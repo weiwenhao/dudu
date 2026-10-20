@@ -1,13 +1,26 @@
 {
   "expo": {
-    "name": "harness-mobile",
+    "name": "dsbot",
     "slug": "harness-mobile",
-    "version": "1.0.0",
-    "orientation": "portrait",
+    "version": "0.1.0",
+    "scheme": "harness-mobile",
+    "orientation": "default",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.harnessmobile.app",
+      "buildNumber": "9",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "连接你电脑上的 DeepSeek Harness，继续对话和管理任务。",
+        "NSMicrophoneUsageDescription": "按住说话，将你的语音转换成对话文字。",
+        "NSSpeechRecognitionUsageDescription": "将你说的话识别成文字，发送到当前对话。",
+        "NSPhotoLibraryUsageDescription": "选择照片作为 Harness 对话附件。",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true,
+          "NSAllowsArbitraryLoadsInWebContent": true
+        }
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -16,10 +29,31 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
+      "package": "com.harnessmobile.app",
+      "softwareKeyboardLayoutMode": "resize",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "扫描电脑上的连接二维码，或向 Harness 上传照片。",
+          "recordAudioAndroid": false
+        }
+      ],
+      "./plugins/with-harness-network.cjs",
+      "./plugins/with-device-diagnostics.cjs",
+      ["expo-speech-recognition", {
+        "microphonePermission": "按住说话，将你的语音转换成对话文字。",
+        "speechRecognitionPermission": "将你说的话识别成文字，发送到当前对话。"
+      }]
+    ]
   }
 }

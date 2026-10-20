@@ -1,0 +1,22 @@
+{
+  "name": "@harness-mobile/desktop",
+  "version": "0.1.1",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": "./index.mjs",
+  "description": "Pair your own DeepSeek Harness Desktop with dsbot",
+  "license": "MIT",
+  "files": ["index.mjs", "cordis.patch.yml", "dist/"],
+  "engines": {
+    "dsh": "0.2.1-rc.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "qrcode-terminal": "0.12.0",
+    "ws": "^8.18.3"
+  }
+}

@@ -1,0 +1,749 @@
+#if DEBUG && targetEnvironment(simulator)
+import Foundation
+
+enum SimulatorReviewFixture {
+    @MainActor
+    static func makeStore() -> DSBotStore {
+        DSBotStore(repository: ReviewComputerRepository(), client: ReviewTransport())
+    }
+}
+
+private actor ReviewComputerRepository: DSBotComputerStorage {
+    private var hasDelayedRestore = false
+    private var library = ComputerLibrary(
+        computers: [
+            Computer(
+                id: "review-local", name: "我的 Mac",
+                url: "https://desktop.example.invalid/dsbot?pair=" + String(repeating: "A", count: 43),
+                computerId: "review-desktop", lastUsedAt: 2
+            ),
+            Computer(
+                id: "review-secondary", name: "工作电脑",
+                url: "https://work.example.invalid/dsbot?pair=" + String(repeating: "B", count: 43),
+                computerId: "review-work", lastUsedAt: 1
+            )
+        ],
+        activeId: "review-local"
+    )
+
+    init() {
+        if ProcessInfo.processInfo.arguments.contains("-dsbot-review-unpaired") {
+            library = ComputerLibrary(computers: [], activeId: nil)
+        } else if ProcessInfo.processInfo.arguments.contains("-dsbot-review-many-computers") {
+            for index in 1...20 {
+                library.computers.append(Computer(
+                    id: "review-extra-\(index)", name: "测试电脑 \(index)",
+                    url: "http://desktop-\(index).example.invalid/dsbot?pair=" + String(repeating: "B", count: 43),
+                    computerId: "review-work", lastUsedAt: 0
+                ))
+            }
+        }
+    }
+
+    func load() async throws -> ComputerLibrary {
+        if ProcessInfo.processInfo.arguments.contains("-dsbot-review-startup-transition"),
+           !hasDelayedRestore {
+            hasDelayedRestore = true
+            try await Task.sleep(nanoseconds: 3_000_000_000)
+        }
+        return library
+    }
+
+    func pairAuthenticated(endpoint: ConnectionEndpoint, readyId: String) -> ComputerLibrary {
+        let existing = library.computers.first { $0.computerId == readyId }
+        let computer = Computer(
+            id: existing?.id ?? UUID().uuidString,
+            name: endpoint.name,
+            url: endpoint.originalURL,
+            computerId: readyId,
+            lastUsedAt: Date().timeIntervalSince1970 * 1_000
+        )
+        library.computers.removeAll { $0.id == computer.id }
+        library.computers.append(computer)
+        library.activeId = computer.id
+        return library
+    }
+
+    func activateAuthenticated(localId: String, readyId: String) -> ComputerLibrary {
+        library.activeId = localId
+        return library
+    }
+
+    func remove(_ localId: String) -> ComputerLibrary {
+        library.computers.removeAll { $0.id == localId }
+        if library.activeId == localId { library.activeId = library.computers.first?.id }
+        return library
+    }
+}
+
+private actor ReviewTransport: DSBotTransport {
+    private var onEvent: (@Sendable (JSONValue) async -> Void)?
+    private var onDisconnect: (@Sendable () async -> Void)?
+    private var connectionCount = 0
+    private var watchID = ""
+    private var selectedID = "review-chat"
+    private var newSessionCount = ProcessInfo.processInfo.arguments.contains("-dsbot-review-blank-session") ? 1 : 0
+    private var newSessionWorkspace = "mobile"
+    private var renamedWorkspaces: [String: String] = [:]
+    private var deletedWorkspaces: Set<String> = []
+    private var unarchivedSessions: Set<String> = []
+    /// What the conversation menu changed: titles, the pin set (most recently pinned first) and archived ones.
+    private var renamedSessions: [String: String] = [:]
+    private var pinnedSessions: [String] = []
+    private var archivedSessions: Set<String> = []
+    private static let richSidebar = ProcessInfo.processInfo.arguments.contains("-dsbot-review-sidebar-rich")
+    /// `-dsbot-review-long-names` uses names as long as the real desktop's, to check chip layout.
+    private static let longNames = ProcessInfo.processInfo.arguments.contains("-dsbot-review-long-names")
+    private var modelID = "deepseek"
+    private var effortID = "high"
+    private var permissionID = "ask"
+    private var presetID = "standard"
+    private var goal: (objective: String, phase: String)? =
+        ProcessInfo.processInfo.arguments.contains("-dsbot-review-goal")
+        ? ("继续完善通用游戏助手 1. 每完成一轮，都停下确认正在做的事情是否符合我们的通用游戏助手的目标。 2. 是否有更好的方案", "active")
+        : nil
+    private var planMode = ProcessInfo.processInfo.arguments.contains("-dsbot-review-plan-mode")
+    private var uploadCount = 0
+    private var compactionCount = 0
+    private var wantsTranscript = false
+    private var sentMessages: [String: [ChatMessage]] = [:]
+    private var embeddedPages: [String: String] = [:]
+    private let realPages = ReviewEmbeddedPages()
+    private let hostPageReview: JSONValue? = {
+        guard let encoded = ProcessInfo.processInfo.environment["DSBOT_HOST_PAGE_REVIEW"],
+              let data = Data(base64Encoded: encoded) else { return nil }
+        return try? JSONDecoder().decode(JSONValue.self, from: data)
+    }()
+    private var computerID = "review-desktop"
+    private let now = Date().timeIntervalSince1970 * 1_000
+
+    func connect(
+        endpoint: ConnectionEndpoint,
+        expectedComputerId: String?,
+        generation: Int,
+        onEvent: @escaping @Sendable (JSONValue) async -> Void,
+        onDisconnect: @escaping @Sendable () async -> Void
+    ) async throws -> (id: String, name: String) {
+        connectionCount += 1
+        let arguments = ProcessInfo.processInfo.arguments
+        let isPrimary = expectedComputerId == nil || expectedComputerId == "review-desktop"
+        if isPrimary {
+            if arguments.contains("-dsbot-review-connecting") {
+                try await Task.sleep(nanoseconds: 20_000_000_000)
+            }
+            if arguments.contains("-dsbot-review-auth-failed"),
+               endpoint.token == String(repeating: "A", count: 43) {
+                if arguments.contains("-dsbot-review-startup-transition") {
+                    try await Task.sleep(nanoseconds: 25_000_000_000)
+                }
+                throw DSBotFailure.remote("AUTH_FAILED")
+            }
+            if arguments.contains("-dsbot-review-disconnected")
+                || (arguments.contains("-dsbot-review-drop-session") && connectionCount > 1) {
+                throw DSBotFailure.connectionFailed
+            }
+            if arguments.contains("-dsbot-review-retry"), connectionCount == 1 {
+                throw DSBotFailure.remote("AUTH_REQUIRED")
+            }
+        }
+        self.onEvent = onEvent
+        self.onDisconnect = onDisconnect
+        computerID = expectedComputerId ?? "review-desktop"
+        return (computerID, endpoint.name)
+    }
+
+    private func publishSnapshot(_ id: String) async {
+        guard var snapshot = try? encode(detail(id, transcript: wantsTranscript)).objectValue else { return }
+        snapshot["watchId"] = .string(watchID)
+        await onEvent?(.object([
+            "type": .string("event"), "topic": .string("session.snapshot"), "params": .object(snapshot)
+        ]))
+    }
+
+    /// Mirrors the replies of DSH's `/goal`, `/plan` and `/compact` handlers.
+    private func reviewCommand(_ command: String, argument: String) -> JSONValue {
+        func reply(_ text: String, error: Bool = false) -> JSONValue {
+            .object(["kind": .string(error ? "error" : "success"), "text": .string(text)])
+        }
+        func render(_ title: String) -> JSONValue {
+            guard let goal else { return reply("No goal is currently set.") }
+            return reply([
+                title, "Status: \(goal.phase)", "Objective: \(goal.objective)",
+                "Rounds: 2/20", "Activation: \(goal.phase == "active" ? "armed" : "disarmed")",
+                "", "Commands: /goal edit <objective>, /goal clear"
+            ].joined(separator: "\n"))
+        }
+        switch command {
+        case "compact":
+            compactionCount += 1
+            return reply("Compacted 14 history items (~3200 tokens).")
+        case "plan":
+            if argument == "off" {
+                defer { planMode = false }
+                return reply(planMode ? "Plan mode off." : "Plan mode is already inactive.")
+            }
+            planMode = true
+            return reply("Plan mode on. Use /plan off to leave.")
+        case "goal":
+            switch argument {
+            case "": return render("Goal")
+            case "clear":
+                defer { goal = nil }
+                return reply(goal == nil ? "No goal to clear." : "Goal cleared.")
+            case "pause":
+                goal?.phase = "paused"
+                return render("Goal paused")
+            case "resume":
+                goal?.phase = "active"
+                return render("Goal resumed")
+            default:
+                if argument.hasPrefix("edit ") {
+                    goal = (String(argument.dropFirst(5)), goal?.phase ?? "active")
+                    return render("Goal updated")
+                }
+                goal = (argument, "active")
+                return render("Goal created")
+            }
+        default:
+            return reply("Unknown command.", error: true)
+        }
+    }
+
+    func request(_ method: String, params: [String: JSONValue], timeoutSeconds: UInt64) async throws -> JSONValue {
+        if method.hasPrefix("web.") && ProcessInfo.processInfo.arguments.contains("-dsbot-review-real-pages") {
+            return try await realPages.request(method, params: params)
+        }
+        switch method {
+        case "session.list":
+            return try encode(sessions)
+        case "workspace.list":
+            return try encode(reviewWorkspaces)
+        case "workspace.rename":
+            if let id = params["id"]?.stringValue, let title = params["title"]?.stringValue { renamedWorkspaces[id] = title }
+            return .object([:])
+        case "workspace.delete":
+            if let id = params["id"]?.stringValue { deletedWorkspaces.insert(id) }
+            return .object([:])
+        case "session.unarchive":
+            if let id = params["id"]?.stringValue {
+                unarchivedSessions.insert(id)
+                archivedSessions.remove(id)
+            }
+            return .object([:])
+        case "session.rename":
+            if let id = params["id"]?.stringValue, let title = params["title"]?.stringValue { renamedSessions[id] = title }
+            return .object([:])
+        case "session.pin":
+            if let id = params["id"]?.stringValue {
+                pinnedSessions.removeAll { $0 == id }
+                if params["pinned"]?.boolValue == true { pinnedSessions.insert(id, at: 0) }
+            }
+            return .object([:])
+        case "session.archive":
+            if let id = params["id"]?.stringValue {
+                archivedSessions.insert(id)
+                pinnedSessions.removeAll { $0 == id }
+            }
+            return .object([:])
+        case "navigation.get":
+            // A host whose plugin predates navigation answers nothing useful here, so the app falls back.
+            guard !ProcessInfo.processInfo.arguments.contains("-dsbot-review-no-navigation") else {
+                throw DSBotFailure.remote("UNSUPPORTED")
+            }
+            return try JSONDecoder().decode(JSONValue.self, from: Data(ReviewNavigation.json.utf8))
+        case "catalog.get":
+            return .object([
+                "models": try encode([
+                    Choice(
+                        id: "deepseek", name: Self.longNames ? "DeepSeek-V4.1-Flash" : "DeepSeek",
+                        efforts: [Choice(id: "high", name: "High"), Choice(id: "max", name: "Max")],
+                        defaultEffort: "high"
+                    ),
+                    Choice(id: "deepseek-reasoner", name: "DeepSeek · 深度思考")
+                ]),
+                "permissions": try encode([
+                    Choice(id: "ask", name: "操作前询问"),
+                    Choice(id: "allow", name: "自动允许"),
+                    Choice(id: "danger-full-access", name: "danger-full-access")
+                ]),
+                "presets": try encode([
+                    Choice(id: "standard", name: "标准模式", description: "处理代码、文件和资料，适合大多数任务。", isDefault: true),
+                    Choice(id: "minimal", name: "极简模式", description: "使用终端和图片读取工具，适合测试基础表现。", isDefault: false),
+                    Choice(id: "cordis", name: "创造模式", description: "用对话定制 DSH，让智能体编写插件。", isDefault: false)
+                ])
+            ])
+        case "session.watch", "session.open":
+            if ProcessInfo.processInfo.arguments.contains("-dsbot-review-slow-session") {
+                // The conversation takes a long while to arrive: the chat shows its loading state meanwhile.
+                try await Task.sleep(nanoseconds: 30_000_000_000)
+            }
+            selectedID = params["id"]?.stringValue ?? selectedID
+            watchID = params["watchId"]?.stringValue ?? watchID
+            wantsTranscript = params["transcript"]?.boolValue == true
+            if ProcessInfo.processInfo.arguments.contains("-dsbot-review-drop-session"),
+               selectedID == "review-second" {
+                await onDisconnect?()
+            }
+            return try encode(detail(selectedID, transcript: wantsTranscript))
+        case "session.unwatch":
+            return .bool(true)
+        case "session.create":
+            newSessionCount += 1
+            newSessionWorkspace = params["workspaceId"]?.stringValue ?? newSessionWorkspace
+            presetID = params["agentPreset"]?.stringValue ?? "standard"
+            return try encode(sessions.first!)
+        case "session.configure":
+            if let model = params["modelId"]?.stringValue {
+                modelID = model
+                effortID = model == "deepseek" ? "high" : ""
+            }
+            effortID = params["reasoningEffort"]?.stringValue ?? effortID
+            permissionID = params["permissionId"]?.stringValue ?? permissionID
+            presetID = params["agentPreset"]?.stringValue ?? presetID
+            return .bool(true)
+        case "session.command":
+            if ProcessInfo.processInfo.arguments.contains("-dsbot-review-commands-unsupported") {
+                throw DSBotFailure.remote("UNSUPPORTED")
+            }
+            let reply = reviewCommand(
+                params["command"]?.stringValue ?? "",
+                argument: params["argument"]?.stringValue ?? ""
+            )
+            await publishSnapshot(params["id"]?.stringValue ?? selectedID)
+            return reply
+        case "file.upload":
+            if ProcessInfo.processInfo.arguments.contains("-dsbot-review-commands-unsupported") {
+                throw DSBotFailure.remote("UNSUPPORTED")
+            }
+            uploadCount += 1
+            let size = params["data"]?.stringValue.map { ($0.count / 4) * 3 } ?? 0
+            return .object([
+                "receiptId": .string("review-receipt-\(uploadCount)"),
+                "name": .string(params["name"]?.stringValue ?? "file"),
+                "bytes": .number(Double(size))
+            ])
+        case "session.send":
+            let id = params["id"]?.stringValue ?? selectedID
+            let text = params["text"]?.stringValue ?? ""
+            sentMessages[id, default: []].append(ChatMessage(id: UUID().uuidString, role: "user", text: text))
+            await publishSnapshot(id)
+            return .bool(true)
+        case "plugins.list":
+            return try encode([
+                LibraryEntry(id: "dsbot", name: "dsbot", subtitle: "手机连接", enabled: true, detail: "已安装 · 0.3.0"),
+                LibraryEntry(id: "files", name: "文件", subtitle: "项目文件与附件", enabled: true, detail: "已启用"),
+                LibraryEntry(id: "terminal", name: "终端", subtitle: "命令执行", enabled: true, detail: "已启用")
+            ])
+        case "schedule.list":
+            return try encode([
+                LibraryEntry(id: "daily", name: "每日项目摘要", subtitle: "每天 09:00", enabled: true, detail: "汇总项目中的最新进展")
+            ])
+        case "files.list":
+            let path = params["path"]?.stringValue ?? ""
+            let entries: [ProjectFileEntry] = path == "src" ? [
+                ProjectFileEntry(name: "ChatView.swift", path: "src/ChatView.swift", isDirectory: false, size: 180),
+                ProjectFileEntry(name: "SidebarView.swift", path: "src/SidebarView.swift", isDirectory: false, size: 92)
+            ] : [
+                ProjectFileEntry(name: ".claude", path: ".claude", isDirectory: true, size: nil),
+                ProjectFileEntry(name: ".git", path: ".git", isDirectory: true, size: nil),
+                ProjectFileEntry(name: "native", path: "native", isDirectory: true, size: nil),
+                ProjectFileEntry(name: "src", path: "src", isDirectory: true, size: nil),
+                ProjectFileEntry(name: "README.md", path: "README.md", isDirectory: false, size: 124),
+                ProjectFileEntry(name: "package.json", path: "package.json", isDirectory: false, size: 86)
+            ]
+            return try encode(ProjectDirectory(name: "dsbot", path: path, entries: entries, truncated: false))
+        case "files.read":
+            let path = params["path"]?.stringValue ?? ""
+            return try encode(ProjectFileContent(
+                name: path.split(separator: "/").last.map(String.init) ?? "README.md",
+                path: path,
+                text: path.hasSuffix(".swift")
+                    ? "import SwiftUI\n\nstruct ConversationView: View {\n    var body: some View {\n        Text(\"继续对话\")\n    }\n}\n"
+                    : "# dsbot\n\n在手机上继续电脑里的对话。\n\n- 原生界面\n- 语音输入\n- 项目文件\n",
+                truncated: false
+            ))
+        case "web.open":
+            let page = params["page"]?.stringValue ?? ""
+            guard ["plugins", "trace", "context", "team", "tools", "panel", "view", "dock", "settings"].contains(page) else {
+                throw DSBotFailure.unsupportedRequest
+            }
+            let id = UUID().uuidString.lowercased()
+            embeddedPages[id] = page
+            let html = page == "plugins" ? hostPageReview?["html"]?.stringValue : nil
+            return .object(["id": .string(id), "html": .string(html ?? Self.embeddedHTML)])
+        case "web.close":
+            if let id = params["id"]?.stringValue { embeddedPages[id] = nil }
+            return .bool(true)
+        case "web.resource":
+            if let id = params["id"]?.stringValue, embeddedPages[id] == "plugins",
+               params["path"]?.stringValue == "/page.js",
+               let resource = hostPageReview?["resource"] {
+                return resource
+            }
+            guard let id = params["id"]?.stringValue, embeddedPages[id] != nil,
+                  params["path"]?.stringValue == "/review-page.js" else {
+                throw DSBotFailure.unsupportedRequest
+            }
+            let data = Data(Self.embeddedScript.utf8)
+            return .object([
+                "mimeType": .string("text/javascript; charset=utf-8"),
+                "dataBase64": .string(data.base64EncodedString()),
+                "totalBytes": .number(Double(data.count)),
+                "eof": .bool(true)
+            ])
+        case "web.invoke":
+            guard let id = params["id"]?.stringValue, let page = embeddedPages[id] else {
+                throw DSBotFailure.unsupportedRequest
+            }
+            if page == "plugins", params["endpoint"]?.stringValue == "pluginManager/listPlugins",
+               let response = hostPageReview?["response"] {
+                return response
+            }
+            return .object(["ok": .bool(true), "value": .string(page)])
+        default:
+            return .bool(true)
+        }
+    }
+
+    func disconnect() async {
+        onEvent = nil
+        embeddedPages.removeAll()
+        await realPages.disconnect()
+    }
+    func disconnect(throughGeneration: Int) async { await disconnect() }
+
+    // This document exercises WebKit's module/resource bridge without using a live pairing.
+    private static let embeddedHTML = """
+    <!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src dsbot-ui:; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'">
+    <style>
+    *{box-sizing:border-box}body{margin:0;padding:20px 18px;color:#17191d;background:#fff;font:16px -apple-system,sans-serif}
+    h1{font-size:19px;margin:0 0 18px}button{display:block;width:100%;min-height:48px;padding:12px 10px;text-align:left;font:inherit;color:inherit;background:white;border:0;border-bottom:1px solid #f0f1f3}
+    button:active{background:#eef0f4}pre{font-size:13px;white-space:pre-wrap}p{line-height:1.6}
+    </style><script type="module" src="./review-page.js"></script></head><body><main></main></body></html>
+    """
+
+    private static let embeddedScript = """
+    const native = window.__DSBOT_NATIVE__;
+    const result = await window.__DSH_TRANSPORT__.rpc.call('/api', 'fixture.describe', {args:{}});
+    if (!result.ok || result.value !== native.page.kind) throw new Error('FIXTURE_BRIDGE');
+    const main = document.querySelector('main');
+    const text = (tag, value) => { const node = document.createElement(tag); node.textContent = value; main.append(node); return node; };
+    const button = (label, action) => { const node = text('button', label); node.onclick = action; return node; };
+    const root = () => {
+      main.replaceChildren();
+      switch (native.page.kind) {
+        case 'plugins':
+          text('h1', '插件');
+          button('dsbot', () => { main.replaceChildren(); text('h1', 'dsbot'); text('p', '手机连接'); button('返回插件', root); });
+          button('文件', () => {}); button('终端', () => {});
+          break;
+        case 'trace': text('h1', '轨迹'); text('p', '已完成'); text('p', '检查输入栏与导航'); break;
+        case 'context': text('h1', '上下文'); text('p', '当前项目'); text('p', 'dsbot'); break;
+        case 'team': text('h1', '编队'); text('p', '暂无编队'); break;
+        case 'tools':
+          text('h1', '文件');
+          button('src', () => {
+            main.replaceChildren(); text('h1', 'src');
+            button('上一级', root);
+            button('ChatView.swift', () => {
+              main.replaceChildren(); text('h1', 'ChatView.swift');
+              text('pre', 'import SwiftUI\\n\\nstruct ConversationView: View {\\n    var body: some View { Text("继续对话") }\\n}');
+              button('返回文件', root);
+            });
+          });
+          button('README.md', () => {}); break;
+      }
+    };
+    root();
+    await native.ready();
+    """
+
+    private var reviewWorkspaces: [WorkspaceSummary] {
+        var list = [
+            WorkspaceSummary(id: "mobile", name: Self.longNames ? "harness-mobile" : "dsbot", path: "/work/dsbot"),
+            WorkspaceSummary(id: "notes", name: "日常", path: "/work/notes"),
+        ]
+        if Self.richSidebar { list.append(WorkspaceSummary(id: "docs", name: "文档", path: "/work/docs")) }
+        return list
+            .filter { !deletedWorkspaces.contains($0.id) }
+            .map { WorkspaceSummary(id: $0.id, name: renamedWorkspaces[$0.id] ?? $0.name, path: $0.path) }
+    }
+
+    private var sessions: [SessionSummary] {
+        var values = [
+            SessionSummary(id: "review-chat", title: "优化手机上的对话体验", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now, status: ProcessInfo.processInfo.arguments.contains("-dsbot-review-running") ? "running" : "idle"),
+            SessionSummary(id: "review-second", title: "检查连接与配对", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now - 18 * 60_000, status: "idle"),
+            SessionSummary(id: "review-notes", title: "整理本周的项目进展", workspaceId: "notes", workspaceName: "日常", updatedAt: now - 41 * 60_000, status: "idle"),
+            SessionSummary(id: "review-fourth", title: "接口设计与实现", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now - 2 * 3_600_000, status: "idle"),
+            SessionSummary(id: "review-fifth", title: "阅读资料与工作记录", workspaceId: "notes", workspaceName: "日常", updatedAt: now - 4 * 3_600_000, status: "idle")
+        ]
+        if newSessionCount > 0 {
+            let workspaceName = newSessionWorkspace == "notes" ? "日常" : "dsbot"
+            // A conversation nobody has written in yet: the host flags it so the sidebar can hide it.
+            values.insert(SessionSummary(id: "review-new-\(newSessionCount)", title: "新会话", workspaceId: newSessionWorkspace, workspaceName: workspaceName, updatedAt: now + Double(newSessionCount), status: "idle", blank: true), at: 0)
+        }
+        if Self.richSidebar {
+            values[3].pinned = true
+            values[3].pinRank = 0
+            values.append(SessionSummary(id: "review-archived", title: "旧的调研记录", workspaceId: "notes", workspaceName: "日常", updatedAt: now - 30 * 3_600_000, status: "idle", archived: !unarchivedSessions.contains("review-archived")))
+            values.append(SessionSummary(id: "review-blank-a", title: "新对话", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now - 3_600_000, status: "idle", blank: true))
+            values.append(SessionSummary(id: "review-blank-b", title: "新对话", workspaceId: "notes", workspaceName: "日常", updatedAt: now - 3_600_000, status: "idle", blank: true))
+            values.append(SessionSummary(id: "review-docs", title: "文档整理", workspaceId: "docs", workspaceName: "文档", updatedAt: now - 5 * 3_600_000, status: "idle"))
+        }
+        if ProcessInfo.processInfo.arguments.contains("-dsbot-review-many-sessions") {
+            // A list long enough to scroll under the sidebar's footer.
+            for index in 1...24 {
+                let inMobile = index.isMultiple(of: 2)
+                values.append(SessionSummary(
+                    id: "review-many-\(index)", title: "示例会话 \(index)",
+                    workspaceId: inMobile ? "mobile" : "notes", workspaceName: inMobile ? "dsbot" : "日常",
+                    updatedAt: now - Double(index) * 50 * 60_000, status: "idle"
+                ))
+            }
+        }
+        // A deleted workspace leaves its conversations loose, as DSH does.
+        values = values.map { session in
+            guard let id = session.workspaceId, deletedWorkspaces.contains(id) else { return session }
+            var loose = session
+            loose.workspaceId = nil
+            loose.workspaceName = nil
+            return loose
+        }
+        if ProcessInfo.processInfo.arguments.contains("-dsbot-review-long-history") {
+            values.insert(SessionSummary(id: "review-long", title: "长对话与排版检查", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now + 1, status: "idle"), at: 0)
+        }
+        if ProcessInfo.processInfo.arguments.contains("-dsbot-review-heavy-history") {
+            values.insert(SessionSummary(id: "review-heavy", title: "很长的对话", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now + 2, status: "idle"), at: 0)
+        }
+        // What the conversation menu changed.
+        return values.map { session in
+            var changed = session
+            if let title = renamedSessions[session.id] { changed.title = title }
+            if let rank = pinnedSessions.firstIndex(of: session.id) {
+                changed.pinned = true
+                changed.pinRank = rank
+            }
+            if archivedSessions.contains(session.id) {
+                changed.archived = true
+                changed.pinned = nil
+                changed.pinRank = nil
+            }
+            return changed
+        }
+    }
+
+    private func detail(_ id: String, transcript wantsTranscript: Bool = false) -> SessionDetail {
+        let session = sessions.first { $0.id == id } ?? sessions[0]
+        let messages: [ChatMessage]
+        if id == "review-long" {
+            messages = (0..<59).map { index in
+                ChatMessage(
+                    id: "review-long-\(index)", role: index.isMultiple(of: 2) ? "user" : "assistant",
+                    text: index.isMultiple(of: 2)
+                        ? "第 \(index + 1) 条记录：检查对话中的输入与滚动。"
+                        : "这是一段较长的会话内容。\n\n**交互检查**\n\n保持输入区的位置，滚动历史时保留阅读位置。\n\n- 支持键盘输入\n- 支持长按说话\n- 支持查看项目文件\n",
+                    status: "complete"
+                )
+            } + [
+                ChatMessage(
+                    id: "review-markdown", role: "assistant",
+                    text: "## 排版检查\n\n这是独立的段落，包含 **加粗**、*斜体* 和 `行内代码`。\n\n1. 第一项\n2. 第二项\n\n```swift\nlet message = \"继续对话\"\nprint(message)\n```\n\n| 功能 | 状态 |\n| --- | --- |\n| 对话 | 正常 |\n| 输入 | 正常 |\n\n> 阅读较早的消息时，保留当前位置。\n\n长对话检查完成。",
+                    status: "complete"
+                )
+            ]
+        } else if id == "review-heavy" {
+            // Rows of wildly different heights, as a real conversation with command output and tables has.
+            messages = (0..<80).map { index in
+                let isUser = index.isMultiple(of: 2)
+                return ChatMessage(
+                    id: "review-heavy-\(index)", role: isUser ? "user" : "assistant",
+                    text: isUser ? "第 \(index / 2 + 1) 个问题" : Self.heavyAnswer(index / 2),
+                    status: "complete"
+                )
+            }
+        } else if id == "review-chat" {
+            messages = [
+                ChatMessage(id: "review-question", role: "user", text: "把手机上的交互整理一下，保留现在的布局。"),
+                ChatMessage(id: "review-answer", role: "assistant", text: "我会按这几个地方逐项检查：\n\n**输入与发送**\n\n照片入口保持在左侧，键盘和更多选项放在右侧。长按说话，松开发送，上移取消。\n\n**会话与导航**\n\n最近会话按活跃时间排列，也可以按项目分组。弹层支持点空白区域或再次点入口关闭。\n\n**连接与设置**\n\n电脑可以随时切换，设置入口集中在侧栏底部。",
+                    process: ProcessInfo.processInfo.arguments.contains("-dsbot-review-process")
+                        ? "Earlier assistant progress stays available here." : nil)
+            ]
+        } else if id.hasPrefix("review-new") {
+            messages = []
+        } else {
+            messages = [ChatMessage(id: "review-content-\(id)", role: "assistant", text: "这是“\(session.title)”的会话内容。")]
+        }
+        let all = messages + (sentMessages[id] ?? [])
+        let arguments = ProcessInfo.processInfo.arguments
+        return SessionDetail(
+            session: session, messages: wantsTranscript ? [] : all,
+            modelId: modelID, permissionId: permissionID,
+            context: [LibraryEntry(id: "project", name: "当前项目", subtitle: "dsbot", detail: "手机界面与交互")],
+            trace: [LibraryEntry(id: "step", name: "已完成", subtitle: "界面检查", detail: "检查输入栏与导航")],
+            team: [],
+            approvals: arguments.contains("-dsbot-review-plan-review") && id == "review-chat" ? [
+                Approval(
+                    id: "review-plan", sessionId: id,
+                    title: "无操作测试目标 — 执行计划（Plan Mode 验证）",
+                    detail: "当前会话的持久目标是「测试目标不需要任何操作」（active，round 1/256）。用户切入 plan mode 并输入「测试计划」。\n\n本计划针对该无操作测试目标本身：不修改仓库、不运行命令，只确认流程可以走通。\n\n## 步骤\n\n1. 读取当前目标\n2. 汇报结论"
+                )
+            ] : [],
+            transcript: wantsTranscript ? reviewTranscript(id, messages: all) : nil,
+            goal: goal.map { SessionGoal(id: "review-goal", phase: $0.phase, objective: $0.objective) },
+            // `-dsbot-review-tasks`: a task list like the one DSH shows above its composer.
+            todos: arguments.contains("-dsbot-review-tasks") && id == "review-chat" ? [
+                TodoItem(content: "梳理现有页面的结构", status: "completed"),
+                TodoItem(content: "调整侧栏列表的对齐", status: "in_progress"),
+                TodoItem(content: "补充任务清单的显示", status: "pending"),
+                TodoItem(content: "整理测试并检查布局", status: "pending")
+            ] : nil,
+            planMode: planMode,
+            reasoningEffort: effortID.isEmpty ? nil : effortID,
+            agentPreset: presetID
+        )
+    }
+
+    private static func heavyAnswer(_ index: Int) -> String {
+        switch index % 7 {
+        case 0:
+            return "好的。"
+        case 1:
+            return "命令的输出如下：\n\n```\n" + (1...140).map { "line \($0): the quick brown fox jumps over the lazy dog" }.joined(separator: "\n") + "\n```\n\n以上。"
+        case 2:
+            return "对照表：\n\n| 名称 | 数值 |\n| --- | --- |\n" + (1...45).map { "| 项目 \($0) | \($0 * 7) |" }.joined(separator: "\n")
+        case 3:
+            return (1...36).map { "- 第 \($0) 项：保持输入区的位置，滚动历史时保留阅读位置。" }.joined(separator: "\n")
+        case 4:
+            return "收到，继续。\n\n再确认一次。"
+        case 5:
+            return "```swift\n" + (1...260).map { "let value\($0) = compute(\($0)) // step \($0)" }.joined(separator: "\n") + "\n```"
+        default:
+            return (1...9).map { "第 \($0) 段：这是一段较长的说明文字，用来让这一条回复占据好几屏的高度，并且和相邻的短回复形成很大的差别。" }.joined(separator: "\n\n")
+        }
+    }
+
+    /// The legacy review messages as transcript entries, plus a richer history behind `-dsbot-review-rich`.
+    private func reviewTranscript(_ id: String, messages: [ChatMessage]) -> Transcript {
+        let arguments = ProcessInfo.processInfo.arguments
+        var entries: [TranscriptEntry] = []
+        var turns: [TranscriptTurn] = []
+        var turn = 0
+        var seq = 0.0
+        func nextSeq() -> Double { seq += 1; return seq }
+        let clockBase = now - 90_000
+
+        for message in messages {
+            if message.role == "user" {
+                entries.append(TranscriptEntry(
+                    type: "user", id: message.id, seq: nextSeq(),
+                    time: message.id == "review-question" ? clockBase : now, text: message.text
+                ))
+            } else {
+                turn += 1
+                if let process = message.process {
+                    entries.append(TranscriptEntry(
+                        type: "assistant", id: "\(message.id)-process", seq: nextSeq(), time: clockBase + 8_000,
+                        reasoning: process, turn: turn, step: 1
+                    ))
+                }
+                entries.append(TranscriptEntry(
+                    type: "assistant", id: message.id, seq: nextSeq(), time: clockBase + 14_000,
+                    text: message.text, turn: turn, step: message.process == nil ? 1 : 2
+                ))
+                turns.append(TranscriptTurn(turn: turn, start: clockBase + 500, end: clockBase + 14_000, outcome: "done"))
+            }
+        }
+        /// What `/compact` leaves behind on the desktop: a command row with the compaction summary.
+        func compactionEntries() -> [TranscriptEntry] {
+            (0..<compactionCount).map { index in
+                TranscriptEntry(
+                    type: "command", id: "command:review-compact-\(index)", seq: 1_000 + Double(index), time: now,
+                    commandId: "review-compact-\(index)", name: "compact", outcome: "success",
+                    summary: "Compacted 14 history items (~3200 tokens).",
+                    compaction: TranscriptCompaction(
+                        items: 14, tokens: 3_200,
+                        summary: "## 对话摘要\n\n- 目标：整理手机端的输入区、侧栏和设置入口。\n- 已确认：照片入口放在左侧，语音和键盘切换放在右侧。\n\n**接下来**：继续检查长对话的滚动位置。"
+                    )
+                )
+            }
+        }
+        guard id == "review-chat", arguments.contains("-dsbot-review-rich") else {
+            return Transcript(entries: entries + compactionEntries(), turns: turns, live: nil)
+        }
+
+        func call(_ id: String, _ name: String, _ detail: String, _ activity: String = "commands", status: String = "done") -> TranscriptCall {
+            TranscriptCall(id: id, name: name, activity: activity, detail: detail, status: status)
+        }
+        let day = now - 26 * 3_600_000
+        entries = [
+            TranscriptEntry(type: "user", id: "rich-user-1", seq: 1, time: day, text: "谁占用的内存。"),
+            TranscriptEntry(
+                type: "assistant", id: "rich-a1", seq: 2, time: day + 8_000,
+                reasoning: "The user asks: \"谁占用的内存。\" — who's using the memory. They want a precise breakdown/ranking, probably more precise than my aggregate.\n\nLet me check the top processes first.",
+                turn: 1, step: 1,
+                calls: [
+                    call("c1", "bash", "List top memory processes"),
+                    call("c2", "bash", "Break down physical memory composition")
+                ]
+            ),
+            TranscriptEntry(
+                type: "assistant", id: "rich-a2", seq: 3, time: day + 20_000,
+                reasoning: "Interesting: total RSS 7.7GB but vm_stat shows active 2.45 + inactive 2.22 + wired 3.84 + compressor 6.48 + free 0.2 = 15.2GB.",
+                turn: 1, step: 2,
+                calls: [
+                    call("c3", "bash", "Categorize memory usage by owner"),
+                    call("c4", "bash", "Show top individual processes by memory and CPU")
+                ]
+            ),
+            TranscriptEntry(
+                type: "assistant", id: "rich-a3", seq: 4, time: day + 31_000,
+                reasoning: "The measurements are fluctuating a lot (system is churning). Numbers differ between calls:",
+                turn: 1, step: 3,
+                calls: [call("c5", "bash", "Take one consistent memory sample"), call("c6", "read", "/tmp/vm_stat.txt", "read", status: "error")]
+            ),
+            TranscriptEntry(
+                type: "assistant", id: "rich-a4", seq: 5, time: day + 45_000,
+                text: "这是 19:31:39 的一次统一采样，按占用从大到小列出来：\n\n| 排名 | 占用者 | 内存 | 进程数 |\n| --- | --- | --- | --- |\n| 1 | Docker 虚拟机 | 1.57GB | 5 |\n| 2 | claude agent 会话 | 1.2GB | 25 |\n| 3 | Notion | 696MB | 14 |\n\n要我把 Docker 和那些僵尸 claude 会话清掉吗？清理前我会先列清单给你确认。",
+                turn: 1, step: 4, usage: 1_300_000
+            ),
+            TranscriptEntry(
+                type: "command", id: "command:rich-compact", seq: 6, time: day + 90_000,
+                commandId: "rich-compact", name: "compact", outcome: "success",
+                summary: "Compacted 348 history items (~192127 tokens).",
+                compaction: TranscriptCompaction(
+                    items: 348, tokens: 192_127,
+                    summary: "## 会话摘要\n\n- 用户在排查电脑的内存占用：Docker 虚拟机约 1.57GB，claude agent 会话约 1.2GB，Notion 约 696MB。\n- 已按占用从大到小列出，并询问是否清理 Docker 与僵尸会话。\n\n**待办**：清理前先列清单，等用户确认。"
+                )
+            ),
+            TranscriptEntry(type: "user", id: "rich-user-2", seq: 7, time: now - 20 * 60_000, text: "这些方案你能在你电脑上测试吗?")
+        ]
+        turns = [TranscriptTurn(turn: 1, start: day + 1_000, end: day + 45_000, outcome: "done")]
+        var live: TranscriptLive?
+        if arguments.contains("-dsbot-review-running") {
+            entries.append(TranscriptEntry(
+                type: "trigger", id: "rich-goal-trigger", seq: 8, time: now - 6 * 60_000,
+                text: "Continue working toward the goal. Check progress against the objective, then run the next step.",
+                source: "goal"
+            ))
+            entries.append(TranscriptEntry(
+                type: "assistant", id: "rich-a5", seq: 9, time: now - 4 * 60_000,
+                reasoning: "Need to update the transport test for JSON retry and run the full suite.",
+                turn: 2, step: 1,
+                calls: [call("c7", "edit", "src/transport.ts", "edit"), call("c8", "bash", "Run the full test suite")]
+            ))
+            turns.append(TranscriptTurn(turn: 2, start: now - 313_000, end: nil, outcome: nil))
+            live = TranscriptLive(
+                id: "live:rich", text: nil, reasoning: "Check results.\n\nThe suite is still running.",
+                calls: [call("c9", "bash", "Update transport test for JSON retry and run full", status: "running")]
+            )
+        }
+        return Transcript(entries: entries + compactionEntries(), turns: turns, live: live)
+    }
+
+    private func encode<T: Encodable>(_ value: T) throws -> JSONValue {
+        try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
+    }
+}
+#endif

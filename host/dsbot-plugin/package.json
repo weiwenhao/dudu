@@ -1,0 +1,25 @@
+{
+  "name": "dsbot",
+  "version": "0.3.8",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "description": "dsbot 手机连接：配置连接地址、生成配对码和管理设备",
+  "license": "MIT",
+  "files": ["index.mjs", "client.js", "cordis.patch.yml", "dist/"],
+  "engines": { "dsh": "0.2.1-rc.2" },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-settings"]
+    }
+  },
+  "dependencies": {
+    "qrcode-terminal": "0.12.0"
+  }
+}

@@ -1,0 +1,1357 @@
+import XCTest
+
+final class NativeInteractionTests: XCTestCase {
+    private var app: XCUIApplication!
+
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        #if !targetEnvironment(simulator)
+        throw XCTSkip("These interaction tests require the simulator review fixture.")
+        #endif
+        launchReviewApp()
+    }
+
+    private func launchReviewApp(additionalArguments: [String] = []) {
+        app = XCUIApplication()
+        #if targetEnvironment(simulator)
+        // The blur's paused animators keep XCUITest waiting for the app to go idle; screenshots cover it.
+        app.launchArguments = ["-dsbot-ui-review", "-dsbot-review-no-blur"] + additionalArguments
+        #endif
+        app.launch()
+    }
+
+    private func relaunchReviewApp(additionalArguments: [String] = []) {
+        app.terminate()
+        launchReviewApp(additionalArguments: additionalArguments)
+    }
+
+    private func capture(_ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    /// A page (web, files, automations) shows only a back button; the sidebar belongs to the conversation.
+    private func leavePageIfShown() {
+        let back = app.buttons["page.back"]
+        if back.exists {
+            back.tap()
+            XCTAssertTrue(waitForDisappearance(back), "Back should return to the conversation.")
+        }
+    }
+
+    @discardableResult
+    private func openSidebar() -> XCUIElement {
+        leavePageIfShown()
+        let toggle = app.buttons["sidebar.toggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 30))
+        toggle.tap()
+        XCTAssertTrue(app.buttons["computers.open"].waitForExistence(timeout: 5))
+        return toggle
+    }
+
+    private func waitForDisappearance(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: element
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private func waitForHittable(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND hittable == true"),
+            object: element
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private func waitForSelection(
+        _ selected: Bool,
+        on element: XCUIElement,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "selected == %@", NSNumber(value: selected)),
+            object: element
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private func waitForLabel(_ element: XCUIElement, containing text: String, timeout: TimeInterval = 10) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", text),
+            object: element
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private func staticText(containing value: String) -> XCUIElement {
+        app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", value)).firstMatch
+    }
+
+    /// Conversation views (trace, context, team) live in the "..." menu at the top right.
+    private func selectMode(_ mode: String) {
+        leavePageIfShown()
+        if app.buttons["computers.open"].exists {
+            app.buttons["sidebar.toggle"].tap()
+            XCTAssertTrue(waitForDisappearance(app.buttons["computers.open"]))
+        }
+        let menu = app.buttons["conversation.menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 5), "Expected the conversation menu")
+        menu.tap()
+        // DSH lists 上下文 both as a view and as a right-dock entry; the views come first.
+        let choice = app.buttons[mode].firstMatch
+        XCTAssertTrue(choice.waitForExistence(timeout: 5), "Expected menu mode: \(mode)")
+        choice.tap()
+    }
+
+    /// Right-dock entries (工作区文件, ...) are the second group of the "..." menu.
+    private func openDockEntry(_ title: String) {
+        let menu = app.buttons["conversation.menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 5), "Expected the conversation menu")
+        menu.tap()
+        let entry = app.buttons[title].firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 5), "Expected dock entry: \(title)")
+        entry.tap()
+    }
+
+    private func assertConversation(
+        title: String,
+        sessionID: String,
+        messageID: String,
+        body: String
+    ) {
+        let sidebar = openSidebar()
+        let session = app.buttons["session.select.\(sessionID)"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5), "Expected session: \(sessionID)")
+        XCTAssertTrue(session.label.contains(title), "Expected session title: \(title)")
+        sidebar.tap()
+        XCTAssertTrue(waitForDisappearance(app.buttons["computers.open"]))
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["chat.message.\(messageID)"].waitForExistence(timeout: 5),
+            "Expected message row: \(messageID)"
+        )
+        XCTAssertTrue(staticText(containing: body).waitForExistence(timeout: 5), "Expected body text: \(body)")
+    }
+
+    func testNativeNavigationAndPairingEntryPreserveExistingComputer() throws {
+        let sidebar = app.buttons["sidebar.toggle"]
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 30), "The simulator fixture should restore into the native shell.")
+        XCTAssertEqual(app.webViews.count, 0, "The installed app must render natively.")
+        capture("native-conversation")
+        sidebar.tap()
+        let computers = app.buttons["computers.open"]
+        XCTAssertTrue(computers.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["library.skills"].exists)
+        for id in ["plugins", "schedules", "insight"] {
+            XCTAssertTrue(app.buttons["library.\(id)"].exists, "The sidebar lists DSH's entry \(id).")
+        }
+        XCTAssertFalse(app.buttons["library.files"].exists, "Files is a right-dock entry in DSH, not a sidebar one.")
+        capture("native-sidebar")
+        computers.tap()
+        let addComputer = app.buttons["computers.add"]
+        XCTAssertTrue(addComputer.waitForExistence(timeout: 5))
+        capture("native-computers")
+        addComputer.tap()
+        XCTAssertTrue(app.buttons["pairing.scan"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["pairing.manual"].exists)
+        capture("native-add-computer")
+    }
+
+    func testComputerSwipeDeleteRemovesSelectedComputerAndLastRemovalShowsGuide() throws {
+        _ = openSidebar()
+        app.buttons["computers.open"].tap()
+
+        let local = app.buttons["computer.row.review-local"]
+        let secondary = app.buttons["computer.row.review-secondary"]
+        XCTAssertTrue(local.waitForExistence(timeout: 10))
+        XCTAssertTrue(secondary.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["computers.edit"].exists)
+
+        secondary.swipeLeft()
+        let deleteSecondary = app.buttons["computer.delete.review-secondary"]
+        XCTAssertTrue(deleteSecondary.waitForExistence(timeout: 5))
+        capture("computer-swipe-delete-visible")
+        deleteSecondary.tap()
+        XCTAssertTrue(waitForDisappearance(secondary), "The delete action must remove that row.")
+        XCTAssertTrue(local.exists, "Deleting an inactive computer must preserve the active one.")
+
+        local.swipeLeft()
+        let deleteLocal = app.buttons["computer.delete.review-local"]
+        XCTAssertTrue(deleteLocal.waitForExistence(timeout: 5))
+        deleteLocal.tap()
+        XCTAssertTrue(waitForDisappearance(local), "The last saved computer must be removable.")
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["connection.guide"].waitForExistence(timeout: 5),
+            "Removing the final computer should return to the connection guide."
+        )
+        capture("connection-guide-after-last-computer-removal")
+    }
+
+    func testComputerListScrollsVerticallyAndSwipeDeleteCanClose() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-many-computers"])
+        _ = openSidebar()
+        app.buttons["computers.open"].tap()
+
+        let list = app.scrollViews["computers.list"]
+        XCTAssertTrue(list.waitForExistence(timeout: 5))
+        let first = app.buttons["computer.row.review-local"]
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        first.swipeLeft()
+        let delete = app.buttons["computer.delete.review-local"]
+        XCTAssertTrue(delete.waitForExistence(timeout: 5))
+        first.swipeRight()
+        XCTAssertTrue(waitForDisappearance(delete))
+        capture("computers-before-vertical-scroll")
+
+        let last = app.buttons["computer.row.review-extra-20"]
+        for _ in 0..<8 {
+            if last.exists && last.isHittable { break }
+            list.swipeUp()
+        }
+        capture("computers-after-vertical-scroll")
+        XCTAssertTrue(waitForHittable(last), "Horizontal row gestures must not block vertical scrolling.")
+        capture("computers-scroll-to-last")
+        last.swipeLeft()
+        XCTAssertTrue(app.buttons["computer.delete.review-extra-20"].waitForExistence(timeout: 5))
+        capture("computers-last-delete-visible")
+    }
+
+    func testSidebarClosesWithToggleAndBackdrop() throws {
+        let toggle = openSidebar()
+        toggle.tap()
+        XCTAssertTrue(waitForDisappearance(app.buttons["computers.open"]))
+
+        _ = openSidebar()
+        let backdrop = app.buttons["sidebar.backdrop"]
+        XCTAssertTrue(backdrop.waitForExistence(timeout: 5))
+        
+        // Tap in the right side of screen where backdrop exists
+        // Use coordinates relative to screen to avoid backdrop frame issues
+        backdrop.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5)).tap()
+        
+        XCTAssertTrue(waitForDisappearance(backdrop))
+        XCTAssertTrue(waitForDisappearance(app.buttons["computers.open"]))
+    }
+
+    func testGlassNavigationControlsAlignAndDrawersPushTheConversation() throws {
+        let sidebar = app.buttons["sidebar.toggle"]
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 30))
+        let viewMenu = app.buttons["conversation.menu"]
+        XCTAssertTrue(viewMenu.exists)
+        XCTAssertFalse(app.buttons["session.new.toolbar"].exists)
+        XCTAssertFalse(app.buttons["tools.toggle"].exists)
+        let leftFrame = sidebar.frame
+        let newSessionFrame = viewMenu.frame
+        let screen = app.frame
+
+        XCTAssertEqual(leftFrame.midY, newSessionFrame.midY, accuracy: 1)
+        XCTAssertGreaterThanOrEqual(leftFrame.height, 44)
+        XCTAssertGreaterThanOrEqual(newSessionFrame.height, 44)
+        XCTAssertEqual(leftFrame.minX - screen.minX, 20, accuracy: 1)
+        XCTAssertEqual(screen.maxX - newSessionFrame.maxX, 20, accuracy: 1)
+        XCTAssertFalse(app.buttons["conversation.title"].exists)
+
+        let firstMessage = app.descendants(matching: .any)["chat.message.review-answer"].firstMatch
+        let plusButton = app.buttons["composer.plus"]
+        let voiceButton = app.buttons["composer.voice"]
+        let composerInput = app.descendants(matching: .any)["composer.text"].firstMatch
+        XCTAssertTrue(firstMessage.waitForExistence(timeout: 5))
+        XCTAssertTrue(plusButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(voiceButton.exists)
+        XCTAssertTrue(composerInput.exists)
+        XCTAssertFalse(app.buttons["composer.keyboard"].exists, "Text mode shows the voice toggle, not the keyboard toggle.")
+        capture("layout-before-sidebar")
+        print("LAYOUT app=\(screen) menu=\(leftFrame) compose=\(newSessionFrame) message=\(firstMessage.frame) voice=\(voiceButton.frame)")
+        XCTAssertGreaterThanOrEqual(
+            firstMessage.frame.minY,
+            max(leftFrame.maxY, newSessionFrame.maxY) + 8,
+            "The first chat message must start below the floating header controls."
+        )
+        XCTAssertEqual(
+            screen.maxY - plusButton.frame.maxY,
+            DSBotLayoutReference.composerBottomDistance,
+            accuracy: 2,
+            "The composer floats as far above the bottom edge of the screen as it is from the sides."
+        )
+        XCTAssertEqual(plusButton.frame.height, 44, accuracy: 1)
+        XCTAssertEqual(plusButton.frame.midY, voiceButton.frame.midY, accuracy: 1)
+        XCTAssertEqual(composerInput.frame.midY, voiceButton.frame.midY, accuracy: 2)
+        XCTAssertEqual(leftFrame.height, 44, accuracy: 1, "Toolbar buttons are 44pt glass circles.")
+        XCTAssertEqual(
+            leftFrame.minY - screen.minY,
+            DSBotLayoutReference.toolbarTop,
+            accuracy: 1,
+            "Toolbar buttons sit flush with the top safe area, like the Muse reference."
+        )
+
+        capture("muse-glass-conversation")
+
+        sidebar.tap()
+        XCTAssertTrue(app.buttons["settings.open"].waitForExistence(timeout: 5))
+        let pushedLeftFrame = sidebar.frame
+        XCTAssertGreaterThan(pushedLeftFrame.minX - leftFrame.minX, screen.width * 0.65)
+        XCTAssertLessThan(pushedLeftFrame.minX - leftFrame.minX, screen.width * 0.85)
+        XCTAssertTrue(sidebar.isHittable, "The original menu control must stay usable on the visible chat edge.")
+        capture("muse-push-sidebar")
+        sidebar.tap()
+        XCTAssertTrue(waitForDisappearance(app.buttons["settings.open"]))
+        XCTAssertEqual(sidebar.frame.minX, leftFrame.minX, accuracy: 1)
+    }
+
+    func testSidebarDragAndSettingsSheetReturnToTheSameConversation() throws {
+        _ = openSidebar()
+        let backdrop = app.buttons["sidebar.backdrop"]
+        XCTAssertTrue(backdrop.waitForExistence(timeout: 5))
+        backdrop.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.35))
+            .press(
+                forDuration: 0.05,
+                thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.35))
+            )
+        XCTAssertTrue(waitForDisappearance(app.buttons["settings.open"]))
+        XCTAssertTrue(waitForHittable(app.buttons["composer.plus"]))
+
+        _ = openSidebar()
+        app.buttons["settings.open"].tap()
+        let close = app.buttons["settings.close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(close.frame.midX, app.frame.width * 0.75)
+        XCTAssertFalse(app.buttons["settings.open"].isHittable)
+        XCTAssertTrue(app.buttons["settings.dsh.models"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["settings.model"].exists, "Model and permission are chosen in the + sheet.")
+        XCTAssertFalse(app.buttons["settings.permission"].exists)
+        capture("muse-grouped-settings")
+        close.tap()
+        XCTAssertTrue(waitForDisappearance(close))
+        XCTAssertTrue(app.buttons["settings.open"].isHittable)
+        app.buttons["sidebar.toggle"].tap()
+        XCTAssertTrue(waitForDisappearance(app.buttons["settings.open"]))
+        XCTAssertTrue(
+            app.descendants(matching: .any)["chat.message.review-answer"].waitForExistence(timeout: 5)
+        )
+    }
+
+    func testSidebarSearchFiltersRecentSessions() throws {
+        _ = openSidebar()
+        let search = app.textFields["sidebar.search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("dsbot")
+
+        XCTAssertTrue(app.buttons["session.select.review-chat"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["session.select.review-second"].exists)
+        XCTAssertFalse(app.buttons["session.select.review-notes"].exists)
+    }
+
+    func testSettingsCloseRemainsReachableWhileScrollingInLandscape() throws {
+        _ = openSidebar()
+        app.buttons["settings.open"].tap()
+        let close = app.buttons["settings.close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCTAssertTrue(waitForHittable(close))
+        let closePosition = close.frame.origin
+        let content = app.scrollViews.firstMatch
+        XCTAssertTrue(content.waitForExistence(timeout: 5))
+        content.swipeUp()
+        XCTAssertTrue(close.isHittable)
+        XCTAssertLessThanOrEqual(abs(close.frame.minY - closePosition.y), 1)
+        XCTAssertLessThanOrEqual(close.frame.maxX, app.frame.maxX + 1)
+        capture("muse-settings-landscape")
+
+        close.tap()
+        XCTAssertTrue(waitForDisappearance(close))
+        XCTAssertTrue(app.buttons["settings.open"].isHittable)
+    }
+
+    func testWorkspaceGroupsFoldAndTheViewOptionsFollowDSH() throws {
+        _ = openSidebar()
+        // The list is grouped by workspace, as DSH's is, so the heading says so.
+        let heading = app.staticTexts["工作区"]
+        let optionsButton = app.buttons["sidebar.sort"]
+        let firstSession = app.buttons["session.select.review-chat"]
+        let timestamp = app.descendants(matching: .any)["session.time.review-chat"]
+        let settings = app.buttons["settings.open"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForHittable(optionsButton))
+        XCTAssertTrue(firstSession.waitForExistence(timeout: 5))
+        XCTAssertTrue(timestamp.waitForExistence(timeout: 5))
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+
+        XCTAssertGreaterThan(optionsButton.frame.minX, heading.frame.maxX)
+        let actionColumnCenters = [optionsButton.frame.midX, timestamp.frame.midX, settings.frame.midX]
+        XCTAssertLessThanOrEqual(
+            (actionColumnCenters.max() ?? 0) - (actionColumnCenters.min() ?? 0),
+            1.0,
+            "The options menu, row timestamps, and settings should share the same action column."
+        )
+
+        // Each workspace is a header with its own menu; tapping the name folds it away and back.
+        let project = app.buttons["sidebar.group.mobile"]
+        XCTAssertTrue(project.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["sidebar.group.menu.mobile"].exists)
+        XCTAssertFalse(app.buttons["sidebar.group.new.mobile"].exists, "A workspace header has no new-session button.")
+        project.tap()
+        XCTAssertTrue(waitForDisappearance(firstSession))
+        project.tap()
+        XCTAssertTrue(firstSession.waitForExistence(timeout: 5))
+
+        // DSH's options, in its words: how the list is grouped and which archived conversations show.
+        optionsButton.tap()
+        for title in [
+            "按工作区", "单列表",
+            "隐藏已归档", "全部对话（显示已归档）", "仅显示已归档",
+        ] {
+            XCTAssertTrue(app.buttons[title].waitForExistence(timeout: 5), "Missing view option: \(title)")
+        }
+        XCTAssertFalse(app.buttons["按工作区树"].exists, "A phone shows one level of workspaces.")
+        XCTAssertFalse(app.buttons["手动排序"].exists, "The phone keeps one order: newest first.")
+        XCTAssertFalse(app.buttons["最近更新"].exists)
+        app.buttons["单列表"].tap()
+        XCTAssertTrue(waitForDisappearance(project))
+        XCTAssertTrue(firstSession.waitForExistence(timeout: 5))
+    }
+
+    func testAPinnedConversationShowsAPinWhereItsTimeWas() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-sidebar-rich"])
+        _ = openSidebar()
+        // The rich fixture pins 接口设计与实现 (review-fourth); every other row keeps its time.
+        let pin = app.descendants(matching: .any)["session.pin.review-fourth"]
+        let time = app.descendants(matching: .any)["session.time.review-chat"]
+        XCTAssertTrue(pin.waitForExistence(timeout: 5))
+        XCTAssertTrue(time.waitForExistence(timeout: 5))
+        XCTAssertEqual(pin.label, "已置顶")
+        XCTAssertFalse(app.descendants(matching: .any)["session.time.review-fourth"].exists, "The pin replaces the time.")
+        XCTAssertFalse(app.descendants(matching: .any)["session.pin.review-chat"].exists)
+        XCTAssertLessThanOrEqual(abs(pin.frame.midX - time.frame.midX), 1.0, "The pin sits in the time's column.")
+    }
+
+    func testLibraryHidesRightPanelButtonAndReturnsToChat() throws {
+        let sidebar = app.buttons["sidebar.toggle"]
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 30))
+        sidebar.tap()
+        let plugins = app.buttons["library.plugins"]
+        XCTAssertTrue(plugins.waitForExistence(timeout: 5))
+        plugins.tap()
+        XCTAssertFalse(app.buttons["tools.toggle"].exists)
+        // On the plugin page the toolbar's right button adds a plugin instead of opening a menu.
+        XCTAssertTrue(app.buttons["plugins.add"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["conversation.menu"].exists)
+        // A page is one level down: a back button, and none of the conversation's controls.
+        XCTAssertTrue(app.buttons["page.back"].exists)
+        XCTAssertFalse(app.buttons["sidebar.toggle"].exists)
+        let pluginPage = app.webViews.firstMatch
+        XCTAssertTrue(pluginPage.waitForExistence(timeout: 10))
+        XCTAssertTrue(pluginPage.staticTexts["插件"].waitForExistence(timeout: 10))
+        let dsbotPlugin = pluginPage.buttons["dsbot"]
+        XCTAssertTrue(dsbotPlugin.waitForExistence(timeout: 10))
+        dsbotPlugin.tap()
+        XCTAssertTrue(pluginPage.staticTexts["手机连接"].waitForExistence(timeout: 5))
+        let returnToPlugins = pluginPage.buttons["返回插件"]
+        XCTAssertTrue(returnToPlugins.waitForExistence(timeout: 5))
+        returnToPlugins.tap()
+        XCTAssertTrue(pluginPage.buttons["dsbot"].waitForExistence(timeout: 5))
+
+        app.buttons["page.back"].tap()
+        XCTAssertTrue(waitForDisappearance(app.webViews.firstMatch, timeout: 10))
+        XCTAssertEqual(app.webViews.count, 0, "Returning to chat should release the embedded page.")
+        XCTAssertTrue(app.buttons["composer.plus"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["chat.message.review-answer"].waitForExistence(timeout: 5))
+        capture("native-library-return")
+    }
+
+    func testProductionHostPluginDocumentRendersThroughWebKitBridge() throws {
+        let fixtureURL = try XCTUnwrap(
+            Bundle(for: NativeInteractionTests.self).url(forResource: "HostPluginPage", withExtension: "json"),
+            "Run npm run native:review-pages before generating the simulator project."
+        )
+        let fixture = try Data(contentsOf: fixtureURL)
+        app.terminate()
+        app.launchEnvironment["DSBOT_HOST_PAGE_REVIEW"] = fixture.base64EncodedString()
+        app.launch()
+        _ = openSidebar()
+        let plugins = app.buttons["library.plugins"]
+        XCTAssertTrue(plugins.waitForExistence(timeout: 5))
+        plugins.tap()
+
+        let page = app.webViews.firstMatch
+        XCTAssertTrue(page.waitForExistence(timeout: 10))
+        XCTAssertTrue(page.staticTexts["Actual host plugin"].waitForExistence(timeout: 10))
+        XCTAssertTrue(page.staticTexts["Production page resource check"].exists)
+        XCTAssertFalse(app.buttons["embedded.retry"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["embedded.loading"].exists)
+        capture("production-host-plugin-page")
+    }
+
+    func testCompletedTurnStartsCollapsedAndItsThinkingCanBeReopened() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-process"])
+        let header = app.buttons["chat.process.header"]
+        XCTAssertTrue(header.waitForExistence(timeout: 10))
+        XCTAssertTrue(header.label.hasPrefix("已完成，用时"), "Turn disclosure reads like DSH: \(header.label)")
+        XCTAssertFalse(app.buttons["chat.process.group"].exists, "A finished turn starts collapsed.")
+        header.tap()
+        let group = app.buttons["chat.process.group"]
+        XCTAssertTrue(group.waitForExistence(timeout: 5))
+        let thought = app.buttons["chat.process.thought"]
+        XCTAssertTrue(thought.waitForExistence(timeout: 5))
+        XCTAssertTrue(thought.label.contains("Earlier assistant progress stays available here."))
+        capture("native-expanded-process")
+        header.tap()
+        XCTAssertTrue(waitForDisappearance(group))
+        capture("native-collapsed-process")
+    }
+
+    func testNativeFilesDrillPreviewBackdropAndReopen() throws {
+        openDockEntry("工作区文件")
+
+        let panel = app.descendants(matching: .any)["files.page"]
+        XCTAssertTrue(panel.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.webViews.count, 0)
+        let sourceFolder = app.buttons["file.entry.src"]
+        XCTAssertTrue(sourceFolder.waitForExistence(timeout: 5))
+        capture("native-files-root")
+        sourceFolder.tap()
+
+        XCTAssertTrue(app.staticTexts["files.path"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["files.path"].label, "src")
+        let parent = app.buttons["files.parent"]
+        XCTAssertTrue(parent.waitForExistence(timeout: 5))
+        parent.tap()
+        XCTAssertTrue(sourceFolder.waitForExistence(timeout: 5))
+
+        sourceFolder.tap()
+        let sourceFile = app.buttons["file.entry.src/ChatView.swift"]
+        XCTAssertTrue(sourceFile.waitForExistence(timeout: 5))
+        sourceFile.tap()
+
+        XCTAssertTrue(app.staticTexts["ChatView.swift"].waitForExistence(timeout: 5))
+        let previewSource = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "import SwiftUI"))
+            .firstMatch
+        XCTAssertTrue(previewSource.waitForExistence(timeout: 5))
+        capture("native-file-preview")
+        let returnToFiles = app.buttons["files.preview.close"]
+        XCTAssertTrue(returnToFiles.waitForExistence(timeout: 5))
+        returnToFiles.tap()
+        XCTAssertTrue(sourceFile.waitForExistence(timeout: 5))
+
+        _ = openSidebar()
+        let session = app.buttons["session.select.review-chat"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        session.tap()
+        XCTAssertTrue(waitForDisappearance(panel))
+        XCTAssertEqual(app.webViews.count, 0)
+
+        openDockEntry("工作区文件")
+        XCTAssertTrue(panel.waitForExistence(timeout: 5))
+        XCTAssertTrue(sourceFolder.waitForExistence(timeout: 5))
+        capture("native-files-reopened")
+    }
+
+    func testSettingsListsDSHSectionsFromThePluginInsteadOfLoadingThePage() throws {
+        _ = openSidebar()
+        let settingsButton = app.buttons["settings.open"]
+        XCTAssertTrue(settingsButton.waitForExistence(timeout: 5))
+        settingsButton.tap()
+
+        // The list is a plugin answer, so it is there before DSH's settings page has loaded.
+        for id in ["general", "account", "models", "agent-presets", "plugins", "archived-sessions", "notion-sync"] {
+            XCTAssertTrue(app.buttons["settings.dsh.\(id)"].waitForExistence(timeout: 5), "Missing settings section: \(id)")
+        }
+        XCTAssertFalse(app.buttons["settings.model"].exists)
+        XCTAssertFalse(app.buttons["settings.permission"].exists)
+        XCTAssertFalse(app.buttons["settings.dsh.general"].exists, "General settings are the desktop's, not the phone's.")
+        XCTAssertFalse(app.buttons["settings.reconnect"].exists, "Reconnecting lives on the computers page.")
+        XCTAssertFalse(app.descendants(matching: .any)["settings.dsh.loading"].exists)
+        capture("native-settings")
+
+        // A section: a back button and its title on one bar, and no close button on top of it.
+        app.buttons["settings.dsh.models"].tap()
+        XCTAssertTrue(app.buttons["settings.dsh.back"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["settings.close"].exists)
+        capture("native-settings-section")
+        app.buttons["settings.dsh.back"].tap()
+        XCTAssertTrue(app.buttons["settings.close"].waitForExistence(timeout: 5))
+
+        app.buttons["settings.computers"].tap()
+        XCTAssertTrue(app.buttons["computers.reconnect"].waitForExistence(timeout: 5))
+    }
+
+    func testSecondaryComputerRestoresNameAndLoadsFreshConversation() throws {
+        _ = openSidebar()
+        let secondSession = app.buttons["session.select.review-second"]
+        XCTAssertTrue(secondSession.waitForExistence(timeout: 5))
+        secondSession.tap()
+        assertConversation(
+            title: "检查连接与配对",
+            sessionID: "review-second",
+            messageID: "review-content-review-second",
+            body: "这是“检查连接与配对”的会话内容。"
+        )
+
+        _ = openSidebar()
+        app.buttons["computers.open"].tap()
+        let secondary = app.buttons["computer.row.review-secondary"]
+        XCTAssertTrue(secondary.waitForExistence(timeout: 5))
+        XCTAssertTrue(secondary.label.contains("工作电脑"))
+        secondary.tap()
+
+        assertConversation(
+            title: "优化手机上的对话体验",
+            sessionID: "review-chat",
+            messageID: "review-answer",
+            body: "我会按这几个地方逐项检查"
+        )
+        XCTAssertFalse(app.descendants(matching: .any)["chat.message.review-content-review-second"].exists)
+
+        _ = openSidebar()
+        app.buttons["settings.open"].tap()
+        let activeComputer = app.buttons["settings.computers"]
+        XCTAssertTrue(activeComputer.waitForExistence(timeout: 5))
+        XCTAssertTrue(activeComputer.isHittable)
+        XCTAssertTrue(activeComputer.label.contains("工作电脑"))
+        capture("native-settings-secondary-computer")
+        app.buttons["settings.close"].tap()
+    }
+
+    func testDraftSurvivesLibraryAndConversationModeNavigation() throws {
+        let input = app.descendants(matching: .any)["composer.text"].firstMatch
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        input.typeText("keep this draft")
+
+        _ = openSidebar()
+        XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch), "Opening the sidebar dismisses the keyboard.")
+        app.buttons["library.plugins"].tap()
+        let pluginPage = app.webViews.firstMatch
+        XCTAssertTrue(pluginPage.waitForExistence(timeout: 10))
+        XCTAssertTrue(pluginPage.staticTexts["插件"].waitForExistence(timeout: 10))
+        XCTAssertTrue(pluginPage.buttons["dsbot"].waitForExistence(timeout: 10))
+        capture("native-library-plugins")
+
+        _ = openSidebar()
+        app.buttons["session.select.review-chat"].tap()
+        XCTAssertTrue(waitForDisappearance(app.webViews.firstMatch, timeout: 10))
+        XCTAssertEqual(app.webViews.count, 0, "The conversation remains native after leaving the plugin page.")
+        XCTAssertTrue(app.buttons["composer.plus"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["chat.message.review-answer"].waitForExistence(timeout: 5))
+        let restoredAfterLibrary = app.descendants(matching: .any)["composer.text"].firstMatch
+        XCTAssertTrue(restoredAfterLibrary.waitForExistence(timeout: 5))
+        XCTAssertEqual(restoredAfterLibrary.value as? String, "keep this draft")
+
+        selectMode("轨迹")
+        let tracePage = app.webViews.firstMatch
+        XCTAssertTrue(tracePage.waitForExistence(timeout: 10))
+        XCTAssertTrue(tracePage.staticTexts["已完成"].waitForExistence(timeout: 10))
+        capture("native-library-trace")
+
+        selectMode("对话")
+        XCTAssertTrue(waitForDisappearance(app.webViews.firstMatch, timeout: 10))
+        XCTAssertEqual(app.webViews.count, 0, "Switching back to conversation should restore the native chat.")
+        XCTAssertTrue(app.buttons["composer.plus"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["chat.message.review-answer"].waitForExistence(timeout: 5))
+
+        let embeddedModes: [(mode: String, content: String, capture: String)] = [
+            ("上下文", "当前项目", "native-library-context"),
+            ("编队", "暂无编队", "native-library-team")
+        ]
+        for item in embeddedModes {
+            selectMode(item.mode)
+            let embeddedPage = app.webViews.firstMatch
+            XCTAssertTrue(embeddedPage.waitForExistence(timeout: 10))
+            XCTAssertTrue(embeddedPage.staticTexts[item.content].waitForExistence(timeout: 10))
+            capture(item.capture)
+        }
+
+        selectMode("对话")
+        XCTAssertTrue(waitForDisappearance(app.webViews.firstMatch, timeout: 10))
+        XCTAssertEqual(app.webViews.count, 0)
+        XCTAssertTrue(app.descendants(matching: .any)["chat.message.review-answer"].waitForExistence(timeout: 5))
+        let restoredAfterMode = app.descendants(matching: .any)["composer.text"].firstMatch
+        XCTAssertTrue(restoredAfterMode.waitForExistence(timeout: 5))
+        XCTAssertEqual(restoredAfterMode.value as? String, "keep this draft")
+        capture("native-draft-restored")
+    }
+
+    func testRepeatedSessionSelectionsChangeTitleAndMessageContent() throws {
+        assertConversation(
+            title: "优化手机上的对话体验",
+            sessionID: "review-chat",
+            messageID: "review-answer",
+            body: "我会按这几个地方逐项检查"
+        )
+        let cases: [(id: String, title: String, messageID: String, body: String)] = [
+            ("review-second", "检查连接与配对", "review-content-review-second", "这是“检查连接与配对”的会话内容。"),
+            ("review-notes", "整理本周的项目进展", "review-content-review-notes", "这是“整理本周的项目进展”的会话内容。"),
+            ("review-fourth", "接口设计与实现", "review-content-review-fourth", "这是“接口设计与实现”的会话内容。"),
+            ("review-fifth", "阅读资料与工作记录", "review-content-review-fifth", "这是“阅读资料与工作记录”的会话内容。"),
+            ("review-chat", "优化手机上的对话体验", "review-answer", "我会按这几个地方逐项检查")
+        ]
+        var previousBody = "我会按这几个地方逐项检查"
+
+        for _ in 0..<2 {
+            for item in cases {
+                _ = openSidebar()
+                let session = app.buttons["session.select.\(item.id)"]
+                XCTAssertTrue(session.waitForExistence(timeout: 5))
+                session.tap()
+
+                assertConversation(
+                    title: item.title,
+                    sessionID: item.id,
+                    messageID: item.messageID,
+                    body: item.body
+                )
+                XCTAssertTrue(waitForDisappearance(staticText(containing: previousBody)))
+                previousBody = item.body
+            }
+        }
+        capture("native-repeated-session-switch")
+    }
+
+    func testFirstLaunchShowsEmptyPairingEntry() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-unpaired"])
+        XCTAssertTrue(app.descendants(matching: .any)["connection.guide"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["pairing.scan"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["pairing.manual"].exists)
+        XCTAssertFalse(app.buttons["sidebar.toggle"].exists)
+        XCTAssertFalse(app.buttons["composer.plus"].exists)
+        capture("native-first-launch-pairing")
+    }
+
+    func testFailedConnectionShowsGuideAndCanSwitchSavedComputer() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-disconnected"])
+        let computers = app.buttons["connection.computers"]
+        XCTAssertTrue(computers.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["connection.retry"].exists)
+        XCTAssertFalse(app.buttons["pairing.scan"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["connection.failure"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["sidebar.toggle"].exists)
+        XCTAssertFalse(app.buttons["composer.plus"].exists)
+        capture("connection-failed-guide")
+
+        computers.tap()
+        let otherComputer = app.buttons["computer.row.review-secondary"]
+        XCTAssertTrue(otherComputer.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["computer.row.review-local"].exists)
+        otherComputer.tap()
+        XCTAssertTrue(app.buttons["sidebar.toggle"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["connection.computers"].exists)
+    }
+
+    func testAuthenticationFailureGuidesManualPairingAndRecovers() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-auth-failed"])
+        let failure = app.descendants(matching: .any)["connection.failure"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 10))
+        XCTAssertTrue(failure.label.contains("配对已失效"))
+        XCTAssertFalse(app.buttons["connection.retry"].exists)
+        XCTAssertEqual(app.buttons["pairing.scan"].label, "重新扫码配对")
+        XCTAssertFalse(app.buttons["sidebar.toggle"].exists)
+        capture("connection-expired-guide")
+
+        app.buttons["pairing.manual"].tap()
+        let link = app.textFields["pairing.link"].exists
+            ? app.textFields["pairing.link"] : app.textViews["pairing.link"]
+        XCTAssertTrue(link.waitForExistence(timeout: 5))
+        capture("connection-manual-entry")
+        link.tap()
+        link.typeText(
+            "https://desktop.example.invalid/dsbot?pair="
+                + String(repeating: "C", count: 43) + "&computer=review-desktop&name=ReviewMac"
+        )
+        app.buttons["完成"].firstMatch.tap()
+        let connect = app.buttons["pairing.connect"]
+        if !connect.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(waitForHittable(connect))
+        connect.tap()
+        XCTAssertTrue(app.buttons["sidebar.toggle"].waitForExistence(timeout: 10))
+        _ = openSidebar()
+        app.buttons["computers.open"].tap()
+        XCTAssertTrue(app.buttons["computer.row.review-local"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["computer.row.review-local"].label.contains("ReviewMac"))
+        XCTAssertTrue(app.buttons["computer.row.review-secondary"].exists)
+        capture("connection-pairing-recovered")
+    }
+
+    func testStartupShowsHomeUntilPairingIsRejected() throws {
+        relaunchReviewApp(additionalArguments: [
+            "-dsbot-review-auth-failed", "-dsbot-review-startup-transition"
+        ])
+        XCTAssertTrue(app.buttons["sidebar.toggle"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["composer.plus"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["connection.guide"].exists)
+        capture("startup-home-restoring")
+
+        XCTAssertTrue(app.descendants(matching: .any)["connection.failure"].waitForExistence(timeout: 30))
+        capture("startup-guide-rejected")
+        XCTAssertFalse(app.buttons["sidebar.toggle"].exists)
+        XCTAssertTrue(app.buttons["connection.computers"].exists)
+    }
+
+    func testRetryFromGuideReturnsToConversation() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-retry"])
+        let retry = app.buttons["connection.retry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitForHittable(retry))
+        retry.tap()
+        XCTAssertTrue(app.buttons["sidebar.toggle"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["connection.computers"].exists)
+    }
+
+    func testConnectingSavedComputerKeepsHomeVisible() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-connecting"])
+        XCTAssertTrue(app.buttons["sidebar.toggle"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["composer.plus"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["connection.guide"].exists)
+        capture("connection-restoring-home")
+        XCTAssertTrue(app.descendants(matching: .any)["chat.message.review-answer"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.descendants(matching: .any)["connection.guide"].exists)
+        capture("connection-restored-home")
+    }
+
+    func testReturningFromBackgroundKeepsConversationVisible() throws {
+        let message = app.descendants(matching: .any)["chat.message.review-answer"]
+        XCTAssertTrue(message.waitForExistence(timeout: 15))
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.buttons["sidebar.toggle"].waitForExistence(timeout: 5))
+        XCTAssertTrue(message.exists)
+        XCTAssertFalse(app.descendants(matching: .any)["connection.guide"].exists)
+        capture("connection-resumed-home")
+    }
+
+    func testLostConnectionReturnsToGuide() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-drop-session"])
+        _ = openSidebar()
+        app.buttons["session.select.review-second"].tap()
+        XCTAssertTrue(app.buttons["connection.computers"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["sidebar.toggle"].exists)
+        XCTAssertFalse(app.buttons["composer.plus"].exists)
+        capture("connection-lost-guide")
+    }
+
+    func testLongHistoryLatestMarkerAndReadingPositionSurviveKeyboardOpening() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-long-history"])
+        let endingText = staticText(containing: "长对话检查完成。")
+        XCTAssertTrue(endingText.waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            waitForHittable(endingText, timeout: 10),
+            "The final sentence must be visible after Markdown finishes laying out."
+        )
+        let earlyMessage = app.descendants(matching: .any)["chat.message.review-long-0"]
+        XCTAssertFalse(earlyMessage.isHittable, "The initial view should be at the end of the long conversation.")
+        XCTAssertFalse(app.buttons["chat.latest"].exists)
+        capture("native-long-history-latest")
+
+        let history = app.scrollViews.firstMatch
+        XCTAssertTrue(history.waitForExistence(timeout: 5))
+        for _ in 0..<12 where !earlyMessage.isHittable {
+            history.swipeDown()
+        }
+        XCTAssertTrue(waitForHittable(earlyMessage), "The long-history fixture should scroll back to its first message.")
+        XCTAssertTrue(app.buttons["chat.latest"].waitForExistence(timeout: 5))
+        XCTAssertFalse(endingText.isHittable)
+        let readingPosition = earlyMessage.frame.minY
+
+        app.descendants(matching: .any)["composer.text"].firstMatch.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForHittable(earlyMessage))
+        XCTAssertLessThanOrEqual(abs(earlyMessage.frame.minY - readingPosition), 8)
+        XCTAssertTrue(app.buttons["chat.latest"].exists)
+        XCTAssertFalse(endingText.isHittable, "Opening the keyboard must not jump the reader back to the latest message.")
+        capture("native-long-history-keyboard-reading")
+    }
+
+    func testFilesPageReturnsToConversationThroughSidebar() throws {
+        openDockEntry("工作区文件")
+        let panel = app.descendants(matching: .any)["files.page"]
+        XCTAssertTrue(panel.waitForExistence(timeout: 5))
+
+        _ = openSidebar()
+        app.buttons["session.select.review-chat"].tap()
+        XCTAssertTrue(waitForDisappearance(panel))
+        XCTAssertTrue(app.buttons["composer.plus"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["chat.message.review-answer"].exists)
+    }
+
+    func testVoiceAndKeyboardModesToggleRepeatedlyWithComposerControlsAccessible() throws {
+        let voiceToggle = app.buttons["composer.voice"]
+        XCTAssertTrue(voiceToggle.waitForExistence(timeout: 30))
+        XCTAssertGreaterThanOrEqual(voiceToggle.frame.width, 38)
+        XCTAssertGreaterThanOrEqual(voiceToggle.frame.height, 42)
+
+        for _ in 0..<2 {
+            voiceToggle.tap()
+            let hold = app.buttons["composer.hold"]
+            XCTAssertTrue(hold.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.descendants(matching: .any)["composer.text"].exists)
+            let keyboardToggle = app.buttons["composer.keyboard"]
+            XCTAssertTrue(keyboardToggle.exists)
+            XCTAssertGreaterThanOrEqual(keyboardToggle.frame.width, 38)
+            XCTAssertGreaterThanOrEqual(keyboardToggle.frame.height, 42)
+            XCTAssertEqual(hold.frame.midY, keyboardToggle.frame.midY, accuracy: 1)
+            capture("native-hold-to-talk-bar")
+
+            keyboardToggle.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.descendants(matching: .any)["composer.text"].firstMatch.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["composer.hold"].exists)
+        }
+
+        let input = app.descendants(matching: .any)["composer.text"].firstMatch
+        input.typeText("draft")
+        XCTAssertTrue(app.buttons["composer.plus"].isHittable)
+        XCTAssertTrue(app.buttons["composer.send"].waitForExistence(timeout: 5), "A draft replaces the voice toggle with send.")
+        XCTAssertFalse(app.buttons["composer.voice"].exists)
+        capture("native-keyboard")
+
+        app.buttons["composer.plus"].tap()
+        let modelMenu = app.buttons["composer.menu.model"]
+        XCTAssertTrue(modelMenu.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["composer.menu.permission"].exists)
+        XCTAssertTrue(app.buttons["composer.photos"].exists)
+        capture("native-composer-menu")
+        modelMenu.tap()
+        let reasonerChoice = app.buttons["composer.model.deepseek-reasoner"]
+        XCTAssertTrue(reasonerChoice.waitForExistence(timeout: 5))
+        XCTAssertEqual(reasonerChoice.label, "DeepSeek · 深度思考")
+        XCTAssertTrue(app.buttons["composer.model.deepseek"].exists)
+        capture("native-composer-model-options")
+        reasonerChoice.tap()
+        XCTAssertTrue(waitForDisappearance(reasonerChoice), "Choosing a model closes the sheet.")
+
+        app.buttons["composer.plus"].tap()
+        app.buttons["composer.menu.model"].tap()
+        let selectedReasoner = app.buttons["composer.model.deepseek-reasoner"]
+        XCTAssertTrue(selectedReasoner.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["composer.model.deepseek"].exists)
+        capture("native-composer-model-selected")
+        app.buttons["composer.sheet.back"].tap()
+        XCTAssertTrue(app.buttons["composer.menu.permission"].waitForExistence(timeout: 5))
+        app.buttons["composer.menu.permission"].tap()
+        XCTAssertTrue(
+            app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'composer.permission.'")).firstMatch
+                .waitForExistence(timeout: 5)
+        )
+        capture("native-composer-permission-options")
+    }
+
+    func testPressingHoldToTalkReplacesComposerWithGlowAndCancelTurnsRed() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-voice-press"])
+        let overlay = app.descendants(matching: .any)["voice.overlay.recording"]
+        XCTAssertTrue(overlay.waitForExistence(timeout: 10))
+        capture("native-voice-press")
+
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-voice-cancel"])
+        let cancel = app.descendants(matching: .any)["voice.overlay.cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10))
+        capture("native-voice-cancel")
+    }
+
+    @discardableResult
+    private func enterHoldToTalk() -> XCUIElement {
+        let toggle = app.buttons["composer.voice"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 30))
+        toggle.tap()
+        let hold = app.buttons["composer.hold"]
+        XCTAssertTrue(hold.waitForExistence(timeout: 5))
+        return hold
+    }
+
+    func testVoiceHoldSendsRecognizedTranscript() throws {
+        let voice = enterHoldToTalk()
+        voice.press(forDuration: 0.5)
+
+        let overlay = app.descendants(matching: .any)["voice.overlay.recording"]
+        XCTAssertTrue(waitForDisappearance(overlay, timeout: 5))
+        XCTAssertTrue(app.staticTexts["继续优化手机界面"].waitForExistence(timeout: 5))
+        capture("native-voice-sent")
+    }
+
+    func testVoiceSwipeUpCancelsWithoutSending() throws {
+        let voice = enterHoldToTalk()
+        let start = voice.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let target = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+        start.press(
+            forDuration: 0.4,
+            thenDragTo: target,
+            withVelocity: .slow,
+            thenHoldForDuration: 0.1
+        )
+
+        XCTAssertTrue(app.buttons["composer.hold"].waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForDisappearance(
+            app.descendants(matching: .any)["voice.overlay.recording"],
+            timeout: 5
+        ))
+        XCTAssertFalse(app.staticTexts["继续优化手机界面"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["voice.overlay.recording"].exists)
+    }
+
+    func testSilentVoiceRecognitionFinishesWithoutBannerOrMessage() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-silent"])
+        let voice = enterHoldToTalk()
+        voice.press(forDuration: 0.5)
+
+        let overlay = app.descendants(matching: .any)["voice.overlay.recording"]
+        XCTAssertTrue(waitForDisappearance(overlay, timeout: 5))
+        XCTAssertFalse(app.staticTexts["继续优化手机界面"].exists)
+        XCTAssertFalse(app.buttons["关闭提示"].exists)
+    }
+
+    // MARK: Conversation menu and edge swipe
+
+    func testConversationMenuListsDSHViewsThenDockEntriesAndOpensWebPages() throws {
+        let menu = app.buttons["conversation.menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 30))
+        menu.tap()
+        // The views DSH registers, including one a third-party plugin adds.
+        for title in ["对话", "轨迹", "上下文", "编队", "笔记"] {
+            XCTAssertTrue(app.buttons[title].firstMatch.waitForExistence(timeout: 5), "Missing menu item: \(title)")
+        }
+        // Then the right dock's entries, as text: the terminal and the browser are the dock's own tabs,
+        // so they are listed like the rest.
+        for title in ["工作区文件", "新建终端", "浏览器", "看板"] {
+            XCTAssertTrue(app.buttons[title].exists, "Missing dock entry: \(title)")
+        }
+        capture("native-conversation-menu")
+        app.buttons["编队"].tap()
+        let page = app.webViews.firstMatch
+        XCTAssertTrue(page.waitForExistence(timeout: 10))
+        XCTAssertTrue(page.staticTexts["暂无编队"].waitForExistence(timeout: 10))
+        _ = openSidebar()
+        XCTAssertFalse(app.buttons["library.mode.编队"].exists, "The sidebar no longer carries the view rows.")
+    }
+
+    func testSwipingFromTheLeftEdgeOpensTheSidebarButMidScreenDragsDoNot() throws {
+        XCTAssertTrue(app.buttons["sidebar.toggle"].waitForExistence(timeout: 30))
+        func point(_ x: CGFloat) -> XCUICoordinate {
+            app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.45))
+        }
+
+        point(0.4).press(forDuration: 0.05, thenDragTo: point(0.9))
+        XCTAssertFalse(app.buttons["computers.open"].exists, "A drag that starts inside the chat is not a drawer gesture.")
+
+        point(0.005).press(forDuration: 0.05, thenDragTo: point(0.12), withVelocity: .slow, thenHoldForDuration: 0.3)
+        XCTAssertTrue(waitForDisappearance(app.buttons["computers.open"]), "A short pull from the edge springs back.")
+
+        point(0.005).press(forDuration: 0.05, thenDragTo: point(0.8))
+        XCTAssertTrue(app.buttons["computers.open"].waitForExistence(timeout: 5), "Pulling from the edge opens the sidebar.")
+        XCTAssertTrue(app.buttons["sidebar.backdrop"].waitForExistence(timeout: 5))
+        capture("native-edge-swipe-sidebar")
+    }
+
+    // MARK: DSH commands from the "+" sheet
+
+    func testSheetOffersDSHCommandsAndCompactRunsWithoutFurtherPrompts() throws {
+        let plus = app.buttons["composer.plus"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 30))
+        plus.tap()
+        for identifier in ["composer.photos", "composer.files", "composer.goal", "composer.plan", "composer.compact",
+                           "composer.menu.permission", "composer.menu.model"] {
+            XCTAssertTrue(app.buttons[identifier].waitForExistence(timeout: 5), "Missing sheet entry: \(identifier)")
+        }
+        capture("native-sheet-commands")
+
+        let compact = app.buttons["composer.compact"]
+        compact.tap()
+        XCTAssertTrue(waitForDisappearance(compact), "Compact closes the sheet and runs straight away.")
+        let row = app.buttons["chat.command.header"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertTrue(row.label.contains("已压缩 14 条历史记录"), "Compaction row: \(row.label)")
+        XCTAssertFalse(staticText(containing: "对话摘要").exists, "The summary stays folded until the row is tapped.")
+        capture("native-compact-row")
+
+        // Like DSH, the row opens to show what the compaction kept.
+        row.tap()
+        XCTAssertTrue(staticText(containing: "整理手机端的输入区").waitForExistence(timeout: 5))
+        capture("native-compact-row-open")
+        row.tap()
+        XCTAssertTrue(waitForDisappearance(staticText(containing: "整理手机端的输入区")))
+    }
+
+    func testOlderDesktopPluginExplainsThatCommandsNeedAnUpdate() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-commands-unsupported"])
+        let plus = app.buttons["composer.plus"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 30))
+        plus.tap()
+        let compact = app.buttons["composer.compact"]
+        XCTAssertTrue(compact.waitForExistence(timeout: 5))
+        compact.tap()
+        XCTAssertTrue(staticText(containing: "请先在电脑上更新 dsbot 插件").waitForExistence(timeout: 10))
+        XCTAssertFalse(app.descendants(matching: .any)["composer.compacting"].exists)
+        capture("native-command-needs-update")
+    }
+
+    func testGoalIsSetFromTheSheetAndManagedFromTheBannerAboveTheComposer() throws {
+        let plus = app.buttons["composer.plus"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 30))
+        plus.tap()
+        let goalRow = app.buttons["composer.goal"]
+        XCTAssertTrue(goalRow.waitForExistence(timeout: 5))
+        goalRow.tap()
+
+        let token = app.buttons["composer.goal.token"]
+        XCTAssertTrue(token.waitForExistence(timeout: 5), "The composer shows the /目标 token.")
+        let input = app.descendants(matching: .any)["composer.text"].firstMatch
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        capture("native-goal-mode")
+        input.typeText("keep mobile and desktop in sync")
+        app.buttons["composer.send"].tap()
+
+        // The goal has a row of its own above the composer.
+        let banner = app.buttons["goal.banner"]
+        XCTAssertTrue(banner.waitForExistence(timeout: 10))
+        XCTAssertTrue(banner.label.contains("进行中的目标"), "Banner: \(banner.label)")
+        XCTAssertTrue(banner.label.contains("keep mobile and desktop in sync"))
+        XCTAssertTrue(waitForDisappearance(token), "The token clears once the goal is set.")
+        XCTAssertLessThan(banner.frame.maxY, app.buttons["composer.plus"].frame.minY, "The goal sits above the composer.")
+        XCTAssertFalse(app.buttons["context.goal"].exists, "It is not a chip beside project and mode.")
+        capture("native-goal-banner")
+
+        app.buttons["goal.menu"].tap()
+        let pause = app.buttons["暂停目标"]
+        XCTAssertTrue(pause.waitForExistence(timeout: 5))
+        pause.tap()
+        XCTAssertTrue(
+            app.buttons.matching(NSPredicate(format: "identifier == 'goal.banner' AND label CONTAINS '已暂停的目标'"))
+                .firstMatch.waitForExistence(timeout: 10)
+        )
+        capture("native-goal-paused")
+
+        app.buttons["goal.menu"].tap()
+        let clear = app.buttons["清除目标"]
+        XCTAssertTrue(clear.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["恢复目标"].exists)
+        XCTAssertTrue(app.buttons["编辑目标"].exists)
+        clear.tap()
+        XCTAssertTrue(waitForDisappearance(banner, timeout: 10))
+    }
+
+    func testTheTaskListIsFoldedToItsCountsAndOpensToTheItems() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-tasks"])
+        let panel = app.descendants(matching: .any)["tasks.panel"]
+        XCTAssertTrue(panel.waitForExistence(timeout: 20))
+        let toggle = app.buttons["tasks.toggle"]
+        XCTAssertTrue(toggle.exists)
+        // DSH's own words and counts, folded until opened.
+        XCTAssertTrue(toggle.label.contains("任务"))
+        XCTAssertTrue(toggle.label.contains("1 已完成"))
+        XCTAssertTrue(toggle.label.contains("1 进行中"))
+        XCTAssertTrue(toggle.label.contains("2 待处理"))
+        XCTAssertFalse(app.descendants(matching: .any)["tasks.item.0"].exists)
+        XCTAssertLessThan(panel.frame.maxY, app.buttons["composer.plus"].frame.minY, "The list sits above the composer.")
+        capture("native-tasks-folded")
+
+        toggle.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["tasks.item.0"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["tasks.item.3"].exists)
+        capture("native-tasks-open")
+        toggle.tap()
+        XCTAssertTrue(waitForDisappearance(app.descendants(matching: .any)["tasks.item.0"]))
+    }
+
+    func testPlanModeShowsChipAboveComposerAndTheChipLeavesIt() throws {
+        let plus = app.buttons["composer.plus"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 30))
+        plus.tap()
+        let planRow = app.buttons["composer.plan"]
+        XCTAssertTrue(planRow.waitForExistence(timeout: 5))
+        planRow.tap()
+        let chip = app.buttons["composer.plan.chip"]
+        XCTAssertTrue(chip.waitForExistence(timeout: 10))
+        XCTAssertLessThan(chip.frame.maxY, app.buttons["composer.plus"].frame.minY)
+        capture("native-plan-mode")
+
+        chip.tap()
+        XCTAssertTrue(waitForDisappearance(chip, timeout: 10))
+    }
+
+    func testPlanReviewCardOffersFullTextRevisionAndApproval() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-plan-review"])
+        let card = app.descendants(matching: .any)["plan.review"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        let approve = app.buttons["plan.approve"]
+        XCTAssertTrue(approve.exists)
+        XCTAssertTrue(app.buttons["plan.revise"].exists)
+        XCTAssertGreaterThanOrEqual(approve.frame.height, 44, "Plan buttons stay easy to hit.")
+        capture("native-plan-review")
+
+        app.buttons["plan.full"].tap()
+        let close = app.buttons["plan.full.close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        capture("native-plan-full")
+        close.tap()
+        XCTAssertTrue(waitForDisappearance(close))
+
+        approve.tap()
+        XCTAssertTrue(waitForDisappearance(card, timeout: 10), "Approving removes the review card.")
+    }
+
+    func testPlanReviewReviseDeclinesThePlanAndFocusesTheComposer() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-plan-review"])
+        let revise = app.buttons["plan.revise"]
+        XCTAssertTrue(revise.waitForExistence(timeout: 10))
+        revise.tap()
+        XCTAssertTrue(waitForDisappearance(app.descendants(matching: .any)["plan.review"], timeout: 10))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "The user can say what to change right away.")
+    }
+
+    // MARK: Transcript
+
+    func testRichTranscriptShowsTurnDisclosureCommandRowAndMessageFooter() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-rich"])
+        let header = app.buttons["chat.process.header"]
+        XCTAssertTrue(header.waitForExistence(timeout: 10))
+        XCTAssertTrue(header.label.hasPrefix("已完成，用时"), "Turn disclosure: \(header.label)")
+        let command = app.buttons["chat.command.header"]
+        XCTAssertTrue(command.waitForExistence(timeout: 5))
+        XCTAssertTrue(command.label.contains("已压缩 348 条历史记录（约 192127 tokens）"), "Command row: \(command.label)")
+        capture("native-transcript-rich-collapsed")
+
+        header.tap()
+        let group = app.buttons.matching(identifier: "chat.process.group").firstMatch
+        XCTAssertTrue(group.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["chat.process.thought"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["chat.process.call"].firstMatch.exists)
+        capture("native-transcript-rich-expanded")
+    }
+
+    // MARK: Project, mode, model, permissions and attachments
+
+    func testBlankConversationShowsTheGreetingAndTheProjectModeAndModelChips() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-blank-session"])
+        XCTAssertTrue(app.descendants(matching: .any)["chat.empty"].waitForExistence(timeout: 20))
+        for identifier in ["context.project", "context.mode", "context.model"] {
+            XCTAssertTrue(app.buttons[identifier].waitForExistence(timeout: 5), "Missing chip: \(identifier)")
+        }
+        capture("native-blank-conversation")
+    }
+
+    func testProjectChipMovesTheNewConversationToAnotherRegisteredProject() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-blank-session"])
+        let project = app.buttons["context.project"]
+        XCTAssertTrue(project.waitForExistence(timeout: 20))
+        XCTAssertTrue(project.label.contains("dsbot"))
+        project.tap()
+        let other = app.buttons["context.project.notes"]
+        XCTAssertTrue(other.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["context.project.add"].exists, "Adding a project stays on the desktop.")
+        capture("native-project-picker")
+        other.tap()
+        XCTAssertTrue(waitForLabel(app.buttons["context.project"], containing: "日常"))
+    }
+
+    func testModeCanBeChosenOnlyBeforeTheFirstMessage() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-blank-session"])
+        let mode = app.buttons["context.mode"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 20))
+        XCTAssertTrue(mode.label.contains("标准模式"))
+        mode.tap()
+        let minimal = app.buttons["context.mode.minimal"]
+        XCTAssertTrue(minimal.waitForExistence(timeout: 5))
+        capture("native-mode-picker")
+        minimal.tap()
+        XCTAssertTrue(waitForLabel(app.buttons["context.mode"], containing: "极简模式"))
+
+        // Once the conversation has begun, project and mode are fixed, so they are not shown at all.
+        relaunchReviewApp()
+        XCTAssertTrue(app.buttons["composer.plus"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["context.mode"].exists)
+        XCTAssertFalse(app.buttons["context.project"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["context.chips"].exists)
+    }
+
+    func testModelChipOpensTheModelAndItsReasoningLevelsTogether() throws {
+        let chip = app.buttons["context.model"]
+        XCTAssertTrue(chip.waitForExistence(timeout: 30))
+        XCTAssertTrue(chip.label.contains("High"))
+        chip.tap()
+        XCTAssertTrue(app.buttons["composer.model.deepseek"].waitForExistence(timeout: 5))
+        let max = app.buttons["composer.effort.max"]
+        XCTAssertTrue(max.waitForExistence(timeout: 5))
+        capture("native-model-and-effort")
+        max.tap()
+        XCTAssertTrue(waitForSelection(true, on: max), "Choosing a level marks it without closing the sheet.")
+    }
+
+    func testReasoningLevelIsAlsoReachableFromThePlusSheet() throws {
+        let plus = app.buttons["composer.plus"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 30))
+        plus.tap()
+        let effort = app.buttons["composer.menu.effort"]
+        XCTAssertTrue(effort.waitForExistence(timeout: 5))
+        effort.tap()
+        XCTAssertTrue(app.buttons["composer.effort.high"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["composer.effort.max"].exists)
+    }
+
+    func testPermissionNamesAreChineseAndFullAccessAsksFirst() throws {
+        let plus = app.buttons["composer.plus"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 30))
+        plus.tap()
+        app.buttons["composer.menu.permission"].tap()
+        let full = app.buttons["composer.permission.danger-full-access"]
+        XCTAssertTrue(full.waitForExistence(timeout: 5))
+        XCTAssertEqual(full.label, "完全权限")
+        full.tap()
+        let alert = app.alerts["确认启用完全权限？"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        capture("native-permission-confirm")
+        alert.buttons["取消"].tap()
+        XCTAssertTrue(waitForDisappearance(alert))
+        XCTAssertTrue(full.exists, "Cancelling leaves the list open and the preset unchanged.")
+    }
+
+    func testPhotoAttachmentsShowAPreviewWithARemoveBadge() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-photo-tiles"])
+        let preview = app.buttons["photo.preview.review-photo-1"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 20))
+        XCTAssertGreaterThanOrEqual(preview.frame.width, 70, "A real thumbnail, not a chip.")
+        capture("native-photo-tiles")
+        app.buttons["photo.remove.review-photo-1"].tap()
+        XCTAssertTrue(waitForDisappearance(preview))
+        XCTAssertTrue(app.buttons["photo.preview.review-photo-2"].exists)
+    }
+
+    func testComposerStaysAboveTheKeyboardAfterChoosingTheGoalCommand() throws {
+        let plus = app.buttons["composer.plus"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 30))
+        plus.tap()
+        let goal = app.buttons["composer.goal"]
+        XCTAssertTrue(goal.waitForExistence(timeout: 5))
+        goal.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 10))
+        let input = app.descendants(matching: .any)["composer.text"].firstMatch
+        XCTAssertTrue(waitForHittable(input, timeout: 10))
+        // Give SwiftUI's own keyboard handling and the safeguard time to settle.
+        Thread.sleep(forTimeInterval: 1.2)
+        XCTAssertLessThanOrEqual(input.frame.maxY, keyboard.frame.minY + 1, "The input must not sit behind the keyboard.")
+        capture("native-goal-with-keyboard")
+    }
+
+    func testRunningTurnShowsLiveStatusAndGoalTrigger() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-rich", "-dsbot-review-running", "-dsbot-review-goal"])
+        let running = app.descendants(matching: .any)["chat.running"]
+        XCTAssertTrue(running.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["chat.trigger.header"].exists)
+        XCTAssertTrue(app.buttons["goal.banner"].waitForExistence(timeout: 5))
+        capture("native-transcript-running")
+    }
+}
+
+
+/// Measured positions from the reference screenshots, in points on an iPhone Air.
+private enum DSBotLayoutReference {
+    /// The conversation runs to the bottom of the screen, so this is measured from the screen's edge.
+    static let composerBottomDistance: CGFloat = 16
+    static let toolbarTop: CGFloat = 68
+}

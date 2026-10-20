@@ -1,0 +1,82 @@
+import SwiftUI
+
+/// Photos and files waiting to be sent, as square tiles at the top of the composer's glass.
+struct ComposerAttachmentTiles: View {
+    let photos: [PreparedPhotoAttachment]
+    let files: [UploadedFile]
+    let uploadingFileName: String?
+    let onRemovePhoto: (PreparedPhotoAttachment) -> Void
+    let onRemoveFile: (UploadedFile) -> Void
+
+    var isEmpty: Bool { photos.isEmpty && files.isEmpty && uploadingFileName == nil }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(photos) { photo in
+                    PhotoAttachmentPreview(photo: photo) { onRemovePhoto(photo) }
+                }
+                ForEach(files) { file in
+                    FileAttachmentTile(file: file) { onRemoveFile(file) }
+                }
+                if let uploadingFileName {
+                    UploadingTile(name: uploadingFileName)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 4)
+        }
+        .accessibilityIdentifier("composer.attachments")
+    }
+}
+
+private struct FileAttachmentTile: View {
+    let file: UploadedFile
+    let onRemove: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 6) {
+                DSBotIcon(.file, size: 24)
+                    .foregroundStyle(DSBotStyle.chatTertiary)
+                Text(file.name)
+                    .font(.system(size: 11))
+                    .foregroundStyle(DSBotStyle.chatSecondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 7)
+            .frame(width: AttachmentTile.size, height: AttachmentTile.size)
+            .background(Color(white: 0.94), in: AttachmentTile.shape)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("文件 \(file.name)")
+            .accessibilityIdentifier("file.tile.\(file.id)")
+
+            AttachmentRemoveBadge(label: "移除文件", identifier: "file.remove.\(file.id)", action: onRemove)
+        }
+        .frame(width: AttachmentTile.size, height: AttachmentTile.size)
+    }
+}
+
+private struct UploadingTile: View {
+    let name: String
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ProgressView().controlSize(.small)
+            Text(name)
+                .font(.system(size: 11))
+                .foregroundStyle(DSBotStyle.chatSecondary)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 7)
+        .frame(width: AttachmentTile.size, height: AttachmentTile.size)
+        .background(Color(white: 0.94), in: AttachmentTile.shape)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("composer.file.uploading")
+    }
+}

@@ -1,4 +1,8 @@
-This is an Expo/React Native mobile application. Prioritize mobile-first patterns, performance, and cross-platform compatibility.
+The current iPhone app is native SwiftUI under `native/`. Read `native/AGENTS.md` for that target. Build it with `npm run native:build`; `npm run native:install` performs an in-place update on a paired physical iPhone. Keep the existing bundle identifier and signing team so Keychain and app data survive.
+
+The desktop plugin listens on port 3170. Native app interactions use authenticated HTTP/HTTPS APIs under `/dsbot/api/v1/`, with HTTP long polling for live events. Complex DSH pages load directly in WKWebView over the user's chosen HTTP or HTTPS address, under `/dsbot/ui/`, with page-scoped authentication. `/dsbot/web/open` exchanges existing pairing authentication for a page session. Page documents, resources, RPC and streams all require that session; do not add anonymous pages, arbitrary HTTP forwarding, or a generic DSH RPC proxy. Do not add WebSocket transport. Pairing codes are generated manually by the user in DSH; never generate or inject a live pairing link during testing.
+
+The remaining Expo/React Native files are a legacy prototype. The Expo-specific rules below apply only when editing that prototype, not to the SwiftUI target. Prioritize mobile interaction and keep decoding, image processing, Keychain access, and diagnostics writes off the UI thread.
 
 ## Expo has changed — do not trust your training data
 

@@ -1,3 +1,4 @@
+import './src/diagnostics';
 import { registerRootComponent } from 'expo';
 
 import App from './App';
