@@ -470,6 +470,38 @@ final class FullPageInteractionTests: XCTestCase {
         app.buttons["settings.close"].tap()
     }
 
+    func testSettingsRestoreTheirSectionAfterVisitingModels() throws {
+        guard openSidebar() else { return }
+        let settings = app.buttons["settings.open"]
+        guard require(settings, "The native settings entry was missing.") else { return }
+        settings.tap()
+        let account = app.buttons["settings.dsh.account"]
+        guard require(account, "The account category was missing.") else { return }
+        account.tap()
+        let webView = app.webViews.firstMatch
+        let accountLink = webView.links.matching(NSPredicate(format: "label CONTAINS %@", "更多账号信息")).firstMatch
+        guard require(accountLink, "The account profile did not load.", timeout: pageTimeout) else { return }
+        let back = app.buttons["settings.dsh.back"]
+        guard require(back, "The account page did not expose Back.") else { return }
+        back.tap()
+        let models = app.buttons["settings.dsh.models"]
+        guard require(models, "Back did not restore the native categories.") else { return }
+        models.tap()
+        let provider = webView.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "编辑 ")).firstMatch
+        guard require(provider, "The requested model settings did not load.", timeout: pageTimeout) else { return }
+        back.tap()
+        guard require(account, "The account category was lost after visiting models.") else { return }
+        account.tap()
+        guard require(accountLink, "Returning to account did not restore its profile.", timeout: pageTimeout) else { return }
+        XCTAssertFalse(webView.buttons["新建会话"].exists)
+        XCTAssertFalse(webView.staticTexts["探索未至之境"].exists)
+        XCTAssertFalse(app.buttons["embedded.retry"].exists)
+        attachScreenshot("settings-restored-after-models")
+        back.tap()
+        guard require(app.buttons["settings.close"], "Back did not restore settings.") else { return }
+        app.buttons["settings.close"].tap()
+    }
+
     func testThirdPartyMarketCatalogSearchAndInstalledTabLoadRealData() throws {
         guard openSettings() else { return }
         let market = app.buttons["settings.dsh.market"]

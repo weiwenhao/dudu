@@ -15,6 +15,12 @@ final class EmbeddedPagePool: ObservableObject {
         let page: EmbeddedDSHPage
         let target: String?
         let sessionID: String?
+
+        init(page: EmbeddedDSHPage, target: String?, sessionID: String?) {
+            self.page = page
+            self.target = target
+            self.sessionID = sessionID
+        }
     }
 
     private var sessions: [Key: EmbeddedPageSession] = [:]

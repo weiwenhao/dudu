@@ -52,6 +52,8 @@ const snapshot = {
 test('the snapshot is validated, ordered and routed: known entries open natively or in their page, new ones in a generic page', () => {
   const lists = sanitizeSnapshot(snapshot);
   assert.ok(lists);
+  assert.equal(Object.hasOwn(lists, 'dock'), false);
+  assert.equal(Object.hasOwn(lists, 'dockTabs'), false);
 
   assert.deepEqual(lists.sidebar.map((item) => [item.id, item.open]), [
     ['plugins', { web: { page: 'plugins' } }],
@@ -67,15 +69,6 @@ test('the snapshot is validated, ordered and routed: known entries open natively
     ['context', { web: { page: 'context' } }],
     ['fleet', { web: { page: 'team' } }],
     ['notes', { web: { page: 'view', target: 'notes' } }],
-  ]);
-
-  // The right dock opens as itself, terminal and browser included.
-  assert.deepEqual(lists.dock.map((item) => [item.id, item.title, item.open]), [
-    ['files:workspace', '工作区文件', { native: 'files' }],
-    ['dsh-context:open', '上下文', { web: { page: 'context' } }],
-    ['terminal:new', '新建终端', { web: { page: 'dock', target: 'terminal:new' } }],
-    ['browser:new', '浏览器', { web: { page: 'dock', target: 'browser:new' } }],
-    ['example-board:open', '看板', { web: { page: 'dock', target: 'example-board:open' } }],
   ]);
 
   // The pairing page configures the desktop and general settings are its appearance and shortcuts:
@@ -221,7 +214,7 @@ test('the store starts empty, keeps lists a snapshot leaves out, clears ones it 
   let clock = 1000;
   const store = await createNavigationStore({ now: () => clock });
   assert.deepEqual(store.get(), {
-    schemaVersion: 1, available: false, updatedAt: 0, sidebar: [], views: [], dock: [], settings: [],
+    schemaVersion: 1, available: false, updatedAt: 0, sidebar: [], views: [], settings: [],
   });
 
   assert.equal(await store.ingest(snapshot), true);
@@ -264,9 +257,6 @@ test('the snapshot survives a restart and is routed again by the running plugin'
   assert.equal(restored.available, true);
   assert.equal(restored.updatedAt, 5000);
   assert.deepEqual(restored.sidebar[0].open, { web: { page: 'plugins' } });
-  assert.deepEqual(restored.dock.map((item: { id: string }) => item.id), [
-    'files:workspace', 'dsh-context:open', 'terminal:new', 'browser:new', 'example-board:open',
-  ]);
   await reopened.close();
 });
 
@@ -291,7 +281,7 @@ test('the phone asks for navigation through the native API and gets an empty ans
 
   const without = createNativeBridge({ rpc });
   assert.deepEqual(await without.dispatch('navigation.get', {}, {}), {
-    schemaVersion: 1, available: false, updatedAt: 0, sidebar: [], views: [], dock: [], settings: [],
+    schemaVersion: 1, available: false, updatedAt: 0, sidebar: [], views: [], settings: [],
   });
 });
 

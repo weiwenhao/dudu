@@ -1,6 +1,6 @@
 {
   "name": "dsbot",
-  "version": "0.3.8",
+  "version": "0.3.18",
   "type": "module",
   "main": "./index.mjs",
   "exports": {

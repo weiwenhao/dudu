@@ -47,72 +47,8 @@ html[data-dsbot-page-kind="plugins"] [data-slot="conversation.composer.bar"],
 html[data-dsbot-page-kind="panel"] [data-dsbot-sidebar],
 html[data-dsbot-page-kind="panel"] [data-dsbot-rightbar],
 html[data-dsbot-page-kind="panel"] [data-slot="conversation.composer"],
-html[data-dsbot-page-kind="panel"] [data-slot="conversation.composer.bar"],
-html[data-dsbot-page-kind="dock"] [data-dsbot-sidebar],
-html[data-dsbot-page-kind="dock"] [data-dsbot-center] {
+html[data-dsbot-page-kind="panel"] [data-slot="conversation.composer.bar"] {
   display: none !important;
-}
-html[data-dsbot-page-kind="dock"] [data-dsbot-frame] {
-  display: block !important;
-  position: fixed !important;
-  inset: 0 !important;
-  width: 100vw !important;
-  min-width: 0 !important;
-  height: 100% !important;
-  padding: 0 !important;
-}
-html[data-dsbot-page-kind="dock"] [data-dsbot-rightbar] {
-  display: flex !important;
-  position: fixed !important;
-  inset: 0 !important;
-  width: 100vw !important;
-  min-width: 0 !important;
-  max-width: none !important;
-  height: 100% !important;
-  margin: 0 !important;
-  border: 0 !important;
-  border-radius: 0 !important;
-}
-/* The dock is the whole page on the phone: folding it away would leave nothing, and "fullscreen" is what it is. */
-html[data-dsbot-page-kind="dock"] button[data-sidebar-right-mode],
-html[data-dsbot-page-kind="dock"] button[data-sidebar-right-toggle] {
-  display: none !important;
-}
-/* Keys a phone keyboard lacks, shown while a terminal has the keyboard. */
-[data-dsbot-keys] {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 2147483000;
-  display: none;
-  gap: 6px;
-  padding: 6px 8px;
-  background: var(--dsw-alias-bg-layer-1, #f4f4f6);
-  border-top: 0.5px solid var(--dsw-alias-border-l3, rgba(0, 0, 0, 0.12));
-  -webkit-user-select: none;
-  user-select: none;
-}
-html[data-dsbot-keys-visible] [data-dsbot-keys] {
-  display: flex;
-}
-html[data-dsbot-keys-visible] [data-dsbot-rightbar] {
-  padding-bottom: 48px !important;
-}
-[data-dsbot-keys] button {
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 36px;
-  padding: 0;
-  font: 500 14px ui-monospace, "SFMono-Regular", Menlo, monospace !important;
-  color: var(--dsw-alias-label-primary, #17181b);
-  background: var(--dsw-alias-bg-base, #fff);
-  border: 0.5px solid var(--dsw-alias-border-l3, rgba(0, 0, 0, 0.14));
-  border-radius: 8px;
-  touch-action: manipulation;
-}
-[data-dsbot-keys] button:active {
-  background: var(--dsw-alias-bg-l1, #e9e9ee);
 }
 html[data-dsbot-page-kind="plugins"] [data-dsbot-frame],
 html[data-dsbot-page-kind="plugins"] [data-dsbot-center],
@@ -164,6 +100,10 @@ html[data-dsbot-page-kind="plugins"] [data-plugin-panel] [class*="_pageTabs"] {
 html[data-dsbot-page-kind="plugins"] [data-plugin-panel] [class*="_pageTabList"] {
   width: 100% !important;
   min-width: 0 !important;
+}
+html[data-dsbot-page-kind="settings"] #root,
+html[data-dsbot-page-kind="settings"] #root * {
+  visibility: hidden !important;
 }
 html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] {
   position: fixed !important;
@@ -258,6 +198,21 @@ html[data-dsbot-page-kind="context"] .lc-root {
   padding: 16px 16px 28px;
   overscroll-behavior-y: contain;
 }
+html[data-dsbot-page-kind="context"] :is(.lc-head, .lc-cols, .lc-body) {
+  flex-direction: column !important;
+  min-width: 0 !important;
+}
+html[data-dsbot-page-kind="context"] :is(.lc-col, .lc-col-browser, .lc-col-graph, .lc-head > .lc-card) {
+  width: 100% !important;
+  min-width: 0 !important;
+  flex: none !important;
+}
+html[data-dsbot-page-kind="context"] .lc-card-title {
+  flex-wrap: wrap !important;
+}
+html[data-dsbot-page-kind="context"] .lc-legend {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
 html[data-dsbot-page-kind="trace"] aside[aria-label="事件详情"],
 html[data-dsbot-page-kind="trace"] aside[aria-label="Event details"] {
   position: absolute !important;
@@ -338,14 +293,13 @@ html[data-dsbot-page-kind] select {
 
 export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
   const page = window.__DSBOT_PAGE__;
-  const supported = new Set(["trace", "context", "team", "view", "dock", "panel", "plugins", "settings"]);
+  const supported = new Set(["trace", "context", "team", "view", "panel", "plugins", "settings"]);
   if (!page || !supported.has(page.kind)) return;
-  // The id of a panel, view, dock entry or settings section the phone asked for.
-  const target = typeof page.target === "string" && page.target ? page.target : null;
+  // The id of a panel, view or settings section the phone asked for.
+  let target = typeof page.target === "string" && page.target ? page.target : null;
 
   const html = document.documentElement;
   html.dataset.dsbotPageKind = page.kind;
-  // The right dock is the page itself for a dock entry, so it keeps the column the others hide.
   if (["trace", "context", "team", "view"].includes(page.kind)) {
     html.dataset.dsbotPageSession = "";
   }
@@ -358,8 +312,8 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
   };
   let routeStarted = false;
   let routeFinished = false;
+  let isVisible = true;
   let requestedSession = false;
-  let dockOpened = false;
   let settingsSignature = "";
   let selectedSection = typeof page.section === "string" ? page.section
     : page.kind === "settings" ? target : null;
@@ -369,7 +323,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
   let scheduled = false;
   let timer;
   let routeError = "";
-  const deadline = performance.now() + 28000;
+  let deadline = performance.now() + 28000;
   const originalConsoleError = console.error;
 
   function reviewDiagnostic(message) {
@@ -409,16 +363,14 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
   }
 
   function markShell() {
-    if (!routeFinished) {
-      const sidebar = document.querySelector('[class*="_sidebarCol"]');
-      const center = document.querySelector('[class*="_centerCol"]');
-      const rightbar = document.querySelector("[data-rightbar-col]");
-      const frame = sidebar?.parentElement || center?.parentElement || rightbar?.parentElement;
-      sidebar?.setAttribute("data-dsbot-sidebar", "");
-      center?.setAttribute("data-dsbot-center", "");
-      rightbar?.setAttribute("data-dsbot-rightbar", "");
-      frame?.setAttribute("data-dsbot-frame", "");
-    }
+    const sidebar = document.querySelector('[class*="_sidebarCol"]');
+    const center = document.querySelector('[class*="_centerCol"]');
+    const rightbar = document.querySelector("[data-rightbar-col]");
+    const frame = sidebar?.parentElement || center?.parentElement || rightbar?.parentElement;
+    sidebar?.setAttribute("data-dsbot-sidebar", "");
+    center?.setAttribute("data-dsbot-center", "");
+    rightbar?.setAttribute("data-dsbot-rightbar", "");
+    frame?.setAttribute("data-dsbot-frame", "");
     if (page.kind === "team") {
       for (const task of document.querySelectorAll(".lc-root li[data-task][aria-expanded]")) {
         const expanded = task.getAttribute("aria-expanded") === "true";
@@ -539,6 +491,18 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     return document.querySelector('[data-shortcut-modal="settings"]');
   }
 
+  function settingsReady(ui, ctx) {
+    const dialog = settingsModal();
+    if (!settingsSignature || !dialog?.querySelector("[data-dsbot-settings-body]")) return false;
+    if (!selectedSection) return true;
+    const section = settingsEntries(ctx).find(item => item.id === selectedSection);
+    if (!section) return false;
+    const label = resolveLabel(ui, ctx, section.entry);
+    return [...dialog.querySelectorAll("nav button")].some(button =>
+      labelOf(button) === label && button.getAttribute("aria-current") === "true"
+    );
+  }
+
   function settingsShell(ui) {
     const slots = service(ui, "slots");
     const entry = slots?.entries?.("sidebar.settings")?.[0];
@@ -627,108 +591,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     return tabs.find(tab => tabLabels[page.kind]?.includes(labelOf(tab)));
   }
 
-  // A tab of this kind that is already open is shown again instead of opened twice, and a column the
-  // user folded away is unfolded: the phone has no other way back to it. The session's dock may not be
-  // adopted yet, in which case this reports false and the next pass tries again.
-  function openDockTab(dock, kind) {
-    try {
-      const open = dock.openTabs?.getSnapshot?.() || [];
-      const existing = open.find(tab => tab.sessionId === page.sessionId && tab.kind === kind);
-      if (existing && typeof dock.focus === "function") {
-        if (dock.isExpanded?.() === false) dock.toggleExpanded?.();
-        dock.focus(existing.tabId);
-      } else {
-        dock.openTab(kind);
-      }
-      return true;
-    } catch (error) {
-      routeError = String(error?.message || error).slice(0, 512);
-      return false;
-    }
-  }
-
-  // ---- Terminal keys -------------------------------------------------------------------------------
-  // Esc, Tab, Ctrl-C and the arrows are not on a phone keyboard. They are written to the terminal the
-  // way DSH's own terminal view writes what xterm produces, so they follow the same input path (and
-  // its limits and acknowledgements) as typing.
-  const terminalKeys = [
-    ["Esc", "\u001b", "Esc"],
-    ["Tab", "\t", "Tab"],
-    ["^C", "\u0003", "Ctrl+C"],
-    ["^D", "\u0004", "Ctrl+D"],
-    ["\u2191", "\u001b[A", "上"],
-    ["\u2193", "\u001b[B", "下"],
-    ["\u2190", "\u001b[D", "左"],
-    ["\u2192", "\u001b[C", "右"]
-  ];
-  let keysBar = null;
-  let keysTimer;
-
-  function activeTerminalView(ui) {
-    try {
-      const tab = service(ui, "sidebarRight")?.active?.();
-      if (!tab || tab.kind !== "terminal") return null;
-      const view = service(ui, "webTerminals")?.views?.get?.(page.sessionId)?.get?.(tab.id);
-      return view && typeof view.write === "function" ? view : null;
-    } catch {
-      return null;
-    }
-  }
-
-  function sendTerminalKey(data) {
-    const ui = appUI();
-    const view = ui ? activeTerminalView(ui) : null;
-    if (view) view.write(data);
-  }
-
-  function buildKeysBar() {
-    const bar = document.createElement("div");
-    bar.setAttribute("data-dsbot-keys", "");
-    bar.setAttribute("role", "toolbar");
-    bar.setAttribute("aria-label", "终端按键");
-    for (const [label, data, name] of terminalKeys) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = label;
-      button.setAttribute("aria-label", name);
-      // A press must not take focus from the terminal, or the keyboard would close under the finger.
-      button.addEventListener("pointerdown", event => { event.preventDefault(); sendTerminalKey(data); });
-      button.addEventListener("mousedown", event => event.preventDefault());
-      // Assistive technology activates with a click that has no pointer behind it.
-      button.addEventListener("click", event => { if (event.detail === 0) sendTerminalKey(data); });
-      bar.appendChild(button);
-    }
-    return bar;
-  }
-
-  function placeKeysBar() {
-    if (!keysBar) return;
-    const viewport = window.visualViewport;
-    const hidden = viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0;
-    keysBar.style.bottom = hidden + "px";
-  }
-
-  function updateKeys() {
-    if (closed || page.kind !== "dock" || !document.body) return;
-    const input = document.activeElement;
-    const ui = appUI();
-    const visible = Boolean(routeFinished && ui && input?.classList?.contains("xterm-helper-textarea")
-      && activeTerminalView(ui));
-    if (visible && !keysBar) {
-      keysBar = buildKeysBar();
-      document.body.appendChild(keysBar);
-    }
-    document.documentElement.toggleAttribute("data-dsbot-keys-visible", visible);
-    if (visible) placeKeysBar();
-  }
-
-  // Focus moves in two steps (out of one field, into the next), so look once it has settled.
-  function updateKeysSoon() {
-    clearTimeout(keysTimer);
-    keysTimer = setTimeout(updateKeys, 60);
-  }
-
-  // Panels and docks come from plugins this adapter knows nothing about, so "ready" means the page
+  // Panels come from plugins this adapter knows nothing about, so "ready" means the page
   // has been still for a moment after DSH showed it.
   function settled(milliseconds) {
     return performance.now() - lastMutationAt >= milliseconds;
@@ -757,20 +620,6 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
           else if (document.querySelector("[data-conversation-content]")
             && (page.kind !== "view" || settled(500))) await finishRoute();
         }
-      } else if (page.kind === "dock" && page.sessionId && target) {
-        const workspace = service(ui, "uiWorkspace");
-        if (!requestedSession && typeof workspace?.openSession === "function") {
-          await workspace.openSession(page.sessionId);
-          requestedSession = true;
-        }
-        const split = target.indexOf(":");
-        const kind = split < 0 ? target : target.slice(0, split);
-        const dock = service(ui, "sidebarRight");
-        if (requestedSession && !dockOpened && typeof dock?.openTab === "function") {
-          dockOpened = openDockTab(dock, kind);
-        }
-        const bar = document.querySelector("[data-dsbot-rightbar]");
-        if (dockOpened && bar && bar.childElementCount > 0 && settled(600)) await finishRoute();
       } else if (page.kind === "panel" && target) {
         const layout = service(ui, "layout");
         if (layout?.panelInfo?.getSnapshot?.().activePanelId !== target) {
@@ -788,8 +637,9 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
       } else if (page.kind === "settings") {
         publishSettingsCategories(ui, ctx);
         openSettingsFromUI(ui);
+        if (selectedSection) selectSettingsSection(ui, ctx, selectedSection);
         markShell();
-        if (settingsSignature && settingsModal()?.querySelector("[data-dsbot-settings-body]")) {
+        if (settingsReady(ui, ctx)) {
           await finishRoute();
         }
       }
@@ -818,6 +668,13 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     if (!ui) return;
     publishSettingsCategories(ui, contextOf(ui));
     if (selectedSection) selectSettingsSection(ui, contextOf(ui), selectedSection);
+    schedule();
+  }
+
+  function onVisibility(event) {
+    if (typeof event.detail !== "boolean") return;
+    isVisible = event.detail;
+    if (isVisible) schedule();
   }
 
   // The app asks the page to do what its native buttons stand for. "add" is the toolbar's "+" on the
@@ -839,13 +696,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
   window.addEventListener("dsbot:app-ui-ready", onAppUIReady);
   window.addEventListener("dsbot:settings-select", onSettingsSelect);
   window.addEventListener("dsbot:command", onCommand);
-  if (page.kind === "dock") {
-    document.addEventListener("focusin", updateKeysSoon);
-    document.addEventListener("focusout", updateKeysSoon);
-    window.visualViewport?.addEventListener("resize", updateKeysSoon);
-    window.visualViewport?.addEventListener("scroll", updateKeysSoon);
-  }
-
+  window.addEventListener("dsbot:visibility", onVisibility);
   async function finishRoute() {
     if (routeFinished || closed) return;
     markShell();
@@ -853,8 +704,8 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     routeFinished = true;
     clearTimeout(timer);
     observer?.disconnect();
-    if (page.kind === "settings" && settingsModal()) {
-      observer?.observe(settingsModal(), {childList: true, subtree: true});
+    if (page.kind === "settings") {
+      observer?.observe(document.body, {childList: true, subtree: true});
     } else if (page.kind === "team") {
       const content = document.querySelector("[data-conversation-content]");
       if (content) observer?.observe(content, {
@@ -873,6 +724,12 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
       const ui = appUI();
       if (ui) {
         publishSettingsCategories(ui, contextOf(ui));
+        if (page.kind === "settings" && isVisible && routeFinished && !settingsReady(ui, contextOf(ui))) {
+          routeFinished = false;
+          deadline = performance.now() + 28000;
+          clearTimeout(timer);
+          timer = setTimeout(tick, 200);
+        }
         if (!routeFinished) void applyRoute(ui);
       }
     });
@@ -920,18 +777,15 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
       window.removeEventListener("dsbot:app-ui-ready", onAppUIReady);
       window.removeEventListener("dsbot:settings-select", onSettingsSelect);
       window.removeEventListener("dsbot:command", onCommand);
-      clearTimeout(keysTimer);
-      document.removeEventListener("focusin", updateKeysSoon);
-      document.removeEventListener("focusout", updateKeysSoon);
-      window.visualViewport?.removeEventListener("resize", updateKeysSoon);
-      window.visualViewport?.removeEventListener("scroll", updateKeysSoon);
-      keysBar?.remove();
-      keysBar = null;
+      window.removeEventListener("dsbot:visibility", onVisibility);
     }
   });
   markShell();
   function observe() {
-    observer = new MutationObserver(() => { lastMutationAt = performance.now(); schedule(); });
+    observer = new MutationObserver(() => {
+      lastMutationAt = performance.now();
+      schedule();
+    });
     observer.observe(document.body, {childList: true, subtree: true});
     schedule();
   }

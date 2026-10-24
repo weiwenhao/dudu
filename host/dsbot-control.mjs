@@ -18,6 +18,8 @@ export async function createDsbotControl({
   folder,
   rpc,
   pages,
+  conversationReads,
+  questionBridge,
   dispatch: injectedDispatch,
   port = DEFAULT_PORT,
   host = '0.0.0.0',
@@ -68,7 +70,7 @@ export async function createDsbotControl({
   let settings = { name: hostname().slice(0, 80) || 'DSH', addresses: [] };
   let server;
   try {
-    bridge = injectedDispatch ? undefined : createNativeBridge({ rpc, pages, navigation });
+    bridge = injectedDispatch ? undefined : createNativeBridge({ rpc, pages, navigation, conversationReads, questionBridge });
     dispatch = injectedDispatch ?? bridge.dispatch;
     httpPages = typeof pages?.openHttp === 'function'
       ? createWebPageHttp({ pages, pairingStore: devices }) : undefined;
@@ -175,7 +177,7 @@ export async function createDsbotControl({
           return Response.json(state(), { headers: { 'cache-control': 'no-store' } });
         }
         if (action === 'nav') {
-          // DSH's own client reports what its sidebar, tabs, dock and settings contain.
+          // DSH's own client reports what its sidebar, tabs and settings contain.
           const raw = await request.text();
           if (Buffer.byteLength(raw, 'utf8') > MAX_NAVIGATION_BYTES) throw new Error('导航数据过大。');
           return Response.json(

@@ -126,6 +126,155 @@ test('plugin readiness accepts the settled empty and error states', async () => 
   }
 });
 
+function createSettingsHarness({ target = 'market', delayedSelection = false } = {}) {
+  let now = 0;
+  let readyCount = 0;
+  let failCount = 0;
+  let observed: unknown;
+  let mutation: (() => void) | undefined;
+  let timerID = 0;
+  const timers = new Map<number, () => void>();
+  const listeners = new Map<string, Set<(event: { detail?: unknown }) => void>>();
+  const state = { open: true, active: 'market', requested: '', openCount: 0 };
+  const sections = ['market', 'models'].map(id => ({ options: { id, label: id } }));
+  const body = {};
+  const sectionBody = { setAttribute() {}, querySelector() { return null; } };
+  const buttons = sections.map(({ options: { id } }) => ({
+    textContent: id,
+    getAttribute(name: string) { return name === 'aria-current' ? String(state.active === id) : null; },
+    click() {
+      state.requested = id;
+      if (!delayedSelection) state.active = id;
+    },
+  }));
+  const dialog = {
+    querySelector(selector: string) {
+      if (selector === '[class*="_content"]' || selector === '[data-dsbot-settings-body]') return sectionBody;
+      if (selector === 'nav') return { setAttribute() {}, querySelectorAll: () => buttons };
+      return null;
+    },
+    querySelectorAll(selector: string) { return selector === 'nav button' ? buttons : []; },
+  };
+  const shell = { actions: {
+    open() { state.open = true; state.openCount += 1; },
+    openSection(id: string) { state.open = true; state.active = id; state.openCount += 1; },
+  } };
+  const slots = { entries(name: string) {
+    if (name === 'settings.section') return sections;
+    if (name === 'sidebar.settings') return [{ store: { create: () => shell } }];
+    return [];
+  } };
+  const document = {
+    body,
+    documentElement: { dataset: {} },
+    querySelector(selector: string) {
+      return selector === '[data-shortcut-modal="settings"]' && state.open ? dialog : null;
+    },
+    querySelectorAll() { return []; },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  class SettingsObserver {
+    constructor(callback: () => void) { mutation = callback; }
+    observe(target: unknown) { observed = target; }
+    disconnect() { observed = undefined; }
+  }
+  const window = {
+    __DSBOT_PAGE__: { kind: 'settings', target },
+    __DSBOT_MOBILE_PAGE_ADAPTER__: undefined as { close: () => void } | undefined,
+    __DSBOT_APP_UI__: { ctx: { slots, get: (name: string) => name === 'slots' ? slots : null } },
+    __DSBOT_NATIVE__: {
+      ready() { readyCount += 1; },
+      fail() { failCount += 1; },
+      settingsCategories() {},
+    },
+    addEventListener(name: string, callback: (event: { detail?: unknown }) => void) {
+      if (!listeners.has(name)) listeners.set(name, new Set());
+      listeners.get(name)!.add(callback);
+    },
+    removeEventListener(name: string, callback: (event: { detail?: unknown }) => void) {
+      listeners.get(name)?.delete(callback);
+    },
+  };
+  runInNewContext(MOBILE_PAGE_SCRIPT, {
+    window, document, MutationObserver: SettingsObserver, performance: { now: () => now },
+    queueMicrotask: (callback: () => void) => Promise.resolve().then(callback),
+    setTimeout: (callback: () => void) => { timers.set(++timerID, callback); return timerID; },
+    clearTimeout: (id: number) => timers.delete(id), console,
+  });
+  const settle = async () => { for (let index = 0; index < 16; index += 1) await Promise.resolve(); };
+  return {
+    state,
+    get readyCount() { return readyCount; },
+    get failCount() { return failCount; },
+    settle,
+    fire(name: string, detail?: unknown) { listeners.get(name)?.forEach(callback => callback({ detail })); },
+    async closeDialog() {
+      state.open = false;
+      if (observed === body) mutation?.();
+      await settle();
+    },
+    async step(milliseconds = 200) {
+      now += milliseconds;
+      if (observed === body || (observed === dialog && state.open)) mutation?.();
+      const callbacks = [...timers.values()];
+      timers.clear();
+      callbacks.forEach(callback => callback());
+      await settle();
+    },
+    close() { window.__DSBOT_MOBILE_PAGE_ADAPTER__!.close(); },
+  };
+}
+
+test('settings restores its requested section when the dialog disappears after a failed market request', async () => {
+  const harness = createSettingsHarness();
+  await harness.settle();
+  assert.equal(harness.readyCount, 1);
+  await harness.closeDialog();
+  await harness.step();
+  assert.equal(harness.state.open, true, 'removing the dialog must restore settings instead of exposing the DSH home');
+  assert.equal(harness.state.active, 'market');
+  assert.equal(harness.readyCount, 2);
+  assert.equal(harness.failCount, 0);
+});
+
+test('returning to hidden settings restores the same category and waits for its selection to render', async () => {
+  const harness = createSettingsHarness({ delayedSelection: true });
+  await harness.settle();
+  harness.fire('dsbot:visibility', false);
+  await harness.closeDialog();
+  assert.equal(harness.state.open, false, 'a hidden page does not reopen its dialog');
+  harness.state.active = 'models';
+  harness.fire('dsbot:visibility', true);
+  await harness.step();
+  assert.equal(harness.state.open, true);
+  assert.equal(harness.state.requested, 'market');
+  assert.equal(harness.readyCount, 1, 'a different settings category is not ready');
+  harness.state.active = 'market';
+  await harness.step();
+  assert.equal(harness.readyCount, 2);
+});
+
+test('an unavailable settings section never reports another category as ready', async () => {
+  const harness = createSettingsHarness({ target: 'removed-plugin' });
+  await harness.settle();
+  assert.equal(harness.readyCount, 0);
+  await harness.step(28_001);
+  assert.equal(harness.failCount, 1);
+});
+
+test('closing the settings adapter cancels recovery and ignores later visibility events', async () => {
+  const harness = createSettingsHarness();
+  await harness.settle();
+  harness.close();
+  await harness.closeDialog();
+  harness.fire('dsbot:visibility', true);
+  await harness.step(30_000);
+  assert.equal(harness.state.open, false);
+  assert.equal(harness.readyCount, 1);
+  assert.equal(harness.failCount, 0);
+});
+
 type Tab = { label: string; selected: boolean };
 
 /** Runs the adapter against a stand-in DSH frontend whose clock and mutations the test controls. */
@@ -135,10 +284,17 @@ function createRouteHarness({
 } = {}) {
   let now = 0;
   const listeners: Record<string, Array<(event: { detail?: unknown }) => void>> = {};
-  let onMutation: (() => void) | undefined;
+  let onMutation: ((records: unknown[]) => void) | undefined;
   let readyCount = 0;
   const timers: Array<() => void> = [];
-  const state = { content, rightbar, tabs, focused: null as unknown, appended: [] as any[] };
+  const state = {
+    content, rightbar,
+    tabs, focused: null as unknown, appended: [] as any[],
+  };
+  const rightbarNode = {
+    contains: () => false,
+    querySelectorAll: () => [],
+  };
   const documentListeners: Record<string, Array<() => void>> = {};
   const rootAttributes: Record<string, string> = {};
   const element = (tag: string) => {
@@ -161,7 +317,12 @@ function createRouteHarness({
   }));
   const ui = {
     ctx: {
-      get: (name: string) => (services as Record<string, unknown>)[name] ?? null,
+      get: (name: string) => {
+        const value = (services as Record<string, unknown>)[name];
+        return name === 'sidebarRight' && value
+          ? { active: () => ({ id: 'active-tab' }), ...value }
+          : value ?? null;
+      },
       slots: { entries: (name: string) => name === 'conversation.view' ? views : [] },
     },
   };
@@ -175,7 +336,7 @@ function createRouteHarness({
     createElement: element,
     querySelector(selector: string) {
       if (selector === '[data-conversation-content]') return state.content ? {} : null;
-      if (selector === '[data-dsbot-rightbar]') return state.rightbar ? { childElementCount: 1 } : null;
+      if (selector === '[data-dsbot-rightbar]') return state.rightbar ? rightbarNode : null;
       if (selector.includes('> header [class*="_toolbar"]')) {
         return toolbarButtons.length ? { querySelectorAll: () => toolbarButtons } : null;
       }
@@ -224,7 +385,7 @@ function createRouteHarness({
     settle,
     /** The page changes (DSH rendered something), then `ms` pass and the adapter looks again. */
     async step(ms: number, { mutate = true } = {}) {
-      if (mutate) onMutation?.();
+      if (mutate) onMutation?.([{ target: rightbarNode }]);
       now += ms;
       timers.splice(0).forEach((callback) => callback());
       await settle();
@@ -297,28 +458,6 @@ test('a view that DSH does not list for this session never becomes ready', async
   assert.equal(tabs[0].selected, true);
 });
 
-test('a right-dock entry opens its tab in the session and shows the right column on its own', async () => {
-  const opened: string[] = [];
-  const harness = createRouteHarness({
-    page: { kind: 'dock', sessionId: 'session-1', target: 'example-board:open' },
-    services: {
-      uiWorkspace: { async openSession(id: string) { opened.push(`session:${id}`); } },
-      sidebarRight: { async openTab(kind: string) { opened.push(`tab:${kind}`); } },
-    },
-  });
-  assert.equal('dsbotPageSession' in harness.dataset, false, 'the right column stays visible for a dock page');
-  await harness.settle();
-  assert.deepEqual(opened, ['session:session-1', 'tab:example-board']);
-  assert.equal(harness.readyCount, 0);
-
-  harness.state.rightbar = true;
-  await harness.step(100);
-  assert.equal(harness.readyCount, 0);
-  await harness.step(700, { mutate: false });
-  assert.equal(harness.readyCount, 1);
-  assert.deepEqual(opened, ['session:session-1', 'tab:example-board'], 'the tab is opened once');
-});
-
 test("the toolbar's + presses DSH's add-plugin button although the page's own header is hidden on the phone", async () => {
   let added = 0;
   const primary = { disabled: false, click() { added += 1; } };
@@ -360,162 +499,4 @@ test('only the plugin page answers the add command', async () => {
   await harness.settle();
   harness.fire('dsbot:command', 'add');
   assert.equal(added, 0);
-});
-
-test('a dock that is not ready yet is tried again, not left waiting, and the tab is opened once', async () => {
-  let attempts = 0;
-  const opened: string[] = [];
-  const harness = createRouteHarness({
-    page: { kind: 'dock', sessionId: 'session-1', target: 'terminal:new' },
-    services: {
-      uiWorkspace: { async openSession() {} },
-      sidebarRight: {
-        openTab(kind: string) {
-          attempts += 1;
-          if (attempts < 3) throw new Error('no Session on screen yet');
-          opened.push(kind);
-        },
-      },
-    },
-  });
-  await harness.settle();
-  await harness.step(200);
-  await harness.step(200);
-  await harness.step(200);
-  assert.deepEqual(opened, ['terminal']);
-  assert.equal(attempts, 3, 'two refusals, one success, and no further attempts');
-});
-
-test('a tab of that kind that is already open is shown again, and a column that was folded is unfolded', async () => {
-  const calls: string[] = [];
-  const harness = createRouteHarness({
-    page: { kind: 'dock', sessionId: 'session-1', target: 'terminal:new' },
-    services: {
-      uiWorkspace: { async openSession() {} },
-      sidebarRight: {
-        openTabs: {
-          getSnapshot: () => [
-            { sessionId: 'other-session', tabId: 'tab-1', kind: 'terminal' },
-            { sessionId: 'session-1', tabId: 'tab-2', kind: 'browser' },
-            { sessionId: 'session-1', tabId: 'tab-7', kind: 'terminal' },
-          ],
-        },
-        isExpanded: () => false,
-        toggleExpanded() { calls.push('toggle'); },
-        focus(id: string) { calls.push(`focus:${id}`); },
-        openTab(kind: string) { calls.push(`open:${kind}`); },
-      },
-    },
-  });
-  await harness.settle();
-  assert.deepEqual(calls, ['toggle', 'focus:tab-7']);
-
-  const fresh: string[] = [];
-  const other = createRouteHarness({
-    page: { kind: 'dock', sessionId: 'session-1', target: 'browser:new' },
-    services: {
-      uiWorkspace: { async openSession() {} },
-      sidebarRight: {
-        openTabs: { getSnapshot: () => [{ sessionId: 'session-1', tabId: 'tab-7', kind: 'terminal' }] },
-        isExpanded: () => true,
-        focus(id: string) { fresh.push(`focus:${id}`); },
-        openTab(kind: string) { fresh.push(`open:${kind}`); },
-      },
-    },
-  });
-  await other.settle();
-  assert.deepEqual(fresh, ['open:browser'], 'no tab of that kind yet: one is opened');
-});
-
-function terminalPage({ activeKind = 'terminal', writable = true } = {}) {
-  const written: string[] = [];
-  const view = writable ? { write(data: string) { written.push(data); } } : {};
-  const harness = createRouteHarness({
-    page: { kind: 'dock', sessionId: 'session-1', target: 'terminal:new' },
-    services: {
-      uiWorkspace: { async openSession() {} },
-      sidebarRight: {
-        openTab() {},
-        active: () => ({ id: 'tab-1', kind: activeKind }),
-      },
-      webTerminals: { views: new Map([['session-1', new Map([['tab-1', view]])]]) },
-    },
-  });
-  const xterm = { classList: { contains: (name: string) => name === 'xterm-helper-textarea' } };
-  return { harness, written, xterm };
-}
-
-async function readyDock(harness: ReturnType<typeof createRouteHarness>) {
-  await harness.settle();
-  harness.state.rightbar = true;
-  await harness.step(100);
-  await harness.step(700, { mutate: false });
-  assert.equal(harness.readyCount, 1);
-}
-
-test('the terminal keys appear while a terminal holds the keyboard, and write through its own view', async () => {
-  const { harness, written, xterm } = terminalPage();
-  await readyDock(harness);
-  assert.equal(harness.state.appended.length, 0, 'no bar until a terminal is focused');
-
-  harness.state.focused = xterm;
-  harness.dispatchOnDocument('focusin');
-  await harness.step(100, { mutate: false });
-  assert.equal(harness.state.appended.length, 1);
-  assert.ok('data-dsbot-keys-visible' in harness.rootAttributes);
-  const bar = harness.state.appended[0];
-  assert.equal(bar.attributes['data-dsbot-keys'], '');
-  assert.deepEqual(bar.children.map((button: any) => button.textContent), ['Esc', 'Tab', '^C', '^D', '↑', '↓', '←', '→']);
-
-  // A press must not move focus away from the terminal.
-  let prevented = 0;
-  const press = (label: string) => {
-    const button = bar.children.find((child: any) => child.textContent === label);
-    button.listeners.pointerdown[0]({ preventDefault() { prevented += 1; } });
-  };
-  for (const label of ['Esc', 'Tab', '^C', '^D', '↑', '↓', '←', '→']) press(label);
-  assert.deepEqual(written, ['\u001b', '\t', '\u0003', '\u0004', '\u001b[A', '\u001b[B', '\u001b[D', '\u001b[C']);
-  assert.equal(prevented, 8);
-  const [first] = bar.children;
-  first.listeners.mousedown[0]({ preventDefault() { prevented += 1; } });
-  assert.equal(prevented, 9);
-
-  // A click with a pointer behind it was already handled; one without (assistive technology) is not.
-  first.listeners.click[0]({ detail: 1 });
-  assert.equal(written.length, 8);
-  first.listeners.click[0]({ detail: 0 });
-  assert.equal(written.length, 9);
-
-  harness.state.focused = null;
-  harness.dispatchOnDocument('focusout');
-  await harness.step(100, { mutate: false });
-  assert.equal('data-dsbot-keys-visible' in harness.rootAttributes, false);
-  assert.equal(harness.state.appended.length, 1, 'the bar is kept and only hidden');
-});
-
-test('the terminal keys stay away unless the active tab is a terminal whose view can write', async () => {
-  for (const options of [{ activeKind: 'browser' }, { writable: false }]) {
-    const { harness, xterm } = terminalPage(options);
-    await readyDock(harness);
-    harness.state.focused = xterm;
-    harness.dispatchOnDocument('focusin');
-    await harness.step(100, { mutate: false });
-    assert.equal(harness.state.appended.length, 0, JSON.stringify(options));
-    assert.equal('data-dsbot-keys-visible' in harness.rootAttributes, false);
-  }
-
-  // Focus in some other field of a dock page is not a terminal.
-  const { harness } = terminalPage();
-  await readyDock(harness);
-  harness.state.focused = { classList: { contains: () => false } };
-  harness.dispatchOnDocument('focusin');
-  await harness.step(100, { mutate: false });
-  assert.equal(harness.state.appended.length, 0);
-});
-
-test('pages that are not docks never listen for focus or build the terminal keys', async () => {
-  const harness = createRouteHarness({ page: { kind: 'panel', target: 'schedules' } });
-  harness.dispatchOnDocument('focusin');
-  await harness.step(100, { mutate: false });
-  assert.equal(harness.state.appended.length, 0);
 });

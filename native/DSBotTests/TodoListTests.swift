@@ -20,7 +20,7 @@ final class TodoListTests: XCTestCase {
         XCTAssertEqual(TodoSummary.progress([item("weird"), item("completed")]), "1 已完成 · 1 待处理")
     }
 
-    func testTheListDecodesFromTheHostAndAnAbsentOrBrokenOneIsNone() throws {
+    func testTheListAllowsAbsenceButRejectsMalformedHostData() throws {
         func detail(_ todos: String?) throws -> SessionDetail {
             let list = todos.map { #","todos": \#($0)"# } ?? ""
             let json = #"{"session": {"id": "s", "title": "t", "updatedAt": 1, "status": "idle"}, "planMode": false\#(list)}"#
@@ -30,6 +30,7 @@ final class TodoListTests: XCTestCase {
         XCTAssertEqual(decoded.todos, [TodoItem(content: "补一项", status: "in_progress"), TodoItem(content: "再一项", status: "pending")])
         XCTAssertTrue(decoded.todos?.first?.isInProgress == true)
         XCTAssertNil(try detail(nil).todos)
-        XCTAssertNil(try detail(#""not a list""#).todos, "A list the app cannot read costs the panel, never the conversation.")
+        XCTAssertThrowsError(try detail(#""not a list""#))
+        XCTAssertThrowsError(try detail(#"[{"content": 7, "status": "pending"}]"#))
     }
 }

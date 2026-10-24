@@ -2,6 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { createNativeFiles } from './native-files.mjs';
 import { createNativePages, NATIVE_PAGE_METHODS } from './native-pages.mjs';
+import {
+  conversationState, deliveredPath, questionsFrom, recordConversationEvent, sessionPerformance,
+  performanceEvent, toolPayload, toolReference, turnPerformance, validateAnswers,
+} from './native-conversation.mjs';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_IMAGES = 3;
@@ -22,7 +26,6 @@ const MAX_STREAM_BLOCKS = 128;
 const MAX_WINDOW_CHARS = 100_000;
 const SESSION_ROWS_CACHE_MS = 1_000;
 const WORKSPACE_CACHE_MS = 5_000;
-const WORKSPACE_WAIT_MS = 250;
 const WATCH_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PRESET_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const EFFORT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
@@ -30,11 +33,22 @@ const EFFORT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 export const NATIVE_METHODS = Object.freeze([
   'workspace.list',
   'session.list',
+  'session.search',
   'session.create',
   'session.open',
   'session.watch',
+  'session.attachment',
   'session.unwatch',
   'session.send',
+  'session.queue.update',
+  'session.page',
+  'session.tool',
+  'session.changes',
+  'session.diff',
+  'session.file',
+  'session.fork',
+  'session.performance',
+  'question.answer',
   'session.stop',
   'session.rename',
   'session.unarchive',
@@ -57,11 +71,16 @@ export const NATIVE_METHODS = Object.freeze([
 
 const GATEWAY_ENDPOINTS = new Set([
   'session/list',
+  'session/search',
   'session/create',
   'session/follow',
+  'session/control',
   'session/cancel',
   'session/projections',
   'session/prompt',
+  'session/updateQueue',
+  'session/page',
+  'session/fork',
   'session/rename',
   'session/selectModel',
   'session/modelCatalog',
@@ -83,11 +102,15 @@ const GATEWAY_ENDPOINTS = new Set([
 ]);
 
 const REQUEST_ARGUMENTS = new Map([
+  ['session/search', 'request'],
   ['session/create', 'request'],
   ['session/follow', 'request'],
   ['session/cancel', 'request'],
   ['session/projections', 'request'],
   ['session/prompt', 'request'],
+  ['session/updateQueue', 'request'],
+  ['session/page', 'request'],
+  ['session/fork', 'request'],
   ['session/rename', 'request'],
   ['session/selectModel', 'request'],
   ['workspace/rename', 'request'],
@@ -126,6 +149,7 @@ function typertArguments(endpoint, values) {
         || typeof values[1] !== 'string' || !PRESET_ID.test(values[1])) fail('BAD_REQUEST');
       return { agentId: values[0], agentPreset: values[1] };
     case 'workspace/follow':
+    case 'session/control':
     case 'session/modelCatalog':
     case 'permissionPresets/catalog':
     case 'agentPresets/list':
@@ -432,14 +456,9 @@ function toolDetail(argumentsValue, name) {
   return '';
 }
 
-const TRIGGER_SOURCES = new Set([
-  'goal', 'agent-message', 'team-message', 'subagent-settled', 'webhook', 'schedule',
-  'tool-jobs', 'cordis-host-runner',
-]);
-
 function triggerKind(source) {
   const kind = text(source?.kind, 64);
-  if (!TRIGGER_SOURCES.has(kind)) return undefined;
+  if (!kind) return undefined;
   if (kind === 'webhook') return text(source?.provider, 32) === 'github' ? 'github' : 'webhook';
   return kind;
 }
@@ -453,12 +472,36 @@ function turnOutcome(reason) {
   }
 }
 
-function userAttachments(content) {
+function imageFromBlock(block) {
+  if (!isRecord(block) || block.type !== 'image'
+    || !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(block.mediaType)
+    || typeof block.data !== 'string' || !block.data.length
+    || block.data.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4) return undefined;
+  return { mediaType: block.mediaType, data: block.data };
+}
+
+function userAttachments(content, state, messageId, seq) {
   if (!Array.isArray(content)) return [];
   const result = [];
-  for (const block of content) {
+  for (const [index, block] of content.entries()) {
     if (!isRecord(block)) continue;
-    if (block.type === 'image') result.push({ kind: 'image', name: text(block.name, 160) || '图片' });
+    if (block.type === 'image') {
+      const attachment = { kind: 'image', name: text(block.name, 160) || '图片' };
+      const image = imageFromBlock(block);
+      if (image) {
+        attachment.id = `${messageId}:${index}`;
+        if (Number.isSafeInteger(seq)) attachment.seq = seq;
+        state.imageChars -= state.images.get(attachment.id)?.data.length ?? 0;
+        state.images.set(attachment.id, image);
+        state.imageChars += image.data.length;
+        while (state.imageChars > Math.ceil(MAX_TOTAL_IMAGE_BYTES / 3) * 4) {
+          const oldest = state.images.keys().next().value;
+          state.imageChars -= state.images.get(oldest).data.length;
+          state.images.delete(oldest);
+        }
+      }
+      result.push(attachment);
+    }
     else if (block.type === 'file') result.push({ kind: 'file', name: text(block.name ?? block.fileName, 160) || '文件' });
   }
   return result.slice(0, 12);
@@ -475,6 +518,7 @@ function trimEntries(state) {
   let chars = state.entries.reduce((sum, item) => sum + entryWeight(item), 0);
   while (state.entries.length > 1 && (state.entries.length > MAX_ENTRIES || chars > MAX_HISTORY_CHARS)) {
     chars -= entryWeight(state.entries.shift());
+    state.historyTrimmed = true;
   }
   state.entryChars = chars;
 }
@@ -484,26 +528,65 @@ function pushEntry(state, entry) {
   trimEntries(state);
 }
 
+function recordInboxClaim(state, event) {
+  const splice = event.data;
+  if (!['next-turn', 'next-step'].includes(splice?.target)) return;
+  const previous = state.inboxClaims[splice.target];
+  const pending = [...previous.pending];
+  const inserted = Array.isArray(splice.inserted) ? splice.inserted : [];
+  const removed = pending.splice(splice.start, splice.removedCount ?? 0, ...inserted);
+  const entered = removed.length > 0 && splice.outcome !== 'canceled';
+  state.inboxClaims[splice.target] = {
+    pending,
+    claimed: entered ? new Set(removed.map((message) => message.id))
+      : new Set([...previous.claimed].filter((id) => !inserted.some((message) => message.id === id))),
+    seq: entered ? event.seq : previous.seq,
+    human: entered ? removed.some((message) => message.source?.kind === 'user') : previous.human,
+  };
+}
+
+function wakesTurn(state, id) {
+  const nextTurn = state.inboxClaims['next-turn'];
+  const nextStep = state.inboxClaims['next-step'];
+  return nextTurn.claimed.has(id)
+    || (state.activeStep === 1 && nextStep.seq > state.turnStartSeq
+      && nextTurn.seq < state.turnStartSeq && !nextStep.human && nextStep.claimed.has(id));
+}
+
 function recordTranscriptEvent(state, event, message, sessionId) {
   const type = event?.type;
   const data = isRecord(event?.data) ? event.data : {};
   const time = Number.isFinite(event?.time) ? event.time : undefined;
   const seq = Number.isFinite(event?.seq) ? event.seq : undefined;
+  const extra = state.conversation.turns.get(data.turn);
+  if (['llm/retry', 'turn/end', 'workspace/changes', 'deliverables/presented'].includes(type) && extra
+    && (extra.notices.length || extra.files.length || extra.changesSeq !== undefined)
+    && !state.entries.some((entry) => entry.turn === data.turn && ['assistant', 'turn-marker'].includes(entry.type))) {
+    pushEntry(state, { type: 'turn-marker', id: `turn-marker:${data.turn}`, turn: data.turn, seq, time });
+  }
+  if (type === 'agent/inbox/spliced') {
+    recordInboxClaim(state, event);
+    return;
+  }
   if (type === 'turn/start' && Number.isSafeInteger(data.turn)) {
+    state.turnStartSeq = seq ?? -1;
+    state.activeStep = 1;
     state.turnTimes.set(data.turn, { start: time });
     return;
   }
+  if (type === 'step/start') state.activeStep = data.step;
   if (type === 'turn/end' && Number.isSafeInteger(data.turn)) {
     const turn = state.turnTimes.get(data.turn) ?? {};
     state.turnTimes.set(data.turn, { ...turn, end: time, outcome: turnOutcome(data.reason?.kind) });
     return;
   }
   if (type === 'tool/result' && event.surfaceOp === 'append') {
-    const callId = text(data.message?.toolCallId, 256);
+    const callId = text(data.message?.toolCallId ?? data.message?.source?.callId, 256);
     if (callId) state.callResults.set(callId, data.message?.isError === true ? 'error' : 'done');
     return;
   }
   if (type === 'command/run') {
+    if (data.name === 'permission') return;
     const commandId = text(data.commandId, 128);
     if (!commandId) return;
     pushEntry(state, {
@@ -554,7 +637,7 @@ function recordTranscriptEvent(state, event, message, sessionId) {
   if (type === 'user/message') {
     if (data.source?.kind === 'user') {
       if (!message) return;
-      const attachments = userAttachments(data.content);
+      const attachments = userAttachments(data.content, state, message.id, seq);
       // Attachments are listed separately; the legacy "[图片]" placeholder stays out of the bubble.
       const body = Array.isArray(data.content)
         ? data.content.filter((block) => block?.type === 'text' && typeof block.text === 'string')
@@ -565,7 +648,7 @@ function recordTranscriptEvent(state, event, message, sessionId) {
       });
     } else {
       const kind = triggerKind(data.source);
-      if (kind) {
+      if (kind && wakesTurn(state, data.id)) {
         const body = Array.isArray(data.content)
           ? data.content.filter((block) => block?.type === 'text' && typeof block.text === 'string')
             .map((block) => block.text).join('\n') : '';
@@ -628,6 +711,7 @@ function trimHistoryToBudget(state) {
 }
 
 function appendEvent(state, event, sessionId) {
+  recordConversationEvent(state.conversation, event);
   const turn = event?.data?.turn;
   const step = event?.data?.step;
   if (Number.isSafeInteger(turn) && Number.isSafeInteger(step)) {
@@ -829,7 +913,10 @@ function transcriptFrom(state) {
     if (entry.type !== 'assistant' || !entry.calls) return entry;
     return {
       ...entry,
-      calls: entry.calls.map((call) => ({ ...call, status: state.callResults.get(call.id) ?? 'running' })),
+      calls: entry.calls.map((call) => ({
+        ...call, ...toolReference(state.conversation, call.id),
+        status: state.callResults.get(call.id) ?? 'running',
+      })),
     };
   });
   const turns = [...state.turnTimes].map(([turn, info]) => ({
@@ -837,9 +924,46 @@ function transcriptFrom(state) {
     ...(Number.isFinite(info.start) ? { start: info.start } : {}),
     ...(Number.isFinite(info.end) ? { end: info.end } : {}),
     ...(info.outcome ? { outcome: info.outcome } : {}),
+    ...state.conversation.turns.get(turn),
   })).slice(-MAX_MESSAGES);
   const live = liveStep(state);
-  return { entries, turns, ...(live ? { live } : {}) };
+  for (const [turn, extra] of state.conversation.turns) {
+    if (!turns.some((item) => item.turn === turn)) turns.push({ turn, ...extra });
+  }
+  const beforeSeq = state.historyTrimmed
+    ? entries.find((entry) => Number.isSafeInteger(entry.seq))?.seq ?? state.historyStart
+    : state.historyStart;
+  return {
+    entries, turns, ...(live ? { live } : {}),
+    tools: Object.fromEntries([...state.conversation.tools.keys()].map((id) => [id, toolReference(state.conversation, id)])),
+    beforeSeq, throughSeq: state.conversation.cursor,
+    hasMore: beforeSeq > 0 && (state.hasMore || state.historyTrimmed),
+  };
+}
+
+function queueFrom(values) {
+  const pending = values.inbox?.['next-turn'];
+  if (!Array.isArray(pending)) return [];
+  return pending.flatMap((message) => {
+    if (typeof message?.id !== 'string' || !Array.isArray(message.content)) return [];
+    const body = message.content.filter((block) => block?.type === 'text')
+      .map((block) => typeof block.text === 'string' ? block.text : '').join('');
+    const attachments = message.content.flatMap((block, index) => {
+      if (!['image', 'file'].includes(block?.type)) return [];
+      const image = imageFromBlock(block);
+      return [{
+        kind: block.type,
+        name: text(block.attachment?.name ?? block.name, 160) || (block.type === 'image' ? '图片' : '文件'),
+        ...(image ? { id: `queue:${message.id}:${index}` } : {}),
+      }];
+    });
+    return [{
+      id: text(message.id, 256), text: text(body, MAX_ENTRY_TEXT),
+      editable: body.length <= MAX_ENTRY_TEXT
+        && message.content.every((block) => block?.type === 'text' && typeof block.text === 'string'),
+      ...(attachments.length ? { attachments: attachments.slice(0, 12) } : {}),
+    }];
+  }).slice(0, 100);
 }
 
 function detailFrom(state, { transcript = false } = {}) {
@@ -870,6 +994,8 @@ function detailFrom(state, { transcript = false } = {}) {
     ...(transcript ? { transcript: transcriptFrom(state) } : {}),
     ...(goalFrom(values) ? { goal: goalFrom(values) } : {}),
     ...(todosFrom(values) ? { todos: todosFrom(values) } : {}),
+    queuedMessages: queueFrom(values),
+    questions: questionsFrom(values, state.summary.id, approvablePlanReview),
     planMode: planModeFrom(values),
     ...(model?.provider && model?.model ? { modelId: `${model.provider}:${model.model}` } : {}),
     ...(typeof model?.reasoningEffort === 'string' ? { reasoningEffort: model.reasoningEffort } : {}),
@@ -893,6 +1019,14 @@ function emptySessionState(summary) {
     summary, messages: [], historyChars: 0, values: {}, trace: [], live: undefined,
     turnSteps: new Map(), completedTurns: new Set(),
     entries: [], entryChars: 0, turnTimes: new Map(), callResults: new Map(),
+    images: new Map(), imageChars: 0,
+    inboxClaims: {
+      'next-turn': { pending: [], claimed: new Set(), seq: -1, human: false },
+      'next-step': { pending: [], claimed: new Set(), seq: -1, human: false },
+    },
+    turnStartSeq: -1, activeStep: undefined,
+    projectionSeqs: new Map(), conversation: conversationState(),
+    historyStart: 0, hasMore: false, historyTrimmed: false,
   };
 }
 
@@ -979,14 +1113,38 @@ function installSnapshot(state, snapshot, sessionId) {
   state.turnSteps.clear();
   state.completedTurns.clear();
   state.entries = [];
+  state.images.clear();
+  state.imageChars = 0;
   state.entryChars = 0;
   state.turnTimes.clear();
   state.callResults.clear();
+  state.conversation = conversationState();
+  state.conversation.cursor = snapshot.cursor ?? -1;
+  state.historyStart = snapshot.records?.find((record) => Number.isSafeInteger(record?.event?.seq))?.event.seq ?? 0;
+  state.hasMore = snapshot.hasMore === true;
+  state.historyTrimmed = false;
+  state.inboxClaims = emptySessionState({}).inboxClaims;
+  state.turnStartSeq = -1;
+  state.activeStep = undefined;
+  const previousValues = state.values;
   state.values = projectionsFrom(snapshot.projections);
+  const asOfSeq = Number.isFinite(snapshot.projections?.asOfSeq) ? snapshot.projections.asOfSeq : -1;
+  for (const [key, seq] of state.projectionSeqs) {
+    if (seq <= asOfSeq) continue;
+    if (Object.hasOwn(previousValues, key)) state.values[key] = previousValues[key];
+    else delete state.values[key];
+  }
+  for (const key of new Set([...Object.keys(state.values), ...state.projectionSeqs.keys()])) {
+    state.projectionSeqs.set(key, Math.max(asOfSeq, state.projectionSeqs.get(key) ?? -1));
+  }
   state.trace = [];
   state.live = undefined;
   for (const record of snapshot.records ?? []) {
     if (record?.type === 'event') appendEvent(state, record.event, sessionId);
+  }
+  for (const target of ['next-turn', 'next-step']) {
+    const pending = state.values.inbox?.[target];
+    if (Array.isArray(pending)) state.inboxClaims[target].pending = [...pending];
   }
   const active = snapshot.assistantStream?.activeAttempt;
   if (isRecord(active) && typeof active.attemptId === 'string') {
@@ -1001,11 +1159,50 @@ function installSnapshot(state, snapshot, sessionId) {
   }
 }
 
+function applyProjection(state, key, value, seq) {
+  if (typeof key !== 'string' || !Number.isFinite(seq)
+    || seq <= (state.projectionSeqs.get(key) ?? -1)) return false;
+  state.projectionSeqs.set(key, seq);
+  state.values[key] = value;
+  return true;
+}
+
+function applyControlFrame(state, frame, sessionId) {
+  if (frame?.type === 'baseline') {
+    const baseline = frame.value?.projections?.[sessionId];
+    if (!isRecord(baseline?.values) || !Number.isFinite(baseline.asOfSeq)) return false;
+    let changed = false;
+    for (const key of Object.keys(state.values)) {
+      if (!Object.hasOwn(baseline.values, key) && baseline.asOfSeq >= (state.projectionSeqs.get(key) ?? -1)) {
+        delete state.values[key];
+        state.projectionSeqs.set(key, baseline.asOfSeq);
+        changed = true;
+      }
+    }
+    for (const [key, value] of Object.entries(baseline.values)) {
+      if (applyProjection(state, key, value, baseline.asOfSeq)) changed = true;
+    }
+    return changed;
+  } else if (frame?.type === 'projection' && frame.sessionId === sessionId) {
+    return applyProjection(state, frame.key, frame.value, frame.seq);
+  }
+  return false;
+}
+
 function applyFollowFrame(state, frame, sessionId) {
   if (frame?.type === 'snapshot') {
     installSnapshot(state, frame, sessionId);
   } else if (frame?.type === 'event') {
     appendEvent(state, frame.event, sessionId);
+    if (frame.event?.type === 'agent/inbox/spliced') {
+      const splice = frame.event.data;
+      if (['next-turn', 'next-step'].includes(splice.target)
+        && frame.event.seq > (state.projectionSeqs.get('inbox') ?? -1)) {
+        const pending = [...(state.values.inbox?.[splice.target] ?? [])];
+        pending.splice(splice.start, splice.removedCount ?? 0, ...(splice.inserted ?? []));
+        applyProjection(state, 'inbox', { ...state.values.inbox, [splice.target]: pending }, frame.event.seq);
+      }
+    }
     if (frame.event?.type === 'assistant/message' && frame.event.surfaceOp === 'append') state.live = undefined;
   } else if (frame?.type === 'assistant-stream' && isRecord(frame.frame)) {
     const item = frame.frame;
@@ -1210,8 +1407,10 @@ function commandLine(command, argument) {
 
 function commandOutcome(result) {
   const outcome = isRecord(result) ? result.result : undefined;
-  if (!isRecord(outcome)) return { kind: 'success', text: '' };
-  return { kind: outcome.kind === 'error' ? 'error' : 'success', text: text(outcome.text, 4000) };
+  if (!isRecord(outcome) || !['success', 'error'].includes(outcome.kind) || typeof outcome.text !== 'string') {
+    fail('UPSTREAM_UNAVAILABLE');
+  }
+  return { kind: outcome.kind, text: text(outcome.text, 4000) };
 }
 
 function modelId(provider, model) {
@@ -1259,7 +1458,7 @@ function mapPresets(result) {
     }));
 }
 
-export function createNativeBridge({ rpc, pages, navigation }) {
+export function createNativeBridge({ rpc, pages, navigation, conversationReads, questionBridge }) {
   const remote = createRemote(rpc);
   let sessionRowsCache;
   let sessionRowsCacheAt = 0;
@@ -1326,14 +1525,6 @@ export function createNativeBridge({ rpc, pages, navigation }) {
     sessionRowsCacheAt = 0;
   }
 
-  function cachedWorkspaces() {
-    if ((!workspaceCacheAt || Date.now() - workspaceCacheAt >= WORKSPACE_CACHE_MS)
-      && !workspaceFlight) {
-      void loadWorkspaces().catch(() => {});
-    }
-    return workspaceCache;
-  }
-
   function withWorkspace(row, workspaces) {
     if (typeof row.workspaceId === 'string') return row;
     const cwd = row.cwd ?? row.projections?.values?.workingDirectory;
@@ -1359,7 +1550,7 @@ export function createNativeBridge({ rpc, pages, navigation }) {
       : row;
     if (!placed && typeof next.workspaceId !== 'string') {
       const cwd = row.cwd ?? row.projections?.values?.workingDirectory;
-      if (typeof cwd === 'string' && cwd) next = withWorkspace(row, cachedWorkspaces());
+      if (typeof cwd === 'string' && cwd) next = withWorkspace(row, workspaceCache);
     }
     if (layout.archived.has(id)) next = { ...next, archived: true };
     const rank = layout.pinned.indexOf(id);
@@ -1420,6 +1611,8 @@ export function createNativeBridge({ rpc, pages, navigation }) {
       fail('BAD_REQUEST');
     }
     const address = sessionAddress(sessionId);
+    if (connection.closed || watchGeneration !== connection.watchGeneration) fail('UPSTREAM_UNAVAILABLE');
+    connection.nativeWatchID = watchId;
     const summary = await sessionSummary(sessionId);
     const abort = new AbortController();
     const stream = streamHandle(await remote.open('session/follow', {
@@ -1430,52 +1623,115 @@ export function createNativeBridge({ rpc, pages, navigation }) {
     }, abort.signal));
     const state = emptySessionState(summary);
     let publishTimer;
+    let controlStream;
+    let releaseQuestionWatch;
     let cancelled = false;
-    const cancel = async () => {
+    let cancellation;
+    const isActive = () => !cancelled && !connection.closed && watchGeneration === connection.watchGeneration;
+    const cancel = () => {
+      if (cancelled) return cancellation;
       cancelled = true;
+      releaseQuestionWatch?.();
+      if (connection.nativeAttachmentState?.state === state) connection.nativeAttachmentState = undefined;
       clearTimeout(publishTimer);
       abort.abort();
-      await stream.close();
+      cancellation = Promise.all([stream.close(), controlStream?.close()]);
+      return cancellation;
     };
-    if (!connection.setWatch(cancel, watchGeneration)) {
+    try {
+      if (!connection.setWatch(cancel, watchGeneration)) fail('UPSTREAM_UNAVAILABLE');
+      const first = await stream.next();
+      if (first.done || !isActive()) fail('UPSTREAM_UNAVAILABLE');
+      installSnapshot(state, firstSessionFrame(first.value), sessionId);
+      connection.selectedSessionId = sessionId;
+      connection.nativeAttachmentState = { sessionId, state, watchGeneration };
+      releaseQuestionWatch = questionBridge?.watch(sessionId, (error) => {
+        queueMicrotask(() => { void failWatch(error, 'questions'); });
+      });
+    } catch (error) {
       await cancel();
-      throw new NativeBridgeError('UPSTREAM_UNAVAILABLE');
+      throw error instanceof NativeBridgeError ? error : safeCallError();
     }
-    const first = await stream.next();
-    if (first.done) {
+    async function failWatch(error, source) {
+      if (isActive()) {
+        connection.sendEvent('session.watch.failed', {
+          id: sessionId, ...(watchId ? { watchId } : {}),
+          code: error instanceof NativeBridgeError ? error.code : 'UPSTREAM_UNAVAILABLE', source,
+        });
+      }
       await cancel();
-      throw new NativeBridgeError('UPSTREAM_UNAVAILABLE');
     }
-    const snapshot = firstSessionFrame(first.value);
-    installSnapshot(state, snapshot, sessionId);
-    connection.selectedSessionId = sessionId;
     const schedulePublish = () => {
-      if (publishTimer || cancelled) return;
+      if (publishTimer || !isActive()) return;
       publishTimer = setTimeout(() => {
         publishTimer = undefined;
-        if (!cancelled && !connection.closed && watchGeneration === connection.watchGeneration) {
-          const detail = detailFrom(state, options);
-          connection.sendEvent('session.snapshot', watchId ? { ...detail, watchId } : detail);
+        if (isActive()) {
+          try {
+            const detail = detailFrom(state, options);
+            connection.sendEvent('session.snapshot', watchId ? { ...detail, watchId } : detail);
+          } catch (error) {
+            void failWatch(error, 'snapshot');
+          }
         }
       }, 100);
       publishTimer.unref?.();
     };
     void (async () => {
       try {
-        while (!connection.closed && watchGeneration === connection.watchGeneration) {
+        const control = streamHandle(await remote.open('session/control', abort.signal));
+        controlStream = control;
+        if (!isActive()) {
+          await control.close();
+          return;
+        }
+        while (isActive()) {
+          const next = await control.next();
+          if (!isActive()) return;
+          if (next.done) fail('UPSTREAM_UNAVAILABLE');
+          if (applyControlFrame(state, next.value, sessionId)) schedulePublish();
+        }
+      } catch (error) {
+        await failWatch(error, 'control');
+      }
+    })();
+    void (async () => {
+      try {
+        while (isActive()) {
           const next = await stream.next();
-          if (next.done) break;
+          if (!isActive()) return;
+          if (next.done) fail('UPSTREAM_UNAVAILABLE');
           applyFollowFrame(state, next.value, sessionId);
           schedulePublish();
         }
-      } catch {
-        // The next watch or connection close owns recovery.
-      } finally {
-        clearTimeout(publishTimer);
-        publishTimer = undefined;
+      } catch (error) {
+        await failWatch(error, 'follow');
       }
     })();
     return detailFrom(state, options);
+  }
+
+  async function readSessionImage(sessionId, attachmentId) {
+    const stream = streamHandle(await remote.open('session/follow', {
+      address: sessionAddress(sessionId), maxMessages: MAX_MESSAGES,
+      turnWindow: { minMessages: 50, minTurns: 2 },
+    }, AbortSignal.timeout(30_000)));
+    try {
+      const first = await stream.next();
+      if (first.done) fail('NOT_FOUND');
+      const snapshot = firstSessionFrame(first.value);
+      for (const record of snapshot.records ?? []) {
+        const event = record?.event;
+        if (event?.type !== 'user/message' || event.data?.source?.kind !== 'user') continue;
+        const message = messageFromEvent(event, sessionId);
+        if (!message || !Array.isArray(event.data.content)) continue;
+        for (const [index, block] of event.data.content.entries()) {
+          if (`${message.id}:${index}` === attachmentId) return imageFromBlock(block);
+        }
+      }
+      return undefined;
+    } finally {
+      await stream.close();
+    }
   }
 
   async function workspaceList() { return loadWorkspaces(); }
@@ -1489,9 +1745,41 @@ export function createNativeBridge({ rpc, pages, navigation }) {
     const question = pending && approvablePlanReview(pending);
     if (!question) fail('STALE_APPROVAL');
     const selected = decision === 'allow' ? [question.intent.approve] : [];
-    return remote.call('userQuestions/answer', sessionId, id, {
-      answers: [{ id: question.id, selected }],
+    const answers = [{ id: question.id, selected }];
+    if (questionBridge?.answer(sessionId, id, answers)) return true;
+    const accepted = await remote.call('userQuestions/answer', sessionId, id, { answers });
+    if (accepted !== true) fail('STALE_APPROVAL');
+    return true;
+  }
+
+  function watchedSession(connection, sessionId) {
+    const watched = connection.nativeAttachmentState;
+    if (!watched || connection.closed || watched.sessionId !== sessionId
+      || connection.selectedSessionId !== sessionId || watched.watchGeneration !== connection.watchGeneration) fail('NOT_FOUND');
+    return watched;
+  }
+
+  function stillWatched(connection, watched) {
+    if (watchedSession(connection, watched.sessionId) !== watched) fail('NOT_FOUND');
+  }
+
+  async function eventAt(watched, seq) {
+    if (!Number.isSafeInteger(seq) || seq < 0 || seq > watched.state.conversation.cursor) fail('BAD_REQUEST');
+    const page = await remote.call('session/page', {
+      address: sessionAddress(watched.sessionId), throughSeq: seq, beforeSeq: seq + 1, maxMessages: 1,
     });
+    const event = page?.records?.find((record) => record.type === 'event' && record.event?.seq === seq)?.event;
+    if (!event) fail('NOT_FOUND');
+    return event;
+  }
+
+  async function readConversation(kind, params) {
+    if (!conversationReads) fail('UNSUPPORTED');
+    try { return await conversationReads.read(kind, params); }
+    catch (error) {
+      if (['BAD_REQUEST', 'NOT_FOUND', 'LIMIT_EXCEEDED', 'UNSUPPORTED'].includes(error?.code)) fail(error.code);
+      throw safeCallError();
+    }
   }
 
   return {
@@ -1508,13 +1796,26 @@ export function createNativeBridge({ rpc, pages, navigation }) {
         case 'workspace.list':
           return workspaceList();
         case 'session.list':
-          // The archive and pin sets and workspace membership ride along with the list. A slow workspace
-          // feed must not hold the list back, so give it a moment and carry on with what is cached.
-          await Promise.race([
-            loadWorkspaces().catch(() => {}),
-            new Promise((resolve) => { setTimeout(resolve, WORKSPACE_WAIT_MS).unref?.(); }),
-          ]);
+          await Promise.all([loadWorkspaces(), loadSessionRows()]);
           return (await sessionRows()).map(summaryFrom).filter((item) => item.id);
+        case 'session.search': {
+          if (typeof params.query !== 'string') fail('BAD_REQUEST');
+          const query = params.query.trim();
+          if (!query || query.length > 500) fail('BAD_REQUEST');
+          const result = await remote.call('session/search', { query });
+          const summaries = new Map((await sessionRows()).map(summaryFrom)
+            .filter((item) => item.id && !item.blank).map((item) => [item.id, item]));
+          const items = [];
+          const seen = new Set();
+          const hits = arrayValue(result, 'items');
+          for (const hit of hits.slice(0, 20)) {
+            const session = summaries.get(hit?.sessionId);
+            if (!session || seen.has(session.id) || typeof hit.snippet !== 'string') continue;
+            seen.add(session.id);
+            items.push({ session, snippet: [...hit.snippet].slice(0, 240).join('') });
+          }
+          return { items, hasMore: result?.hasMore === true || hits.length > 20 };
+        }
         case 'workspace.rename': {
           const id = text(params.id, 256);
           const title = text(params.title, 300).trim();
@@ -1576,17 +1877,122 @@ export function createNativeBridge({ rpc, pages, navigation }) {
           if (!id) throw new NativeBridgeError('UPSTREAM_UNAVAILABLE');
           connection.selectedSessionId = id;
           const found = await findSessionRow(id, { fresh: true });
-          return found ? summaryFrom(found) : {
-            id, title: '新对话', updatedAt: Date.now(), status: 'idle',
-            ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
-          };
+          if (!found) fail('UPSTREAM_UNAVAILABLE');
+          return summaryFrom(found);
         }
         case 'session.open':
           connection.selectedSessionId = params.id;
           return readSessionDetail(params.id, { transcript: params.transcript === true });
+        case 'session.page': {
+          const watched = watchedSession(connection, params.id);
+          const throughSeq = params.throughSeq ?? watched.state.conversation.cursor;
+          if (!Number.isSafeInteger(throughSeq) || throughSeq < 0 || throughSeq > watched.state.conversation.cursor
+            || !Number.isSafeInteger(params.beforeSeq) || params.beforeSeq < 1 || params.beforeSeq > throughSeq + 1) fail('BAD_REQUEST');
+          const page = await remote.call('session/page', {
+            address: sessionAddress(params.id), throughSeq, beforeSeq: params.beforeSeq, maxMessages: 50,
+            turnWindow: { minMessages: 25, minTurns: 2 },
+          });
+          stillWatched(connection, watched);
+          const state = emptySessionState(watched.state.summary);
+          installSnapshot(state, { ...page, cursor: throughSeq }, params.id);
+          return { transcript: transcriptFrom(state) };
+        }
+        case 'session.tool': {
+          const watched = watchedSession(connection, params.id);
+          const [call, result] = await Promise.all([
+            eventAt(watched, params.seq),
+            params.resultSeq === undefined ? undefined : eventAt(watched, params.resultSeq),
+          ]);
+          stillWatched(connection, watched);
+          return toolPayload(call, result, params);
+        }
+        case 'session.changes':
+        case 'session.diff': {
+          const watched = watchedSession(connection, params.id);
+          const event = await eventAt(watched, params.seq);
+          if (event.type !== 'workspace/changes') fail('NOT_FOUND');
+          const coordinates = { sessionId: params.id, seq: params.seq };
+          if (method === 'session.diff') {
+            if (!Number.isSafeInteger(params.index) || params.index < 0) fail('BAD_REQUEST');
+            coordinates.index = params.index;
+          }
+          const result = await readConversation(method === 'session.diff' ? 'diff' : 'summary', coordinates);
+          stillWatched(connection, watched);
+          return result;
+        }
+        case 'session.file': {
+          const watched = watchedSession(connection, params.id);
+          const [event, call, row] = await Promise.all([
+            eventAt(watched, params.seq),
+            params.kind === 'produced' ? eventAt(watched, params.callSeq) : undefined,
+            findSessionRow(params.id),
+          ]);
+          const path = deliveredPath(event, call, params, row?.cwd ?? watched.state.values.workingDirectory);
+          stillWatched(connection, watched);
+          const result = await readConversation('file', { path });
+          stillWatched(connection, watched);
+          return { ...result, name: path.split(/[\\/]/u).at(-1) };
+        }
+        case 'session.fork': {
+          const watched = watchedSession(connection, params.id);
+          const event = await eventAt(watched, params.seq);
+          if (event.surfaceOp !== 'append' || !['assistant/message', 'user/message'].includes(event.type)
+            || event.type === 'user/message' && event.data?.source?.kind !== 'user') fail('BAD_REQUEST');
+          stillWatched(connection, watched);
+          const result = await remote.call('session/fork', { sessionId: params.id, atSeq: params.seq });
+          forgetWorkspaces();
+          return result;
+        }
+        case 'session.performance': {
+          const watched = watchedSession(connection, params.id);
+          if (params.turn !== undefined) {
+            if (!Number.isSafeInteger(params.turn) || params.turn < 0) fail('BAD_REQUEST');
+            const anchor = await eventAt(watched, params.seq);
+            if (anchor.data?.turn !== params.turn) fail('NOT_FOUND');
+            const events = [];
+            let beforeSeq = params.seq + 1;
+            for (let count = 0; count < 200; count += 1) {
+              stillWatched(connection, watched);
+              const page = await remote.call('session/page', {
+                address: sessionAddress(params.id), throughSeq: params.seq, beforeSeq, maxMessages: 50,
+              });
+              stillWatched(connection, watched);
+              const records = (page?.records ?? []).filter((item) => item.type === 'event'
+                && Number.isSafeInteger(item.event?.seq) && item.event.seq < beforeSeq && item.event.seq <= params.seq);
+              if (!records.length) fail('NOT_FOUND');
+              const local = records.map((item) => item.event).filter((event) => event.data?.turn === params.turn);
+              events.push(...local.map(performanceEvent));
+              if (events.length > 50_000) fail('LIMIT_EXCEEDED');
+              if (local.some((event) => event.type === 'turn/start')) {
+                return turnPerformance(events.sort((left, right) => left.seq - right.seq), params.turn);
+              }
+              beforeSeq = Math.min(...records.map((item) => item.event.seq));
+              if (!page.hasMore || beforeSeq <= 0) fail('NOT_FOUND');
+            }
+            fail('LIMIT_EXCEEDED');
+          }
+          const projection = await remote.call('session/projections', { sessionId: params.id });
+          stillWatched(connection, watched);
+          return sessionPerformance(projection?.values ?? {});
+        }
+        case 'question.answer': {
+          const watched = watchedSession(connection, params.id);
+          const projection = await remote.call('session/projections', { sessionId: params.id });
+          const active = projection?.values?.userQuestions?.active ?? [];
+          const pending = active.find((call) => call.callId === params.callId);
+          const answer = validateAnswers(pending, params.answers);
+          stillWatched(connection, watched);
+          if (questionBridge?.answer(params.id, params.callId, answer.answers)) return true;
+          const accepted = await remote.call('userQuestions/answer', params.id, params.callId, answer);
+          if (accepted !== true) fail('STALE_APPROVAL');
+          return true;
+        }
         case 'session.watch':
           return watchSession(params, connection, watchGeneration);
         case 'session.unwatch':
+          if (typeof params.watchId !== 'string' || !WATCH_ID.test(params.watchId)) fail('BAD_REQUEST');
+          if (params.watchId !== connection.nativeWatchID) return {};
+          connection.nativeWatchID = undefined;
           await connection.stopWatch();
           return {};
         case 'files.list':
@@ -1616,6 +2022,20 @@ export function createNativeBridge({ rpc, pages, navigation }) {
           const sessionId = text(params.id ?? connection.selectedSessionId, 256);
           if (!sessionId) fail('BAD_REQUEST');
           await remote.call('session/cancel', { sessionId });
+          return {};
+        }
+        case 'session.queue.update': {
+          const sessionId = text(params.id, 256);
+          const itemId = text(params.itemId, 256);
+          if (!sessionId || !itemId || !['edit', 'remove', 'steer'].includes(params.action)) fail('BAD_REQUEST');
+          const action = { kind: params.action };
+          if (action.kind === 'edit') {
+            if (typeof params.text !== 'string' || !params.text.trim() || params.text.length > MAX_ENTRY_TEXT) {
+              fail('BAD_REQUEST');
+            }
+            action.content = [{ type: 'text', text: params.text }];
+          }
+          await remote.call('session/updateQueue', { sessionId, itemId, action });
           return {};
         }
         case 'session.rename': {
@@ -1681,13 +2101,42 @@ export function createNativeBridge({ rpc, pages, navigation }) {
             if (!preset || typeof preset.value !== 'string' || /[\r\n]/.test(preset.value)) {
               fail('BAD_REQUEST');
             }
-            await remote.call('commands/execute', {
+            const outcome = commandOutcome(await remote.call('commands/execute', {
               agentId: sessionId,
               line: `/permission ${preset.value}`,
               submittedAttachments: [],
-            });
+            }));
+            if (outcome.kind === 'error') fail('UPSTREAM_ERROR');
           }
           return {};
+        }
+        case 'session.attachment': {
+          const sessionId = text(params.id, 256);
+          const attachmentId = text(params.attachmentId, 512);
+          const watched = connection.nativeAttachmentState;
+          if (!sessionId || !attachmentId || connection.closed || !watched || watched.sessionId !== sessionId
+            || connection.selectedSessionId !== sessionId
+            || watched.watchGeneration !== connection.watchGeneration) fail('NOT_FOUND');
+          let image = watched.state.images.get(attachmentId);
+          if (!image && attachmentId.startsWith('queue:')) {
+            for (const message of watched.state.values.inbox?.['next-turn'] ?? []) {
+              for (const [index, block] of (message.content ?? []).entries()) {
+                if (`queue:${message.id}:${index}` === attachmentId) image = imageFromBlock(block);
+              }
+            }
+          } else if (!image && params.seq !== undefined) {
+            const event = await eventAt(watched, params.seq);
+            const content = event.type === 'user/message' && event.data?.source?.kind === 'user'
+              ? event.data.content : event.type === 'tool/result' ? event.data?.message?.content : [];
+            const id = event.type === 'user/message' ? messageFromEvent(event, sessionId)?.id
+              : `tool:${event.data?.message?.toolCallId ?? event.data?.message?.source?.callId}`;
+            for (const [index, block] of (content ?? []).entries()) {
+              if (`${id}:${index}` === attachmentId) image = imageFromBlock(block);
+            }
+          } else if (!image) image = await readSessionImage(sessionId, attachmentId);
+          if (!image || connection.nativeAttachmentState !== watched || connection.closed) fail('NOT_FOUND');
+          decodeBase64(image.data, MAX_IMAGE_BYTES);
+          return image;
         }
         case 'session.command': {
           const sessionId = text(params.id ?? connection.selectedSessionId, 256);
@@ -1719,16 +2168,14 @@ export function createNativeBridge({ rpc, pages, navigation }) {
           };
         }
         case 'navigation.get':
-          // What DSH shows in its sidebar, conversation tabs, right dock and settings, as reported by DSH.
           return navigation?.get() ?? {
-            schemaVersion: 1, available: false, updatedAt: 0, sidebar: [], views: [], dock: [], settings: [],
+            schemaVersion: 1, available: false, updatedAt: 0, sidebar: [], views: [], settings: [],
           };
         case 'catalog.get': {
           const [modelsResult, permissionsResult, presetsResult] = await Promise.all([
             remote.call('session/modelCatalog'),
             remote.call('permissionPresets/catalog'),
-            // Hosts without the preset registry simply offer no modes.
-            remote.call('agentPresets/list').catch(() => undefined),
+            remote.call('agentPresets/list'),
           ]);
           return {
             models: mapModelCatalog(modelsResult),

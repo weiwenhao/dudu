@@ -1,4 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
+import { gzip } from 'node:zlib';
 
 const OPEN_PATH = '/dsbot/web/open';
 const PAGE_PREFIX = '/dsbot/ui/';
@@ -6,6 +8,15 @@ const TOKEN = /^[A-Za-z0-9_-]{43}$/u;
 const PAGE_PATH = /^\/dsbot\/ui\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(.*)$/u;
 const MAX_BODY_BYTES = 1024 * 1024;
 const digest = (value) => createHash('sha256').update(value).digest();
+const gzipBytes = promisify(gzip);
+
+function acceptsGzip(header) {
+  const codings = String(header ?? '').split(',').map((item) => item.toLowerCase().split(';').map((part) => part.trim()));
+  const coding = codings.find(([name]) => name === 'gzip') ?? codings.find(([name]) => name === '*');
+  if (!coding) return false;
+  const quality = coding.slice(1).find((part) => part.startsWith('q='));
+  return quality === undefined || Number(quality.slice(2)) > 0 && Number(quality.slice(2)) <= 1;
+}
 
 class PageHttpError extends Error {
   constructor(status, code) {
@@ -135,7 +146,7 @@ export function createWebPageHttp({
   let pendingOpen = 0;
   let closed = false;
   const methods = new Set([
-    'web.invoke', 'web.stream.open', 'web.stream.next', 'web.stream.send', 'web.stream.close', 'web.close',
+    'web.invoke', 'web.stream.open', 'web.stream.next', 'web.stream.close', 'web.close',
   ]);
 
   function disposeConnection(connection) {
@@ -312,16 +323,24 @@ export function createWebPageHttp({
             } else {
               ({ mimeType, data } = await pages.resourceHttp({ id: session.id, path: raw }, session.connection));
             }
+            let encoded = data;
+            if (data.byteLength >= 1024 && acceptsGzip(request.headers['accept-encoding'])
+              && /^(?:text\/(?:html|css|javascript)|application\/(?:javascript|json)|image\/svg\+xml)(?:;|$)/iu.test(mimeType)) {
+              const compressed = await gzipBytes(data);
+              if (compressed.byteLength < data.byteLength) encoded = compressed;
+            }
             if (!response.destroyed && !response.writableEnded) {
               response.writeHead(200, {
                 'content-type': mimeType,
-                'content-length': data.byteLength,
+                'content-length': encoded.byteLength,
+                ...(encoded !== data ? { 'content-encoding': 'gzip' } : {}),
+                vary: 'Accept-Encoding',
                 'cache-control': 'no-store',
                 'content-security-policy': "frame-ancestors 'none'",
                 'x-content-type-options': 'nosniff',
                 'referrer-policy': 'no-referrer',
               });
-              response.end(data);
+              response.end(encoded);
             }
           }
         } finally {

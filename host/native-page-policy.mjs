@@ -1,21 +1,11 @@
 import {
-  PAGE_READ_METHODS, PAGE_WRITE_METHODS, PAGE_STREAM_METHODS, PAGE_TERMINAL_METHODS, PAGE_TERMINAL_STREAMS,
+  PAGE_READ_METHODS, PAGE_WRITE_METHODS, PAGE_STREAM_METHODS,
 } from './native-page-rpc.mjs';
 
 const READS = new Set(PAGE_READ_METHODS);
 const WRITES = new Set(PAGE_WRITE_METHODS);
 const STREAMS = new Set(PAGE_STREAM_METHODS);
-const TERMINAL_CALLS = new Set(PAGE_TERMINAL_METHODS);
-const TERMINAL_STREAMS = new Set(PAGE_TERMINAL_STREAMS);
-// Streams the page also writes to; the only one is a terminal's keystrokes.
-const DUPLEX_STREAMS = new Set(['terminal/attach']);
-const TERMINAL_ID = /^[\w-]{1,128}$/u;
-const MAX_TRACKED_SHELLS = 32;
-// DSH's own limits (`maxInputBytes`, `maxCols`, `maxRows`); DSH enforces them again, this only bounds the wire.
-const MAX_TERMINAL_INPUT_BYTES = 64 * 1024;
-const MAX_TERMINAL_COLS = 500;
-const MAX_TERMINAL_ROWS = 200;
-const SESSION_PAGES = new Set(['trace', 'context', 'team', 'tools', 'view', 'dock']);
+const SESSION_PAGES = new Set(['trace', 'context', 'team', 'tools', 'view']);
 const CONFIG_PAGES = new Set(['settings', 'plugins']);
 const THIRD_PARTY_MARKET_READS = new Set([
   'dshMarket/registry',
@@ -66,7 +56,6 @@ const PAGE_EVENTS = Object.freeze({
     'settings/document-updated',
   ]),
   view: new Set(['commands/change']),
-  dock: new Set(['commands/change']),
 });
 const ARGUMENTS = Object.freeze({
   'session/list': ['_request'],
@@ -201,78 +190,11 @@ export function initializePagePolicy(page) {
   page.bundleNames = new Set();
   page.marketIndexes = new Set();
   page.installIds = new Set();
-  // The shells the desktop offered this page: a terminal may be started with one of these and no other.
-  page.shellPaths = new Set();
-}
-
-export const isDuplexStream = (endpoint) => DUPLEX_STREAMS.has(endpoint);
-
-const terminalId = (value) => typeof value === 'string' && TERMINAL_ID.test(value);
-
-/**
- * The right dock's terminal tab runs a shell as the desktop user, so its calls are the narrowest in the
- * policy: a dock page, and its own conversation. A terminal is named by an id the page's own storage
- * remembers across visits, so an id is only checked for shape; DSH owns which terminals exist.
- * `retain` alone may name another conversation: it holds a saved terminal open without reading it or
- * typing into it, which is what DSH's own page does for every terminal tab it has saved.
- */
-function allowTerminalCall(page, endpoint, args) {
-  if (page.kind !== 'dock' || !page.sessionId) return false;
-  const own = (value) => value === page.sessionId;
-  switch (endpoint) {
-    case 'terminal/environment':
-    case 'terminal/shells':
-      return ownKeys(args, ['agentId']) && own(args.agentId);
-    case 'terminal/list':
-      return ownKeys(args, ['sessionId']) && own(args.sessionId);
-    case 'terminal/create': {
-      const request = args.request;
-      if (!ownKeys(args, ['agentId', 'request']) || !own(args.agentId)
-        || !ownKeys(request, ['shellPath', 'id', 'cols', 'rows'])
-        || !terminalId(request.id)
-        || !boundedInteger(request.cols, 2, MAX_TERMINAL_COLS)
-        || !boundedInteger(request.rows, 1, MAX_TERMINAL_ROWS)) return false;
-      // A shell is chosen from the list the desktop offered this page, never named freely.
-      return request.shellPath === undefined || page.shellPaths.has(request.shellPath);
-    }
-    case 'terminal/rename':
-      return ownKeys(args, ['agentId', 'id', 'title']) && own(args.agentId)
-        && terminalId(args.id) && shortString(args.title, 120);
-    case 'terminal/close':
-    case 'terminal/attach':
-      return ownKeys(args, ['agentId', 'id']) && own(args.agentId) && terminalId(args.id);
-    case 'terminal/retain':
-      return ownKeys(args, ['sessionId', 'id']) && shortString(args.sessionId, 256) && terminalId(args.id);
-    default:
-      return false;
-  }
-}
-
-/**
- * One item the page sends up a duplex stream: a terminal's keystrokes or its new size. DSH decodes
- * the item again against its own codec and checks the sequence, so this keeps only what cannot be
- * a command: the shape, and sizes the wire has no reason to carry.
- */
-export function acceptPageUplink(page, endpoint, item) {
-  if (endpoint !== 'terminal/attach' || page.kind !== 'dock' || !record(item)) return false;
-  if (!boundedInteger(item.sequence, 1, Number.MAX_SAFE_INTEGER)) return false;
-  if (item.type === 'write') {
-    return ownKeys(item, ['type', 'sequence', 'data']) && typeof item.data === 'string'
-      && item.data.length > 0 && Buffer.byteLength(item.data, 'utf8') <= MAX_TERMINAL_INPUT_BYTES;
-  }
-  if (item.type === 'resize') {
-    return ownKeys(item, ['type', 'sequence', 'cols', 'rows'])
-      && boundedInteger(item.cols, 2, MAX_TERMINAL_COLS) && boundedInteger(item.rows, 1, MAX_TERMINAL_ROWS);
-  }
-  return false;
 }
 
 export function allowPageCall(page, endpoint, args, stream = false) {
   if (!shortString(endpoint, 100) || !record(args) || !safeJSON(args)
     || Buffer.byteLength(JSON.stringify(args), 'utf8') > 768 * 1024) return false;
-  if (TERMINAL_CALLS.has(endpoint) || TERMINAL_STREAMS.has(endpoint)) {
-    return stream === TERMINAL_STREAMS.has(endpoint) && allowTerminalCall(page, endpoint, args);
-  }
   if (THIRD_PARTY_MARKET_READS.has(endpoint)
     && (stream || STREAMS.has(endpoint) || WRITES.has(endpoint) || !READS.has(endpoint))) return false;
   if (!(stream ? STREAMS : READS).has(endpoint) && (stream || !WRITES.has(endpoint))) return false;
@@ -400,13 +322,6 @@ export function acceptPageResult(page, endpoint, result, args) {
   }
   if (endpoint === 'pluginManager/installBundle' && shortString(value?.requestId)) {
     page.installIds.add(value.requestId);
-  }
-  if (endpoint === 'terminal/shells' && result?.ok === true) {
-    for (const shell of Array.isArray(value) ? value : []) {
-      if (shortString(shell?.path, 4096) && page.shellPaths.size < MAX_TRACKED_SHELLS) {
-        page.shellPaths.add(shell.path);
-      }
-    }
   }
   return result;
 }

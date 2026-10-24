@@ -67,35 +67,4 @@ final class EmbeddedPageResourceTests: XCTestCase {
         }
     }
 
-    func testOnlyADockPageMayLoadFramesFromOtherSites() throws {
-        let site = try XCTUnwrap(URL(string: "https://example.com/docs"))
-        let loopback = try XCTUnwrap(URL(string: "http://127.0.0.1:5173/"))
-        for url in [site, loopback] {
-            XCTAssertTrue(embeddedSubframeNavigationAllowed(page: .dock, url: url, targetFrameIsMain: false))
-            // The page itself never navigates away, and a new window is not a frame.
-            XCTAssertFalse(embeddedSubframeNavigationAllowed(page: .dock, url: url, targetFrameIsMain: true))
-            XCTAssertFalse(embeddedSubframeNavigationAllowed(page: .dock, url: url, targetFrameIsMain: nil))
-            for page in [EmbeddedDSHPage.plugins, .trace, .context, .team, .tools, .settings, .panel, .view] {
-                XCTAssertFalse(embeddedSubframeNavigationAllowed(page: page, url: url, targetFrameIsMain: false), "\(page)")
-            }
-        }
-        for value in [
-            "https://user:password@example.com/", "file:///private/example", "javascript:alert(1)",
-            "data:text/html,hello", "blob:https://example.com/id", "dsbot://pair/example", "about:srcdoc",
-        ] {
-            let url = try XCTUnwrap(URL(string: value))
-            XCTAssertFalse(embeddedSubframeNavigationAllowed(page: .dock, url: url, targetFrameIsMain: false), value)
-        }
-    }
-
-    func testTheBrowserTabsOpenInSystemBrowserComesFromThePageNotAFrame() throws {
-        let url = try XCTUnwrap(URL(string: "https://example.com/docs"))
-        XCTAssertTrue(embeddedDockOpensInSystem(page: .dock, url: url, sourceIsMainFrame: true))
-        XCTAssertFalse(embeddedDockOpensInSystem(page: .dock, url: url, sourceIsMainFrame: false), "a frame is not DSH asking")
-        XCTAssertFalse(embeddedDockOpensInSystem(page: .settings, url: url, sourceIsMainFrame: true))
-        for value in ["file:///private/example", "javascript:alert(1)", "https://user:pw@example.com/"] {
-            let rejected = try XCTUnwrap(URL(string: value))
-            XCTAssertFalse(embeddedDockOpensInSystem(page: .dock, url: rejected, sourceIsMainFrame: true), value)
-        }
-    }
 }

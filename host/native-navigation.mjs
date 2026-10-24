@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /**
- * Navigation for the phone: the sidebar panels, conversation views, right-dock entries and settings
+ * Navigation for the phone: the sidebar panels, conversation views and settings
  * sections DSH shows, as DSH itself registered them.
  *
  * Those registries live in DSH's browser runtime. The dsbot client module reads them there (so a
@@ -151,17 +151,6 @@ function viewRoute(item) {
   return web('view', item.id);
 }
 
-/**
- * Right-dock entries. The phone shows the dock itself, so a terminal or a browser tab opens like any
- * other entry; the page transport carries a terminal's keystrokes and the page policy confines them to
- * the conversation the page was opened for. Files and context have screens of their own.
- */
-function dockRoute(item) {
-  if (item.entryId === 'workspace' || item.commandId === 'workspace.files') return { native: 'files' };
-  if (CONTEXT_VIEW.test(item.kind) || CONTEXT_VIEW.test(item.entryId) || CONTEXT_TITLE.test(item.title)) return web('context');
-  return web('dock', `${item.kind}:${item.entryId}`);
-}
-
 const settingsRoute = (item) => web('settings', item.id);
 
 // ---- Sanitizing --------------------------------------------------------------------------------
@@ -204,17 +193,6 @@ function buildView(raw) {
   return { ...base, open: viewRoute(base) };
 }
 
-function buildDock(raw) {
-  const kind = cleanId(raw.kind);
-  const entryId = cleanId(raw.entryId);
-  if (!kind || !entryId) return undefined;
-  const commandId = cleanId(raw.commandId);
-  const base = common(raw, `${kind}:${entryId}`);
-  if (!base) return undefined;
-  const open = dockRoute({ kind, entryId, commandId, title: base.title });
-  return open ? { ...base, kind, entryId, ...(commandId ? { commandId } : {}), open } : undefined;
-}
-
 /** Sections the phone has no use for: pairing configures the desktop, and general settings are the
  * desktop's appearance, language and shortcuts. */
 const HIDDEN_SETTINGS = new Set(['dsbot-mobile-control', 'general']);
@@ -229,7 +207,6 @@ function buildSettings(raw) {
 const LISTS = Object.freeze({
   sidebar: buildSidebar,
   views: buildView,
-  dock: buildDock,
   settings: buildSettings,
 });
 
@@ -248,7 +225,7 @@ export function sanitizeSnapshot(raw) {
 
 export async function createNavigationStore({ folder, now = Date.now } = {}) {
   const path = folder ? join(folder, 'navigation.json') : undefined;
-  let current = { sidebar: [], views: [], dock: [], settings: [] };
+  let current = { sidebar: [], views: [], settings: [] };
   let updatedAt = 0;
   let saving = Promise.resolve();
 

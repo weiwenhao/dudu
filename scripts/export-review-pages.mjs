@@ -118,7 +118,7 @@ async function main() {
     || !Object.hasOwn(manifest.documents, 'plugins')) {
     fail('Capture manifest must be version 1 and include the plugins page.');
   }
-  const pages = Object.entries(manifest.documents);
+  const pages = Object.entries(manifest.documents).filter(([kind]) => kind !== 'dock');
   for (const [kind, html] of pages) {
     if (!PAGE_KINDS.has(kind) || typeof html !== 'string' || !html
       || Buffer.byteLength(html, 'utf8') > 768 * 1024) {

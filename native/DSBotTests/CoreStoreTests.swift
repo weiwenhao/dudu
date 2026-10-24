@@ -1,8 +1,259 @@
+import Combine
 import XCTest
 @testable import dsbot
 
 @MainActor
 final class CoreStoreTests: XCTestCase {
+    func testForkRequiresAnAuthoritativeBranchAndPreservesTheSourceOnFailure() async throws {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        let target = DraftTarget(computerID: "local-fixture", sessionID: "a")
+        await transport.setForkReply(.object(["sessionId": .string("branch")]))
+        do {
+            try await store.forkConversation(at: 1, target: target)
+            XCTFail("An absent branch must not be fabricated from the source conversation.")
+        } catch {
+            XCTAssertEqual(error as? DSBotFailure, .protocolError)
+        }
+        XCTAssertEqual(store.selectedSession?.id, "a")
+        XCTAssertEqual(store.messages.first?.text, "a")
+        XCTAssertFalse(store.sessions.contains { $0.id == "branch" })
+
+        await transport.listSession("branch")
+        try await store.forkConversation(at: 1, target: target)
+        XCTAssertEqual(store.selectedSession?.id, "branch")
+        XCTAssertEqual(store.messages.first?.text, "branch")
+    }
+
+    func testFreshSessionRefreshDoesNotReuseAResponseStartedBeforeMutation() async throws {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        let initialCount = await transport.requestCount("session.list")
+        await transport.holdNextRequest("session.list")
+        let existing = Task { await store.refreshSessions() }
+        await transport.waitForRequest("session.list")
+        let fresh = Task { await store.refreshSessions(requiringNewRequest: true) }
+        await transport.listSession("branch")
+        await transport.finishRequest("session.list")
+        await existing.value
+        await fresh.value
+        let finalCount = await transport.requestCount("session.list")
+        XCTAssertEqual(finalCount, initialCount + 2)
+        XCTAssertTrue(store.sessions.contains { $0.id == "branch" })
+    }
+
+    func testInvalidCommandRepliesAndWrongSessionSnapshotsCannotReportSuccess() async throws {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await transport.setCommandReply(.object([:]))
+        let outcome = await store.runCommand(.plan)
+        XCTAssertNil(outcome)
+        XCTAssertFalse(store.planMode)
+        XCTAssertEqual(store.error, DSBotFailure.protocolError.localizedDescription)
+        let watchID = await transport.watchID("a")
+        await transport.emitSnapshot("b", text: "wrong session", watchID: try XCTUnwrap(watchID))
+        XCTAssertEqual(store.status, .disconnected)
+        XCTAssertEqual(store.connectionFailure, .protocolError)
+        XCTAssertEqual(store.messages.first?.text, "a")
+    }
+
+    func testFailedLiveWatchDisconnectsPreservesHistoryAndRejectsLateReplies() async throws {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        let currentWatchID = await transport.watchID("a")
+        let watchID = try XCTUnwrap(currentWatchID)
+        let target = DraftTarget(computerID: "local-fixture", sessionID: "a")
+        await transport.holdNextRequest("session.tool")
+        let pending = Task {
+            do {
+                _ = try await store.conversationRequest("session.tool", target: target)
+                return false
+            } catch { return true }
+        }
+        await transport.waitForRequest("session.tool")
+        await transport.emitEvent("session.watch.failed", params: .object([
+            "id": .string("a"), "watchId": .string(watchID), "code": .string("UPSTREAM_UNAVAILABLE")
+        ]))
+        XCTAssertEqual(store.status, .disconnected)
+        XCTAssertEqual(store.connectionFailure, .remote("UPSTREAM_UNAVAILABLE"))
+        XCTAssertEqual(store.messages.first?.text, "a")
+        XCTAssertFalse(store.showsConnectionGuide)
+        await transport.emitSnapshot("a", text: "obsolete", watchID: watchID)
+        await transport.finishRequest("session.tool")
+        let rejected = await pending.value
+        XCTAssertTrue(rejected)
+        XCTAssertEqual(store.messages.first?.text, "a")
+        await store.reconnect()
+        XCTAssertEqual(store.status, .connected)
+        let newWatchID = await transport.watchID("a")
+        XCTAssertNotEqual(newWatchID, watchID)
+    }
+
+    func testMalformedCurrentEventsReportProtocolFailureWhileOldWatchEventsAreIgnored() async throws {
+        for topic in ["session.snapshot", "navigation.changed"] {
+            let transport = StoreTransportFixture()
+            let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+            await store.start()
+            await transport.emitEvent("session.snapshot", params: .object(["watchId": .string("old")]))
+            await transport.emitEvent("session.watch.failed", params: .object(["watchId": .string("old")]))
+            XCTAssertEqual(store.status, .connected)
+            let watchID = await transport.watchID("a")
+            await transport.emitEvent(topic, params: .object([
+                "watchId": .string(try XCTUnwrap(watchID)), "session": .null, "schemaVersion": .string("invalid")
+            ]))
+            XCTAssertEqual(store.status, .disconnected)
+            XCTAssertEqual(store.connectionFailure, .protocolError)
+            XCTAssertEqual(store.messages.first?.text, "a")
+        }
+    }
+
+    func testRepeatedSnapshotsDoNotInvalidateTheConversationWithoutAChange() async {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await transport.emitTranscriptSnapshot("a")
+        var publications = 0
+        let observation = store.objectWillChange.sink { publications += 1 }
+        let revision = store.contentRevision
+        for _ in 0..<10 { await transport.emitTranscriptSnapshot("a") }
+        XCTAssertEqual(publications, 0)
+        XCTAssertEqual(store.contentRevision, revision)
+        await transport.emitSnapshot("a", text: "updated")
+        XCTAssertGreaterThan(publications, 0)
+        XCTAssertNil(store.transcript)
+        XCTAssertTrue(store.transcriptRows.isEmpty)
+        withExtendedLifetime(observation) {}
+    }
+
+    func testQuestionRepliesPreserveDraftsSuppressStaleSnapshotsAndClearOnSessionChange() async throws {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await transport.emitQuestionSnapshot("a")
+        let batch = try XCTUnwrap(store.questions.first)
+        let target = DraftTarget(computerID: try XCTUnwrap(store.activeComputer?.id), sessionID: "a")
+        store.messageDrafts[target] = "my draft"
+        await transport.failNextRequest("question.answer", with: .remote("UPSTREAM_UNAVAILABLE"))
+        do {
+            try await store.answerQuestions(batch, answers: [.init(id: "name", selected: [], custom: "answer")], target: target)
+            XCTFail("Failed answers must remain editable.")
+        } catch {}
+        XCTAssertEqual(store.questions.first?.id, batch.id)
+        try await store.answerQuestions(batch, answers: [.init(id: "name", selected: [], custom: "answer")], target: target)
+        XCTAssertTrue(store.questions.isEmpty)
+        await transport.emitQuestionSnapshot("a")
+        XCTAssertTrue(store.questions.isEmpty)
+        XCTAssertEqual(store.messageDrafts[target], "my draft")
+        await store.selectSession(try XCTUnwrap(store.sessions.first { $0.id == "b" }))
+        XCTAssertTrue(store.questions.isEmpty)
+    }
+
+    func testConversationFeatureRepliesRejectAChangedSession() async throws {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        let target = DraftTarget(computerID: try XCTUnwrap(store.activeComputer?.id), sessionID: "a")
+        await transport.holdNextRequest("session.tool")
+        let pending = Task { () -> Bool in
+            do {
+                _ = try await store.conversationRequest("session.tool", parameters: ["seq": .number(1)], target: target)
+                return false
+            } catch { return true }
+        }
+        await transport.waitForRequest("session.tool")
+        await store.selectSession(try XCTUnwrap(store.sessions.first { $0.id == "b" }))
+        await transport.finishRequest("session.tool")
+        let rejected = await pending.value
+        XCTAssertTrue(rejected)
+    }
+
+    func testQueueSnapshotActionsAndSessionIsolation() async throws {
+        let transport = StoreTransportFixture()
+        await transport.setQueue("a", texts: ["desktop follow up"])
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        let queued = try XCTUnwrap(store.queuedMessages.first)
+        XCTAssertEqual(queued.text, "desktop follow up")
+        try await store.updateQueuedMessage(queued, action: "edit", text: "edited")
+        XCTAssertEqual(store.queuedMessages.first?.text, "edited")
+        XCTAssertNil(store.updatingQueueItemID)
+        await transport.failNextRequest("session.queue.update", with: .remote("UPSTREAM_ERROR"))
+        do {
+            try await store.updateQueuedMessage(queued, action: "remove")
+            XCTFail("A rejected queue operation must remain visible.")
+        } catch {}
+        XCTAssertEqual(store.queuedMessages.first?.text, "edited")
+        XCTAssertNil(store.updatingQueueItemID)
+        try await store.updateQueuedMessage(queued, action: "remove")
+        XCTAssertTrue(store.queuedMessages.isEmpty)
+        await transport.setQueue("a", texts: ["new desktop item"])
+        await transport.emitSnapshot("a", text: "a")
+        XCTAssertEqual(store.queuedMessages.first?.text, "new desktop item")
+        await store.selectSession(try XCTUnwrap(store.sessions.first { $0.id == "b" }))
+        XCTAssertTrue(store.queuedMessages.isEmpty)
+    }
+
+    func testQueueActionReplyCannotReplaceAnotherSessionsQueue() async throws {
+        let transport = StoreTransportFixture()
+        await transport.setQueue("a", texts: ["first"])
+        await transport.setQueue("b", texts: ["second"])
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        let message = try XCTUnwrap(store.queuedMessages.first)
+        await transport.holdNextRequest("session.queue.update")
+        let pending = Task { try? await store.updateQueuedMessage(message, action: "remove") }
+        await transport.waitForRequest("session.queue.update")
+        await store.selectSession(try XCTUnwrap(store.sessions.first { $0.id == "b" }))
+        await transport.finishRequest("session.queue.update")
+        await pending.value
+        XCTAssertEqual(store.queuedMessages.first?.text, "second")
+        XCTAssertNil(store.updatingQueueItemID)
+    }
+
+    func testSearchKeepsTheLatestQueryWhenAnOlderRequestFinishesLater() async {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        let search = SessionSearchModel()
+        search.query = "first phrase"
+        await transport.holdNextRequest("session.search")
+        let first = Task { await search.load(using: store) }
+        await transport.waitForRequest("session.search")
+
+        search.query = "second phrase"
+        await search.load(using: store)
+        XCTAssertEqual(search.results.first?.snippet, "second phrase")
+        await transport.finishRequest("session.search")
+        await first.value
+        XCTAssertEqual(search.results.first?.snippet, "second phrase")
+
+        await search.load(using: store)
+        let requests = await transport.requestCount("session.search")
+        XCTAssertEqual(requests, 2)
+        XCTAssertFalse(search.isLoading)
+    }
+
+    func testClearingSearchDiscardsAnInFlightReply() async {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        let search = SessionSearchModel()
+        search.query = "message content"
+        await transport.holdNextRequest("session.search")
+        let pending = Task { await search.load(using: store) }
+        await transport.waitForRequest("session.search")
+        search.reset()
+        await transport.finishRequest("session.search")
+        await pending.value
+        XCTAssertTrue(search.query.isEmpty)
+        XCTAssertTrue(search.results.isEmpty)
+        XCTAssertFalse(search.isLoading)
+    }
+
     func testStartupKeepsHomeWhileRestoringAndAuthenticatingSavedComputer() async {
         let repository = StoreComputerFixture()
         let transport = StoreTransportFixture()
@@ -87,7 +338,7 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertFalse(store.showsConnectionGuide)
     }
 
-    func testLostConnectionShowsGuideAndFailedRetryKeepsItVisible() async {
+    func testLostConnectionAndFailedRetryKeepConversationVisible() async {
         let transport = StoreTransportFixture()
         let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
         await store.start()
@@ -95,12 +346,157 @@ final class CoreStoreTests: XCTestCase {
 
         await transport.emitDisconnect()
         XCTAssertEqual(store.status, .disconnected)
-        XCTAssertTrue(store.showsConnectionGuide)
+        XCTAssertFalse(store.showsConnectionGuide)
+        XCTAssertEqual(store.messages.first?.text, "a")
         await store.reconnect()
 
         XCTAssertEqual(store.status, .disconnected)
-        XCTAssertTrue(store.showsConnectionGuide)
+        XCTAssertFalse(store.showsConnectionGuide)
+        XCTAssertEqual(store.messages.first?.text, "a")
         XCTAssertEqual(store.connectionFailure, .remote("AUTH_FAILED"))
+    }
+
+    func testColdLaunchRestoresLastConversationAndDraftFromDiskBeforeNetwork() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let firstTransport = StoreTransportFixture()
+        let first = DSBotStore(
+            repository: StoreComputerFixture(), client: firstTransport,
+            conversationStorage: FileConversationStorage(directory: directory)
+        )
+        await first.start()
+        await first.selectSession(session("b"))
+        await firstTransport.emitTranscriptSnapshot("b")
+        first.messageDrafts[DraftTarget(computerID: "local-fixture", sessionID: "b")] = "继续这里"
+        await first.flushConversationCache()
+
+        let transport = StoreTransportFixture()
+        await transport.holdNextConnection()
+        await transport.holdWatch("b")
+        let restored = DSBotStore(
+            repository: StoreComputerFixture(), client: transport,
+            conversationStorage: FileConversationStorage(directory: directory)
+        )
+        let startup = Task { await restored.start() }
+        await transport.waitForConnection()
+        XCTAssertEqual(restored.selectedSession?.id, "b")
+        XCTAssertEqual(restored.transcript?.entries.last?.text, "你好呀")
+        XCTAssertFalse(restored.transcriptRows.isEmpty)
+        XCTAssertEqual(restored.goal?.objective, "ship it")
+        XCTAssertEqual(restored.messageDrafts[DraftTarget(computerID: "local-fixture", sessionID: "b")], "继续这里")
+        XCTAssertFalse(restored.showsConnectionGuide)
+
+        await transport.finishConnection()
+        await transport.waitForWatch("b")
+        XCTAssertEqual(restored.transcript?.entries.last?.text, "你好呀")
+        await transport.finishWatch("b", text: "fresh history")
+        await startup.value
+        XCTAssertEqual(restored.selectedSession?.id, "b")
+        XCTAssertEqual(restored.messages.last?.text, "fresh history")
+        await restored.flushConversationCache()
+    }
+
+    func testWatchFailureKeepsPersistedContent() async throws {
+        let cache = MemoryConversationStorage()
+        await cache.save(cachedConversation())
+        let transport = StoreTransportFixture()
+        await transport.failNextRequest("session.watch", with: .timedOut)
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport, conversationStorage: cache)
+
+        await store.start()
+
+        XCTAssertEqual(store.selectedSession?.id, "b")
+        XCTAssertEqual(store.messages.first?.text, "cached history")
+        XCTAssertNotNil(store.error)
+        XCTAssertFalse(store.showsConnectionGuide)
+        await store.flushConversationCache()
+    }
+
+    func testMissingPersistedSessionFallsBackToAvailableConversation() async {
+        let cache = MemoryConversationStorage()
+        await cache.save(cachedConversation(sessionID: "removed"))
+        let transport = StoreTransportFixture()
+        await transport.failNextRequest("session.watch", with: .remote("NOT_FOUND"))
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport, conversationStorage: cache)
+
+        await store.start()
+
+        XCTAssertEqual(store.selectedSession?.id, "a")
+        XCTAssertEqual(store.messages.first?.text, "a")
+        await store.flushConversationCache()
+    }
+
+    func testPersistedNewTaskHomeDoesNotSelectFirstConversation() async {
+        let cache = MemoryConversationStorage()
+        let first = DSBotStore(repository: StoreComputerFixture(), client: StoreTransportFixture(), conversationStorage: cache)
+        await first.start()
+        first.beginNewTask()
+        await first.flushConversationCache()
+        let restored = DSBotStore(repository: StoreComputerFixture(), client: StoreTransportFixture(), conversationStorage: cache)
+
+        await restored.start()
+
+        XCTAssertTrue(restored.isChoosingWorkspace)
+        XCTAssertNil(restored.selectedSession)
+        XCTAssertTrue(restored.messages.isEmpty)
+        await restored.flushConversationCache()
+    }
+
+    func testAnotherComputersCacheDoesNotAppearDuringStartup() async {
+        let cache = MemoryConversationStorage()
+        await cache.save(cachedConversation(computerID: "other-computer"))
+        let transport = StoreTransportFixture()
+        await transport.holdNextConnection()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport, conversationStorage: cache)
+        let startup = Task { await store.start() }
+        await transport.waitForConnection()
+
+        XCTAssertNil(store.selectedSession)
+        XCTAssertTrue(store.messages.isEmpty)
+        XCTAssertTrue(store.isLoading)
+        XCTAssertFalse(store.isRestoring)
+        await transport.finishConnection()
+        await startup.value
+        await store.flushConversationCache()
+    }
+
+    func testRemovingComputerAlsoRemovesQueuedConversationCache() async throws {
+        let cache = MemoryConversationStorage()
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport, conversationStorage: cache)
+        await store.start()
+        await transport.emitSnapshot("a", text: "latest before removal")
+        let computer = try XCTUnwrap(store.activeComputer)
+
+        await store.removeComputer(computer)
+        await store.flushConversationCache()
+
+        let snapshot = await cache.load(for: computer.id)
+        XCTAssertNil(snapshot)
+        XCTAssertNil(store.selectedSession)
+    }
+
+    func testFailedComputerSwitchCannotLeakItsCacheIntoThePreviousNewTaskHome() async {
+        let cache = MemoryConversationStorage()
+        await cache.save(cachedConversation(computerID: "other", sessionID: "other-session"))
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport, conversationStorage: cache)
+        await store.start()
+        store.beginNewTask()
+        await transport.failConnections(with: .connectionFailed)
+        let other = Computer(
+            id: "other", name: "Other computer",
+            url: "http://127.0.0.1:3170/dsbot?pair=" + String(repeating: "b", count: 43),
+            lastUsedAt: 0
+        )
+
+        await store.selectComputer(other)
+
+        XCTAssertEqual(store.activeComputer?.id, "local-fixture")
+        XCTAssertTrue(store.isChoosingWorkspace)
+        XCTAssertNil(store.selectedSession)
+        XCTAssertTrue(store.messages.isEmpty)
+        await store.flushConversationCache()
     }
 
     func testSessionSwitchDoesNotWaitForPreviousStreamCleanup() async throws {
@@ -191,6 +587,7 @@ final class CoreStoreTests: XCTestCase {
         let transport = StoreTransportFixture()
         let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
         await store.start()
+        let initialModels = store.models
         await transport.failNextRequest("catalog.get", with: .remote("TEMPORARY"))
 
         await store.refreshCatalog()
@@ -198,109 +595,31 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertEqual(store.catalogError, DSBotFailure.remote("TEMPORARY").localizedDescription)
         XCTAssertFalse(store.isLoadingCatalog)
         XCTAssertNil(store.error)
+        XCTAssertEqual(store.models, initialModels)
 
         await store.refreshCatalog()
 
         XCTAssertNil(store.catalogError)
-        XCTAssertEqual(store.models, [])
+        XCTAssertEqual(store.models, initialModels)
     }
 
-    func testChatScrollSchedulerKeepsFiringDuringContinuousStreaming() async throws {
-        let scheduler = ChatLatestScrollScheduler()
-        var scrollCount = 0
+    func testStopCoalescesRequestsAndResetsWhenStartingANewTask() async {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await transport.holdNextRequest("session.stop")
+        let stopping = Task { await store.stopSession() }
+        await transport.waitForRequest("session.stop")
+        XCTAssertTrue(store.isStoppingSession)
 
-        for _ in 0..<8 {
-            scheduler.schedule(
-                afterNanoseconds: 70_000_000,
-                shouldScroll: { true },
-                action: { scrollCount += 1 }
-            )
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-        try await Task.sleep(nanoseconds: 90_000_000)
-
-        XCTAssertGreaterThanOrEqual(scrollCount, 3)
-    }
-
-    func testChatScrollSchedulerPreservesHistoryPositionDuringViewportChanges() async throws {
-        let scheduler = ChatLatestScrollScheduler()
-        var followsLatest = true
-        var isDraggingHistory = false
-        var scrollCount = 0
-
-        scheduler.schedule(
-            afterNanoseconds: 70_000_000,
-            shouldScroll: { followsLatest && !isDraggingHistory },
-            action: { scrollCount += 1 }
-        )
-        followsLatest = false
-        isDraggingHistory = true
-        try await Task.sleep(nanoseconds: 100_000_000)
-
-        XCTAssertEqual(scrollCount, 0)
-    }
-
-    func testKeyboardViewportChangesDebounceAndRespectHistoryPosition() async throws {
-        let scheduler = ChatViewportScrollScheduler()
-        var followsLatest = true
-        var isDraggingHistory = false
-        var scrollCount = 0
-
-        for _ in 0..<5 {
-            scheduler.schedule(
-                afterNanoseconds: 70_000_000,
-                shouldScroll: { followsLatest && !isDraggingHistory },
-                action: { scrollCount += 1 }
-            )
-            try await Task.sleep(nanoseconds: 25_000_000)
-        }
-        try await Task.sleep(nanoseconds: 90_000_000)
-        XCTAssertEqual(scrollCount, 1)
-
-        scheduler.schedule(
-            afterNanoseconds: 70_000_000,
-            shouldScroll: { followsLatest && !isDraggingHistory },
-            action: { scrollCount += 1 }
-        )
-        followsLatest = false
-        isDraggingHistory = true
-        try await Task.sleep(nanoseconds: 100_000_000)
-
-        XCTAssertEqual(scrollCount, 1)
-    }
-
-    func testChatScrollSchedulersCancelOldSessionAndAcceptNewScroll() async throws {
-        let contentScheduler = ChatLatestScrollScheduler()
-        let viewportScheduler = ChatViewportScrollScheduler()
-        var scrollCount = 0
-
-        contentScheduler.schedule(
-            afterNanoseconds: 100_000_000,
-            shouldScroll: { true },
-            action: { scrollCount += 10 }
-        )
-        viewportScheduler.schedule(
-            afterNanoseconds: 100_000_000,
-            shouldScroll: { true },
-            action: { scrollCount += 100 }
-        )
-        contentScheduler.cancel()
-        viewportScheduler.cancel()
-        contentScheduler.schedule(
-            afterNanoseconds: 20_000_000,
-            shouldScroll: { true },
-            action: { scrollCount += 1 }
-        )
-        viewportScheduler.schedule(
-            afterNanoseconds: 20_000_000,
-            shouldScroll: { true },
-            action: { scrollCount += 1 }
-        )
-        try await Task.sleep(nanoseconds: 50_000_000)
-        XCTAssertEqual(scrollCount, 2)
-        try await Task.sleep(nanoseconds: 80_000_000)
-
-        XCTAssertEqual(scrollCount, 2)
+        await store.stopSession()
+        let requests = await transport.requestCount("session.stop")
+        XCTAssertEqual(requests, 1)
+        store.beginNewTask()
+        XCTAssertFalse(store.isStoppingSession)
+        await transport.finishRequest("session.stop")
+        await stopping.value
+        XCTAssertFalse(store.isStoppingSession)
     }
 
     func testLateSessionReplyCannotReplaceNewerSelection() async throws {
@@ -472,6 +791,83 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertEqual(requests[1]["command"]?.stringValue, "compact")
         XCTAssertNil(requests[1]["argument"], "A command without an argument sends none.")
         XCTAssertNil(store.error)
+    }
+
+    func testPlanCommandUpdatesImmediatelyAndRejectsSnapshotsFromThePreviousWatch() async throws {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        let watchID = await transport.watchID(for: "a")
+        let previousWatchID = try XCTUnwrap(watchID)
+        let draftTarget = DraftTarget(computerID: "local-fixture", sessionID: "a")
+        store.messageDrafts[draftTarget] = "Keep this draft"
+        let messages = store.messages
+        await transport.holdWatch("a")
+
+        let entering = Task { await store.runCommand(.plan) }
+        await transport.waitForWatch("a")
+
+        XCTAssertTrue(store.planMode)
+        XCTAssertTrue(store.isChangingPlanMode)
+        XCTAssertFalse(store.isLoadingSession)
+        XCTAssertEqual(store.messages, messages)
+        await transport.emitSnapshot("a", text: "stale", watchID: previousWatchID)
+        XCTAssertEqual(store.messages, messages)
+        XCTAssertTrue(store.planMode)
+        _ = await store.runCommand(.plan)
+        let pendingRequests = await transport.commandParams()
+        XCTAssertEqual(pendingRequests.count, 1)
+
+        await transport.finishWatch("a", text: "a")
+        let outcome = await entering.value
+        XCTAssertEqual(outcome?.isError, false)
+        XCTAssertTrue(store.planMode)
+        XCTAssertFalse(store.isChangingPlanMode)
+        XCTAssertEqual(store.messageDrafts[draftTarget], "Keep this draft")
+
+        _ = await store.runCommand(.plan, argument: "off")
+        XCTAssertFalse(store.planMode)
+        XCTAssertFalse(store.isChangingPlanMode)
+        let watchCount = await transport.watchCount("a")
+        XCTAssertEqual(watchCount, 3)
+    }
+
+    func testRefusedPlanCommandPreservesTheModeAndDoesNotReplaceTheWatch() async {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await transport.emitTranscriptSnapshot("a")
+        await transport.setCommandReply(.object(["kind": .string("error"), "text": .string("Plan mode is unavailable.")]))
+
+        let outcome = await store.runCommand(.plan, argument: "off")
+
+        XCTAssertEqual(outcome?.isError, true)
+        XCTAssertTrue(store.planMode)
+        XCTAssertFalse(store.isChangingPlanMode)
+        let watchCount = await transport.watchCount("a")
+        XCTAssertEqual(watchCount, 1)
+    }
+
+    func testLatePlanCommandCannotChangeAnotherSessionsModeOrWatch() async {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await transport.holdNextRequest("session.command")
+        let entering = Task { await store.runCommand(.plan) }
+        await transport.waitForRequest("session.command")
+        XCTAssertTrue(store.isChangingPlanMode)
+
+        await store.selectSession(session("b"))
+        XCTAssertFalse(store.isChangingPlanMode)
+        await transport.finishRequest("session.command")
+        let outcome = await entering.value
+
+        XCTAssertNil(outcome)
+        XCTAssertEqual(store.selectedSession?.id, "b")
+        XCTAssertFalse(store.planMode)
+        XCTAssertFalse(store.isChangingPlanMode)
+        let watchCount = await transport.watchCount("b")
+        XCTAssertEqual(watchCount, 1)
     }
 
     func testRunCommandSurfacesDesktopRefusalsAsErrorOutcomes() async throws {
@@ -733,7 +1129,6 @@ final class CoreStoreTests: XCTestCase {
             .web(page: .panel, target: "insight")
         )
         XCTAssertTrue(store.activeNavigation.views.isEmpty, "Empty stays empty: the app adds nothing.")
-        XCTAssertTrue(store.activeNavigation.dock.isEmpty)
     }
 
     func testRenamingAndDeletingAWorkspaceAndUnarchivingGoThroughThePlugin() async {
@@ -804,6 +1199,16 @@ final class CoreStoreTests: XCTestCase {
 
     private func session(_ id: String) -> SessionSummary {
         SessionSummary(id: id, title: id, updatedAt: 1, status: "idle")
+    }
+
+    private func cachedConversation(computerID: String = "local-fixture", sessionID: String = "b") -> ConversationSnapshot {
+        ConversationSnapshot(
+            computerID: computerID, sessions: [session("a"), session(sessionID)], workspaces: [],
+            detail: SessionDetail(
+                session: session(sessionID),
+                messages: [ChatMessage(id: "cached", role: "assistant", text: "cached history")]
+            ), isChoosingWorkspace: false, drafts: [:]
+        )
     }
 }
 
@@ -888,11 +1293,14 @@ private actor StoreTransportFixture: DSBotTransport {
     private var sendRequests: [[String: JSONValue]] = []
     private var changeRequests: [(method: String, params: [String: JSONValue])] = []
     private var commandReply: JSONValue = .object(["kind": .string("success"), "text": .string("Plan mode off.")])
+    private var planModes: [String: Bool] = [:]
     private var createRequests: [[String: JSONValue]] = []
     private var configureRequests: [[String: JSONValue]] = []
     private var extraListedRows: [JSONValue] = []
     private var createdWorkspaces: [String: String] = [:]
     private var navigationReply: JSONValue?
+    private var forkReply: JSONValue = .object([:])
+    private var queues: [String: [JSONValue]] = [:]
 
     func connect(
         endpoint: ConnectionEndpoint,
@@ -918,6 +1326,7 @@ private actor StoreTransportFixture: DSBotTransport {
 
     func request(_ method: String, params: [String: JSONValue], timeoutSeconds: UInt64) async throws -> JSONValue {
         requestCounts[method, default: 0] += 1
+        let listedSessions = method == "session.list" ? ["a", "b", "c"].map { summary($0) } + extraListedRows : []
         if ["session.rename", "session.pin", "session.archive"].contains(method) {
             changeRequests.append((method, params))
         }
@@ -932,7 +1341,14 @@ private actor StoreTransportFixture: DSBotTransport {
         }
         switch method {
         case "session.list":
-            return .array(["a", "b", "c"].map { summary($0) } + extraListedRows)
+            return .array(listedSessions)
+        case "session.fork":
+            return forkReply
+        case "session.search":
+            return .object([
+                "items": .array([.object(["session": summary("a"), "snippet": params["query"] ?? .string("")])]),
+                "hasMore": .bool(false)
+            ])
         case "navigation.get":
             return navigationReply ?? .object([:])
         case "session.watch":
@@ -986,6 +1402,10 @@ private actor StoreTransportFixture: DSBotTransport {
             return .object([:])
         case "session.command":
             commandRequests.append(params)
+            if params["command"]?.stringValue == "plan", commandReply["kind"]?.stringValue != "error",
+               let id = params["id"]?.stringValue {
+                planModes[id] = params["argument"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) != "off"
+            }
             return commandReply
         case "file.upload":
             uploadRequests.append(params)
@@ -995,6 +1415,20 @@ private actor StoreTransportFixture: DSBotTransport {
         case "session.send":
             sendRequests.append(params)
             return .bool(true)
+        case "session.queue.update":
+            let id = params["id"]!.stringValue!
+            let itemID = params["itemId"]?.stringValue
+            if params["action"]?.stringValue == "edit" {
+                queues[id] = queues[id, default: []].map { item in
+                    guard item["id"]?.stringValue == itemID else { return item }
+                    var value = item.objectValue!
+                    value["text"] = params["text"]
+                    return .object(value)
+                }
+            } else {
+                queues[id]?.removeAll { $0["id"]?.stringValue == itemID }
+            }
+            return .object(["queuedMessages": .array(queues[id] ?? [])])
         default:
             return .object([:])
         }
@@ -1011,6 +1445,9 @@ private actor StoreTransportFixture: DSBotTransport {
     func conversationChanges() -> [(method: String, params: [String: JSONValue])] { changeRequests }
     func failConnections(with failure: DSBotFailure?) { connectionFailure = failure }
     func emitDisconnect() async { await onDisconnect?() }
+    func emitEvent(_ topic: String, params: JSONValue) async {
+        await event?(.object(["type": .string("event"), "topic": .string(topic), "params": params]))
+    }
     func holdNextConnection() { shouldHoldConnection = true }
     func failNextRequest(_ method: String, with failure: DSBotFailure) {
         nextRequestFailures[method] = failure
@@ -1022,7 +1459,15 @@ private actor StoreTransportFixture: DSBotTransport {
     func configureParams() -> [[String: JSONValue]] { configureRequests }
     func uploadParams() -> [[String: JSONValue]] { uploadRequests }
     func sendParams() -> [[String: JSONValue]] { sendRequests }
+    func setQueue(_ id: String, texts: [String]) {
+        queues[id] = texts.enumerated().map { index, text in
+            .object(["id": .string("\(id)-\(index)"), "text": .string(text), "editable": .bool(true)])
+        }
+    }
     func setCommandReply(_ reply: JSONValue) { commandReply = reply }
+    func setForkReply(_ reply: JSONValue) { forkReply = reply }
+    func listSession(_ id: String) { extraListedRows.append(summary(id)) }
+    func watchID(for id: String) -> String? { watchIDs[id] }
     func setNavigation(_ reply: JSONValue) { navigationReply = reply }
     /// A conversation that has no message yet, as the host lists it.
     func listBlankSession(_ id: String, workspaceId: String) {
@@ -1082,6 +1527,18 @@ private actor StoreTransportFixture: DSBotTransport {
         ]))
     }
 
+    func emitQuestionSnapshot(_ id: String) async {
+        var params = detail(id, text: id).objectValue!
+        params["questions"] = .array([.object([
+            "id": .string("question-\(id)"), "sessionId": .string(id), "state": .string("continued"),
+            "questions": .array([.object([
+                "id": .string("name"), "question": .string("Name?"), "multiSelect": .bool(false), "options": .array([])
+            ])])
+        ])])
+        params["watchId"] = .string(watchIDs[id] ?? "")
+        await event?(.object(["type": .string("event"), "topic": .string("session.snapshot"), "params": .object(params)]))
+    }
+
     /// A snapshot of a conversation that has nothing in it yet.
     func emitEmptySnapshot(_ id: String) async {
         var params = detail(id, text: id).objectValue!
@@ -1132,6 +1589,8 @@ private actor StoreTransportFixture: DSBotTransport {
     private func detail(_ id: String, text: String, approvalID: String? = nil) -> JSONValue {
         .object([
             "session": summary(id),
+            "planMode": .bool(planModes[id] ?? false),
+            "queuedMessages": .array(queues[id] ?? []),
             "messages": .array([.object([
                 "id": .string("message-" + id), "role": .string("assistant"), "text": .string(text)
             ])]),

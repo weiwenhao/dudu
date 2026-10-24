@@ -6,16 +6,20 @@ import {
   createTypertRpcAdapter,
 } from '../host/native-bridge.mjs';
 
-function iterable(frames, delayBeforeDoneMs = 0) {
+function iterable(frames, delayBeforeDoneMs = 0, keepOpen = false) {
+  let disposed = false;
+  let finish;
   return {
     [Symbol.asyncIterator]() {
       let index = 0;
       return {
         async next() {
+          if (disposed) return { done: true };
           if (index < frames.length) return { value: frames[index++], done: false };
           if (delayBeforeDoneMs) {
             await new Promise((resolve) => setTimeout(resolve, delayBeforeDoneMs));
           }
+          if (keepOpen && !disposed) return new Promise((resolve) => { finish = resolve; });
           return { done: true };
         },
         async return() {
@@ -23,7 +27,7 @@ function iterable(frames, delayBeforeDoneMs = 0) {
         },
       };
     },
-    async dispose() {},
+    async dispose() { disposed = true; finish?.({ done: true }); },
   };
 }
 
@@ -43,12 +47,16 @@ function eventMessage(id, seq, value) {
 function makeHarness({
   snapshot,
   followFrames = [],
+  controlFrames = [],
   followDelayMs = 0,
   rows,
   projections,
   scheduleTasks = [],
   responses = {},
   workspaces = { items: [] },
+  conversationReads,
+  questionBridge,
+  streams = {},
 } = {}) {
   const calls = [];
   const sessionRows = rows ?? [{
@@ -82,16 +90,18 @@ function makeHarness({
       return {};
     },
     async open(_channel, endpoint) {
+      if (streams[endpoint]) return streams[endpoint]();
       if (endpoint === 'workspace/follow') {
         return iterable([{ type: 'baseline', value: workspaces }]);
       }
       if (endpoint === 'session/follow') {
-        return iterable([snapshot, ...followFrames], followDelayMs);
+        return iterable([snapshot, ...followFrames], followDelayMs, true);
       }
+      if (endpoint === 'session/control') return iterable(controlFrames, followDelayMs, true);
       throw new Error(`unexpected stream endpoint: ${endpoint}`);
     },
   };
-  return { bridge: createNativeBridge({ rpc }), calls };
+  return { bridge: createNativeBridge({ rpc, conversationReads, questionBridge }), calls };
 }
 
 test('Typert adapter uses the owner peer and only invokes named allowlisted endpoints', async () => {
@@ -135,11 +145,73 @@ test('Typert adapter uses the owner peer and only invokes named allowlisted endp
     peer,
     signal: undefined,
   });
+  await rpc.open('/api', 'session/control');
+  assert.deepEqual(streams.at(-1), {
+    namespace: 'session', method: 'control', args: {}, peer, signal: undefined,
+  });
+  await rpc.call('/api', 'session/updateQueue', {
+    sessionId: 'session-1', itemId: 'queued', action: { kind: 'remove' },
+  });
+  assert.deepEqual(invocations.at(-1).args, {
+    request: { sessionId: 'session-1', itemId: 'queued', action: { kind: 'remove' } },
+  });
   await assert.rejects(rpc.call('/api', 'arbitrary/execute'), { code: 'UNSUPPORTED' });
   assert.throws(() => createTypertRpcAdapter({
     gateway,
     peer: { principal: { kind: 'user' } },
   }), /owner-scoped/);
+});
+
+test('native session search uses DSH content search and returns bounded visible conversation snippets', async () => {
+  const { bridge, calls } = makeHarness({
+    rows: [
+      { sessionId: 'session-1', title: '手机交互', updatedAt: 123 },
+      { sessionId: 'blank', title: '新任务', blank: true },
+    ],
+    responses: {
+      'session/search': {
+        items: [
+          { sessionId: 'session-1', snippet: '长按说话' + '🐋'.repeat(300) },
+          { sessionId: 'session-1', snippet: 'duplicate' },
+          { sessionId: 'unknown', snippet: 'not visible in the list' },
+          { sessionId: 'blank', snippet: 'blank conversations stay hidden' },
+        ],
+        hasMore: true,
+      },
+    },
+  });
+  const result = await bridge.dispatch('session.search', { query: '  长按说话  ' }, {});
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].session.id, 'session-1');
+  assert.equal(result.items[0].session.title, '手机交互');
+  assert.equal([...result.items[0].snippet].length, 240);
+  assert.equal(result.hasMore, true);
+  assert.deepEqual(calls.find((call) => call.endpoint === 'session/search')?.args, [{ query: '长按说话' }]);
+  assert.equal(calls.some((call) => ['session/follow', 'session/prompt'].includes(call.endpoint)), false);
+});
+
+test('native session search rejects blank, oversized and non-text queries before reaching DSH', async () => {
+  const { bridge, calls } = makeHarness();
+  for (const query of ['', '  ', 'a'.repeat(501), 17, null]) {
+    await assert.rejects(bridge.dispatch('session.search', { query }, {}), { code: 'BAD_REQUEST' });
+  }
+  assert.deepEqual(calls, []);
+});
+
+test('Typert session search carries only the named search request', async () => {
+  const peer = { principal: { kind: 'owner' } };
+  const invocations = [];
+  const rpc = createTypertRpcAdapter({
+    peer,
+    gateway: {
+      async invoke(request) { invocations.push(request); return { ok: true, value: { items: [], hasMore: false } }; },
+      async stream() { return iterable([]); },
+    },
+  });
+  await rpc.call('/api', 'session/search', { query: '布局' });
+  assert.deepEqual(invocations, [{
+    namespace: 'session', method: 'search', args: { request: { query: '布局' } }, peer, signal: undefined,
+  }]);
 });
 
 test('native bridge no longer exposes a separate skill catalog endpoint', async () => {
@@ -520,7 +592,7 @@ test('interrupted turns and a turn ending after a tool step preserve visible ass
   assert.deepEqual(detail.messages.map((message) => message.id), ['first', 'second']);
 });
 
-test('session listing and selection do not wait for a workspace baseline', async () => {
+test('session listing waits for authoritative workspace layout while selection can proceed independently', async () => {
   let releaseWorkspace;
   let workspaceStarted;
   const workspaceStartedPromise = new Promise((resolve) => { workspaceStarted = resolve; });
@@ -536,6 +608,7 @@ test('session listing and selection do not wait for a workspace baseline', async
       throw new Error(`unexpected RPC method: ${endpoint}`);
     },
     async open(_channel, endpoint) {
+      if (endpoint === 'session/control') return iterable([], 0, true);
       if (endpoint === 'workspace/follow') {
         workspaceStarted();
         let first = true;
@@ -595,9 +668,10 @@ test('session listing and selection do not wait for a workspace baseline', async
   };
 
   try {
-    const sessions = await beforeDeadline(bridge.dispatch('session.list', {}, {}));
+    let listed = false;
+    const listing = bridge.dispatch('session.list', {}, {}).then((value) => { listed = true; return value; });
     await workspaceStartedPromise;
-    assert.equal(sessions[0].id, 'session-1');
+    assert.equal(listed, false);
 
     const detail = await beforeDeadline(bridge.dispatch('session.watch', {
       id: 'session-1',
@@ -606,12 +680,18 @@ test('session listing and selection do not wait for a workspace baseline', async
     assert.equal(sessionListCalls, 1, 'selection reuses the recent DSH session rows');
 
     await connection.cancel();
+    releaseWorkspace({
+      type: 'baseline',
+      value: { items: [{ workspaceId: 'workspace-1', title: 'Project', path: '/tmp/project' }] },
+    });
+    const sessions = await listing;
+    assert.equal(sessions[0].workspaceName, 'Project');
   } finally {
     releaseWorkspace({
       type: 'baseline',
       value: { items: [{ workspaceId: 'workspace-1', title: 'Project', path: '/tmp/project' }] },
     });
-    await bridge.dispatch('workspace.list', {}, {}).catch(() => {});
+    await bridge.dispatch('workspace.list', {}, {});
   }
   const regrouped = await bridge.dispatch('session.list', {}, {});
   assert.equal(regrouped[0].workspaceName, 'Project');
@@ -631,6 +711,7 @@ test('stream disposal settles a pending iterator.next before iterator.return', a
       throw new Error(`unexpected RPC method: ${endpoint}`);
     },
     async open(_channel, endpoint) {
+      if (endpoint === 'session/control') return iterable([], 0, true);
       if (endpoint !== 'session/follow') throw new Error(`unexpected stream endpoint: ${endpoint}`);
       let first = true;
       return {
@@ -765,6 +846,28 @@ test('phone commands reject anything outside the allowlist and report DSH errors
   });
 });
 
+test('malformed command results cannot report success', async () => {
+  for (const result of [{}, { result: null }, { result: { kind: 'other', text: '' } }, { result: { kind: 'success' } }]) {
+    const { bridge } = commandHarness({ 'commands/execute': () => result });
+    await assert.rejects(bridge.dispatch('session.command', { command: 'plan' }, connection()), { code: 'UPSTREAM_UNAVAILABLE' });
+  }
+});
+
+test('permission configuration must preserve a rejected command outcome', async () => {
+  for (const kind of ['success', 'error']) {
+    const { bridge, calls } = commandHarness({
+      'permissionPresets/catalog': () => ({ options: [{ value: 'read-only' }] }),
+      'commands/execute': () => ({ result: { kind, text: 'Permission result' } }),
+    });
+    const operation = bridge.dispatch('session.configure', { id: 'session-1', permissionId: 'read-only' }, {});
+    if (kind === 'success') await operation;
+    else await assert.rejects(operation, { code: 'UPSTREAM_ERROR' });
+    assert.deepEqual(calls.at(-1).args, [{
+      agentId: 'session-1', line: '/permission read-only', submittedAttachments: [],
+    }]);
+  }
+});
+
 test('file upload stages exact bytes for the session and returns only the opaque receipt', async () => {
   assert.ok(NATIVE_METHODS.includes('file.upload'));
   const data = Buffer.from('hello report').toString('base64');
@@ -875,6 +978,345 @@ function surface(type, seq, time, data, extra = {}) {
   return { type: 'event', event: { type, seq, time, surfaceOp: 'append', data, ...extra } };
 }
 
+function attachmentConnection() {
+  return {
+    closed: false,
+    watchGeneration: 1,
+    cancel: async () => {},
+    setWatch(cancel, generation) {
+      this.cancel = cancel;
+      return generation === this.watchGeneration;
+    },
+    async stopWatch() {
+      this.watchGeneration += 1;
+      await this.cancel();
+    },
+    sendEvent() {},
+  };
+}
+
+function controlledStream(frames = []) {
+  const buffered = [...frames];
+  let pending;
+  let ended = false;
+  let failure;
+  let disposals = 0;
+  return {
+    [Symbol.asyncIterator]() {
+      return {
+        next() {
+          if (failure) return Promise.reject(failure);
+          if (buffered.length) return Promise.resolve({ value: buffered.shift(), done: false });
+          if (ended) return Promise.resolve({ done: true });
+          return new Promise((resolve, reject) => { pending = { resolve, reject }; });
+        },
+        async return() { return { done: true }; },
+      };
+    },
+    end() { ended = true; pending?.resolve({ done: true }); },
+    fail(error) { failure = error; pending?.reject(error); },
+    async dispose() { disposals += 1; this.end(); },
+    get disposals() { return disposals; },
+  };
+}
+
+test('ended and failed watch streams notify once, close both streams and release question ownership', async () => {
+  for (const source of ['follow', 'control']) {
+    for (const outcome of ['end', 'fail']) {
+      const follow = controlledStream([{ type: 'snapshot', records: [], projections: { values: {} } }]);
+      const control = controlledStream();
+      let released = 0;
+      const { bridge } = makeHarness({
+        streams: { 'session/follow': () => follow, 'session/control': () => control },
+        questionBridge: { watch() { return () => { released += 1; }; } },
+      });
+      const connection = attachmentConnection();
+      const events = [];
+      connection.sendEvent = (topic, params) => events.push({ topic, params });
+      const watchId = 'a2f7f43c-b843-4e16-b82f-bbc2e27d82b0';
+      await bridge.dispatch('session.watch', { id: 'session-1', watchId }, connection, { watchGeneration: 1 });
+      await new Promise((resolve) => setImmediate(resolve));
+      const failing = source === 'follow' ? follow : control;
+      if (outcome === 'end') failing.end();
+      else failing.fail(new Error('Private upstream detail must not escape'));
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(events, [{
+        topic: 'session.watch.failed',
+        params: { id: 'session-1', watchId, code: 'UPSTREAM_UNAVAILABLE', source },
+      }]);
+      assert.equal(connection.nativeAttachmentState, undefined);
+      assert.equal(follow.disposals, 1);
+      assert.equal(control.disposals, 1);
+      assert.equal(released, 1);
+      await connection.cancel();
+      assert.equal(released, 1);
+    }
+  }
+});
+
+test('initial watch failures close the acquired stream and never retain attachment authority', async () => {
+  for (const mode of ['reject', 'invalid']) {
+    const stream = controlledStream(mode === 'invalid' ? [{ type: 'unexpected' }] : []);
+    if (mode === 'reject') stream.fail(new Error('private'));
+    const { bridge } = makeHarness({ streams: { 'session/follow': () => stream } });
+    const connection = attachmentConnection();
+    await assert.rejects(bridge.dispatch('session.watch', { id: 'session-1' }, connection, { watchGeneration: 1 }), { code: 'UPSTREAM_UNAVAILABLE' });
+    assert.equal(stream.disposals, 1);
+    assert.equal(connection.nativeAttachmentState, undefined);
+  }
+});
+
+test('watch replacement and explicit cancellation never report upstream failures', async () => {
+  const follow = controlledStream([{ type: 'snapshot', records: [], projections: { values: {} } }]);
+  const control = controlledStream();
+  const { bridge } = makeHarness({ streams: { 'session/follow': () => follow, 'session/control': () => control } });
+  const connection = attachmentConnection();
+  const events = [];
+  connection.sendEvent = (...args) => events.push(args);
+  await bridge.dispatch('session.watch', { id: 'session-1' }, connection, { watchGeneration: 1 });
+  await new Promise((resolve) => setImmediate(resolve));
+  connection.watchGeneration = 2;
+  follow.fail(new Error('old watch'));
+  await connection.cancel();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events, []);
+});
+
+test('an unwatch request only cancels its own watch, including one still opening', async () => {
+  const oldWatchId = 'a2f7f43c-b843-4e16-b82f-bbc2e27d82b0';
+  const newWatchId = 'b2f7f43c-b843-4e16-b82f-bbc2e27d82b0';
+  const { bridge } = makeHarness({ snapshot: { type: 'snapshot', records: [], projections: { values: {} } } });
+  const connection = attachmentConnection();
+  await bridge.dispatch('session.watch', { id: 'session-1', watchId: newWatchId }, connection, { watchGeneration: 1 });
+  await bridge.dispatch('session.unwatch', { watchId: oldWatchId }, connection);
+  assert.equal(connection.watchGeneration, 1);
+  assert.ok(connection.nativeAttachmentState);
+  await assert.rejects(bridge.dispatch('session.unwatch', {}, connection), { code: 'BAD_REQUEST' });
+  await bridge.dispatch('session.unwatch', { watchId: newWatchId }, connection);
+  assert.equal(connection.watchGeneration, 2);
+  assert.equal(connection.nativeAttachmentState, undefined);
+
+  const stream = controlledStream();
+  const opening = makeHarness({ streams: { 'session/follow': () => stream } });
+  const pendingConnection = attachmentConnection();
+  const pending = opening.bridge.dispatch('session.watch', { id: 'session-1', watchId: newWatchId }, pendingConnection, { watchGeneration: 1 });
+  await new Promise((resolve) => setImmediate(resolve));
+  const rejected = assert.rejects(pending, { code: 'UPSTREAM_UNAVAILABLE' });
+  await opening.bridge.dispatch('session.unwatch', { watchId: newWatchId }, pendingConnection);
+  await rejected;
+  assert.equal(stream.disposals, 1);
+  assert.equal(pendingConnection.nativeAttachmentState, undefined);
+});
+
+test('workspace and catalog failures and missing newly-created sessions cannot return fabricated success', async () => {
+  const workspace = makeHarness({ streams: { 'workspace/follow': () => { throw new Error('broken workspace'); } } });
+  await assert.rejects(workspace.bridge.dispatch('session.list', {}, {}), { code: 'UPSTREAM_UNAVAILABLE' });
+  const catalog = makeHarness({ responses: { 'agentPresets/list': () => { throw new Error('broken presets'); } } });
+  await assert.rejects(catalog.bridge.dispatch('catalog.get', {}, {}), { code: 'UPSTREAM_UNAVAILABLE' });
+  const created = makeHarness({ responses: { 'session/create': { sessionId: 'missing' } } });
+  await assert.rejects(created.bridge.dispatch('session.create', {}, {}), { code: 'UPSTREAM_UNAVAILABLE' });
+});
+
+test('queue mutation acknowledges its own result and leaves updates to the sequenced control stream', async () => {
+  const { bridge, calls } = makeHarness({
+    responses: { 'session/projections': () => { throw new Error('An unrelated refresh must not change mutation admission.'); } },
+  });
+  await bridge.dispatch('session.queue.update', { id: 'session-1', itemId: 'queued', action: 'remove' }, {});
+  assert.equal(calls.filter((call) => call.endpoint === 'session/updateQueue').length, 1);
+  assert.equal(calls.some((call) => call.endpoint === 'session/projections'), false);
+});
+
+test('paged conversation features use durable event coordinates and never accept phone-supplied file paths', async () => {
+  const fileReads = [];
+  const records = [
+    surface('user/message', 1, 100, { id: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'Write a report' }] }),
+    surface('turn/start', 2, 110, { turn: 1 }),
+    surface('step/start', 3, 120, { turn: 1, step: 1 }),
+    surface('assistant/message', 4, 140, { turn: 1, step: 1, message: { id: 'assistant', content: [
+      { type: 'tool-call', id: 'write', name: 'write', argsRaw: '{"file_path":"/workspace/report.md","content":"report"}' },
+    ] } }),
+    surface('tool/call', 5, 150, { turn: 1, step: 1, callId: 'write', name: 'write', arguments: '{"file_path":"/workspace/report.md","content":"report"}' }),
+    surface('tool/result', 6, 160, { turn: 1, step: 1, message: { source: { callId: 'write' }, content: [{ type: 'text', text: 'saved' }] } }),
+    surface('workspace/changes', 7, 170, { turn: 1 }),
+    surface('deliverables/presented', 8, 180, { turn: 1, files: [{ path: '/workspace/report.md', description: 'Report' }] }),
+    surface('step/end', 9, 190, { turn: 1, step: 1 }),
+    surface('turn/end', 10, 200, { turn: 1, reason: { kind: 'completed' } }),
+  ];
+  const { bridge, calls } = makeHarness({
+    snapshot: { type: 'snapshot', records: records.slice(-3), cursor: 10, hasMore: true, projections: { values: {} } },
+    responses: {
+      'session/page': (request) => ({
+        records: records.filter((item) => item.event.seq <= request.throughSeq && item.event.seq < request.beforeSeq)
+          .slice(-request.maxMessages),
+        hasMore: request.maxMessages === 1 && request.beforeSeq > 2,
+      }),
+      'session/fork': { sessionId: 'branch-1' },
+    },
+    conversationReads: { async read(kind, coordinates) {
+      fileReads.push({ kind, coordinates });
+      if (kind === 'file') return { dataBase64: 'b2s=', mediaType: 'text/plain' };
+      return { files: [], kind: 'text' };
+    } },
+  });
+  const connection = attachmentConnection();
+  const detail = await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, connection, { watchGeneration: 1 });
+  assert.equal(detail.transcript.beforeSeq, 8);
+  assert.equal(detail.transcript.hasMore, true);
+  const older = await bridge.dispatch('session.page', { id: 'session-1', beforeSeq: 8, throughSeq: 10 }, connection);
+  assert.equal(older.transcript.beforeSeq, 1);
+  assert.equal(older.transcript.hasMore, false);
+  assert.equal(older.transcript.tools.write.seq, 5);
+  assert.equal(older.transcript.tools.write.resultSeq, 6);
+  assert.equal(connection.nativeAttachmentState.state.historyStart, 8);
+  const tool = await bridge.dispatch('session.tool', { id: 'session-1', callId: 'write', seq: 5, resultSeq: 6 }, connection);
+  assert.equal(tool.output.text, 'saved');
+  await bridge.dispatch('session.changes', { id: 'session-1', seq: 7 }, connection);
+  await bridge.dispatch('session.diff', { id: 'session-1', seq: 7, index: 0 }, connection);
+  const file = await bridge.dispatch('session.file', {
+    id: 'session-1', kind: 'produced', seq: 6, callSeq: 5, path: '/etc/passwd',
+  }, connection);
+  assert.equal(file.name, 'report.md');
+  assert.deepEqual(fileReads, [
+    { kind: 'summary', coordinates: { sessionId: 'session-1', seq: 7 } },
+    { kind: 'diff', coordinates: { sessionId: 'session-1', seq: 7, index: 0 } },
+    { kind: 'file', coordinates: { path: '/workspace/report.md' } },
+  ]);
+  const measured = await bridge.dispatch('session.performance', { id: 'session-1', turn: 1, seq: 10 }, connection);
+  assert.equal(measured.stats.steps, 1);
+  assert.equal(measured.stats.llmMs, 20);
+  assert.equal(measured.stats.toolMs, 10);
+  assert.deepEqual(await bridge.dispatch('session.fork', { id: 'session-1', seq: 1 }, connection), { sessionId: 'branch-1' });
+  assert.deepEqual(calls.findLast((call) => call.endpoint === 'session/fork').args, [{ sessionId: 'session-1', atSeq: 1 }]);
+  for (const [method, params] of [
+    ['session.page', { beforeSeq: 12, throughSeq: 10 }],
+    ['session.tool', { seq: 5, resultSeq: 6, callId: 'other' }],
+    ['session.changes', { seq: 6 }], ['session.fork', { seq: 6 }],
+    ['session.file', { seq: 1, kind: 'presented', index: 0 }],
+    ['session.performance', { seq: 10, turn: 2 }],
+  ]) await assert.rejects(bridge.dispatch(method, { id: 'session-1', ...params }, connection));
+  connection.watchGeneration += 1;
+  await assert.rejects(bridge.dispatch('session.file', { id: 'session-1', kind: 'presented', seq: 8, index: 0 }, connection), { code: 'NOT_FOUND' });
+});
+
+test('question answers revalidate the live projection and queued images resolve occurrence IDs', async () => {
+  const active = [{ callId: 'q', questions: [{ id: 'text', question: 'Name?' }], state: 'continued' }];
+  const data = Buffer.from('queued image').toString('base64');
+  const values = { userQuestions: { active }, inbox: { 'next-turn': [{
+    id: 'message:with:colon', source: { kind: 'user' },
+    content: [{ type: 'image', mediaType: 'image/png', data, name: 'photo.png' }],
+  }] } };
+  const { bridge, calls } = makeHarness({
+    snapshot: { type: 'snapshot', records: [], projections: { values } }, projections: values,
+  });
+  const connection = attachmentConnection();
+  const detail = await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, connection, { watchGeneration: 1 });
+  assert.equal(detail.questions[0].state, 'continued');
+  assert.equal(detail.queuedMessages[0].attachments[0].id, 'queue:message:with:colon:0');
+  assert.deepEqual(await bridge.dispatch('session.attachment', {
+    id: 'session-1', attachmentId: 'queue:message:with:colon:0',
+  }, connection), { mediaType: 'image/png', data });
+  const answers = [{ id: 'text', selected: [], custom: 'Phone answer' }];
+  await bridge.dispatch('question.answer', { id: 'session-1', callId: 'q', answers }, connection);
+  assert.deepEqual(calls.findLast((call) => call.endpoint === 'userQuestions/answer').args,
+    ['session-1', 'q', { answers }]);
+  active.splice(0);
+  await assert.rejects(bridge.dispatch('question.answer', { id: 'session-1', callId: 'q', answers }, connection), { code: 'STALE_APPROVAL' });
+});
+
+test('a late history or tool reply cannot cross a watch replacement', async () => {
+  let finish;
+  const record = surface('tool/call', 1, 100, { callId: 'call', name: 'read', arguments: '{}' });
+  const { bridge } = makeHarness({
+    snapshot: { type: 'snapshot', records: [record], cursor: 1, projections: { values: {} } },
+    responses: { 'session/page': () => new Promise((resolve) => { finish = resolve; }) },
+  });
+  const connection = attachmentConnection();
+  await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, connection, { watchGeneration: 1 });
+  const request = bridge.dispatch('session.tool', { id: 'session-1', seq: 1, callId: 'call' }, connection);
+  await new Promise((resolve) => setImmediate(resolve));
+  connection.watchGeneration += 1;
+  finish({ records: [record] });
+  await assert.rejects(request, { code: 'NOT_FOUND' });
+});
+
+test('conversation images are authenticated watch-scoped references without bytes in snapshots', async () => {
+  const data = Buffer.from('private-image').toString('base64');
+  const { bridge } = makeHarness({ snapshot: {
+    type: 'snapshot', projections: { values: {} }, records: [
+      surface('user/message', 1, 1_000, {
+        id: 'photo-user', source: { kind: 'user' }, content: [
+          { type: 'text', text: 'Inspect the picture' },
+          { type: 'image', mediaType: 'image/png', data, name: 'picture.png' },
+        ],
+      }),
+    ],
+  } });
+  const connection = attachmentConnection();
+  const detail = await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, connection, { watchGeneration: 1 });
+  assert.equal(JSON.stringify(detail).includes(data), false);
+  assert.deepEqual(detail.transcript.entries[0].attachments, [{ kind: 'image', name: 'picture.png', id: 'photo-user:1', seq: 1 }]);
+  assert.deepEqual(await bridge.dispatch('session.attachment', {
+    id: 'session-1', attachmentId: 'photo-user:1',
+  }, connection), { mediaType: 'image/png', data });
+  for (const params of [
+    { id: 'session-2', attachmentId: 'photo-user:1' },
+    { id: 'session-1', attachmentId: '/etc/passwd' },
+    { id: 'session-1', attachmentId: 'https://example.com/private.png' },
+    { id: 'session-1', attachmentId: 'photo-user:0' },
+  ]) {
+    await assert.rejects(bridge.dispatch('session.attachment', params, connection), { code: 'NOT_FOUND' });
+  }
+  connection.watchGeneration = 2;
+  await assert.rejects(bridge.dispatch('session.attachment', { id: 'session-1', attachmentId: 'photo-user:1' }, connection), { code: 'NOT_FOUND' });
+  connection.watchGeneration = 1;
+  await connection.cancel();
+  await assert.rejects(bridge.dispatch('session.attachment', { id: 'session-1', attachmentId: 'photo-user:1' }, connection), { code: 'NOT_FOUND' });
+});
+
+test('conversation images reject injected context, external URLs and excessive or invalid data', async () => {
+  const data = Buffer.from('image').toString('base64');
+  const { bridge } = makeHarness({ snapshot: {
+    type: 'snapshot', projections: { values: {} }, records: [
+      surface('user/message', 1, 1_000, {
+        id: 'context', source: { kind: 'plugin' }, content: [{ type: 'image', mediaType: 'image/png', data }],
+      }),
+      surface('user/message', 2, 1_100, {
+        id: 'bad', source: { kind: 'user' }, content: [
+          { type: 'image', mediaType: 'image/svg+xml', data },
+          { type: 'image', mediaType: 'image/png', url: 'https://example.com/image.png' },
+          { type: 'image', mediaType: 'image/png', data: 'A'.repeat(14 * 1024 * 1024) },
+          { type: 'image', mediaType: 'image/png', data: 'not!base64' },
+        ],
+      }),
+    ],
+  } });
+  const connection = attachmentConnection();
+  await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, connection, { watchGeneration: 1 });
+  for (const attachmentId of ['context:0', 'bad:0', 'bad:1', 'bad:2']) {
+    await assert.rejects(bridge.dispatch('session.attachment', { id: 'session-1', attachmentId }, connection), { code: 'NOT_FOUND' });
+  }
+  await assert.rejects(bridge.dispatch('session.attachment', { id: 'session-1', attachmentId: 'bad:3' }, connection), { code: 'INVALID_ATTACHMENT' });
+  await connection.cancel();
+});
+
+test('an evicted conversation image is reread only from the watched session snapshot', async () => {
+  const data = 'A'.repeat(8 * 1024 * 1024);
+  const { bridge } = makeHarness({ snapshot: {
+    type: 'snapshot', projections: { values: {} }, records: [
+      surface('user/message', 1, 1_000, {
+        id: 'photos', source: { kind: 'user' }, content: Array.from({ length: 4 }, () => ({ type: 'image', mediaType: 'image/jpeg', data })),
+      }),
+    ],
+  } });
+  const connection = attachmentConnection();
+  await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, connection, { watchGeneration: 1 });
+  assert.equal(connection.nativeAttachmentState.state.images.has('photos:0'), false);
+  assert.equal((await bridge.dispatch('session.attachment', { id: 'session-1', attachmentId: 'photos:0' }, connection)).data, data);
+  connection.closed = true;
+  await assert.rejects(bridge.dispatch('session.attachment', { id: 'session-1', attachmentId: 'photos:0' }, connection), { code: 'NOT_FOUND' });
+  await connection.cancel();
+});
+
 test('transcript mode returns structured entries, turn timing, goal and plan state instead of messages', async () => {
   const records = [
     surface('user/message', 1, 1_000, {
@@ -919,6 +1361,12 @@ test('transcript mode returns structured entries, turn timing, goal and plan sta
       summary: [{ type: 'text', text: '## Summary\n' }, { type: 'image', name: 'skipped' }, { type: 'text', text: 'Kept the plan.\n' }],
     } } },
     { type: 'event', event: { type: 'command/done', seq: 10, time: 46_200, data: { commandId: 'cmd-1', kind: 'success', text: 'Compacted 3 history items (~4200 tokens).' } } },
+    surface('agent/inbox/spliced', 10.1, 46_300, {
+      target: 'next-turn', start: 0, inserted: [{ id: 'g1', source: { kind: 'goal' } }],
+    }),
+    surface('agent/inbox/spliced', 10.2, 46_400, {
+      target: 'next-turn', start: 0, removedCount: 1, inserted: [],
+    }),
     surface('user/message', 11, 47_000, {
       id: 'g1', content: [{ type: 'text', text: 'Keep working on the goal.' }], source: { kind: 'goal' },
     }),
@@ -943,7 +1391,9 @@ test('transcript mode returns structured entries, turn timing, goal and plan sta
   assert.deepEqual(detail.goal, { id: 'goal-1', phase: 'active', objective: 'Ship the release' });
   assert.equal(detail.planMode, true);
   const { entries, turns } = detail.transcript;
-  assert.deepEqual(turns, [{ turn: 1, start: 1_100, end: 45_100, outcome: 'done' }]);
+  assert.deepEqual(turns.map(({ turn, start, end, outcome }) => ({ turn, start, end, outcome })),
+    [{ turn: 1, start: 1_100, end: 45_100, outcome: 'done' }]);
+  assert.equal(turns[0].lastSeq, 7);
   assert.deepEqual(entries.map((entry) => [entry.type, entry.id]), [
     ['user', 'u1'],
     ['assistant', 'a1'],
@@ -956,8 +1406,8 @@ test('transcript mode returns structured entries, turn timing, goal and plan sta
     attachments: [{ kind: 'image', name: 'shot.png' }],
   });
   assert.deepEqual(entries[1].calls, [
-    { id: 'call-1', name: 'bash', activity: 'commands', detail: 'List top memory processes', status: 'done' },
-    { id: 'call-2', name: 'read', activity: 'read', detail: '/tmp/report.txt', status: 'error' },
+    { id: 'call-1', name: 'bash', activity: 'commands', detail: 'List top memory processes', status: 'done', resultSeq: 4 },
+    { id: 'call-2', name: 'read', activity: 'read', detail: '/tmp/report.txt', status: 'error', resultSeq: 5 },
   ]);
   assert.equal(entries[1].reasoning, 'The user asks about memory.\nSecond line.');
   assert.equal(entries[1].usage, 1200);
@@ -975,6 +1425,141 @@ test('transcript mode returns structured entries, turn timing, goal and plan sta
   });
 });
 
+test('chat shows wake triggers but hides context injected during a running turn', async () => {
+  const message = (id, kind) => ({ id, source: { kind }, content: [{ type: 'text', text: id }] });
+  const splice = (seq, target, inserted, removedCount = 0, outcome) => surface('agent/inbox/spliced', seq, seq, {
+    target, start: 0, inserted, removedCount, ...(outcome ? { outcome } : {}),
+  });
+  const records = [
+    splice(1, 'next-turn', [message('goal', 'goal')]),
+    splice(2, 'next-turn', [], 1),
+    surface('turn/start', 3, 3, { turn: 1 }),
+    surface('user/message', 4, 4, message('goal', 'goal')),
+    surface('step/start', 5, 5, { turn: 1, step: 2 }),
+    splice(6, 'next-step', [message('job-1', 'tool-jobs'), message('job-2', 'tool-jobs')]),
+    splice(7, 'next-step', [], 2),
+    surface('user/message', 8, 8, message('job-1', 'tool-jobs')),
+    surface('user/message', 9, 9, message('job-2', 'tool-jobs')),
+    splice(10, 'next-turn', [message('wake-job', 'tool-jobs')]),
+    splice(11, 'next-turn', [], 1),
+    surface('turn/start', 12, 12, { turn: 2 }),
+    surface('user/message', 13, 13, message('wake-job', 'tool-jobs')),
+    splice(14, 'next-turn', [message('canceled', 'schedule')]),
+    splice(15, 'next-turn', [], 1, 'canceled'),
+    surface('user/message', 16, 16, message('canceled', 'schedule')),
+    surface('command/run', 17, 17, { commandId: 'permission-1', name: 'permission' }),
+    splice(18, 'next-turn', [message('plugin-wake', 'new-plugin')]),
+    splice(19, 'next-turn', [], 1),
+    surface('user/message', 20, 20, message('plugin-wake', 'new-plugin')),
+  ];
+  const { bridge } = makeHarness({ snapshot: { type: 'snapshot', records, projections: { values: {} } } });
+  const detail = await bridge.dispatch('session.open', { id: 'session-1', transcript: true }, {});
+  assert.deepEqual(detail.transcript.entries.map((entry) => entry.id), ['goal', 'wake-job', 'plugin-wake']);
+});
+
+test('idle steering wakes a turn only for a nonhuman first-step claim', async () => {
+  const records = [
+    surface('turn/start', 1, 1, { turn: 1 }),
+    surface('agent/inbox/spliced', 2, 2, {
+      target: 'next-step', start: 0, inserted: [{ id: 'wake', source: { kind: 'schedule' } }],
+    }),
+    surface('agent/inbox/spliced', 3, 3, { target: 'next-step', start: 0, removedCount: 1, inserted: [] }),
+    surface('user/message', 4, 4, { id: 'wake', source: { kind: 'schedule' }, content: [] }),
+    surface('agent/inbox/spliced', 5, 5, {
+      target: 'next-step', start: 0,
+      inserted: [{ id: 'human', source: { kind: 'user' } }, { id: 'context', source: { kind: 'tool-jobs' } }],
+    }),
+    surface('agent/inbox/spliced', 6, 6, { target: 'next-step', start: 0, removedCount: 2, inserted: [] }),
+    surface('user/message', 7, 7, { id: 'context', source: { kind: 'tool-jobs' }, content: [] }),
+  ];
+  const { bridge } = makeHarness({ snapshot: { type: 'snapshot', records, projections: { values: {} } } });
+  const detail = await bridge.dispatch('session.open', { id: 'session-1', transcript: true }, {});
+  assert.deepEqual(detail.transcript.entries.map((entry) => entry.id), ['wake']);
+});
+
+test('queued messages retain host occurrence identity and nontext edit restrictions', async () => {
+  const { bridge } = makeHarness({ snapshot: {
+    type: 'snapshot', records: [], projections: { values: { inbox: { 'next-turn': [
+      { id: 'one', source: { kind: 'user' }, content: [{ type: 'text', text: 'follow ' }, { type: 'text', text: 'up' }] },
+      { id: 'two', source: { kind: 'user' }, content: [
+        { type: 'text', text: 'look' },
+        { type: 'image', attachment: { name: 'photo.png' } },
+      ] },
+      { id: 'long', source: { kind: 'user' }, content: [{ type: 'text', text: 'x'.repeat(60_001) }] },
+    ] } } },
+  } });
+  const detail = await bridge.dispatch('session.open', { id: 'session-1' }, {});
+  assert.deepEqual(detail.queuedMessages, [
+    { id: 'one', text: 'follow up', editable: true },
+    { id: 'two', text: 'look', editable: false, attachments: [{ kind: 'image', name: 'photo.png' }] },
+    { id: 'long', text: 'x'.repeat(60_000), editable: false },
+  ]);
+});
+
+test('queue actions use the exact host operation, reject arbitrary actions and preserve failures', async () => {
+  const { bridge, calls } = makeHarness();
+  for (const action of ['edit', 'remove', 'steer']) {
+    await bridge.dispatch('session.queue.update', { id: 'session-1', itemId: 'queue-1', action, text: 'new text' }, {});
+  }
+  assert.deepEqual(calls.filter((call) => call.endpoint === 'session/updateQueue').map((call) => call.args[0]), [
+    { sessionId: 'session-1', itemId: 'queue-1', action: { kind: 'edit', content: [{ type: 'text', text: 'new text' }] } },
+    { sessionId: 'session-1', itemId: 'queue-1', action: { kind: 'remove' } },
+    { sessionId: 'session-1', itemId: 'queue-1', action: { kind: 'steer' } },
+  ]);
+  for (const params of [
+    { action: 'execute', text: 'command' }, { action: 'edit', text: ' ' },
+    { action: 'edit', text: 'x'.repeat(60_001) },
+  ]) {
+    await assert.rejects(bridge.dispatch('session.queue.update', { id: 'session-1', itemId: 'queue-1', ...params }, {}), { code: 'BAD_REQUEST' });
+  }
+  const failing = makeHarness({ responses: { 'session/updateQueue': { ok: false, error: { code: 'session/queue-item-not-found' } } } });
+  await assert.rejects(failing.bridge.dispatch('session.queue.update', { id: 'session-1', itemId: 'old', action: 'remove' }, {}), { code: 'UPSTREAM_ERROR' });
+});
+
+test('watched queue, goal and todos follow control projections without accepting older or other-session data', async () => {
+  const pending = { id: 'queued', source: { kind: 'user' }, content: [{ type: 'text', text: 'from desktop' }] };
+  const { bridge } = makeHarness({
+    snapshot: { type: 'snapshot', records: [], projections: { asOfSeq: 10, values: { inbox: { 'next-turn': [] } } } },
+    controlFrames: [
+      { type: 'baseline', value: { projections: { 'session-1': { asOfSeq: 11, values: {
+        inbox: { 'next-turn': [] }, plan: { active: true },
+      } } } } },
+      { type: 'projection', sessionId: 'session-1', key: 'inbox', seq: 12, value: { 'next-turn': [pending] } },
+      { type: 'projection', sessionId: 'session-1', key: 'inbox', seq: 11, value: { 'next-turn': [] } },
+      { type: 'projection', sessionId: 'other', key: 'inbox', seq: 13, value: { 'next-turn': [] } },
+      { type: 'projection', sessionId: 'session-1', key: 'goal', seq: 13, value: { goal: { id: 'goal', phase: 'active', objective: 'finish' } } },
+      { type: 'projection', sessionId: 'session-1', key: 'todos', seq: 14, value: [{ content: 'verify', status: 'in_progress' }] },
+      { type: 'baseline', value: { projections: { 'session-1': { asOfSeq: 11, values: { inbox: { 'next-turn': [] } } } } } },
+    ],
+    followDelayMs: 400,
+  });
+  const connection = attachmentConnection();
+  const updates = [];
+  connection.sendEvent = (_topic, detail) => updates.push(detail);
+  await bridge.dispatch('session.watch', { id: 'session-1' }, connection, { watchGeneration: 1 });
+  await new Promise((resolve) => setTimeout(resolve, 180));
+  assert.equal(updates.at(-1).queuedMessages[0].text, 'from desktop');
+  assert.equal(updates.at(-1).goal.objective, 'finish');
+  assert.equal(updates.at(-1).todos[0].content, 'verify');
+  assert.equal(updates.at(-1).planMode, false);
+  await connection.cancel();
+});
+
+test('inbox events update the live queue and a consumed message leaves the queue', async () => {
+  const pending = { id: 'queued', source: { kind: 'user' }, content: [{ type: 'text', text: 'follow up' }] };
+  const { bridge } = makeHarness({
+    snapshot: { type: 'snapshot', records: [], projections: { values: { inbox: { 'next-turn': [pending] } } } },
+    followFrames: [surface('agent/inbox/spliced', 2, 2, { target: 'next-turn', start: 0, removedCount: 1, inserted: [] })],
+    followDelayMs: 400,
+  });
+  const connection = attachmentConnection();
+  const updates = [];
+  connection.sendEvent = (_topic, detail) => updates.push(detail);
+  await bridge.dispatch('session.watch', { id: 'session-1' }, connection, { watchGeneration: 1 });
+  await new Promise((resolve) => setTimeout(resolve, 180));
+  assert.deepEqual(updates.at(-1).queuedMessages, []);
+  await connection.cancel();
+});
 test("the conversation's task list is DSH's todos projection, cleaned and bounded", async () => {
   const open = async (todos: unknown) => {
     const { bridge } = makeHarness({ snapshot: { type: 'snapshot', records: [], projections: { values: { todos } } } });
@@ -1108,7 +1693,7 @@ test('catalog.get lists reasoning efforts per model and the usable agent presets
   ]);
 });
 
-test('catalog.get still works on a host without the agent preset registry', async () => {
+test('catalog.get reports a missing agent preset registry instead of hiding its modes', async () => {
   const { bridge } = makeHarness({
     responses: {
       'session/modelCatalog': MODEL_CATALOG,
@@ -1116,10 +1701,7 @@ test('catalog.get still works on a host without the agent preset registry', asyn
       'agentPresets/list': () => { throw new Error('unknown method'); },
     },
   });
-  const catalog = await bridge.dispatch('catalog.get', {}, {});
-
-  assert.deepEqual(catalog.presets, []);
-  assert.equal(catalog.models.length, 2);
+  await assert.rejects(bridge.dispatch('catalog.get', {}, {}), { code: 'UPSTREAM_UNAVAILABLE' });
 });
 
 test('session.configure changes only the reasoning effort of the model already in use', async () => {

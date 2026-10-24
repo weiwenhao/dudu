@@ -415,10 +415,7 @@ function rewriteAssetTags(html, staticManifest, resourceOverrides = new Map(), b
   });
 }
 
-// Only the right dock hosts a browser tab, which shows other sites in a frame the page cannot read.
-const frameSource = (kind) => (kind === 'dock' ? 'http: https:' : "'none'");
-
-function cspMeta(nonce, httpTransport = false, kind) {
+function cspMeta(nonce, httpTransport = false) {
   const localSource = httpTransport ? "'self'" : 'dsbot-ui:';
   const policy = [
     "default-src 'none'",
@@ -429,7 +426,7 @@ function cspMeta(nonce, httpTransport = false, kind) {
     `media-src ${localSource}`,
     httpTransport ? "connect-src 'self'" : "connect-src 'none'",
     "object-src 'none'",
-    `frame-src ${frameSource(kind)}`,
+    "frame-src 'none'",
     "worker-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",
@@ -459,7 +456,7 @@ function injectDocumentHTML(html, {
   });
   const localPath = (path) => documentResourcePath(path, basePath);
   const tags = [
-    cspMeta(nonce, httpTransport, kind),
+    cspMeta(nonce, httpTransport),
     `<script src="${localPath(queuePath)}"></script>`,
     ...application.map((batch) => `<link rel="preload" as="script" href="${htmlAttribute(localPath(batch.url))}">`),
     ...bootstrap.map((batch) => `<script src="${htmlAttribute(localPath(batch.url))}"></script>`),
@@ -623,7 +620,7 @@ export function createDshMobileFrontend({
 
   return Object.freeze({
     async document({ kind, sessionId, transport, basePath } = {}) {
-      if (!['plugins', 'trace', 'context', 'team', 'tools', 'settings', 'panel', 'view', 'dock'].includes(kind)) {
+      if (!['plugins', 'trace', 'context', 'team', 'tools', 'settings', 'panel', 'view'].includes(kind)) {
         throw new TypeError('Unsupported DSH mobile page kind.');
       }
       if (!['plugins', 'settings', 'panel'].includes(kind)

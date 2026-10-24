@@ -137,28 +137,16 @@
     return result;
   };
 
-  // Streams the page also writes to (a terminal's keystrokes). The desktop's page policy names the same set.
-  const duplexEndpoints = new Set(['terminal/attach']);
-  const uplinkBatchItems = 64;
-  const uplinkBatchBytes = 400 * 1024;
-  const uplinkTick = Symbol('tick');
-
-  function remoteStream(endpoint, payload, signal, uplink) {
+  function remoteStream(endpoint, payload, signal) {
     let streamID;
     let closed = false;
     let closeSent = false;
     const queued = [];
     let opening;
-    let pumping = false;
     const close = () => {
       closed = true;
       queued.length = 0;
       signal?.removeEventListener('abort', close);
-      if (pumping) {
-        // Wake a pump that is waiting for the next keystroke.
-        try { uplink.close?.(); } catch {}
-        try { void Promise.resolve(uplink.return?.()).catch(() => {}); } catch {}
-      }
       if (streamID && !closeSent) {
         closeSent = true;
         void pageRPC('web.stream.close', { streamId: streamID }).catch(() => {
@@ -166,73 +154,6 @@
         });
       }
     };
-
-    // The page's items go up in order, as many as are already queued per request: one request per
-    // keystroke would make a pasted line crawl, and requests that overlap could arrive out of order.
-    async function pumpUplink() {
-      const iterator = uplink[Symbol.asyncIterator]();
-      const send = async (items, end) => {
-        const result = await pageRPC('web.stream.send', {
-          streamId: streamID, items, ...(end ? { end: true } : {}),
-        });
-        if (result?.ok === false || result?.error) throw new Error('STREAM_WRITE_FAILED');
-      };
-      let waiting;
-      let carry;
-      try {
-        for (;;) {
-          let first;
-          if (carry) {
-            first = { done: false, value: carry };
-            carry = undefined;
-          } else {
-            waiting ??= iterator.next();
-            first = await waiting;
-            waiting = undefined;
-          }
-          if (closed || signal?.aborted) return;
-          if (first.done) {
-            await send([], true);
-            return;
-          }
-          const items = [first.value];
-          let bytes = JSON.stringify(first.value).length;
-          let ended = false;
-          while (items.length < uplinkBatchItems && bytes < uplinkBatchBytes) {
-            waiting ??= iterator.next();
-            const tick = new Promise((resolve) => { setTimeout(() => resolve(uplinkTick), 0); });
-            const more = await Promise.race([waiting, tick]);
-            // Not there yet: the read stays pending and starts the next round.
-            if (more === uplinkTick) break;
-            waiting = undefined;
-            if (more.done) {
-              ended = true;
-              break;
-            }
-            const size = JSON.stringify(more.value).length;
-            if (bytes + size > uplinkBatchBytes) {
-              carry = more.value;
-              break;
-            }
-            items.push(more.value);
-            bytes += size;
-          }
-          if (closed || signal?.aborted) return;
-          await send(items, ended);
-          if (ended) return;
-        }
-      } catch (error) {
-        if (!closed && !signal?.aborted) {
-          reportReviewDiagnostic('transport.error', errorDetails(error));
-          reportRPCFailure(endpoint);
-          // The desktop never saw this input; ending the stream lets the page offer a reconnect.
-          close();
-        }
-      } finally {
-        try { uplink.close?.(); } catch {}
-        try { void Promise.resolve(iterator.return?.()).catch(() => {}); } catch {}
-      }
-    }
 
     signal?.addEventListener('abort', close, { once: true });
     return {
@@ -254,10 +175,6 @@
             if (closed || signal?.aborted) {
               close();
               return { done: true };
-            }
-            if (uplink !== undefined && duplexEndpoints.has(endpoint) && !pumping) {
-              pumping = true;
-              void pumpUplink();
             }
           }
           while (!queued.length && !closed) {
@@ -704,10 +621,9 @@
           return { ok: false, error: { code: 'gateway/unavailable', message: '电脑暂时无法完成请求。', details: {} } };
         }
       },
-      open(channel, endpoint, payload, signal, uplink) {
+      open(channel, endpoint, payload, signal) {
         if (channel !== '/api') throw new Error('UNSUPPORTED');
-        // The gateway passes an uplink queue for every stream descriptor; only a terminal's is carried.
-        return remoteStream(endpoint, payload, signal, uplink);
+        return remoteStream(endpoint, payload, signal);
       },
     },
     loadBundle(path) {

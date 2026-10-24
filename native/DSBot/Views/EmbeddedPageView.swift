@@ -13,22 +13,6 @@ func embeddedResourceRequestPath(from url: URL) -> String? {
     return path
 }
 
-/// Whether a navigation inside a frame of the page may proceed: only a dock page's frames, to http(s).
-/// `targetFrameIsMain` is nil when the navigation opens a window rather than loading a frame.
-func embeddedSubframeNavigationAllowed(
-    page: EmbeddedDSHPage,
-    url: URL,
-    targetFrameIsMain: Bool?
-) -> Bool {
-    page == .dock && targetFrameIsMain == false && embeddedExternalURL(from: url) != nil
-}
-
-/// The browser tab's "open in system browser" is DSH's own page opening a window. A frame doing the same
-/// (an ad, a redirect) is not DSH asking, so only the page itself may.
-func embeddedDockOpensInSystem(page: EmbeddedDSHPage, url: URL, sourceIsMainFrame: Bool) -> Bool {
-    page == .dock && sourceIsMainFrame && embeddedExternalURL(from: url) != nil
-}
-
 enum EmbeddedExternalLinkDisposition: Equatable {
     case reject
     case openInSystem
@@ -107,7 +91,7 @@ struct PageCommand: Equatable {
 struct EmbeddedPageView: View {
     @ObservedObject var store: DSBotStore
     let page: EmbeddedDSHPage
-    /// The panel, view, dock entry or settings section a plugin named, for pages that need one.
+    /// The panel, view or settings section a plugin named, for pages that need one.
     var target: String?
     var sessionID: String?
     var retryToken: Int
@@ -203,7 +187,9 @@ struct EmbeddedPageView: View {
         .task(id: location) {
             // A page the pool kept is still loaded for this very location: nothing to open.
             if session.isPooled, session.hasPage, session.location == location,
-               session.isCurrent, session.error == nil { return }
+               session.isCurrent, session.error == nil {
+                return
+            }
             await session.open(page: page, target: target, sessionID: sessionID, store: store, location: location)
         }
         .onAppear { pool?.markInUse(page: page, target: target, sessionID: sessionID) }
@@ -242,7 +228,7 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
             return kept
         }
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = EmbeddedPageStorage.dataStore(for: page, computerID: session.computerID)
+        configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.mediaTypesRequiringUserActionForPlayback = .all
         configuration.userContentController.addScriptMessageHandler(
@@ -273,6 +259,7 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
     func updateUIView(_ view: WKWebView, context: Context) {
         updateVisibility(in: view)
         context.coordinator.load(session, in: view)
+        context.coordinator.updateVisibility(isVisible, in: view)
         context.coordinator.updateSettingsSelection(settingsSelection, in: view)
         if context.coordinator.deliver(command, to: view) { commandDelivered() }
     }
@@ -312,6 +299,7 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
         private var loadedID: String?
         private var lastSettingsSelection: String?
         private var didDispatchSettingsSelection = false
+        private var lastVisibility: Bool?
         private var resourceTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
         private var bridgeTasks: [UUID: Task<Void, Never>] = [:]
         private var loadTask: Task<Void, Never>?
@@ -388,6 +376,14 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
 
         private var lastCommandID: UUID?
 
+        func updateVisibility(_ isVisible: Bool, in view: WKWebView) {
+            guard loadedID == session.pageID, !session.isLoading, session.error == nil,
+                  lastVisibility != isVisible else { return }
+            lastVisibility = isVisible
+            if isVisible { didDispatchSettingsSelection = false }
+            view.evaluateJavaScript("window.dispatchEvent(new CustomEvent('dsbot:visibility',{detail:\(isVisible)}));")
+        }
+
         /// Hand a toolbar request to the page once it is ready; true when it was sent.
         func deliver(_ command: PageCommand?, to view: WKWebView) -> Bool {
             guard let command, command.id != lastCommandID,
@@ -417,6 +413,7 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
         }
 
         func cancel() {
+            lastVisibility = nil
             loadTask?.cancel()
             loadTask = nil
             if let installedPageCookie {
@@ -463,15 +460,6 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
                 return .allow
             }
             if url.scheme == "dsbot-ui", url.host == loadedID { return .allow }
-            // The right dock's browser tab shows other sites in a frame. The page itself never leaves its
-            // own address: this admits only what a frame inside it loads, and only over http(s).
-            if embeddedSubframeNavigationAllowed(
-                page: page,
-                url: url,
-                targetFrameIsMain: navigationAction.targetFrame?.isMainFrame
-            ) {
-                return .allow
-            }
             switch embeddedExternalLinkDisposition(
                 url: url,
                 isUserActivated: navigationAction.navigationType == .linkActivated,
@@ -501,12 +489,7 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
                     url: url,
                     isUserActivated: navigationAction.navigationType == .linkActivated,
                     targetFrameIsNil: true
-                  ) == .handleNewWindowInSystem
-                    || embeddedDockOpensInSystem(
-                        page: page,
-                        url: url,
-                        sourceIsMainFrame: navigationAction.sourceFrame.isMainFrame
-                    ) else {
+                  ) == .handleNewWindowInSystem else {
                 return nil
             }
             guard reserveExternalURL(url) else { return nil }
@@ -682,7 +665,7 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
                         }
                         session.recordSettingsMutation()
                         replyHandler("true", nil)
-                    case "web.invoke", "web.stream.open", "web.stream.next", "web.stream.send", "web.stream.close":
+                    case "web.invoke", "web.stream.open", "web.stream.next", "web.stream.close":
                         guard !session.usesHTTPTransport else {
                             throw DSBotFailure.unsupportedRequest
                         }

@@ -3,7 +3,7 @@ import UIKit
 
 /// Which part of the app an entry was chosen from; the sidebar highlights only its own.
 enum NavigationArea: Equatable {
-    case sidebar, view, dock
+    case sidebar, view
 }
 
 /// What fills the main area: the conversation, a screen of the app's own, or an embedded DSH page.
@@ -36,6 +36,8 @@ struct DSBotRootView: View {
     @State private var presentedSheet: RootSheet?
     @State private var pendingPairingLink: String?
     @State private var destination = MainDestination.conversation
+    @State private var isSearchActive = false
+    @State private var conversationSearch = SessionSearchModel()
     /// The home indicator's inset, read once the window exists. UIKit is never asked while SwiftUI lays out:
     /// reading a window's safe area inside a layout closure leaves the root view stale (the card stops
     /// following the drawer).
@@ -62,6 +64,7 @@ struct DSBotRootView: View {
     }
 
     var body: some View {
+        let drawerPosition = DrawerPosition(isOpen: isSidebarOpen, drag: drawerDrag, edgeOffset: edgeDragOffset)
         Group {
             if store.showsConnectionGuide {
                 ConnectionGuideView(
@@ -79,7 +82,7 @@ struct DSBotRootView: View {
                 .accessibilityHidden(presentedSheet != nil)
             } else {
                 GeometryReader { geometry in
-                    drawerStack(in: geometry)
+                    drawerStack(in: geometry, position: drawerPosition)
                 }
                 .accessibilityHidden(presentedSheet != nil)
             }
@@ -129,9 +132,9 @@ struct DSBotRootView: View {
                 isSidebarOpen = true
             }
             if let spec = reviewArgument("-dsbot-review-open-item") {
-                // "sidebar:insight", "view:notes", "dock:files:workspace": open that DSH entry.
+                // "sidebar:insight", "view:notes": open that DSH entry.
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
-                // A dock or view page belongs to a conversation: wait until the fixture has opened one.
+                // A view page belongs to a conversation: wait until the fixture has opened one.
                 for _ in 0..<40 where store.selectedSession == nil {
                     try? await Task.sleep(nanoseconds: 250_000_000)
                 }
@@ -199,6 +202,8 @@ struct DSBotRootView: View {
         .onChange(of: store.activeComputer?.id) { _, _ in
             isSidebarOpen = false
             destination = .conversation
+            isSearchActive = false
+            conversationSearch.reset()
         }
         .onChange(of: pageConnectionKey, initial: true) { _, key in
             pagePool.connectionChanged(to: key)
@@ -235,6 +240,17 @@ struct DSBotRootView: View {
 
     // MARK: Drawer
 
+    private struct DrawerPosition {
+        let isOpen: Bool
+        let drag: CGFloat
+        let edgeOffset: CGFloat
+
+        func offset(for width: CGFloat) -> CGFloat {
+            if isOpen { return width + min(0, max(-width, drag)) }
+            return min(width, max(0, edgeOffset))
+        }
+    }
+
     private struct DrawerMetrics {
         let width: CGFloat
         let offset: CGFloat
@@ -246,30 +262,56 @@ struct DSBotRootView: View {
         let chatBottomInset: CGFloat
     }
 
-    private func drawerMetrics(in geometry: GeometryProxy) -> DrawerMetrics {
+    private func drawerMetrics(in geometry: GeometryProxy, position: DrawerPosition) -> DrawerMetrics {
         let width = DSBotLayout.drawerWidth(in: geometry.size.width)
-        let offset = drawerOffset(width: width)
+        let offset = position.offset(for: width)
         return DrawerMetrics(
             width: width,
             offset: offset,
             progress: width > 0 ? min(1, max(0, offset / width)) : 0,
-            isOpen: isSidebarOpen,
+            isOpen: position.isOpen,
             chatBottomInset: KeyboardAvoidance.bottomReach(
                 homeInset: homeInset, safeAreaBottom: geometry.safeAreaInsets.bottom
             )
         )
     }
 
-    private func drawerStack(in geometry: GeometryProxy) -> some View {
-        let metrics = drawerMetrics(in: geometry)
+    private func drawerStack(in geometry: GeometryProxy, position: DrawerPosition) -> some View {
+        let metrics = drawerMetrics(in: geometry, position: position)
         return ZStack(alignment: .leading) {
             DSBotStyle.canvas.ignoresSafeArea()
-            sidebarLayer(metrics).zIndex(0)
-            cardLayer(in: geometry, metrics).zIndex(1)
-            backdropLayer(in: geometry, metrics).zIndex(2)
+            sidebarLayer(metrics)
+                .accessibilityHidden(isSidebarOpen && isSearchActive)
+                .zIndex(0)
+            cardLayer(in: geometry, metrics)
+                .accessibilityHidden(isSidebarOpen && isSearchActive)
+                .zIndex(1)
+            backdropLayer(in: geometry, metrics)
+                .accessibilityHidden(isSidebarOpen && isSearchActive)
+                .zIndex(2)
             edgeStripLayer(metrics).zIndex(3)
+            if isSearchActive {
+                ConversationSearchView(
+                    store: store, search: conversationSearch,
+                    onBack: {
+                        dismissKeyboard()
+                        isSearchActive = false
+                        conversationSearch.reset()
+                    },
+                    onOpen: { session in
+                        showConversation()
+                        Task { await store.selectSession(session) }
+                    }
+                )
+                .opacity(isSidebarOpen ? 1 : 0)
+                .allowsHitTesting(isSidebarOpen)
+                .accessibilityHidden(!isSidebarOpen)
+                .transition(.move(edge: .trailing))
+                .zIndex(4)
+            }
         }
         .animation(drawerAnimation, value: isSidebarOpen)
+        .animation(drawerAnimation, value: isSearchActive)
         // At launch and after a rotation (the width changes), ask the window once it has settled.
         .task(id: geometry.size.width) { await readHomeInset() }
     }
@@ -299,6 +341,10 @@ struct DSBotRootView: View {
                     dismissKeyboard()
                     presentedSheet = .settings
                     DSBotLog.record("settings.open")
+                },
+                onSearch: {
+                    isSearchActive = true
+                    DSBotLog.record("sidebar.search.open")
                 },
                 onClose: closeSidebar,
                 selectedItemID: destination.area == .sidebar ? destination.id : nil
@@ -423,7 +469,7 @@ struct DSBotRootView: View {
     }
 
 
-    /// The conversation is home: the sidebar on the left, its views and the right dock on the right.
+    /// The conversation is home: the sidebar on the left, its views on the right.
     /// Every other page (DSH's web pages, files, automations) is one level down, so it gets a way back
     /// and nothing that belongs to the conversation; a page's own action (the plugin page's "+") stays.
     private var toolbar: some View {
@@ -508,25 +554,14 @@ struct DSBotRootView: View {
         .accessibilityIdentifier("plugins.add")
     }
 
-    /// DSH's conversation views, then its right-dock entries, as DSH lists them; the phone adds nothing.
     @ViewBuilder
     private var conversationMenu: some View {
         let views = menuViews
-        let dock = menuDock
-        if !views.isEmpty || !dock.isEmpty {
+        if !views.isEmpty {
             Menu {
                 if !views.isEmpty {
-                    Section {
-                        Picker("会话视图", selection: viewSelection(of: views)) {
-                            ForEach(views) { Text($0.title).tag($0.id) }
-                        }
-                    }
-                }
-                if !dock.isEmpty {
-                    Section {
-                        ForEach(dock) { item in
-                            Button(item.title) { open(item, in: .dock) }
-                        }
+                    Picker("会话视图", selection: viewSelection(of: views)) {
+                        ForEach(views) { Text($0.title).tag($0.id) }
                     }
                 }
             } label: {
@@ -553,11 +588,6 @@ struct DSBotRootView: View {
         return views.count > 1 ? views : []
     }
 
-    /// Dock entries belong to a conversation, as they do in DSH.
-    private var menuDock: [NavigationItem] {
-        store.selectedSession == nil ? [] : store.activeNavigation.dock
-    }
-
     private func viewSelection(of views: [NavigationItem]) -> Binding<String> {
         Binding(
             get: {
@@ -573,6 +603,8 @@ struct DSBotRootView: View {
     private func statusBarFrost(safeAreaTop: CGFloat) -> some View {
         DSBotEdgeBlur(edge: .top, height: safeAreaTop + DSBotLayout.toolbarHeight + 20, strength: 0.8)
             .offset(y: -safeAreaTop)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     /// What covers the conversation while a page of DSH or of the app's own is open.
@@ -599,14 +631,15 @@ struct DSBotRootView: View {
                 commandDelivered: { pageCommand = nil }
             )
                 // Pages of plugins this app has no layout for start below the toolbar buttons.
-                .padding(.top, [.panel, .view, .dock].contains(page) ? DSBotLayout.toolbarHeight : 0)
+                .padding(.top, [.panel, .view].contains(page) ? DSBotLayout.toolbarHeight : 0)
                 // One view identity per page and conversation, so each owns its own session and web view.
                 .id("\(page.rawValue)/\(target ?? "")/\(sessionID ?? "")")
         }
     }
 
-    /// Show an entry of DSH's sidebar, conversation views or right dock, the way the plugin says to open it.
+    /// Show an entry of DSH's sidebar or conversation views, the way the plugin says to open it.
     private func open(_ item: NavigationItem, in area: NavigationArea) {
+        DSBotLog.record("navigation.open", state: "page")
         let target = item.target
         guard target != .unsupported else {
             store.notice = "手机端暂不支持「\(item.title)」"
@@ -644,8 +677,6 @@ struct DSBotRootView: View {
             if let item = navigation.sidebar.first(where: { $0.id == id }) { open(item, in: .sidebar) }
         case "view":
             if let item = navigation.views.first(where: { $0.id == id }) { open(item, in: .view) }
-        case "dock":
-            if let item = navigation.dock.first(where: { $0.id == id }) { open(item, in: .dock) }
         default:
             break
         }
@@ -667,11 +698,6 @@ struct DSBotRootView: View {
 
     private var drawerAnimation: Animation {
         reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.38, dampingFraction: 0.88)
-    }
-
-    private func drawerOffset(width: CGFloat) -> CGFloat {
-        if isSidebarOpen { return width + min(0, max(-width, drawerDrag)) }
-        return min(width, max(0, edgeDragOffset))
     }
 
     private func edgeOpenGesture(width: CGFloat) -> some Gesture {

@@ -4,10 +4,13 @@ import SwiftUI
 /// (the counts of what is done, going on and waiting) until it is opened, then the items with a mark each.
 struct TaskPanel: View {
     let todos: [TodoItem]
+    let onOverlayHeightChange: (CGFloat) -> Void
     @State private var isExpanded: Bool
+    @State private var contentHeight: CGFloat = 0
 
-    init(todos: [TodoItem]) {
+    init(todos: [TodoItem], onOverlayHeightChange: @escaping (CGFloat) -> Void = { _ in }) {
         self.todos = todos
+        self.onOverlayHeightChange = onOverlayHeightChange
         // DSH keeps it folded until it is opened.
         var opened = false
         #if DEBUG && targetEnvironment(simulator)
@@ -17,6 +20,24 @@ struct TaskPanel: View {
     }
 
     var body: some View {
+        Color.clear
+            .frame(height: 44)
+            .overlay(alignment: .bottom) {
+                panel
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background { DSBotPanelBackdrop() }
+            }
+            .onChange(of: overlayHeight, initial: true) { _, height in
+                onOverlayHeightChange(height)
+            }
+            .onDisappear { onOverlayHeightChange(0) }
+    }
+
+    private var overlayHeight: CGFloat {
+        isExpanded ? min(232, contentHeight) : 0
+    }
+
+    private var panel: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 withAnimation(.easeOut(duration: 0.18)) { isExpanded.toggle() }
@@ -32,8 +53,7 @@ struct TaskPanel: View {
                         .foregroundStyle(DSBotStyle.chatTertiary)
                         .lineLimit(1)
                     Spacer(minLength: 8)
-                    // Folded, the panel opens upwards over the conversation: the chevron points that way.
-                    DSBotIcon(isExpanded ? .down : .up, size: 14)
+                    DSBotIcon(.options, size: 20)
                         .foregroundStyle(DSBotStyle.chatTertiary)
                 }
                 .padding(.horizontal, 14)
@@ -54,13 +74,19 @@ struct TaskPanel: View {
                         }
                     }
                     .padding(.bottom, 8)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
                 }
                 .scrollBounceBehavior(.basedOnSize)
-                .frame(maxHeight: 232)
+                .frame(height: min(232, contentHeight))
+                .accessibilityIdentifier("tasks.list")
             }
         }
         .background(DSBotStyle.chatPanel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(DSBotStyle.chatBorder, lineWidth: 0.5))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(DSBotStyle.chatBorder, lineWidth: 0.5)
+                .allowsHitTesting(false)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("tasks.panel")
     }
@@ -72,10 +98,7 @@ struct TaskPanel: View {
             Text(item.content)
                 .font(.system(size: 14))
                 .lineSpacing(2)
-                .foregroundStyle(
-                    item.isInProgress ? DSBotStyle.chatInk
-                        : item.isCompleted ? DSBotStyle.chatTertiary : DSBotStyle.chatSecondary
-                )
+                .foregroundStyle(DSBotStyle.chatSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -86,25 +109,47 @@ struct TaskPanel: View {
     }
 }
 
-/// Done, going on or waiting, in the marks DSH uses: a check, a ring that turns, a quiet dot.
 private struct TaskStateMark: View {
     let item: TodoItem
 
     var body: some View {
         Group {
             if item.isCompleted {
-                DSBotIcon(.check, size: 13)
-                    .foregroundStyle(DSBotStyle.chatTertiary)
+                Circle()
+                    .fill(Color(red: 0x22 / 255, green: 0xc5 / 255, blue: 0x5e / 255))
+                    .frame(width: 6, height: 6)
             } else if item.isInProgress {
-                ProgressView()
-                    .controlSize(.mini)
-                    .tint(DSBotStyle.chatSecondary)
+                TaskActivityRing()
             } else {
                 Circle()
-                    .fill(Color(white: 0.8))
+                    .fill(Color(white: 0xd4 / 255))
                     .frame(width: 6, height: 6)
             }
         }
         .accessibilityHidden(true)
+    }
+}
+
+private struct TaskActivityRing: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.conversationIsCovered) private var isCovered
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion || isCovered)) { timeline in
+            let phase = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
+                .truncatingRemainder(dividingBy: 1.5) / 1.5
+            let breath = reduceMotion ? 0.5 : (1 - cos(phase * 2 * .pi)) / 2
+            let circumference = 2 * .pi * 9.5
+            ZStack {
+                Circle()
+                    .stroke(DSBotStyle.chatTertiary.opacity(0.25), lineWidth: 14.0 / 12)
+                Circle()
+                    .trim(from: 0, to: (12 + 12 * breath) / circumference)
+                    .stroke(DSBotStyle.chatTertiary, style: StrokeStyle(lineWidth: 14.0 / 12, lineCap: .round))
+                    .rotationEffect(.degrees(phase * 360 - 6 * breath / circumference * 360))
+            }
+            .padding(14.0 * 2.5 / 24)
+            .frame(width: 14, height: 14)
+        }
     }
 }

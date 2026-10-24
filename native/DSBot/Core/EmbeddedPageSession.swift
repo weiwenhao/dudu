@@ -3,9 +3,9 @@ import Foundation
 
 enum EmbeddedDSHPage: String, Codable, Sendable {
     case plugins, trace, context, team, tools, settings
-    /// A sidebar panel, a conversation view or a right-dock entry that a plugin added to DSH; the
+    /// A sidebar panel or a conversation view that a plugin added to DSH; the
     /// `target` names it.
-    case panel, view, dock
+    case panel, view
 }
 
 struct EmbeddedSettingsCategory: Decodable, Identifiable, Sendable, Equatable {

@@ -5,6 +5,8 @@ import { createTypertRpcAdapter } from './dist/native-bridge.mjs';
 import { createTypertPageRpc } from './dist/native-page-rpc.mjs';
 import { createDshMobileFrontend } from './dist/dsh-mobile-frontend.mjs';
 import { createNativePages } from './dist/native-pages.mjs';
+import { createConversationReads } from './dist/native-conversation-reads.mjs';
+import { createNativeQuestions } from './dist/native-questions.mjs';
 
 export const name = 'dsbot';
 export const inject = ['connection', 'typertGateway', 'clientModules', 'webServer'];
@@ -14,6 +16,7 @@ export async function apply(ctx, config = {}) {
   const folder = join(dshHome, 'dsbot');
   const peer = ctx.connection.createPeer({ principal: { kind: 'owner' } });
   let control;
+  let questionBridge;
   const disposers = [];
   try {
     const rpc = createTypertRpcAdapter({ gateway: ctx.typertGateway, peer });
@@ -26,10 +29,20 @@ export async function apply(ctx, config = {}) {
       webServer: ctx.webServer,
     });
     const pages = createNativePages({ frontend, pageRpc });
+    questionBridge = createNativeQuestions({
+      events: ctx,
+      attachWait: (request, signal) => {
+        const questions = ctx.get('userQuestions');
+        if (typeof questions?.attachWait !== 'function') throw new Error('User question wait service is unavailable.');
+        return questions.attachWait(request.agent, request.wait.callId, signal);
+      },
+    });
     control = await createDsbotControl({
       folder,
       rpc,
       pages,
+      conversationReads: createConversationReads({ connection: ctx.connection, peer }),
+      questionBridge,
       legacyKeyPath: join(dshHome, 'harness-mobile', 'pairing-key'),
       port: config.port ?? 3170,
       host: config.host ?? '0.0.0.0',
@@ -41,12 +54,14 @@ export async function apply(ctx, config = {}) {
       }));
     }
   } catch (error) {
+    questionBridge?.close();
     for (const dispose of disposers) dispose();
     try { await control?.close(); }
     finally { await peer.dispose(); }
     throw error;
   }
   ctx.effect(() => async () => {
+    questionBridge.close();
     for (const dispose of disposers) dispose();
     try { await control.close(); }
     finally { await peer.dispose(); }

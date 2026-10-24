@@ -76,7 +76,11 @@ struct PlanReviewCard: View {
                         .foregroundStyle(DSBotStyle.chatInk)
                         .padding(.horizontal, 20)
                         .frame(height: 44)
-                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(DSBotStyle.chatDivider, lineWidth: 1))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(DSBotStyle.chatDivider, lineWidth: 1)
+                                .allowsHitTesting(false)
+                        }
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -100,7 +104,11 @@ struct PlanReviewCard: View {
         .opacity(isResponding ? 0.7 : 1)
         .background(Color.white, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(DSBotStyle.chatDivider, lineWidth: 0.5))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(DSBotStyle.chatDivider, lineWidth: 0.5)
+                .allowsHitTesting(false)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("plan.review")
     }

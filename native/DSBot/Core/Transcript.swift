@@ -8,11 +8,15 @@ struct TranscriptCall: Codable, Identifiable, Equatable, Sendable {
     var activity: String
     var detail: String
     var status: String?
+    var seq: Double? = nil
+    var resultSeq: Double? = nil
 }
 
 struct TranscriptAttachment: Codable, Equatable, Hashable, Sendable {
     var kind: String
     var name: String
+    var id: String? = nil
+    var seq: Double? = nil
 }
 
 struct TranscriptCompaction: Codable, Equatable, Sendable {
@@ -49,6 +53,12 @@ struct TranscriptTurn: Codable, Equatable, Sendable {
     var start: Double?
     var end: Double?
     var outcome: String?
+    var lastSeq: Double? = nil
+    var files: [DeliveredFile]? = nil
+    var changesSeq: Double? = nil
+    var notices: [TurnNotice]? = nil
+    var stats: [String: Double]? = nil
+    var usage: [String: Double]? = nil
 }
 
 struct TranscriptLive: Codable, Equatable, Sendable {
@@ -62,6 +72,16 @@ struct Transcript: Codable, Equatable, Sendable {
     var entries: [TranscriptEntry]
     var turns: [TranscriptTurn]
     var live: TranscriptLive?
+    var beforeSeq: Double? = nil
+    var throughSeq: Double? = nil
+    var hasMore: Bool? = nil
+    var tools: [String: TranscriptToolReference]? = nil
+}
+
+struct TranscriptToolReference: Codable, Equatable, Sendable {
+    var seq: Double?
+    var resultSeq: Double?
+    var status: String?
 }
 
 struct SessionGoal: Codable, Equatable, Sendable {
@@ -313,6 +333,12 @@ struct TurnRow: Identifiable, Equatable, Sendable {
     var startedAt: Double?
     var usage: Int?
     var live: LiveStatus?
+    var answerSeq: Double? = nil
+    var messageSequences: [String: Double] = [:]
+    var files: [DeliveredFile] = []
+    var changesSeq: Double? = nil
+    var notices: [TurnNotice] = []
+    var performanceSeq: Double? = nil
 
     var hasProcess: Bool { !segments.isEmpty }
 
@@ -337,6 +363,7 @@ struct UserRow: Identifiable, Equatable, Sendable {
     var text: String
     var attachments: [TranscriptAttachment]
     var time: Double?
+    var seq: Double? = nil
 }
 
 struct CommandRow: Identifiable, Equatable, Sendable {
@@ -391,11 +418,11 @@ enum TranscriptBuilder {
             case "user":
                 rows.append(.user(UserRow(
                     id: entry.id, text: entry.text ?? "",
-                    attachments: entry.attachments ?? [], time: entry.time
+                    attachments: entry.attachments ?? [], time: entry.time, seq: entry.seq
                 )))
-            case "assistant":
+            case "assistant", "turn-marker":
                 let turn = entry.turn ?? -1
-                stepsByTurn[turn, default: []].append(entry)
+                if entry.type == "assistant" { stepsByTurn[turn, default: []].append(entry) }
                 if turnRowIndex[turn] == nil {
                     turnRowIndex[turn] = rows.count
                     rows.append(.turn(TurnRow(
@@ -447,6 +474,16 @@ enum TranscriptBuilder {
             let liveStep = isRunningTurn ? transcript.live : nil
 
             row.startedAt = info?.start
+            row.files = info?.files ?? []
+            row.changesSeq = info?.changesSeq
+            var retryChains = Set<String>()
+            row.notices = (info?.notices ?? []).reversed().filter { notice in
+                guard notice.kind == "retry", let retryId = notice.retryId, !retryId.isEmpty else { return true }
+                return retryChains.insert(retryId).inserted
+            }.reversed()
+            row.performanceSeq = info?.lastSeq
+            row.messageSequences = Dictionary(steps.compactMap { entry in entry.seq.map { (entry.id, $0) } },
+                                              uniquingKeysWith: { _, latest in latest })
             let usage = steps.compactMap(\.usage).reduce(0, +)
             row.usage = usage > 0 ? usage : nil
             if isRunningTurn {
@@ -468,6 +505,7 @@ enum TranscriptBuilder {
                 row.answerID = last.id
                 row.answer = text
                 row.answerTime = last.time
+                row.answerSeq = last.seq
                 processSteps.removeLast()
             }
             row.segments = segments(from: processSteps, live: liveStep, isRunningTurn: isRunningTurn)

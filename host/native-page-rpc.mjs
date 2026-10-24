@@ -68,27 +68,8 @@ export const PAGE_STREAM_METHODS = Object.freeze([
   'productAnalytics/watchPolicy',
 ]);
 
-/**
- * The right dock's terminal tab, which runs a shell as the user. These are not reads or config writes,
- * so the page policy admits them only on a dock page, only for that page's own conversation, and only
- * for terminals the page itself listed or created (see native-page-policy).
- */
-export const PAGE_TERMINAL_METHODS = Object.freeze([
-  'terminal/environment',
-  'terminal/shells',
-  'terminal/list',
-  'terminal/create',
-  'terminal/rename',
-  'terminal/close',
-]);
-
-export const PAGE_TERMINAL_STREAMS = Object.freeze([
-  'terminal/attach',
-  'terminal/retain',
-]);
-
-const CALLS = new Set([...PAGE_READ_METHODS, ...PAGE_WRITE_METHODS, ...PAGE_TERMINAL_METHODS]);
-const STREAMS = new Set([...PAGE_STREAM_METHODS, ...PAGE_TERMINAL_STREAMS]);
+const CALLS = new Set([...PAGE_READ_METHODS, ...PAGE_WRITE_METHODS]);
+const STREAMS = new Set([...PAGE_STREAM_METHODS]);
 const NOTIFICATIONS = Object.freeze([
   'agent-preset/selected',
   'api-session/activity',
@@ -238,9 +219,7 @@ export function createTypertPageRpc({ gateway, peer, events, connection, webServ
         return failure();
       }
     },
-    // `uplink` is the page's half of a duplex stream (a terminal's keystrokes); the Gateway decodes each
-    // item against the method's own codec before the method sees it.
-    async open(endpoint, args, signal, uplink) {
+    async open(endpoint, args, signal) {
       if (!STREAMS.has(endpoint)) throw new Error('Unsupported embedded stream.');
       if (endpoint === '$events') return notificationStream(events, signal);
       if (endpoint === 'productAnalytics/watchPolicy') {
@@ -248,7 +227,7 @@ export function createTypertPageRpc({ gateway, peer, events, connection, webServ
       }
       const [namespace, method] = endpoint.split('/');
       const source = await gateway.stream({
-        namespace, method, args, peer, signal, ...(uplink === undefined ? {} : { uplink }),
+        namespace, method, args, peer, signal,
       });
       return {
         dispose: () => source.dispose?.(),

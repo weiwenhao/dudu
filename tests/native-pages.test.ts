@@ -62,10 +62,13 @@ function deferred() {
 test('exports the authenticated embedded-page methods and validates page identity', async () => {
   assert.deepEqual(NATIVE_PAGE_METHODS, [
     'web.open', 'web.resource', 'web.invoke', 'web.close',
-    'web.stream.open', 'web.stream.next', 'web.stream.send', 'web.stream.close',
+    'web.stream.open', 'web.stream.next', 'web.stream.close',
   ]);
   const { pages, connection, frontend } = createHarness();
   await assert.rejects(openPage(pages, connection, 'public-url'), { code: 'BAD_REQUEST' });
+  for (const method of ['web.dock.sync', 'web.stream.send']) {
+    await assert.rejects(pages.dispatch(method, {}, connection), { code: 'BAD_REQUEST' });
+  }
   await assert.rejects(openPage(pages, connection, 'trace'), { code: 'BAD_REQUEST' });
   await assert.rejects(pages.dispatch('web.open', { page: 'trace', sessionId: 'bad\nvalue' }, connection), {
     code: 'BAD_REQUEST',
@@ -557,13 +560,15 @@ test('pages for what plugins add are named by a registered id, and ids and sessi
   assert.match(panel.id, /^[0-9a-f-]{36}$/u);
   assert.deepEqual(frontend.calls.documents.at(-1), { kind: 'panel', sessionId: undefined });
 
-  // A conversation view or a dock entry needs both.
+  // Conversation pages require a session; a named view also requires its target.
   await assert.rejects(open({ page: 'view', target: 'notes' }), { code: 'BAD_REQUEST' });
   await assert.rejects(open({ page: 'view', sessionId: SESSION_ID }), { code: 'BAD_REQUEST' });
-  await assert.rejects(open({ page: 'dock', sessionId: SESSION_ID }), { code: 'BAD_REQUEST' });
+  for (const params of [{ page: 'dock' }, { page: 'dock', sessionId: SESSION_ID },
+    { page: 'dock', sessionId: SESSION_ID, target: 'example-board:open' }]) {
+    await assert.rejects(open(params), { code: 'BAD_REQUEST' });
+  }
   await open({ page: 'view', sessionId: SESSION_ID, target: 'notes' });
-  await open({ page: 'dock', sessionId: SESSION_ID, target: 'example-board:open' });
-  assert.deepEqual(frontend.calls.documents.slice(-2).map((item: { kind: string }) => item.kind), ['view', 'dock']);
+  assert.deepEqual(frontend.calls.documents.at(-1), { kind: 'view', sessionId: SESSION_ID });
 
   // Settings can open on a section; other pages take no target at all.
   await open({ page: 'settings', target: 'models' });
@@ -573,154 +578,6 @@ test('pages for what plugins add are named by a registered id, and ids and sessi
   for (const target of ['', 'has space', 'a'.repeat(300), '../up', 'line\nbreak', '<script>', 42]) {
     await assert.rejects(open({ page: 'panel', target }), { code: 'BAD_REQUEST' }, String(target));
   }
-});
-
-// ---- Terminals: the right dock's duplex stream -------------------------------------------------
-
-const TERMINAL_ID = 'terminal-one';
-
-async function openDock(pages, connection, target = 'terminal:new') {
-  return pages.dispatch('web.open', { page: 'dock', sessionId: SESSION_ID, target }, connection);
-}
-
-/** A terminal attachment as DSH's gateway presents it: reads the page's uplink, answers with frames. */
-function terminalRpc({ output = [], onItem = () => {} } = {}) {
-  const seen = { opens: [], uplinks: [] };
-  return {
-    seen,
-    pageRpc: {
-      async invoke(endpoint, args) {
-        if (endpoint === 'terminal/list') return { ok: true, value: [{ id: TERMINAL_ID, state: 'running' }] };
-        if (endpoint === 'terminal/shells') return { ok: true, value: [{ path: '/bin/zsh', args: [], name: 'zsh' }] };
-        return { ok: true, value: {} };
-      },
-      async open(endpoint, args, signal, uplink) {
-        seen.opens.push({ endpoint, args, uplink: Boolean(uplink) });
-        return {
-          async *[Symbol.asyncIterator]() {
-            for (const frame of output) yield frame;
-            if (!uplink) return;
-            for await (const item of uplink) {
-              seen.uplinks.push(item);
-              onItem(item);
-              yield { type: 'ack', sequence: item.sequence };
-            }
-          },
-        };
-      },
-    },
-  };
-}
-
-async function attachTerminal(pages, connection, page) {
-  await pages.dispatch('web.invoke', {
-    id: page.id, endpoint: 'terminal/list', args: { sessionId: SESSION_ID },
-  }, connection);
-  return pages.dispatch('web.stream.open', {
-    id: page.id, endpoint: 'terminal/attach', args: { agentId: SESSION_ID, id: TERMINAL_ID },
-  }, connection);
-}
-
-test('a terminal attachment is a duplex stream: input goes up in order and the desktop answers', async () => {
-  const rpc = terminalRpc();
-  const { pages, connection } = createHarness({ pageRpc: rpc.pageRpc });
-  const page = await openDock(pages, connection);
-  const opened = await attachTerminal(pages, connection, page);
-  assert.equal(rpc.seen.opens[0].uplink, true, 'the Gateway is handed an uplink');
-
-  const write = (sequence, data) => ({ type: 'write', sequence, data });
-  await pages.dispatch('web.stream.send', {
-    id: page.id, streamId: opened.streamId, items: [write(1, 'ls'), write(2, '\r')],
-  }, connection);
-  await pages.dispatch('web.stream.send', {
-    id: page.id, streamId: opened.streamId, items: [{ type: 'resize', sequence: 3, cols: 80, rows: 24 }],
-  }, connection);
-
-  const acks = [];
-  while (acks.length < 3) {
-    const next = await pages.dispatch('web.stream.next', { id: page.id, streamId: opened.streamId }, connection);
-    acks.push(...next.items);
-  }
-  assert.deepEqual(rpc.seen.uplinks.map((item) => item.sequence), [1, 2, 3]);
-  assert.deepEqual(acks.map((frame) => frame.sequence), [1, 2, 3]);
-
-  await pages.dispatch('web.stream.send', { id: page.id, streamId: opened.streamId, items: [], end: true }, connection);
-  const last = await pages.dispatch('web.stream.next', { id: page.id, streamId: opened.streamId }, connection);
-  assert.deepEqual(last, { items: [], done: true }, 'ending the uplink ends the attachment');
-});
-
-test('terminal input is validated before it reaches the desktop', async () => {
-  const rpc = terminalRpc();
-  const { pages, connection } = createHarness({ pageRpc: rpc.pageRpc });
-  const page = await openDock(pages, connection);
-  const opened = await attachTerminal(pages, connection, page);
-  const send = (items, extra = {}) => pages.dispatch('web.stream.send', {
-    id: page.id, streamId: opened.streamId, items, ...extra,
-  }, connection);
-
-  for (const items of [
-    [{ type: 'write', sequence: 1 }],
-    [{ type: 'write', sequence: 0, data: 'x' }],
-    [{ type: 'write', sequence: 1.5, data: 'x' }],
-    [{ type: 'write', sequence: 1, data: '' }],
-    [{ type: 'write', sequence: 1, data: 'x', extra: true }],
-    [{ type: 'write', sequence: 1, data: 'x'.repeat(65 * 1024) }],
-    [{ type: 'resize', sequence: 1, cols: 1, rows: 24 }],
-    [{ type: 'resize', sequence: 1, cols: 501, rows: 24 }],
-    [{ type: 'resize', sequence: 1, cols: 80, rows: 201 }],
-    [{ type: 'run', sequence: 1, command: 'rm -rf /' }],
-    ['write'],
-    [null],
-  ]) {
-    await assert.rejects(send(items), { code: 'BAD_REQUEST' }, JSON.stringify(items).slice(0, 80));
-  }
-  await assert.rejects(send(Array.from({ length: 65 }, (_, index) => ({ type: 'write', sequence: index + 1, data: 'a' }))), {
-    code: 'BAD_REQUEST',
-  });
-  await assert.rejects(send([], {}), { code: 'BAD_REQUEST' }, 'nothing to send and no end');
-  await assert.rejects(send([], { end: false }), { code: 'BAD_REQUEST' });
-  await assert.rejects(send([{ type: 'write', sequence: 1, data: 'a' }], { extra: 1 }), { code: 'BAD_REQUEST' });
-  assert.deepEqual(rpc.seen.uplinks, [], 'nothing invalid was delivered');
-
-  // Multi-byte input counts by UTF-8 bytes, not characters.
-  await assert.rejects(send([{ type: 'write', sequence: 1, data: '你'.repeat(22 * 1024) }]), { code: 'BAD_REQUEST' });
-  await send([{ type: 'write', sequence: 1, data: '你'.repeat(20 * 1024) }]);
-});
-
-test('only a stream that carries an uplink accepts one, and only from its own page', async () => {
-  const rpc = terminalRpc();
-  const { pages, connection } = createHarness({ pageRpc: rpc.pageRpc });
-  const page = await openDock(pages, connection);
-  const events = await pages.dispatch('web.stream.open', { id: page.id, endpoint: '$events', args: {} }, connection);
-  await assert.rejects(pages.dispatch('web.stream.send', {
-    id: page.id, streamId: events.streamId, items: [{ type: 'write', sequence: 1, data: 'x' }],
-  }, connection), { code: 'NOT_FOUND' });
-
-  const other = await openDock(pages, connection, 'browser:new');
-  const opened = await attachTerminal(pages, connection, page);
-  await assert.rejects(pages.dispatch('web.stream.send', {
-    id: other.id, streamId: opened.streamId, items: [{ type: 'write', sequence: 1, data: 'x' }],
-  }, connection), { code: 'NOT_FOUND' }, 'a stream belongs to the page that opened it');
-  await assert.rejects(pages.dispatch('web.stream.send', {
-    id: page.id, streamId: 'not-an-id', items: [],
-  }, connection), { code: 'BAD_REQUEST' });
-});
-
-test('terminal output is delivered a batch at a time, and the end never travels with items', async () => {
-  const frames = Array.from({ length: 5 }, (_, index) => ({ type: 'output', sequence: index + 1, data: `line ${index}` }));
-  const rpc = terminalRpc({ output: frames });
-  rpc.pageRpc.open = async (endpoint, args, signal, uplink) => ({
-    async *[Symbol.asyncIterator]() { for (const frame of frames) yield frame; },
-  });
-  const { pages, connection } = createHarness({ pageRpc: rpc.pageRpc });
-  const page = await openDock(pages, connection);
-  const opened = await attachTerminal(pages, connection, page);
-
-  const first = await pages.dispatch('web.stream.next', { id: page.id, streamId: opened.streamId }, connection);
-  assert.deepEqual(first.items.map((frame) => frame.sequence), [1, 2, 3, 4, 5], 'everything already waiting is one reply');
-  assert.equal(first.done, false, 'the end is reported on its own');
-  const second = await pages.dispatch('web.stream.next', { id: page.id, streamId: opened.streamId }, connection);
-  assert.deepEqual(second, { items: [], done: true });
 });
 
 test('other streams still deliver one item per reply', async () => {
@@ -735,73 +592,4 @@ test('other streams still deliver one item per reply', async () => {
   const opened = await pages.dispatch('web.stream.open', { id: page.id, endpoint: '$events', args: {} }, connection);
   const first = await pages.dispatch('web.stream.next', { id: page.id, streamId: opened.streamId }, connection);
   assert.equal(first.items.length, 1);
-});
-
-test('a page that outruns the desktop loses its terminal stream instead of filling its memory', async () => {
-  const gate = deferred();
-  const rpc = terminalRpc();
-  rpc.pageRpc.open = async (endpoint, args, signal, uplink) => ({
-    async *[Symbol.asyncIterator]() {
-      await gate.promise; // the desktop is not reading yet
-      for await (const item of uplink) yield { type: 'ack', sequence: item.sequence };
-    },
-  });
-  const { pages, connection } = createHarness({ pageRpc: rpc.pageRpc });
-  const page = await openDock(pages, connection);
-  const opened = await attachTerminal(pages, connection, page);
-
-  const chunk = 'x'.repeat(60 * 1024);
-  let failure;
-  for (let sequence = 1; sequence <= 80 && !failure; sequence += 1) {
-    try {
-      await pages.dispatch('web.stream.send', {
-        id: page.id, streamId: opened.streamId, items: [{ type: 'write', sequence, data: chunk }],
-      }, connection);
-    } catch (error) {
-      failure = error;
-    }
-  }
-  assert.equal(failure?.code, 'LIMIT_EXCEEDED');
-  await assert.rejects(pages.dispatch('web.stream.send', {
-    id: page.id, streamId: opened.streamId, items: [{ type: 'write', sequence: 99, data: 'x' }],
-  }, connection), { code: 'NOT_FOUND' }, 'the stream is gone');
-  gate.resolve();
-});
-
-test('closing a terminal stream or its page releases the uplink for the desktop', async () => {
-  let released = 0;
-  const rpc = terminalRpc();
-  rpc.pageRpc.open = async (endpoint, args, signal, uplink) => ({
-    async *[Symbol.asyncIterator]() {
-      try {
-        for await (const item of uplink) yield { type: 'ack', sequence: item.sequence };
-      } finally {
-        released += 1;
-      }
-    },
-  });
-  const { pages, connection } = createHarness({ pageRpc: rpc.pageRpc });
-  const page = await openDock(pages, connection);
-
-  // The desktop is reading the uplink once the first keystroke has been answered.
-  const running = async () => {
-    const opened = await attachTerminal(pages, connection, page);
-    await pages.dispatch('web.stream.send', {
-      id: page.id, streamId: opened.streamId, items: [{ type: 'write', sequence: 1, data: 'a' }],
-    }, connection);
-    await pages.dispatch('web.stream.next', { id: page.id, streamId: opened.streamId }, connection);
-    return opened;
-  };
-
-  const first = await running();
-  const pending = pages.dispatch('web.stream.next', { id: page.id, streamId: first.streamId }, connection);
-  await pages.dispatch('web.stream.close', { id: page.id, streamId: first.streamId }, connection);
-  assert.deepEqual(await pending, { items: [], done: true });
-  assert.equal(released, 1);
-
-  const second = await running();
-  const waiting = pages.dispatch('web.stream.next', { id: page.id, streamId: second.streamId }, connection);
-  await pages.dispatch('web.close', { id: page.id }, connection);
-  await waiting.catch(() => {});
-  assert.equal(released, 2);
 });

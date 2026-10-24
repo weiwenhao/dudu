@@ -5,7 +5,7 @@ enum DSBotGlyph: CaseIterable {
     case menu, panel, camera, image, keyboard, microphone, voice
     case plus, add, compose, close, remove, check, settings
     case plugins, skills, schedule, computer, account, options
-    case message, trace, context, team
+    case message, queue, trace, context, team
     case down, up, right, select, reconnect, permission, model
     case scan, focus, stop, send, terminal, open, search, folder, file, back, copy
     case goal, plan, compact, attach
@@ -35,6 +35,7 @@ enum DSBotGlyph: CaseIterable {
         case .account: return .circleUserRound
         case .options: return .ellipsis
         case .message: return .messageSquare
+        case .queue: return .messageCircleText
         case .trace: return .activity
         case .context: return .fileCode
         case .team: return .usersRound
@@ -76,9 +77,19 @@ enum DSBotGlyph: CaseIterable {
         }
     }
 
+    var assetName: String? {
+        switch self {
+        case .goal: return "Goal"
+        case .queue: return "Queue"
+        case .mode: return "AgentPreset"
+        default: return nil
+        }
+    }
+
     // Native menus require Image labels. Rasterize only the icons being displayed.
     @MainActor
     fileprivate var menuImage: Image {
+        if let assetName { return Image(assetName) }
         if let image = Self.menuImages[self] { return image }
         let image = Image(lucide: lucide, strokeWidth: 2)
         Self.menuImages[self] = image
@@ -104,8 +115,17 @@ struct DSBotIcon: View {
     }
 
     var body: some View {
-        LucideIcon(glyph.lucide, size: size, strokeWidth: strokeWidth, absoluteStrokeWidth: !scalesStroke)
-            .accessibilityHidden(true)
+        Group {
+            if let assetName = glyph.assetName {
+                Image(assetName)
+                    .resizable()
+                    .renderingMode(.template)
+                    .frame(width: size, height: size)
+            } else {
+                LucideIcon(glyph.lucide, size: size, strokeWidth: strokeWidth, absoluteStrokeWidth: !scalesStroke)
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 

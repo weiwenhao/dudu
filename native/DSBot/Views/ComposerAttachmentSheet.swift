@@ -296,7 +296,8 @@ struct ComposerAttachmentSheet: View {
             commandRow(
                 icon: .plan, title: store.planMode ? "退出计划模式" : "计划",
                 subtitle: store.planMode ? "计划模式已开启" : "进入或退出计划模式",
-                showsChevron: false, identifier: "composer.plan", isEnabled: true
+                showsChevron: false, isSelected: store.planMode,
+                identifier: "composer.plan", isEnabled: !store.isChangingPlanMode
             ) { onPlan() }
         }
         .background(Self.card, in: RoundedRectangle(cornerRadius: Layout.cardRadius, style: .continuous))
@@ -367,6 +368,7 @@ struct ComposerAttachmentSheet: View {
         subtitle: String?,
         value: String? = nil,
         showsChevron: Bool = true,
+        isSelected: Bool = false,
         identifier: String,
         isEnabled: Bool,
         action: @escaping () -> Void
@@ -396,7 +398,10 @@ struct ComposerAttachmentSheet: View {
                         .truncationMode(.tail)
                         .frame(maxWidth: 130, alignment: .trailing)
                 }
-                if showsChevron {
+                if isSelected {
+                    DSBotIcon(.check, size: 20)
+                        .padding(.leading, 6)
+                } else if showsChevron {
                     DSBotIcon(.right, size: 16)
                         .foregroundStyle(DSBotStyle.muted)
                         .padding(.leading, 6)
@@ -413,6 +418,7 @@ struct ComposerAttachmentSheet: View {
         .accessibilityLabel(subtitle.map { "\(title)，\($0)" } ?? title)
         .accessibilityValue(value ?? "")
         .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityIdentifier(identifier)
     }
 

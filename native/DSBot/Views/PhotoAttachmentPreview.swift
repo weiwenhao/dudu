@@ -89,10 +89,11 @@ struct AttachmentRemoveBadge: View {
     }
 }
 
-private struct PhotoAttachmentFullScreenPreview: View {
-    let base64: String
+struct PhotoAttachmentFullScreenPreview: View {
+    var base64: String? = nil
     let thumbnailImage: UIImage?
     let onClose: () -> Void
+    var loadImage: (() async -> PreparedPhotoImage?)? = nil
 
     @State private var fullSizeImage: UIImage?
 
@@ -117,10 +118,15 @@ private struct PhotoAttachmentFullScreenPreview: View {
         }
         .preferredColorScheme(.dark)
         .task {
-            guard let prepared = await PhotoAttachments.loadFullSizePreview(fromBase64: base64) else {
-                return
+            let prepared: PreparedPhotoImage?
+            if let loadImage {
+                prepared = await loadImage()
+            } else if let base64 {
+                prepared = await PhotoAttachments.loadFullSizePreview(fromBase64: base64)
+            } else {
+                prepared = nil
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, let prepared else { return }
             fullSizeImage = prepared.image
         }
     }

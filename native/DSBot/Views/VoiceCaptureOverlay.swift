@@ -6,6 +6,66 @@ final class VoiceTouch: ObservableObject {
     @Published var location: CGPoint?
 }
 
+@MainActor
+final class VoicePressState: ObservableObject {
+    @Published var isActive = false
+    @Published var isCancelling = false
+    let touch = VoiceTouch()
+    var sessionID: String?
+    var computerID: String?
+    var startedAt: TimeInterval?
+    var timeoutTask: Task<Void, Never>?
+}
+
+struct VoiceCaptureLayer: View {
+    @ObservedObject var capture: NativeSpeechCapture
+    @ObservedObject var press: VoicePressState
+    let isVoiceMode: Bool
+
+    private var isVisible: Bool { press.isActive || capture.isFinishing }
+
+    var body: some View {
+        let visible = isVisible
+        let transcript = capture.transcript
+        let cancelling = press.isCancelling
+        let finishing = capture.isFinishing
+        GeometryReader { geometry in
+            if isVoiceMode || visible {
+                let height = min(geometry.size.height * 0.32, 248)
+                VoiceCaptureOverlay(
+                    transcript: transcript, meter: capture.meter, touch: press.touch,
+                    touchOriginY: geometry.frame(in: .global).maxY - height,
+                    isCancelling: cancelling, isFinishing: finishing,
+                    isActive: visible
+                )
+                .frame(height: height)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .opacity(visible ? 1 : 0.001)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(!visible)
+        .onChange(of: visible) { _, visible in
+            DSBotLog.record("voice.overlay.visibility", state: visible ? "visible" : "hidden")
+            if visible, let startedAt = press.startedAt {
+                DSBotLog.record("voice.overlay.ready", elapsedMs: (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000)
+            }
+        }
+        .onChange(of: capture.isRecording) { _, recording in
+            if !recording && !capture.isFinishing { press.isActive = false }
+        }
+    }
+}
+
+struct VoiceComposerVisibility: ViewModifier {
+    @ObservedObject var capture: NativeSpeechCapture
+    @ObservedObject var press: VoicePressState
+
+    func body(content: Content) -> some View {
+        content.opacity(press.isActive || capture.isFinishing ? 0 : 1)
+    }
+}
+
 /// Full-width glow that replaces the composer while the hold-to-talk bar is pressed: a blue (or,
 /// when the finger has moved up to cancel, red) wash that rises from the bottom edge, a hint, and
 /// a level meter. A soft spot of light follows the finger and breathes while it is held down.
@@ -106,7 +166,8 @@ struct VoiceCaptureOverlay: View {
         }
         .allowsHitTesting(false)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(isCancelling ? "voice.overlay.cancel" : "voice.overlay.recording")
+        .accessibilityHidden(!isActive)
+        .accessibilityIdentifier(isActive ? (isCancelling ? "voice.overlay.cancel" : "voice.overlay.recording") : "voice.overlay.inactive")
     }
 
     private static let barCount = 54

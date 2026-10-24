@@ -30,23 +30,21 @@ final class NavigationTests: XCTestCase {
         XCTAssertEqual(catalog.sidebar[1].icon?.nodes.first?.d, "M0 0L1 1")
         XCTAssertEqual(catalog.sidebar[1].icon?.nodes.first?.strokeWidth, 1.3)
         XCTAssertEqual(catalog.views.map(\.title), ["对话", "笔记"])
-        XCTAssertEqual(catalog.dock.map(\.id), ["files:workspace"])
         XCTAssertEqual(catalog.settings.first?.target, .web(page: .settings, target: "models"))
     }
 
-    func testAnEntryTheAppCannotReadDoesNotTakeTheOthersWithIt() throws {
-        let catalog = try decode(#"""
+    func testMalformedEntriesReportFailureInsteadOfDisappearing() throws {
+        XCTAssertThrowsError(try decode(#"""
         {"available": true,
          "sidebar": [{"id": "a", "title": "A", "open": {"web": {"page": "panel", "target": "a"}}},
                      {"id": 7, "title": "wrong type"},
                      {"title": "no id", "open": {}},
                      {"id": "b", "title": "B", "open": {"native": "files"}}]}
-        """#)
-        XCTAssertEqual(catalog.sidebar.map(\.id), ["a", "b"])
+        """#))
     }
 
-    func testAnIconTheAppCannotDrawCostsTheEntryItsGlyphOnly() throws {
-        let catalog = try decode(#"""
+    func testMalformedIconsReportFailureInsteadOfLosingTheirGlyphs() throws {
+        XCTAssertThrowsError(try decode(#"""
         {"available": true,
          "sidebar": [
            {"id": "a", "title": "A", "open": {"native": "files"}, "icon": {"viewBox": [0, 0, 0, 16], "nodes": [{"tag": "path"}]}},
@@ -55,10 +53,9 @@ final class NavigationTests: XCTestCase {
            {"id": "d", "title": "D", "open": {"native": "files"},
             "icon": {"viewBox": [0, 0, 16, 16], "nodes": [{"tag": "path", "d": "M0 0L1 1"}, {"broken": true}]}}
          ]}
-        """#)
-        XCTAssertEqual(catalog.sidebar.map(\.id), ["a", "b", "c", "d"])
-        XCTAssertEqual(catalog.sidebar.map { $0.icon != nil }, [false, false, false, true])
-        XCTAssertEqual(catalog.sidebar[3].icon?.nodes.count, 1, "A shape that does not parse is skipped.")
+        """#))
+        XCTAssertThrowsError(try catalog(withIcon: #"{"viewBox": [0, 0, 16, 16], "nodes": [{"tag": "path", "d": "M0 0L1 1"}, {"broken": true}]}"#))
+        XCTAssertThrowsError(try decode(#"{"schemaVersion": 2}"#))
     }
 
     func testAMissingOrEmptyReplyIsTheEmptyCatalog() throws {
@@ -79,14 +76,14 @@ final class NavigationTests: XCTestCase {
                        "A screen this build lacks falls back to the page.")
         XCTAssertEqual(target(nil, "trace"), .web(page: .trace, target: nil))
         XCTAssertEqual(target(nil, "view", "notes"), .web(page: .view, target: "notes"))
-        XCTAssertEqual(target(nil, "dock", "board:open"), .web(page: .dock, target: "board:open"))
+        XCTAssertEqual(target(nil, "dock", "board:open"), .unsupported)
         XCTAssertEqual(target("calendar"), .unsupported)
         XCTAssertEqual(target(nil, "hologram"), .unsupported, "A page kind this build does not know cannot open.")
         XCTAssertEqual(target(nil), .unsupported)
     }
 
     func testPagesOfOneConversationNeedASession() {
-        for page in [EmbeddedDSHPage.trace, .context, .team, .tools, .view, .dock] {
+        for page in [EmbeddedDSHPage.trace, .context, .team, .tools, .view] {
             XCTAssertTrue(page.needsSession, "\(page)")
         }
         for page in [EmbeddedDSHPage.plugins, .settings, .panel] {
@@ -100,7 +97,6 @@ final class NavigationTests: XCTestCase {
         XCTAssertFalse(empty.available)
         XCTAssertTrue(empty.sidebar.isEmpty)
         XCTAssertTrue(empty.views.isEmpty)
-        XCTAssertTrue(empty.dock.isEmpty)
         XCTAssertTrue(empty.settings.isEmpty)
     }
 
@@ -134,7 +130,7 @@ final class NavigationTests: XCTestCase {
         XCTAssertEqual(icon.viewBox, [0, 0, 64, 64])
     }
 
-    func testAPictureThatIsNotASmallRealPNGCostsTheEntryItsGlyphOnly() throws {
+    func testInvalidPicturesReportFailure() throws {
         let bad: [String: String] = [
             "not base64": "not base64!",
             "a data url": "data:image/png;base64,\(pictureBase64())",
@@ -146,16 +142,14 @@ final class NavigationTests: XCTestCase {
             "too many bytes": pictureBase64(trailing: 13 * 1024)
         ]
         for (what, png) in bad {
-            let catalog = try catalog(withIcon: #"{"viewBox": [0, 0, 64, 64], "nodes": [], "png": "\#(png)"}"#)
-            XCTAssertEqual(catalog.sidebar.count, 1, what)
-            XCTAssertNil(catalog.sidebar[0].icon, what)
+            XCTAssertThrowsError(try catalog(withIcon: #"{"viewBox": [0, 0, 64, 64], "nodes": [], "png": "\#(png)"}"#), what)
         }
     }
 
     func testShapesStillNeedAtLeastOneNodeAndAPictureNeedsNone() throws {
-        XCTAssertNil(try catalog(withIcon: #"{"viewBox": [0, 0, 16, 16], "nodes": []}"#).sidebar[0].icon)
+        XCTAssertThrowsError(try catalog(withIcon: #"{"viewBox": [0, 0, 16, 16], "nodes": []}"#))
         XCTAssertNotNil(try catalog(withIcon: #"{"viewBox": [0, 0, 16, 16], "nodes": [{"tag": "path", "d": "M0 0L1 1"}]}"#).sidebar[0].icon)
-        XCTAssertNil(try catalog(withIcon: #"{"viewBox": [0, 0, 0, 16], "nodes": [], "png": "\#(pictureBase64())"}"#).sidebar[0].icon,
-                     "The box is checked for a picture too.")
+        XCTAssertThrowsError(try catalog(withIcon: #"{"viewBox": [0, 0, 0, 16], "nodes": [], "png": "\#(pictureBase64())"}"#),
+                             "The box is checked for a picture too.")
     }
 }

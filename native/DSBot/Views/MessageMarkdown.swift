@@ -5,12 +5,27 @@ struct MessageMarkdown: View {
     let text: String
     /// Smaller, quieter text for secondary content such as a compaction summary.
     var compact = false
+    var allowsTextSelection = true
     @State private var parsed: MarkdownContent?
-    @State private var parsedText: String?
 
     var body: some View {
         Group {
-            if let parsed, parsedText == text {
+            if allowsTextSelection {
+                renderedContent.textSelection(.enabled)
+            } else {
+                renderedContent.textSelection(.disabled)
+            }
+        }
+        .task(id: text) {
+            let content = await MessageMarkdownCache.shared.content(for: text)
+            guard !Task.isCancelled else { return }
+            parsed = content
+        }
+    }
+
+    private var renderedContent: some View {
+        Group {
+            if let parsed = MessageMarkdownCache.cachedContent(for: text) ?? parsed {
                 Markdown(parsed)
                     .markdownTheme(compact ? .dsbotCompact : .dsbot)
                     .markdownImageProvider(MessageImagePlaceholder())
@@ -22,32 +37,49 @@ struct MessageMarkdown: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .textSelection(.enabled)
-        .task(id: text) {
-            let content = await MessageMarkdownCache.shared.content(for: text)
-            guard !Task.isCancelled else { return }
-            parsed = content
-            parsedText = text
-        }
     }
 }
 
 // Parse once off the UI thread, with a bounded cache for revisiting conversations.
 private actor MessageMarkdownCache {
     static let shared = MessageMarkdownCache()
+    private nonisolated static let memory = MessageMarkdownMemory()
+
+    nonisolated static func cachedContent(for text: String) -> MarkdownContent? {
+        memory.content(for: text)
+    }
+
+    func content(for text: String) -> MarkdownContent {
+        if let content = Self.memory.content(for: text) { return content }
+        let content = MarkdownContent(text)
+        Self.memory.insert(content, for: text)
+        return content
+    }
+}
+
+private final class MessageMarkdownMemory: @unchecked Sendable {
+    private let lock = NSLock()
     private var values: [String: MarkdownContent] = [:]
     private var recent: [String] = []
     private var byteCount = 0
 
-    func content(for text: String) -> MarkdownContent {
+    func content(for text: String) -> MarkdownContent? {
+        lock.lock()
+        defer { lock.unlock() }
         if let content = values[text] {
             recent.removeAll { $0 == text }
             recent.append(text)
             return content
         }
-        let content = MarkdownContent(text)
+        return nil
+    }
+
+    func insert(_ content: MarkdownContent, for text: String) {
         let size = text.utf8.count
-        guard size <= 512_000 else { return content }
+        guard size <= 512_000 else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        guard values[text] == nil else { return }
         while recent.count >= 48 || byteCount + size > 2_000_000 {
             guard !recent.isEmpty else { break }
             let removed = recent.removeFirst()
@@ -57,7 +89,6 @@ private actor MessageMarkdownCache {
         values[text] = content
         recent.append(text)
         byteCount += size
-        return content
     }
 }
 

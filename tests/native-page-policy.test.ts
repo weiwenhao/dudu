@@ -2,10 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   acceptPageResult,
-  acceptPageUplink,
   allowPageCall,
   initializePagePolicy,
-  isDuplexStream,
   pageStreamItem,
 } from '../host/native-page-policy.mjs';
 
@@ -28,6 +26,19 @@ const pageFor = (kind, sessionId = parentSession) => {
 };
 const invoke = (page, endpoint, args) => allowPageCall(page, endpoint, args, false);
 const stream = (page, endpoint, args) => allowPageCall(page, endpoint, args, true);
+
+test('embedded pages reject the retired resource terminal calls and streams', () => {
+  for (const kind of ['plugins', 'trace', 'context', 'team', 'tools', 'settings', 'panel', 'view', 'dock']) {
+    const page = pageFor(kind);
+    for (const endpoint of ['terminal/environment', 'terminal/shells', 'terminal/list',
+      'terminal/create', 'terminal/rename', 'terminal/close']) {
+      assert.equal(invoke(page, endpoint, { agentId: parentSession, id: 'terminal-one' }), false);
+    }
+    for (const endpoint of ['terminal/attach', 'terminal/retain']) {
+      assert.equal(stream(page, endpoint, { agentId: parentSession, id: 'terminal-one' }), false);
+    }
+  }
+});
 
 test('session read and follow calls require named, identity-scoped request objects', () => {
   const page = pageFor('trace');
@@ -354,14 +365,14 @@ test('events stay session scoped and unsupported RPC routes remain unavailable',
   assert.equal(stream(page, 'arbitrary/subscribe', {}), false);
 });
 
-test('panels, views and docks added by plugins read through the same allowlist and write nothing', () => {
+test('panels and views added by plugins read through the same allowlist and write nothing', () => {
   const session = (kind: string) => {
     const page: Record<string, unknown> = { kind, sessionId: 'session-1' };
     initializePagePolicy(page);
     return page;
   };
 
-  for (const kind of ['view', 'dock']) {
+  for (const kind of ['view']) {
     const page = session(kind);
     assert.equal(allowPageCall(page, 'session/projections', { request: { sessionId: 'session-1' } }), true, kind);
     assert.equal(allowPageCall(page, 'session/projections', { request: { sessionId: 'other' } }), false, kind);
@@ -382,142 +393,4 @@ test('panels, views and docks added by plugins read through the same allowlist a
   }
   assert.ok(pageStreamItem(panel, '$events', { type: 'emit', event: 'schedule/changed', args: [] }));
   assert.equal(pageStreamItem(panel, '$events', { type: 'emit', event: 'credentials/record-updated', args: [] }), undefined);
-});
-
-// ---- Terminals ---------------------------------------------------------------------------------
-
-const terminalId = 'terminal-one';
-const dockPage = (sessionId = parentSession) => pageFor('dock', sessionId);
-const create = (page, request, agentId = parentSession) => invoke(page, 'terminal/create', { agentId, request });
-
-test('terminal calls exist only on a dock page, for that page\'s own conversation', () => {
-  const calls = [
-    ['terminal/environment', { agentId: parentSession }],
-    ['terminal/shells', { agentId: parentSession }],
-    ['terminal/list', { sessionId: parentSession }],
-  ];
-  const dock = dockPage();
-  for (const [endpoint, args] of calls) assert.equal(invoke(dock, endpoint, args), true, endpoint);
-  for (const kind of ['plugins', 'settings', 'trace', 'context', 'team', 'view', 'panel', 'tools']) {
-    const page = pageFor(kind);
-    for (const [endpoint, args] of calls) assert.equal(invoke(page, endpoint, args), false, `${kind} ${endpoint}`);
-  }
-  for (const [endpoint, args] of calls) {
-    const key = Object.keys(args)[0];
-    assert.equal(invoke(dock, endpoint, { [key]: 'another-session' }), false, `${endpoint} for another conversation`);
-    assert.equal(invoke(dock, endpoint, { ...args, extra: 1 }), false, `${endpoint} with an extra argument`);
-    assert.equal(invoke(dock, endpoint, {}), false, `${endpoint} without arguments`);
-  }
-  assert.equal(invoke(pageFor('dock', undefined), 'terminal/list', { sessionId: undefined }), false);
-  // They are neither reads nor writes of the generic allowlists, and they are not streams.
-  assert.equal(stream(dock, 'terminal/list', { sessionId: parentSession }), false);
-  assert.equal(invoke(dock, 'terminal/attach', { agentId: parentSession, id: terminalId }), false);
-  assert.equal(invoke(dock, 'terminal/retain', { sessionId: parentSession, id: terminalId }), false);
-});
-
-test('a terminal is created with a chosen id, a shell the desktop offered, and sane dimensions', () => {
-  const page = dockPage();
-  assert.equal(create(page, { id: terminalId, cols: 80, rows: 24 }), true);
-  // A shell must come from the desktop's own list for this page.
-  assert.equal(create(page, { id: 'terminal-two', cols: 80, rows: 24, shellPath: '/bin/zsh' }), false);
-  acceptPageResult(page, 'terminal/shells', { ok: true, value: [{ path: '/bin/zsh', args: [], name: 'zsh' }] });
-  assert.equal(create(page, { id: 'terminal-two', cols: 80, rows: 24, shellPath: '/bin/zsh' }), true);
-  assert.equal(create(page, { id: 'terminal-three', cols: 80, rows: 24, shellPath: '/bin/sh' }), false);
-
-  for (const request of [
-    { id: 'bad id', cols: 80, rows: 24 },
-    { id: '../escape', cols: 80, rows: 24 },
-    { id: '', cols: 80, rows: 24 },
-    { id: 'x'.repeat(129), cols: 80, rows: 24 },
-    { id: 'terminal-four', cols: 1, rows: 24 },
-    { id: 'terminal-four', cols: 501, rows: 24 },
-    { id: 'terminal-four', cols: 80, rows: 0 },
-    { id: 'terminal-four', cols: 80, rows: 201 },
-    { id: 'terminal-four', cols: 80.5, rows: 24 },
-    { id: 'terminal-four', cols: 80, rows: 24, cwd: '/' },
-    { id: 'terminal-four', cols: 80, rows: 24, args: ['-c', 'x'] },
-    { id: 'terminal-four', cols: 80 },
-  ]) {
-    assert.equal(create(page, request), false, JSON.stringify(request));
-  }
-  assert.equal(create(page, { id: 'terminal-five', cols: 80, rows: 24 }, 'another-session'), false);
-});
-
-test('a terminal is named by a well-formed id inside the page\'s own conversation', () => {
-  const page = dockPage();
-  const attach = { agentId: parentSession, id: terminalId };
-  // The id was saved by the page's own storage on an earlier visit, so only its shape is checked.
-  assert.equal(stream(page, 'terminal/attach', attach), true);
-  assert.equal(invoke(page, 'terminal/rename', { ...attach, title: 'build' }), true);
-  assert.equal(invoke(page, 'terminal/close', attach), true);
-  assert.equal(stream(page, 'terminal/retain', { sessionId: parentSession, id: terminalId }), true);
-
-  for (const id of ['', 'bad id', '../escape', 'a/b', 'x'.repeat(129), 'bad\nid', 7, null, undefined]) {
-    assert.equal(stream(page, 'terminal/attach', { agentId: parentSession, id }), false, `attach ${String(id)}`);
-    assert.equal(invoke(page, 'terminal/close', { agentId: parentSession, id }), false, `close ${String(id)}`);
-    assert.equal(invoke(page, 'terminal/rename', { agentId: parentSession, id, title: 'x' }), false, `rename ${String(id)}`);
-    assert.equal(stream(page, 'terminal/retain', { sessionId: parentSession, id }), false, `retain ${String(id)}`);
-  }
-
-  // Input, renaming and closing never reach into another conversation.
-  assert.equal(stream(page, 'terminal/attach', { agentId: 'another-session', id: terminalId }), false);
-  assert.equal(invoke(page, 'terminal/close', { agentId: 'another-session', id: terminalId }), false);
-  assert.equal(invoke(page, 'terminal/rename', { agentId: 'another-session', id: terminalId, title: 'x' }), false);
-  assert.equal(stream(page, 'terminal/attach', { ...attach, extra: true }), false);
-  assert.equal(invoke(page, 'terminal/attach', attach), false, 'attach is a stream');
-  assert.equal(invoke(page, 'terminal/rename', { ...attach, title: '' }), false);
-  assert.equal(invoke(page, 'terminal/rename', { ...attach, title: 'x'.repeat(121) }), false);
-  assert.equal(invoke(page, 'terminal/rename', { ...attach, title: 'bad\ntitle' }), false);
-  assert.equal(stream(page, 'terminal/attach', { agentId: parentSession }), false);
-  assert.equal(stream(page, 'terminal/attach', { id: terminalId }), false);
-});
-
-test('holding a saved terminal open is the one terminal call that may name another conversation', () => {
-  // DSH's page holds every terminal tab it has saved, including those of conversations not on screen.
-  const page = dockPage();
-  assert.equal(stream(page, 'terminal/retain', { sessionId: 'saved-session', id: terminalId }), true);
-  assert.equal(stream(page, 'terminal/retain', { sessionId: '', id: terminalId }), false);
-  assert.equal(stream(page, 'terminal/retain', { sessionId: 'x'.repeat(257), id: terminalId }), false);
-  assert.equal(stream(page, 'terminal/retain', { sessionId: 'bad\nsession', id: terminalId }), false);
-  assert.equal(stream(page, 'terminal/retain', { sessionId: 'saved-session', id: terminalId, extra: 1 }), false);
-  // Anywhere but a dock page there is nothing to hold.
-  assert.equal(stream(pageFor('trace'), 'terminal/retain', { sessionId: 'saved-session', id: terminalId }), false);
-  assert.equal(stream(pageFor('plugins'), 'terminal/retain', { sessionId: 'saved-session', id: terminalId }), false);
-});
-
-test('terminal input is a write or a resize and nothing else', () => {
-  const page = dockPage();
-  assert.equal(isDuplexStream('terminal/attach'), true);
-  assert.equal(isDuplexStream('terminal/retain'), false);
-  assert.equal(isDuplexStream('session/follow'), false);
-  const accept = (item, endpoint = 'terminal/attach', target = page) => acceptPageUplink(target, endpoint, item);
-
-  assert.equal(accept({ type: 'write', sequence: 1, data: 'ls -la\r' }), true);
-  assert.equal(accept({ type: 'write', sequence: 2, data: '\u0003' }), true, 'control characters are keystrokes');
-  assert.equal(accept({ type: 'write', sequence: 3, data: '\u001b[A' }), true);
-  assert.equal(accept({ type: 'resize', sequence: 4, cols: 120, rows: 40 }), true);
-  assert.equal(accept({ type: 'write', sequence: 5, data: 'x'.repeat(64 * 1024) }), true);
-  assert.equal(accept({ type: 'write', sequence: 5, data: 'x'.repeat(64 * 1024 + 1) }), false);
-  assert.equal(accept({ type: 'write', sequence: 5, data: '界'.repeat(21846) }), false, 'counted in bytes');
-
-  for (const item of [
-    undefined, null, 'ls', 1, [], {},
-    { type: 'write', sequence: 1 },
-    { type: 'write', sequence: 1, data: 7 },
-    { type: 'write', sequence: 0, data: 'x' },
-    { type: 'write', sequence: -1, data: 'x' },
-    { type: 'write', sequence: '1', data: 'x' },
-    { type: 'write', sequence: 1.5, data: 'x' },
-    { type: 'write', sequence: 1, data: 'x', cwd: '/' },
-    { type: 'resize', sequence: 1, cols: 80 },
-    { type: 'resize', sequence: 1, cols: 80, rows: 24, data: 'x' },
-    { type: 'resize', sequence: 1, cols: 1, rows: 24 },
-    { type: 'exec', sequence: 1, data: 'x' },
-    { sequence: 1, data: 'x' },
-  ]) {
-    assert.equal(accept(item), false, JSON.stringify(item));
-  }
-  assert.equal(accept({ type: 'write', sequence: 1, data: 'x' }, 'terminal/retain'), false);
-  assert.equal(accept({ type: 'write', sequence: 1, data: 'x' }, 'session/follow'), false);
-  assert.equal(accept({ type: 'write', sequence: 1, data: 'x' }, 'terminal/attach', pageFor('trace')), false);
 });

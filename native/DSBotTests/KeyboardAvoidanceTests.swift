@@ -2,21 +2,19 @@ import XCTest
 @testable import dsbot
 
 final class KeyboardAvoidanceTests: XCTestCase {
-    func testAKeyboardThatLeavesIsReleasedAtOnce() {
-        // Its end frame starts at the bottom edge of the screen.
-        XCTAssertEqual(KeyboardAvoidance.action(endFrameMinY: 912, screenHeight: 912), .release)
-        XCTAssertEqual(KeyboardAvoidance.action(endFrameMinY: 911.5, screenHeight: 912), .release)
-        XCTAssertEqual(KeyboardAvoidance.action(endFrameMinY: 1_000, screenHeight: 912), .release)
+    func testAKeyboardThatLeavesDoesNotKeepTheComposerRaised() {
+        XCTAssertFalse(KeyboardAvoidance.isVisible(endFrameMinY: 912, screenHeight: 912))
+        XCTAssertFalse(KeyboardAvoidance.isVisible(endFrameMinY: 911.5, screenHeight: 912))
+        XCTAssertFalse(KeyboardAvoidance.isVisible(endFrameMinY: 1_000, screenHeight: 912))
     }
 
-    func testAKeyboardThatArrivesOrChangesIsMeasuredOnceItHasSettled() {
-        XCTAssertEqual(KeyboardAvoidance.action(endFrameMinY: 528, screenHeight: 912), .settle(top: 528))
-        XCTAssertEqual(KeyboardAvoidance.action(endFrameMinY: 480, screenHeight: 912), .settle(top: 480))
+    func testAKeyboardThatArrivesOrChangesIsRecognizedWithoutASecondLayoutDelay() {
+        XCTAssertTrue(KeyboardAvoidance.isVisible(endFrameMinY: 528, screenHeight: 912))
+        XCTAssertTrue(KeyboardAvoidance.isVisible(endFrameMinY: 480, screenHeight: 912))
     }
 
     func testWithoutAScreenHeightNoKeyboardCountsAsLeaving() {
-        // The screen height is unknown (zero) only when no scene exists, where holding a lift up is no help.
-        XCTAssertEqual(KeyboardAvoidance.action(endFrameMinY: 300, screenHeight: 0), .release)
+        XCTAssertFalse(KeyboardAvoidance.isVisible(endFrameMinY: 300, screenHeight: 0))
     }
 
     func testTheConversationReachesTheHomeIndicatorStripUntilTheKeyboardHasIt() {

@@ -126,7 +126,7 @@ function pngBase64(width = 64, height = 64) {
 }
 
 async function setup({
-  page = false, failDock = false, developerTools = true, rejectFirst = false,
+  page = false, developerTools = true, rejectFirst = false,
   sidebarIcons = [] as Array<{ id: string; component: unknown }>, drawingFails = false,
 } = {}) {
   const source = await readFile(new URL('../host/dsbot-plugin/client.js', import.meta.url), 'utf8');
@@ -161,10 +161,6 @@ async function setup({
       { options: { id: 'dsbot-mobile-control', order: 50, label: () => '手机控制' } },
     ]],
   ]);
-  const guide = [
-    { kind: 'files', id: 'workspace', commandId: 'workspace.files', order: 10, title: () => '工作区文件', providerId: 'files-pkg' },
-    { kind: 'terminal', id: 'new', order: 20, title: () => '新建终端', providerId: 'terminal-pkg' },
-  ];
   const requireModule = (name: string): unknown => {
     switch (name) {
       case 'react': return {
@@ -261,10 +257,7 @@ async function setup({
     },
     locale: { subscribe: on('locale') },
     configForms: { developerTools: { enabled: { getSnapshot: () => developerTools, subscribe: on('developerTools') } } },
-    sidebarRightTabs: {
-      guide: () => { if (failDock) throw new Error('registry unavailable'); return guide; },
-      subscribe: on('dock'),
-    },
+
   };
   plugin.apply(ctx);
 
@@ -284,10 +277,10 @@ async function setup({
     now = target;
   };
   const debounced = () => [...timers.values()].filter((timer) => !timer.repeat && timer.ms === 500).length;
-  return { posts, advance, listeners, entries, guide, disposers, timers, debounced, drawn, canvases };
+  return { posts, advance, listeners, entries, disposers, timers, debounced, drawn, canvases };
 }
 
-test('DSH reports its real registries: labels, icons, views and dock entries, in a snapshot the plugin accepts', async () => {
+test('DSH reports its real registries: labels, icons and views, in a snapshot the plugin accepts', async () => {
   const { posts, advance } = await setup();
   await advance(600);
 
@@ -318,10 +311,8 @@ test('DSH reports its real registries: labels, icons, views and dock entries, in
   assert.deepEqual(snapshot.views.map((item: any) => [item.id, item.title]), [
     ['chat', '对话'], ['trajectory', '轨迹'], ['notes', '笔记'],
   ]);
-  assert.deepEqual(snapshot.dock, [
-    { kind: 'files', entryId: 'workspace', commandId: 'workspace.files', title: '工作区文件', order: 10, source: 'files-pkg' },
-    { kind: 'terminal', entryId: 'new', commandId: undefined, title: '新建终端', order: 20, source: 'terminal-pkg' },
-  ].map((item) => JSON.parse(JSON.stringify(item))));
+  assert.equal(Object.hasOwn(snapshot, 'dock'), false);
+  assert.equal(Object.hasOwn(snapshot, 'dockTabs'), false);
 
   // Settings icons follow DSH's own mapping by section id, with its gear for the rest.
   assert.deepEqual(snapshot.settings.map((item: any) => [item.id, item.title, item.icon?.viewBox?.join(',')]), [
@@ -339,10 +330,6 @@ test('DSH reports its real registries: labels, icons, views and dock entries, in
   ]);
   assert.deepEqual(lists?.views.map((item: any) => item.open), [
     { native: 'chat' }, { web: { page: 'trace' } }, { web: { page: 'view', target: 'notes' } },
-  ]);
-  assert.deepEqual(lists?.dock.map((item: any) => [item.id, item.open]), [
-    ['files:workspace', { native: 'files' }],
-    ['terminal:new', { web: { page: 'dock', target: 'terminal:new' } }],
   ]);
   assert.deepEqual(lists?.settings.map((item: any) => item.id), ['models', 'misc']);
 });
@@ -397,15 +384,6 @@ test('the Trajectory tab is left out while developer tools are off, as in DSH it
   const { posts, advance } = await setup({ developerTools: false });
   await advance(600);
   assert.deepEqual(posts[0].body.views.map((item: any) => item.id), ['chat', 'notes']);
-});
-
-test('one unreadable registry does not stop the others from being reported', async () => {
-  const { posts, advance } = await setup({ failDock: true });
-  await advance(600);
-  assert.equal(posts.length, 1);
-  assert.equal(posts[0].body.dock, undefined, 'the plugin keeps the dock list it already has');
-  assert.ok(posts[0].body.sidebar.length > 0);
-  assert.ok(posts[0].body.views.length > 0);
 });
 
 test('phone pages that run this module inside their own frontend never report', async () => {

@@ -128,6 +128,7 @@ test('preserves queue, application preload, bootstrap, graph, and adapter boot o
   const csp = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/u)?.[1];
   assert.ok(csp);
   assert.ok(csp.includes(`nonce-${inline[1]}`));
+  assert.ok(csp.includes("frame-src 'none'"));
 
   const graphResource = await document.resource(graphPath);
   const serializedGraph = bytes(graphResource.data).toString('utf8');
@@ -493,30 +494,6 @@ test('serves only the scanned static manifest and denies maps, symlinks, and tra
     '/assets/nested/font.woff2#fragment',
   ]) {
     await assert.rejects(document.resource(path), undefined, path);
-  }
-});
-
-test('only a dock page may frame other sites, for the browser tab, and nothing else is loosened', async (t) => {
-  const { frontend } = await fixture(t);
-  const policy = async (descriptor) => {
-    const html = (await frontend.document(descriptor)).html;
-    return html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/u)?.[1] ?? '';
-  };
-  const dock = await policy({ kind: 'dock', sessionId: 'session-1' });
-  assert.match(dock, /frame-src http: https:/u);
-  for (const directive of [
-    /default-src 'none'/u, /script-src dsbot-ui: 'nonce-[^']+'/u, /connect-src 'none'/u,
-    /object-src 'none'/u, /worker-src 'none'/u, /base-uri 'none'/u, /form-action 'none'/u,
-  ]) assert.match(dock, directive);
-  assert.doesNotMatch(dock, /script-src[^;]*https?:/u, 'a framed site cannot add scripts to the page');
-  assert.doesNotMatch(dock, /connect-src[^;]*https?:/u);
-
-  for (const descriptor of [
-    { kind: 'plugins' }, { kind: 'settings' }, { kind: 'panel' },
-    { kind: 'trace', sessionId: 'session-1' }, { kind: 'context', sessionId: 'session-1' },
-    { kind: 'team', sessionId: 'session-1' }, { kind: 'view', sessionId: 'session-1' },
-  ]) {
-    assert.match(await policy(descriptor), /frame-src 'none'/u, descriptor.kind);
   }
 });
 

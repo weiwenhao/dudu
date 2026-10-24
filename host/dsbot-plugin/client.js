@@ -239,7 +239,7 @@ window.__ModuleLoader__.load({
 
     // ---- Navigation: tell the phone what DSH's own UI contains ---------------------------------
     //
-    // The sidebar panels, conversation tabs, right-dock entries and settings sections are registered in
+    // The sidebar panels, conversation tabs and settings sections are registered in
     // this browser runtime by whichever plugins are installed. Reading them here, rather than listing
     // them in the app, is what lets a plugin's new panel or tab reach the phone unchanged.
     const SETTINGS_ICONS = {
@@ -444,19 +444,6 @@ window.__ModuleLoader__.load({
             source: source(entry),
           }));
       };
-      const collectDock = () => {
-        let guide;
-        try { guide = ctx.sidebarRightTabs?.guide?.(); } catch { return undefined; }
-        if (!Array.isArray(guide)) return undefined;
-        return guide.map((entry) => {
-          let title = '';
-          try { title = String(entry.title?.() ?? ''); } catch { /* skipped below */ }
-          return {
-            kind: entry.kind, entryId: entry.id, commandId: entry.commandId, title,
-            order: entry.order ?? 0, source: entry.providerId,
-          };
-        });
-      };
       const collectSettings = () => {
         const entries = entriesOf('settings.section');
         if (!entries) return undefined;
@@ -471,7 +458,7 @@ window.__ModuleLoader__.load({
       const collect = () => {
         const snapshot = { schemaVersion: 1 };
         for (const [name, read] of [
-          ['sidebar', collectSidebar], ['views', collectViews], ['dock', collectDock], ['settings', collectSettings],
+          ['sidebar', collectSidebar], ['views', collectViews], ['settings', collectSettings],
         ]) {
           try { const list = read(); if (list) snapshot[name] = list; } catch { /* leave the list out */ }
         }
@@ -523,7 +510,6 @@ window.__ModuleLoader__.load({
         }
         subscribe('locale', () => ctx.locale.subscribe(schedule));
         subscribe('developerTools', () => ctx.configForms.developerTools.enabled.subscribe(schedule));
-        subscribe('dock', () => ctx.sidebarRightTabs.subscribe(schedule));
       };
 
       // Plugins register as DSH loads them, so look again a few times while it settles, then rarely.

@@ -11,10 +11,10 @@ enum DSBotLayout {
     static let edgeSwipeWidth: CGFloat = 24
 
     static let composerHeight: CGFloat = 44
-    static let composerSideMargin: CGFloat = 16
+    static let composerSideMargin: CGFloat = 32
     /// Distance from the composer to the bottom edge of the screen (the conversation runs to that edge, under
     /// the home indicator), the same as its side margin.
-    static let composerBottomMargin: CGFloat = 16
+    static let composerBottomMargin: CGFloat = composerSideMargin
     /// Distance from the composer to the keyboard.
     static let composerKeyboardGap: CGFloat = 8
 
@@ -67,7 +67,8 @@ extension EnvironmentValues {
 }
 
 enum DSBotStyle {
-    static let blue = Color(red: 77.0 / 255, green: 107.0 / 255, blue: 254.0 / 255)
+    static let blue = Color(red: 65.0 / 255, green: 118.0 / 255, blue: 230.0 / 255)
+    static let composerAction = Color(red: 184.0 / 255, green: 219.0 / 255, blue: 253.0 / 255)
     static let ink = Color(red: 23.0 / 255, green: 24.0 / 255, blue: 27.0 / 255)
     static let muted = Color(red: 150.0 / 255, green: 152.0 / 255, blue: 157.0 / 255)
     static let line = Color(red: 237.0 / 255, green: 237.0 / 255, blue: 240.0 / 255)
@@ -88,6 +89,30 @@ enum DSBotStyle {
     static let chatRunning = Color(red: 0x3a / 255, green: 0x62 / 255, blue: 0xd6 / 255)
     static let chatWarning = Color(red: 0xf5 / 255, green: 0x9e / 255, blue: 0x0b / 255)
     static let chatError = Color(red: 0xec / 255, green: 0x13 / 255, blue: 0x13 / 255)
+}
+
+struct DSBotPanelBackdrop: View {
+    var horizontalExtension: CGFloat = DSBotLayout.composerSideMargin
+    var bottomExtension: CGFloat = 8
+    var tintOpacity: Double = 0.35
+
+    var body: some View {
+        Rectangle()
+            .fill(.regularMaterial)
+            .overlay(DSBotStyle.canvas.opacity(tintOpacity))
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 16)
+                    Rectangle()
+                }
+            }
+            .padding(.horizontal, -horizontalExtension)
+            .padding(.top, -16)
+            .padding(.bottom, -bottomExtension)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
 }
 
 extension View {

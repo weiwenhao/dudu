@@ -57,10 +57,15 @@ final class NativeSpeechCapture: ObservableObject {
 
         #if DEBUG && targetEnvironment(simulator)
         if ProcessInfo.processInfo.arguments.contains("-dsbot-ui-review") {
+            if ProcessInfo.processInfo.arguments.contains("-dsbot-review-delayed-speech") {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                guard generation == token else { return }
+            }
             isRecording = true
             transcript = ProcessInfo.processInfo.arguments.contains("-dsbot-review-silent") ? "" : "继续优化手机界面"
             hasFinalResult = true
             meter.update(0.65, force: true)
+            DSBotLog.record("voice.capture.ready", elapsedMs: (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000)
             return
         }
         #endif
@@ -101,6 +106,7 @@ final class NativeSpeechCapture: ObservableObject {
             DSBotLog.record("voice.capture.denied", state: "microphone")
             return
         }
+        DSBotLog.record("voice.permissions.ready", elapsedMs: (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000)
 
         // Already built when the talk bar came up; otherwise built here, but never on the main thread.
         guard let prepared = await recognizer().value else {
@@ -117,6 +123,7 @@ final class NativeSpeechCapture: ObservableObject {
             DSBotLog.record("voice.capture.unavailable")
             return
         }
+        DSBotLog.record("voice.recognizer.ready", elapsedMs: (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000)
 
         let nextRequest = SFSpeechAudioBufferRecognitionRequest()
         nextRequest.shouldReportPartialResults = true
@@ -137,25 +144,33 @@ final class NativeSpeechCapture: ObservableObject {
                 audioCapture.stop()
                 return
             }
+            DSBotLog.record("voice.audio.ready", elapsedMs: (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000)
 
-            recognitionTask = recognizer.recognitionTask(with: nextRequest) { [weak self] result, error in
-                Task { @MainActor [weak self] in
-                    guard let self, self.generation == token else { return }
-                    if let result {
-                        self.transcript = result.bestTranscription.formattedString
-                        if result.isFinal {
-                            self.hasFinalResult = true
+            let task = await Task.detached(priority: .userInitiated) { [weak self] in
+                prepared.recognizer.recognitionTask(with: nextRequest) { [weak self] result, error in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.generation == token else { return }
+                        if let result {
+                            self.transcript = result.bestTranscription.formattedString
+                            if result.isFinal {
+                                self.hasFinalResult = true
+                            }
+                        }
+                        if self.isFinishing, self.hasFinalResult {
+                            self.complete(isFinal: true)
+                        } else if self.isFinishing && error != nil {
+                            self.complete(isFinal: false)
+                        } else if error != nil {
+                            self.failQuietly()
                         }
                     }
-                    if self.isFinishing, self.hasFinalResult {
-                        self.complete(isFinal: true)
-                    } else if self.isFinishing && error != nil {
-                        self.complete(isFinal: false)
-                    } else if error != nil {
-                        self.failQuietly()
-                    }
                 }
+            }.value
+            guard generation == token else {
+                task.cancel()
+                return
             }
+            recognitionTask = task
             isRecording = true
             DSBotLog.record(
                 "voice.capture.ready",
@@ -291,6 +306,7 @@ private final class AudioCaptureController: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.harnessmobile.dsbot.audio-capture", qos: .userInitiated)
     private var engine: AVAudioEngine?
     private var tapInstalled = false
+    private var sessionActive = false
 
     func start(
         request: SFSpeechAudioBufferRecognitionRequest,
@@ -300,8 +316,11 @@ private final class AudioCaptureController: @unchecked Sendable {
             queue.async {
                 do {
                     let audioSession = AVAudioSession.sharedInstance()
-                    try audioSession.setCategory(.record, mode: .measurement)
+                    if audioSession.category != .record || audioSession.mode != .measurement {
+                        try audioSession.setCategory(.record, mode: .measurement)
+                    }
                     try audioSession.setActive(true)
+                    self.sessionActive = true
 
                     let engine = self.engine ?? AVAudioEngine()
                     self.engine = engine
@@ -345,7 +364,10 @@ private final class AudioCaptureController: @unchecked Sendable {
             engine.inputNode.removeTap(onBus: 0)
             tapInstalled = false
         }
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if sessionActive {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            sessionActive = false
+        }
     }
 }
 

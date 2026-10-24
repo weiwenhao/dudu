@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
-  initializePagePolicy, allowPageCall, acceptPageResult, acceptPageUplink, pageStreamItem, isDuplexStream,
+  initializePagePolicy, allowPageCall, acceptPageResult, pageStreamItem,
 } from './native-page-policy.mjs';
 
 export const NATIVE_PAGE_METHODS = Object.freeze([
@@ -10,15 +10,14 @@ export const NATIVE_PAGE_METHODS = Object.freeze([
   'web.close',
   'web.stream.open',
   'web.stream.next',
-  'web.stream.send',
   'web.stream.close',
 ]);
 
-const PAGE_KINDS = new Set(['plugins', 'trace', 'context', 'team', 'tools', 'settings', 'panel', 'view', 'dock']);
+const PAGE_KINDS = new Set(['plugins', 'trace', 'context', 'team', 'tools', 'settings', 'panel', 'view']);
 // Pages that belong to one conversation, and pages named by an id DSH registered (see native-navigation).
-const SESSION_PAGE_KINDS = new Set(['trace', 'context', 'team', 'tools', 'view', 'dock']);
-const TARGET_REQUIRED = new Set(['panel', 'view', 'dock']);
-const TARGET_ALLOWED = new Set(['panel', 'view', 'dock', 'settings']);
+const SESSION_PAGE_KINDS = new Set(['trace', 'context', 'team', 'tools', 'view']);
+const TARGET_REQUIRED = new Set(['panel', 'view']);
+const TARGET_ALLOWED = new Set(['panel', 'view', 'settings']);
 const TARGET_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,255}$/u;
 const PAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_PAGES = 8;
@@ -32,15 +31,6 @@ const MAX_REPLY_BYTES = 6 * 1024 * 1024;
 const RESOURCE_TIMEOUT_MS = 30_000;
 const STREAM_NEXT_TIMEOUT_MS = 25_000;
 const STREAM_IDLE_TIMEOUT_MS = 10 * 60_000;
-// A terminal's output arrives as many small frames; one reply carries what is already waiting.
-const BATCHED_STREAMS = new Set(['terminal/attach']);
-const BATCH_MAX_ITEMS = 64;
-const BATCH_MAX_BYTES = 384 * 1024;
-// What the page may have queued for a duplex stream that the desktop has not yet read.
-const UPLINK_MAX_ITEMS = 1024;
-const UPLINK_MAX_BYTES = 2 * 1024 * 1024;
-const SEND_MAX_ITEMS = 64;
-
 const SAFE_ERRORS = Object.freeze({
   BAD_REQUEST: '请求参数不正确。',
   NOT_FOUND: '找不到此嵌入页面。',
@@ -58,59 +48,6 @@ export class NativePagesError extends Error {
 
 const fail = (code) => { throw new NativePagesError(code); };
 
-/**
- * The page's half of a duplex stream, read by the Gateway as the method's uplink: one reader, bounded,
- * ended by the page or dropped when the stream is released.
- */
-function createUplink() {
-  const queue = [];
-  const waiters = new Set();
-  let bytes = 0;
-  let ended = false;
-  let closed = false;
-  const wake = () => {
-    for (const resolve of [...waiters]) resolve();
-    waiters.clear();
-  };
-  const done = () => ({ done: true, value: undefined });
-  return {
-    push(item) {
-      if (closed || ended) fail('NOT_FOUND');
-      const size = Buffer.byteLength(JSON.stringify(item), 'utf8');
-      if (queue.length >= UPLINK_MAX_ITEMS || bytes + size > UPLINK_MAX_BYTES) fail('LIMIT_EXCEEDED');
-      queue.push({ item, size });
-      bytes += size;
-      wake();
-    },
-    end() {
-      ended = true;
-      wake();
-    },
-    close() {
-      closed = true;
-      queue.length = 0;
-      bytes = 0;
-      wake();
-    },
-    [Symbol.asyncIterator]() { return this; },
-    async next() {
-      for (;;) {
-        if (closed) return done();
-        const entry = queue.shift();
-        if (entry) {
-          bytes -= entry.size;
-          return { done: false, value: entry.item };
-        }
-        if (ended) return done();
-        await new Promise((resolve) => { waiters.add(resolve); });
-      }
-    },
-    return() {
-      this.close();
-      return Promise.resolve(done());
-    },
-  };
-}
 const isRecord = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const keysAre = (value, keys) => isRecord(value) && Object.keys(value).every((key) => keys.includes(key));
 const validSessionID = (value) => typeof value === 'string' && value.trim().length > 0
@@ -162,7 +99,6 @@ export function createNativePages({
     if (stream.closePromise) return stream.closePromise;
     stream.closed = true;
     clearTimeout(stream.idleTimer);
-    stream.uplink?.close();
     stream.abort.abort();
     stream.releaseClosed();
     stream.closePromise = Promise.resolve().then(async () => {
@@ -353,11 +289,10 @@ export function createNativePages({
       id: randomUUID(), endpoint: params.endpoint, abort, closed: false,
       closedPromise: new Promise((resolve) => { releaseClosed = resolve; }),
       releaseClosed, queue: Promise.resolve(),
-      uplink: isDuplexStream(params.endpoint) ? createUplink() : undefined,
     };
     page.streams.set(stream.id, stream);
     try {
-      stream.source = await pageRpc.open(params.endpoint, params.args, abort.signal, stream.uplink);
+      stream.source = await pageRpc.open(params.endpoint, params.args, abort.signal);
       if (stream.closed || page.closed) {
         try { await stream.source?.dispose?.(); } catch { /* Opening raced page closure. */ }
         fail('NOT_FOUND');
@@ -402,19 +337,6 @@ export function createNativePages({
     return result;
   }
 
-  // What the source can give without waiting: a macrotask is enough for items it already holds.
-  async function nextIfReady(stream) {
-    const pending = pendingRead(stream);
-    let handle;
-    const idle = new Promise((resolve) => { handle = setImmediate(() => resolve({ idle: true })); });
-    const result = await Promise.race([
-      pending, idle, stream.closedPromise.then(() => ({ closed: true })),
-    ]);
-    clearImmediate(handle);
-    if (result.error) throw result.error;
-    return result;
-  }
-
   async function readStream(page, stream) {
     try {
       if (stream.finished) {
@@ -434,22 +356,6 @@ export function createNativePages({
         const item = pageStreamItem(page, stream.endpoint, next.value.value);
         if (item === undefined) continue;
         const items = [item];
-        if (BATCHED_STREAMS.has(stream.endpoint)) {
-          let bytes = JSON.stringify(item).length;
-          while (items.length < BATCH_MAX_ITEMS && bytes < BATCH_MAX_BYTES) {
-            const more = await nextIfReady(stream);
-            if (more.idle || more.closed || stream.closed || page.closed) break;
-            if (more.value?.done) {
-              // Items and the end never travel together: the page drops what is queued behind an end.
-              stream.finished = true;
-              break;
-            }
-            const extra = pageStreamItem(page, stream.endpoint, more.value.value);
-            if (extra === undefined) continue;
-            items.push(extra);
-            bytes += JSON.stringify(extra).length;
-          }
-        }
         return boundedReply({ items, done: false });
       }
       return { items: [], done: false };
@@ -470,30 +376,6 @@ export function createNativePages({
     const result = stream.queue.then(() => readStream(page, stream));
     stream.queue = result.catch(() => {});
     return result;
-  }
-
-  async function streamSend(params, connection) {
-    requireParams(params, ['id', 'streamId', 'items', 'end']);
-    const page = pageFor(connection, params.id);
-    const stream = page.streams.get(requireID(params.streamId));
-    if (!stream || stream.closed || !stream.uplink) fail('NOT_FOUND');
-    if (!Array.isArray(params.items) || params.items.length > SEND_MAX_ITEMS
-      || (params.end !== undefined && params.end !== true)
-      || (params.items.length === 0 && params.end !== true)
-      || !params.items.every((item) => acceptPageUplink(page, stream.endpoint, item))) {
-      fail('BAD_REQUEST');
-    }
-    refreshIdle(page, stream);
-    try {
-      for (const item of params.items) stream.uplink.push(item);
-      if (params.end === true) stream.uplink.end();
-    } catch (error) {
-      // A page that outruns the desktop loses the stream rather than the desktop its memory.
-      await closeStream(stream);
-      page.streams.delete(stream.id);
-      throw error;
-    }
-    return {};
   }
 
   async function streamClose(params, connection) {
@@ -524,7 +406,6 @@ export function createNativePages({
         case 'web.close': return close(params, connection);
         case 'web.stream.open': return streamOpen(params, connection);
         case 'web.stream.next': return streamNext(params, connection);
-        case 'web.stream.send': return streamSend(params, connection);
         case 'web.stream.close': return streamClose(params, connection);
         default: fail('BAD_REQUEST');
       }

@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { gunzipSync } from 'node:zlib';
 import { createNativeServer } from '../host/native-server.mjs';
 import { createNativePages } from '../host/native-pages.mjs';
 import { createPairingStore } from '../host/pairing-devices.mjs';
@@ -25,6 +26,12 @@ async function fixture(t, options = {}) {
         return {
           html: '<!doctype html><html lang="zh-CN"><body>mobile page</body></html>',
           async resource(path) {
+            if (path === '/assets/app.js') {
+              return { mimeType: 'text/javascript; charset=utf-8', data: Buffer.from('const context = "resource";\n'.repeat(2000)) };
+            }
+            if (path === '/assets/image.png') {
+              return { mimeType: 'image/png', data: Buffer.alloc(4096, 127) };
+            }
             if (path !== '/assets/site.css') throw new Error('private resource path');
             return { mimeType: 'text/css; charset=utf-8', data: Buffer.from('body{width:100%}') };
           },
@@ -115,6 +122,43 @@ test('HTTP pages exchange pairing auth for a page-scoped session and serve real 
   for (const path of ['/', '/dsbot', '/api', '/assets/site.css', '/dsbot/pages']) {
     assert.equal((await fetch(`${f.server.address}${path}`)).status, 404, path);
   }
+});
+
+test('HTTP page assets use negotiated gzip while retaining scoped authentication and no-store', async (t) => {
+  const fixtureData = await fixture(t);
+  const page = (await fixtureData.open()).value;
+  const resourceURL = `${fixtureData.server.address}${page.path}assets/app.js`;
+  const read = (url, headers) => new Promise((resolve, reject) => {
+    http.get(url, { headers }, (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => resolve({ code: response.statusCode, headers: response.headers, body: Buffer.concat(chunks) }));
+      response.on('error', reject);
+    }).on('error', reject);
+  });
+  const headers = { cookie: `dsbot_ui=${page.cookie}`, 'accept-encoding': 'gzip, deflate, br' };
+  const zipped = await read(resourceURL, headers);
+  assert.equal(zipped.code, 200);
+  assert.equal(zipped.headers['content-encoding'], 'gzip');
+  assert.equal(zipped.headers['cache-control'], 'no-store');
+  assert.equal(zipped.headers.vary, 'Accept-Encoding');
+  assert.equal(Number(zipped.headers['content-length']), zipped.body.byteLength);
+  const source = gunzipSync(zipped.body);
+  assert.equal(source.toString(), 'const context = "resource";\n'.repeat(2000));
+  assert.ok(zipped.body.byteLength < source.byteLength / 10);
+  for (const encoding of ['identity', 'gzip;q=0, *;q=1', 'gzip;q=invalid']) {
+    const plain = await read(resourceURL, { ...headers, 'accept-encoding': encoding });
+    assert.equal(plain.headers['content-encoding'], undefined, encoding);
+    assert.deepEqual(plain.body, source);
+  }
+  const wildcard = await read(resourceURL, { ...headers, 'accept-encoding': '*;q=0.5' });
+  assert.equal(wildcard.headers['content-encoding'], 'gzip');
+  const image = await read(resourceURL.replace('app.js', 'image.png'), headers);
+  assert.equal(image.headers['content-encoding'], undefined);
+  assert.equal(image.body.byteLength, 4096);
+  const rejected = await read(resourceURL, { 'accept-encoding': 'gzip' });
+  assert.equal(rejected.code, 401);
+  assert.equal(rejected.headers['content-encoding'], undefined);
 });
 
 test('documents, assets and RPC all require their own page cookie; pair credentials never work in URLs', async (t) => {

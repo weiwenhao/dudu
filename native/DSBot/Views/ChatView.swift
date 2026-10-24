@@ -9,7 +9,8 @@ struct ChatView: View {
     var historyTopInset: CGFloat = 0
 
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var speechCapture = NativeSpeechCapture()
+    @State private var speechCapture = NativeSpeechCapture()
+    @State private var voicePress = VoicePressState()
     @State private var draft = ""
     @State private var draftRevision = 0
     @State private var previousDraftTarget: DraftTarget?
@@ -19,23 +20,11 @@ struct ChatView: View {
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var isPhotoPickerPresented = false
     @State private var photoNotice: String?
+    @State private var commandResult: DSBotToastMessage?
     @State private var photoLoadGeneration = 0
-    @State private var isVoicePressActive = false
-    @State private var cancelVoicePress = false
-    @State private var voiceTimeoutTask: Task<Void, Never>?
-    @State private var voiceSessionID: String?
-    @State private var voiceComputerID: String?
-    @State private var voicePressStartedAt: Date?
-    /// Where the finger is while it holds the talk bar. Its own object, held without observing it: the
-    /// position changes with every touch event, and the chat must not be rebuilt each time.
-    @State private var voiceTouch = VoiceTouch()
     @State private var followsLatestMessage = true
-    @State private var isDraggingHistory = false
-    /// Where the history's end marker is in the scroll view; the preference's default while it is not on screen.
-    @State private var historyBottomY: CGFloat = ChatBottomPreference.defaultValue
-    @State private var lastMessageHeight: CGFloat = 0
-    @State private var latestScrollScheduler = ChatLatestScrollScheduler()
-    @State private var viewportScrollScheduler = ChatViewportScrollScheduler()
+    @State private var historyFailure: String?
+    @State private var historyController = ConversationHistoryController()
     @State private var isVoiceMode = false
     /// The open "+" sheet. The page rides along in the item so presentation and page cannot disagree.
     @State private var attachmentSheetRequest: AttachmentSheetRequest?
@@ -43,19 +32,24 @@ struct ChatView: View {
     @State private var isFileImporterPresented = false
     @State private var composerIntent = ComposerIntent.message
     @State private var isGoalWorking = false
+    @State private var goalEditor: GoalEditorRequest?
+    @State private var goalEditorError: String?
     @State private var isCompacting = false
     @State private var planPreview: Approval?
     @State private var preparedFiles: [UploadedFile] = []
     @State private var uploadingFileName: String?
     @State private var chromeHeight: CGFloat = 0
+    @State private var taskOverlayHeight: CGFloat = 0
+    @State private var goalOverlayHeight: CGFloat = 0
+    @State private var queueOverlayHeight: CGFloat = 0
+    @State private var queueEditor: QueuedMessage?
     @State private var contextPicker: ContextPicker?
-    /// Top edge of the keyboard once it has settled (screen coordinates); nil while it is hidden.
-    @State private var keyboardTop: CGFloat?
-    @State private var keyboardSettleTask: Task<Void, Never>?
-    @FocusState private var composerFocused: Bool
+    @State private var keyboardVisible = false
+    @State private var composerFocused = false
 
     var body: some View {
         messageHistory
+            .environment(\.conversationAccess, conversationAccess)
             .background(DSBotStyle.canvas)
             .coordinateSpace(name: "dsbot.chat")
             .sheet(item: $attachmentSheetRequest, onDismiss: handleAttachmentSheetDismiss) { request in
@@ -69,6 +63,31 @@ struct ChatView: View {
                     .presentationDetents([.large])
                     .presentationDragIndicator(.hidden)
                     .presentationBackground(ComposerAttachmentSheet.background)
+            }
+            .sheet(item: $goalEditor) { request in
+                GoalEditorSheet(
+                    objective: request.objective,
+                    isSaving: isGoalWorking,
+                    error: goalEditorError,
+                    onSave: { saveEditedGoal($0, request: request) },
+                    onClose: { goalEditor = nil }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(DSBotStyle.canvas)
+            }
+            .sheet(item: $queueEditor) { message in
+                QueuedMessageEditor(
+                    message: message, isSaving: store.updatingQueueItemID != nil,
+                    onSave: { updateQueue(message, action: "edit", text: $0) },
+                    onCancel: { queueEditor = nil }
+                )
+                .presentationDetents([.medium, .large])
+            }
+            .onChange(of: store.queuedMessages) { _, messages in
+                if let editing = queueEditor, !messages.contains(where: { $0.id == editing.id }) {
+                    queueEditor = nil
+                }
             }
             .fileImporter(
                 isPresented: $isFileImporterPresented,
@@ -84,33 +103,18 @@ struct ChatView: View {
             matching: .images
         )
         .overlay(alignment: .bottom) {
-            // Mounted from the moment the talk bar is up and only faded in by a press, so its first
-            // frame is drawn before anyone holds the bar rather than while they wait for it.
-            if isVoiceMode || showsVoiceOverlay {
-                GeometryReader { geometry in
-                    let height = min(geometry.size.height * 0.32, 248)
-                    // The chat reaches the bottom edge of the screen, which is where the glow is laid out to.
-                    VoiceCaptureOverlay(
-                        transcript: speechCapture.transcript,
-                        meter: speechCapture.meter,
-                        touch: voiceTouch,
-                        touchOriginY: geometry.size.height - height,
-                        isCancelling: cancelVoicePress,
-                        isFinishing: speechCapture.isFinishing,
-                        isActive: showsVoiceOverlay
-                    )
-                    .frame(height: height)
-                    .frame(maxHeight: .infinity, alignment: .bottom)
-                    .offset(y: showsVoiceOverlay ? 0 : 24)
-                    .opacity(showsVoiceOverlay ? 1 : 0.001)
-                }
-                .allowsHitTesting(false)
-                .accessibilityHidden(!showsVoiceOverlay)
-            }
+            VoiceCaptureLayer(capture: speechCapture, press: voicePress, isVoiceMode: isVoiceMode)
         }
-        .animation(.easeOut(duration: 0.22), value: showsVoiceOverlay)
-        // A tap on the bar you can feel at once, whatever the screen is still drawing.
-        .sensoryFeedback(trigger: isVoicePressActive) { _, pressed in pressed ? .impact(weight: .medium) : nil }
+        .overlay(alignment: .top) {
+            ChatFeedbackOverlay(
+                store: store, capture: speechCapture, commandResult: $commandResult, photoNotice: $photoNotice,
+                onDismissVoiceNotice: cancelVoiceCapture
+            )
+            .padding(.horizontal, 24)
+            .padding(.top, historyTopInset + 8)
+            .opacity(isOverlayOpen ? 0 : 1)
+            .accessibilityHidden(isOverlayOpen)
+        }
         .onChange(of: isVoiceMode) { _, isOn in
             // Build the recognizer now, off the main thread, so the first press does not wait for it.
             if isOn { speechCapture.prepare() }
@@ -127,22 +131,19 @@ struct ChatView: View {
             }
             #endif
             speechCapture.onRecognition = { text in
-                sendVoiceTranscript(text, sessionID: voiceSessionID, computerID: voiceComputerID)
+                sendVoiceTranscript(text, sessionID: voicePress.sessionID, computerID: voicePress.computerID)
             }
             speechCapture.onDraft = { text in
-                preserveVoiceTranscriptAsDraft(text, sessionID: voiceSessionID, computerID: voiceComputerID)
+                preserveVoiceTranscriptAsDraft(text, sessionID: voicePress.sessionID, computerID: voicePress.computerID)
             }
         }
         .onChange(of: draftTarget) { _, _ in
             restoreDraft()
+            followsLatestMessage = true
+            historyFailure = nil
         }
         .onDisappear {
-            latestScrollScheduler.cancel()
-            cancelViewportScroll()
             saveDraft()
-            voiceTimeoutTask?.cancel()
-            voiceTimeoutTask = nil
-            isVoicePressActive = false
             cancelVoiceCapture()
             speechCapture.onRecognition = nil
             speechCapture.onDraft = nil
@@ -178,9 +179,8 @@ struct ChatView: View {
             cancelVoiceCapture()
         }
         .onChange(of: store.selectedSession?.id) { _, _ in
-            latestScrollScheduler.cancel()
-            cancelViewportScroll()
-            followsLatestMessage = true
+            goalEditor = nil
+            queueEditor = nil
             photoLoadGeneration += 1
             preparedPhotos = []
             preparedFiles = []
@@ -190,13 +190,12 @@ struct ChatView: View {
             compressedPhotoBytes = 0
             photoNotice = nil
             selectedPhotos = []
-            lastMessageHeight = 0
             composerFocused = false
             cancelVoiceCapture()
         }
         .onChange(of: store.activeComputer?.id) { _, _ in
-            latestScrollScheduler.cancel()
-            cancelViewportScroll()
+            goalEditor = nil
+            queueEditor = nil
             photoLoadGeneration += 1
             preparedPhotos = []
             preparedFiles = []
@@ -205,17 +204,14 @@ struct ChatView: View {
             compressedPhotoBytes = 0
             photoNotice = nil
             selectedPhotos = []
-            lastMessageHeight = 0
             composerFocused = false
             cancelVoiceCapture()
         }
         .onChange(of: composerFocused) { _, focused in
             DSBotLog.record(focused ? "keyboard.focus" : "keyboard.dismiss")
         }
-        .onChange(of: speechCapture.isRecording) { _, recording in
-            if !recording && !speechCapture.isFinishing {
-                isVoicePressActive = false
-            }
+        .onChange(of: store.goal?.id) { _, _ in
+            goalEditor = nil
         }
         .onChange(of: isOverlayOpen) { _, isOpen in
             guard isOpen else { return }
@@ -237,6 +233,20 @@ struct ChatView: View {
         guard let computerID = store.activeComputer?.id,
               let sessionID = store.selectedSession?.id else { return nil }
         return DraftTarget(computerID: computerID, sessionID: sessionID)
+    }
+
+    private var conversationAccess: ConversationAccess? {
+        guard let target = draftTarget else { return nil }
+        return ConversationAccess(
+            target: target, connected: store.status == .connected,
+            request: { method, parameters in
+                try await store.conversationRequest(method, parameters: parameters, target: target)
+            },
+            fork: { seq in try await store.forkConversation(at: seq, target: target) },
+            loadImage: { attachment, target, fullSize in
+                await store.conversationImage(attachment, target: target, fullSize: fullSize)
+            }
+        )
     }
 
     private var draftBinding: Binding<String> {
@@ -269,232 +279,133 @@ struct ChatView: View {
     }
 
     private var messageHistory: some View {
-        GeometryReader { geometry in
-            let visibleHeight = max(0, geometry.size.height - chromeHeight)
-            // SwiftUI normally shrinks this view for the keyboard. If it did not (or not enough), lift
-            // the composer by what still overlaps so it can never sit behind the keyboard.
-            let keyboardLift = keyboardTop.map { max(0, geometry.frame(in: .global).maxY - $0) } ?? 0
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        if !hasConversationContent {
-                            // The hero and the loading state are overlays, centred in the free area.
-                            if store.selectedSession == nil {
-                                Text(" ")
-                                    .frame(maxWidth: .infinity, minHeight: 24)
-                            }
-                        } else if store.transcript != nil {
-                            ForEach(store.transcriptRows) { row in
-                                TranscriptRowView(row: row)
-                                    .equatable()
-                                    .id(row.id)
-                                    .background {
-                                        if row.id == store.transcriptRows.last?.id {
-                                            GeometryReader { row in
-                                                Color.clear.preference(
-                                                    key: ChatLastMessageHeightPreference.self,
-                                                    value: row.size.height
-                                                )
-                                            }
-                                        }
-                                    }
-                            }
-                        } else {
-                            ForEach(store.messages) { message in
-                                ChatMessageRow(message: message)
-                                    .equatable()
-                                    .id(message.id)
-                                    .background {
-                                        if message.id == store.messages.last?.id {
-                                            GeometryReader { row in
-                                                Color.clear.preference(
-                                                    key: ChatLastMessageHeightPreference.self,
-                                                    value: row.size.height
-                                                )
-                                            }
-                                        }
-                                    }
-                            }
-                        }
-                        if store.transcript != nil {
-                            ForEach(sessionApprovals) { approval in
-                                PlanReviewCard(
-                                    approval: approval,
-                                    isResponding: store.isRespondingApprovals.contains(approval.id),
-                                    onApprove: { respond(to: approval, allow: true) },
-                                    onRevise: { revise(approval) },
-                                    onOpenFull: { planPreview = approval }
-                                )
-                                .id("approval:\(approval.id)")
-                            }
-                        }
-                        Color.clear
-                            .frame(height: 1)
-                            .id("chat.bottom")
-                            .background {
-                                GeometryReader { bottom in
-                                    Color.clear.preference(
-                                        key: ChatBottomPreference.self,
-                                        value: bottom.frame(in: .named("dsbot.history")).maxY
-                                    )
-                                }
-                            }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, historyTopInset + 14)
-                    .padding(.bottom, 18)
-                    .frame(maxWidth: 760)
-                    .frame(maxWidth: .infinity)
-                }
-                .coordinateSpace(name: "dsbot.history")
-                .scrollDismissesKeyboard(.interactively)
-                .background(DSBotStyle.canvas)
-                .onPreferenceChange(ChatBottomPreference.self) { value in
-                    historyBottomY = value
-                    guard !isDraggingHistory, value != ChatBottomPreference.defaultValue else { return }
-                    if followsLatestMessage && value > visibleHeight + 2 {
-                        scheduleLatestScroll(using: proxy)
-                    } else if value < visibleHeight + 64 {
-                        followsLatestMessage = true
-                    }
-                }
-                .onPreferenceChange(ChatLastMessageHeightPreference.self) { height in
-                    guard height.isFinite, height > 0 else { return }
-                    let changed = abs(height - lastMessageHeight) > 0.5
-                    lastMessageHeight = height
-                    guard changed, followsLatestMessage, !isDraggingHistory else { return }
-                    scheduleLatestScroll(using: proxy)
-                }
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 8)
-                        .onChanged { _ in
-                            if !isDraggingHistory {
-                                latestScrollScheduler.cancel()
-                                cancelViewportScroll()
-                            }
-                            isDraggingHistory = true
-                            followsLatestMessage = false
-                        }
-                        .onEnded { _ in
-                            isDraggingHistory = false
-                            followsLatestMessage = historyBottomY < visibleHeight + 64
-                            if followsLatestMessage {
-                                scheduleLatestScroll(using: proxy)
-                            }
-                        }
-                )
-                .onChange(of: store.messages.count) { _, _ in
-                    guard followsLatestMessage else { return }
-                    scheduleLatestScroll(using: proxy)
-                }
-                .onChange(of: store.contentRevision) { _, _ in
-                    guard followsLatestMessage else { return }
-                    scheduleLatestScroll(using: proxy)
-                }
-                .onChange(of: store.approvals) { _, _ in
-                    guard followsLatestMessage else { return }
-                    scheduleLatestScroll(using: proxy)
-                }
-                .onChange(of: store.messages.last?.text) { _, _ in
-                    guard followsLatestMessage else { return }
-                    scheduleLatestScroll(using: proxy)
-                }
-                .onChange(of: geometry.size.height) { _, _ in
-                    guard followsLatestMessage else { return }
-                    scheduleViewportScroll(using: proxy)
-                }
-                .onChange(of: chromeHeight) { _, _ in
-                    guard followsLatestMessage else { return }
-                    scheduleViewportScroll(using: proxy)
-                }
-                .onAppear {
-                    // A history that is already there (the app was rebuilt after a reconnect) has no change to
-                    // trigger the scroll: ask for it, with the settling scrolls a long LazyVStack needs.
-                    #if DEBUG && targetEnvironment(simulator)
-                    if ProcessInfo.processInfo.arguments.contains("-dsbot-review-no-appear-scroll") { return }
-                    #endif
-                    scheduleLatestScroll(using: proxy)
-                }
-                .onChange(of: isOverlayOpen) { wasOpen, isOpen in
-                    guard wasOpen, !isOpen else { return }
-                    verifyHistoryEnd(using: proxy, visibleHeight: visibleHeight)
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    bottomChrome(using: proxy, visibleHeight: visibleHeight, keyboardLift: keyboardLift)
-                }
-                .overlay {
-                    if showsEmptyState {
-                        ConversationEmptyState()
-                            .padding(.bottom, chromeHeight)
-                            .allowsHitTesting(false)
-                            .transition(.opacity)
-                    } else if showsLoadingState {
-                        // Centred between the toolbar and the composer.
-                        ConversationLoadingState()
-                            .padding(.top, historyTopInset)
-                            .padding(.bottom, chromeHeight)
-                            .allowsHitTesting(false)
-                            .transition(.opacity)
-                    }
-                }
-
+        let items = historyItems
+        let target = draftTarget
+        let canLoadAttachments = store.status == .connected && !store.isLoadingSession
+        let emptyStateVisible = showsEmptyState
+        let loadingStateVisible = showsLoadingState
+        let access = conversationAccess
+        return ZStack(alignment: .bottom) {
+            ConversationHistoryView(
+                items: items, target: target,
+                topInset: historyTopInset + 7, bottomInset: chromeHeight + 11,
+                canLoadAttachments: canLoadAttachments, keyboardVisible: keyboardVisible,
+                isCovered: isOverlayOpen, controller: historyController, followsLatest: $followsLatestMessage
+            ) { item in
+                historyContent(item, target: target, canLoadAttachments: canLoadAttachments)
+                    .environment(\.conversationAccess, access)
+                    .environment(\.conversationIsCovered, isOverlayOpen)
+                    .tint(DSBotStyle.ink)
+            }
+            .id(target)
+            bottomChrome()
+        }
+        .overlay {
+            if emptyStateVisible {
+                ConversationEmptyState()
+                    .padding(.top, historyTopInset)
+                    .padding(.bottom, chromeHeight)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            } else if loadingStateVisible {
+                ConversationLoadingState()
+                    .padding(.top, historyTopInset)
+                    .padding(.bottom, chromeHeight)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
             }
         }
     }
 
-    private func scheduleLatestScroll(using proxy: ScrollViewProxy) {
-        guard followsLatestMessage, !isDraggingHistory else { return }
-        #if DEBUG && targetEnvironment(simulator)
-        // A review that wants the history where it starts, with text under the composer and the toolbar.
-        if ProcessInfo.processInfo.arguments.contains("-dsbot-review-no-scroll") { return }
-        #endif
-        latestScrollScheduler.schedule(
-            shouldScroll: { followsLatestMessage && !isDraggingHistory },
-            action: { proxy.scrollTo("chat.bottom", anchor: .bottom) }
-        )
+    private var historyItems: [ConversationHistoryItem] {
+        guard hasConversationContent else { return [] }
+        guard store.transcript != nil else { return store.messages.map(ConversationHistoryItem.message) }
+        var items: [ConversationHistoryItem] = [
+            .controls(
+                hasEarlier: store.transcript?.hasMore == true,
+                isLoading: store.historyLoadTarget == draftTarget && draftTarget != nil,
+                failure: historyFailure
+            )
+        ]
+        for row in store.transcriptRows {
+            items.append(.transcript(row, store.transcriptTimeSeparators[row.id]))
+            if case let .turn(turn) = row, turn.outcome == .running {
+                items.append(.running(turnID: turn.id, startedAt: turn.startedAt))
+            }
+        }
+        items += sessionApprovals.map { .approval($0, isResponding: store.isRespondingApprovals.contains($0.id)) }
+        if draftTarget != nil {
+            items += store.questions.map(ConversationHistoryItem.questions)
+        }
+        return items
     }
 
-    private func scheduleViewportScroll(using proxy: ScrollViewProxy) {
-        guard followsLatestMessage, !isDraggingHistory else { return }
-        #if DEBUG && targetEnvironment(simulator)
-        if ProcessInfo.processInfo.arguments.contains("-dsbot-review-no-scroll") { return }
-        #endif
-        viewportScrollScheduler.schedule(
-            shouldScroll: { followsLatestMessage && !isDraggingHistory },
-            action: { proxy.scrollTo("chat.bottom", anchor: .bottom) }
-        )
-    }
-
-    private func cancelViewportScroll() {
-        viewportScrollScheduler.cancel()
-    }
-
-    /// After the sidebar, a sheet or a page has covered a history that follows the latest message, its end must
-    /// be where it was. A long history can come back scrolled past its end, which is a blank screen: the log
-    /// says what it found, and the history is scrolled to its end again.
-    private func verifyHistoryEnd(using proxy: ScrollViewProxy, visibleHeight: CGFloat) {
-        Task { @MainActor in
-            for delay in [350, 1_000] as [UInt64] {
-                try? await Task.sleep(nanoseconds: delay * 1_000_000)
-                guard followsLatestMessage, !isDraggingHistory else { return }
-                let marker = historyBottomY
-                let state: String
-                if marker == ChatBottomPreference.defaultValue {
-                    state = "lost"
-                } else if marker < 0 {
-                    state = "past"
-                } else if marker > visibleHeight + 64 {
-                    state = "short"
-                } else {
-                    state = "end"
+    @ViewBuilder
+    private func historyContent(
+        _ item: ConversationHistoryItem, target: DraftTarget?, canLoadAttachments: Bool
+    ) -> some View {
+        switch item {
+        case let .transcript(row, timeSeparator):
+            TranscriptRowView(
+                row: row, timeSeparator: timeSeparator, attachmentTarget: target,
+                canLoadAttachments: canLoadAttachments, showsRunningStatus: false
+            ) { attachment, target, fullSize in
+                await store.conversationImage(attachment, target: target, fullSize: fullSize)
+            }
+            .equatable()
+        case let .running(_, startedAt):
+            RunningStatusView(startedAt: startedAt)
+                .padding(.top, 2)
+        case let .message(message):
+            ChatMessageRow(message: message).equatable()
+        case let .controls(hasEarlier, isLoading, failure):
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    if hasEarlier, let target {
+                        Button {
+                            loadEarlierHistory(target: target)
+                        } label: {
+                            HStack(spacing: 6) {
+                                if isLoading { ProgressView().controlSize(.small) }
+                                else { Text("加载更早") }
+                            }
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .disabled(isLoading || !canLoadAttachments)
+                        .accessibilityIdentifier("chat.history.older")
+                    }
+                    Spacer()
+                    ConversationPerformanceButton()
                 }
-                DSBotLog.record(
-                    "chat.resume",
-                    counts: ["messageCount": store.transcriptRows.count + store.messages.count],
-                    state: state
-                )
-                guard state != "end" else { return }
-                scheduleLatestScroll(using: proxy)
+                .font(.system(size: 13))
+                .foregroundStyle(DSBotStyle.chatTertiary)
+                if let failure { ConversationFailureView(message: failure) }
+            }
+        case let .approval(approval, isResponding):
+            PlanReviewCard(
+                approval: approval, isResponding: isResponding,
+                onApprove: { respond(to: approval, allow: true) },
+                onRevise: { revise(approval) }, onOpenFull: { planPreview = approval }
+            )
+        case let .questions(batch):
+            if let target {
+                ConversationQuestionsView(batch: batch, connected: canLoadAttachments) { answers in
+                    try await store.answerQuestions(batch, answers: answers, target: target)
+                }
+            }
+        }
+    }
+
+    private func loadEarlierHistory(target: DraftTarget) {
+        guard store.historyLoadTarget != target else { return }
+        followsLatestMessage = false
+        historyFailure = nil
+        Task { @MainActor in
+            do {
+                try await store.loadEarlierHistory(target: target)
+            } catch {
+                if draftTarget == target { historyFailure = error.localizedDescription }
             }
         }
     }
@@ -594,48 +505,46 @@ struct ChatView: View {
 
     // MARK: Bottom chrome
 
-    /// Everything that floats above the history: the jump-to-latest button, approvals, notices,
+    /// Everything that floats above the history: the jump-to-latest button, approvals,
     /// photo chips and the glass composer. The history scrolls beneath it behind a progressive blur.
-    private func bottomChrome(using proxy: ScrollViewProxy, visibleHeight: CGFloat, keyboardLift: CGFloat) -> some View {
+    private func bottomChrome() -> some View {
         let gap = composerFocused ? DSBotLayout.composerKeyboardGap : DSBotLayout.composerBottomMargin
         return VStack(spacing: 8) {
-            if !followsLatestMessage && historyBottomY > visibleHeight + 64 {
-                HStack {
-                    Spacer(minLength: 0)
-                    latestButton(using: proxy)
+            if store.transcript == nil { approvalCards }
+            taskPanel
+                .offset(y: -goalOverlayHeight - queueOverlayHeight)
+                .animation(.easeOut(duration: 0.18), value: goalOverlayHeight)
+            VStack(spacing: 8) {
+                goalBanner
+                    .offset(y: -queueOverlayHeight)
+                queuedMessagesPanel
+                contextChips
+                composerCapsule
+            }
+            .background {
+                if store.goal != nil || !store.queuedMessages.isEmpty {
+                    DSBotPanelBackdrop()
+                        .padding(.top, -goalOverlayHeight - queueOverlayHeight)
+                        .animation(.easeOut(duration: 0.18), value: goalOverlayHeight)
                 }
             }
-            if store.transcript == nil { approvalCards }
-            if let photoNotice {
-                compactNotice(photoNotice) { self.photoNotice = nil }
+        }
+        .overlay(alignment: .top) {
+            if !followsLatestMessage {
+                latestButton()
+                    .offset(y: -52 - taskOverlayHeight - goalOverlayHeight - queueOverlayHeight)
+                    .animation(.easeOut(duration: 0.18), value: taskOverlayHeight)
+                    .animation(.easeOut(duration: 0.18), value: goalOverlayHeight)
             }
-            if let notice = speechCapture.notice {
-                compactNotice(notice) { cancelVoiceCapture() }
-            }
-            if let error = store.error {
-                compactNotice(error) { store.error = nil }
-            }
-            if let notice = store.notice {
-                compactNotice(notice, isInfo: true) { store.notice = nil }
-                    .task(id: notice) {
-                        try? await Task.sleep(nanoseconds: 5_000_000_000)
-                        if store.notice == notice { store.notice = nil }
-                    }
-            }
-            if isCompacting { compactingRow }
-            taskPanel
-            goalBanner
-            chipStrip
-            contextChips
-            composerCapsule
         }
         .padding(.horizontal, DSBotLayout.composerSideMargin)
         .padding(.top, 6)
-        .padding(.bottom, gap + keyboardLift)
-        // A preference raised inside `safeAreaInset` never reaches the history, so read the size here.
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { chromeHeight = $0 }
+        .padding(.bottom, gap)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+            if abs(chromeHeight - height) > 0.5 { chromeHeight = height }
+        }
         .background(alignment: .bottom) {
-            bottomEdge(height: DSBotLayout.composerHeight + gap + keyboardLift + 8)
+            bottomEdge(height: DSBotLayout.composerHeight + gap + 8)
         }
     }
 
@@ -654,18 +563,16 @@ struct ChatView: View {
         .allowsHitTesting(false)
     }
 
-    private func latestButton(using proxy: ScrollViewProxy) -> some View {
+    private func latestButton() -> some View {
         Button {
-            latestScrollScheduler.cancel()
-            cancelViewportScroll()
+            DSBotLog.record("chat.latest")
             followsLatestMessage = true
-            withAnimation(.easeOut(duration: 0.18)) {
-                proxy.scrollTo("chat.bottom", anchor: .bottom)
-            }
+            historyController.scrollToLatest(animated: true)
         } label: {
             DSBotIcon(.down, size: 20)
                 .foregroundStyle(DSBotStyle.ink)
-                .frame(width: 42, height: 42)
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
         }
         .buttonStyle(DSBotGlassButtonStyle())
         .accessibilityLabel("回到最新消息")
@@ -677,7 +584,7 @@ struct ChatView: View {
     @ViewBuilder
     private var taskPanel: some View {
         if store.selectedSession != nil, !store.isChoosingWorkspace, !store.todos.isEmpty {
-            TaskPanel(todos: store.todos)
+            TaskPanel(todos: store.todos) { taskOverlayHeight = $0 }
                 .transition(.opacity)
         }
     }
@@ -689,43 +596,44 @@ struct ChatView: View {
                 goal: goal,
                 isWorking: isGoalWorking,
                 onPauseResume: { runGoalCommand(goal.isPaused ? "resume" : "pause") },
-                onEdit: { enterGoalMode() },
-                onClear: { runGoalCommand("clear") }
+                onEdit: { presentGoalEditor(goal) },
+                onClear: { runGoalCommand("clear") },
+                onOverlayHeightChange: { goalOverlayHeight = $0 }
             )
             .transition(.opacity)
         }
     }
 
-    /// Plan mode is the only state that lives above the composer; attachments sit inside it.
     @ViewBuilder
-    private var chipStrip: some View {
-        if store.planMode {
-            HStack {
-                planChip
-                Spacer(minLength: 0)
-            }
+    private var queuedMessagesPanel: some View {
+        if !store.queuedMessages.isEmpty {
+            QueuedMessagesPanel(
+                messages: store.queuedMessages,
+                isRunning: store.selectedSession?.status == "running",
+                isConnected: store.status == .connected,
+                busyItemID: store.updatingQueueItemID,
+                onEdit: { composerFocused = false; queueEditor = $0 },
+                onRemove: { updateQueue($0, action: "remove") },
+                onSteer: { updateQueue($0, action: "steer") },
+                onOverlayHeightChange: { queueOverlayHeight = $0 }
+            )
         }
     }
 
-    /// Plan mode is on for this session; tapping the chip leaves it (`/plan off`).
-    private var planChip: some View {
-        Button {
-            runPlanCommand(argument: "off")
-        } label: {
-            HStack(spacing: 5) {
-                DSBotIcon(.plan, size: 14)
-                Text("计划")
-                    .font(.system(size: 14, weight: .medium))
+    private func updateQueue(_ message: QueuedMessage, action: String, text: String? = nil) {
+        let target = draftTarget
+        Task {
+            do {
+                try await store.updateQueuedMessage(message, action: action, text: text)
+                guard target == draftTarget else { return }
+                if action == "edit" { queueEditor = nil }
+            } catch {
+                guard target == draftTarget else { return }
+                let failure = action == "edit" ? "编辑失败：这条消息可能已经开始发送。"
+                    : action == "remove" ? "删除失败：这条消息可能已经开始发送。" : "插话发送失败，请重试。"
+                commandResult = DSBotToastMessage(text: failure, kind: .error)
             }
-            .foregroundStyle(DSBotStyle.chatRunning)
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .background(DSBotStyle.chatBubble, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("计划模式已开启，点按关闭")
-        .accessibilityIdentifier("composer.plan.chip")
     }
 
     // MARK: Empty conversation and keyboard
@@ -733,33 +641,20 @@ struct ChatView: View {
     /// A conversation with nothing in it yet (and the new-task home) shows DSH's hero instead of a blank page.
     private var showsEmptyState: Bool {
         if store.isChoosingWorkspace { return true }
-        return !hasConversationContent && sessionApprovals.isEmpty && !store.isLoadingSession
+        return !store.isRestoring && !hasConversationContent && sessionApprovals.isEmpty && !store.isLoadingSession
             && !(store.selectedSession == nil && store.isLoading)
     }
 
     /// Nothing to show yet because the conversation (or the first one, right after connecting) is on its way.
     private var showsLoadingState: Bool {
         !hasConversationContent && !store.isChoosingWorkspace
-            && (store.isLoadingSession || (store.selectedSession == nil && store.isLoading))
+            && (store.isRestoring || store.isLoadingSession || (store.selectedSession == nil && store.isLoading))
     }
 
     private func trackKeyboard(_ note: Notification) {
         guard let end = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
-        keyboardSettleTask?.cancel()
-        switch KeyboardAvoidance.action(endFrameMinY: end.minY, screenHeight: DSBotLayout.screenHeight) {
-        case .release:
-            // Nothing is left to keep clear of: go down with the keyboard, in its own time, instead of
-            // waiting for it to settle while the composer stays up where it was.
-            let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
-            withAnimation(.easeOut(duration: duration)) { keyboardTop = nil }
-        case let .settle(top):
-            keyboardSettleTask = Task { @MainActor in
-                // Let the keyboard's own animation and SwiftUI's avoidance finish, then correct any overlap.
-                try? await Task.sleep(nanoseconds: KeyboardAvoidance.settleNanoseconds)
-                guard !Task.isCancelled else { return }
-                withAnimation(.easeOut(duration: 0.2)) { keyboardTop = top }
-            }
-        }
+        let visible = KeyboardAvoidance.isVisible(endFrameMinY: end.minY, screenHeight: DSBotLayout.screenHeight)
+        if keyboardVisible != visible { keyboardVisible = visible }
     }
 
     // MARK: Project and mode above the composer
@@ -880,7 +775,6 @@ struct ChatView: View {
 
     // MARK: Composer
 
-    private var showsVoiceOverlay: Bool { isVoicePressActive || speechCapture.isFinishing }
 
     private var hasAttachmentTiles: Bool {
         !preparedPhotos.isEmpty || !preparedFiles.isEmpty || uploadingFileName != nil
@@ -962,12 +856,15 @@ struct ChatView: View {
             }
             .frame(minHeight: DSBotLayout.composerHeight)
         }
-        .dsbotGlass(in: RoundedRectangle(
-            cornerRadius: hasAttachmentTiles ? 28 : DSBotLayout.composerHeight / 2, style: .continuous
-        ))
+        .background {
+            Color.clear
+                .dsbotGlass(in: RoundedRectangle(
+                    cornerRadius: hasAttachmentTiles ? 28 : DSBotLayout.composerHeight / 2, style: .continuous
+                ))
+                .allowsHitTesting(false)
+        }
         .animation(.easeOut(duration: 0.18), value: hasAttachmentTiles)
-        .opacity(showsVoiceOverlay ? 0 : 1)
-        .animation(.easeOut(duration: 0.16), value: showsVoiceOverlay)
+        .modifier(VoiceComposerVisibility(capture: speechCapture, press: voicePress))
     }
 
     private var plusButton: some View {
@@ -997,14 +894,13 @@ struct ChatView: View {
         // `.top`, not a baseline alignment: a vertical-axis TextField has no usable first baseline,
         // so the token and the placeholder drifted apart and stretched the capsule.
         HStack(alignment: .top, spacing: 6) {
-            if case let .goal(editing) = composerIntent {
+            if case .goal = composerIntent {
                 Button {
                     composerIntent = .message
-                    if editing { updateDraft("") }
                 } label: {
-                    Text(editing ? "/目标 编辑" : "/目标")
+                    Text("/目标")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(DSBotStyle.ink)
+                        .foregroundStyle(DSBotStyle.blue)
                         .padding(.vertical, 12.5)
                         .contentShape(Rectangle())
                 }
@@ -1012,18 +908,8 @@ struct ChatView: View {
                 .accessibilityLabel("目标指令，点按取消")
                 .accessibilityIdentifier("composer.goal.token")
             }
-            TextField(
-                placeholder,
-                text: draftBinding,
-                prompt: Text(placeholder).foregroundColor(DSBotStyle.muted),
-                axis: .vertical
-            )
-            .font(.system(size: 16))
-            .lineLimit(1...5)
-            .focused($composerFocused)
-            .textFieldStyle(.plain)
-            .padding(.vertical, 12.5)
-            .accessibilityIdentifier("composer.text")
+            ComposerTextView(text: draftBinding, isFocused: $composerFocused, placeholder: placeholder)
+                .id(draftTarget)
         }
         .padding(.leading, 1)
         .frame(minHeight: DSBotLayout.composerHeight)
@@ -1035,7 +921,14 @@ struct ChatView: View {
             .foregroundStyle(DSBotStyle.ink)
             .frame(maxWidth: .infinity, minHeight: DSBotLayout.composerHeight)
             .contentShape(Rectangle())
-            .gesture(voicePressGesture)
+            .overlay {
+                VoicePressSurface(
+                    onBegan: beginVoicePress,
+                    onMoved: moveVoicePress,
+                    onEnded: endVoicePress,
+                    onCancelled: cancelVoiceCapture
+                )
+            }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("按住说话，上滑取消")
             .accessibilityAddTraits(.isButton)
@@ -1044,7 +937,29 @@ struct ChatView: View {
 
     @ViewBuilder
     private var trailingControl: some View {
-        if isVoiceMode {
+        if !hasSendableContent,
+           store.selectedSession?.status == "running" || store.isSending || isCompacting {
+            Button {
+                DSBotLog.record("session.stop")
+                Task { await store.stopSession() }
+            } label: {
+                Group {
+                    if store.isStoppingSession {
+                        ProgressView().tint(DSBotStyle.ink)
+                    } else {
+                        RoundedRectangle(cornerRadius: 3).fill(DSBotStyle.ink).frame(width: 14, height: 14)
+                    }
+                }
+                .frame(width: 34, height: 34)
+                .background(DSBotStyle.composerAction, in: Circle())
+                .frame(width: DSBotLayout.composerHeight, height: DSBotLayout.composerHeight)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(store.isStoppingSession || store.status != .connected)
+            .accessibilityLabel("停止任务")
+            .accessibilityIdentifier("composer.stop")
+        } else if isVoiceMode && !hasSendableContent {
             Button(action: showKeyboard) {
                 DSBotKeyboardGlyph(size: 25)
                     .foregroundStyle(DSBotStyle.ink)
@@ -1058,16 +973,16 @@ struct ChatView: View {
             Button(action: send) {
                 Group {
                     if store.isSending {
-                        ProgressView().tint(.white)
+                        ProgressView().tint(DSBotStyle.ink)
                     } else {
                         DSBotIcon(.send, size: 20)
                     }
                 }
-                .foregroundStyle(.white)
+                .foregroundStyle(DSBotStyle.ink)
                 .frame(width: 34, height: 34)
-                .background(DSBotStyle.blue, in: Circle())
+                .background(DSBotStyle.composerAction, in: Circle())
                 .overlay {
-                    if isGoalWorking { ProgressView().tint(.white) }
+                    if isGoalWorking { ProgressView().tint(DSBotStyle.ink) }
                 }
                 .frame(width: DSBotLayout.composerHeight, height: DSBotLayout.composerHeight)
                 .contentShape(Rectangle())
@@ -1165,14 +1080,45 @@ struct ChatView: View {
     // MARK: DSH commands from the composer
 
     private func enterGoalMode() {
-        voiceModeOff()
         if let goal = store.goal {
-            updateDraft(goal.objective)
-            composerIntent = .goal(editing: true)
-        } else {
-            composerIntent = .goal(editing: false)
+            presentGoalEditor(goal)
+            return
         }
+        voiceModeOff()
+        composerIntent = .goal
         DispatchQueue.main.async { composerFocused = true }
+    }
+
+    private func presentGoalEditor(_ goal: SessionGoal) {
+        guard let target = draftTarget, !isGoalWorking else { return }
+        voiceModeOff()
+        composerFocused = false
+        goalEditorError = nil
+        goalEditor = GoalEditorRequest(goalID: goal.id, objective: goal.objective, target: target)
+    }
+
+    private func saveEditedGoal(_ objective: String, request: GoalEditorRequest) {
+        let text = objective.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !isGoalWorking, draftTarget == request.target,
+              goalEditor?.id == request.id, store.goal?.id == request.goalID else { return }
+        isGoalWorking = true
+        goalEditorError = nil
+        Task {
+            let argument = "edit \(text)"
+            let outcome = await store.runCommand(.goal, argument: argument)
+            isGoalWorking = false
+            guard draftTarget == request.target, goalEditor?.id == request.id else { return }
+            guard let outcome else {
+                goalEditorError = store.error
+                return
+            }
+            if outcome.isError {
+                goalEditorError = CommandText.message(for: .goal, argument: argument, outcome: outcome)
+            } else {
+                goalEditor = nil
+                reportCommand(.goal, argument: argument, outcome: outcome)
+            }
+        }
     }
 
     private func voiceModeOff() {
@@ -1190,9 +1136,10 @@ struct ChatView: View {
     }
 
     private func runPlanCommand(argument: String?) {
+        guard !store.isChangingPlanMode else { return }
         Task {
             let outcome = await store.runCommand(.plan, argument: argument)
-            reportCommand(.plan, argument: argument, outcome: outcome)
+            if outcome?.isError == true { reportCommand(.plan, argument: argument, outcome: outcome) }
         }
     }
 
@@ -1209,23 +1156,22 @@ struct ChatView: View {
         }
     }
 
-    /// Success becomes a short notice above the composer; a refusal from DSH is shown as an error.
     private func reportCommand(_ command: SessionCommand, argument: String?, outcome: CommandOutcome?) {
         guard let outcome else { return }
         let message = CommandText.message(for: command, argument: argument, outcome: outcome)
         if outcome.isError {
             store.error = message
         } else {
-            store.notice = message
+            commandResult = DSBotToastMessage(text: message, kind: .success)
         }
     }
 
-    private func sendGoal(editing: Bool) {
+    private func sendGoal() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isGoalWorking else { return }
         isGoalWorking = true
         Task {
-            let argument = editing ? "edit \(text)" : text
+            let argument = text
             let outcome = await store.runCommand(.goal, argument: argument)
             isGoalWorking = false
             guard let outcome else { return }
@@ -1264,97 +1210,65 @@ struct ChatView: View {
 
     // MARK: Hold to talk
 
-    private var voicePressGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .named("dsbot.chat"))
-            .onChanged { value in
-                if !isVoicePressActive {
-                    guard let sessionID = store.selectedSession?.id,
-                          let computerID = store.activeComputer?.id else { return }
-                    // How long after the touch itself this handler ran: if the screen is slow to answer a press,
-                    // this says whether the delay came before the app or inside it.
-                    DSBotLog.record("voice.press", elapsedMs: max(0, Date().timeIntervalSince(value.time) * 1_000))
-                    voicePressStartedAt = Date()
-                    isVoicePressActive = true
-                    cancelVoicePress = false
-                    if composerFocused { composerFocused = false }
-                    voiceSessionID = sessionID
-                    voiceComputerID = computerID
-                    Task {
-                        await speechCapture.begin()
-                        guard isVoicePressActive else {
-                            cancelVoiceCapture()
-                            return
-                        }
-                    }
-                    voiceTimeoutTask?.cancel()
-                    voiceTimeoutTask = Task {
-                        try? await Task.sleep(nanoseconds: 60_000_000_000)
-                        guard !Task.isCancelled, isVoicePressActive else { return }
-                        isVoicePressActive = false
-                        if speechCapture.isRecording {
-                            DSBotLog.record("voice.timeout")
-                            speechCapture.finish()
-                        } else {
-                            cancelVoiceCapture()
-                        }
-                    }
-                }
-                voiceTouch.location = value.location
-                let cancelling = value.translation.height < -72
-                if cancelling != cancelVoicePress { cancelVoicePress = cancelling }
+    private func beginVoicePress(location: CGPoint, timestamp: TimeInterval) -> Bool {
+        guard !voicePress.isActive,
+              let sessionID = store.selectedSession?.id,
+              let computerID = store.activeComputer?.id else { return false }
+        DSBotLog.record("voice.press", elapsedMs: max(0, (ProcessInfo.processInfo.systemUptime - timestamp) * 1_000))
+        voicePress.startedAt = timestamp
+        voicePress.sessionID = sessionID
+        voicePress.computerID = computerID
+        voicePress.touch.location = location
+        voicePress.isCancelling = false
+        voicePress.isActive = true
+        if composerFocused { composerFocused = false }
+        Task {
+            await Task.yield()
+            guard voicePress.isActive, voicePress.startedAt == timestamp else { return }
+            await speechCapture.begin()
+            guard voicePress.startedAt == timestamp else { return }
+            if !voicePress.isActive { cancelVoiceCapture() }
+        }
+        voicePress.timeoutTask?.cancel()
+        voicePress.timeoutTask = Task {
+            try? await Task.sleep(nanoseconds: 60_000_000_000)
+            guard !Task.isCancelled, voicePress.isActive else { return }
+            voicePress.isActive = false
+            if speechCapture.isRecording {
+                DSBotLog.record("voice.timeout")
+                speechCapture.finish()
+            } else {
+                cancelVoiceCapture()
             }
-            .onEnded { _ in
-                voiceTimeoutTask?.cancel()
-                voiceTimeoutTask = nil
-                isVoicePressActive = false
-                if cancelVoicePress {
-                    cancelVoiceCapture()
-                } else if voiceSessionID == store.selectedSession?.id,
-                          voiceComputerID == store.activeComputer?.id,
-                          speechCapture.isRecording {
-                    DSBotLog.record("voice.release")
-                    speechCapture.finish()
-                } else {
-                    cancelVoiceCapture()
-                }
-            }
+        }
+        return true
     }
 
-    /// Compaction asks the model for a summary and can take a while, so the tap needs visible feedback.
-    private var compactingRow: some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.mini)
-            Text("正在压缩对话…")
-        }
-        .font(.system(size: 12))
-        .foregroundStyle(DSBotStyle.ink)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 6)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("composer.compacting")
+    private func moveVoicePress(location: CGPoint, translation: CGFloat) {
+        voicePress.touch.location = location
+        let cancelling = translation < -72
+        if cancelling != voicePress.isCancelling { voicePress.isCancelling = cancelling }
     }
 
-    private func compactNotice(_ message: String, isInfo: Bool = false, dismiss: @escaping () -> Void) -> some View {
-        HStack(spacing: 8) {
-            Text(message)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button(action: dismiss) {
-                DSBotIcon(.close, size: 14)
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("关闭提示")
+    private func endVoicePress() {
+        voicePress.timeoutTask?.cancel()
+        voicePress.timeoutTask = nil
+        voicePress.isActive = false
+        if voicePress.isCancelling {
+            cancelVoiceCapture()
+        } else if voicePress.sessionID == store.selectedSession?.id,
+                  voicePress.computerID == store.activeComputer?.id,
+                  speechCapture.isRecording {
+            DSBotLog.record("voice.release")
+            speechCapture.finish()
+        } else {
+            cancelVoiceCapture()
         }
-        .font(.system(size: 12))
-        .foregroundStyle(isInfo ? DSBotStyle.ink : DSBotStyle.muted)
-        .padding(.horizontal, 6)
     }
 
     private func send() {
-        if case let .goal(editing) = composerIntent {
-            sendGoal(editing: editing)
+        if case .goal = composerIntent {
+            sendGoal()
             return
         }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1433,15 +1347,15 @@ struct ChatView: View {
     }
 
     private func cancelVoiceCapture() {
-        let hadPendingCapture = isVoicePressActive || voiceSessionID != nil || speechCapture.isRecording
-        voiceTimeoutTask?.cancel()
-        voiceTimeoutTask = nil
-        isVoicePressActive = false
-        cancelVoicePress = false
-        voiceSessionID = nil
-        voiceComputerID = nil
-        voicePressStartedAt = nil
-        voiceTouch.location = nil
+        let hadPendingCapture = voicePress.isActive || voicePress.sessionID != nil || speechCapture.isRecording
+        voicePress.timeoutTask?.cancel()
+        voicePress.timeoutTask = nil
+        voicePress.isActive = false
+        voicePress.isCancelling = false
+        voicePress.sessionID = nil
+        voicePress.computerID = nil
+        voicePress.startedAt = nil
+        voicePress.touch.location = nil
         speechCapture.cancel()
         if hadPendingCapture {
             DSBotLog.record("voice.cancel")
@@ -1454,7 +1368,7 @@ struct ChatView: View {
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("-dsbot-review-voice-mode") { isVoiceMode = true }
         if arguments.contains("-dsbot-review-attachment-sheet") { attachmentSheetRequest = AttachmentSheetRequest(page: .root) }
-        if arguments.contains("-dsbot-review-goal-mode") { composerIntent = .goal(editing: false) }
+        if arguments.contains("-dsbot-review-goal-mode") { composerIntent = .goal }
         if arguments.contains("-dsbot-review-focus-composer") { composerFocused = true }
         if arguments.contains("-dsbot-review-model-chip") {
             attachmentSheetRequest = AttachmentSheetRequest(page: .modelSettings)
@@ -1511,9 +1425,9 @@ struct ChatView: View {
         }
         if arguments.contains("-dsbot-review-voice-press") || arguments.contains("-dsbot-review-voice-cancel") {
             isVoiceMode = true
-            isVoicePressActive = true
-            cancelVoicePress = arguments.contains("-dsbot-review-voice-cancel")
-            voiceTouch.location = CGPoint(x: 210, y: 843)
+            voicePress.isActive = true
+            voicePress.isCancelling = arguments.contains("-dsbot-review-voice-cancel")
+            voicePress.touch.location = CGPoint(x: 210, y: 843)
         }
     }
     #endif
@@ -1531,116 +1445,14 @@ private struct AttachmentSheetRequest: Identifiable, Equatable {
 
 private enum ComposerIntent: Equatable {
     case message
-    /// `/goal <objective>` (create) or `/goal edit <objective>`.
-    case goal(editing: Bool)
+    case goal
 }
 
-private struct ChatBottomPreference: PreferenceKey {
-    static var defaultValue: CGFloat = .greatestFiniteMagnitude
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-private struct ChatLastMessageHeightPreference: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-@MainActor
-final class ChatLatestScrollScheduler {
-    private var pendingTask: Task<Void, Never>?
-    private var settleTask: Task<Void, Never>?
-    private var generation = 0
-
-    /// A LazyVStack only knows estimated heights for rows it has not laid out, so one `scrollTo` can
-    /// stop short of the real end of a long history (and nothing fires afterwards, because the end
-    /// marker is not on screen to report anything). Scrolling again a few times while the rows
-    /// settle lands on the end.
-    private static let settleDelays: [UInt64] = [120, 260, 500, 900]
-
-    func schedule(
-        afterNanoseconds: UInt64 = 70_000_000,
-        shouldScroll: @escaping @MainActor () -> Bool,
-        action: @escaping @MainActor () -> Void
-    ) {
-        guard pendingTask == nil else { return }
-        let scheduledGeneration = generation
-        pendingTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: afterNanoseconds)
-            } catch {
-                return
-            }
-            guard let self, self.generation == scheduledGeneration else { return }
-            self.pendingTask = nil
-            guard shouldScroll() else { return }
-            action()
-            self.settle(generation: scheduledGeneration, shouldScroll: shouldScroll, action: action)
-        }
-    }
-
-    private func settle(
-        generation scheduledGeneration: Int,
-        shouldScroll: @escaping @MainActor () -> Bool,
-        action: @escaping @MainActor () -> Void
-    ) {
-        settleTask?.cancel()
-        settleTask = Task { @MainActor [weak self] in
-            for delay in Self.settleDelays {
-                do {
-                    try await Task.sleep(nanoseconds: delay * 1_000_000)
-                } catch {
-                    return
-                }
-                guard let self, self.generation == scheduledGeneration, shouldScroll() else { return }
-                action()
-            }
-        }
-    }
-
-    func cancel() {
-        generation &+= 1
-        pendingTask?.cancel()
-        pendingTask = nil
-        settleTask?.cancel()
-        settleTask = nil
-    }
-}
-
-@MainActor
-final class ChatViewportScrollScheduler {
-    private var pendingTask: Task<Void, Never>?
-    private var generation = 0
-
-    func schedule(
-        afterNanoseconds: UInt64 = 120_000_000,
-        shouldScroll: @escaping @MainActor () -> Bool,
-        action: @escaping @MainActor () -> Void
-    ) {
-        generation &+= 1
-        let scheduledGeneration = generation
-        pendingTask?.cancel()
-        pendingTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: afterNanoseconds)
-            } catch {
-                return
-            }
-            guard let self, self.generation == scheduledGeneration else { return }
-            self.pendingTask = nil
-            guard shouldScroll() else { return }
-            action()
-        }
-    }
-
-    func cancel() {
-        generation &+= 1
-        pendingTask?.cancel()
-        pendingTask = nil
-    }
+private struct GoalEditorRequest: Identifiable {
+    let id = UUID()
+    let goalID: String
+    let objective: String
+    let target: DraftTarget
 }
 
 private struct ChatMessageRow: View, Equatable {
@@ -1718,14 +1530,6 @@ private struct ChatMessageRow: View, Equatable {
             if message.role != "user" { Spacer(minLength: 18) }
         }
         .frame(maxWidth: .infinity, alignment: message.role == "user" ? .trailing : .leading)
-        .contextMenu {
-            Button {
-                UIPasteboard.general.string = message.text
-                DSBotLog.record("message.copy")
-            } label: {
-                DSBotLabel("复制", icon: .copy)
-            }
-        }
         .accessibilityIdentifier("chat.message.\(message.id)")
     }
 
@@ -1735,10 +1539,12 @@ private struct ChatMessageRow: View, Equatable {
             Text(value)
                 .font(.system(size: 16))
                 .foregroundStyle(DSBotStyle.ink)
-                .textSelection(.enabled)
+                .textSelection(.disabled)
                 .fixedSize(horizontal: false, vertical: true)
+                .messageActions(text: value, isUser: message.role == "user")
         } else {
-            MessageMarkdown(text: value)
+            MessageMarkdown(text: value, allowsTextSelection: false)
+                .messageActions(text: value, isUser: message.role == "user")
         }
     }
 }

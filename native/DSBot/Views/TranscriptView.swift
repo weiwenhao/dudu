@@ -1,18 +1,44 @@
 import SwiftUI
-import UIKit
-
-// The chat transcript, laid out like DSH's own chat: user bubbles with a time and copy row, a
-// collapsible "已完成，用时 …" disclosure per turn holding grouped thinking/tool rows, the final
-// answer, a usage/time tail, command and trigger rows, and a live status while the model works.
-// Metrics and colours come from DSH's chat stylesheet, sized up a little for a phone.
 
 struct TranscriptRowView: View, Equatable {
     let row: TranscriptRow
+    let timeSeparator: Double?
+    let attachmentTarget: DraftTarget?
+    let canLoadAttachments: Bool
+    var showsRunningStatus = true
+    let loadAttachment: (TranscriptAttachment, DraftTarget, Bool) async -> PreparedPhotoImage?
+
+    static func == (left: Self, right: Self) -> Bool {
+        left.row == right.row && left.timeSeparator == right.timeSeparator
+            && left.attachmentTarget == right.attachmentTarget
+            && left.canLoadAttachments == right.canLoadAttachments
+            && left.showsRunningStatus == right.showsRunningStatus
+    }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            if let timeSeparator {
+                Text(TranscriptTitles.clock(timeSeparator))
+                    .font(.system(size: 13))
+                    .foregroundStyle(DSBotStyle.chatTertiary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
+                    .accessibilityIdentifier("chat.timestamp.\(row.id)")
+            }
+            messageRow
+        }
+    }
+
+    @ViewBuilder
+    private var messageRow: some View {
         switch row {
-        case let .user(user): UserBubbleRow(row: user)
-        case let .turn(turn): TurnRowView(row: turn)
+        case let .user(user): UserBubbleRow(
+            row: user, attachmentTarget: attachmentTarget, canLoadAttachments: canLoadAttachments,
+            loadAttachment: loadAttachment
+        )
+        case let .turn(turn):
+            TurnRowView(row: turn, showsRunningStatus: showsRunningStatus).id(attachmentTarget)
         case let .command(command): CommandRowView(row: command)
         case let .trigger(trigger): TriggerRowView(row: trigger)
         case let .status(startedAt): RunningStatusView(startedAt: startedAt)
@@ -24,23 +50,34 @@ struct TranscriptRowView: View, Equatable {
 
 private struct UserBubbleRow: View {
     let row: UserRow
+    let attachmentTarget: DraftTarget?
+    let canLoadAttachments: Bool
+    let loadAttachment: (TranscriptAttachment, DraftTarget, Bool) async -> PreparedPhotoImage?
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
+            ForEach(Array(row.attachments.enumerated()).filter { $0.element.kind == "image" }, id: \.offset) { index, attachment in
+                ConversationImageThumbnail(
+                    attachment: attachment, target: attachmentTarget, canLoadAttachment: canLoadAttachments,
+                    identifier: "chat.image.\(row.id).\(index)", loadImage: loadAttachment
+                )
+                .messageActions(text: "", isUser: true, seq: row.seq)
+            }
             if !row.text.isEmpty {
                 Text(row.text)
                     .font(.system(size: 16))
                     .lineSpacing(3)
                     .foregroundStyle(DSBotStyle.chatInk)
-                    .textSelection(.enabled)
+                    .textSelection(.disabled)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(DSBotStyle.chatBubble, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .messageActions(text: row.text, isUser: true, seq: row.seq)
                     .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in width * 0.82 }
             }
-            if !row.attachments.isEmpty {
+            if row.attachments.contains(where: { $0.kind != "image" }) {
                 HStack(spacing: 6) {
-                    ForEach(Array(row.attachments.enumerated()), id: \.offset) { _, attachment in
+                    ForEach(Array(row.attachments.enumerated()).filter { $0.element.kind != "image" }, id: \.offset) { _, attachment in
                         HStack(spacing: 5) {
                             DSBotIcon(attachment.kind == "image" ? .image : .attach, size: 13, scalesStroke: true)
                             Text(attachment.name).lineLimit(1).frame(maxWidth: 120)
@@ -54,7 +91,6 @@ private struct UserBubbleRow: View {
                     }
                 }
             }
-            MessageMetaRow(text: row.text, time: row.time, usage: nil)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .accessibilityElement(children: .contain)
@@ -62,53 +98,13 @@ private struct UserBubbleRow: View {
     }
 }
 
-/// Copy button plus the message's usage and clock, the row DSH shows under each message.
-private struct MessageMetaRow: View {
-    let text: String
-    let time: Double?
-    let usage: Int?
-    @State private var copied = false
-
-    var body: some View {
-        HStack(spacing: 8) {
-            if !text.isEmpty {
-                Button {
-                    UIPasteboard.general.string = text
-                    DSBotLog.record("message.copy")
-                    copied = true
-                    Task {
-                        try? await Task.sleep(nanoseconds: 1_200_000_000)
-                        copied = false
-                    }
-                } label: {
-                    DSBotIcon(copied ? .check : .copy, size: 16, scalesStroke: true)
-                        .foregroundStyle(DSBotStyle.chatTertiary)
-                        .frame(width: 30, height: 30)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("复制")
-            }
-            if let usage {
-                Text("用量 \(TranscriptTitles.tokens(usage)) tok")
-                    .font(.system(size: 13))
-                    .foregroundStyle(DSBotStyle.chatTertiary)
-            }
-            if let time {
-                Text(TranscriptTitles.clock(time))
-                    .font(.system(size: 13))
-                    .foregroundStyle(DSBotStyle.chatTertiary)
-            }
-        }
-        .frame(height: 30)
-    }
-}
-
 // MARK: - Turn
 
 private struct TurnRowView: View {
     let row: TurnRow
+    let showsRunningStatus: Bool
     @State private var processOpen = Self.startsOpen
+    @AppStorage("conversation.performance.detailed") private var detailedPerformance = false
 
     private static var startsOpen: Bool {
         #if DEBUG && targetEnvironment(simulator)
@@ -137,16 +133,21 @@ private struct TurnRowView: View {
                 }
             }
             if let answer = row.answer {
-                MessageMarkdown(text: answer)
+                MessageMarkdown(text: answer, allowsTextSelection: false)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .messageActions(text: answer, seq: row.answerSeq)
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("chat.message.\(row.answerID ?? row.id)")
             }
-            if row.outcome == .running {
+            ForEach(row.notices) { TurnNoticeView(notice: $0) }
+            if !row.files.isEmpty || row.changesSeq != nil {
+                TurnFilesView(files: row.files, changesSeq: row.changesSeq)
+            }
+            if detailedPerformance, row.outcome != .running, let turn = row.turn, let seq = row.performanceSeq {
+                ConversationPerformanceButton(turn: turn, seq: seq)
+            }
+            if row.outcome == .running && showsRunningStatus {
                 RunningStatusView(startedAt: row.startedAt)
-            } else if row.answer != nil {
-                MessageMetaRow(text: row.answer ?? "", time: row.answerTime, usage: row.usage)
-                    .padding(.leading, -6)
-                    .padding(.top, -8)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -166,13 +167,11 @@ private struct TurnRowView: View {
                     )
                 case let .reply(id, text):
                     if id.hasPrefix("live:") {
-                        Text(text)
-                            .font(.system(size: 16))
-                            .foregroundStyle(DSBotStyle.chatInk)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
+                        StreamingReplyText(text: text)
+                            .messageActions(text: text, seq: row.messageSequences[id])
                     } else {
-                        MessageMarkdown(text: text)
+                        MessageMarkdown(text: text, allowsTextSelection: false)
+                            .messageActions(text: text, seq: row.messageSequences[id])
                     }
                 }
             }
@@ -338,11 +337,22 @@ private struct ThoughtRow: View {
 
 private struct CallRow: View {
     let call: TranscriptCall
+    @State private var showingDetail = false
+    @Environment(\.conversationAccess) private var access
 
     private var isError: Bool { call.status == "error" }
     private var isRunning: Bool { (call.status ?? "running") == "running" }
 
     var body: some View {
+        Button { showingDetail = true } label: {
+            label
+        }
+        .buttonStyle(.plain)
+        .disabled(call.seq == nil || access?.connected != true)
+        .sheet(isPresented: $showingDetail) { ConversationToolSheet(call: call) }
+    }
+
+    private var label: some View {
         HStack(spacing: 6) {
             DSBotIcon(ActivityKind(wire: call.activity).glyph, size: 14, scalesStroke: true)
             Text(TranscriptTitles.rowTitle(forTool: call.name))
@@ -359,6 +369,7 @@ private struct CallRow: View {
         .foregroundStyle(isError ? DSBotStyle.chatError : DSBotStyle.chatTertiary)
         .opacity(isRunning ? 0.8 : 1)
         .frame(minHeight: 24)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("chat.process.call")
     }
@@ -440,8 +451,10 @@ private struct CommandRowView: View {
     private var header: some View {
         HStack(spacing: 6) {
             DSBotIcon(row.isCompaction ? .compact : .terminal, size: 14, scalesStroke: true)
+                .foregroundStyle(DSBotStyle.blue)
             Text(row.name)
                 .font(.system(size: 15))
+                .foregroundStyle(DSBotStyle.blue)
             if !row.summary.isEmpty {
                 Separator()
                 Text(row.summary)
@@ -477,10 +490,6 @@ private struct TriggerRowView: View {
                     Text(row.title)
                         .font(.system(size: 15))
                     Spacer(minLength: 8)
-                    if let time = row.time {
-                        Text(TranscriptTitles.clock(time))
-                            .font(.system(size: 12))
-                    }
                     DSBotIcon(.down, size: 14, scalesStroke: true)
                         .rotationEffect(.degrees(open ? 180 : 0))
                 }

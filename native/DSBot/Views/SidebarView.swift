@@ -6,8 +6,6 @@ struct SidebarView: View {
     @AppStorage("dsbot.sidebar.archive") private var archiveRaw = SidebarArchiveFilter.hide.rawValue
     /// Ids of the workspaces the user folded, kept as a JSON list.
     @AppStorage("dsbot.sidebar.collapsed") private var collapsedRaw = "[]"
-    @State private var searchText = ""
-    @FocusState private var searchFocused: Bool
     @State private var renaming: SidebarGroup?
     @State private var renameText = ""
     @State private var deleting: SidebarGroup?
@@ -23,6 +21,7 @@ struct SidebarView: View {
     let onChooseConversation: () -> Void
     let onOpenComputers: () -> Void
     let onOpenSettings: () -> Void
+    let onSearch: () -> Void
     let onClose: () -> Void
 
     init(
@@ -31,6 +30,7 @@ struct SidebarView: View {
         onChooseConversation: @escaping () -> Void,
         onOpenComputers: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
+        onSearch: @escaping () -> Void,
         onClose: @escaping () -> Void,
         selectedItemID: String? = nil
     ) {
@@ -40,6 +40,7 @@ struct SidebarView: View {
         self.onChooseConversation = onChooseConversation
         self.onOpenComputers = onOpenComputers
         self.onOpenSettings = onOpenSettings
+        self.onSearch = onSearch
         self.onClose = onClose
     }
 
@@ -92,9 +93,6 @@ struct SidebarView: View {
         .accessibilityElement(children: .contain)
         .task {
             await store.refreshSessions()
-        }
-        .onChange(of: searchText) { _, _ in
-            DSBotLog.record("sidebar.search", counts: ["payloadBytes": searchText.utf8.count])
         }
         .onChange(of: groupingRaw) { _, grouping in
             DSBotLog.record("sidebar.grouping", state: grouping)
@@ -177,20 +175,21 @@ struct SidebarView: View {
     }
 
     private var searchField: some View {
-        HStack(spacing: 10) {
-            DSBotIcon(.search, size: 18)
-                .foregroundStyle(DSBotStyle.muted)
-            TextField("搜索", text: $searchText)
-                .font(.system(size: 14))
-                .textFieldStyle(.plain)
-                .focused($searchFocused)
-                .submitLabel(.search)
-                .onSubmit { searchFocused = false }
-                .accessibilityIdentifier("sidebar.search")
+        Button(action: onSearch) {
+            HStack(spacing: 10) {
+                DSBotIcon(.search, size: 18)
+                Text("搜索对话内容…")
+                    .font(.system(size: 14))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(DSBotStyle.muted)
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .dsbotGlass(in: Capsule(), interactive: true)
+            .contentShape(Capsule())
         }
-        .padding(.horizontal, 14)
-        .frame(height: 44)
-        .dsbotGlass(in: Capsule(), interactive: true)
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("sidebar.search")
     }
 
     /// DSH's own sidebar entries (插件, 自动化任务, ...), whatever plugins have added to them.
@@ -268,9 +267,7 @@ struct SidebarView: View {
     private var entries: [SidebarEntry] {
         SidebarList.entries(
             sessions: store.sessions, workspaces: store.workspaces, options: options,
-            search: searchText,
-            // A search lists every match, so nothing is folded away.
-            collapsed: searchText.isEmpty ? collapsed : []
+            collapsed: collapsed
         )
     }
 
@@ -346,7 +343,6 @@ struct SidebarView: View {
     }
 
     private var emptyListText: String {
-        if !searchText.isEmpty { return "没有匹配的会话" }
         return options.archive == .only ? "暂无已归档会话" : "暂无会话"
     }
 
@@ -466,26 +462,16 @@ struct SidebarView: View {
             .accessibilityLabel("设置")
             .accessibilityIdentifier("settings.open")
         }
+        .padding(.trailing, SidebarMetrics.trailing)
         .padding(.horizontal, DSBotLayout.sidebarPadding)
         .padding(.bottom, SidebarMetrics.footerBottomGap)
-        .background(alignment: .bottom) {
-            footerFade(height: SidebarMetrics.footerHeight + SidebarMetrics.footerBottomGap + 18 + homeInset)
-                // Down to the screen's edge, under the home indicator.
-                .offset(y: homeInset)
-        }
-    }
-
-    private func footerFade(height: CGFloat) -> some View {
-        ZStack(alignment: .bottom) {
-            DSBotEdgeBlur(edge: .bottom, height: height, strength: 0.8)
-            LinearGradient(
-                colors: [DSBotStyle.canvas.opacity(0), DSBotStyle.canvas.opacity(0.55)],
-                startPoint: .top,
-                endPoint: .bottom
+        .background {
+            DSBotPanelBackdrop(
+                horizontalExtension: 0,
+                bottomExtension: homeInset,
+                tintOpacity: 0.65
             )
         }
-        .frame(height: height, alignment: .bottom)
-        .allowsHitTesting(false)
     }
 }
 

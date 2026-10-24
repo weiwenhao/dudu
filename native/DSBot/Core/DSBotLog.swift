@@ -11,14 +11,22 @@ enum DSBotLog {
         "catalog.get", "navigation.get", "plugins.list",
         "schedule.list", "approval.respond", "files.list", "files.read",
         "web.open", "web.close", "web.resource", "web.invoke",
-        "web.stream.open", "web.stream.next", "web.stream.send", "web.stream.close"
+        "web.stream.open", "web.stream.next", "web.stream.close",
+        "session.search", "session.queue.update", "session.page", "session.tool",
+        "session.changes", "session.diff", "session.file", "session.fork",
+        "session.performance", "session.attachment", "question.answer"
     ]
     private static let allowedCountKeys: Set<String> = [
         "payloadBytes", "computerCount", "sessionCount", "workspaceCount",
         "attachmentCount", "messageCount", "pendingCount"
     ]
+    private static let allowedGeometryKeys: Set<String> = ["bottomY", "viewportHeight", "lastRowHeight"]
 
     static func networkFailure(_ event: String, error: Error, elapsedMs: Double? = nil) {
+        if let failure = error as? ConversationStorageError {
+            record(event, level: "warn", elapsedMs: elapsedMs, code: failure.logCode)
+            return
+        }
         if let failure = error as? DSBotFailure {
             record(event, level: "warn", elapsedMs: elapsedMs, code: failure.logCode)
             return
@@ -44,6 +52,7 @@ enum DSBotLog {
         requestId: String? = nil,
         elapsedMs: Double? = nil,
         counts: [String: Int]? = nil,
+        geometry: [String: Double]? = nil,
         state: String? = nil,
         code: String? = nil
     ) {
@@ -65,6 +74,12 @@ enum DSBotLog {
         if let counts {
             let safeCounts = counts.filter { allowedCountKeys.contains($0.key) && $0.value >= 0 }
             if !safeCounts.isEmpty { record["counts"] = safeCounts }
+        }
+        if let geometry {
+            let safeGeometry = geometry.filter {
+                allowedGeometryKeys.contains($0.key) && $0.value.isFinite && abs($0.value) <= 10_000_000
+            }
+            if !safeGeometry.isEmpty { record["geometry"] = safeGeometry }
         }
         if let state, state.range(of: #"^[A-Za-z0-9._-]{1,32}$"#, options: .regularExpression) != nil {
             record["state"] = state

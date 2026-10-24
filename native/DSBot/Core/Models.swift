@@ -44,7 +44,7 @@ struct WorkspaceSummary: Codable, Identifiable, Sendable, Equatable {
     var path: String?
 }
 
-struct DraftTarget: Hashable {
+struct DraftTarget: Hashable, Sendable {
     let computerID: String
     let sessionID: String
 }
@@ -132,6 +132,13 @@ struct ProjectFileContent: Codable, Sendable {
     let truncated: Bool
 }
 
+struct QueuedMessage: Codable, Identifiable, Sendable, Equatable {
+    var id: String
+    var text: String
+    var editable: Bool
+    var attachments: [TranscriptAttachment]?
+}
+
 struct SessionDetail: Codable, Sendable, Equatable {
     var session: SessionSummary
     var messages: [ChatMessage]
@@ -146,6 +153,8 @@ struct SessionDetail: Codable, Sendable, Equatable {
     var goal: SessionGoal?
     /// DSH's task list for this conversation; nil when it has none.
     var todos: [TodoItem]?
+    var queuedMessages: [QueuedMessage]
+    var questions: [ConversationQuestions]
     var planMode: Bool
     /// Reasoning level in use and the agent preset ("mode") the session started with.
     var reasoningEffort: String?
@@ -153,7 +162,7 @@ struct SessionDetail: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case session, messages, modelId, permissionId, context, trace, team, approvals
-        case transcript, goal, todos, planMode, reasoningEffort, agentPreset
+        case transcript, goal, todos, queuedMessages, questions, planMode, reasoningEffort, agentPreset
     }
 
     init(
@@ -168,6 +177,8 @@ struct SessionDetail: Codable, Sendable, Equatable {
         transcript: Transcript? = nil,
         goal: SessionGoal? = nil,
         todos: [TodoItem]? = nil,
+        queuedMessages: [QueuedMessage] = [],
+        questions: [ConversationQuestions] = [],
         planMode: Bool = false,
         reasoningEffort: String? = nil,
         agentPreset: String? = nil
@@ -183,6 +194,8 @@ struct SessionDetail: Codable, Sendable, Equatable {
         self.transcript = transcript
         self.goal = goal
         self.todos = todos
+        self.queuedMessages = queuedMessages
+        self.questions = questions
         self.planMode = planMode
         self.reasoningEffort = reasoningEffort
         self.agentPreset = agentPreset
@@ -200,7 +213,9 @@ struct SessionDetail: Codable, Sendable, Equatable {
         approvals = try container.decodeIfPresent([Approval].self, forKey: .approvals) ?? []
         transcript = try container.decodeIfPresent(Transcript.self, forKey: .transcript)
         goal = try container.decodeIfPresent(SessionGoal.self, forKey: .goal)
-        todos = try? container.decodeIfPresent([TodoItem].self, forKey: .todos)
+        todos = try container.decodeIfPresent([TodoItem].self, forKey: .todos)
+        queuedMessages = try container.decodeIfPresent([QueuedMessage].self, forKey: .queuedMessages) ?? []
+        questions = try container.decodeIfPresent([ConversationQuestions].self, forKey: .questions) ?? []
         planMode = try container.decodeIfPresent(Bool.self, forKey: .planMode) ?? false
         reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
         agentPreset = try container.decodeIfPresent(String.self, forKey: .agentPreset)
@@ -386,8 +401,12 @@ enum DSBotFailure: Error, LocalizedError, Sendable, Equatable {
 
 actor DSBotJSON {
     func decode<Value: Decodable & Sendable>(_ type: Value.Type, from value: JSONValue) throws -> Value {
-        let data = try JSONEncoder().encode(value)
-        return try JSONDecoder().decode(type, from: data)
+        do {
+            let data = try JSONEncoder().encode(value)
+            return try JSONDecoder().decode(type, from: data)
+        } catch {
+            throw DSBotFailure.protocolError
+        }
     }
 
     func encode<Value: Encodable & Sendable>(_ value: Value) throws -> JSONValue {

@@ -1,6 +1,6 @@
 import Foundation
 
-/// What DSH shows in its own sidebar, conversation tabs, right dock and settings, as the dsbot plugin
+/// What DSH shows in its own sidebar, conversation tabs and settings, as the dsbot plugin
 /// reports it. The app never lists these itself: an entry that a plugin adds to DSH arrives here, and
 /// the plugin says how each one is opened.
 struct NavigationCatalog: Decodable, Equatable, Sendable {
@@ -10,40 +10,39 @@ struct NavigationCatalog: Decodable, Equatable, Sendable {
     var updatedAt: Double
     var sidebar: [NavigationItem]
     var views: [NavigationItem]
-    var dock: [NavigationItem]
     var settings: [NavigationItem]
 
     static let empty = NavigationCatalog(
-        schemaVersion: 1, available: false, updatedAt: 0, sidebar: [], views: [], dock: [], settings: []
+        schemaVersion: 1, available: false, updatedAt: 0, sidebar: [], views: [], settings: []
     )
 
     init(
         schemaVersion: Int, available: Bool, updatedAt: Double,
-        sidebar: [NavigationItem], views: [NavigationItem], dock: [NavigationItem], settings: [NavigationItem]
+        sidebar: [NavigationItem], views: [NavigationItem], settings: [NavigationItem]
     ) {
         self.schemaVersion = schemaVersion
         self.available = available
         self.updatedAt = updatedAt
         self.sidebar = sidebar
         self.views = views
-        self.dock = dock
         self.settings = settings
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, available, updatedAt, sidebar, views, dock, settings
+        case schemaVersion, available, updatedAt, sidebar, views, settings
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        guard schemaVersion == 1 else {
+            throw DecodingError.dataCorruptedError(forKey: .schemaVersion, in: container, debugDescription: "Unsupported navigation schema.")
+        }
         available = try container.decodeIfPresent(Bool.self, forKey: .available) ?? false
         updatedAt = try container.decodeIfPresent(Double.self, forKey: .updatedAt) ?? 0
-        // One entry this app cannot read must not take the others with it.
-        sidebar = try container.decodeIfPresent(LossyList<NavigationItem>.self, forKey: .sidebar)?.items ?? []
-        views = try container.decodeIfPresent(LossyList<NavigationItem>.self, forKey: .views)?.items ?? []
-        dock = try container.decodeIfPresent(LossyList<NavigationItem>.self, forKey: .dock)?.items ?? []
-        settings = try container.decodeIfPresent(LossyList<NavigationItem>.self, forKey: .settings)?.items ?? []
+        sidebar = try container.decodeIfPresent([NavigationItem].self, forKey: .sidebar) ?? []
+        views = try container.decodeIfPresent([NavigationItem].self, forKey: .views) ?? []
+        settings = try container.decodeIfPresent([NavigationItem].self, forKey: .settings) ?? []
     }
 }
 
@@ -55,10 +54,11 @@ struct NavigationItem: Decodable, Identifiable, Equatable, Sendable {
     var open: NavigationOpen
     /// The package that registered it in DSH, when it said so.
     var source: String?
+    var sessionId: String?
 
     init(
         id: String, title: String, order: Double = 0, icon: NavigationIcon? = nil,
-        open: NavigationOpen, source: String? = nil
+        open: NavigationOpen, source: String? = nil, sessionId: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -66,9 +66,10 @@ struct NavigationItem: Decodable, Identifiable, Equatable, Sendable {
         self.icon = icon
         self.open = open
         self.source = source
+        self.sessionId = sessionId
     }
 
-    private enum CodingKeys: String, CodingKey { case id, title, order, icon, open, source }
+    private enum CodingKeys: String, CodingKey { case id, title, order, icon, open, source, sessionId }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -76,9 +77,10 @@ struct NavigationItem: Decodable, Identifiable, Equatable, Sendable {
         title = try container.decode(String.self, forKey: .title)
         order = try container.decodeIfPresent(Double.self, forKey: .order) ?? 0
         // An icon the app cannot draw costs the entry its glyph, never the entry.
-        icon = (try? container.decodeIfPresent(NavigationIcon.self, forKey: .icon)).flatMap { $0 }
+        icon = try container.decodeIfPresent(NavigationIcon.self, forKey: .icon)
         open = try container.decode(NavigationOpen.self, forKey: .open)
         source = try container.decodeIfPresent(String.self, forKey: .source)
+        sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
     }
 
     var target: NavigationTarget { NavigationTarget(open) }
@@ -135,29 +137,9 @@ extension EmbeddedDSHPage {
     /// Pages of one conversation: they are opened on the conversation that is on screen.
     var needsSession: Bool {
         switch self {
-        case .trace, .context, .team, .tools, .view, .dock: return true
+        case .trace, .context, .team, .tools, .view: return true
         case .plugins, .settings, .panel: return false
         }
-    }
-}
-
-/// Decodes the elements it can and skips the rest.
-struct LossyList<Element: Decodable & Sendable>: Decodable, Sendable {
-    var items: [Element]
-
-    private struct Skipped: Decodable {}
-
-    init(from decoder: Decoder) throws {
-        var container = try decoder.unkeyedContainer()
-        var items: [Element] = []
-        while !container.isAtEnd {
-            if let item = try? container.decode(Element.self) {
-                items.append(item)
-            } else {
-                _ = try? container.decode(Skipped.self)
-            }
-        }
-        self.items = items
     }
 }
 
@@ -195,7 +177,7 @@ struct NavigationIcon: Decodable, Equatable, Sendable {
             png = data
             return
         }
-        let nodes = try container.decode(LossyList<NavigationIconNode>.self, forKey: .nodes).items
+        let nodes = try container.decode([NavigationIconNode].self, forKey: .nodes)
         guard !nodes.isEmpty, nodes.count <= 48 else {
             throw DecodingError.dataCorruptedError(forKey: .nodes, in: container, debugDescription: "Unusable icon.")
         }
