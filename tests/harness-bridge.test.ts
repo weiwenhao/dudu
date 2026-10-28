@@ -41,9 +41,9 @@ function fakeDriver() {
   };
 }
 
-function setup() {
+function setup(interact?: any) {
   const driver = fakeDriver();
-  const bridge = new HarnessBridge({ driver, agentOf: () => ({ session: { header: { cwd: '/work/project' } } }) });
+  const bridge = new HarnessBridge({ driver, interact, agentOf: () => ({ session: { header: { cwd: '/work/project' } } }), permissionOf: () => 'workspace-write' });
   return { driver, bridge, adapter: createHarnessAdapter(bridge) };
 }
 
@@ -150,42 +150,62 @@ test('stopping the turn interrupts the harness and rejects the step', async () =
   assert.equal(driver.handles[0].interrupted, 1);
 });
 
-test('a permission question for a tool call reaches the answerer and the decision goes back to the harness', async () => {
-  const { driver, bridge, adapter } = setup();
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+test('a permission question is answered the moment it arrives, while the message that holds the call is still streaming', async () => {
+  const asked: any[] = [];
+  const { driver, adapter } = setup(async (request: any, run: any) => { asked.push(request); run.respondPermission(request.id, { behavior: 'allow' }); });
   const stream = collect(adapter.stream({ sessionId: 's1', messages: [user('u1', 'rm it')] }));
-  await new Promise((resolve) => setImmediate(resolve));
+  await tick();
   const handle = driver.handles[0];
+  handle.push({ type: 'text-delta', text: 'about to' });
   handle.push({ type: 'tool-call', id: 't1', name: 'Bash', input: { command: 'rm x' } });
+  // DSH has not even finished this step, so no mirror tool is running yet, and the harness is already waiting.
+  handle.push({ type: 'permission-request', id: 'p1', toolCallId: 't1', toolName: 'Bash', input: { command: 'rm x' } });
+  await tick();
+  assert.equal(asked[0].toolCallId, 't1');
+  assert.deepEqual(handle.permissions, [{ id: 'p1', decision: { behavior: 'allow' } }]);
   handle.push({ type: 'step-end' });
   await stream;
-
-  const seen: any[] = [];
-  const waiting = bridge.runOf('s1')!.waitTool('t1', {
-    onInteraction: async (request: any, run: any) => { seen.push(request); run.respondPermission(request.id, { behavior: 'allow' }); },
-  });
-  handle.push({ type: 'permission-request', id: 'p1', toolCallId: 't1', toolName: 'Bash', input: { command: 'rm x' } });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(handle.permissions, [{ id: 'p1', decision: { behavior: 'allow' } }]);
-  handle.push({ type: 'tool-result', id: 't1', output: 'removed', isError: false });
-  assert.equal((await waiting).output, 'removed');
-  assert.equal(seen.length, 1);
 });
 
-test('with nobody to answer, a permission question is denied instead of leaving the harness hanging', async () => {
-  const { driver, bridge, adapter } = setup();
+test('with nobody to answer, a permission or question request is refused instead of leaving the harness hanging', async () => {
+  const { driver, adapter } = setup();
   const stream = collect(adapter.stream({ sessionId: 's1', messages: [user('u1', 'go')] }));
-  await new Promise((resolve) => setImmediate(resolve));
+  await tick();
   const handle = driver.handles[0];
-  handle.push({ type: 'tool-call', id: 't1', name: 'Bash', input: {} });
+  handle.push({ type: 'permission-request', id: 'p1', toolCallId: 't1', toolName: 'Bash', input: {} });
+  handle.push({ type: 'question-request', id: 'k1', toolCallId: 't2', questions: [{ question: 'q' }] });
+  await tick();
+  assert.equal(handle.permissions[0].decision.behavior, 'deny');
+  assert.deepEqual(handle.questions, [{ id: 'k1', answer: { cancelled: true } }]);
   handle.push({ type: 'step-end' });
   await stream;
-  // The question arrives before any tool starts waiting, and is answered once one does.
+});
+
+test('a handler that fails refuses the request, and the turn ending withdraws what is still open', async () => {
+  let seen: AbortSignal | undefined;
+  let release: () => void = () => {};
+  const { driver, adapter } = setup(async (request: any, _run: any, signal: AbortSignal) => {
+    if (request.id === 'p1') throw new Error('no open turn');
+    seen = signal;
+    await new Promise<void>((resolve) => { release = resolve; signal.addEventListener('abort', () => resolve()); });
+  });
+  const stream = collect(adapter.stream({ sessionId: 's1', messages: [user('u1', 'go')] }));
+  await tick();
+  const handle = driver.handles[0];
   handle.push({ type: 'permission-request', id: 'p1', toolCallId: 't1', toolName: 'Bash', input: {} });
-  const waiting = bridge.runOf('s1')!.waitTool('t1');
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(handle.permissions[0].decision.behavior, 'deny');
-  handle.push({ type: 'tool-result', id: 't1', output: 'denied', isError: true });
-  assert.equal((await waiting).isError, true);
+  handle.push({ type: 'permission-request', id: 'p2', toolCallId: 't2', toolName: 'Bash', input: {} });
+  await tick();
+  assert.equal(handle.permissions.length, 1, 'only the failed request is refused');
+  assert.equal(handle.permissions[0].id, 'p1');
+  assert.equal(seen?.aborted, false);
+  handle.push({ type: 'turn-end', ok: true });
+  await stream;
+  assert.equal(seen?.aborted, true, 'a question still open when the turn ends is withdrawn');
+  release();
+  await tick();
+  assert.equal(handle.permissions.length, 1, 'nothing is answered after the withdrawal');
 });
 
 test('a tool still waiting when the harness stops fails, and a failed turn reaches DSH with its code', async () => {

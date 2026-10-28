@@ -1,7 +1,8 @@
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHarnessAdapter, HarnessBridge } from './harness-bridge.mjs';
-import { createMirrorTools } from './mirror-tools.mjs';
+import { createInteractionHandler } from './interactions.mjs';
+import { createMirrorTool, createMirrorTools } from './mirror-tools.mjs';
 import { detectHarness } from './detect.mjs';
 
 // The providers of DSH: the harnesses installed on this computer. A harness that is found and enabled becomes a
@@ -29,7 +30,7 @@ async function writeSettings(file, settings) {
   await rename(temporary, file);
 }
 
-export async function createProviders({ host, defineTool, drivers, folder, detect = detectHarness, log = console }) {
+export async function createProviders({ host, drivers, folder, detect = detectHarness, log = console }) {
   await mkdir(folder, { recursive: true, mode: 0o700 });
   const settingsFile = join(folder, 'providers.json');
   let settings = await readSettings(settingsFile);
@@ -47,7 +48,7 @@ export async function createProviders({ host, defineTool, drivers, folder, detec
     mirrored.delete(agent.id);
     if (!wanted) return;
     try {
-      const disposers = createMirrorTools({ defineTool, bridge: wanted, services }).map((definition) => agent.ctx.tools.register(definition));
+      const disposers = createMirrorTools({ bridge: wanted }).map((definition) => agent.ctx.tools.register(definition));
       mirrored.set(agent.id, { route, dispose: () => { for (const dispose of disposers) { try { dispose(); } catch { /* the agent is gone */ } } } });
     } catch (error) {
       log.warn?.(`[dudu] Could not register the ${route} tools for a session: ${error.message}`);
@@ -64,7 +65,23 @@ export async function createProviders({ host, defineTool, drivers, folder, detec
 
   function register(driver, path) {
     const configured = driver.create({ path });
-    const bridge = new HarnessBridge({ driver: configured, agentOf: (id) => host.agents.get(id) });
+    const bridge = new HarnessBridge({
+      driver: configured, agentOf: (id) => host.agents.get(id), permissionOf: (agent) => host.permissionOf?.(agent),
+      interact: createInteractionHandler({ services, agentOf: (id) => host.agents.get(id) }),
+    });
+    // A tool the catalog does not list (an MCP tool, say) gets its mirror tool when the harness first calls it.
+    bridge.onUnknownTool = (sessionId, name) => {
+      const agent = host.agents.get(sessionId);
+      const spec = configured.fallbackTool?.(name);
+      if (!agent || !spec) return;
+      try {
+        const dispose = agent.ctx.tools.register(createMirrorTool({ bridge, spec }));
+        const current = mirrored.get(agent.id);
+        if (current) { const before = current.dispose; current.dispose = () => { before(); try { dispose(); } catch { /* the agent is gone */ } }; }
+      } catch (error) {
+        log.warn?.(`[dudu] Could not register the ${name} tool: ${error.message}`);
+      }
+    };
     const dispose = host.llm.registerAdapter([configured.route], createHarnessAdapter(bridge));
     registered.set(configured.route, { bridge, path, dispose });
   }

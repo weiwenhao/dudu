@@ -5,8 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createProviders } from '../host/providers/index.mjs';
 
-const defineTool = (definition: any) => definition;
-
 function fakeHost() {
   const handlers = new Map<string, Set<Function>>();
   const adapters = new Map<string, any>();
@@ -59,7 +57,7 @@ async function setup(t: { after: (callback: () => Promise<unknown>) => void }, d
   const driver = fakeDriver();
   const calls: any[] = [];
   const providers = await createProviders({
-    host, defineTool, drivers: [driver], folder,
+    host, drivers: [driver], folder,
     detect: async (request: any) => { calls.push(request); return detections.current ?? { state: 'ready', path: '/bin/fake-cli', version: '1.2.3' }; },
     log: { warn() {} },
   });
@@ -138,7 +136,7 @@ test('agents that exist when the plugin loads are covered, and closing leaves no
   t.after(() => rm(folder, { recursive: true, force: true }));
   const host = fakeHost();
   const early = host.addAgent('s1', 'fake');
-  const providers = await createProviders({ host, defineTool, drivers: [fakeDriver()], folder, detect: async () => ({ state: 'ready', path: '/bin/x', version: '1.0.0' }), log: { warn() {} } });
+  const providers = await createProviders({ host, drivers: [fakeDriver()], folder, detect: async () => ({ state: 'ready', path: '/bin/x', version: '1.0.0' }), log: { warn() {} } });
   assert.equal(early.tools.size, 2);
   await providers.close();
   assert.equal(host.adapters.size, 0);
