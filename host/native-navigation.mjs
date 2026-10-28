@@ -196,7 +196,7 @@ function buildView(raw) {
 /** Sections the phone has no use for: pairing configures the desktop, and general settings are the
  * desktop's appearance, language and shortcuts. */
 // The plugin's own section is hidden under both of its names: a DSH window may still run the client module of the plugin's former name.
-const HIDDEN_SETTINGS = new Set(['dudu-mobile-control', 'dsbot-mobile-control', 'general']);
+const HIDDEN_SETTINGS = new Set(['dudu-mobile-control', 'dudu-providers', 'dsbot-mobile-control', 'general']);
 
 function buildSettings(raw) {
   const base = common(raw);

@@ -60,6 +60,8 @@ export function createClaudeProvider({ runtime = claudeRuntime, registry } = {})
       env: { CLAUDE_CODE_ENTRYPOINT: ENTRYPOINT },
       disallowedTools: [...(permission === 'read-only' ? WRITING_TOOLS : []), ...UNANSWERABLE_TOOLS],
     }),
+    // Claude takes a message written during its turn into a queue: it answers it with a turn of its own after this one.
+    queuesSteer: true,
     before: async ({ resume }) => {
       if (!resume) return;
       const other = await openElsewhere(resume, registry);

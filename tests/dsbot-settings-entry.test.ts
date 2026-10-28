@@ -56,6 +56,11 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
     devices: [],
   };
   let plugin: { apply: (ctx: unknown) => void } | undefined;
+  const childPlugins: Array<Record<string, unknown>> = [];
+  const provider = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
+    id, name, route: id, enabled: true, configuredPath: '', state: 'ready', version: '2.1.312', path: `/home/u/.local/bin/${id}`, ...extra,
+  });
+  const providersValue = { providers: [provider('claude', 'Claude'), provider('codex', 'ChatGPT', { state: 'missing', version: undefined, path: undefined, reason: 'ChatGPT was not found.' })] };
 
   const react = {
     createElement(type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): ElementNode {
@@ -119,6 +124,7 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
     fetch: async (path: string, init?: { body?: string }) => {
       requests.push(path);
       requestBodies.push({ path, body: JSON.parse(init?.body ?? '{}') as Record<string, unknown> });
+      if (path.startsWith('/api/dudu/providers/')) return { ok: true, json: async () => providersValue };
       return {
         ok: true,
         json: async () => ({
@@ -140,6 +146,7 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
 
   const ctx = {
     effect(effect: () => unknown) { effect(); },
+    plugin(child: Record<string, unknown>) { childPlugins.push(child); },
     slots: {
       inject(_slot: string, activate: () => void) { injections.push(activate); },
       register(options: Record<string, unknown>, component: Function) {
@@ -244,4 +251,39 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
     'saving should keep the protected LAN address first and include editable custom addresses');
   assert.equal(saveButton?.props.variant, 'primary');
   assert.equal(saveButton?.props.size, 'sm');
+
+  // Beside phone control: a section for the harnesses on this computer, and the plugin that adds the provider chip and
+  // scopes the model list. That plugin waits for the services it needs, so a DSH without them still gets the rest.
+  const providers = registrations.find((entry) => entry.options.id === 'dudu-providers');
+  assert.ok(providers, 'the providers section should be registered');
+  assert.equal(providers.options.name, 'settings.section');
+  assert.equal((providers.options.label as () => string)(), '供应商');
+  assert.equal(providers.options.order, 51);
+  assert.deepEqual(childPlugins.map((child) => child.name), ['dudu-providers']);
+  assert.deepEqual([...(childPlugins[0].inject as string[])], ['slots', 'modelDirectories', 'sessions', 'remote', 'remote.session']);
+
+  hookState.length = 0;
+  completedEffects.clear();
+  requests.length = 0;
+  requestBodies.length = 0;
+  hookIndex = 0;
+  providers.component({});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  hookIndex = 0;
+  const providersView = providers.component({}) as ElementNode;
+  assert.deepEqual(requests, ['/api/dudu/providers/state']);
+  const providerNodes = descendants(providersView);
+  const headings = providerNodes.filter((node) => node.type === 'h3').map((node) => node.props.children);
+  assert.deepEqual(headings, [['Claude'], ['ChatGPT']]);
+  const textOf = (node: ElementNode) => JSON.stringify(node.props.children);
+  assert.ok(providerNodes.some((node) => textOf(node) === '["可用 2.1.312"]'), 'a harness that was found shows its version');
+  assert.ok(providerNodes.some((node) => textOf(node) === '["未找到"]'), 'a harness that was not found says so');
+  assert.equal(providerNodes.some((node) => node.props.className === 'dsbot-muted' && textOf(node) === '["ChatGPT was not found."]'), false, 'a missing harness needs no sentence beside its status');
+  const enable = providerNodes.find((node) => node.type === 'input' && node.props.id === 'dudu-provider-enabled-claude');
+  assert.equal(enable?.props.checked, true);
+  await (enable?.props.onChange as (event: unknown) => Promise<void>)({ target: { checked: false } });
+  assert.deepEqual(requestBodies.at(-1), { path: '/api/dudu/providers/save', body: { id: 'claude', enabled: false } });
+  const refresh = providerNodes.find((node) => node.type === 'button' && JSON.stringify(node.props.children).includes('重新检测'));
+  await (refresh?.props.onClick as () => Promise<void>)();
+  assert.equal(requests.at(-1), '/api/dudu/providers/refresh');
 });

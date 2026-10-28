@@ -1,7 +1,7 @@
 window.__ModuleLoader__.load({
   id: 'dudu',
   factory(require) {
-    const { createElement: h, useEffect, useRef, useState } = require('react');
+    const { createElement: h, Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } = require('react');
     const { Button, Input } = require('@deepseek-ai/dsh-client-ui-primitives');
 
     const styles = `
@@ -17,6 +17,7 @@ window.__ModuleLoader__.load({
 .dsbot-address-field{display:flex;align-items:center;gap:12px;min-width:0}.dsbot-address-field .dsbot-input{flex:1 1 auto;min-width:0}.dsbot-address-field .dsbot-button,.dsbot-address-field .dsbot-danger-button{flex:none;white-space:nowrap}.dsbot-danger-button{color:var(--dsw-alias-state-error-primary)!important}
 .dsbot-device{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;border-bottom:.5px solid var(--dsw-alias-border-l2)}.dsbot-device-copy{min-width:0;overflow-wrap:anywhere}.dsbot-device .dsbot-button{flex:none}
 .dsbot-empty{padding:16px 0;color:var(--dsw-alias-label-secondary)}
+.dudu-checkbox{justify-self:start;margin:0;width:16px;height:16px}
 .dsbot-dialog-shade{position:fixed;inset:0;background:transparent;border:0;z-index:10000;align-items:center;justify-content:center;padding:24px;width:100%;height:100%;max-width:none;max-height:none;margin:0;color:inherit}.dsbot-dialog-shade[open]{display:flex}.dsbot-dialog-shade::backdrop{background:#0008}.dsbot-dialog{background:var(--dsw-alias-bg-layer-1,#fff);border-radius:var(--dsw-radius-panel);padding:24px;width:360px;max-width:100%;max-height:calc(100vh - 48px);overflow:auto}.dsbot-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px}.dsbot-dialog-head h3{margin:0}.dsbot-qr{background:#fff;border-radius:12px;padding:12px}.dsbot-qr svg{display:block;width:100%;height:auto}.dsbot-dialog p{text-align:center;margin:12px 0 0;overflow-wrap:anywhere}
 @media(max-width:620px){.dsbot-settings-row{grid-template-columns:minmax(0,1fr);gap:8px}.dsbot-address-row,.dsbot-address-row--default{grid-template-columns:minmax(0,1fr);gap:8px}.dsbot-address-field{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.dsbot-address-field .dsbot-input{grid-column:1/-1;grid-row:1}.dsbot-address-field .dsbot-button{grid-column:1;grid-row:2}.dsbot-address-field .dsbot-danger-button{grid-column:2;grid-row:2}.dsbot-address-row--default .dsbot-address-field .dsbot-button{grid-column:2}}
 `;
@@ -27,7 +28,7 @@ window.__ModuleLoader__.load({
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body), credentials: 'same-origin',
       });
-      const value = await response.json();
+      const value = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(value.error || '连接暂时不可用。');
       return value;
     }
@@ -548,6 +549,295 @@ window.__ModuleLoader__.load({
       };
     }
 
+    // ---- Providers: the harnesses installed on this computer -------------------------------------------
+    //
+    // A harness the plugin found (Claude Code, Codex) is a model route of DSH. Two pieces of DSH's own interface
+    // learn about it, both through the public client APIs and without editing any DSH package:
+    //
+    //  1. Scoping. `modelDirectories.directoryFor(sessionId)` returns the per-session ModelDirectory whose store
+    //     feeds both the composer's model seat and the `/model` popup. Wrapping that store's `set` so `groups`
+    //     only holds the groups of the session's current provider scopes both at once, with DSH's own menu,
+    //     search, effort row and keyboard handling untouched.
+    //  2. The chip. `conversation.hero.agentPreset` is a `single` slot rendered last in the new-session screen's
+    //     chip row and occupied by the mode chip. A single slot renders its lowest-priority entry, so an entry
+    //     at priority -1 shadows it; it declares a child slot and re-hosts a clone of the original entry there,
+    //     so the mode chip keeps working and the provider chip is rendered beside it.
+    //
+    // The provider is chosen by selecting that provider's default model through the directory's own `select()`,
+    // which is `session.selectModel` and so a `model/selection` event in the session's log.
+
+    const PROVIDERS = 'dudu-providers';
+    const HERO_SLOT = 'conversation.hero.agentPreset';
+    const MODE_SLOT = 'dudu.hero.mode';
+    // Routes that are whole harnesses. Every other route belongs to the DeepSeek family (DeepSeek Account,
+    // DeepSeek, and any API-key provider the user configured).
+    const HARNESS = new Set(['claude', 'codex']);
+    const familyOf = (provider) => (HARNESS.has(provider) ? provider : 'deepseek');
+
+    // The look of the mode chip (dsh-client-ui-agent-preset), under this plugin's own class names.
+    const providerStyles = `
+.dudu-menuAnchor{min-width:54px;max-width:100%}
+.dudu-seat{border-radius:var(--dsw-radius-sm);min-width:0;max-width:min(100%,240px);min-height:28px;color:var(--dsw-alias-label-primary);white-space:nowrap;cursor:pointer;background:0 0;border:none;align-items:center;gap:4px;padding:0 8px;font-size:13px;font-weight:500;line-height:20px;display:inline-flex}
+.dudu-seat:not(:disabled):hover,.dudu-seat[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover)}
+.dudu-seat:disabled{cursor:default;color:var(--dsw-alias-label-quaternary)}
+.dudu-seatIcon{color:var(--dsw-alias-label-primary);flex:none}
+.dudu-seatLabel{text-overflow:ellipsis;white-space:nowrap;min-width:0;overflow:hidden}
+.dudu-chevron{color:var(--dsw-alias-label-caption);flex:none}
+.dudu-itemName{color:var(--dsw-alias-label-primary);font-size:13px;line-height:20px}
+`;
+
+    const noopSubscribe = () => () => {};
+    const emptyState = { current: null, groups: [], status: 'idle', pending: null };
+
+    function scopeState(state) {
+      const selection = state?.current;
+      if (!selection || !Array.isArray(state.groups)) return state;
+      const family = familyOf(selection.provider);
+      const groups = state.groups.filter((group) => familyOf(group.id) === family);
+      return groups.length === state.groups.length ? state : { ...state, groups };
+    }
+
+    function installScoping(service) {
+      const wrapped = new Map();
+      const scope = (directory) => {
+        if (!wrapped.has(directory)) {
+          const store = directory.store;
+          const originalSet = store.set;
+          wrapped.set(directory, originalSet);
+          store.set = (next) => originalSet(scopeState(next));
+          directory.syncInputs(); // publish the current state again, through the wrapper
+        }
+        return directory;
+      };
+      const original = service.directoryFor;
+      service.directoryFor = function directoryFor(sessionId) { return scope(original.call(this, sessionId)); };
+      try { for (const directory of service.live.directories.values) scope(directory); } catch { /* none yet */ }
+      return () => {
+        delete service.directoryFor;
+        for (const [directory, originalSet] of wrapped) {
+          directory.store.set = originalSet;
+          try { directory.syncInputs(); } catch { /* the directory is already gone */ }
+        }
+        wrapped.clear();
+      };
+    }
+
+    // The directory exists once the session has a scope and a binding; before that `directoryFor` throws. The lookup
+    // is cheap and idempotent (the service caches), so it is repeated on every render, and while it fails a short
+    // timer forces another render instead of caching the failure.
+    function useDirectory(service, sessionId) {
+      const [attempt, retry] = useState(0);
+      let directory;
+      if (sessionId !== undefined) {
+        try { directory = service.directoryFor(sessionId); } catch { directory = undefined; }
+      }
+      useEffect(() => {
+        if (directory !== undefined || sessionId === undefined) return undefined;
+        const timer = setTimeout(() => retry((value) => value + 1), 250);
+        return () => clearTimeout(timer);
+      }, [directory, sessionId, attempt]);
+      const state = useSyncExternalStore(
+        directory ? directory.store.subscribe : noopSubscribe,
+        directory ? directory.store.getSnapshot : () => emptyState,
+      );
+      return { directory, state };
+    }
+
+    // What the chip offers, from the Host's catalog: the DeepSeek family as one entry (when any of its groups has
+    // models) and one entry per harness that is registered and has models.
+    function providersOf(catalog) {
+      const groups = catalog?.value?.groups ?? [];
+      const result = [];
+      const deepseek = groups.filter((group) => !HARNESS.has(group.id));
+      if (deepseek.length > 0) result.push({ id: 'deepseek', name: 'DeepSeek', groups: deepseek });
+      for (const group of groups) if (HARNESS.has(group.id)) result.push({ id: group.id, name: group.name, groups: [group] });
+      return result;
+    }
+
+    const groupRank = (group) => (group.id === 'deepseek-account' ? 0 : group.id === 'deepseek-official' ? 1 : 2);
+
+    // The provider's default model: the deployment's default when it belongs to the provider, else the first model of
+    // its first group (DSH's own provider order), with that model's default reasoning effort.
+    function defaultSelection(provider, catalog) {
+      const fallback = catalog?.value?.default;
+      const groups = [...provider.groups].sort((a, b) => groupRank(a) - groupRank(b));
+      if (fallback && familyOf(fallback.provider) === provider.id
+        && groups.some((group) => group.id === fallback.provider && group.models.some((model) => model.id === fallback.model))) {
+        return fallback;
+      }
+      const model = groups[0].models[0];
+      return { provider: groups[0].id, model: model.id, ...(model.reasoning?.defaultEffort ? { reasoningEffort: model.reasoning.defaultEffort } : {}) };
+    }
+
+    function providerChip({ Menu, IconChevronDownOutlineRegular, IconCordisPluginOutlineRegular }, service) {
+      return function ProviderChip({ sessionId }) {
+        const { directory, state } = useDirectory(service, sessionId);
+        const catalog = useSyncExternalStore(service.catalog.store.subscribe, service.catalog.store.getSnapshot);
+        const [open, setOpen] = useState(false);
+        const [error, setError] = useState('');
+        const providers = useMemo(() => providersOf(catalog), [catalog]);
+        useEffect(() => { directory?.load().catch(() => {}); }, [directory]);
+        // With one provider there is nothing to choose: render nothing and leave DSH's own row as it is.
+        if (!directory || providers.length < 2 || !state.current) return null;
+        const family = familyOf(state.current.provider);
+        const current = providers.find((provider) => provider.id === family) ?? providers[0];
+        const pick = async (id) => {
+          setOpen(false);
+          const next = providers.find((provider) => provider.id === id);
+          if (!next || next.id === family) return;
+          setError('');
+          const result = await directory.select(defaultSelection(next, catalog));
+          if (!result.ok) setError(`${result.error.code}: ${result.error.message}`);
+        };
+        return h(Menu, {
+          open,
+          onClose: () => setOpen(false),
+          items: providers.map((provider) => ({ id: provider.id, label: h('span', { className: 'dudu-itemName' }, provider.name) })),
+          selectedId: current.id,
+          onSelect: pick,
+          align: 'start',
+          portal: true,
+          className: 'dudu-menuAnchor',
+          anchor: h('button', {
+            type: 'button',
+            className: 'dudu-seat',
+            'aria-haspopup': 'menu',
+            'aria-expanded': open,
+            'aria-label': `供应商，当前 ${current.name}`,
+            title: error || undefined,
+            'data-testid': 'dudu-provider-chip',
+            disabled: state.status === 'selecting',
+            onClick: () => setOpen((value) => !value),
+          },
+          h(IconCordisPluginOutlineRegular, { className: 'dudu-seatIcon' }),
+          h('span', { className: 'dudu-seatLabel' }, current.name),
+          h(IconChevronDownOutlineRegular, { className: 'dudu-chevron' })),
+        });
+      };
+    }
+
+    // The entry that shadows the hero's mode chip: the original chip (only for the DeepSeek family) and the provider chip.
+    function installHeroChip(ctx, service, ProviderChip) {
+      function Hero(props) {
+        const { state } = useDirectory(service, props.sessionId);
+        const family = state.current ? familyOf(state.current.provider) : 'deepseek';
+        return h(Fragment, null,
+          family === 'deepseek' ? props.renderSlot(MODE_SLOT, {}) : null,
+          h(ProviderChip, { sessionId: props.sessionId }));
+      }
+      let cloneOf;
+      let disposeClone = () => {};
+      const sync = () => {
+        const original = ctx.slots.entries(HERO_SLOT).find((entry) => entry.registrant !== PROVIDERS);
+        if (original === cloneOf) return;
+        disposeClone();
+        disposeClone = () => {};
+        cloneOf = original;
+        if (!original) return;
+        disposeClone = ctx.slots.register({
+          name: MODE_SLOT,
+          ...(original.inject ? { inject: original.inject } : {}),
+          ...(original.locale ? { locale: original.locale } : {}),
+          registrant: `${PROVIDERS}:mode`,
+        }, original.component);
+      };
+      return ctx.slots.inject(HERO_SLOT, () => {
+        const disposeHero = ctx.slots.register({
+          name: HERO_SLOT,
+          priority: -1,
+          children: { [MODE_SLOT]: { kind: 'single', scope: 'session-maybe' } },
+          registrant: PROVIDERS,
+        }, Hero);
+        const unsubscribe = ctx.slots.subscribe(HERO_SLOT, sync);
+        sync();
+        return () => {
+          unsubscribe();
+          disposeClone();
+          cloneOf = undefined;
+          disposeHero();
+        };
+      });
+    }
+
+    // What the settings page says about a harness the plugin looked for.
+    const PROVIDER_STATES = { ready: '可用', missing: '未找到', unsupported: '版本不受支持', broken: '无法运行' };
+
+    function ProvidersSettings() {
+      const [providers, setProviders] = useState(null);
+      const [paths, setPaths] = useState({});
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState('');
+      const [saved, setSaved] = useState('');
+      const show = (value) => {
+        setProviders(value.providers);
+        setPaths(Object.fromEntries(value.providers.map((provider) => [provider.id, provider.configuredPath])));
+      };
+      useEffect(() => {
+        let alive = true;
+        request('providers/state').then((value) => { if (alive) show(value); }, (failure) => { if (alive) setError(failure.message); });
+        return () => { alive = false; };
+      }, []);
+      const run = async (action, body, done = '') => {
+        setBusy(true); setError(''); setSaved('');
+        try { show(await request(`providers/${action}`, body)); setSaved(done); }
+        catch (failure) { setError(failure.message); }
+        finally { setBusy(false); }
+      };
+      if (!providers) return h('div', { className: 'dsbot-settings' }, error || '正在读取…');
+      const button = (props, label) => h(Button, { ...props, size: 'sm', className: 'dsbot-button' }, label);
+      return h('div', { className: 'dsbot-settings' },
+        h('h2', null, '供应商'),
+        providers.map((provider) => h('section', { className: 'dsbot-settings-section', key: provider.id },
+          h('h3', null, provider.name),
+          h('div', { className: 'dsbot-settings-row' },
+            h('span', { className: 'dsbot-field-title' }, '状态'),
+            h('div', null,
+              h('div', null, [PROVIDER_STATES[provider.state] ?? provider.state, provider.version].filter(Boolean).join(' ')),
+              provider.path && h('div', { className: 'dsbot-muted' }, provider.path),
+              (provider.state === 'unsupported' || provider.state === 'broken') && provider.reason && h('div', { className: 'dsbot-muted' }, provider.reason))),
+          h('div', { className: 'dsbot-settings-row' },
+            h('label', { className: 'dsbot-field-title', htmlFor: `dudu-provider-enabled-${provider.id}` }, '启用'),
+            h('input', {
+              id: `dudu-provider-enabled-${provider.id}`, type: 'checkbox', className: 'dudu-checkbox', checked: provider.enabled, disabled: busy,
+              onChange: (event) => run('save', { id: provider.id, enabled: event.target.checked }),
+            })),
+          h('div', { className: 'dsbot-settings-row' },
+            h('label', { className: 'dsbot-field-title', htmlFor: `dudu-provider-path-${provider.id}` }, '可执行文件路径'),
+            h('div', { className: 'dsbot-address-field' },
+              h(Input, {
+                id: `dudu-provider-path-${provider.id}`, type: 'text', className: 'dsbot-input', value: paths[provider.id] ?? '',
+                placeholder: '留空则自动查找', autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false, disabled: busy,
+                onChange: (event) => { setPaths((previous) => ({ ...previous, [provider.id]: event.target.value })); setSaved(''); },
+              }),
+              button({
+                type: 'button', variant: 'primary', disabled: busy || (paths[provider.id] ?? '') === provider.configuredPath,
+                onClick: () => run('save', { id: provider.id, path: paths[provider.id] ?? '' }, '已保存'),
+              }, '保存'))))),
+        h('div', { className: 'dsbot-actions' },
+          button({ type: 'button', variant: 'outline', disabled: busy, onClick: () => run('refresh', {}) }, busy ? '处理中…' : '重新检测'),
+          saved && h('span', { className: 'dsbot-muted', role: 'status' }, saved)),
+        error && h('p', { className: 'dsbot-error', role: 'alert' }, error));
+    }
+
+    // The chip and the scoping need services only some DSH builds have, so they are a plugin of their own that waits
+    // for them; the settings page and the phone navigation never depend on it. The caller of the model directory's
+    // methods has to declare the injects the service itself declares (Cordis' strict injection).
+    const providerUi = {
+      name: PROVIDERS,
+      inject: ['slots', 'modelDirectories', 'sessions', 'remote', 'remote.session'],
+      apply(ctx) {
+        const primitives = require('@deepseek-ai/dsh-client-ui-primitives');
+        ctx.effect(() => {
+          const style = document.createElement('style');
+          style.textContent = providerStyles;
+          document.head.appendChild(style);
+          return () => style.remove();
+        });
+        ctx.effect(() => installScoping(ctx.modelDirectories));
+        ctx.effect(() => installHeroChip(ctx, ctx.modelDirectories, providerChip(primitives, ctx.modelDirectories)));
+      },
+    };
+
     return {
       name: 'dudu',
       inject: ['slots'],
@@ -572,6 +862,13 @@ window.__ModuleLoader__.load({
           ctx.effect(() => {
             try { return startNavigationPublisher(ctx); } catch { return undefined; }
           });
+          ctx.slots.inject('settings.section', () => ctx.slots.register({
+            name: 'settings.section',
+            id: 'dudu-providers',
+            order: 51,
+            label: () => '供应商',
+          }, ProvidersSettings));
+          ctx.plugin(providerUi);
         }
       },
     };

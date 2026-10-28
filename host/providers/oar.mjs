@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { AsyncQueue } from './async.mjs';
 import { assertDirectory, harnessError } from './harness-bridge.mjs';
@@ -8,6 +9,10 @@ import { assertDirectory, harnessError } from './harness-bridge.mjs';
 
 const MODEL_TTL = 5 * 60_000;
 const FALLBACK_TTL = 30_000;
+// How long a turn that has ended waits for the follow-up the harness still owes a message it took in the meantime.
+const FOLLOW_UP_MS = 5000;
+// What shows the harness doing something again after its turn has ended.
+const ACTIVITY = new Set(['turn_active', 'turn_started', 'text_delta', 'reasoning', 'tool_call_started']);
 
 const text = (value) => (typeof value === 'string' ? value : '');
 const titleCase = (id) => id[0].toUpperCase() + id.slice(1);
@@ -74,6 +79,9 @@ export class OarNormalizer {
 
   /** The result of a call the bridge knows. */
   resultOf(event) { return { output: contentText(event.content), isError: event.result === 'failed', ...(Number.isInteger(event.exitCode) ? { data: { exitCode: event.exitCode } } : {}) }; }
+
+  /** The turn the normalizer reported as ended continues: the harness took up a message that had been waiting. */
+  reopen() { this.#finished = false; }
 
   feed(record) {
     const events = [];
@@ -176,7 +184,7 @@ async function* drain(queue) {
 }
 
 /** One OAR session for one DSH turn. Resolves once the prompt is accepted. */
-export async function startOarRun({ runtime, installation, sessionOptions, prompt, normalizer, name, signal }) {
+export async function startOarRun({ runtime, installation, sessionOptions, prompt, normalizer, name, signal, queuesSteer = false, followUpMs = FOLLOW_UP_MS }) {
   if (signal?.aborted) throw signal.reason ?? harnessError('The request was aborted.', 'ABORTED');
   let session;
   try { session = await runtime.session(installation, sessionOptions); }
@@ -184,20 +192,37 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
 
   const events = new AsyncQueue();
   let finished = false;
-  const release = () => { void session.dispose().catch(() => {}); };
+  // OAR answers a second `dispose()` at once, without waiting for the process: one disposal is kept, so that whoever
+  // asks to close the run waits for the process that the end of the turn already started to stop.
+  let disposal;
+  const dispose = () => (disposal ??= session.dispose().catch(() => {}));
   const finish = (event) => {
     if (finished) return;
     finished = true;
     events.push(event);
     events.close();
     // After the observer returns: the session is still reading the frame this record came from.
-    queueMicrotask(release);
+    queueMicrotask(dispose);
   };
+  // A message written while the harness works is either taken into the turn or, for a harness whose input is a queue,
+  // answered by a turn of its own once this one ends. Such a message is tracked until the harness shows it picked it up.
+  const waiting = new Set();
+  let held;
+  let holdTimer;
+  const release = () => { clearTimeout(holdTimer); const event = held; held = undefined; if (event) finish(event); };
   const unsubscribe = session.rawEvents((record) => {
     if (finished) return;
+    const seen = record.kind === 'frame' ? record.body?.events ?? [] : [];
+    for (const event of seen) if (event.kind === 'user_message' && event.inputId) waiting.delete(event.inputId);
+    if (held && seen.some((event) => ACTIVITY.has(event.kind))) {
+      clearTimeout(holdTimer);
+      held = undefined;
+      normalizer.reopen();
+    }
     for (const event of normalizer.feed(record)) {
-      if (event.type === 'turn-end') finish(event);
-      else events.push(event);
+      if (event.type !== 'turn-end') { events.push(event); continue; }
+      if (event.ok && waiting.size > 0) { held = event; holdTimer = setTimeout(release, followUpMs); }
+      else finish(event);
     }
   });
 
@@ -207,7 +232,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   if (outcome.kind === 'rejected') {
     finished = true;
     unsubscribe();
-    await session.dispose().catch(() => {});
+    await dispose();
     throw harnessError(`${name} did not take the message: ${outcome.reason}`, 'HARNESS_REJECTED');
   }
 
@@ -215,13 +240,20 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     nativeSessionId: session.id,
     events: drain(events),
     // Real steering where the harness takes it; OAR reports whether it did, and a miss means the turn had just ended.
-    async pushUserMessage(content) { if (typeof session.steer === 'function') await session.steer(content).catch(() => {}); },
+    async pushUserMessage(content) {
+      if (typeof session.steer !== 'function') return;
+      const inputId = randomUUID();
+      if (queuesSteer) waiting.add(inputId);
+      const outcome = await session.steer(content, { inputId }).catch(() => undefined);
+      if (!outcome || outcome.kind === 'rejected') waiting.delete(inputId);
+    },
     async interrupt() { await session.abort().catch(() => {}); },
     async close() {
       finished = true;
+      clearTimeout(holdTimer);
       unsubscribe();
       events.close();
-      await session.dispose().catch(() => {});
+      await dispose();
     },
   };
 }
@@ -230,7 +262,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
  * A harness provider on an OAR runtime. `session` returns what is specific to the harness in the options of one OAR
  * session (environment, tool limits, launch arguments) from the DSH access mode.
  */
-export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before }) {
+export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer }) {
   const known = new Set(tools.map((tool) => tool.name));
   const environment = (extra) => ({ ...scrubbedEnvironment(scrub.patterns, scrub), ...extra });
 
@@ -267,7 +299,10 @@ export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbac
         fallbackTool,
         refreshModels() { loaded = undefined; },
         async listModels() {
-          return (await load()).map((model) => ({ provider: id, id: model.id, name: model.displayName || model.id }));
+          const models = await load();
+          // The harness's own default comes first: a provider's first model is what the provider chip selects.
+          return [...models.filter((model) => model.default), ...models.filter((model) => !model.default)]
+            .map((model) => ({ provider: id, id: model.id, name: model.displayName || model.id }));
         },
         async resolveModel(modelId) {
           const model = (await load()).find((candidate) => candidate.id === modelId);
@@ -296,7 +331,7 @@ export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbac
             ...specific,
             env: environment(specific.env),
           };
-          return startOarRun({ runtime, installation, sessionOptions, prompt, normalizer: normalizer({ name, login }), name, signal });
+          return startOarRun({ runtime, installation, sessionOptions, prompt, normalizer: normalizer({ name, login }), name, signal, queuesSteer });
         },
       };
     },

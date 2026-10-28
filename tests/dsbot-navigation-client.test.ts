@@ -249,6 +249,7 @@ async function setup({
   const disposers: Array<() => void> = [];
   const ctx = {
     effect(callback: () => unknown) { effects.push(callback); const dispose = callback(); if (typeof dispose === 'function') disposers.push(dispose as () => void); },
+    plugin() {},
     slots: {
       inject() {}, register() { return () => {}; },
       entries: (name: string) => entries.get(name) ?? [],

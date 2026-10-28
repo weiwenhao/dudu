@@ -8,7 +8,7 @@ import { ClaudeNormalizer, ENTRYPOINT, WRITING_TOOLS, createClaudeProvider, open
 import { CodexNormalizer, createCodexProvider, sandboxOf, toolCallOf, toolResultOf } from '../host/providers/drivers/codex.mjs';
 import { CLAUDE_TOOLS, numberedLines } from '../host/providers/drivers/claude-tools.mjs';
 import { CODEX_TOOLS } from '../host/providers/drivers/codex-tools.mjs';
-import { contentText, parseInput, scrubbedEnvironment } from '../host/providers/oar.mjs';
+import { contentText, parseInput, scrubbedEnvironment, startOarRun } from '../host/providers/oar.mjs';
 
 // ---- OAR's records, as the normalizers read them ----------------------------------------------------------------
 
@@ -365,13 +365,14 @@ test('models come from the harness through OAR, with the efforts each one suppor
   let answer: any = {
     kind: 'ok',
     models: [
-      { id: 'default', displayName: 'Default (recommended)', effortLevels: ['low', 'high'], defaultEffort: 'high' },
       { id: 'haiku', displayName: 'Haiku', effortLevels: [] },
+      { id: 'default', displayName: 'Default (recommended)', effortLevels: ['low', 'high'], defaultEffort: 'high', default: true },
       { id: 'old', displayName: 'Old', disabled: true },
     ],
   };
   const runtime = { listModels: async () => { calls++; if (answer instanceof Error) throw answer; return answer; } };
   const driver = createClaudeProvider({ runtime }).create({ installation: BUNDLED });
+  // The harness's own default comes first, then the rest as OAR lists them; a disabled model is not offered.
   assert.deepEqual(await driver.listModels(), [
     { provider: 'claude', id: 'default', name: 'Default (recommended)' },
     { provider: 'claude', id: 'haiku', name: 'Haiku' },
@@ -388,4 +389,107 @@ test('models come from the harness through OAR, with the efforts each one suppor
   answer = new Error('claude hung');
   assert.equal((await driver.listModels()).length, 4);
   assert.equal(calls, 3);
+});
+
+test('closing a run whose turn just ended waits for its process to stop, so the next turn never meets it', async (t) => {
+  const cwd = await workDirectory(t);
+  const stopped: string[] = [];
+  let observer: ((record: unknown) => void) | undefined;
+  const session = {
+    id: 'native-1', rawEvents: (callback: (record: unknown) => void) => { observer = callback; return () => {}; },
+    prompt: async () => ({ kind: 'accepted' }),
+    // The process takes a while to go, and a second `dispose()` is answered at once, as OAR does.
+    dispose: (() => { let asked = false; return () => { if (asked) return Promise.resolve(); asked = true; return new Promise<void>((resolve) => setTimeout(() => { stopped.push('process'); resolve(); }, 60)); }; })(),
+  };
+  const driver = createClaudeProvider({ runtime: { session: async () => session } }).create({ installation: BUNDLED });
+  const handle = await driver.start({ prompt: 'x', cwd });
+  observer!(turnEnded({ kind: 'completed' }));
+  assert.equal((await collect(handle)).at(-1).type, 'turn-end');
+  await handle.close();
+  assert.deepEqual(stopped, ['process'], 'close() returned only after the process had stopped');
+});
+
+// A harness whose input is a queue answers a message written during its turn with a turn of its own, after this one.
+function queueingSession(steerReply: any = { kind: 'accepted' }) {
+  const steered: Array<{ text: string; inputId: string }> = [];
+  let observer: (record: unknown) => void = () => {};
+  const session = {
+    id: 'native-1', rawEvents: (callback: (record: unknown) => void) => { observer = callback; return () => {}; },
+    prompt: async () => ({ kind: 'accepted' }),
+    steer: async (text: string, options: { inputId: string }) => { steered.push({ text, inputId: options.inputId }); return steerReply; },
+    dispose: async () => {},
+  };
+  return { session, steered, emit: (record: unknown) => observer(record) };
+}
+const startRun = (session: unknown, options: Record<string, unknown> = {}) => startOarRun({
+  runtime: { session: async () => session }, installation: BUNDLED, sessionOptions: {}, prompt: 'x', normalizer: claude(), name: 'Claude', ...options,
+});
+const activity = frame([{ kind: 'turn_active' }]);
+const acknowledged = (inputId: string) => frame([{ kind: 'user_message', input: 'more', inputId, evidence: 'acknowledged' }]);
+
+test('a message Claude took while it worked is answered before the turn ends, instead of being lost with the process', async () => {
+  const { session, steered, emit } = queueingSession();
+  const handle = await startRun(session, { queuesSteer: true });
+  const seen = collect(handle);
+  emit(said('First answer.'));
+  await handle.pushUserMessage('and one more thing');
+  emit(messageStop());
+  emit(turnEnded({ kind: 'completed' }));
+  await wait(20);
+  // The turn it was written in has ended, but Claude still owes the message its answer: the run stays open.
+  emit(activity);
+  emit(acknowledged(steered[0].inputId));
+  emit(said('Second answer.'));
+  emit(messageStop());
+  emit(turnEnded({ kind: 'completed' }));
+  const events = await seen;
+  assert.deepEqual(types(events), ['text-delta', 'step-end', 'text-delta', 'step-end', 'turn-end']);
+  assert.deepEqual(events.filter((event) => event.type === 'text-delta').map((event) => event.text), ['First answer.', 'Second answer.']);
+});
+
+test('a message taken into the turn itself does not keep the turn open, and neither does one that was refused', async () => {
+  const inside = queueingSession();
+  const first = await startRun(inside.session, { queuesSteer: true });
+  const done = collect(first);
+  inside.emit(said('Answer.'));
+  await first.pushUserMessage('adjust');
+  inside.emit(acknowledged(inside.steered[0].inputId));
+  inside.emit(turnEnded({ kind: 'completed' }));
+  assert.equal((await done).at(-1).type, 'turn-end');
+
+  const refused = queueingSession({ kind: 'rejected', code: 'no_active_turn', reason: 'no active turn' });
+  const second = await startRun(refused.session, { queuesSteer: true });
+  const finished = collect(second);
+  await second.pushUserMessage('too late');
+  refused.emit(turnEnded({ kind: 'completed' }));
+  assert.equal((await finished).at(-1).type, 'turn-end');
+});
+
+test('a follow-up that never starts does not keep the turn open for ever, and a harness that steers inside its turn is not waited on', async () => {
+  const silent = queueingSession();
+  const handle = await startRun(silent.session, { queuesSteer: true, followUpMs: 30 });
+  const seen = collect(handle);
+  await handle.pushUserMessage('lost');
+  silent.emit(turnEnded({ kind: 'completed' }));
+  const started = Date.now();
+  assert.equal((await seen).at(-1).type, 'turn-end');
+  assert.ok(Date.now() - started >= 25, 'it waited for the follow-up');
+
+  const joined = queueingSession();
+  const direct = await startRun(joined.session, { followUpMs: 30 });
+  const finished = collect(direct);
+  await direct.pushUserMessage('into the turn');
+  joined.emit(turnEnded({ kind: 'completed' }));
+  const begun = Date.now();
+  assert.equal((await finished).at(-1).type, 'turn-end');
+  assert.ok(Date.now() - begun < 25, 'it did not');
+});
+
+test('a failed turn ends at once even while a message waits', async () => {
+  const { session, emit } = queueingSession();
+  const handle = await startRun(session, { queuesSteer: true });
+  const seen = collect(handle);
+  await handle.pushUserMessage('pending');
+  emit(turnEnded({ kind: 'failed', failure: 'quota', reason: 'Usage limit reached' }));
+  assert.equal((await seen).at(-1).error.message, 'Usage limit reached');
 });
