@@ -274,6 +274,7 @@ npm run native:test -- --device YOUR_COREDEVICE_ID
 | `host/native-bridge.mjs` | 允许的业务方法与 DSH 私有接口转换 |
 | `host/dsbot-control.mjs` | 电脑地址配置、配对和撤销 |
 | `host/dudu-plugin/` | DSH Desktop 插件 |
+| `host/providers/` | 供应商：在 DSH 里使用电脑上的 Claude Code 和 Codex，基于 OAR，见 `docs/providers.md` |
 | `scripts/package-desktop.mjs` | 打包原生客户端对应的电脑插件 |
 | `scripts/update-desktop.mjs` | 安装本地电脑插件、热重载及必要时重启，并检查运行代码 |
 

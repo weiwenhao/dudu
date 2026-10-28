@@ -55,6 +55,14 @@ test('calls of one message share its step', () => {
   assert.deepEqual(types(events), ['tool-call', 'tool-call', 'step-end']);
 });
 
+test('a result too large for a conversation log is cut', () => {
+  const big = 'x'.repeat(300 * 1024);
+  const events = run(claude(), [callStarted('t1', 'Bash'), callInput('t1', {}), messageStop(), callEnded('t1', big)]);
+  const output = events.at(-1).output as string;
+  assert.equal(output.length, 256 * 1024 + '\n… (output truncated)'.length);
+  assert.ok(output.endsWith('… (output truncated)'));
+});
+
 test('a failed tool is a failed result with the exit code kept', () => {
   const events = run(claude(), [callStarted('t1', 'Bash'), callInput('t1', {}), messageStop(), callEnded('t1', 'boom', 'failed', { exitCode: 2 })]);
   assert.deepEqual(events.at(-1), { type: 'tool-result', id: 't1', output: 'boom', isError: true, data: { exitCode: 2 } });

@@ -9,6 +9,8 @@ import { assertDirectory, harnessError } from './harness-bridge.mjs';
 
 const MODEL_TTL = 5 * 60_000;
 const FALLBACK_TTL = 30_000;
+// A tool result is kept in DSH's log with the conversation: past this many characters it is cut.
+const MAX_OUTPUT = 256 * 1024;
 // How long a turn that has ended waits for the follow-up the harness still owes a message it took in the meantime.
 const FOLLOW_UP_MS = 5000;
 // What shows the harness doing something again after its turn has ended.
@@ -139,7 +141,9 @@ export class OarNormalizer {
     if (!call?.announced) return;
     // A result means the message that made the call is over, even where the harness gave no sign of it.
     if (this.#inStep > 0) this.#closeStep(events);
-    events.push({ type: 'tool-result', id: event.callId, ...this.resultOf(event, call, record) });
+    const result = this.resultOf(event, call, record);
+    if (typeof result.output === 'string' && result.output.length > MAX_OUTPUT) result.output = `${result.output.slice(0, MAX_OUTPUT)}\n… (output truncated)`;
+    events.push({ type: 'tool-result', id: event.callId, ...result });
   }
 
   #closeStep(events) {

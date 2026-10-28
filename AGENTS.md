@@ -6,6 +6,8 @@ For local desktop plugin updates on macOS, use `npm run desktop:update`. It pack
 
 The desktop plugin is named `dudu` (it was `dsbot` before 0.4.0) and listens on port 3170. Native app interactions use authenticated HTTP/HTTPS APIs under `/dsbot/api/v1/`, with HTTP long polling for live events. Complex DSH pages load directly in WKWebView over the user's chosen HTTP or HTTPS address, under `/dsbot/ui/`, with page-scoped authentication. `/dsbot/web/open` exchanges existing pairing authentication for a page session. Page documents, resources, RPC and streams all require that session; do not add anonymous pages, arbitrary HTTP forwarding, or a generic DSH RPC proxy. Do not add WebSocket transport. Pairing codes are generated manually by the user in DSH; never generate or inject a live pairing link during testing.
 
+Harness providers (Claude Code and Codex inside DSH) live in `host/providers/` and run on `@botiverse/oar`, pinned and bundled by `scripts/package-desktop.mjs`. Do not hand-write harness drivers or protocol code: extend the use of OAR, and read `docs/providers.md` for the design, the limits OAR imposes (no approval channel) and how it was verified. Its list of new interface wording is awaiting the owner's review.
+
 The remaining Expo/React Native files are a legacy prototype. The Expo-specific rules below apply only when editing that prototype, not to the SwiftUI target. Prioritize mobile interaction and keep decoding, image processing, Keychain access, and diagnostics writes off the UI thread.
 
 ## Expo has changed — do not trust your training data
