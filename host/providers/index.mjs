@@ -1,9 +1,7 @@
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHarnessAdapter, HarnessBridge } from './harness-bridge.mjs';
-import { createInteractionHandler } from './interactions.mjs';
 import { createMirrorTool, createMirrorTools } from './mirror-tools.mjs';
-import { detectHarness } from './detect.mjs';
 
 // The providers of DSH: the harnesses installed on this computer. A harness that is found and enabled becomes a
 // model route of its own (`claude`, `codex`); a session that selects the route is run by that harness, and the
@@ -30,14 +28,13 @@ async function writeSettings(file, settings) {
   await rename(temporary, file);
 }
 
-export async function createProviders({ host, drivers, folder, detect = detectHarness, log = console }) {
+export async function createProviders({ host, providers, folder, log = console }) {
   await mkdir(folder, { recursive: true, mode: 0o700 });
   const settingsFile = join(folder, 'providers.json');
   let settings = await readSettings(settingsFile);
-  const status = new Map();         // driver id -> what the settings page shows
-  const registered = new Map();     // route -> { bridge, path, dispose }
+  const status = new Map();         // provider id -> what the settings page shows
+  const registered = new Map();     // route -> { bridge, driver, path, dispose }
   const mirrored = new Map();       // agent id -> { route, dispose }
-  const services = host.services ?? {};
   let closed = false;
 
   function syncMirrorTools(agent, route) {
@@ -55,24 +52,23 @@ export async function createProviders({ host, drivers, folder, detect = detectHa
     }
   }
 
-  function unregister(driver) {
-    const entry = registered.get(driver.route);
+  function unregister(provider) {
+    const entry = registered.get(provider.route);
     if (!entry) return;
-    registered.delete(driver.route);
+    registered.delete(provider.route);
     entry.dispose();
     void entry.bridge.dispose();
   }
 
-  function register(driver, path) {
-    const configured = driver.create({ path });
+  function register(provider, detection) {
+    const driver = provider.create({ installation: detection.installation });
     const bridge = new HarnessBridge({
-      driver: configured, agentOf: (id) => host.agents.get(id), permissionOf: (agent) => host.permissionOf?.(agent),
-      interact: createInteractionHandler({ services, agentOf: (id) => host.agents.get(id) }),
+      driver, agentOf: (id) => host.agents.get(id), permissionOf: (agent) => host.permissionOf?.(agent),
     });
     // A tool the catalog does not list (an MCP tool, say) gets its mirror tool when the harness first calls it.
     bridge.onUnknownTool = (sessionId, name) => {
       const agent = host.agents.get(sessionId);
-      const spec = configured.fallbackTool?.(name);
+      const spec = driver.fallbackTool?.(name);
       if (!agent || !spec) return;
       try {
         const dispose = agent.ctx.tools.register(createMirrorTool({ bridge, spec }));
@@ -82,23 +78,25 @@ export async function createProviders({ host, drivers, folder, detect = detectHa
         log.warn?.(`[dudu] Could not register the ${name} tool: ${error.message}`);
       }
     };
-    const dispose = host.llm.registerAdapter([configured.route], createHarnessAdapter(bridge));
-    registered.set(configured.route, { bridge, path, dispose });
+    const dispose = host.llm.registerAdapter([driver.route], createHarnessAdapter(bridge));
+    registered.set(driver.route, { bridge, driver, path: detection.path, dispose });
   }
 
   async function refresh() {
-    for (const driver of drivers) {
-      const detection = await detect({ name: driver.binary, minVersion: driver.minVersion, override: settings.paths[driver.id] });
-      const enabled = !settings.disabled.includes(driver.id);
-      status.set(driver.id, {
-        id: driver.id, name: driver.name, route: driver.route, enabled, configuredPath: settings.paths[driver.id] ?? '',
+    for (const provider of providers) {
+      const detection = await provider.probe({ override: settings.paths[provider.id] });
+      const enabled = !settings.disabled.includes(provider.id);
+      status.set(provider.id, {
+        id: provider.id, name: provider.name, route: provider.route, enabled, configuredPath: settings.paths[provider.id] ?? '',
         state: detection.state, version: detection.version, path: detection.path, reason: detection.reason,
       });
       if (closed) return;
-      const entry = registered.get(driver.route);
+      const entry = registered.get(provider.route);
       const wanted = enabled && detection.state === 'ready';
-      if (entry && (!wanted || entry.path !== detection.path)) unregister(driver);
-      if (wanted && !registered.has(driver.route)) register(driver, detection.path);
+      if (entry && (!wanted || entry.path !== detection.path)) unregister(provider);
+      if (wanted && !registered.has(provider.route)) register(provider, detection);
+      // A refresh is how a new model or a changed login shows up.
+      else if (wanted) registered.get(provider.route).driver.refreshModels?.();
     }
   }
 
@@ -120,14 +118,14 @@ export async function createProviders({ host, drivers, folder, detect = detectHa
   // Agents that already exist when the plugin loads (a hot reload) get their tools too.
   for (const agent of host.agents.list?.() ?? []) syncMirrorTools(agent, agent.options?.provider);
 
-  const view = () => ({ providers: drivers.map((driver) => status.get(driver.id)).filter(Boolean) });
+  const view = () => ({ providers: providers.map((provider) => status.get(provider.id)).filter(Boolean) });
 
   return {
     state: view,
     refresh: async () => { await refresh(); return view(); },
     async save({ id, enabled, path }) {
-      const driver = drivers.find((candidate) => candidate.id === id);
-      if (!driver) throw new Error('Unknown provider.');
+      const provider = providers.find((candidate) => candidate.id === id);
+      if (!provider) throw new Error('Unknown provider.');
       const next = { disabled: [...settings.disabled], paths: { ...settings.paths } };
       if (typeof enabled === 'boolean') {
         next.disabled = next.disabled.filter((item) => item !== id);
@@ -157,7 +155,7 @@ export async function createProviders({ host, drivers, folder, detect = detectHa
       for (const dispose of disposers) dispose();
       for (const entry of mirrored.values()) entry.dispose();
       mirrored.clear();
-      for (const driver of drivers) unregister(driver);
+      for (const provider of providers) unregister(provider);
     },
   };
 }

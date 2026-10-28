@@ -37,49 +37,53 @@ function fakeHost() {
   return host;
 }
 
-function fakeDriver(id = 'fake') {
+const ready = (path = '/bin/fake-cli', version = '1.2.3') => ({ state: 'ready', path, version, installation: { command: path } });
+
+function fakeProvider(id = 'fake') {
   const created: any[] = [];
   return {
-    id, name: `Fake ${id}`, route: id, binary: `${id}-cli`, minVersion: '1.0.0', created,
-    create({ path }: { path: string }) {
-      const closed: string[] = [];
-      const driver = { id, name: `Fake ${id}`, route: id, path, closed, tools: [{ name: 'Bash' }, { name: 'Read' }], listModels: async () => [], resolveModel: async (model: string) => ({ id: model, name: model }), start: async () => { throw new Error('not needed'); } };
+    id, name: `Fake ${id}`, route: id, created,
+    // What the provider's probe is asked, and what it answers, is set by each test.
+    probes: [] as any[], detection: undefined as any,
+    probe(this: any, request: any) { this.probes.push(request); return Promise.resolve(this.detection ?? ready()); },
+    create({ installation }: { installation: { command: string } }) {
+      const driver = {
+        id, name: `Fake ${id}`, route: id, path: installation.command, refreshed: 0, tools: [{ name: 'Bash' }, { name: 'Read' }],
+        refreshModels() { this.refreshed++; },
+        listModels: async () => [], resolveModel: async (model: string) => ({ id: model, name: model }), start: async () => { throw new Error('not needed'); },
+      };
       created.push(driver);
       return driver;
     },
   };
 }
 
-async function setup(t: { after: (callback: () => Promise<unknown>) => void }, detections: Record<string, any>) {
+async function setup(t: { after: (callback: () => Promise<unknown>) => void }, detection?: any) {
   const folder = await mkdtemp(join(tmpdir(), 'dudu-providers-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
   const host = fakeHost();
-  const driver = fakeDriver();
-  const calls: any[] = [];
-  const providers = await createProviders({
-    host, drivers: [driver], folder,
-    detect: async (request: any) => { calls.push(request); return detections.current ?? { state: 'ready', path: '/bin/fake-cli', version: '1.2.3' }; },
-    log: { warn() {} },
-  });
+  const provider = fakeProvider();
+  provider.detection = detection;
+  const providers = await createProviders({ host, providers: [provider], folder, log: { warn() {} } });
   t.after(() => providers.close());
-  return { host, driver, providers, folder, calls };
+  return { host, provider, providers, folder };
 }
 
 test('a ready harness becomes a model route; a missing one does not, and says why', async (t) => {
-  const missing = await setup(t, { current: { state: 'missing', reason: 'fake-cli was not found.' } });
+  const missing = await setup(t, { state: 'missing', reason: 'fake-cli was not found.' });
   assert.equal(missing.host.adapters.size, 0);
   assert.deepEqual(missing.providers.state().providers[0], {
     id: 'fake', name: 'Fake fake', route: 'fake', enabled: true, configuredPath: '', state: 'missing', version: undefined, path: undefined, reason: 'fake-cli was not found.',
   });
 
-  const ready = await setup(t, {});
-  assert.ok(ready.host.adapters.has('fake'));
-  assert.equal(ready.providers.state().providers[0].state, 'ready');
-  assert.equal(ready.driver.created[0].path, '/bin/fake-cli');
+  const found = await setup(t);
+  assert.ok(found.host.adapters.has('fake'));
+  assert.equal(found.providers.state().providers[0].state, 'ready');
+  assert.equal(found.provider.created[0].path, '/bin/fake-cli');
 });
 
 test('turning a provider off removes its route and turning it on brings it back; the choice is saved privately', async (t) => {
-  const { host, providers, folder } = await setup(t, {});
+  const { host, providers, folder } = await setup(t);
   await providers.save({ id: 'fake', enabled: false });
   assert.equal(host.adapters.has('fake'), false);
   assert.equal(providers.state().providers[0].enabled, false);
@@ -90,21 +94,20 @@ test('turning a provider off removes its route and turning it on brings it back;
 });
 
 test('a configured path is what detection looks at, and a different path replaces the route', async (t) => {
-  const detections: any = {};
-  const { host, driver, providers, calls } = await setup(t, detections);
-  detections.current = { state: 'ready', path: '/custom/fake-cli', version: '2.0.0' };
+  const { host, provider, providers } = await setup(t);
+  provider.detection = ready('/custom/fake-cli', '2.0.0');
   await providers.save({ id: 'fake', path: ' /custom/fake-cli ' });
-  assert.equal(calls.at(-1).override, '/custom/fake-cli');
-  assert.equal(driver.created.at(-1).path, '/custom/fake-cli');
+  assert.equal(provider.probes.at(-1).override, '/custom/fake-cli');
+  assert.equal(provider.created.at(-1).path, '/custom/fake-cli');
   assert.equal(host.adapters.size, 1);
-  assert.equal(driver.created.length, 2, 'a changed binary is a new route registration');
+  assert.equal(provider.created.length, 2, 'a changed binary is a new route registration');
   await providers.save({ id: 'fake', path: '' });
-  assert.equal(calls.at(-1).override, undefined);
+  assert.equal(provider.probes.at(-1).override, undefined);
   await assert.rejects(providers.save({ id: 'nope', enabled: true }), /Unknown provider/);
 });
 
 test('an agent gets mirror tools while its route is the harness, from creation or from a later selection', async (t) => {
-  const { host } = await setup(t, {});
+  const { host } = await setup(t);
   const born = host.addAgent('s1', 'fake');
   host.emit('agent/created', { agent: born });
   assert.deepEqual([...born.tools.keys()], ['Bash', 'Read']);
@@ -123,7 +126,7 @@ test('an agent gets mirror tools while its route is the harness, from creation o
 });
 
 test('disposing an agent removes its tools and stops its harness run', async (t) => {
-  const { host } = await setup(t, {});
+  const { host } = await setup(t);
   const agent = host.addAgent('s1', 'fake');
   host.emit('agent/created', { agent });
   assert.equal(agent.tools.size, 2);
@@ -136,7 +139,7 @@ test('agents that exist when the plugin loads are covered, and closing leaves no
   t.after(() => rm(folder, { recursive: true, force: true }));
   const host = fakeHost();
   const early = host.addAgent('s1', 'fake');
-  const providers = await createProviders({ host, drivers: [fakeDriver()], folder, detect: async () => ({ state: 'ready', path: '/bin/x', version: '1.0.0' }), log: { warn() {} } });
+  const providers = await createProviders({ host, providers: [fakeProvider()], folder, log: { warn() {} } });
   assert.equal(early.tools.size, 2);
   await providers.close();
   assert.equal(host.adapters.size, 0);
@@ -144,11 +147,19 @@ test('agents that exist when the plugin loads are covered, and closing leaves no
 });
 
 test('the settings page talks to it with JSON actions and gets a plain error for a bad request', async (t) => {
-  const { providers } = await setup(t, {});
+  const { providers } = await setup(t);
   const state = await (await providers.handle('state')).json();
   assert.equal(state.providers[0].id, 'fake');
   const bad = await providers.handle('save', new Request('http://x/api/dudu/providers/save', { method: 'POST', body: JSON.stringify({ id: 'nope' }) }));
   assert.equal(bad.status, 400);
   assert.match((await bad.json()).error, /Unknown provider/);
   assert.equal((await providers.handle('other')).status, 404);
+});
+
+test('refreshing asks a harness that is still the same for its models again', async (t) => {
+  const { provider, providers } = await setup(t);
+  assert.equal(provider.created[0].refreshed, 0);
+  await providers.refresh();
+  assert.equal(provider.created.length, 1, 'the same binary keeps its registration');
+  assert.equal(provider.created[0].refreshed, 1);
 });

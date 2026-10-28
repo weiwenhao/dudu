@@ -57,13 +57,13 @@ export function analyzeRequest(messages, route) {
 
 /**
  * One harness process for one DSH turn, and the pump that keeps reading it between DSH's steps.
- * What the harness asks (permission, a question) is answered here as it arrives: the harness may ask while it is
- * still streaming the message with the tool call, long before DSH's loop runs the mirror tool.
+ * The harness runs its tools while it streams, so a tool's result can arrive long before DSH's loop starts the mirror
+ * tool that waits for it: results are kept as they come.
  */
 export class HarnessRun {
   #tools = new Map();
 
-  constructor({ sessionId, handle, prompts, interact }) {
+  constructor({ sessionId, handle, prompts }) {
     this.sessionId = sessionId;
     this.handle = handle;
     this.nativeSessionId = handle.nativeSessionId;
@@ -71,9 +71,6 @@ export class HarnessRun {
     this.forwarded = new Set(prompts.map((message) => message.id));
     this.finished = false;
     this.turnEnd = undefined;
-    this.interact = interact;
-    // Aborted when the turn ends or is stopped: questions still open are withdrawn.
-    this.lifetime = new AbortController();
     this.pump = this.#pump();
   }
 
@@ -89,25 +86,9 @@ export class HarnessRun {
   #route(event) {
     switch (event.type) {
       case 'tool-result': this.#tool(event.id).resolve(event); break;
-      case 'permission-request':
-      case 'question-request': void this.#answer(event); break;
       case 'turn-end': this.#end(event); break;
       default: this.steps.push(event);
     }
-  }
-
-  async #answer(request) {
-    try {
-      if (!this.interact) { this.#refuse(request); return; }
-      await this.interact(request, this, this.lifetime.signal);
-    } catch {
-      if (!this.lifetime.signal.aborted) this.#refuse(request);
-    }
-  }
-
-  #refuse(request) {
-    if (request.type === 'question-request') this.handle.respondQuestion?.(request.id, { cancelled: true });
-    else this.handle.respondPermission?.(request.id, { behavior: 'deny', message: 'No one is available to answer this request.' });
   }
 
   #end(event) {
@@ -117,7 +98,6 @@ export class HarnessRun {
     this.steps.push(event);
     this.steps.close();
     for (const call of this.#tools.values()) call.reject(harnessError('The harness ended before the tool finished.', 'HARNESS_EXITED'));
-    this.lifetime.abort();
   }
 
   #tool(callId) {
@@ -142,17 +122,13 @@ export class HarnessRun {
     });
   }
 
-  respondPermission(id, decision) { this.handle.respondPermission?.(id, decision); }
-  respondQuestion(id, answer) { this.handle.respondQuestion?.(id, answer); }
-  pushUserMessage(text) { this.handle.pushUserMessage?.(text); }
+  pushUserMessage(text) { void this.handle.pushUserMessage?.(text); }
 
   async interrupt() {
-    this.lifetime.abort();
     if (!this.finished) await this.handle.interrupt?.();
   }
 
   async close() {
-    this.lifetime.abort();
     await this.handle.close?.();
     await this.pump.catch(() => {});
   }
@@ -162,11 +138,10 @@ export class HarnessRun {
 export class HarnessBridge {
   #runs = new Map();
 
-  constructor({ driver, agentOf = () => undefined, permissionOf = () => undefined, interact }) {
+  constructor({ driver, agentOf = () => undefined, permissionOf = () => undefined }) {
     this.driver = driver;
     this.agentOf = agentOf;
     this.permissionOf = permissionOf;
-    this.interact = interact;
     // Set by the owner of the agents: registers a mirror tool for a tool name the harness's catalog does not list.
     this.onUnknownTool = undefined;
   }
@@ -182,7 +157,7 @@ export class HarnessBridge {
       sessionId, agent, prompt: promptText, resume: link?.nativeSessionId, cwd: agent?.session?.header?.cwd,
       model, effort, permission: this.permissionOf(agent), signal,
     });
-    const run = new HarnessRun({ sessionId, handle, prompts, interact: this.interact });
+    const run = new HarnessRun({ sessionId, handle, prompts });
     this.#runs.set(sessionId, run);
     return run;
   }
@@ -207,11 +182,23 @@ function usageOf(usage = {}) {
   };
 }
 
-/** Titles come from the first prompt as typed; starting a harness for a title would spend a turn on it. */
-function titleOf(messages) {
-  const prompt = [...messages].reverse().find((message) => message.role === 'user' && textOf(message.content).trim());
-  const line = textOf(prompt?.content).replace(/\s+/g, ' ').trim();
-  return line.length > 60 ? `${line.slice(0, 59)}…` : line || 'New session';
+/**
+ * Titles come from the first prompt as typed; starting a harness for a title would spend a turn on it. DSH asks for
+ * a title with the person's messages inside an instruction, as a JSON array of `{ seq, text }`; a request that
+ * carries the text on its own is read as it is.
+ */
+export function titleOf(messages) {
+  const request = [...messages].reverse().find((message) => message.role === 'user' && textOf(message.content).trim());
+  const body = textOf(request?.content);
+  let prompts = [];
+  const array = body.match(/\[[\s\S]*\]\s*$/);
+  if (array) {
+    try { prompts = JSON.parse(array[0]).map((item) => String(item?.text ?? '')).filter((text) => text.trim()); } catch { /* plain text */ }
+  }
+  const line = (prompts[0] ?? body).replace(/\s+/g, ' ').trim();
+  const limit = /[\u3400-\u9fff]/.test(line) ? 24 : 60;
+  const characters = [...line];
+  return characters.length > limit ? `${characters.slice(0, limit - 1).join('')}…` : line || 'New session';
 }
 
 /** The LLM adapter DSH's loop talks to; `stream()` replays one assistant message of the harness per call. */

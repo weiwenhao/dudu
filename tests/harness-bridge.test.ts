@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AsyncQueue } from '../host/providers/async.mjs';
-import { analyzeRequest, createHarnessAdapter, HarnessBridge } from '../host/providers/harness-bridge.mjs';
+import { analyzeRequest, createHarnessAdapter, HarnessBridge, titleOf } from '../host/providers/harness-bridge.mjs';
 
 type Chunk = { type: string; [key: string]: any };
 
@@ -27,9 +27,7 @@ function fakeDriver() {
         events: { async *[Symbol.asyncIterator]() { for (;;) { const next = await events.next(); if (next.done) return; yield next.value; } } },
         push: (event: any) => events.push(event),
         end: () => events.close(),
-        permissions: [] as any[], questions: [] as any[], userMessages: [] as string[], interrupted: 0, closed: 0,
-        respondPermission(id: string, decision: any) { this.permissions.push({ id, decision }); },
-        respondQuestion(id: string, answer: any) { this.questions.push({ id, answer }); },
+        userMessages: [] as string[], interrupted: 0, closed: 0,
         pushUserMessage(text: string) { this.userMessages.push(text); },
         async interrupt() { this.interrupted++; },
         async close() { this.closed++; events.close(); },
@@ -41,9 +39,9 @@ function fakeDriver() {
   };
 }
 
-function setup(interact?: any) {
+function setup() {
   const driver = fakeDriver();
-  const bridge = new HarnessBridge({ driver, interact, agentOf: () => ({ session: { header: { cwd: '/work/project' } } }), permissionOf: () => 'workspace-write' });
+  const bridge = new HarnessBridge({ driver, agentOf: () => ({ session: { header: { cwd: '/work/project' } } }), permissionOf: () => 'workspace-write' });
   return { driver, bridge, adapter: createHarnessAdapter(bridge) };
 }
 
@@ -150,64 +148,6 @@ test('stopping the turn interrupts the harness and rejects the step', async () =
   assert.equal(driver.handles[0].interrupted, 1);
 });
 
-const tick = () => new Promise((resolve) => setImmediate(resolve));
-
-test('a permission question is answered the moment it arrives, while the message that holds the call is still streaming', async () => {
-  const asked: any[] = [];
-  const { driver, adapter } = setup(async (request: any, run: any) => { asked.push(request); run.respondPermission(request.id, { behavior: 'allow' }); });
-  const stream = collect(adapter.stream({ sessionId: 's1', messages: [user('u1', 'rm it')] }));
-  await tick();
-  const handle = driver.handles[0];
-  handle.push({ type: 'text-delta', text: 'about to' });
-  handle.push({ type: 'tool-call', id: 't1', name: 'Bash', input: { command: 'rm x' } });
-  // DSH has not even finished this step, so no mirror tool is running yet, and the harness is already waiting.
-  handle.push({ type: 'permission-request', id: 'p1', toolCallId: 't1', toolName: 'Bash', input: { command: 'rm x' } });
-  await tick();
-  assert.equal(asked[0].toolCallId, 't1');
-  assert.deepEqual(handle.permissions, [{ id: 'p1', decision: { behavior: 'allow' } }]);
-  handle.push({ type: 'step-end' });
-  await stream;
-});
-
-test('with nobody to answer, a permission or question request is refused instead of leaving the harness hanging', async () => {
-  const { driver, adapter } = setup();
-  const stream = collect(adapter.stream({ sessionId: 's1', messages: [user('u1', 'go')] }));
-  await tick();
-  const handle = driver.handles[0];
-  handle.push({ type: 'permission-request', id: 'p1', toolCallId: 't1', toolName: 'Bash', input: {} });
-  handle.push({ type: 'question-request', id: 'k1', toolCallId: 't2', questions: [{ question: 'q' }] });
-  await tick();
-  assert.equal(handle.permissions[0].decision.behavior, 'deny');
-  assert.deepEqual(handle.questions, [{ id: 'k1', answer: { cancelled: true } }]);
-  handle.push({ type: 'step-end' });
-  await stream;
-});
-
-test('a handler that fails refuses the request, and the turn ending withdraws what is still open', async () => {
-  let seen: AbortSignal | undefined;
-  let release: () => void = () => {};
-  const { driver, adapter } = setup(async (request: any, _run: any, signal: AbortSignal) => {
-    if (request.id === 'p1') throw new Error('no open turn');
-    seen = signal;
-    await new Promise<void>((resolve) => { release = resolve; signal.addEventListener('abort', () => resolve()); });
-  });
-  const stream = collect(adapter.stream({ sessionId: 's1', messages: [user('u1', 'go')] }));
-  await tick();
-  const handle = driver.handles[0];
-  handle.push({ type: 'permission-request', id: 'p1', toolCallId: 't1', toolName: 'Bash', input: {} });
-  handle.push({ type: 'permission-request', id: 'p2', toolCallId: 't2', toolName: 'Bash', input: {} });
-  await tick();
-  assert.equal(handle.permissions.length, 1, 'only the failed request is refused');
-  assert.equal(handle.permissions[0].id, 'p1');
-  assert.equal(seen?.aborted, false);
-  handle.push({ type: 'turn-end', ok: true });
-  await stream;
-  assert.equal(seen?.aborted, true, 'a question still open when the turn ends is withdrawn');
-  release();
-  await tick();
-  assert.equal(handle.permissions.length, 1, 'nothing is answered after the withdrawal');
-});
-
 test('a tool still waiting when the harness stops fails, and a failed turn reaches DSH with its code', async () => {
   const { driver, bridge, adapter } = setup();
   const first = collect(adapter.stream({ sessionId: 's1', messages: [user('u1', 'go')] }));
@@ -265,15 +205,24 @@ test('input typed while the harness works is handed over once, as steering', asy
 
 test('titles and other auxiliary calls never start the harness', async () => {
   const { driver, adapter } = setup();
+  const wrapped = 'Generate the session title from this JSON array of human messages:\n[{"seq":10,"text":"Fix the flaky   login test\\nit fails on CI"},{"seq":14,"text":"and the retry"}]';
   const chunks = await collect(adapter.stream({
-    sessionId: 's1', purpose: 'session-title',
-    messages: [{ role: 'user', content: [{ type: 'text', text: 'Fix the flaky   login test\nit fails on CI' }] }],
+    sessionId: 's1', purpose: 'session-title', messages: [{ role: 'user', source: { kind: 'dsh-session-title-llm' }, content: [{ type: 'text', text: wrapped }] }],
   }));
   assert.equal(driver.started.length, 0);
   assert.equal(chunks[1].text, 'Fix the flaky login test it fails on CI');
   const compaction = await collect(adapter.stream({ sessionId: 's1', purpose: 'compaction', messages: [] }));
   assert.equal(driver.started.length, 0);
   assert.equal(compaction[1].text, '');
+});
+
+test('a title is the first prompt, short, in the language it was written in', () => {
+  const ask = (text: string) => [{ role: 'user', content: [{ type: 'text', text }] }];
+  assert.equal(titleOf(ask('Just a plain request')), 'Just a plain request');
+  assert.equal(titleOf(ask('x'.repeat(100))), `${'x'.repeat(59)}…`);
+  assert.equal(titleOf(ask('Generate the session title from this JSON array of human messages:\n[{"seq":1,"text":"帮我把登录页的测试修好，并且检查一下重试逻辑和超时设置"}]')), `${'帮我把登录页的测试修好，并且检查一下重试逻辑和超时设置'.slice(0, 23)}…`);
+  assert.equal(titleOf(ask('Generate the session title from this JSON array of human messages:\n[not json')), 'Generate the session title from this JSON array of human messages: [not json'.slice(0, 59) + '…');
+  assert.equal(titleOf([]), 'New session');
 });
 
 test('an empty prompt is refused rather than sent to the harness', async () => {

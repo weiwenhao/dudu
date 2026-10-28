@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const plugin = join(root, 'host', 'dudu-plugin');
@@ -13,15 +14,44 @@ const runtime = join(plugin, 'dist');
 await rm(runtime, { recursive: true, force: true });
 await mkdir(runtime);
 const copied = new Set();
+// The installed plugin has no node_modules of its own to resolve OAR from, so the one file that imports it is bundled,
+// with only the two runtimes the plugin uses. The licenses of what ends up inside travel with it.
+const bundled = new Set(['providers/oar-runtimes.mjs']);
+async function bundleRuntime(file) {
+  const target = join(runtime, file);
+  await mkdir(dirname(target), { recursive: true });
+  const { metafile } = await build({
+    entryPoints: [join(root, 'host', file)], outfile: target, bundle: true, platform: 'node', format: 'esm', target: 'node24',
+    metafile: true, logLevel: 'warning', legalComments: 'none',
+    // The bundled CommonJS dependencies require Node's own modules, which an ES module has no `require` for.
+    banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" },
+  });
+  const notices = [];
+  const packages = new Map();
+  for (const input of Object.keys(metafile.inputs)) {
+    const match = input.match(/^(.*node_modules\/((?:@[^/]+\/)?[^/]+))\//);
+    if (match) packages.set(match[2], match[1]);
+  }
+  for (const [name, folder] of [...packages].sort(([a], [b]) => a.localeCompare(b))) {
+    const manifest = JSON.parse(await readFile(join(root, folder, 'package.json'), 'utf8'));
+    let license = '';
+    for (const candidate of ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE']) {
+      try { license = await readFile(join(root, folder, candidate), 'utf8'); break; } catch { /* next */ }
+    }
+    notices.push(`${name} ${manifest.version} (${manifest.license ?? 'license not declared'})\n\n${license.trim() || 'No license file was published with this package.'}\n`);
+  }
+  await writeFile(join(runtime, 'THIRD_PARTY_NOTICES.txt'), `This plugin bundles the following packages.\n\n${notices.join('\n----------------------------------------\n\n')}`);
+}
 async function copyRuntime(file) {
   if (copied.has(file)) return;
   copied.add(file);
+  if (bundled.has(file)) { await bundleRuntime(file); return; }
   const source = join(root, 'host', file);
   const body = await readFile(source, 'utf8');
   const target = join(runtime, file);
   await mkdir(dirname(target), { recursive: true });
   await copyFile(source, target);
-  for (const match of body.matchAll(/(?:from\s*|import\s*(?:\(\s*)?)['"](\.\/[^'"]+\.mjs)['"]/g)) {
+  for (const match of body.matchAll(/(?:from\s*|import\s*(?:\(\s*)?)['"](\.{1,2}\/[^'"]+\.mjs)['"]/g)) {
     const dependency = resolve(dirname(source), match[1]);
     const hostRoot = join(root, 'host') + '/';
     if (!dependency.startsWith(hostRoot)) throw new Error('Plugin runtime import escapes host source.');
