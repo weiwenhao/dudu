@@ -1,12 +1,12 @@
 # Dudu 电脑连接插件
 
-Dudu 电脑连接插件（包名 `dsbot`）`0.3.21` 为 SwiftUI iPhone 客户端提供原生会话连接和带鉴权的 HTTP 页面。
-发布包 `dsbot-desktop-0.3.21.zip` 包含 `dsbot-0.3.21.tgz`。
+Dudu 电脑连接插件（包名 `dudu`，`0.4.0` 前叫 `dsbot`）`0.4.0` 为 SwiftUI iPhone 客户端提供原生会话连接和带鉴权的 HTTP 页面。
+发布包 `dudu-desktop-0.4.0.zip` 包含 `dudu-0.4.0.tgz`。
 不声明 DSH 版本约束，升级 DSH 不会仅因版本号变化而被标记为不兼容。
 
 ## 安装与配对
 
-1. 在 DSH Desktop「插件」中安装 `dsbot-0.3.21.tgz`。
+1. 在 DSH Desktop「插件」中安装 `dudu-0.4.0.tgz`；如果装过旧的 `dsbot` 插件，请先卸载它。
 2. 打开 DSH Desktop「设置 → 手机控制」，填写电脑名称。
 3. 添加一个或多个手机可访问的连接地址。
 4. 在目标地址旁手动点击「生成二维码」。
@@ -34,7 +34,7 @@ WebView 按用户填写的 HTTP/HTTPS 协议直接加载手机适配页面。
 并修改当前会话的推理等级；预设只能取自 DSH 返回的列表。
 `0.3.5` 起，手机从插件读取 DSH 的侧栏入口、会话视图和设置分区（含图标），
 其他插件新增的内容会自动出现在手机上；DSH 窗口把这些内容报告给插件，插件保存最近一份
-（`DSH_HOME/dsbot/navigation.json`）。升级插件后请打开一次 DSH 窗口，手机才会拿到完整列表。
+（`DSH_HOME/dudu/navigation.json`）。升级插件后请打开一次 DSH 窗口，手机才会拿到完整列表。
 `0.3.12` 新增 `session.search`，调用 DSH 原生的正文检索接口，返回可见会话和命中片段，不启动会话。
 
 `0.3.13` 为 HTTP 页面脚本和样式增加 gzip 传输。
@@ -75,7 +75,8 @@ WS/WSS scheme 只会在 App 导入时归一化为 HTTP/HTTPS；新地址请填�
 ## 维护与升级
 
 电脑需要保持 DSH 和连接隧道运行。配置和设备记录保存在
-`DSH_HOME/dsbot/`，默认 `~/.dsh/dsbot/`。重启或升级保留已有记录，
+`DSH_HOME/dudu/`，默认 `~/.dsh/dudu/`。从 `dsbot` 升级时，首次启动会复制原 `DSH_HOME/dsbot/`
+里的已配对设备和设置，旧目录保留。重启或升级保留已有记录，
 设备密钥以散列形式保存。
 
 macOS 上从源码更新可在仓库运行 `npm run desktop:update`，自动打包、通过 Desktop
@@ -85,7 +86,7 @@ macOS 上从源码更新可在仓库运行 `npm run desktop:update`，自动打�
 更新日志、结果和 profile 备份在 `.local/desktop-updates/`。
 安装包路径包含源码指纹，同版本修改也会安装新的包，避免包管理器复用旧缓存。
 
-上游错误分类保存在 `DSH_HOME/dsbot/diagnostics/upstream.jsonl`，自动轮转，
+上游错误分类保存在 `DSH_HOME/dudu/diagnostics/upstream.jsonl`，自动轮转，
 只记录接口、失败阶段和错误码，不记录请求参数、会话正文或凭据。
 
 从旧版升级时，手机使用原 bundle identifier 覆盖安装，保留 Keychain 和数据。

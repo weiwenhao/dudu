@@ -43,7 +43,8 @@ const snapshot = {
   ],
   settings: [
     { id: 'models', title: '模型', order: 10, icon },
-    { id: 'dsbot-mobile-control', title: '手机控制', order: 50 },
+    { id: 'dudu-mobile-control', title: '手机控制', order: 50 },
+    { id: 'dsbot-mobile-control', title: '手机控制', order: 51 },
     { id: 'general', title: '通用设置', order: 5 },
     { id: 'account', title: '账号', order: 0 },
   ],

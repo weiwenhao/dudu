@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: 'dsbot',
+  id: 'dudu',
   factory(require) {
     const { createElement: h, useEffect, useRef, useState } = require('react');
     const { Button, Input } = require('@deepseek-ai/dsh-client-ui-primitives');
@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
 `;
 
     async function request(action, body = {}) {
-      const path = new URL(`api/dsbot/${action}`, document.baseURI).pathname;
+      const path = new URL(`api/dudu/${action}`, document.baseURI).pathname;
       const response = await fetch(path, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body), credentials: 'same-origin',
@@ -549,7 +549,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      name: 'dsbot',
+      name: 'dudu',
       inject: ['slots'],
       apply(ctx) {
         ctx.effect(() => {
@@ -559,11 +559,11 @@ window.__ModuleLoader__.load({
           return () => style.remove();
         });
         ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
-          name: 'plugins.bundle.config', key: 'dsbot',
+          name: 'plugins.bundle.config', key: 'dudu',
         }, (props = {}) => props.view === 'summary' ? null : h(Settings)));
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
-          id: 'dsbot-mobile-control',
+          id: 'dudu-mobile-control',
           order: 50,
           label: () => '手机控制',
         }, Settings));

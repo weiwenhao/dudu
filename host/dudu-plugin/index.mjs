@@ -10,16 +10,19 @@ import { createConversationReads } from './dist/native-conversation-reads.mjs';
 import { createNativeQuestions } from './dist/native-questions.mjs';
 import { desktopPackageIdentity, writeDesktopRuntime } from './dist/desktop-runtime.mjs';
 import { createNativeDiagnostics } from './dist/native-diagnostics.mjs';
+import { migrateLegacyState } from './dist/legacy-state.mjs';
 
 // Capture the loaded package once, so an old runtime cannot report newly installed files as its own.
 const runtimeIdentity = await desktopPackageIdentity(dirname(fileURLToPath(import.meta.url)));
 
-export const name = 'dsbot';
+export const name = 'dudu';
 export const inject = ['connection', 'typertGateway', 'clientModules', 'webServer'];
 
 export async function apply(ctx, config = {}) {
   const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh');
-  const folder = join(dshHome, 'dsbot');
+  const folder = join(dshHome, 'dudu');
+  // Paired phones were stored by the plugin's former name; carry them over before anything reads the folder.
+  await migrateLegacyState({ dshHome });
   const diagnostics = createNativeDiagnostics(folder);
   const peer = ctx.connection.createPeer({ principal: { kind: 'owner' } });
   let control;
@@ -56,7 +59,7 @@ export async function apply(ctx, config = {}) {
     });
     for (const action of ['state', 'save', 'generate', 'revoke', 'nav']) {
       disposers.push(ctx.connection.fetch.register({
-        path: `/api/dsbot/${action}`, methods: ['POST'], requestBody: 'buffered',
+        path: `/api/dudu/${action}`, methods: ['POST'], requestBody: 'buffered',
         fetch: (request) => control.handle(action, request),
       }));
     }
@@ -74,6 +77,6 @@ export async function apply(ctx, config = {}) {
     finally { await peer.dispose(); await diagnostics.flush(); }
   });
   try { await writeDesktopRuntime(folder, runtimeIdentity, control.state().port); }
-  catch { console.warn('[dsbot] Could not save the local runtime receipt.'); }
-  console.info(`[dsbot] Ready on port ${control.state().port}. Open Settings > 手机控制 to pair.`);
+  catch { console.warn('[dudu] Could not save the local runtime receipt.'); }
+  console.info(`[dudu] Ready on port ${control.state().port}. Open Settings > 手机控制 to pair.`);
 }

@@ -14,7 +14,7 @@ Expo、React Native 或 Metro。核心交互使用原生界面；
 
 ## 连接
 
-电脑端安装 `dsbot` DSH 插件，监听 `3170`。用户填写 HTTP 或 HTTPS 地址：
+电脑端安装 `dudu` DSH 插件（`0.4.0` 前叫 `dsbot`），监听 `3170`。用户填写 HTTP 或 HTTPS 地址：
 
 ```text
 iPhone 原生聊天 ── HTTP/HTTPS /dsbot/api/v1 ── 电脑 3170
@@ -39,7 +39,7 @@ TLS 反向代理终止加密，因此中转服务器仍能接触解密后的流�
 ## 安装和配对
 
 1. 运行 `npm run package:desktop`。
-2. 在 DSH Desktop「插件」中安装 `.local/release/dsbot-0.3.21.tgz`。
+2. 在 DSH Desktop「插件」中安装 `.local/release/dudu-0.4.0.tgz`。
 3. 打开 DSH Desktop「设置 → 手机控制」，填写电脑名称并添加一个或多个连接地址。
 4. 在目标地址旁手动点击「生成二维码」。
 5. 手机打开 Dudu，扫码或粘贴完整配对链接；已连接时可在「电脑连接 → 添加电脑」继续配对。
@@ -53,10 +53,14 @@ DSH；运行中的任务可能使 DSH 显示自己的退出确认，脚本不会
 原有配对和连接配置保留。
 安装包路径包含源码指纹，同版本修改也会安装新的包，避免包管理器复用旧缓存。
 
-电脑端的上游错误分类保存在 `~/.dsh/dsbot/diagnostics/upstream.jsonl`，文件自动轮转，
+电脑端的上游错误分类保存在 `~/.dsh/dudu/diagnostics/upstream.jsonl`，文件自动轮转，
 只记录接口、失败阶段和错误码，不记录请求参数、会话正文或凭据。
 
 插件 `0.3.19` 起不声明 DSH 版本约束，升级 DSH 不会仅因版本号变化而被标记为不兼容。
+
+插件 `0.4.0` 起改名为 `dudu`，状态目录改为 `~/.dsh/dudu/`。首次启动会把原 `~/.dsh/dsbot/` 里的
+已配对设备和设置复制过来，旧目录原样保留。已配对的手机无需任何操作，手机协议路径 `/dsbot` 不变。
+`npm run desktop:update` 装好 dudu 后会卸载同一个 profile 里旧的 dsbot 插件，两者不会同时运行。
 
 插件 `0.3.20` 起，DSH 窗口自己绘制的侧栏图标（例如「上下文洞察」）只绘制一次，之后某次上报没带图标时沿用已有的，手机侧栏的图标不再时有时无。
 
@@ -114,7 +118,7 @@ App 打开时先恢复上次查看的会话和本地草稿，再在后台同步�
 ### 侧栏、「…」菜单和设置来自 DSH
 
 侧栏的入口、会话视图（对话、轨迹、上下文、编队……）和设置分区都不写在 App 里。插件的 DSH 端模块在 DSH 自己的窗口里读取各个插件注册的内容，
-连同图标一起通过 `/api/dsbot/nav` 交给插件主机，主机校验后保存到 `DSH_HOME/dsbot/navigation.json`，
+连同图标一起通过 `/api/dudu/nav` 交给插件主机，主机校验后保存到 `DSH_HOME/dudu/navigation.json`，
 手机用 `navigation.get` 取回。其他插件给 DSH 新增面板、会话标签页或设置分区，手机上会自动出现，
 不需要升级 App。
 
@@ -191,7 +195,7 @@ npm run native:install -- --device YOUR_COREDEVICE_ID
 `--device`。指定 Debug 构建可添加 `--configuration Debug`。
 
 App 显示名称为 `Dudu`，bundle identifier 为 `com.harnessmobile.app`。
-内部构建目标、电脑端插件和配对协议继续使用 `dsbot`，现有配对和数据保持兼容。
+内部构建目标和配对协议（`/dsbot` 路径）继续使用 `dsbot`，现有配对和数据保持兼容。
 本地开发签名只适用于签名允许的设备。向其他用户分发 iOS App 需要自己的
 TestFlight、App Store 或适用的设备签名；本项目不包含商店发布凭据。
 
@@ -269,9 +273,9 @@ npm run native:test -- --device YOUR_COREDEVICE_ID
 | `host/web-page-http.mjs` | HTTP 页面鉴权、资源和受限操作 |
 | `host/native-bridge.mjs` | 允许的业务方法与 DSH 私有接口转换 |
 | `host/dsbot-control.mjs` | 电脑地址配置、配对和撤销 |
-| `host/dsbot-plugin/` | DSH Desktop 插件 |
+| `host/dudu-plugin/` | DSH Desktop 插件 |
 | `scripts/package-desktop.mjs` | 打包原生客户端对应的电脑插件 |
 | `scripts/update-desktop.mjs` | 安装本地电脑插件、热重载及必要时重启，并检查运行代码 |
 
 旧版 `App.tsx`、`src/`、`host/relay.mjs` 和 `host/plugin/` 不属于原生 App
-或新 dsbot 插件的运行链路。`legacy:ios`、`web`、`share` 等命令仅保留给旧原型。
+或 dudu 插件的运行链路。`legacy:ios`、`web`、`share` 等命令仅保留给旧原型。

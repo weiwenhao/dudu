@@ -16,7 +16,7 @@ test('desktop identity detects code changes even when the package version stays 
   const folder = await temporary(t);
   await mkdir(join(folder, 'dist'));
   for (const [name, text] of Object.entries({
-    'package.json': JSON.stringify({ name: 'dsbot', version: '0.3.21' }),
+    'package.json': JSON.stringify({ name: 'dudu', version: '0.4.0' }),
     'index.mjs': 'export const name = "dsbot";',
     'client.js': 'window.ready = true;',
     'cordis.patch.yml': '[]',

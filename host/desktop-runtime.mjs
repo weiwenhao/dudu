@@ -19,8 +19,8 @@ export async function desktopPackageIdentity(folder) {
     hash.update(file).update('\0').update(await readFile(join(folder, file))).update('\0');
   }
   const metadata = JSON.parse(await readFile(join(folder, 'package.json'), 'utf8'));
-  if (metadata.name !== 'dsbot' || typeof metadata.version !== 'string') {
-    throw new Error('Expected a dsbot desktop package.');
+  if (metadata.name !== 'dudu' || typeof metadata.version !== 'string') {
+    throw new Error('Expected a dudu desktop package.');
   }
   return { version: metadata.version, fingerprint: hash.digest('hex') };
 }

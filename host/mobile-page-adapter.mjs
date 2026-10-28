@@ -462,7 +462,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
 
   function settingsEntries(ctx) {
     return slotEntries(ctx, "settings.section")
-      .filter(entry => entry?.options?.id && !["dsbot-mobile-control", "general"].includes(entry.options.id))
+      .filter(entry => entry?.options?.id && !["dudu-mobile-control", "dsbot-mobile-control", "general"].includes(entry.options.id))
       .map((entry, index) => ({ entry, index, id: entry.options.id }))
       .sort((a, b) => {
         const ao = Number(a.entry?.options?.order);
@@ -536,7 +536,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
   function selectSettingsSection(ui, ctx, id) {
     if (page.kind !== "settings" || typeof id !== "string") return false;
     const entry = settingsEntries(ctx).find(item => item.id === id);
-    if (!entry || ["dsbot-mobile-control", "general"].includes(id)) return false;
+    if (!entry || ["dudu-mobile-control", "dsbot-mobile-control", "general"].includes(id)) return false;
     const dialog = settingsModal();
     const label = resolveLabel(ui, ctx, entry.entry);
     const target = [...(dialog?.querySelectorAll("nav button") || [])]

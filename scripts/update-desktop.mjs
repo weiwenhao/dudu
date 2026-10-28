@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { copyFile, mkdir, mkdtemp, open, realpath, rm, stat, utimes } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, open, readFile, realpath, rm, stat, utimes } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -23,6 +23,11 @@ export async function activateDesktopUpdate({ running, restartRequired, touchPro
   return { mode: 'restart', runtime };
 }
 
+async function hasDependency(profile, name) {
+  const { dependencies } = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'));
+  return dependencies?.[name] !== undefined;
+}
+
 async function probe(port) {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/dsbot/api/v1/probe`, {
@@ -40,7 +45,7 @@ async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--help')) {
     console.log('npm run desktop:update -- [--app "/Applications/DeepSeek Harness.app"] [--restart]');
-    console.log('Packages and installs dsbot through Desktop, tries hot reload, and restarts DSH if needed.');
+    console.log('Packages and installs dudu through Desktop, tries hot reload, and restarts DSH if needed.');
     return;
   }
   let app = '/Applications/DeepSeek Harness.app';
@@ -91,17 +96,18 @@ async function main() {
       });
       return candidates.filter((entry) => !candidates.some((other) => other.pid === entry.parent));
     };
-    console.log('Packaging dsbot...');
+    console.log('Packaging dudu...');
     await run(process.execPath, ['scripts/package-desktop.mjs'], 'package');
-    const expected = await desktopPackageIdentity(join(root, 'host', 'dsbot-plugin'));
-    const runtimeFolder = join(dshHome, 'dsbot');
+    const expected = await desktopPackageIdentity(join(root, 'host', 'dudu-plugin'));
+    const runtimeFolder = join(dshHome, 'dudu');
     const running = (await mainPids()).length > 0;
-    const installed = join(profile, 'node_modules', 'dsbot');
+    const legacy = await hasDependency(profile, 'dsbot');
+    const installed = join(profile, 'node_modules', 'dudu');
     const current = await waitForDesktopRuntime({ folder: runtimeFolder, expected, timeoutMs: 0, probe });
     if (!restartRequired && current && running) {
       const identity = await desktopPackageIdentity(installed);
       if (identity.fingerprint === expected.fingerprint) {
-        console.log(`dsbot ${expected.version} is already running with this exact build.`);
+        console.log(`dudu ${expected.version} is already running with this exact build.`);
         return;
       }
     }
@@ -114,13 +120,22 @@ async function main() {
     }
     const after = Date.now();
     const release = join(root, '.local', 'release');
-    const archive = join(release, `dsbot-${expected.version}-${expected.fingerprint}.tgz`);
+    const archive = join(release, `dudu-${expected.version}-${expected.fingerprint}.tgz`);
     // pnpm caches file: tarballs by path; a changed build must never reuse the previous path.
-    await copyFile(join(release, `dsbot-${expected.version}.tgz`), archive);
-    console.log(`Installing dsbot ${expected.version} using Desktop's bundled CLI...`);
+    await copyFile(join(release, `dudu-${expected.version}.tgz`), archive);
+    console.log(`Installing dudu ${expected.version} using Desktop's bundled CLI...`);
     await run(carrier, ['plugin', '--profile', 'desktop', 'add', `file:${archive}`], 'install');
     const identity = await desktopPackageIdentity(installed);
     if (identity.fingerprint !== expected.fingerprint) throw new Error('Installed package differs from the packaged source.');
+    if (legacy) {
+      // dudu was called dsbot; two copies would fight over the same port, so the old one leaves in this same update.
+      console.log('Removing the former dsbot plugin...');
+      try { await run(carrier, ['plugin', '--profile', 'desktop', 'remove', 'dsbot'], 'remove-dsbot'); }
+      catch (error) {
+        await run(carrier, ['plugin', '--profile', 'desktop', 'remove', 'dudu'], 'rollback-dudu').catch(() => {});
+        throw error;
+      }
+    }
     console.log('Applying the update and checking the running code...');
     const result = await activateDesktopUpdate({
       running, restartRequired,
@@ -151,7 +166,7 @@ async function main() {
     const receipt = await open(join(logFolder, 'result.json'), 'w', 0o600);
     try { await receipt.writeFile(JSON.stringify(result, null, 2) + '\n'); }
     finally { await receipt.close(); }
-    console.log(`dsbot ${expected.version} is running and ready (${result.mode === 'hot' ? 'hot reload; DSH stayed open' : 'DSH restarted'}).`);
+    console.log(`dudu ${expected.version} is running and ready (${result.mode === 'hot' ? 'hot reload; DSH stayed open' : 'DSH restarted'}).`);
   } catch (error) {
     if (logFolder) console.error(`Update diagnostics: ${logFolder}`);
     throw error;

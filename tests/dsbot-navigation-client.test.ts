@@ -129,7 +129,7 @@ async function setup({
   page = false, developerTools = true, rejectFirst = false,
   sidebarIcons = [] as Array<{ id: string; component: unknown }>, drawingFails = false,
 } = {}) {
-  const source = await readFile(new URL('../host/dsbot-plugin/client.js', import.meta.url), 'utf8');
+  const source = await readFile(new URL('../host/dudu-plugin/client.js', import.meta.url), 'utf8');
   const posts: Array<{ path: string; body: Record<string, any> }> = [];
   // A virtual clock, so timers fire in the order and at the times a browser would run them.
   const timers = new Map<number, { fn: () => void; ms: number; due: number; repeat: boolean }>();
@@ -158,7 +158,7 @@ async function setup({
     ['settings.section', [
       { options: { id: 'models', order: 10, label: () => '模型' } },
       { options: { id: 'misc', order: 20, label: () => '其他' } },
-      { options: { id: 'dsbot-mobile-control', order: 50, label: () => '手机控制' } },
+      { options: { id: 'dudu-mobile-control', order: 50, label: () => '手机控制' } },
     ]],
   ]);
   const requireModule = (name: string): unknown => {
@@ -285,7 +285,7 @@ test('DSH reports its real registries: labels, icons and views, in a snapshot th
   await advance(600);
 
   assert.equal(posts.length, 1);
-  assert.equal(posts[0].path, '/api/dsbot/nav');
+  assert.equal(posts[0].path, '/api/dudu/nav');
   const snapshot = posts[0].body;
   assert.equal(snapshot.schemaVersion, 1);
 
@@ -318,7 +318,7 @@ test('DSH reports its real registries: labels, icons and views, in a snapshot th
   assert.deepEqual(snapshot.settings.map((item: any) => [item.id, item.title, item.icon?.viewBox?.join(',')]), [
     ['models', '模型', '0,0,16,16'],
     ['misc', '其他', '0,0,24,24'],
-    ['dsbot-mobile-control', '手机控制', '0,0,24,24'],
+    ['dudu-mobile-control', '手机控制', '0,0,24,24'],
   ]);
 
   // And the plugin keeps it, routed for the phone.

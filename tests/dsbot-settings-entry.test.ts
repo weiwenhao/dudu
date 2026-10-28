@@ -34,8 +34,8 @@ function descendants(value: unknown): ElementNode[] {
 }
 
 test('dsbot registers its existing controls as a DSH Settings section', async () => {
-  const source = await readFile(new URL('../host/dsbot-plugin/client.js', import.meta.url), 'utf8');
-  const metadata = JSON.parse(await readFile(new URL('../host/dsbot-plugin/package.json', import.meta.url), 'utf8'));
+  const source = await readFile(new URL('../host/dudu-plugin/client.js', import.meta.url), 'utf8');
+  const metadata = JSON.parse(await readFile(new URL('../host/dudu-plugin/package.json', import.meta.url), 'utf8'));
   const requests: string[] = [];
   const requestBodies: Array<{ path: string; body: Record<string, unknown> }> = [];
   const registrations: Array<{ options: Record<string, unknown>; component: Function }> = [];
@@ -101,7 +101,7 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
   const window = {
     __ModuleLoader__: {
       load(module: ClientModule) {
-        if (module.id === 'dsbot') {
+        if (module.id === 'dudu') {
           plugin = module.factory((name) => {
             if (name === 'react') return react;
             if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitives;
@@ -155,7 +155,7 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
   const legacyPluginEntry = registrations.find((entry) => entry.options.name === 'plugins.bundle.config');
   assert.ok(section, 'a first-class settings section should be registered');
   assert.ok(legacyPluginEntry, 'the existing plugin configuration entry should remain available');
-  assert.equal(section.options.id, 'dsbot-mobile-control');
+  assert.equal(section.options.id, 'dudu-mobile-control');
   assert.equal((section.options.label as () => string)(), '手机控制');
   assert.equal(section.options.order, 50);
   assert.ok(metadata.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-settings'));
@@ -171,7 +171,7 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
   let view = section.component({ close() {} }) as ElementNode;
   const text = JSON.stringify(view, (_key, value) => typeof value === 'function' ? '[function]' : value);
   assert.match(text, /手机控制/);
-  assert.deepEqual(requests, ['/api/dsbot/state'], 'opening Settings must not generate a pairing code');
+  assert.deepEqual(requests, ['/api/dudu/state'], 'opening Settings must not generate a pairing code');
 
   let nodes = descendants(view);
   const nameRow = nodes.find((node) => node.props.className === 'dsbot-settings-row');
@@ -239,7 +239,7 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
     && node.props.children?.includes('保存'));
   assert.equal(typeof saveButton?.props.onClick, 'function');
   await (saveButton?.props.onClick as () => Promise<void>)();
-  const saveRequest = requestBodies.find((entry) => entry.path === '/api/dsbot/save');
+  const saveRequest = requestBodies.find((entry) => entry.path === '/api/dudu/save');
   assert.deepEqual(saveRequest?.body.addresses, [lanAddress, ...customAddresses],
     'saving should keep the protected LAN address first and include editable custom addresses');
   assert.equal(saveButton?.props.variant, 'primary');

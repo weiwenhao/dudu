@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const plugin = join(root, 'host', 'dsbot-plugin');
+const plugin = join(root, 'host', 'dudu-plugin');
 const { version } = JSON.parse(await readFile(join(plugin, 'package.json'), 'utf8'));
 const output = join(root, '.local', 'release');
 await mkdir(output, { recursive: true });
@@ -35,19 +35,19 @@ for (const file of roots) await copyRuntime(file);
 if ([...copied].some((file) => /(?:^|\/)(?:relay\.mjs|mobile-adapter)/.test(file))) {
   throw new Error('The native desktop package must not include the old web relay.');
 }
-const staging = await mkdtemp(join(tmpdir(), 'dsbot-desktop-'));
+const staging = await mkdtemp(join(tmpdir(), 'dudu-desktop-'));
 try {
-  const folder = join(staging, 'dsbot-desktop');
+  const folder = join(staging, 'dudu-desktop');
   await mkdir(folder);
   const packed = JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', folder], {
     cwd: plugin, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'],
   }));
   if (packed.length !== 1) throw new Error('Expected one desktop plugin package.');
   await copyFile(join(root, 'desktop', 'README.md'), join(folder, 'README.md'));
-  const archive = join(output, `dsbot-desktop-${version}.zip`);
+  const archive = join(output, `dudu-desktop-${version}.zip`);
   // zip appends to an existing archive; create each artifact from an empty file.
   await rm(archive, { force: true });
-  execFileSync('zip', ['-q', '-r', archive, 'dsbot-desktop'], { cwd: staging });
+  execFileSync('zip', ['-q', '-r', archive, 'dudu-desktop'], { cwd: staging });
   await copyFile(join(folder, packed[0].filename), join(output, packed[0].filename));
   console.log(archive);
 } finally {
