@@ -28,10 +28,7 @@ struct ConnectionGuideView: View {
                     Spacer(minLength: 24)
 
                     VStack(spacing: 20) {
-                        DSBotIcon(.computer, size: 34)
-                            .foregroundStyle(DSBotStyle.ink)
-                            .frame(width: 76, height: 76)
-                            .dsbotGlass(in: RoundedRectangle(cornerRadius: 25, style: .continuous))
+                        DuduLogo(size: 76)
 
                         VStack(spacing: 12) {
                             Text("连接电脑上的 DSH")

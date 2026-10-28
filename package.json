@@ -48,6 +48,7 @@
     "build:adapter": "node --experimental-strip-types scripts/build-adapter.mts",
     "share": "npm run build:adapter && node scripts/share.mjs",
     "desktop:link": "node scripts/desktop-link.mjs",
+    "desktop:update": "node scripts/update-desktop.mjs",
     "package:desktop": "node scripts/package-desktop.mjs",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "preexport": "npm run build:adapter",

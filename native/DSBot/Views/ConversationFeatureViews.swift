@@ -1,6 +1,4 @@
 import SwiftUI
-import QuickLook
-import UniformTypeIdentifiers
 import UIKit
 
 struct ConversationAccess {
@@ -252,171 +250,7 @@ private struct ConversationToolText: UIViewRepresentable {
     }
 }
 
-struct TurnFilesView: View {
-    let files: [DeliveredFile]
-    let changesSeq: Double?
-    @Environment(\.conversationAccess) private var access
-    @State private var changes: ConversationChanges?
-    @State private var expanded = false
-    @State private var loading = false
-    @State private var failure: String?
-    @State private var selectedDiff: SelectedDiff?
-    @State private var changesLoadID: UUID?
-    @State private var loadingSeq: Double?
-
-    private struct SelectedDiff: Identifiable {
-        let id: Int
-        let seq: Double
-        let name: String
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if changesSeq != nil {
-                DisclosureGroup(isExpanded: $expanded) {
-                    if let changes {
-                        ForEach(Array(changes.files.enumerated()), id: \.offset) { index, file in
-                            Button {
-                                if let changesSeq { selectedDiff = SelectedDiff(id: index, seq: changesSeq, name: file.display) }
-                            } label: {
-                                HStack {
-                                    Text(file.display).lineLimit(2).multilineTextAlignment(.leading)
-                                    Spacer()
-                                    Text("+\(file.added)").foregroundStyle(.green)
-                                    Text("−\(file.deleted)").foregroundStyle(DSBotStyle.chatError)
-                                }
-                                .padding(.vertical, 8)
-                                .frame(minHeight: 44)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("changes.file.\(index)")
-                        }
-                    }
-                    if loading { ProgressView() }
-                    if let failure { ConversationFailureView(message: failure) { Task { await loadChanges() } } }
-                } label: {
-                    HStack(spacing: 8) {
-                        DSBotIcon(.file, size: 16, scalesStroke: true)
-                        Text(changes.map { "已编辑 \($0.total) 个文件" } ?? "文件改动")
-                        if let changes {
-                            Text("+\(changes.added)").foregroundStyle(.green)
-                            Text("−\(changes.deleted)").foregroundStyle(DSBotStyle.chatError)
-                        }
-                    }
-                }
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("changes.toggle")
-            }
-            let presentedPaths = Set(files.filter { $0.kind == "presented" }.map(\.path))
-            ForEach(files.filter { $0.kind != "produced" || !presentedPaths.contains($0.path) }) { file in
-                DeliveredFileCard(file: file)
-            }
-        }
-        .font(.system(size: 13))
-        .foregroundStyle(DSBotStyle.chatSecondary)
-        .onChange(of: expanded) { _, open in if open { Task { await loadChanges() } } }
-        .onChange(of: changesSeq) { _, _ in
-            changes = nil
-            if expanded { Task { await loadChanges() } }
-        }
-        .sheet(item: $selectedDiff) { selection in
-            ConversationDiffSheet(seq: selection.seq, index: selection.id, name: selection.name)
-        }
-    }
-
-    @MainActor private func loadChanges() async {
-        guard let access, let changesSeq, changes == nil,
-              !loading || loadingSeq != changesSeq else { return }
-        let loadID = UUID()
-        changesLoadID = loadID
-        loadingSeq = changesSeq
-        loading = true
-        failure = nil
-        defer {
-            if changesLoadID == loadID {
-                loading = false
-                loadingSeq = nil
-                changesLoadID = nil
-            }
-        }
-        do {
-            let result: ConversationChanges = try await access.read("session.changes", ["seq": .number(changesSeq)])
-            try Task.checkCancellation()
-            if changesLoadID == loadID, self.changesSeq == changesSeq { changes = result }
-        } catch is CancellationError {
-        } catch {
-            if changesLoadID == loadID, self.changesSeq == changesSeq { failure = error.localizedDescription }
-        }
-    }
-}
-
-private struct DeliveredFileCard: View {
-    let file: DeliveredFile
-    @Environment(\.conversationAccess) private var access
-    @State private var preview: URL?
-    @State private var loading = false
-    @State private var failure: String?
-    @State private var temporaryFile: URL?
-    @State private var openTask: Task<Void, Never>?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button { openTask = Task { await open() } } label: {
-                HStack(spacing: 12) {
-                    if loading { ProgressView() } else { DSBotIcon(.file, size: 26) }
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(file.name).font(.system(size: 14, weight: .medium)).foregroundStyle(DSBotStyle.chatInk).lineLimit(2)
-                        if let description = file.description, !description.isEmpty {
-                            Text(description).font(.system(size: 12)).lineLimit(3)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
-                .background(DSBotStyle.chatPanel, in: RoundedRectangle(cornerRadius: 16))
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(DSBotStyle.chatBorder, lineWidth: 0.5))
-            }
-            .buttonStyle(.plain)
-            .disabled(loading || access?.connected != true)
-            .accessibilityIdentifier("chat.file.\(file.id)")
-            if let failure { ConversationFailureView(message: failure) }
-        }
-        .quickLookPreview($preview)
-        .onChange(of: preview) { old, new in
-            if new == nil, let old { Task { await ConversationFileStorage.shared.remove(old) } }
-        }
-        .onDisappear {
-            if preview == nil {
-                openTask?.cancel()
-                if let temporaryFile { Task { await ConversationFileStorage.shared.remove(temporaryFile) } }
-            }
-        }
-    }
-
-    @MainActor private func open() async {
-        guard let access, !loading else { return }
-        loading = true
-        failure = nil
-        defer {
-            loading = false
-            openTask = nil
-        }
-        do {
-            let payload: ConversationFilePayload = try await access.read("session.file", file.parameters)
-            let url = try await ConversationFileStorage.shared.write(payload)
-            if Task.isCancelled {
-                await ConversationFileStorage.shared.remove(url)
-                return
-            }
-            temporaryFile = url
-            preview = url
-        } catch { failure = error.localizedDescription }
-    }
-}
-
-private struct ConversationDiffSheet: View {
+struct ConversationDiffContent: View {
     let seq: Double
     let index: Int
     let name: String
@@ -427,47 +261,72 @@ private struct ConversationDiffSheet: View {
     @State private var loading = false
 
     var body: some View {
-        NavigationStack {
+        GeometryReader { viewport in
             ScrollView([.vertical, .horizontal]) {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if let diff {
-                        if diff.kind == "binary" { Text("二进制文件，无法显示改动").padding() }
-                        else if diff.kind == "oversized" { Text("文件过大，无法显示改动").padding() }
-                        else {
-                            if diff.coarse == true { Text("逐行对比超时，按整个文件替换显示").padding() }
-                            if diff.before == false { Text("本轮新建的文件").padding() }
-                            if diff.after == false { Text("本轮删除的文件").padding() }
-                            ForEach(Array((diff.hunks ?? []).enumerated()), id: \.offset) { _, hunk in
-                                Text("@@ −\(hunk.oldStart),\(hunk.oldLines) +\(hunk.newStart),\(hunk.newLines) @@")
-                                    .foregroundStyle(DSBotStyle.chatSecondary).padding(.vertical, 10)
-                                ForEach(hunk.numberedLines) { line in
-                                    HStack(alignment: .top, spacing: 12) {
-                                        Text(line.old.map(String.init) ?? "").frame(width: 42, alignment: .trailing)
-                                        Text(line.new.map(String.init) ?? "").frame(width: 42, alignment: .trailing)
-                                        Text(line.text).fixedSize(horizontal: true, vertical: false)
-                                    }
-                                    .foregroundStyle(line.text.hasPrefix("-") ? DSBotStyle.chatError : DSBotStyle.chatInk)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.vertical, 2)
-                                    .background(line.text.hasPrefix("+") ? Color.green.opacity(0.10)
-                                                : line.text.hasPrefix("-") ? Color.red.opacity(0.08) : Color.clear)
-                                }
-                            }
-                            if diff.hunks?.isEmpty == true { Text("两侧内容相同").padding() }
-                        }
-                    }
-                    if loading { ProgressView().padding() }
-                    if let failure { ConversationFailureView(message: failure) { Task { await load() } }.padding() }
-                }
-                .font(.system(size: 12, design: .monospaced))
-                .textSelection(.enabled)
-                .padding(16)
+                diffContent
+                    .frame(minWidth: max(0, viewport.size.width - 32), alignment: .leading)
+                    .padding(16)
             }
-            .navigationTitle(name)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+            .defaultScrollAnchor(.topLeading)
+            .accessibilityIdentifier("changes.diff")
+        }
+        .navigationTitle(name)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { dismiss() } label: {
+                    DSBotIcon(.close, size: 20)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Circle())
+                }
+                .accessibilityLabel("关闭")
+                .accessibilityIdentifier("changes.diff.close")
+            }
         }
         .task { await load() }
+    }
+
+    private var diffContent: some View {
+        LazyVStack(alignment: .leading, spacing: 0) {
+            if let diff {
+                if diff.kind == "binary" { Text("二进制文件，无法显示改动").padding() }
+                else if diff.kind == "oversized" { Text("文件过大，无法显示改动").padding() }
+                else {
+                    if diff.coarse == true { Text("逐行对比超时，按整个文件替换显示").padding() }
+                    if diff.before == false { Text("本轮新建的文件").padding() }
+                    if diff.after == false { Text("本轮删除的文件").padding() }
+                    ForEach(Array((diff.hunks ?? []).enumerated()), id: \.offset) { hunkIndex, hunk in
+                        Text("@@ −\(hunk.oldStart),\(hunk.oldLines) +\(hunk.newStart),\(hunk.newLines) @@")
+                            .foregroundStyle(DSBotStyle.chatSecondary).padding(.vertical, 10)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .accessibilityIdentifier("changes.diff.hunk.\(hunkIndex)")
+                        ForEach(hunk.numberedLines) { line in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(line.old.map(String.init) ?? "").frame(width: lineNumberWidth, alignment: .trailing)
+                                Text(line.new.map(String.init) ?? "").frame(width: lineNumberWidth, alignment: .trailing)
+                                Text(line.text).fixedSize(horizontal: true, vertical: false)
+                                    .accessibilityIdentifier("changes.diff.line.\(hunkIndex).\(line.id)")
+                            }
+                            .foregroundStyle(line.text.hasPrefix("-") ? DSBotStyle.chatError : DSBotStyle.chatInk)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 2)
+                            .background(line.text.hasPrefix("+") ? Color.green.opacity(0.10)
+                                        : line.text.hasPrefix("-") ? Color.red.opacity(0.08) : Color.clear)
+                        }
+                    }
+                    if diff.hunks?.isEmpty == true { Text("两侧内容相同").padding() }
+                }
+            }
+            if loading { ProgressView().padding() }
+            if let failure { ConversationFailureView(message: failure) { Task { await load() } }.padding() }
+        }
+        .font(.system(size: 12, design: .monospaced))
+        .textSelection(.enabled)
+    }
+
+    private var lineNumberWidth: CGFloat {
+        let largest = diff?.hunks?.map { max($0.oldStart + $0.oldLines, $0.newStart + $0.newLines) }.max() ?? 0
+        return max(24, CGFloat(String(largest).count) * 7.25 + 6)
     }
 
     @MainActor private func load() async {

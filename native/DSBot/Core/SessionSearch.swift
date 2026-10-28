@@ -92,7 +92,7 @@ final class SessionSearchModel: ObservableObject {
             guard requestID == loadID, !Task.isCancelled else { return }
             if let failure = error as? DSBotFailure, case let .remote(code) = failure,
                ["UNSUPPORTED", "METHOD_NOT_ALLOWED"].contains(code) {
-                self.error = "请先在电脑上更新 dsbot 插件，再使用此功能。"
+                self.error = "请先在电脑上更新 Dudu 插件，再使用此功能。"
             } else {
                 self.error = (error as? DSBotFailure ?? .connectionFailed).localizedDescription
             }

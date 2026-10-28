@@ -256,10 +256,6 @@ struct DSBotRootView: View {
         let offset: CGFloat
         let progress: CGFloat
         let isOpen: Bool
-        /// How far the conversation reaches below the layout's bottom edge: the home-indicator strip while
-        /// no keyboard is up, so the history runs to the bottom of the screen. It is gone once the keyboard
-        /// has the strip, and eases out as the keyboard's inset grows.
-        let chatBottomInset: CGFloat
     }
 
     private func drawerMetrics(in geometry: GeometryProxy, position: DrawerPosition) -> DrawerMetrics {
@@ -269,10 +265,7 @@ struct DSBotRootView: View {
             width: width,
             offset: offset,
             progress: width > 0 ? min(1, max(0, offset / width)) : 0,
-            isOpen: position.isOpen,
-            chatBottomInset: KeyboardAvoidance.bottomReach(
-                homeInset: homeInset, safeAreaBottom: geometry.safeAreaInsets.bottom
-            )
+            isOpen: position.isOpen
         )
     }
 
@@ -403,8 +396,7 @@ struct DSBotRootView: View {
                 historyTopInset: safeTop + DSBotLayout.toolbarHeight
             )
             .id(chatIdentity)
-            .frame(width: geometry.size.width, height: geometry.size.height + safeTop + metrics.chatBottomInset)
-            .offset(y: -safeTop)
+            .ignoresSafeArea(.container)
             .opacity(destination.showsChat ? 1 : 0)
             .allowsHitTesting(destination.showsChat)
             .accessibilityHidden(!destination.showsChat)

@@ -42,10 +42,7 @@ struct PairingView: View {
         VStack(spacing: 0) {
             if !embeddedInSettings {
                 Spacer(minLength: 30)
-                DSBotIcon(.computer, size: 36)
-                    .foregroundStyle(DSBotStyle.ink)
-                    .frame(width: 72, height: 72)
-                    .background(DSBotStyle.sheet, in: RoundedRectangle(cornerRadius: 23))
+                DuduLogo(size: 72)
                     .padding(.bottom, 22)
                 Text("连接电脑上的 DSH")
                     .font(.system(size: 23, weight: .semibold))

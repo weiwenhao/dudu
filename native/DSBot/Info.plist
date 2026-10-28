@@ -5,7 +5,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>zh_CN</string>
     <key>CFBundleDisplayName</key>
-    <string>dsbot</string>
+    <string>Dudu</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>$(PRODUCT_NAME)</string>
+    <string>Dudu</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -23,7 +23,7 @@
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>NSCameraUsageDescription</key>
-    <string>拍摄对话图片，或扫描电脑上的 dsbot 配对二维码。</string>
+    <string>拍摄对话图片，或扫描电脑上的 Dudu 配对二维码。</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>连接你电脑上的 DSH，继续对话和管理任务。</string>
     <key>NSMicrophoneUsageDescription</key>

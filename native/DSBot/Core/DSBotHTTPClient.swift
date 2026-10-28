@@ -217,7 +217,8 @@ actor DSBotHTTPClient: DSBotTransport {
         } catch {
             let failure = normalizedFailure(error, method: method)
             DSBotLog.networkFailure(
-                "http.request.fail", error: failure, elapsedMs: elapsed(since: startedAt)
+                "http.request.fail", error: failure, method: method, requestId: requestID,
+                elapsedMs: elapsed(since: startedAt)
             )
             if isTerminalConnectionFailure(failure) {
                 await failConnection(generation: connection.generation)

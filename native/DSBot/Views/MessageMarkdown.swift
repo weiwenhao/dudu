@@ -6,7 +6,8 @@ struct MessageMarkdown: View {
     /// Smaller, quieter text for secondary content such as a compaction summary.
     var compact = false
     var allowsTextSelection = true
-    @State private var parsed: MarkdownContent?
+    @Environment(\.conversationMarkdown) private var prepared
+    @State private var parsed: (text: String, content: MarkdownContent)?
 
     var body: some View {
         Group {
@@ -17,24 +18,24 @@ struct MessageMarkdown: View {
             }
         }
         .task(id: text) {
+            guard prepared.content(for: text) == nil else { return }
             let content = await MessageMarkdownCache.shared.content(for: text)
             guard !Task.isCancelled else { return }
-            parsed = content
+            parsed = (text, content)
         }
     }
 
     private var renderedContent: some View {
         Group {
-            if let parsed = MessageMarkdownCache.cachedContent(for: text) ?? parsed {
+            if let parsed = prepared.content(for: text) ?? MessageMarkdownCache.cachedContent(for: text) ??
+                (parsed?.text == text ? parsed?.content : nil) {
                 Markdown(parsed)
                     .markdownTheme(compact ? .dsbotCompact : .dsbot)
                     .markdownImageProvider(MessageImagePlaceholder())
                     .markdownInlineImageProvider(MessageInlineImagePlaceholder())
             } else {
-                Text(text)
-                    .font(.system(size: compact ? 14 : 16))
-                    .foregroundStyle(compact ? DSBotStyle.chatSecondary : DSBotStyle.ink)
-                    .fixedSize(horizontal: false, vertical: true)
+                ProgressView()
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

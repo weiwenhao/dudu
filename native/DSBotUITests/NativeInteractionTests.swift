@@ -79,7 +79,7 @@ final class NativeInteractionTests: XCTestCase {
     }
 
     private var chatHistory: XCUIElement {
-        app.tables["chat.history"]
+        app.scrollViews["chat.history"]
     }
 
     private func waitForVisibleInConversation(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
@@ -909,7 +909,7 @@ final class NativeInteractionTests: XCTestCase {
 
     func testHeavyHistoryAppearsOnColdLaunchAndAfterSwitchingSessionsWithoutSwiping() throws {
         relaunchReviewApp(additionalArguments: ["-dsbot-review-heavy-history"])
-        let latestMessage = chatHistory.cells["transcript:turn:turn-40"].staticTexts
+        let latestMessage = chatHistory.otherElements["transcript:turn:turn-40"].staticTexts
             .matching(NSPredicate(format: "label CONTAINS %@", "再确认一次。")).firstMatch
         let latestVisible = waitForVisibleInConversation(latestMessage, timeout: 10)
         if !latestVisible { capture("native-heavy-history-not-visible") }
@@ -936,6 +936,24 @@ final class NativeInteractionTests: XCTestCase {
         capture("native-heavy-history-session-restored")
     }
 
+    func testCachedHistoryRefreshesWithNewTurnsAndRemainsVisibleAfterSmallDrag() throws {
+        let arguments = ["-dsbot-review-cache-id", UUID().uuidString, "-dsbot-review-heavy-history"]
+        relaunchReviewApp(additionalArguments: arguments + ["-dsbot-review-heavy-cache-prefix"])
+        XCTAssertTrue(waitForVisibleInConversation(staticText(containing: "再确认一次。"), timeout: 10))
+        XCUIDevice.shared.press(.home)
+        app.terminate()
+        launchReviewApp(additionalArguments: arguments)
+        let lastAnswer = chatHistory.otherElements["transcript:turn:turn-40"].staticTexts
+            .matching(NSPredicate(format: "label CONTAINS %@", "再确认一次。")).firstMatch
+        XCTAssertTrue(waitForVisibleInConversation(lastAnswer, timeout: 10))
+        let history = chatHistory
+        history.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+            .press(forDuration: 0.05, thenDragTo: history.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65)))
+        let visibleText = history.staticTexts.allElementsBoundByIndex.contains { isVisibleInConversation($0) }
+        XCTAssertTrue(visibleText, "New turns must leave real message content in the viewport after a small drag.")
+        capture("native-cache-refresh-new-turns")
+    }
+
     func testLongHistoryLatestMarkerAndReadingPositionSurviveKeyboardOpening() throws {
         relaunchReviewApp(additionalArguments: ["-dsbot-review-long-history"])
         let endingText = staticText(containing: "长对话检查完成。")
@@ -944,7 +962,7 @@ final class NativeInteractionTests: XCTestCase {
             waitForVisibleInConversation(endingText, timeout: 10),
             "The final sentence must be visible after Markdown finishes laying out."
         )
-        let earlyMessage = app.descendants(matching: .any)["chat.message.review-long-54"]
+        let earlyMessage = chatHistory.otherElements["transcript:user:review-long-54"]
         XCTAssertFalse(isVisibleInConversation(earlyMessage), "The initial view should be at the end of the long conversation.")
         XCTAssertFalse(app.buttons["chat.latest"].exists)
         capture("native-long-history-latest")
@@ -969,10 +987,13 @@ final class NativeInteractionTests: XCTestCase {
         XCTAssertTrue(app.buttons["chat.latest"].waitForExistence(timeout: 5))
         XCTAssertFalse(isVisibleInConversation(endingText))
         let readingPosition = earlyMessage.frame.minY
+        let readingViewport = history.frame
 
         app.descendants(matching: .any)["composer.text"].firstMatch.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitForVisibleInConversation(earlyMessage))
+        let readingVisible = waitForVisibleInConversation(earlyMessage)
+        if !readingVisible { capture("native-reading-keyboard-position-failed") }
+        XCTAssertTrue(readingVisible, "Reading marker: \(earlyMessage.frame), previous: \(readingPosition), viewport: \(history.frame), previous viewport: \(readingViewport).")
         XCTAssertLessThanOrEqual(abs(earlyMessage.frame.minY - readingPosition), 8)
         XCTAssertTrue(app.buttons["chat.latest"].exists)
         XCTAssertFalse(isVisibleInConversation(endingText), "Opening the keyboard must not jump the reader back to the latest message.")
@@ -994,19 +1015,99 @@ final class NativeInteractionTests: XCTestCase {
         capture("native-long-history-jump-to-latest")
     }
 
+    func testOrdinaryHistoryDragsFollowTheFingerAndRemainStillAfterRelease() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-long-history"])
+        XCTAssertTrue(waitForVisibleInConversation(staticText(containing: "长对话检查完成。"), timeout: 10))
+        let history = chatHistory
+        for iteration in 0..<6 {
+            let top = app.buttons["sidebar.toggle"].frame.maxY + 24
+            let bottom = app.buttons["composer.plus"].frame.minY - 24
+            let candidates = history.descendants(matching: .any).matching(
+                NSPredicate(format: "identifier BEGINSWITH %@", "transcript:user:review-long-")
+            ).allElementsBoundByIndex
+            let visible = try XCTUnwrap(candidates.first {
+                $0.frame.minY > top && $0.frame.maxY < bottom && $0.frame.height > 0
+            })
+            let marker = app.descendants(matching: .any)[visible.identifier].firstMatch
+            let before = marker.frame.minY
+            let start = history.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+            start.press(
+                forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 180)),
+                withVelocity: .slow, thenHoldForDuration: 0.2
+            )
+            XCTAssertEqual(marker.frame.minY - before, 180, accuracy: 18,
+                           "Ordinary dragging must not be cancelled by a layout correction.")
+            XCTAssertTrue(app.buttons["chat.latest"].waitForExistence(timeout: 3))
+            let settled = marker.frame.minY
+            for _ in 0..<6 {
+                Thread.sleep(forTimeInterval: 0.08)
+                XCTAssertEqual(marker.frame.minY, settled, accuracy: 2,
+                               "Static history must stay still after the finger is released.")
+            }
+            capture("native-ordinary-history-drag-\(iteration)")
+        }
+    }
+
+    func testJumpFromTheStartOfHeavyHistoryReachesTheActualLastMessage() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-heavy-history", "-dsbot-review-history-start"])
+        let first = staticText(containing: "第 1 个问题")
+        XCTAssertTrue(waitForVisibleInConversation(first, timeout: 15))
+        let ending = chatHistory.otherElements["transcript:turn:turn-40"].staticTexts
+            .matching(NSPredicate(format: "label CONTAINS %@", "再确认一次。")).firstMatch
+        XCTAssertFalse(isVisibleInConversation(ending))
+        capture("native-heavy-history-start")
+        tapCenter(app.buttons["chat.latest"])
+        XCTAssertTrue(waitForVisibleInConversation(ending, timeout: 5))
+        XCTAssertFalse(isVisibleInConversation(first))
+        XCTAssertTrue(waitForDisappearance(app.buttons["chat.latest"]))
+        capture("native-heavy-history-full-jump")
+    }
+
+    func testHeavyHistoryLatestRemainsAboveTheKeyboardAfterJumping() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-heavy-history", "-dsbot-review-goal"])
+        let ending = chatHistory.otherElements["transcript:turn:turn-40"].staticTexts
+            .matching(NSPredicate(format: "label CONTAINS %@", "再确认一次。")).firstMatch
+        let latest = app.buttons["chat.latest"]
+        XCTAssertTrue(waitForVisibleInConversation(ending, timeout: 15))
+        for _ in 0..<3 {
+            chatHistory.swipeDown()
+        }
+        XCTAssertTrue(latest.waitForExistence(timeout: 5))
+        capture("native-heavy-history-before-jump")
+        tapCenter(latest)
+        XCTAssertTrue(waitForDisappearance(latest))
+        let landed = waitForVisibleInConversation(ending)
+        capture("native-heavy-history-after-jump")
+        XCTAssertTrue(landed, "The jump must end at the latest message.")
+        for iteration in 0..<3 {
+            tapCenter(app.descendants(matching: .any)["composer.text"].firstMatch)
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            let visible = waitForVisibleInConversation(ending)
+            if !visible { capture("native-heavy-history-keyboard-failed-\(iteration)") }
+            XCTAssertTrue(visible, "History: \(chatHistory.frame), goal: \(app.buttons["goal.banner"].frame).")
+            XCTAssertLessThan(app.buttons["goal.banner"].frame.minY - ending.frame.maxY, 100)
+            tapCenter(app.buttons["composer.voice"])
+            XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch))
+            tapCenter(app.buttons["composer.keyboard"])
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            XCTAssertTrue(waitForVisibleInConversation(ending))
+        }
+        capture("native-heavy-history-keyboard")
+    }
+
     func testKeyboardDismissalAtLatestDoesNotLeaveAGapAndCanFocusAgain() throws {
         relaunchReviewApp(additionalArguments: [
             "-dsbot-review-rich", "-dsbot-review-running", "-dsbot-review-streaming-fast"
         ])
         let input = app.descendants(matching: .any)["composer.text"].firstMatch
-        let running = chatHistory.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "running:")).firstMatch
+        let running = chatHistory.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "running:")).firstMatch
         XCTAssertTrue(waitForVisibleInConversation(running, timeout: 15))
         for iteration in 0..<3 {
             input.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: iteration.isMultiple(of: 2) ? 0.15 : 0.85)).tap()
             XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4))
             let replyVisibleWithKeyboard = waitForVisibleInConversation(running)
             if !replyVisibleWithKeyboard { capture("native-keyboard-focus-reply-position-failed-\(iteration)") }
-            XCTAssertTrue(replyVisibleWithKeyboard)
+            XCTAssertTrue(replyVisibleWithKeyboard, "Status: \(running.frame), viewport: \(chatHistory.frame), composer: \(app.buttons["composer.plus"].frame).")
             let history = chatHistory
             let start = history.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 220)),
@@ -1018,7 +1119,9 @@ final class NativeInteractionTests: XCTestCase {
             if !replyVisible { capture("native-keyboard-reply-position-failed-\(iteration)") }
             XCTAssertTrue(replyVisible, "Dismissing the keyboard at the end must keep the live reply in view.")
             XCTAssertFalse(app.buttons["chat.latest"].exists)
-            XCTAssertLessThan(app.buttons["composer.plus"].frame.minY - running.frame.maxY, 80,
+            let bottomGap = app.buttons["composer.plus"].frame.minY - running.frame.maxY
+            if bottomGap >= 80 { capture("native-keyboard-bottom-gap-\(iteration)") }
+            XCTAssertLessThan(bottomGap, 80,
                               "The keyboard must not leave an empty keyboard-sized gap below the reply.")
         }
         capture("native-fast-stream-keyboard-dismissal")
@@ -1028,7 +1131,7 @@ final class NativeInteractionTests: XCTestCase {
         relaunchReviewApp(additionalArguments: [
             "-dsbot-review-rich", "-dsbot-review-running", "-dsbot-review-streaming-fast"
         ])
-        let running = chatHistory.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "running:")).firstMatch
+        let running = chatHistory.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "running:")).firstMatch
         let statusVisible = waitForVisibleInConversation(running, timeout: 15)
         if !statusVisible { capture("native-fast-stream-initial-status-missing") }
         XCTAssertTrue(statusVisible, app.debugDescription)
@@ -1161,7 +1264,7 @@ final class NativeInteractionTests: XCTestCase {
         XCTAssertTrue(stop.waitForExistence(timeout: 10))
         XCTAssertTrue(waitForVisibleInConversation(staticText(containing: "流式输出第 3 段"), timeout: 10))
         XCTAssertTrue(waitForVisibleInConversation(runningStatus))
-        let initialReplyHeight = app.otherElements["chat.turn.turn-2"].frame.height
+        let initialReplyHeight = chatHistory.otherElements["transcript:turn:turn-2"].frame.height
         XCTAssertFalse(latest.exists)
         capture("native-streaming-at-end")
 
@@ -1186,7 +1289,7 @@ final class NativeInteractionTests: XCTestCase {
         }
         XCTAssertTrue(waitForDisappearance(latest))
         XCTAssertTrue(waitForVisibleInConversation(runningStatus))
-        XCTAssertGreaterThan(app.otherElements["chat.turn.turn-2"].frame.height, initialReplyHeight + 100)
+        XCTAssertGreaterThan(chatHistory.otherElements["transcript:turn:turn-2"].frame.height, initialReplyHeight + 100)
         XCTAssertTrue(waitForVisibleInConversation(runningStatus))
         XCTAssertFalse(latest.exists, "The reply must keep following new output after manually reaching the bottom.")
         capture("native-streaming-returned-to-end")
@@ -1267,7 +1370,7 @@ final class NativeInteractionTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(voiceToggle.frame.height, 42)
 
         for _ in 0..<2 {
-            voiceToggle.tap()
+            tapCenter(voiceToggle)
             let hold = app.buttons["composer.hold"]
             XCTAssertTrue(hold.waitForExistence(timeout: 5))
             XCTAssertFalse(app.descendants(matching: .any)["composer.text"].exists)
@@ -1278,7 +1381,7 @@ final class NativeInteractionTests: XCTestCase {
             XCTAssertEqual(hold.frame.midY, keyboardToggle.frame.midY, accuracy: 1)
             capture("native-hold-to-talk-bar")
 
-            keyboardToggle.tap()
+            tapCenter(keyboardToggle)
             XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
             XCTAssertTrue(app.descendants(matching: .any)["composer.text"].firstMatch.waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons["composer.hold"].exists)
@@ -1325,6 +1428,7 @@ final class NativeInteractionTests: XCTestCase {
         relaunchReviewApp(additionalArguments: ["-dsbot-review-voice-press"])
         let overlay = app.descendants(matching: .any)["voice.overlay.recording"]
         XCTAssertTrue(overlay.waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(overlay.frame.height, 300)
         capture("native-voice-press")
 
         relaunchReviewApp(additionalArguments: ["-dsbot-review-voice-cancel"])
@@ -1337,9 +1441,13 @@ final class NativeInteractionTests: XCTestCase {
     private func enterHoldToTalk() -> XCUIElement {
         let toggle = app.buttons["composer.voice"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 30))
-        toggle.tap()
+        tapCenter(toggle)
         let hold = app.buttons["composer.hold"]
-        XCTAssertTrue(hold.waitForExistence(timeout: 5))
+        let enteredVoiceMode = hold.waitForExistence(timeout: 5)
+        if !enteredVoiceMode {
+            capture("native-voice-mode-toggle-failed")
+        }
+        XCTAssertTrue(enteredVoiceMode)
         return hold
     }
 
@@ -1353,12 +1461,49 @@ final class NativeInteractionTests: XCTestCase {
         capture("native-voice-sent")
     }
 
+    func testVoiceHoldWithSmallUpwardDriftStillSends() throws {
+        let voice = enterHoldToTalk()
+        let start = voice.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(
+            forDuration: 0.4,
+            thenDragTo: start.withOffset(CGVector(dx: 0, dy: -100)),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.1
+        )
+        XCTAssertTrue(app.staticTexts["继续优化手机界面"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["message.copy"].exists)
+        XCTAssertTrue(waitForDisappearance(app.descendants(matching: .any)["voice.overlay.recording"]))
+    }
+
     func testVoiceHoldWithSlowCaptureInLongConversationStillSends() throws {
         relaunchReviewApp(additionalArguments: ["-dsbot-review-heavy-history", "-dsbot-review-delayed-speech"])
         let voice = enterHoldToTalk()
         voice.press(forDuration: 1.2)
         XCTAssertTrue(app.staticTexts["继续优化手机界面"].waitForExistence(timeout: 5))
         XCTAssertTrue(waitForDisappearance(app.descendants(matching: .any)["voice.overlay.recording"]))
+    }
+
+    func testVoiceHoldAboveScrolledMessagesDoesNotOpenTheirContextMenu() throws {
+        try assertVoiceHoldAboveScrolledMessages(at: CGVector(dx: 0.1, dy: 0.5))
+    }
+
+    func testVoiceHoldNearBarEdgeDoesNotOpenMessageContextMenu() throws {
+        try assertVoiceHoldAboveScrolledMessages(at: CGVector(dx: 0.98, dy: 0.98))
+    }
+
+    private func assertVoiceHoldAboveScrolledMessages(at point: CGVector) throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-long-history", "-dsbot-review-delayed-speech"])
+        let voice = enterHoldToTalk()
+        chatHistory.swipeDown(velocity: .slow)
+        XCTAssertTrue(app.buttons["chat.latest"].waitForExistence(timeout: 5))
+        voice.coordinate(withNormalizedOffset: point).press(forDuration: 1.2)
+        capture("native-voice-hold-above-history")
+        XCTAssertFalse(app.buttons["message.copy"].exists, "The hold surface must consume the press above the transcript.")
+        XCTAssertFalse(app.buttons["message.select"].exists)
+        let latest = app.buttons["chat.latest"]
+        if latest.exists { tapCenter(latest) }
+        XCTAssertTrue(app.staticTexts["继续优化手机界面"].waitForExistence(timeout: 5))
+        capture("native-voice-sent-above-history")
     }
 
     func testVoiceSwipeUpCancelsWithoutSending() throws {
@@ -1470,7 +1615,7 @@ final class NativeInteractionTests: XCTestCase {
         let compact = app.buttons["composer.compact"]
         XCTAssertTrue(compact.waitForExistence(timeout: 5))
         compact.tap()
-        XCTAssertTrue(staticText(containing: "请先在电脑上更新 dsbot 插件").waitForExistence(timeout: 10))
+        XCTAssertTrue(staticText(containing: "请先在电脑上更新 Dudu 插件").waitForExistence(timeout: 10))
         let feedback = app.descendants(matching: .any)["feedback.toast"].firstMatch
         XCTAssertTrue(feedback.waitForExistence(timeout: 5))
         XCTAssertGreaterThan(feedback.frame.minY, app.buttons["sidebar.toggle"].frame.maxY)
@@ -1646,7 +1791,7 @@ final class NativeInteractionTests: XCTestCase {
         relaunchReviewApp(additionalArguments: ["-dsbot-review-goal", "-dsbot-review-tasks", "-dsbot-review-long-history"])
         XCTAssertTrue(waitForVisibleInConversation(staticText(containing: "长对话检查完成。"), timeout: 10))
         let history = chatHistory
-        let earlierMessage = app.descendants(matching: .any)["chat.message.review-long-54"].firstMatch
+        let earlierMessage = chatHistory.otherElements["transcript:user:review-long-54"]
         for _ in 0..<12 where !isVisibleInConversation(earlierMessage) {
             history.swipeDown()
         }
@@ -1676,6 +1821,11 @@ final class NativeInteractionTests: XCTestCase {
         capture("native-goal-and-tasks-expanded-while-reading")
 
         goal.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let collapsed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in abs(goal.frame.minY - goalFrame.minY) <= 1 },
+            object: nil
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [collapsed], timeout: 3), .completed)
         XCTAssertEqual(goal.frame.minY, goalFrame.minY, accuracy: 1)
         XCTAssertEqual(goal.frame.maxY, goalFrame.maxY, accuracy: 1)
         XCTAssertEqual(earlierMessage.frame.minY, readingY, accuracy: 2)
@@ -1734,7 +1884,7 @@ final class NativeInteractionTests: XCTestCase {
         relaunchReviewApp(additionalArguments: ["-dsbot-review-tasks", "-dsbot-review-goal", "-dsbot-review-long-history"])
         XCTAssertTrue(waitForVisibleInConversation(staticText(containing: "长对话检查完成。"), timeout: 10))
         let history = chatHistory
-        let earlierMessage = app.descendants(matching: .any)["chat.message.review-long-54"].firstMatch
+        let earlierMessage = chatHistory.otherElements["transcript:user:review-long-54"]
         for _ in 0..<12 where !isVisibleInConversation(earlierMessage) {
             history.swipeDown()
         }
@@ -1875,7 +2025,8 @@ final class NativeInteractionTests: XCTestCase {
         tapCenter(file)
         XCTAssertTrue(staticText(containing: "+新内容").waitForExistence(timeout: 5))
         XCTAssertTrue(staticText(containing: "-旧内容").exists)
-        app.buttons["完成"].tap()
+        app.buttons["changes.diff.close"].tap()
+        app.buttons["files.browser.close"].tap()
         let image = app.buttons["queue.image.queue:parity:0"]
         XCTAssertTrue(image.waitForExistence(timeout: 5))
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: image)
@@ -1884,6 +2035,99 @@ final class NativeInteractionTests: XCTestCase {
         XCTAssertTrue(app.buttons["photo.preview.close"].waitForExistence(timeout: 5))
         app.buttons["photo.preview.close"].tap()
         XCTAssertTrue(app.buttons["chat.file.parity-file"].exists)
+    }
+
+    func testLongDiffStartsAtTheLeadingEdgeAndKeepsLinesReadable() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-parity", "-dsbot-review-long-diff"])
+        let changes = app.buttons["changes.toggle"]
+        XCTAssertTrue(changes.waitForExistence(timeout: 10))
+        XCTAssertTrue(staticText(containing: "已编辑 1 个文件").waitForExistence(timeout: 5))
+        tapCenter(changes)
+        tapCenter(app.buttons["changes.file.0"])
+        let hunk = app.staticTexts["changes.diff.hunk.0"]
+        let firstLine = app.staticTexts["changes.diff.line.0.0"]
+        XCTAssertTrue(hunk.waitForExistence(timeout: 5))
+        XCTAssertTrue(firstLine.exists)
+        XCTAssertEqual(hunk.frame.minX, app.frame.minX + 16, accuracy: 2)
+        XCTAssertLessThan(hunk.frame.height, 30)
+        XCTAssertGreaterThan(firstLine.frame.width, app.frame.width * 2)
+        XCTAssertGreaterThanOrEqual(firstLine.frame.minX, app.frame.minX + 16)
+        XCTAssertLessThan(firstLine.frame.minX, app.frame.minX + app.frame.width / 4)
+        capture("native-long-diff-leading-edge")
+        let scroll = app.scrollViews["changes.diff"]
+        let addition = staticText(containing: "+新内容")
+        for _ in 0..<4 where !addition.isHittable { scroll.swipeUp() }
+        XCTAssertTrue(addition.isHittable)
+        XCTAssertGreaterThanOrEqual(addition.frame.minX, app.frame.minX)
+        XCTAssertLessThan(addition.frame.minX, app.frame.midX)
+        tapCenter(app.buttons["changes.diff.close"])
+        XCTAssertTrue(waitForDisappearance(app.buttons["changes.diff.close"]))
+        tapCenter(app.buttons["files.browser.close"])
+        XCTAssertTrue(app.buttons["changes.toggle"].exists)
+    }
+
+    func testManyFilesStayCompactAndSearchOpensTheRecordedDiff() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-parity", "-dsbot-review-many-files"])
+        let changes = app.buttons["changes.toggle"]
+        XCTAssertTrue(changes.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitForLabel(changes, containing: "18"))
+        XCTAssertTrue(app.buttons["files.presented.all"].exists)
+        XCTAssertFalse(app.buttons["files.produced.all"].exists)
+        XCTAssertFalse(app.buttons["chat.file.produced-0"].exists)
+        XCTAssertTrue(app.buttons["chat.file.presented-2"].exists)
+        XCTAssertFalse(app.buttons["chat.file.presented-3"].exists)
+        capture("files-compact-conversation")
+        tapCenter(changes)
+        let search = app.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        capture("files-changes-browser")
+        search.tap()
+        search.typeText("module-17")
+        let result = app.buttons["changes.file.17"]
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(result.frame.height, 44)
+        XCTAssertFalse(app.buttons["changes.file.0"].exists)
+        tapCenter(result)
+        XCTAssertTrue(staticText(containing: "+new-17").waitForExistence(timeout: 5))
+        XCTAssertTrue(staticText(containing: "-old-17").exists)
+        capture("files-filtered-diff")
+        tapCenter(app.buttons["changes.diff.close"])
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        tapCenter(app.buttons["files.browser.close"])
+        XCTAssertTrue(app.buttons["files.presented.all"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["chat.file.presented-3"].exists)
+    }
+
+    func testDeliveredFileBrowserFindsFilesBeyondTheInlinePreview() throws {
+        relaunchReviewApp(additionalArguments: ["-dsbot-review-parity", "-dsbot-review-many-files"])
+        let all = app.buttons["files.presented.all"]
+        XCTAssertTrue(all.waitForExistence(timeout: 10))
+        tapCenter(all)
+        let search = app.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        capture("files-delivered-browser")
+        search.tap()
+        search.typeText("report-7")
+        let browser = app.collectionViews["files.browser"]
+        let file = browser.buttons["chat.file.presented-7"]
+        XCTAssertTrue(file.waitForExistence(timeout: 5))
+        XCTAssertFalse(browser.buttons["chat.file.presented-0"].exists)
+        tapCenter(file)
+        let content = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "已验证", "已验证")
+        ).firstMatch
+        XCTAssertTrue(content.waitForExistence(timeout: 10))
+    }
+
+    func testUnavailableChangesDoNotAddAGeneratedFilesEntry() throws {
+        relaunchReviewApp(additionalArguments: [
+            "-dsbot-review-parity", "-dsbot-review-many-files", "-dsbot-review-changes-unavailable"
+        ])
+        XCTAssertTrue(app.buttons["重试"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["files.produced.all"].exists)
+        XCTAssertFalse(app.buttons["chat.file.produced-19"].exists)
+        XCTAssertTrue(app.buttons["files.presented.all"].exists)
+        XCTAssertTrue(app.buttons["chat.file.presented-0"].exists)
     }
 
     func testParityOlderHistoryToolDetailsAndSessionPerformance() throws {

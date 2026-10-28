@@ -2,33 +2,15 @@ import XCTest
 @testable import dsbot
 
 final class ChatScrollPositionTests: XCTestCase {
-    func testBottomOffsetUsesTheNativeViewportAndComposerInsetOnce() {
-        XCTAssertEqual(ChatScrollPosition.bottomOffset(
-            contentHeight: 1_900, containerHeight: 874, topInset: 0, bottomInset: 83
-        ), 1_109)
-        XCTAssertEqual(ChatScrollPosition.bottomOffset(
-            contentHeight: 1_900, containerHeight: 554, topInset: 0, bottomInset: 59
-        ), 1_405)
-        XCTAssertEqual(ChatScrollPosition.bottomOffset(
-            contentHeight: 400, containerHeight: 874, topInset: 0, bottomInset: 83
-        ), 0)
-        XCTAssertEqual(ChatScrollPosition.bottomOffset(
-            contentHeight: 400, containerHeight: 874, topInset: 100, bottomInset: 83
-        ), -100)
-    }
-
-    func testLatestPositionIncludesNativeInsetsWhenTheKeyboardChangesTheViewport() {
+    func testNativeGeometryUsesTheVisibleViewportWithoutAddingKeyboardInsetsAgain() {
         XCTAssertTrue(ChatScrollPosition.isAtEnd(
-            contentHeight: 1_900, containerHeight: 874, contentOffset: 1_109,
-            topInset: 110, bottomInset: 83
+            contentHeight: 1_900, containerHeight: 912, contentOffset: 988
         ))
         XCTAssertFalse(ChatScrollPosition.isAtEnd(
-            contentHeight: 1_900, containerHeight: 554, contentOffset: 1_109,
-            topInset: 110, bottomInset: 59
+            contentHeight: 1_900, containerHeight: 566, contentOffset: 988
         ))
         XCTAssertTrue(ChatScrollPosition.isAtEnd(
-            contentHeight: 1_900, containerHeight: 554, contentOffset: 1_405,
-            topInset: 110, bottomInset: 59
+            contentHeight: 1_900, containerHeight: 566, contentOffset: 1_334
         ))
     }
 
@@ -86,5 +68,24 @@ final class ChatScrollPositionTests: XCTestCase {
         XCTAssertTrue(ChatScrollPosition.isAtEnd(
             contentHeight: 1_400, containerHeight: 777, contentOffset: 623
         ))
+    }
+
+    func testTheJumpButtonWaitsUntilTheReaderIsATenthOfAViewportAboveTheEnd() {
+        // 1,900 of content in a 912 viewport: the end is at offset 988 and a tenth of the viewport is 91, so 120 rules.
+        XCTAssertFalse(ChatScrollPosition.isAwayFromEnd(contentHeight: 1_900, containerHeight: 912, contentOffset: 988))
+        XCTAssertFalse(ChatScrollPosition.isAwayFromEnd(contentHeight: 1_900, containerHeight: 912, contentOffset: 868))
+        XCTAssertTrue(ChatScrollPosition.isAwayFromEnd(contentHeight: 1_900, containerHeight: 912, contentOffset: 867))
+        XCTAssertTrue(ChatScrollPosition.isAwayFromEnd(contentHeight: 1_900, containerHeight: 912, contentOffset: 0))
+        // A tall viewport asks for a tenth of itself: 150 of 1,500.
+        XCTAssertFalse(ChatScrollPosition.isAwayFromEnd(contentHeight: 3_000, containerHeight: 1_500, contentOffset: 1_350))
+        XCTAssertTrue(ChatScrollPosition.isAwayFromEnd(contentHeight: 3_000, containerHeight: 1_500, contentOffset: 1_349))
+    }
+
+    func testTheJumpButtonNeverShowsForShortContentOrASmallNudge() {
+        for contentOffset: CGFloat in [-120, 0, 120] {
+            XCTAssertFalse(ChatScrollPosition.isAwayFromEnd(contentHeight: 700, containerHeight: 777, contentOffset: contentOffset))
+        }
+        // A drag of 100pt away from the end is still a nudge.
+        XCTAssertFalse(ChatScrollPosition.isAwayFromEnd(contentHeight: 1_000, containerHeight: 300, contentOffset: 600))
     }
 }

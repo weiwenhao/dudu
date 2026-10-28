@@ -63,7 +63,7 @@ export function renderPairingPage(pairUrl) {
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>dsbot - 连接手机</title><style>
+<title>Dudu - 连接手机</title><style>
 :root{color-scheme:light;--ink:#17181b;--muted:#777b84;--blue:#4d6bfe}
 *{box-sizing:border-box}body{margin:0;background:#f7f7f8;color:var(--ink);font-family:"Helvetica Neue","PingFang SC",sans-serif}
 main{width:min(440px,calc(100% - 40px));margin:8vh auto;padding:32px;background:#fff;border-radius:28px;text-align:center}
@@ -72,7 +72,7 @@ svg{display:block;width:100%;max-width:304px;margin:auto}
 p{color:var(--muted);font-size:14px;margin:16px 0 24px}
 label{display:block;text-align:left;font-size:13px;margin-bottom:8px}
 input{width:100%;padding:14px;border:1px solid #eeeff1;border-radius:12px;background:#f8f8fa;font-size:13px;color:var(--ink)}
-</style></head><body><main><h1>dsbot</h1><h2>打开 dsbot 扫码</h2>
+</style></head><body><main><h1>Dudu</h1><h2>打开 Dudu 扫码</h2>
 ${svg}
 <p>${address}</p><label for="pairing-link">配对链接</label><input id="pairing-link" readonly value="${url}">
 </main></body></html>`;

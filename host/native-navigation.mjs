@@ -221,6 +221,24 @@ export function sanitizeSnapshot(raw) {
   return lists;
 }
 
+/**
+ * An entry that arrives without the icon it had keeps that icon. An icon DSH's window draws itself
+ * (a mask, say) can fail to draw on one report and succeed on the next; without this the entry's picture
+ * would come and go on the phone with each report.
+ */
+function keepKnownIcons(previous, lists) {
+  for (const name of ['sidebar', 'settings']) {
+    if (!lists[name]) continue;
+    const known = new Map((previous[name] ?? []).filter((item) => item.icon).map((item) => [item.id, item.icon]));
+    lists[name] = lists[name].map((item) => {
+      if (item.icon || !known.has(item.id)) return item;
+      // Same field order as an item built with its icon, so an unchanged report compares equal.
+      const { open, ...base } = item;
+      return { ...base, icon: known.get(item.id), open };
+    });
+  }
+}
+
 // ---- Store ---------------------------------------------------------------------------------------
 
 export async function createNavigationStore({ folder, now = Date.now } = {}) {
@@ -268,6 +286,7 @@ export async function createNavigationStore({ folder, now = Date.now } = {}) {
     async ingest(raw) {
       const lists = sanitizeSnapshot(raw);
       if (!lists) throw new TypeError('Unsupported navigation snapshot.');
+      keepKnownIcons(current, lists);
       const next = { ...current, ...lists };
       if (updatedAt > 0 && JSON.stringify(next) === JSON.stringify(current)) return false;
       current = next;

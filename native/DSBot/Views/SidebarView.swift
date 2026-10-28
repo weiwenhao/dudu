@@ -151,7 +151,7 @@ struct SidebarView: View {
 
     private var brandHeader: some View {
         HStack {
-            Text("dsbot")
+            Text("Dudu")
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(DSBotStyle.ink)
 
@@ -214,7 +214,7 @@ struct SidebarView: View {
     /// Say why DSH's entries are missing instead of listing a guess at them.
     private var navigationHint: String? {
         switch store.navigationAvailability {
-        case .unsupported: return "电脑上的 dsbot 插件需要更新后，这里才会显示 DSH 的入口。"
+        case .unsupported: return "电脑上的 Dudu 插件需要更新后，这里才会显示 DSH 的入口。"
         case .waiting: return "打开一次电脑上的 DSH 窗口后，这里会显示 DSH 的入口。"
         case .unknown, .ready: return nil
         }
@@ -468,6 +468,7 @@ struct SidebarView: View {
         .background {
             DSBotPanelBackdrop(
                 horizontalExtension: 0,
+                topExtension: 16,
                 bottomExtension: homeInset,
                 tintOpacity: 0.65
             )

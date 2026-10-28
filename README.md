@@ -1,6 +1,9 @@
-# dsbot
+# Dudu
 
-dsbot 是 DeepSeek Harness Desktop 的原生 iPhone 客户端，使用 SwiftUI、
+Dudu 定位为个人 AI 助手，围绕自然对话、任务执行和日常使用持续演进。
+后续功能与交互设计以这一定位为准，优先适合手机上的操作与观察。
+
+当前实现连接 DeepSeek Harness Desktop，使用 SwiftUI、
 UIKit 和 Apple 系统框架。聊天、侧栏、设置入口、扫码、照片选择和语音输入均在手机本地
 呈现。电脑继续运行 DSH，手机通过经过配对认证的连接操作会话。
 
@@ -36,10 +39,26 @@ TLS 反向代理终止加密，因此中转服务器仍能接触解密后的流�
 ## 安装和配对
 
 1. 运行 `npm run package:desktop`。
-2. 在 DSH Desktop「插件」中安装 `.local/release/dsbot-0.3.18.tgz`。
+2. 在 DSH Desktop「插件」中安装 `.local/release/dsbot-0.3.21.tgz`。
 3. 打开 DSH Desktop「设置 → 手机控制」，填写电脑名称并添加一个或多个连接地址。
 4. 在目标地址旁手动点击「生成二维码」。
-5. 手机打开 dsbot，扫码或粘贴完整配对链接；已连接时可在「电脑连接 → 添加电脑」继续配对。
+5. 手机打开 Dudu，扫码或粘贴完整配对链接；已连接时可在「电脑连接 → 添加电脑」继续配对。
+
+macOS 本地开发和更新可直接运行 `npm run desktop:update`。脚本打包当前源码，
+通过 DSH Desktop 自带的 CLI 安装插件，并请求 DSH 热重载；新运行实例的版本、
+代码指纹和服务探测全部匹配后才报告成功。热重载不可用时自动正常退出并重新打开
+DSH；运行中的任务可能使 DSH 显示自己的退出确认，脚本不会强制终止进程。
+可用 `-- --restart` 明确选择重启，`-- --app "/path/DeepSeek Harness.app"` 指定应用。
+日志、结果回执和更新前的 profile 文件保存在 `.local/desktop-updates/`；
+原有配对和连接配置保留。
+安装包路径包含源码指纹，同版本修改也会安装新的包，避免包管理器复用旧缓存。
+
+电脑端的上游错误分类保存在 `~/.dsh/dsbot/diagnostics/upstream.jsonl`，文件自动轮转，
+只记录接口、失败阶段和错误码，不记录请求参数、会话正文或凭据。
+
+插件 `0.3.19` 起不声明 DSH 版本约束，升级 DSH 不会仅因版本号变化而被标记为不兼容。
+
+插件 `0.3.20` 起，DSH 窗口自己绘制的侧栏图标（例如「上下文洞察」）只绘制一次，之后某次上报没带图标时沿用已有的，手机侧栏的图标不再时有时无。
 
 连接地址第一项由电脑当前内网 IP 自动生成，不能修改或删除；网络变化后会自动更新。
 其他地址可以自行添加、修改和删除。
@@ -70,7 +89,7 @@ App 默认打开主页，使用已保存的配对记录恢复连接。回到前�
 
 插件 `0.3.18` 起，对话还支持：
 
-- 展开本轮文件改动，在原生页面查看带行号的 diff；点击生成或交付文件卡片使用系统预览。
+- 本轮文件改动收在「已编辑 N 个文件」摘要入口，显示增删行数，点开可搜索文件并查看带行号的 diff；明确交付的文件在聊天里最多显示 3 项，其余通过「全部 N 个文件」打开原生列表并使用系统预览。工具写入或修改的文件不再额外生成文件列表入口。
 - 在对话中回答单选、多选和文本问题，支持逐题回答、跳过、继续工作后的补答；不替换消息草稿。
 - 展开模型重试原因，保留本轮错误代码和输出 token 上限提示。
 - 在历史顶部加载更早消息，保持当前阅读位置；随后的实时更新保留已加载的历史。
@@ -158,7 +177,7 @@ DSH 没有删除会话的功能，只有归档，归档的会话不会丢：在�
 ## 构建 iPhone App
 
 需要 Xcode、XcodeGen、Node.js 22.18 或更新版本，以及能为目标手机签名的
-Apple 开发者账号。构建目标为 iOS 17 或更新版本。
+Apple 开发者账号。构建目标为 iOS 18 或更新版本。
 
 ```sh
 npm install
@@ -171,7 +190,8 @@ npm run native:install -- --device YOUR_COREDEVICE_ID
 `native:install` 覆盖安装，保留同一 App 的数据。只有一个已配对设备时可省略
 `--device`。指定 Debug 构建可添加 `--configuration Debug`。
 
-App 名称为 `dsbot`，bundle identifier 为 `com.harnessmobile.app`。
+App 显示名称为 `Dudu`，bundle identifier 为 `com.harnessmobile.app`。
+内部构建目标、电脑端插件和配对协议继续使用 `dsbot`，现有配对和数据保持兼容。
 本地开发签名只适用于签名允许的设备。向其他用户分发 iOS App 需要自己的
 TestFlight、App Store 或适用的设备签名；本项目不包含商店发布凭据。
 
@@ -251,6 +271,7 @@ npm run native:test -- --device YOUR_COREDEVICE_ID
 | `host/dsbot-control.mjs` | 电脑地址配置、配对和撤销 |
 | `host/dsbot-plugin/` | DSH Desktop 插件 |
 | `scripts/package-desktop.mjs` | 打包原生客户端对应的电脑插件 |
+| `scripts/update-desktop.mjs` | 安装本地电脑插件、热重载及必要时重启，并检查运行代码 |
 
 旧版 `App.tsx`、`src/`、`host/relay.mjs` 和 `host/plugin/` 不属于原生 App
 或新 dsbot 插件的运行链路。`legacy:ios`、`web`、`share` 等命令仅保留给旧原型。

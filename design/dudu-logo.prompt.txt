@@ -1,0 +1,9 @@
+Mode: built-in image_gen, precise edit with transparent background.
+Source: native/DSBot/Assets.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png
+Asset: native/DSBot/Assets.xcassets/DuduLogo.imageset/DuduLogo.png
+Rendering: alpha mask, template rendering in DSBotStyle.blue, high-quality interpolation.
+The Home Screen icon remains opaque and unchanged.
+
+Final prompt:
+
+Use case: background-extraction. Edit target: the attached existing Dudu app icon. Produce a production in-app logo asset derived from this exact mark. Keep the exact distinctive lowercase-d companion silhouette, its two oval eye positions and dimensions, the rounded bowl, upright on the right, and the existing blue hue. Remove ALL warm white/cream canvas outside the blue mark to true alpha transparency. Make both eye holes true transparent knockout holes too. Remove the subtle paper/noise texture and any warm-white fringe from edges. Blue mark should be a uniform flat blue sampled from the original (approximately #4176E6) with impeccably smooth antialiased curved boundaries, including eye holes, suitable for display at 18 to 76 points on high-density iPhone screens. Preserve the original mark's shape and aspect ratio; center it on a square transparent canvas with the same generous placement and proportions as the original image. Do not add a rounded square tile, background, outline, border, shadow, glow, gradients, lettering or any new elements. This is precise background cleanup and edge refinement of the same identity, not a redesign. Return one high-resolution RGBA PNG with actual transparent pixels.

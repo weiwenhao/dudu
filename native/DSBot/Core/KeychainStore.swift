@@ -137,7 +137,7 @@ actor ComputerRepository: DSBotComputerStorage {
             let computer = Computer(
                 id: UUID().uuidString,
                 name: String((legacy.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                    ? legacy.name! : "dsbot").prefix(80)),
+                    ? legacy.name! : "Dudu").prefix(80)),
                 url: legacy.url,
                 computerId: Self.computerId(in: legacy.url),
                 lastUsedAt: now

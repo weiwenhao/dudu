@@ -18,17 +18,22 @@ enum DSBotLog {
     ]
     private static let allowedCountKeys: Set<String> = [
         "payloadBytes", "computerCount", "sessionCount", "workspaceCount",
-        "attachmentCount", "messageCount", "pendingCount"
+        "attachmentCount", "messageCount", "pendingCount", "realizedCount", "visibleCount"
     ]
-    private static let allowedGeometryKeys: Set<String> = ["bottomY", "viewportHeight", "lastRowHeight"]
+    private static let allowedGeometryKeys: Set<String> = [
+        "bottomY", "viewportHeight", "lastRowHeight", "contentHeight", "contentOffset", "topInset", "bottomInset"
+    ]
 
-    static func networkFailure(_ event: String, error: Error, elapsedMs: Double? = nil) {
+    static func networkFailure(
+        _ event: String, error: Error, method: String? = nil,
+        requestId: String? = nil, elapsedMs: Double? = nil
+    ) {
         if let failure = error as? ConversationStorageError {
-            record(event, level: "warn", elapsedMs: elapsedMs, code: failure.logCode)
+            record(event, level: "warn", method: method, requestId: requestId, elapsedMs: elapsedMs, code: failure.logCode)
             return
         }
         if let failure = error as? DSBotFailure {
-            record(event, level: "warn", elapsedMs: elapsedMs, code: failure.logCode)
+            record(event, level: "warn", method: method, requestId: requestId, elapsedMs: elapsedMs, code: failure.logCode)
             return
         }
         let native = error as NSError
@@ -40,7 +45,7 @@ enum DSBotLog {
         default: domain = "other"
         }
         record(
-            event, level: "warn", elapsedMs: elapsedMs,
+            event, level: "warn", method: method, requestId: requestId, elapsedMs: elapsedMs,
             state: "\(domain).\(max(-100_000, min(100_000, native.code)))"
         )
     }

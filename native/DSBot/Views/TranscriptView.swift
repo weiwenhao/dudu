@@ -140,7 +140,7 @@ private struct TurnRowView: View {
                     .accessibilityIdentifier("chat.message.\(row.answerID ?? row.id)")
             }
             ForEach(row.notices) { TurnNoticeView(notice: $0) }
-            if !row.files.isEmpty || row.changesSeq != nil {
+            if row.changesSeq != nil || row.files.contains(where: { $0.kind == "presented" }) {
                 TurnFilesView(files: row.files, changesSeq: row.changesSeq)
             }
             if detailedPerformance, row.outcome != .running, let turn = row.turn, let seq = row.performanceSeq {
@@ -529,7 +529,7 @@ private struct TriggerRowView: View {
 
 // MARK: - Running status
 
-/// "深度求索中，用时 5分13秒 ···" with DSH's whale tail, ticking once a second.
+/// "深度求索中，用时 5分13秒 ···" with Dudu's logo, ticking once a second.
 struct RunningStatusView: View {
     let startedAt: Double?
 
@@ -539,9 +539,7 @@ struct RunningStatusView: View {
             TimelineView(.periodic(from: .now, by: 1)) { timeline in
                 let phase = timeline.date.timeIntervalSinceReferenceDate
                 HStack(spacing: 6) {
-                    WhaleTail()
-                        .stroke(DSBotStyle.chatRunning, style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
-                        .frame(width: 16, height: 16)
+                    DuduLogo(size: 18)
                         .opacity(0.7 + 0.3 * (0.5 + 0.5 * sin(phase * 2.4)))
                     Text(label(at: timeline.date))
                         .font(.system(size: 14))
@@ -558,47 +556,5 @@ struct RunningStatusView: View {
         guard let startedAt else { return "深度求索中 ···" }
         let elapsed = max(1_000, date.timeIntervalSince1970 * 1_000 - startedAt)
         return "深度求索中，用时 \(TranscriptTitles.duration(milliseconds: elapsed)) ···"
-    }
-}
-
-/// The running icon from DSH's chat (a 16×16 whale tail outline).
-private struct WhaleTail: Shape {
-    private static let commands: [(String, [CGFloat])] = [
-        ("M", [8.844, 13.742]),
-        ("C", [8.967, 12.328, 8.45, 10.4, 8.45, 9.65]),
-        ("C", [8.45, 8.94, 8.88, 8.43, 9.6, 8.43]),
-        ("C", [11.285, 8.43, 12.106, 8.281, 12.685, 8.104]),
-        ("C", [13.71, 7.791, 14.585, 6.768, 15.055, 5.945]),
-        ("C", [15.137, 5.803, 14.99, 5.641, 14.829, 5.671]),
-        ("C", [13.829, 5.86, 12.828, 5.376, 11.827, 4.978]),
-        ("C", [10.659, 4.514, 9.491, 4.707, 8.935, 4.876]),
-        ("C", [8.805, 4.915, 8.658, 4.819, 8.636, 4.686]),
-        ("C", [8.468, 3.643, 7.405, 2.615, 5.498, 2.238]),
-        ("C", [4.54, 2.048, 3.748, 1.574, 3.347, 1.202]),
-        ("C", [3.252, 1.113, 3.088, 1.125, 3.03, 1.242]),
-        ("C", [2.628, 2.059, 2.168, 3.82, 5.248, 6.115]),
-        ("C", [5.82, 6.494, 6.31, 6.785, 6.574, 7.637]),
-        ("C", [6.72, 8.104, 6.157, 9.168, 6.061, 9.368]),
-        ("C", [5.157, 11.27, 5.089, 12.19, 4.926, 13.742])
-    ]
-
-    func path(in rect: CGRect) -> Path {
-        let scale = min(rect.width, rect.height) / 16
-        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: rect.minX + x * scale, y: rect.minY + y * scale)
-        }
-        var path = Path()
-        for (command, values) in Self.commands {
-            if command == "M" {
-                path.move(to: point(values[0], values[1]))
-            } else {
-                path.addCurve(
-                    to: point(values[4], values[5]),
-                    control1: point(values[0], values[1]),
-                    control2: point(values[2], values[3])
-                )
-            }
-        }
-        return path
     }
 }

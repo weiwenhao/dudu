@@ -213,7 +213,7 @@ window.__ModuleLoader__.load({
             : h('div', { className: 'dsbot-empty' }, '暂无配对设备')),
         code && dialog([
           h('div', { className: 'dsbot-dialog-head', key: 'head' },
-            h('h3', null, '打开 dsbot 扫码'), button({ type: 'button', variant: 'ghost', onClick: () => setCode(null), autoFocus: true }, '关闭')),
+            h('h3', null, '打开 Dudu 扫码'), button({ type: 'button', variant: 'ghost', onClick: () => setCode(null), autoFocus: true }, '关闭')),
           h('div', { className: 'dsbot-qr', key: 'qr', dangerouslySetInnerHTML: { __html: code.svg } }),
           h('p', { key: 'host' }, new URL(code.url).host),
           h('div', { className: 'dsbot-actions', key: 'copy', style: { justifyContent: 'center', marginTop: 16 } },
@@ -265,6 +265,20 @@ window.__ModuleLoader__.load({
     const MAX_RASTER_ICONS = 12;
     const MAX_RASTER_BASE64 = 16 * 1024;
     const rasterCache = new Map();
+    // A drawing that failed is tried again on later reports, a few times, before the icon is given up on.
+    const MAX_RASTER_ATTEMPTS = 3;
+    const rasterFailures = new Map();
+    /**
+     * The markup with its generated ids (React's useId gives every render a new one, so the same icon
+     * would otherwise never hit the cache and the cache would fill with copies of it) renamed by order.
+     */
+    const stableMarkup = (markup) => {
+      let text = markup;
+      Array.from(new Set(Array.from(markup.matchAll(/\bid="([^"]+)"/gu), (match) => match[1])))
+        .sort((a, b) => b.length - a.length)
+        .forEach((id, index) => { text = text.split(id).join(`icon-id-${index}`); });
+      return text;
+    };
     const NAV_DEBOUNCE_MS = 500;
     const NAV_REFRESH_MS = 5 * 60 * 1000;
     const NAV_WARMUP_MS = [1500, 6000, 20000];
@@ -302,7 +316,8 @@ window.__ModuleLoader__.load({
     function rasterIcon(svg, viewBox) {
       const markup = String(svg.outerHTML || '');
       if (!markup) return Promise.resolve(undefined);
-      const cached = rasterCache.get(markup);
+      const key = stableMarkup(markup);
+      const cached = rasterCache.get(key);
       if (cached) return cached;
       if (rasterCache.size >= MAX_RASTER_ICONS) return Promise.resolve(undefined);
       // Everything that needs the live DOM happens before the first await: the caller unmounts it next.
@@ -330,8 +345,15 @@ window.__ModuleLoader__.load({
         return png.length > 0 && png.length <= MAX_RASTER_BASE64
           ? { viewBox: [0, 0, RASTER_PX, RASTER_PX], nodes: [], png, width: RASTER_PX, height: RASTER_PX }
           : undefined;
-      })().catch(() => undefined);
-      rasterCache.set(markup, pending);
+      })().catch(() => undefined).then((icon) => {
+        if (icon === undefined) {
+          const failures = (rasterFailures.get(key) ?? 0) + 1;
+          rasterFailures.set(key, failures);
+          if (failures < MAX_RASTER_ATTEMPTS && rasterCache.get(key) === pending) rasterCache.delete(key);
+        }
+        return icon;
+      });
+      rasterCache.set(key, pending);
       return pending;
     }
 

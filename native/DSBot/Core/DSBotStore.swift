@@ -30,6 +30,7 @@ final class DSBotStore: ObservableObject {
     @Published var planMode = false
     /// `transcript` folded into display rows; rebuilt only when its inputs change.
     @Published private(set) var transcriptRows: [TranscriptRow] = []
+    @Published private(set) var conversationMarkdown = ConversationMarkdown.empty
     private(set) var transcriptTimeSeparators: [String: Double] = [:]
     /// Bumps whenever the visible conversation changes so views can follow the latest content.
     @Published private(set) var contentRevision = 0
@@ -403,6 +404,7 @@ final class DSBotStore: ObservableObject {
             transcript = nil
             transcriptTimeSeparators = [:]
             transcriptRows = []
+            conversationMarkdown = .empty
             transcriptRevision &+= 1
             goal = nil
             todos = []
@@ -508,6 +510,7 @@ final class DSBotStore: ObservableObject {
         transcript = nil
         transcriptTimeSeparators = [:]
         transcriptRows = []
+        conversationMarkdown = .empty
         transcriptRevision &+= 1
         goal = nil
         todos = []
@@ -864,7 +867,7 @@ final class DSBotStore: ObservableObject {
     private func featureMessage(for error: Error) -> String {
         if case let .remote(code) = safeFailure(for: error),
            ["UNSUPPORTED", "METHOD_NOT_ALLOWED"].contains(code) {
-            return "请先在电脑上更新 dsbot 插件，再使用此功能。"
+            return "请先在电脑上更新 Dudu 插件，再使用此功能。"
         }
         return safeMessage(for: error)
     }
@@ -993,7 +996,9 @@ final class DSBotStore: ObservableObject {
             let revision = transcriptRevision
             let projection = await conversationProjector.project(
                 current: transcript, incoming: page.transcript, currentRows: transcriptRows,
-                isRunning: selectedSession?.status == "running", prepending: true
+                isRunning: selectedSession?.status == "running", prepending: true,
+                additionalMarkdown: questions.flatMap { $0.questions.compactMap(\.detail) } +
+                    approvals.compactMap(\.detail)
             )
             guard !Task.isCancelled, connection == generation, watchID == currentWatchID,
                   selection == sessionSelectionGeneration,
@@ -1505,7 +1510,9 @@ final class DSBotStore: ObservableObject {
             let revision = transcriptRevision
             prepared = await conversationProjector.project(
                 current: transcript, incoming: detail.transcript, currentRows: transcriptRows,
-                isRunning: detail.session.status == "running"
+                isRunning: detail.session.status == "running", messages: detail.messages,
+                additionalMarkdown: detail.questions.flatMap { $0.questions.compactMap(\.detail) } +
+                    detail.approvals.compactMap(\.detail)
             )
             guard application == detailApplicationRevision, selection == sessionSelectionGeneration,
                   connection == generation, watchID == currentWatchID else { return }
@@ -1556,6 +1563,7 @@ final class DSBotStore: ObservableObject {
     }
 
     private func apply(_ projection: ConversationProjection) {
+        if conversationMarkdown !== projection.markdown { conversationMarkdown = projection.markdown }
         if projection.transcriptChanged {
             transcript = projection.transcript
             transcriptRevision &+= 1
@@ -1696,6 +1704,7 @@ final class DSBotStore: ObservableObject {
         transcript = nil
         transcriptTimeSeparators = [:]
         transcriptRows = []
+        conversationMarkdown = .empty
         transcriptRevision &+= 1
         goal = nil
         todos = []

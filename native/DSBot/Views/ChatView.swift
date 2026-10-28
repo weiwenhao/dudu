@@ -23,8 +23,9 @@ struct ChatView: View {
     @State private var commandResult: DSBotToastMessage?
     @State private var photoLoadGeneration = 0
     @State private var followsLatestMessage = true
+    @State private var awayFromLatest = false
+    @State private var latestJump = 0
     @State private var historyFailure: String?
-    @State private var historyController = ConversationHistoryController()
     @State private var isVoiceMode = false
     /// The open "+" sheet. The page rides along in the item so presentation and page cannot disagree.
     @State private var attachmentSheetRequest: AttachmentSheetRequest?
@@ -50,6 +51,7 @@ struct ChatView: View {
     var body: some View {
         messageHistory
             .environment(\.conversationAccess, conversationAccess)
+            .environment(\.conversationMarkdown, store.conversationMarkdown)
             .background(DSBotStyle.canvas)
             .coordinateSpace(name: "dsbot.chat")
             .sheet(item: $attachmentSheetRequest, onDismiss: handleAttachmentSheetDismiss) { request in
@@ -140,6 +142,7 @@ struct ChatView: View {
         .onChange(of: draftTarget) { _, _ in
             restoreDraft()
             followsLatestMessage = true
+            awayFromLatest = false
             historyFailure = nil
         }
         .onDisappear {
@@ -290,7 +293,8 @@ struct ChatView: View {
                 items: items, target: target,
                 topInset: historyTopInset + 7, bottomInset: chromeHeight + 11,
                 canLoadAttachments: canLoadAttachments, keyboardVisible: keyboardVisible,
-                isCovered: isOverlayOpen, controller: historyController, followsLatest: $followsLatestMessage
+                isCovered: isOverlayOpen, followsLatest: $followsLatestMessage,
+                awayFromLatest: $awayFromLatest, jumpToken: latestJump
             ) { item in
                 historyContent(item, target: target, canLoadAttachments: canLoadAttachments)
                     .environment(\.conversationAccess, access)
@@ -530,12 +534,10 @@ struct ChatView: View {
             }
         }
         .overlay(alignment: .top) {
-            if !followsLatestMessage {
-                latestButton()
-                    .offset(y: -52 - taskOverlayHeight - goalOverlayHeight - queueOverlayHeight)
-                    .animation(.easeOut(duration: 0.18), value: taskOverlayHeight)
-                    .animation(.easeOut(duration: 0.18), value: goalOverlayHeight)
-            }
+            latestButton()
+                .offset(y: -52 - taskOverlayHeight - goalOverlayHeight - queueOverlayHeight)
+                .animation(.easeOut(duration: 0.18), value: taskOverlayHeight)
+                .animation(.easeOut(duration: 0.18), value: goalOverlayHeight)
         }
         .padding(.horizontal, DSBotLayout.composerSideMargin)
         .padding(.top, 6)
@@ -563,11 +565,14 @@ struct ChatView: View {
         .allowsHitTesting(false)
     }
 
+    /// Stays mounted and only fades: inserting or removing a glass view in the middle of a scroll
+    /// leaves its old frame composited behind. Shown to a reader who has scrolled well above the end,
+    /// never to one the history is following.
     private func latestButton() -> some View {
-        Button {
+        let shows = awayFromLatest && !followsLatestMessage
+        return Button {
             DSBotLog.record("chat.latest")
-            followsLatestMessage = true
-            historyController.scrollToLatest(animated: true)
+            latestJump &+= 1
         } label: {
             DSBotIcon(.down, size: 20)
                 .foregroundStyle(DSBotStyle.ink)
@@ -575,9 +580,14 @@ struct ChatView: View {
                 .contentShape(Circle())
         }
         .buttonStyle(DSBotGlassButtonStyle())
+        .opacity(shows ? 1 : 0)
+        .scaleEffect(shows ? 1 : 0.85)
+        .animation(.easeOut(duration: 0.2), value: shows)
+        .allowsHitTesting(shows)
         .accessibilityLabel("回到最新消息")
-        .accessibilityIdentifier("chat.latest")
-        .transition(.opacity)
+        // While it is faded out the glass is still in the hierarchy; XCUITest finds it under another name.
+        .accessibilityIdentifier(shows ? "chat.latest" : "chat.latest.faded")
+        .accessibilityHidden(!shows)
     }
 
     /// DSH's task list for this conversation, when it has one.
@@ -865,6 +875,19 @@ struct ChatView: View {
         }
         .animation(.easeOut(duration: 0.18), value: hasAttachmentTiles)
         .modifier(VoiceComposerVisibility(capture: speechCapture, press: voicePress))
+        .overlay(alignment: .bottom) {
+            if isVoiceMode {
+                // Keep the touch owner mounted and fully interactive while the visible composer fades.
+                VoicePressSurface(
+                    onBegan: beginVoicePress,
+                    onMoved: moveVoicePress,
+                    onEnded: endVoicePress,
+                    onCancelled: cancelVoiceCapture
+                )
+                .frame(height: DSBotLayout.composerHeight)
+                .padding(.horizontal, DSBotLayout.composerHeight)
+            }
+        }
     }
 
     private var plusButton: some View {
@@ -920,19 +943,8 @@ struct ChatView: View {
             .font(.system(size: 17, weight: .semibold))
             .foregroundStyle(DSBotStyle.ink)
             .frame(maxWidth: .infinity, minHeight: DSBotLayout.composerHeight)
-            .contentShape(Rectangle())
-            .overlay {
-                VoicePressSurface(
-                    onBegan: beginVoicePress,
-                    onMoved: moveVoicePress,
-                    onEnded: endVoicePress,
-                    onCancelled: cancelVoiceCapture
-                )
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("按住说话，上滑取消")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityIdentifier("composer.hold")
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -1246,7 +1258,7 @@ struct ChatView: View {
 
     private func moveVoicePress(location: CGPoint, translation: CGFloat) {
         voicePress.touch.location = location
-        let cancelling = translation < -72
+        let cancelling = translation < -160
         if cancelling != voicePress.isCancelling { voicePress.isCancelling = cancelling }
     }
 

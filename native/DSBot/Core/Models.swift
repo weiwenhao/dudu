@@ -387,7 +387,7 @@ enum DSBotFailure: Error, LocalizedError, Sendable, Equatable {
     private static func message(for code: String) -> String {
         switch code {
         case "UNAUTHORIZED", "AUTH_FAILED": return "配对已失效，请生成新配对码"
-        case "AUTH_REQUIRED": return "请更新电脑端的 dsbot 插件"
+        case "AUTH_REQUIRED": return "请更新电脑端的 Dudu 插件"
         case "METHOD_NOT_ALLOWED": return "请更新电脑端的手机控制插件"
         case "UNSUPPORTED": return "暂不支持此操作。"
         case "NOT_FOUND": return "请求的会话或资源已不存在。"

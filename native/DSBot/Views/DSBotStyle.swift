@@ -93,6 +93,7 @@ enum DSBotStyle {
 
 struct DSBotPanelBackdrop: View {
     var horizontalExtension: CGFloat = DSBotLayout.composerSideMargin
+    var topExtension: CGFloat = 0
     var bottomExtension: CGFloat = 8
     var tintOpacity: Double = 0.35
 
@@ -108,7 +109,7 @@ struct DSBotPanelBackdrop: View {
                 }
             }
             .padding(.horizontal, -horizontalExtension)
-            .padding(.top, -16)
+            .padding(.top, -topExtension)
             .padding(.bottom, -bottomExtension)
             .allowsHitTesting(false)
             .accessibilityHidden(true)

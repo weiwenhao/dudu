@@ -1,13 +1,11 @@
 import SwiftUI
 
-/// DSH's hero: the whale and "探索未至之境". Shown while a conversation has nothing
+/// Dudu's logo and "探索未至之境". Shown while a conversation has nothing
 /// in it yet, and on the new-task home before a workspace is chosen.
 struct ConversationEmptyState: View {
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            DeepSeekWhale()
-                .fill(DSBotStyle.blue)
-                .frame(width: 34, height: 34 / DeepSeekWhale.aspectRatio)
+            DuduLogo(size: 44)
             Text("探索未至之境")
                 .font(.system(size: 26, weight: .medium))
                 .foregroundStyle(DSBotStyle.chatInk)

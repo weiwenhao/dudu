@@ -2,6 +2,16 @@
 import Foundation
 
 enum ConversationParityFixture {
+    static let manyFiles = ProcessInfo.processInfo.arguments.contains("-dsbot-review-many-files")
+    static let producedFiles = (0..<20).map { index in
+        DeliveredFile(id: "produced-\(index)", kind: "produced", seq: Double(105 + index), callSeq: 104,
+                      path: "/workspace/src/module-\(index).js", name: "module-\(index).js")
+    }
+    static let presentedFiles = (0..<8).map { (index: Int) -> DeliveredFile in
+        DeliveredFile(id: "presented-\(index)", kind: "presented", seq: 107, index: index,
+                      path: "/workspace/output/report-\(index).txt", name: "report-\(index).txt")
+    }
+
     static let transcript = Transcript(
         entries: [
             TranscriptEntry(type: "user", id: "parity-user", seq: 100, time: 1_792_800_000_000,
@@ -15,8 +25,10 @@ enum ConversationParityFixture {
         turns: [
             TranscriptTurn(
                 turn: 2, start: 1_792_800_001_000, end: 1_792_800_012_000, outcome: "done", lastSeq: 110,
-                files: [DeliveredFile(id: "parity-file", kind: "presented", seq: 107, index: 0,
-                                      path: "/workspace/report.txt", name: "report.txt")],
+                files: manyFiles ? producedFiles + presentedFiles : [
+                    DeliveredFile(id: "parity-file", kind: "presented", seq: 107, index: 0,
+                                  path: "/workspace/report.txt", name: "report.txt")
+                ],
                 changesSeq: 109,
                 notices: [TurnNotice(id: "retry-parity", kind: "retry", seq: 102, message: "HTTP 502",
                                     code: "HTTP_502", retry: 1, maximum: 3, delayMs: 1000, state: "started")]
@@ -34,16 +46,40 @@ enum ConversationParityFixture {
         live: nil, beforeSeq: 0, throughSeq: 110, hasMore: false
     ))
 
-    static let changes = ConversationChanges(
+    static let changes = manyFiles ? ConversationChanges(
+        turn: 2, files: producedFiles.prefix(18).enumerated().map { index, file in
+            ConversationChanges.File(path: file.path, display: "src/\(file.name)", added: index + 1, deleted: index)
+        }, total: 18, added: 171, deleted: 153
+    ) : ConversationChanges(
         turn: 2, files: [ConversationChanges.File(path: "/workspace/report.txt", display: "report.txt", added: 2, deleted: 1)],
         total: 1, added: 2, deleted: 1
     )
 
-    static let diff = ConversationDiff(
+    static let diff = ProcessInfo.processInfo.arguments.contains("-dsbot-review-long-diff") ? ConversationDiff(
+        kind: "text", path: "/workspace/report.txt", display: "report.txt", before: true, after: true, coarse: false,
+        hunks: [
+            ConversationDiff.Hunk(oldStart: 1, oldLines: 41, newStart: 1, newLines: 1,
+                                  lines: ["-旧内容：" + String(repeating: "保留原始缩进和完整代码 ", count: 40)]
+                                    + (2...41).map { "-第 \($0) 行旧内容" } + ["+新内容"]),
+            ConversationDiff.Hunk(oldStart: 300, oldLines: 1, newStart: 260, newLines: 1,
+                                  lines: ["-较早的段落", "+较新的段落"])
+        ]
+    ) : ConversationDiff(
         kind: "text", path: "/workspace/report.txt", display: "report.txt", before: true, after: true, coarse: false,
         hunks: [ConversationDiff.Hunk(oldStart: 1, oldLines: 2, newStart: 1, newLines: 3,
                                      lines: [" 报告", "-旧内容", "+新内容", "+已验证"])]
     )
+
+    static func fileDiff(_ params: [String: JSONValue]) -> ConversationDiff {
+        guard manyFiles, let index = params["index"]?.numberValue.map(Int.init),
+              changes.files.indices.contains(index) else { return diff }
+        let file = changes.files[index]
+        return ConversationDiff(
+            kind: "text", path: file.path, display: file.display, before: true, after: true,
+            hunks: [.init(oldStart: 1, oldLines: 1, newStart: 1, newLines: 1,
+                          lines: ["-old-\(index)", "+new-\(index)"])]
+        )
+    }
 
     static let performance = ConversationPerformance(
         stats: ["turns": 2, "steps": 4, "llmMs": 8000, "toolMs": 3000, "ttftMs": 400, "ttftSteps": 2, "decodeMs": 7600, "decodeTokens": 400],

@@ -1,0 +1,11 @@
+Mode: built-in image_gen, new image generation.
+Asset: native/DSBot/Assets.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png
+Packaging: resized to 1024 x 1024 with sips; opaque RGB PNG.
+
+Final prompt:
+
+Use case: logo-brand.
+Asset type: final production iOS app icon for Dudu, a personal AI assistant that can converse and help users act on tasks. Generate one flat square 1024 x 1024 icon asset, not a mockup or presentation sheet.
+Primary request: Create an original, extremely simple and distinctive companion mark. A single soft, sculptural lowercase-d-inspired silhouette in clear cornflower blue (#4176E6) on a uniform warm white (#F8F7F3) full-bleed square. Its rounded bowl reads as a quiet, curious little face. Two small, well-separated warm-white vertical oval eyes cut into the bowl, with a very subtle upward offset to suggest attention. The d's short upright rises organically from the right side, all corners rounded with expertly balanced curves. No mouth. The single bold blue silhouette is the entire design. Friendly and intelligent, composed rather than babyish. Express the character through silhouette and eye placement alone.
+Style: refined contemporary identity design, precise vector-like edges, flat solid colors, understated playful confidence. The mark fills roughly 62 percent of the canvas width and 66 percent of the height, optically centered with generous equal breathing room. Eyes must remain legible when the entire icon is shown at 40 pixels. Very clean shapes, no fine details.
+Constraints: fully opaque PNG-style square canvas, background extends to every edge. Do not bake in rounded app-icon corners. No words, no lettering other than the abstract d-inspired silhouette, no captions, no UI, no grid, no construction lines, no watermark, no gradient, no shadows, no 3D, no texture, no border, no antenna, no limbs, no generic robot helmet, no chat bubble, no sparkles. One finished icon only.

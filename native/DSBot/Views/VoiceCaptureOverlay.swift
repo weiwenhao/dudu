@@ -31,7 +31,7 @@ struct VoiceCaptureLayer: View {
         let finishing = capture.isFinishing
         GeometryReader { geometry in
             if isVoiceMode || visible {
-                let height = min(geometry.size.height * 0.32, 248)
+                let height = min(geometry.size.height * 0.40, 320)
                 VoiceCaptureOverlay(
                     transcript: transcript, meter: capture.meter, touch: press.touch,
                     touchOriginY: geometry.frame(in: .global).maxY - height,
@@ -39,6 +39,20 @@ struct VoiceCaptureLayer: View {
                     isActive: visible
                 )
                 .frame(height: height)
+                .background {
+                    Rectangle()
+                        .fill(.thickMaterial)
+                        .mask {
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .clear, location: 0),
+                                    .init(color: .black, location: 0.34)
+                                ],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        }
+                        .accessibilityHidden(true)
+                }
                 .frame(maxHeight: .infinity, alignment: .bottom)
                 .opacity(visible ? 1 : 0.001)
             }
@@ -84,8 +98,8 @@ struct VoiceCaptureOverlay: View {
 
     /// Vertical anchors, measured from the screen's bottom edge (the overlay is laid out to it).
     private enum Anchor {
-        static let waveformCenter: CGFloat = 74
-        static let hintCenter: CGFloat = 130
+        static let waveformCenter: CGFloat = 90
+        static let hintCenter: CGFloat = 160
         static let waveformHeight: CGFloat = 32
         static let hintLineHeight: CGFloat = 16
     }

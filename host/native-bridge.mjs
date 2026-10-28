@@ -162,7 +162,7 @@ function typertArguments(endpoint, values) {
   }
 }
 
-export function createTypertRpcAdapter({ gateway, peer }) {
+export function createTypertRpcAdapter({ gateway, peer, diagnostics }) {
   if (!gateway || typeof gateway.invoke !== 'function' || typeof gateway.stream !== 'function'
     || !peer || peer.principal?.kind !== 'owner') {
     throw new TypeError('Native bridge requires the owner-scoped Typert Gateway.');
@@ -176,8 +176,20 @@ export function createTypertRpcAdapter({ gateway, peer }) {
     if (values.at(-1) instanceof AbortSignal) signal = values.pop();
     const call = { namespace, method, args: typertArguments(endpoint, values), peer, signal };
     try {
-      return mode === 'stream' ? await gateway.stream(call) : await gateway.invoke(call);
-    } catch {
+      if (mode !== 'stream') return await gateway.invoke(call);
+      const source = await gateway.stream(call);
+      return {
+        dispose: () => source.dispose?.(),
+        async *[Symbol.asyncIterator]() {
+          try { yield* source; }
+          catch (error) {
+            if (!signal?.aborted) diagnostics?.failure({ endpoint, stage: 'next', error });
+            throw safeCallError();
+          }
+        },
+      };
+    } catch (error) {
+      if (!signal?.aborted) diagnostics?.failure({ endpoint, stage: mode === 'stream' ? 'open' : 'invoke', error });
       throw safeCallError();
     }
   };

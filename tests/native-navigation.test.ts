@@ -238,6 +238,28 @@ test('the store starts empty, keeps lists a snapshot leaves out, clears ones it 
   await store.close();
 });
 
+test('an entry that later arrives without its icon keeps the one it had, and a new icon replaces it', async () => {
+  const picture = {
+    viewBox: [0, 0, 64, 64], nodes: [], width: 64, height: 64,
+    png: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52,
+      0, 0, 0, 64, 0, 0, 0, 64, 8, 6, 0, 0, 0, 0xaa, 0xbb, 0xcc, 0xdd, 0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44]).toString('base64'),
+  };
+  const store = await createNavigationStore({ now: () => 1 });
+  await store.ingest({ schemaVersion: 1, sidebar: [{ id: 'insight', title: '上下文洞察', icon: picture }, { id: 'plugins', title: '插件' }] });
+  assert.equal(store.get().sidebar.find((item: any) => item.id === 'insight').icon.png, picture.png);
+
+  // The same entries, reported while DSH's window could not draw the picture.
+  assert.equal(await store.ingest({ schemaVersion: 1, sidebar: [{ id: 'insight', title: '上下文洞察' }, { id: 'plugins', title: '插件' }] }), false);
+  assert.equal(store.get().sidebar.find((item: any) => item.id === 'insight').icon.png, picture.png);
+  assert.equal(store.get().sidebar.find((item: any) => item.id === 'plugins').icon, undefined, 'an entry that never had one gets none');
+
+  // An entry that goes away takes its icon with it; one that comes back without it starts without.
+  await store.ingest({ schemaVersion: 1, sidebar: [{ id: 'plugins', title: '插件' }] });
+  await store.ingest({ schemaVersion: 1, sidebar: [{ id: 'insight', title: '上下文洞察' }, { id: 'plugins', title: '插件' }] });
+  assert.equal(store.get().sidebar.find((item: any) => item.id === 'insight').icon, undefined);
+  await store.close();
+});
+
 test('the snapshot survives a restart and is routed again by the running plugin', async (t) => {
   const folder = await mkdtemp(join(tmpdir(), 'dsbot-navigation-'));
   t.after(() => rm(folder, { recursive: true, force: true }));

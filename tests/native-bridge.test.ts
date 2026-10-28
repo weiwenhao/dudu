@@ -162,6 +162,61 @@ test('Typert adapter uses the owner peer and only invokes named allowlisted endp
   }), /owner-scoped/);
 });
 
+test('Typert diagnostics distinguish invocation, opening and iteration failures while keeping public errors safe', async () => {
+  const failures = [];
+  const upstream = Object.assign(new Error('private upstream detail'), { code: 'session/not-found' });
+  let failOpen = true;
+  const rpc = createTypertRpcAdapter({
+    peer: { principal: { kind: 'owner' } },
+    diagnostics: { failure(value) { failures.push(value); } },
+    gateway: {
+      async invoke() { throw upstream; },
+      async stream() {
+        if (failOpen) throw upstream;
+        return { async *[Symbol.asyncIterator]() { throw upstream; } };
+      },
+    },
+  });
+  await assert.rejects(rpc.call('/api', 'session/list'), { code: 'UPSTREAM_UNAVAILABLE' });
+  await assert.rejects(rpc.open('/api', 'session/control'), { code: 'UPSTREAM_UNAVAILABLE' });
+  failOpen = false;
+  const stream = await rpc.open('/api', 'session/follow', { address: { kind: 'session', sessionId: 's' } });
+  await assert.rejects(stream[Symbol.asyncIterator]().next(), (error) => {
+    assert.equal(error.code, 'UPSTREAM_UNAVAILABLE');
+    assert.doesNotMatch(error.message, /private/);
+    return true;
+  });
+  assert.deepEqual(failures.map(({ endpoint, stage, error }) => [endpoint, stage, error.code]), [
+    ['session/list', 'invoke', 'session/not-found'],
+    ['session/control', 'open', 'session/not-found'],
+    ['session/follow', 'next', 'session/not-found'],
+  ]);
+});
+
+test('Typert stream wrapper forwards disposal and does not record intentional cancellation', async () => {
+  const abort = new AbortController();
+  let disposed = 0;
+  const failures = [];
+  const rpc = createTypertRpcAdapter({
+    peer: { principal: { kind: 'owner' } },
+    diagnostics: { failure(value) { failures.push(value); } },
+    gateway: {
+      async invoke() { return {}; },
+      async stream() {
+        return {
+          dispose() { disposed++; },
+          async *[Symbol.asyncIterator]() { abort.abort(); throw new Error('cancelled'); },
+        };
+      },
+    },
+  });
+  const stream = await rpc.open('/api', 'session/control', abort.signal);
+  await assert.rejects(stream[Symbol.asyncIterator]().next(), { code: 'UPSTREAM_UNAVAILABLE' });
+  await stream.dispose();
+  assert.equal(disposed, 1);
+  assert.deepEqual(failures, []);
+});
+
 test('native session search uses DSH content search and returns bounded visible conversation snippets', async () => {
   const { bridge, calls } = makeHarness({
     rows: [

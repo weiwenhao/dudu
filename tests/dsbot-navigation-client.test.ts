@@ -457,6 +457,31 @@ test('a drawn icon is remembered, so a later report does not draw it again', asy
   assert.equal(posts[1].body.sidebar.find((entry: any) => entry.id === 'masked').icon.png, pngBase64(64, 64));
 });
 
+test('an icon whose generated ids change on every render is still one icon: it is drawn once and stays on every report', async () => {
+  let renders = 0;
+  // Like dsh-context's: React's useId gives each render a new id, and the mask refers to it.
+  const Unstable = () => {
+    const id = `sheet-r${++renders}-thin`;
+    return { type: 'svg', props: { viewBox: '0 0 1024 1024', children: [
+      { type: 'defs', props: { children: [{ type: 'mask', props: { id, children: [
+        { type: 'rect', props: { width: 1024, height: 1024, fill: '#fff' } }] } }] } },
+      { type: 'rect', props: { width: 1024, height: 1024, fill: 'currentColor', mask: `url(#${id})` } }] } };
+  };
+  const { posts, advance, drawn, listeners, entries } = await setup({ sidebarIcons: [{ id: 'unstable', component: Unstable }] });
+  await advance(600);
+  // More reports than the cache holds icons: each one renders the component again.
+  for (let report = 0; report < 20; report += 1) {
+    entries.get('conversation.view')!.push({ options: { id: `tab-${report}`, label: `Tab ${report}` }, registrant: 'x' });
+    [...(listeners.get('conversation.view') ?? [])].forEach((listener) => listener());
+    await advance(600);
+  }
+  assert.ok(renders > 12, 'the component was rendered more times than the cache holds');
+  assert.equal(drawn.length, 1, 'one drawing, whatever the generated ids were');
+  for (const post of posts) {
+    assert.equal(post.body.sidebar.find((entry: any) => entry.id === 'unstable').icon.png, pngBase64(64, 64));
+  }
+});
+
 test('only a handful of icons are ever drawn, so a plugin cannot make the report grow without limit', async () => {
   const many = Array.from({ length: 20 }, (_, index) => ({
     id: `m${index}`,

@@ -152,6 +152,13 @@ private actor ReviewTransport: DSBotTransport {
         ? ["review-chat": [QueuedMessage(id: "queued-desktop", text: "电脑端排队的消息", editable: true)]] : [:]
     private var embeddedPages: [String: String] = [:]
     private let realPages = ReviewEmbeddedPages()
+    /// Local-only replay data is copied into the simulator, never bundled with the app.
+    private lazy var replayDetail: SessionDetail? = {
+        guard ProcessInfo.processInfo.arguments.contains("-dsbot-review-replay"),
+              let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
+              let data = try? Data(contentsOf: documents.appendingPathComponent("ReviewSession.json")) else { return nil }
+        return try? JSONDecoder().decode(SessionDetail.self, from: data)
+    }()
     private let hostPageReview: JSONValue? = {
         guard let encoded = ProcessInfo.processInfo.environment["DSBOT_HOST_PAGE_REVIEW"],
               let data = Data(base64Encoded: encoded) else { return nil }
@@ -280,8 +287,12 @@ private actor ReviewTransport: DSBotTransport {
         if ProcessInfo.processInfo.arguments.contains("-dsbot-review-parity") {
             switch method {
             case "session.page": return try encode(ConversationParityFixture.older)
-            case "session.changes": return try encode(ConversationParityFixture.changes)
-            case "session.diff": return try encode(ConversationParityFixture.diff)
+            case "session.changes":
+                if ProcessInfo.processInfo.arguments.contains("-dsbot-review-changes-unavailable") {
+                    throw DSBotFailure.protocolError
+                }
+                return try encode(ConversationParityFixture.changes)
+            case "session.diff": return try encode(ConversationParityFixture.fileDiff(params))
             case "session.tool": return try encode(ConversationParityFixture.tool(params))
             case "session.performance": return try encode(ConversationParityFixture.performance)
             case "session.file":
@@ -679,6 +690,7 @@ private actor ReviewTransport: DSBotTransport {
     }
 
     private func detail(_ id: String, transcript wantsTranscript: Bool = false) -> SessionDetail {
+        if let replayDetail, replayDetail.session.id == id { return replayDetail }
         let session = sessions.first { $0.id == id } ?? sessions[0]
         let messages: [ChatMessage]
         if id == "review-long" {
@@ -700,7 +712,8 @@ private actor ReviewTransport: DSBotTransport {
             ]
         } else if id == "review-heavy" {
             // Rows of wildly different heights, as a real conversation with command output and tables has.
-            messages = (0..<80).map { index in
+            let count = ProcessInfo.processInfo.arguments.contains("-dsbot-review-heavy-cache-prefix") ? 10 : 80
+            messages = (0..<count).map { index in
                 let isUser = index.isMultiple(of: 2)
                 return ChatMessage(
                     id: "review-heavy-\(index)", role: isUser ? "user" : "assistant",

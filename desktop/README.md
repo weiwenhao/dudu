@@ -1,16 +1,16 @@
-# dsbot 电脑连接插件
+# Dudu 电脑连接插件
 
-dsbot `0.3.18` 为 SwiftUI iPhone 客户端提供原生会话连接和带鉴权的 HTTP 页面。
-发布包 `dsbot-desktop-0.3.18.zip` 包含 `dsbot-0.3.18.tgz`。
-当前与 DeepSeek Harness Desktop `0.2.1-rc.2` 联调。
+Dudu 电脑连接插件（包名 `dsbot`）`0.3.21` 为 SwiftUI iPhone 客户端提供原生会话连接和带鉴权的 HTTP 页面。
+发布包 `dsbot-desktop-0.3.21.zip` 包含 `dsbot-0.3.21.tgz`。
+不声明 DSH 版本约束，升级 DSH 不会仅因版本号变化而被标记为不兼容。
 
 ## 安装与配对
 
-1. 在 DSH Desktop「插件」中安装 `dsbot-0.3.18.tgz`。
+1. 在 DSH Desktop「插件」中安装 `dsbot-0.3.21.tgz`。
 2. 打开 DSH Desktop「设置 → 手机控制」，填写电脑名称。
 3. 添加一个或多个手机可访问的连接地址。
 4. 在目标地址旁手动点击「生成二维码」。
-5. 手机打开 dsbot，扫码或粘贴完整配对链接；已连接时可在「电脑连接 → 添加电脑」继续配对。
+5. 手机打开 Dudu，扫码或粘贴完整配对链接；已连接时可在「电脑连接 → 添加电脑」继续配对。
 
 地址不区分局域网与公网模式。配置 TLS 的反向代理或隧道可填写
 `https://your-domain.example/dsbot`，局域网可填写 `http://电脑地址:3170/dsbot`。
@@ -77,6 +77,16 @@ WS/WSS scheme 只会在 App 导入时归一化为 HTTP/HTTPS；新地址请填�
 电脑需要保持 DSH 和连接隧道运行。配置和设备记录保存在
 `DSH_HOME/dsbot/`，默认 `~/.dsh/dsbot/`。重启或升级保留已有记录，
 设备密钥以散列形式保存。
+
+macOS 上从源码更新可在仓库运行 `npm run desktop:update`，自动打包、通过 Desktop
+自带的 CLI 安装并请求热重载。脚本核对本地运行回执中的版本和代码指纹，并探测
+服务就绪；热重载不可用时自动正常退出并重新打开 DSH。DSH 有运行中任务时，
+它自己的退出确认仍然有效，脚本不会强制杀进程。加 `-- --restart` 可直接选择重启。
+更新日志、结果和 profile 备份在 `.local/desktop-updates/`。
+安装包路径包含源码指纹，同版本修改也会安装新的包，避免包管理器复用旧缓存。
+
+上游错误分类保存在 `DSH_HOME/dsbot/diagnostics/upstream.jsonl`，自动轮转，
+只记录接口、失败阶段和错误码，不记录请求参数、会话正文或凭据。
 
 从旧版升级时，手机使用原 bundle identifier 覆盖安装，保留 Keychain 和数据。
 旧凭据只在实际认证时按迁移规则导入；撤销后的旧凭据不能再次导入。

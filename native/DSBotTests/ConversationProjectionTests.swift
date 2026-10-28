@@ -2,7 +2,7 @@ import XCTest
 @testable import dsbot
 
 final class ConversationProjectionTests: XCTestCase {
-    func testLiveUpdatesPreserveHistoricalRowsAndFinishAsTheSameTurn() async {
+    func testLiveUpdatesPreserveHistoricalRowsAndFinishAsTheSameTurn() async throws {
         let projector = ConversationProjector()
         var transcript = Transcript(entries: [
             TranscriptEntry(type: "user", id: "question", seq: 1, time: 1_000, text: "question"),
@@ -15,6 +15,7 @@ final class ConversationProjectionTests: XCTestCase {
             TranscriptTurn(turn: 2, start: 400_100)
         ], live: TranscriptLive(id: "live:2", text: "hello"))
         let initial = await projector.project(current: nil, incoming: transcript, currentRows: [], isRunning: true)
+        XCTAssertNotNil(initial.markdown.content(for: "answer"))
         let history = Array(initial.rows.dropLast())
         var current = initial
         for count in 1...40 {
@@ -26,14 +27,16 @@ final class ConversationProjectionTests: XCTestCase {
             XCTAssertEqual(Array(current.rows.dropLast()), history)
             XCTAssertEqual(current.timeSeparators, initial.timeSeparators)
             XCTAssertEqual(current.rows, TranscriptBuilder.rows(from: transcript, isRunning: true))
+            XCTAssertTrue(current.markdown === initial.markdown)
         }
         let unchanged = await projector.project(
             current: current.transcript, incoming: transcript, currentRows: current.rows, isRunning: true
         )
         XCTAssertFalse(unchanged.transcriptChanged)
         XCTAssertFalse(unchanged.rowsChanged)
+        let finalText = try XCTUnwrap(transcript.live?.text)
         transcript.entries.append(TranscriptEntry(
-            type: "assistant", id: "final", seq: 5, time: 402_000, text: transcript.live?.text, turn: 2, step: 2
+            type: "assistant", id: "final", seq: 5, time: 402_000, text: finalText, turn: 2, step: 2
         ))
         transcript.live = nil
         transcript.turns[1].end = 402_000
@@ -43,6 +46,7 @@ final class ConversationProjectionTests: XCTestCase {
         )
         XCTAssertEqual(completed.rows.map(\.id), initial.rows.map(\.id))
         XCTAssertEqual(completed.rows, TranscriptBuilder.rows(from: transcript, isRunning: false))
+        XCTAssertNotNil(completed.markdown.content(for: finalText))
     }
 
     func testEarlierPageSurvivesTailUpdatesAndResetDropsTheOldConversation() async {
@@ -68,5 +72,19 @@ final class ConversationProjectionTests: XCTestCase {
         XCTAssertNil(cleared.transcript)
         XCTAssertTrue(cleared.rows.isEmpty)
         XCTAssertTrue(cleared.timeSeparators.isEmpty)
+        XCTAssertTrue(cleared.markdown.texts.isEmpty)
+    }
+
+    func testLegacyMessagesAndExpandedDetailsArePreparedBeforeDisplay() async {
+        let projector = ConversationProjector()
+        let projection = await projector.project(
+            current: nil, incoming: nil, currentRows: [], isRunning: false,
+            messages: [ChatMessage(id: "legacy", role: "assistant", text: "## Legacy\n\n**Ready**",
+                                   reasoning: "Reasoning", process: "Process")],
+            additionalMarkdown: ["Question details", "Plan details"]
+        )
+        for text in ["## Legacy\n\n**Ready**", "Process", "Reasoning", "Question details", "Plan details"] {
+            XCTAssertNotNil(projection.markdown.content(for: text))
+        }
     }
 }
