@@ -136,7 +136,8 @@ SQLite 文件不放进项目文件夹：用户可能把它指到同步盘，SQLi
 
 规则：
 
-- 每一个都要你手动开启：嘟嘟添加的、自动查找到的，一律 `enabled: false`；只有你能打开（连接页的开关，或直接改文件），嘟嘟不能把它改成 `true`。开启一个连接器，就是允许嘟嘟用它 `allow` 里的全部操作；开启之前，你在连接页看得到这份列表。收进来时代码只调用读操作。
+- 每一个都要你手动开启：嘟嘟添加的、自动查找到的，一律 `enabled: false`；只有你能打开（连接页的开关，或直接改文件），嘟嘟的方法里没有开启这一项。开启一个连接器，就是允许嘟嘟用它 `allow` 里的全部操作；开启之前，你在连接页看得到这份列表。收进来时代码只调用读操作。
+- 嘟嘟能做的比这更窄（2026-10-31 实现时定的，比上面严）：它改不了、删不了你写的条目，也改不了、删不了已开启的条目要运行的东西（要先由你关掉）；它不能把 `sh`、`node`、`python`、`npx`、`ssh` 这类解释器和启动器登记成命令行连接器的程序，也不能设 `PATH`、`LD_*`、`NODE_OPTIONS` 这类环境变量，不能把密钥写成明文。`allow` 里的一条可以写成 `{ "run": "task +get-my-tasks", "readOnly": true }`：不写 `readOnly` 的当作写操作，收进来时读不了；MCP 的工具由服务器的 `readOnlyHint` 决定默认勾哪些，你勾了才开放，收进来时两样都要满足。从别的 agent 的配置找来的 MCP 条目只存一个指回原配置的引用，你在连接页打开它时，把你看到的那份启动方式固定下来，原配置变了就停用。
 - 你对嘟嘟说"接入 X"，嘟嘟去查找，再用 `connectors_register` 添加，条目标 `source: dudu`。嘟嘟只能新增和修改自己添加的条目，不能改、不能删你写的。每次添加写进 `reviews/`，可撤销。
 - 命令行条目必须有 `allow` 模板；MCP 条目的工具由你勾选，标了只读的默认勾上，其余默认不勾。
 - 登录授权（包括 OAuth）由工具自己完成，嘟嘟不做。密钥只存引用，放 DSH 的凭据存储或系统钥匙串，不进登记册、日志、快照、记忆（验证 7）。
@@ -588,7 +589,7 @@ Issue 是嘟嘟里唯一的工作单位：一件要办的事，来自连接器�
 | `memory/records`、`update`、`forget` | `memory.*` | 记录列表、修改、忘记（先预览） |
 | `skills/list`、`read`、`remove` | — | 技能 |
 | `rules/get` | — | 读 `TRIAGE.md`、`ASSIGN.md`（只读；要改用系统编辑器打开文件） |
-| `connectors/list`、`discover`、`enable`、`disable`、`remove`、`test` | `connectors.list` | 连接器；开启和关闭只能由你，手机只看状态 |
+| `connectors/list`、`discover`、`enable`、`disable`、`tick`、`remove`、`test`、`undo` | `connectors.list` | 连接器；开启和关闭只能由你，手机只看状态；`tick` 勾选 MCP 要开放的工具，`undo` 撤销嘟嘟的一次添加或你的一次移除 |
 | — | `assistant.watch` | 带 `since` 游标的长轮询，返回 issue、快照、记录的变化（桌面用轮询） |
 
 手机上的方法名可以调整。形状：
@@ -707,7 +708,7 @@ host/assistant/
              createDashboard({ file, engine }) → { get, set, add, move, resize, remove, reset, undo }；layout.mjs 是每个小组件的最小和推荐大小、读写时的校验和修正（夹进范围，重叠的往下推：用打包好的 gridstack 引擎，和界面里同一套规则）
 host/dudu-plugin/ui/（已做 Issues，2026-10-31）  entry.jsx（给 `client.js` 的页面和样式）、styles.css（Tailwind 的入口，变量接 DSH 的 `--dsw-*`）、strings.js（界面上所有的字）、lib/（`cn`，`Scope`：带 `.dudu` 的根，弹层都放进它）、components/（shadcn 的组件源码：button、popover、command、switch、select-field、calendar，都是 `forwardRef` 写法）、issues/（列表、分组、Board、筛选、显示选项、详情和它们的状态；纯逻辑在 `view.js`、`filter-state.js`、`flatten.js`、`activity.js`、`due.js`，有单元测试）。还没有：dashboard（gridstack 的接线、编辑、添加列表）、widgets/<id>（别的小组件）、设置、宠物。`scripts/build-client.mjs` 把它编成 `dist/client.js`
   connectors/ index.mjs markdown.mjs cli.mjs mcp.mjs
-             createConnectors({ file, secrets }) → { list, discover, register, update, remove, test, tools, call }
+             createConnectors({ file, secrets, run, now, env, home, platform, dsh }) → { dudu: { list, discover, register, update, remove, test, tools, call, undo }, owner: { list, discover, enable, disable, tick, remove, test, call, undo }, read, readTools, close }（已做，2026-10-31；`dudu` 给嘟嘟会话，`owner` 给设置页，两组方法分开，嘟嘟的工具列表里不会混进你的；`mcp.mjs` 是唯一出现 SDK 包名的文件，由打包脚本打进包；还有 discover.mjs、toml.mjs、schema.mjs、redact.mjs、text.mjs）
   home.mjs                             DSH 适配：嘟嘟会话、上下文、工具、接口、事件（唯一碰 ctx.* 的文件）
 tests/assistant-*.test.ts
 ```
@@ -777,7 +778,7 @@ tests/assistant-*.test.ts
 | 4 | 打开 DSH 默认落在嘟嘟的仪表盘（`selectPanel`、`activePanelId`） | 把嘟嘟入口放在侧栏最上面，一点就到，并告诉主人 |
 | 5 | `dsh web` 的最低 Node 版本（DSH 没写） | `node:sqlite` 不可用时，关掉嘟嘟这部分并给诊断 |
 | 6 | Claude、Codex"在等你"的信号 | 用真实会话校准 3.4 的状态规则 |
-| 7 | 连接器：MCP SDK 打进包的体积和许可证；命令行运行器；DSH 工具在对话外能不能用；密钥怎么存、怎么引用；自动查找的第三个来源怎么不碰密钥值 | 逐项找替代办法，没有就如实告诉主人 |
+| 7 | 连接器：MCP SDK 打进包的体积和许可证；命令行运行器；DSH 工具在对话外能不能用；密钥怎么存、怎么引用；自动查找的第三个来源怎么不碰密钥值 | 逐项找替代办法，没有就如实告诉主人。**结果（2026-10-31）**：SDK 打包后 842 KB（gzip 163 KB），压缩后 389 KB（115 KB），打进去的包都是 MIT、ISC 或 BSD-3；命令行用 `execFile` 加参数数组，不经 shell；密钥只存引用（环境变量名），运行时才取；别的 agent 的配置只读名字和启动方式；DSH 工具在对话外能不能用没验证（`dsh.call` 只是注入的接口）；SDK 的 stdio 客户端用 `cross-spawn`（CommonJS），打包要带 `createRequire` 的前缀（`package-desktop.mjs` 已有），并要把子进程的 stderr 接走，否则话多的服务器会卡住；SDK 只把 HOME、LOGNAME、PATH、SHELL、TERM、USER 传给服务器，DSH 的密钥不会漏过去 |
 | 8 | 手机：嘟嘟的对话怎么成为首屏（`navigation.get`、`DSBotRootView`）；嘟嘟会话怎么从两边的列表隐藏；长轮询方法 | — |
 | 9 | 项目文件夹：DSH 能不能指定、改一个会话的工作区；工作区怎么从 DSH 的列表里隐藏；各平台的临时目录判断 | 不能改工作区：在新工作区里接一个新会话，DSH 里的会话 id 会变，历史靠自己的索引接上 |
 | 10 | 整理在 DeepSeek 上的质量和 token 成本（目标：改过的事实答对，一次远低于 16 万 token）；能不能只给嘟嘟会话换压缩摘要提示词 | 换不了提示词不影响正确性；成本太高就缩小每次整理的范围 |
