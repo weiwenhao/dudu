@@ -16,7 +16,12 @@ const usage = { providers: [
 ] };
 
 let fixture: Awaited<ReturnType<typeof startFixture>>;
-before(async () => { fixture = await startFixture({ handlers: { 'overview/usage': () => usage } }); });
+const inputs = { lastRunAt: Date.now(), running: false, createdToday: 3, connectors: [
+  { id: 'lark', name: '飞书', enabled: true, operations: 2, readToday: 12, createdToday: 3, lastRead: { at: Date.now() - 600000, ok: true, items: 12, created: 3 } },
+  { id: 'mail', name: 'Email', enabled: true, operations: 1, readToday: 0, createdToday: 0, lastRead: { at: Date.now() - 3 * 3600000, ok: false, items: 0, created: 0, error: 'login expired' } },
+  { id: 'notion', name: 'Notion', enabled: false, operations: 1, readToday: 0, createdToday: 0, lastRead: null },
+] };
+before(async () => { fixture = await startFixture({ handlers: { 'overview/usage': () => usage, 'dispatch/state': () => ({ outcome: 'success', ...inputs }) } }); });
 after(async () => { await fixture?.stop(); });
 
 /** Makes room (Issues is pulled to the left half from the keyboard), adds the widget, and leaves edit mode. */
@@ -74,5 +79,25 @@ test('Stuck: the issues whose agent is stuck (its session failed), and none of t
   const stuck = await withWidget(page, 'Stuck');
   await stuck.getByRole('button', { name: /备份脚本出错了/ }).waitFor();
   assert.equal(await stuck.getByText('一切正常的事').count(), 0);
+  await page.context().close();
+});
+
+test('Inputs: the numbers of today and a red line, with when, for a connector that fails; a taller widget lists every connector that is on', async () => {
+  const page = await fixture.open();
+  const widget = await withWidget(page, 'Inputs');
+  await widget.getByText('Read today').waitFor();
+  await widget.getByText('12', { exact: true }).waitFor();
+  await widget.getByText('3', { exact: true }).waitFor();
+  await widget.getByText('Email').waitFor();
+  await widget.getByText(/^Failed · /).waitFor();
+  assert.equal(await widget.getByText('飞书').count(), 0, 'a short widget lists only what fails');
+  assert.equal(await widget.getByText('Notion').count(), 0, 'a connector that is off is not an input');
+
+  await page.getByRole('button', { name: 'Edit layout' }).click();
+  await page.locator('.db-card').filter({ has: widget }).focus();
+  await page.keyboard.press('Shift+ArrowDown');
+  await page.keyboard.press('Shift+ArrowDown');
+  await widget.getByText('飞书').waitFor();
+  await widget.getByText('12 read').waitFor();
   await page.context().close();
 });

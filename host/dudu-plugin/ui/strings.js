@@ -99,7 +99,8 @@ export const T = {
   },
   // NEW: the words of the small widgets (the design names the widgets and what they show, not their wording).
   widgets: {
-    titles: { overview: 'Overview', upcoming: 'Upcoming', stuck: 'Stuck', quota: 'Quota', sessions: 'Sessions' }, // the design's names
+    titles: { overview: 'Overview', upcoming: 'Upcoming', stuck: 'Stuck', inputs: 'Inputs', quota: 'Quota', sessions: 'Sessions' }, // the design's names
+    inputs: { empty: 'No connectors are on', readToday: 'Read today', made: 'Issues made', allWorking: 'All working', failing: (n) => `${n} failing`, failed: (when) => `Failed · ${when}`, never: 'Not read yet', count: (n) => `${n} read` },
     overview: { overdue: 'Overdue', thisWeek: 'Due this week', inProgress: 'In progress' },
     upcoming: { empty: 'Nothing is due' },
     stuck: { empty: 'Nothing is stuck' },
