@@ -275,6 +275,10 @@ npm run native:test -- --device YOUR_COREDEVICE_ID
 | `host/dsbot-control.mjs` | 电脑地址配置、配对和撤销 |
 | `host/dudu-plugin/` | DSH Desktop 插件 |
 | `host/providers/` | 供应商：在 DSH 里使用电脑上的 Claude Code 和 Codex，基于 OAR，见 `docs/providers.md` |
+| `host/providers/native/` | 嘟嘟：读 Claude / Codex 已有的会话，搜索，加载进 DSH，见 `docs/providers.md` |
+| `host/assistant/` | 嘟嘟的 issue：SQLite 库（`issues/index.mjs`）、给桌面界面的 HTTP 接口（`issues/api.mjs`），设计见 `docs/assistant.md` |
+| `host/dudu-plugin/ui/` | 嘟嘟页面的 React 界面（shadcn/ui、Tailwind）：Issues 列表、分组、Board、筛选、详情；所有的字在 `strings.js`，待审的见 `docs/issues-ui-wording.md` |
+| `scripts/build-client.mjs` | 把 `ui/` 编成 `dist/client.js`（`npm run client:build`；`package:desktop` 里自动跑） |
 | `scripts/package-desktop.mjs` | 打包原生客户端对应的电脑插件 |
 | `scripts/update-desktop.mjs` | 安装本地电脑插件、热重载及必要时重启，并检查运行代码 |
 

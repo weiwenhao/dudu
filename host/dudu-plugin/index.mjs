@@ -17,6 +17,8 @@ import { createOverview } from './dist/providers/native/overview.mjs';
 import { claudeProvider } from './dist/providers/drivers/claude.mjs';
 import { codexProvider } from './dist/providers/drivers/codex.mjs';
 import { permissionOf } from './dist/providers/permission.mjs';
+import { createIssues } from './dist/assistant/issues/index.mjs';
+import { createIssuesApi, ISSUE_ACTIONS } from './dist/assistant/issues/api.mjs';
 
 // Capture the loaded package once, so an old runtime cannot report newly installed files as its own.
 const runtimeIdentity = await desktopPackageIdentity(dirname(fileURLToPath(import.meta.url)));
@@ -67,6 +69,20 @@ async function startProviders(ctx, folder) {
     for (const dispose of disposers) dispose();
     await providers.close();
     await links.flush();
+  };
+}
+
+// The issues of 嘟嘟 (docs/assistant.md): one SQLite file in the plugin's state folder, served to the desktop interface.
+async function startIssues(ctx, folder) {
+  const issues = createIssues({ file: join(folder, 'assistant', 'issues.db') });
+  const api = createIssuesApi({ issues });
+  const disposers = ISSUE_ACTIONS.map((action) => ctx.connection.fetch.register({
+    path: `/api/dudu/issues/${action}`, methods: ['POST'], requestBody: 'buffered',
+    fetch: (request) => api.handle(action, request),
+  }));
+  return async () => {
+    for (const dispose of disposers) dispose();
+    issues.close();
   };
 }
 
@@ -141,6 +157,14 @@ export async function apply(ctx, config = {}) {
     console.info('[dudu] Providers are ready.');
   } catch (error) {
     console.warn(`[dudu] Providers are unavailable: ${error.message}`);
+  }
+
+  try {
+    stops.push(await startIssues(ctx, folder));
+    console.info('[dudu] Issues are ready.');
+  } catch (error) {
+    // A database written by a newer version stays untouched (SCHEMA_TOO_NEW); the rest of the plugin keeps working.
+    console.warn(`[dudu] Issues are unavailable: ${error.message}`);
   }
 
   if (typeof ctx.connection.createPeer === 'function') {

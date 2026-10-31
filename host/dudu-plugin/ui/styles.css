@@ -1,0 +1,110 @@
+/* Tailwind input for the desktop interface. scripts/build-client.mjs compiles it, then scopes every rule under `.dudu`
+ * and drops the cascade layers, so none of it can reach DSH's own interface (and DSH's unlayered global CSS cannot beat it).
+ * Only theme + utilities are imported: no preflight, a small scoped reset below stands in for it. */
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@source "./";
+
+/* DSH marks dark mode on <body>; the `dark:` classes of shadcn follow it. */
+@custom-variant dark (&:is(body[data-ds-dark-theme] *));
+
+/* shadcn's variables, filled from DSH's own tokens (--dsw-*) so colours and theme follow DSH. The literals are the light
+ * values, used only if a token is missing. Selectors here are written bare: the build puts `.dudu` in front of each, and
+ * turns `:root` into `.dudu` itself (the one rule that is already scoped by hand is the dark-mode one). */
+:root {
+  --radius: 0.5rem;
+  --background: var(--dsw-alias-bg-base, #ffffff);
+  --foreground: var(--dsw-alias-label-primary, #0f1115);
+  --card: var(--dsw-alias-bg-layer-1, #ffffff);
+  --card-foreground: var(--foreground);
+  --popover: var(--dsw-alias-bg-layer-1, #ffffff);
+  --popover-foreground: var(--foreground);
+  --primary: var(--dsw-alias-brand-primary, #0f1115);
+  --primary-foreground: var(--dsw-alias-label-primary-foreground, #ffffff);
+  --secondary: var(--dsw-alias-interactive-bg-hover, #2631480f);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--dsw-alias-interactive-bg-hover, #2631480f);
+  --muted-foreground: var(--dsw-alias-label-secondary, #61666b);
+  --accent: var(--dsw-alias-interactive-bg-hover, #2631480f);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--dsw-alias-state-error-primary, #ec1313);
+  --border: var(--dsw-alias-border-l2, #0000001a);
+  --input: var(--dsw-alias-border-l3, #0000001f);
+  --ring: var(--dsw-alias-state-business-primary, #4176e6);
+  /* What shadcn has no name for: the Linear status colours, the Urgent orange, due-date tones. */
+  --success: var(--dsw-alias-state-success-primary, #22c55e);
+  --warning: var(--dsw-alias-state-warn-primary, #f59e0b);
+  --priority-urgent: #f4793b;
+  --status-backlog: #95a2b3;
+  --status-todo: #a0a5ad;
+  --status-progress: #f2c94c;
+  --status-review: #4cb782;
+  --status-done: #5e6ad2;
+  --status-canceled: #95a2b3;
+  --warning-foreground: #8a5300;
+  --danger-foreground: #b91c1c;
+  font-family: var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Arial, sans-serif);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+}
+body[data-ds-dark-theme] .dudu {
+  --warning-foreground: #f59e0b;
+  --danger-foreground: #f25a5a;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-status-backlog: var(--status-backlog);
+  --color-status-todo: var(--status-todo);
+  --color-status-progress: var(--status-progress);
+  --color-status-review: var(--status-review);
+  --color-status-done: var(--status-done);
+  --color-status-canceled: var(--status-canceled);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-danger-foreground: var(--danger-foreground);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  /* Linear's 13px as the body size (text-sm), 12px as the secondary one (text-xs). */
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.9375rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.75rem;
+}
+
+/* What preflight would have reset, for our own elements only. Once scoped, these sit below every utility (`.dudu .class`) and
+ * above DSH's bare element selectors. */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; border: 0 solid var(--border); }
+button, input, select, textarea { font: inherit; letter-spacing: inherit; color: inherit; background: transparent; border-radius: 0; }
+button { cursor: pointer; text-align: inherit; }
+button:disabled { cursor: default; }
+h1, h2, h3, h4 { font-size: inherit; font-weight: inherit; color: inherit; }
+ul, ol { list-style: none; }
+a { color: inherit; text-decoration: inherit; }
+svg { display: block; }

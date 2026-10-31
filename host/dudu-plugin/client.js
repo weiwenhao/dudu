@@ -3,6 +3,8 @@ window.__ModuleLoader__.load({
   factory(require) {
     const { createElement: h, Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } = require('react');
     const { Button, Input } = require('@deepseek-ai/dsh-client-ui-primitives');
+    // The React interface (ui/, built by scripts/build-client.mjs) is compiled in front of this file; unbuilt, it is absent.
+    const ui = typeof __DUDU_UI__ === 'function' ? __DUDU_UI__(require) : null;
 
     const styles = `
 .dsbot-settings{max-width:760px;padding:0 0 24px;color:var(--dsw-alias-label-primary);font-size:14px;line-height:22px}
@@ -1162,7 +1164,16 @@ window.__ModuleLoader__.load({
             ctx.layout.selectPanel(null);
           },
         });
-        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID }, Page));
+        if (ui) {
+          ctx.effect(() => {
+            const style = document.createElement('style');
+            style.textContent = ui.css;
+            document.head.appendChild(style);
+            return () => style.remove();
+          });
+        }
+        const IssuesPage = () => h(ui.Page, { request, logo: LOGO });
+        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID }, ui ? IssuesPage : Page));
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
           name: 'sidebar.panellist', id: PANEL_ID, order: 20, label: () => '嘟嘟',
         }, DuduGlyph));
