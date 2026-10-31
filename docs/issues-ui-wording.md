@@ -52,8 +52,18 @@
 - 仪表盘：Issues 没被拉过时占满全部列并跟着窗口；键盘 Tab 到小组件，方向键移一格，Shift + 方向键改大小，Delete 移除；Esc 退出编辑。Overview 的 `In progress` 数智能体正在工作的；Quota 不列没有订阅的（DeepSeek），读不到的写 `—`。
 - 设置里的模态窗口会盖住页面的撤销条，所以移除连接器的撤销是窗口里的一行。
 
+## 收进来、分配、Office：新写的字，等你看
+
+- 设计稿原话：issue 没分配时的问题 `交给谁处理？`；做完后的 `确认完成吗？`。
+- 智能体出问题时 issue 上的问题（中文，`host/assistant/home/assign.mjs`）：`出错了：…。怎么办？` · `没能开始：…。要换个智能体，还是稍后再试？` · `回复没能发给会话：…`。
+- 活动里嘟嘟写的几行（英文，固定用词）：`started a session with Claude` · `closed the session` · `resumed the session` · `access: read-only` · `No agent chosen: …` · `the session it named was not offered, so a new one starts` · `Urgent needs a rule in TRIAGE.md; the priority comes from impact and effort.`（`host/assistant/dispatch/words.mjs`，其余是给调用它的模型看的，不在界面上）。
+- 交给会话的第一条消息：`host/assistant/home/first-message.mjs`，中文，几行平话，写明访问方式、哪些是资料不是指令。
+- 给模型的指令（`dispatch/prompts.mjs`）不是界面，但你写的 `TRIAGE.md`、`ASSIGN.md` 就是读给它们的。
+- Office：名牌、图例、读屏句子在 `host/dudu-plugin/ui/widgets/office/strings.js`。
+
 ## 还没做
 
 - New issue 的窗口：设计稿只画了按钮，窗口是最小版（标题、描述、两个按钮；从分组条或 Board 列的"＋"打开时带那一组的值）。
-- 详情页的"Open session"和换智能体：按钮和菜单做好了，接真正的会话要等分配那一块；右上"···"（撤销这次整理、忘记）也是。
-- Office、宠物；设置里"通用"还缺宠物和快捷键、模型、最近一次整理；"手机控制、供应商"仍在 DSH 自己的设置里。
+- 详情页右上"···"（撤销这次整理、忘记）。
+- 宠物和嘟嘟自己的对话；设置里"通用"还缺宠物和快捷键、模型、最近一次整理；"手机控制、供应商"仍在 DSH 自己的设置里。
+- 手机端没有设计，没做。

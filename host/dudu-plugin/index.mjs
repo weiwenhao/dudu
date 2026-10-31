@@ -20,9 +20,14 @@ import { codexProvider } from './dist/providers/drivers/codex.mjs';
 import { permissionOf } from './dist/providers/permission.mjs';
 import { createIssues } from './dist/assistant/issues/index.mjs';
 import { createIssuesApi, ISSUE_ACTIONS } from './dist/assistant/issues/api.mjs';
-import { createAgentSessions } from './dist/assistant/home/agent-sessions.mjs';
+import { AGENTS, createAgentSessions, modelFor } from './dist/assistant/home/agent-sessions.mjs';
 import { createDshSessions } from './dist/assistant/home/dsh-sessions.mjs';
 import { createAssignment } from './dist/assistant/home/assign.mjs';
+import { firstMessage } from './dist/assistant/home/first-message.mjs';
+import { createDispatch } from './dist/assistant/dispatch/index.mjs';
+import { createDshLlm } from './dist/assistant/dispatch/dsh-llm.mjs';
+import { createHandOut } from './dist/assistant/dispatch/hand-out.mjs';
+import { allowedAccess } from './dist/assistant/dispatch/rules.mjs';
 import { createDashboard } from './dist/assistant/dashboard/index.mjs';
 import { createDashboardApi, DASHBOARD_ACTIONS } from './dist/assistant/dashboard/api.mjs';
 import { GridStackEngine } from './dist/assistant/dashboard/engine.mjs';
@@ -117,12 +122,14 @@ async function startAssignment(ctx, folder, assignment) {
     // An issue that names no project is worked on in 嘟嘟's own folder (3.2): the project folder the settings name, once startAssistant has
     // opened it (`assignment.projectFolder`), else the standard one.
     defaultCwd: async () => { const home = assignment.projectFolder?.() ?? join(folder, 'home'); await mkdir(home, { recursive: true }); return home; },
+    // What ASSIGN.md allows for this kind of issue; read-only when it says nothing (3.3).
+    accessOf: (issue) => ({ access: allowedAccess(assignment.assistant?.memory?.rules?.()?.rules?.['ASSIGN.md'], issue) }),
   });
-  Object.assign(assignment, { sessionState: hooks.sessionState, onAssign: hooks.onAssign, onReply: hooks.onReply, onResume: hooks.onResume });
+  Object.assign(assignment, { sessionState: hooks.sessionState, onAssign: hooks.onAssign, onReply: hooks.onReply, onResume: hooks.onResume, start: hooks.start, restore: hooks.restore });
   // The sessions of the issues that are open are followed again after a restart; reading their logs does not hold the plugin back.
   hooks.restore().catch((error) => console.warn(`[dudu] The sessions of the open issues could not be followed again: ${error.message}`));
   return async () => {
-    for (const hook of ['sessionState', 'onAssign', 'onReply', 'onResume']) delete assignment[hook];
+    for (const hook of ['sessionState', 'onAssign', 'onReply', 'onResume', 'start', 'restore']) delete assignment[hook];
     hooks.dispose();
     agentSessions.dispose();
   };
@@ -132,14 +139,71 @@ async function startAssignment(ctx, folder, assignment) {
 // connectors, and the calls the settings page makes on them. A project folder that cannot be opened turns off the memory and the
 // connectors only (the settings page says why); the rest of the plugin runs.
 async function startAssistant(ctx, dshHome, folder, assignment = {}) {
-  const assistant = openAssistant({ dshHome, stateFolder: join(folder, 'assistant') });
+  // The memory asks the model of startDispatch once it is there (the same one DSH has as its default).
+  const llm = (messages, options) => (assignment.llm ? assignment.llm(messages, options) : Promise.reject(new Error('There is no model yet.')));
+  const assistant = openAssistant({ dshHome, stateFolder: join(folder, 'assistant'), llm });
+  assignment.assistant = assistant; // startAssignment and startDispatch read the rules and the connectors through it: the folder can move
   assignment.projectFolder = () => assistant.folder; // an issue without a project is worked on there (startAssignment)
   for (const problem of assistant.problems) console.warn(`[dudu] The project folder is not available: ${problem}`);
   const disposers = assistant.paths.map((path) => ctx.connection.fetch.register({
     path: `/api/dudu/${path}`, methods: ['POST'], requestBody: 'buffered',
     fetch: (request) => assistant.handle(path, request),
   }));
-  return async () => { delete assignment.projectFolder; for (const dispose of disposers) dispose(); await assistant.close(); };
+  return async () => { delete assignment.assistant; delete assignment.projectFolder; for (const dispose of disposers) dispose(); await assistant.close(); };
+}
+
+// --- startDispatch: from what comes in to who does it (docs/assistant.md 1.2, 3.1 "收进来", 3.3) ---
+// Every half hour the enabled connectors are read (only read operations), what is new becomes issues, and each new issue is handed to an
+// agent by ASSIGN.md, or left in Todo with the question "交给谁处理？". The first round is a minute after start. A round that has nothing
+// to read costs no model call. The Inputs widget reads `dispatch/state`.
+const INTAKE_FIRST_MS = 60_000;
+const INTAKE_EVERY_MS = 30 * 60_000;
+
+async function startDispatch(ctx, folder, assignment) {
+  if (!assignment.issues) throw new Error('there are no issues');
+  const dsh = createDshSessions(ctx);
+  const llm = createDshLlm(ctx);
+  assignment.llm = llm;
+  const dispatch = createDispatch({
+    issues: assignment.issues,
+    connectors: () => assignment.assistant?.connectors ?? null,
+    rules: () => assignment.assistant?.memory?.rules?.() ?? { rules: {} },
+    llm,
+    agents: async () => {
+      let catalog = null;
+      try { catalog = await dsh.models(); } catch { /* a DSH without the service has no agent to give an issue to */ }
+      return Object.entries(AGENTS).map(([id, name]) => ({ id, name, enabled: Boolean(catalog && modelFor(id, catalog)) }));
+    },
+    file: join(folder, 'assistant', 'intake.json'),
+  });
+
+  const handOut = createHandOut({ dispatch, issues: assignment.issues, assignment, firstMessage });
+
+  let round = null;
+  const intake = () => {
+    round ??= (async () => {
+      const run = await dispatch.intake();
+      for (const made of run.created ?? []) await handOut(made.id).catch((error) => console.warn(`[dudu] ${made.ref ?? made.id} could not be handed out: ${error.message}`));
+    })().catch((error) => console.warn(`[dudu] Reading what came in failed: ${error.message}`)).finally(() => { round = null; });
+    return round;
+  };
+  const first = setTimeout(() => { void intake(); }, INTAKE_FIRST_MS);
+  const every = setInterval(() => { void intake(); }, INTAKE_EVERY_MS);
+  first.unref?.();
+  every.unref?.();
+
+  const disposeRoute = ctx.connection.fetch.register({
+    path: '/api/dudu/dispatch/state', methods: ['POST'], requestBody: 'buffered',
+    fetch: async () => Response.json(await dispatch.state(), { headers: { 'cache-control': 'no-store' } }),
+  });
+  return async () => {
+    clearTimeout(first);
+    clearInterval(every);
+    disposeRoute();
+    delete assignment.llm;
+    await dispatch.dispose();
+    await round;
+  };
 }
 
 // The dashboard layout (docs/assistant.md 4.1): one small JSON file next to the issues. The engine of the grid library is the one the
@@ -255,6 +319,13 @@ export async function apply(ctx, config = {}) {
     console.info('[dudu] The project folder, memory and connectors are ready.');
   } catch (error) {
     console.warn(`[dudu] The project folder, memory and connectors are unavailable: ${error.message}`);
+  }
+
+  try {
+    stops.push(await startDispatch(ctx, folder, assignment));
+    console.info('[dudu] Reading what comes in is ready.');
+  } catch (error) {
+    console.warn(`[dudu] Reading what comes in is unavailable: ${error.message}`);
   }
 
   if (typeof ctx.connection.createPeer === 'function') {
