@@ -109,7 +109,7 @@ export function IssuesWidget({ request, onOpen }) {
   const addTo = useCallback((entry) => setCreating({ preset: presetOf(entry.field, entry.groupKey) }), []);
 
   return (
-    <section ref={root} aria-label={T.issues} className="@container relative flex h-full min-h-0 flex-col rounded-2xl border bg-card text-card-foreground">
+    <section ref={root} aria-label={T.issues} className="@container relative flex h-full min-h-0 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-2 px-4">
         <h2 className="font-semibold">{T.issues}</h2>
         <span className="flex-1" />

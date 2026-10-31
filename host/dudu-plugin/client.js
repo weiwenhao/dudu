@@ -1154,16 +1154,15 @@ window.__ModuleLoader__.load({
           document.head.appendChild(style);
           return () => style.remove();
         });
-        const Page = () => h(DuduPage, {
-          // A session written by the host is stored, not yet running: DSH's own create resumes a stored session, which also
-          // puts it in the session list, and only then can it be opened.
-          openSession: async ({ sessionId, workspaceId }) => {
-            await ctx.sessions.create({ sessionId, ...(workspaceId ? { workspaceId } : {}) });
-            await untilListed(ctx.sessions, sessionId);
-            ctx.uiWorkspace.openSession(sessionId);
-            ctx.layout.selectPanel(null);
-          },
-        });
+        // A session written by the host is stored, not yet running: DSH's own create resumes a stored session, which also
+        // puts it in the session list, and only then can it be opened.
+        const openSession = async ({ sessionId, workspaceId }) => {
+          await ctx.sessions.create({ sessionId, ...(workspaceId ? { workspaceId } : {}) });
+          await untilListed(ctx.sessions, sessionId);
+          ctx.uiWorkspace.openSession(sessionId);
+          ctx.layout.selectPanel(null);
+        };
+        const Page = () => h(DuduPage, { openSession });
         if (ui) {
           ctx.effect(() => {
             const style = document.createElement('style');
@@ -1172,7 +1171,8 @@ window.__ModuleLoader__.load({
             return () => style.remove();
           });
         }
-        const IssuesPage = () => h(ui.Page, { request, logo: LOGO });
+        const actions = { openSession };
+        const IssuesPage = () => h(ui.Page, { request, logo: LOGO, actions });
         ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID }, ui ? IssuesPage : Page));
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
           name: 'sidebar.panellist', id: PANEL_ID, order: 20, label: () => '嘟嘟',

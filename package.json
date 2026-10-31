@@ -74,7 +74,7 @@
     "export": "expo export --platform all",
     "lint": "expo lint",
     "logs:pull": "node scripts/pull-device-logs.mjs",
-    "test:e2e": "node --experimental-strip-types --test tests/e2e/*.e2e.test.ts"
+    "test:e2e": "node scripts/e2e.mjs"
   },
   "engines": {
     "node": ">=22.18"

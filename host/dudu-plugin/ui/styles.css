@@ -3,6 +3,9 @@
  * Only theme + utilities are imported: no preflight, a small scoped reset below stands in for it. */
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
+/* The dashboard's grid: gridstack's own rules, then ours (the look of the settled demo). */
+@import "gridstack/dist/gridstack.min.css";
+@import "./dashboard/dashboard.css";
 @source "./";
 
 /* DSH marks dark mode on <body>; the `dark:` classes of shadcn follow it. */

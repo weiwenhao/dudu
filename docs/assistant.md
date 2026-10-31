@@ -676,6 +676,8 @@ Issues 前端怎么搭（2026-10-31 查的，星数和更新日期来自 GitHub�
 
 **顺序**：先打通一条线再往外加：服务端按页查询 → 平铺列表（Active）→ 状态菜单和优先级 → 页签和筛选 → 显示选项和分组 → Board → 详情页；每一步先对着设计稿渲出来比对，再往下。
 
+**进度（2026-10-31 晚）**：Issues 的空白补齐了（批量选择、Dates 筛选、All issues 的搜索和总数、分组条和 Board 列的"＋"、详情页的按钮、智能体菜单、回复和结果）；仪表盘做好了：`gridstack` 的 React 页面（`ui/dashboard/`，样式照 2026-10-30 的 demo）、版面存取和撤销在 `host/assistant/dashboard/`（`POST /api/dudu/dashboard/<动作>`，页面只管手势和键盘，改了什么由插件拼撤销条的字）、小组件 Overview、Upcoming、Stuck、Quota、Sessions（原来"嘟嘟"页的会话列表）；Office、Inputs、设置、宠物、记忆、连接器、会话和分配的接线还没有。**测试以端到端为主（主人 2026-10-31）**：`tests/e2e/` 把打好的插件装进真实的 `dsh web`（自己的 `DSH_HOME` 和 `HOME`），用装着的 Chrome（无头，playwright-core）点真实的界面；`npm run test:e2e`；读不到数据的小组件（Quota 的额度、出错的会话）用 `tests/e2e/fixture.mjs`：真实的界面和真实的库，插件的回答由测试给。
+
 **进度（2026-10-31 开工当天）**：这条线都通了：库和接口（`host/assistant/issues/`，61 + 5 个测试，5 万条的耗时在测试里）→ 平铺和分组的虚拟列表 → 状态菜单 → 页签、筛选（含 Agent、Agent state、Project、Source，选项和件数由库的 `facets` 给）→ 显示选项（分组、子分组、排序、Completed issues、显示哪些属性、Reset）→ Board → 详情页（改状态、优先级、截止日期、标题、描述，评论，Activity）。对照画布的图：`Issues-active`、`Status-menu` 量过位置，和设计稿一致；`Display-grouped`、`Board`、`Detail` 用眼对过，结构一致（Board 列头的"···"和"+"没做）。验证过：假的 DSH 页面加上真实的 DSH 全局样式和故意写坏的全局 CSS（样式不漏进来也不被压过）、平铺列表 5 万条模拟数据（页面里只有 23 行，滚动没有长任务；分组的 5 万条还没在界面里试）、真实的 DSH 0.2.0-rc.2（隔离的 `DSH_HOME`，真实的 `issues.db`，浅色和深色，筛选、分组、弹层的位置；详情页还没在真机上看）。**还没做的**（设计稿没画或要先定）和待审的字：`docs/issues-ui-wording.md`。
 
 ## 7. 开发

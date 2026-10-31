@@ -85,6 +85,29 @@ export const T = {
   // NEW: the + of a group bar or board column, and the menu of a board column.
   addTo: (name) => `Add issue to ${name}`,
   lane: { options: (name) => `${name} options`, collapse: 'Collapse column', expand: 'Expand column' },
+  // The dashboard. "Edit layout", "Add widget", "Restore default" and "Done" are the design's words; the rest is mine (NEW).
+  dashboard: {
+    editLayout: 'Edit layout', editHint: 'Drag a widget to move it, pull an edge to resize it.', addWidget: 'Add widget', restoreDefault: 'Restore default', done: 'Done',
+    settings: 'Settings', board: 'Dashboard', remove: (name) => `Remove ${name}`, addTitle: 'Add widget', addDescription: 'Pick a widget to put on the dashboard.', added: 'Added',
+    add: 'Add', source: (name) => `From ${name}`, noMore: 'Every widget is on the dashboard.',
+    didAdd: (name) => `Added “${name}”`, didRemove: (name) => `Removed “${name}”`, didMove: (name) => `Moved “${name}”`, didResize: (name, size) => `“${name}” resized to ${size}`,
+    didRestore: 'Restored default layout', minimum: 'Minimum size', maximum: 'Maximum size', undo: 'Undo',
+    placed: (name, x, y) => `${name}: column ${x}, row ${y}`, sized: (name, w, h) => `${name}: ${w} by ${h}`,
+    broken: (name) => `This widget could not be shown`, brokenFrom: (source) => `From ${source}`, missing: (source) => `This widget comes from ${source}, which is not installed.`,
+    loadFailed: 'Could not load the dashboard', retry: 'Retry', saveFailed: 'Could not save the layout',
+  },
+  // NEW: the words of the small widgets (the design names the widgets and what they show, not their wording).
+  widgets: {
+    overview: { overdue: 'Overdue', thisWeek: 'Due this week', inProgress: 'In progress' },
+    upcoming: { empty: 'Nothing is due' },
+    stuck: { empty: 'Nothing is stuck' },
+    quota: {
+      empty: 'No usage to show', unknown: '—', fiveHour: '5-hour', weekly: 'Weekly', days: (n) => `${n}-day`, used: (label, percent) => `${label} ${percent}% used`,
+      resets: (when) => `resets ${when}`, resetsAt: (when) => `Resets ${when}`, limitReached: (when) => `Limit reached, resets ${when}`, label: (name, percent) => `${name} ${percent}% used`,
+      login: 'Sign in to see usage',
+    },
+    sessions: { search: 'Search sessions', empty: 'No sessions', loading: 'Looking for sessions…', failed: 'Could not read sessions', opening: 'Opening…', agents: { claude: 'Claude', codex: 'ChatGPT' } },
+  },
   agentState: { working: 'Working', needs_you: 'Needs you', stuck: 'Stuck', idle: 'Idle' },
   noAgent: 'No agent',
   today: 'Today',

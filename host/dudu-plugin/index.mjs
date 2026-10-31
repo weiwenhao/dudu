@@ -19,6 +19,9 @@ import { codexProvider } from './dist/providers/drivers/codex.mjs';
 import { permissionOf } from './dist/providers/permission.mjs';
 import { createIssues } from './dist/assistant/issues/index.mjs';
 import { createIssuesApi, ISSUE_ACTIONS } from './dist/assistant/issues/api.mjs';
+import { createDashboard } from './dist/assistant/dashboard/index.mjs';
+import { createDashboardApi, DASHBOARD_ACTIONS } from './dist/assistant/dashboard/api.mjs';
+import { GridStackEngine } from './dist/assistant/dashboard/engine.mjs';
 
 // Capture the loaded package once, so an old runtime cannot report newly installed files as its own.
 const runtimeIdentity = await desktopPackageIdentity(dirname(fileURLToPath(import.meta.url)));
@@ -84,6 +87,18 @@ async function startIssues(ctx, folder) {
     for (const dispose of disposers) dispose();
     issues.close();
   };
+}
+
+// The dashboard layout (docs/assistant.md 4.1): one small JSON file next to the issues. The engine of the grid library is the one the
+// page runs, so a layout the plugin changes is pushed around the same way.
+async function startDashboard(ctx, folder) {
+  const dashboard = createDashboard({ file: join(folder, 'assistant', 'dashboard.json'), engine: GridStackEngine });
+  const api = createDashboardApi({ dashboard });
+  const disposers = DASHBOARD_ACTIONS.map((action) => ctx.connection.fetch.register({
+    path: `/api/dudu/dashboard/${action}`, methods: ['POST'], requestBody: 'buffered',
+    fetch: (request) => api.handle(action, request),
+  }));
+  return async () => { for (const dispose of disposers) dispose(); };
 }
 
 async function startPhoneControl(ctx, config, dshHome, folder) {
@@ -165,6 +180,13 @@ export async function apply(ctx, config = {}) {
   } catch (error) {
     // A database written by a newer version stays untouched (SCHEMA_TOO_NEW); the rest of the plugin keeps working.
     console.warn(`[dudu] Issues are unavailable: ${error.message}`);
+  }
+
+  try {
+    stops.push(await startDashboard(ctx, folder));
+    console.info('[dudu] The dashboard is ready.');
+  } catch (error) {
+    console.warn(`[dudu] The dashboard is unavailable: ${error.message}`);
   }
 
   if (typeof ctx.connection.createPeer === 'function') {

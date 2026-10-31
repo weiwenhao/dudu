@@ -1,0 +1,74 @@
+/* The dashboard: widgets on a grid of square cells, laid out by gridstack (float mode: nothing closes the gaps, what a widget lands
+ * on is pushed down). The look is the settled demo's (.local/dashboard-demo/index-gridstack.html), written for our tokens.
+ * Bare selectors on purpose: the build puts `.dudu` in front of each. The page sets --db-cell, --db-gap, --db-ext (columns used),
+ * --db-rows and --db-bw (their width) on `.db-wrap`.
+ *
+ * gridstack's cell is a card plus a gap: the card is inset by half the gap on every side, so the lines between cells fall in the
+ * middle of the gaps, which is where the construction lines are drawn. The board is therefore one gap wider and taller than the
+ * cards, and is pulled back by half a gap. */
+.db-page { flex: 1; min-height: 0; overflow: auto; padding: 20px 24px; scrollbar-gutter: stable; }
+.db-wrap { position: relative; display: flow-root; width: 100%; min-width: var(--db-bw, 0px); --db-line: color-mix(in srgb, var(--foreground) 30%, transparent); --db-shadow: rgb(0 0 0 / 0.2); }
+.db-board {
+  position: relative;
+  width: calc(var(--db-bw, 1092px) + var(--db-gap, 12px));
+  min-height: calc(var(--db-rows, 6) * (var(--db-cell, 126px) + var(--db-gap, 12px)));
+  margin: calc(var(--db-gap, 12px) / -2) 0 calc(var(--db-gap, 12px) / -2) calc((100% - var(--db-bw, 1092px)) / 2 - var(--db-gap, 12px) / 2);
+}
+.db-board.grid-stack-animate { transition: none; }
+.db-board .grid-stack-item, .db-board .grid-stack-item > .grid-stack-item-content { overflow: visible; } /* handles and the remove button reach outside the card */
+.db-board.grid-stack-animate .grid-stack-item { transition: left 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), top 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), width 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), height 0.2s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.db-board.grid-stack-animate .grid-stack-item.ui-draggable-dragging, .db-board.grid-stack-animate .grid-stack-item.ui-resizable-resizing { transition: none; }
+.db-board.grid-stack-animate .grid-stack-item.grid-stack-placeholder { transition: left 0.12s ease, top 0.12s ease, width 0.12s ease, height 0.12s ease; }
+.db-board .ui-draggable-dragging > .grid-stack-item-content, .db-board .ui-resizable-resizing > .grid-stack-item-content { box-shadow: none; opacity: 1; }
+
+/* The construction lines: dashes in the middle of the gaps, each running a little past the end, not closing into a frame. Edit only. */
+.db-lines { position: absolute; z-index: 0; left: 50%; top: 0; width: var(--db-bw, 1092px); height: 0; transform: translateX(-50%); opacity: 0; pointer-events: none; transition: opacity 0.15s; }
+.db-lines svg { position: absolute; left: 0; top: 0; display: block; width: 1px; height: 1px; overflow: visible; }
+.db-lines line { stroke: var(--db-line); stroke-width: 1; stroke-dasharray: 7 5; fill: none; }
+.db-wrap.db-editing .db-lines, .db-wrap.db-dragging .db-lines { opacity: 1; }
+
+/* A card fills the cell gridstack gives it. The surface is the widget's look; the frame shows the blue outline while resizing. */
+.db-card { position: absolute; inset: 0; min-width: 0; min-height: 0; }
+.db-surface { position: absolute; inset: 0; overflow: hidden; border-radius: 20px; border: 1px solid var(--border); background: var(--card); color: var(--card-foreground); }
+.db-frame, .db-remove { display: none; }
+.db-board.db-editing .db-card { cursor: grab; touch-action: none; user-select: none; }
+.db-board.db-editing .db-surface { background: color-mix(in srgb, var(--card) 58%, transparent); border-color: color-mix(in srgb, var(--foreground) 50%, transparent); } /* the lines show through; the card is an outline darker than they are */
+.db-board.db-editing .db-surface > * { pointer-events: none; }
+.db-board.db-editing .db-card.db-moving .db-surface, .db-board.db-editing .db-card.db-resizing .db-surface { background: color-mix(in srgb, var(--card) 90%, transparent); box-shadow: 0 18px 40px var(--db-shadow), 0 0 0 1px var(--input); }
+.db-card.db-moving { cursor: grabbing; }
+.db-card.db-moving, .db-card.db-resizing { z-index: 50; }
+.db-board.db-editing .db-card.db-resizing .db-frame { display: block; position: absolute; inset: 0; border-radius: 20px; border: 2px solid var(--ring); pointer-events: none; }
+.db-board.db-editing .db-remove { display: inline-flex; position: absolute; z-index: 9; top: -8px; left: -8px; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 999px; border: 1px solid var(--input); background: var(--card); color: var(--foreground); box-shadow: 0 1px 3px var(--db-shadow); cursor: pointer; }
+.db-board.db-editing .db-remove:hover { background: var(--foreground); color: var(--background); }
+.db-board.db-editing .db-card:focus-visible { outline: none; }
+.db-board.db-editing .db-card:focus-visible .db-surface { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent); }
+.db-card.db-flash .db-frame { display: block; position: absolute; inset: 0; border-radius: 20px; border: 0; animation: db-flash 1.2s ease-out 1; pointer-events: none; }
+@keyframes db-flash { from { box-shadow: 0 0 0 4px var(--ring); } to { box-shadow: 0 0 0 4px transparent; } }
+
+/* The handles gridstack puts on every cell (e, w, n, s, se, ne, sw), moved onto the card's edges and corners. They show in edit
+ * mode only; the corners carry no mark (the cursor is the cue). */
+.db-board .grid-stack-item > .ui-resizable-handle { display: none; position: absolute; z-index: 7; width: auto; height: auto; top: auto; right: auto; bottom: auto; left: auto; background: none; transform: none; touch-action: none; }
+.db-board.db-editing .grid-stack-item > .ui-resizable-handle { display: block; }
+.db-board .grid-stack-item > .ui-resizable-w, .db-board .grid-stack-item > .ui-resizable-e { top: calc(var(--gs-item-margin-top) + 20px); bottom: calc(var(--gs-item-margin-bottom) + 20px); width: 14px; }
+.db-board .grid-stack-item > .ui-resizable-w { left: calc(var(--gs-item-margin-left) - 7px); cursor: ew-resize; }
+.db-board .grid-stack-item > .ui-resizable-e { right: calc(var(--gs-item-margin-right) - 7px); cursor: ew-resize; }
+.db-board .grid-stack-item > .ui-resizable-n, .db-board .grid-stack-item > .ui-resizable-s { left: calc(var(--gs-item-margin-left) + 20px); right: calc(var(--gs-item-margin-right) + 20px); height: 14px; }
+.db-board .grid-stack-item > .ui-resizable-n { top: calc(var(--gs-item-margin-top) - 7px); cursor: ns-resize; }
+.db-board .grid-stack-item > .ui-resizable-s { bottom: calc(var(--gs-item-margin-bottom) - 7px); cursor: ns-resize; }
+.db-board .grid-stack-item > .ui-resizable-se, .db-board .grid-stack-item > .ui-resizable-ne, .db-board .grid-stack-item > .ui-resizable-sw { width: 22px; height: 22px; }
+.db-board .grid-stack-item > .ui-resizable-se { right: calc(var(--gs-item-margin-right) - 8px); bottom: calc(var(--gs-item-margin-bottom) - 8px); cursor: nwse-resize; }
+.db-board .grid-stack-item > .ui-resizable-ne { right: calc(var(--gs-item-margin-right) - 8px); top: calc(var(--gs-item-margin-top) - 8px); cursor: nesw-resize; }
+.db-board .grid-stack-item > .ui-resizable-sw { left: calc(var(--gs-item-margin-left) - 8px); bottom: calc(var(--gs-item-margin-bottom) - 8px); cursor: nesw-resize; }
+.db-board .ui-resizable-handle::after { content: ""; position: absolute; background: var(--muted-foreground); opacity: 0.75; border-radius: 3px; }
+.db-board .ui-resizable-w::after, .db-board .ui-resizable-e::after { left: 50%; top: 50%; width: 4px; height: 30px; margin: -15px 0 0 -2px; }
+.db-board .ui-resizable-n::after, .db-board .ui-resizable-s::after { left: 50%; top: 50%; width: 30px; height: 4px; margin: -2px 0 0 -15px; }
+.db-board .ui-resizable-se::after, .db-board .ui-resizable-ne::after, .db-board .ui-resizable-sw::after { display: none; }
+.db-board .ui-resizable-handle:hover::after, .db-board .ui-resizable-handle.db-held::after { background: var(--ring); opacity: 1; }
+
+/* Where a dragged widget will land: dashed while moving, solid while resizing (gridstack's placeholder is the box). */
+.db-board .grid-stack-placeholder > .placeholder-content { box-sizing: border-box; border-radius: 20px; border: 2px solid var(--ring); background: color-mix(in srgb, var(--ring) 14%, transparent); }
+.db-board.db-moving .grid-stack-placeholder > .placeholder-content { border-style: dashed; border-color: color-mix(in srgb, var(--ring) 75%, transparent); background: color-mix(in srgb, var(--ring) 12%, transparent); }
+
+/* The size label beside the pointer while resizing ("4×2 · Minimum size"). */
+.db-chip { position: fixed; z-index: 1200; padding: 0 8px; border-radius: 6px; background: var(--ring); color: #fff; font-size: 12px; line-height: 20px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; box-shadow: 0 0 0 2px var(--background); }
+@media (prefers-reduced-motion: reduce) { .db-board.grid-stack-animate .grid-stack-item { transition: none; } .db-card.db-flash .db-frame { animation: none; } }

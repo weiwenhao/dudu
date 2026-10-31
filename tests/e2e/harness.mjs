@@ -38,12 +38,17 @@ async function waitForUrl(child, output) {
   throw new Error('dsh web did not print its address in time.');
 }
 
-export async function startDudu({ colorScheme = 'light', viewport = { width: 1440, height: 900 }, patch = '' } = {}) {
+export async function startDudu({ colorScheme = 'light', viewport = { width: 1440, height: 900 }, patch = '', files = {} } = {}) {
   const tgz = await packagedPlugin();
   const folder = await mkdtemp(join(tmpdir(), 'dudu-e2e-'));
   const home = join(folder, 'dsh');
   const user = join(folder, 'user'); // HOME of DSH and the plugin: no real Claude or Codex sessions, no real config to read
   await mkdir(user, { recursive: true });
+  // Files to put in HOME before anything starts (a Claude Code session to find, say): { 'relative/path': text }.
+  for (const [path, text] of Object.entries(files)) {
+    await mkdir(dirname(join(user, path)), { recursive: true });
+    await writeFile(join(user, path), text);
+  }
   const env = {
     PATH: process.env.PATH, HOME: user, TMPDIR: process.env.TMPDIR, LANG: process.env.LANG ?? 'en_US.UTF-8',
     DSH_HOME: home, DUDU_ALLOW_TEMP_HOME: '1', NO_COLOR: '1', ...(process.env.DUDU_E2E_ENV ? JSON.parse(process.env.DUDU_E2E_ENV) : {}),

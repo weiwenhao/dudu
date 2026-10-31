@@ -1,4 +1,4 @@
-# Issues 界面：待主人审的用词
+# 嘟嘟桌面界面：待主人审的用词（Issues、仪表盘、小组件）
 
 2026-10-31 照定稿的设计稿（画布 v38）做了 Issues 的界面。界面上固定的字都是英文，所有字都在一个文件里：`host/dudu-plugin/ui/strings.js`（带 `NEW` 注释的是设计稿里没有的）。**审过之前不安装到主人的桌面版**（`npm run desktop:update` 没跑过）。
 
@@ -35,6 +35,26 @@ Issues · Active / Backlog / All issues · Backlog / Todo / In Progress / In Rev
 | 详情页标题右边的按钮和菜单 | `Copy ID` · `Open session`（没有会话时是 `Open source`）· `Snooze` · `Later today` · `Tomorrow` · `Next week` · `Clear snooze` · `Snoozed until Nov 2, 09:00` |
 | 详情页的智能体菜单、回复和结果 | `Set agent…` · `A new session starts with the log of this issue as its first message. The old session is closed.` · `Reply…` · `Send reply`（读屏）· `Add a result…` · `Save` · `Skip` |
 
+## 仪表盘和小组件的新字（设计稿里没有，要你审）
+
+设计稿里已有的字：`Edit layout`、`Add widget`、`Restore default`、`Done`、8 个小组件的名字、`Minimum size`、`Maximum size`，撤销条的三个例子（`Removed`、`Moved`、`resized to 5×2`）。
+
+| 位置 | 现在的写法 |
+|---|---|
+| 编辑条上的一句提示 | `Drag a widget to move it, pull an edge to resize it.` |
+| 图标按钮（读屏） | `Edit layout` · `Settings` · `Remove Quota`（卡片左上角的"−"） |
+| Add widget 的列表 | 标题 `Add widget` · 每项的按钮 `Add`、已在版面上的写 `Added` · 全加完时 `Every widget is on the dashboard.` · 别的插件带来的小组件写 `From @acme/xxx` |
+| 8 个小组件的一句话（添加列表里，写在 `host/assistant/dashboard/widgets.mjs`） | Issues：`Every issue, as a list or a board.` · Overview：`Overdue, due this week and in progress.` · Upcoming：`Issues with a due date, soonest first.` · Stuck：`Issues that are stuck or waiting on someone.` · Inputs：`Whether each connector works and what it read today.` · Quota：`Subscription usage, one line per agent.` · Sessions：`Search and open sessions.` · Office：`A 3D office: each active issue is someone at a desk.` |
+| 改版面后底部的撤销条（字由插件拼，`host/assistant/dashboard/index.mjs`） | `Removed “Quota”` · `Moved “Overview”` · `“Overview” resized to 5×2`（这三条是设计稿的例子，引号我用了英文的 “ ”，设计稿写的是「」）· 新增的：`Added “Quota”` · `Restored default` · `Changed layout`（一次动了好几个）· `“Issues” resized to full width × 4` · 按钮 `Undo` |
+| 拖边角时指针旁的小标签 | `4×2` · `4×2 · Minimum size` · `4×2 · Maximum size` |
+| 用键盘改版面时读屏念的 | `Overview: column 3, row 2` · `Overview: 4 by 2` |
+| 小组件出错、版面读不出来 | `This widget could not be shown` · `From @acme/xxx` · `This widget comes from @acme/xxx, which is not installed.` · `Could not load the dashboard` · `Retry` · `Could not save the layout` |
+| Overview | `Overdue` · `Due this week` · `In progress` |
+| Upcoming、Stuck 为空 | `Nothing is due` · `Nothing is stuck` |
+| Quota | `No usage to show` · 读不到的写 `—`（不写 0%）· 窗口名 `5-hour`、`Weekly`、`3-day`（插件给的是中文 5 小时、每周，界面里换成英文）· 悬停条 `Claude · Max`、`5-hour 74% used · resets 13:00` · 读屏 `Claude 74% used`、`ChatGPT: Limit reached, resets 15:00` · 2×2 里 `Resets 13:00` · 需要登录的 `Sign in to see usage` |
+| Sessions | 搜索框 `Search sessions` · `No sessions` · `Could not read sessions` · 点开时 `Opening…` · 智能体名 `Claude`、`ChatGPT` |
+| 校验小组件声明时的拒绝理由（以后写在设置页里，`widgets.mjs`） | `It has no id.` `It has no name.` `It has no minimum size.` `Its recommended size is smaller than its minimum size.` 等 10 句 |
+
 ## 我替你定的小事（可以推翻）
 
 - project 的颜色：按 project 名字算一个固定的颜色，同名永远同色。文档写"按顺序分配"，那要在服务端存一份对应表，等设置文件做时再改。
@@ -47,11 +67,15 @@ Issues · Active / Backlog / All issues · Backlog / Todo / In Progress / In Rev
 - Board 列头的"···"里先只有 Collapse column（折成一条窄的竖条，点它展开）；"＋"在这一列的状态里新建；列表的分组条上的"＋"一样在这一组里新建。
 - Snooze 的时间：Later today（今天 18:00，不到一小时就不给）、Tomorrow（明天 09:00）、Next week（下周一 09:00）；只用来把智能体的提问藏起来。
 - 回复智能体的提问：写进日志（算一条决定），提问和 Needs you 标记随之消失；把回复交给智能体的会话，要等会话接上以后才有。
+- 仪表盘：Issues 没被拉过时占满全部列，窗口宽了窄了它跟着；拉过一次就是具体的格数。格子是正方形，6 行一屏，列数跟着窗口宽度（至少 4 列），照设计稿的规则。新加的小组件放在第一个放得下的空位，放不下就放在最下面，版面滚到那里并闪一下；每种最多一个。
+- 键盘：编辑版面时 Tab 到小组件，方向键移一格，Shift + 方向键改大小一格，Delete 移除；Esc 退出编辑。
+- Overview 的"In progress"数的是智能体正在工作（Working）的；Stuck 只列智能体状态是 Stuck 的（库里没有"在等别人"这个状态）；Quota 不列没有订阅的智能体（DeepSeek），读不到的写 `—`；重置时间当天写时分，别的天写星期加时分。
+- Sessions 小组件就是原来"嘟嘟"页的会话列表（搜索、点一下加载进 DSH 并打开）；原页上的用量和"在跑什么"拆给了 Quota 和以后的小组件。
 - 在详情页把状态改成 Done 以后，活动里出现一行"Add a result…"，可以写一句结果，也可以 Skip。
 
 ## 还没做（设计稿没有画，或要先定）
 
 - **New issue 的窗口**：设计稿只画了按钮；窗口是我做的最小版本（上表），样子和字都等你定；从分组条或 Board 列的"＋"打开时，新 issue 带那一组的状态、优先级、智能体或 project，窗口里不显示；建的时候不能选其他的，要在 issue 自己的页面里改。
 - 详情页的"Open session"和换智能体：按钮和菜单做好了，真正开会话、换会话要等会话那一块（`docs/assistant.md` 3.3、3.4）接上；右上"···"里的"撤销这次整理"和"忘记"也是。
-- 仪表盘（可拖动的小组件版面）、Office、Quota：现在打开嘟嘟，Issues 直接占满页面。
-- 原来的"嘟嘟"页（读取 Claude、Codex 已有的会话、加载进 DSH）：装了新界面之后打开嘟嘟看不到它，代码还在，没装新界面（没构建）时仍是它。设计里它是 Sessions 小组件，等做小组件时放回去。
+- Office、Inputs 两个小组件，设置弹窗（右上角的齿轮），宠物：还没有（Office 的场景在写，Inputs 要等连接器接上）。
+- 原来的"嘟嘟"页（读取 Claude、Codex 已有的会话、加载进 DSH）：现在是 Sessions 小组件，不在默认版面上，要用时在"Add widget"里加；没构建新界面时仍显示旧页。

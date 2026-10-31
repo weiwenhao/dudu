@@ -47,7 +47,7 @@ export async function scopeCss(css) {
   return result.css;
 }
 
-async function compileCss(work) {
+export async function compileCss(work) {
   const raw = join(work, 'tailwind.css');
   execFileSync(join(root, 'node_modules', '.bin', 'tailwindcss'), ['-i', join(ui, 'styles.css'), '-o', raw, '--minify'], {
     cwd: root, stdio: ['ignore', 'ignore', 'inherit'],

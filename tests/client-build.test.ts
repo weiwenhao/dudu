@@ -40,6 +40,8 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
     window: { __ModuleLoader__: { load: (module: never) => loaded.push(module) } },
     document: { createElement: () => ({ remove() {} }), head: { appendChild: (style: { textContent: string }) => styles.push(style.textContent) } },
     console, clearTimeout, clearInterval,
+    // The grid library reads the browser's identity when it loads.
+    navigator: { userAgent: 'node', platform: 'node' },
     // The shell's own timers (navigation reporting retries) must not keep the test process alive.
     setTimeout: (work: () => void, delay?: number) => setTimeout(work, delay).unref(),
     setInterval: (work: () => void, delay?: number) => setInterval(work, delay).unref(),
@@ -56,7 +58,7 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
   assert.deepEqual(asked.filter((name) => !(name in seeds)), []);
 
   // Apply the shell the way DSH does and look at what the panel registers in the `main` slot.
-  let main: (() => { type: unknown; props: { request: unknown; logo?: string } }) | undefined;
+  let main: (() => { type: unknown; props: { request: unknown; logo?: string; actions?: { openSession?: unknown } } }) | undefined;
   const disposers: Array<() => void> = [];
   const ctx: Record<string, unknown> = {
     effect: (work: () => unknown) => { const dispose = work(); if (typeof dispose === 'function') disposers.push(dispose as () => void); },
@@ -75,6 +77,7 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
     assert.equal(typeof page.type, 'function', 'with the interface built in, the panel shows it, not the old overview');
     assert.equal(typeof page.props.request, 'function', 'the interface posts through the shell\'s own request helper');
     assert.match(String((page.props as { logo?: string }).logo), /^data:image\/png;base64,/, 'and draws the mark the shell already carries');
+    assert.equal(typeof page.props.actions?.openSession, 'function', 'and can open a session in DSH through the shell');
     assert.ok(styles.some((css) => css.includes('.dudu ')), 'the interface\'s stylesheet is injected');
   } finally {
     for (const dispose of disposers) dispose();
