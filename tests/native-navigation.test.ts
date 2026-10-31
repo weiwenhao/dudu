@@ -26,6 +26,8 @@ const snapshot = {
     { id: 'schedules', title: '自动化任务', order: 10, source: '@deepseek-ai/dsh-client-ui-schedule', icon },
     { id: 'plugins', title: '插件', order: 0 },
     { id: 'insight', title: '上下文洞察', order: 20, source: 'example-insight' },
+    // The desktop's page for browsing the harnesses' sessions: the phone has no such page, so it is not offered.
+    { id: 'dudu', title: '嘟嘟', order: 20, source: 'dudu' },
   ],
   views: [
     { id: 'trajectory', title: '轨迹', order: 10 },

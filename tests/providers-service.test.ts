@@ -163,3 +163,12 @@ test('refreshing asks a harness that is still the same for its models again', as
   assert.equal(provider.created.length, 1, 'the same binary keeps its registration');
   assert.equal(provider.created[0].refreshed, 1);
 });
+
+test('the harnesses that are found and enabled are what the sessions list reads from', async (t) => {
+  const { providers } = await setup(t);
+  const sources = providers.sources();
+  assert.deepEqual(sources.map((source: any) => [source.id, source.name, source.route, source.command]), [['fake', 'Fake fake', 'fake', '/bin/fake-cli']]);
+  assert.equal(typeof sources[0].driver.listModels, 'function');
+  await providers.save({ id: 'fake', enabled: false });
+  assert.deepEqual(providers.sources(), [], 'a harness that is turned off has no sessions to show');
+});

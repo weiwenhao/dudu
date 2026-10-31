@@ -180,9 +180,12 @@ function common(raw, id = cleanId(raw.id)) {
   return { id, title, order: finite(raw.order, 1e6) ? raw.order : 0, ...(source ? { source } : {}) };
 }
 
+/** Panels the phone cannot open: the 嘟嘟 page browses the sessions of the harnesses on the desktop, and only DSH's own window has it. */
+const HIDDEN_PANELS = new Set(['dudu']);
+
 function buildSidebar(raw) {
   const base = common(raw);
-  if (!base) return undefined;
+  if (!base || HIDDEN_PANELS.has(base.id)) return undefined;
   const icon = sanitizeIcon(raw.icon);
   return { ...base, ...(icon ? { icon } : {}), open: sidebarRoute(base) };
 }

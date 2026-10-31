@@ -838,6 +838,337 @@ window.__ModuleLoader__.load({
       },
     };
 
+    // ---- The 嘟嘟 panel: the sessions the harnesses on this computer already have ------------------------------------
+    //
+    // A global panel of DSH's sidebar, added the way DSH's own plugins add theirs (a `sidebar.panellist` entry that
+    // selects a panel, and a `main` page keyed by the same id). It lists the Claude Code and Codex sessions the plugin
+    // finds on this computer, searchable, and loads one into DSH: the host writes a session that holds the
+    // conversation and resumes the harness's own session, and this page then opens it.
+
+    const PANEL_ID = 'dudu';
+    // The Dudu logo, transparent behind it, as DSH's sidebar draws its icons.
+    const LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAMAAADVRocKAAAAP1BMVEUudvI3bug3cOtiYv8AAP84ce0ycbtUqP9VVao/P78Af38zmf8AAAA5dPAA//8zaNoAAAAAAAAAAAAAAAAAAAD5D19zAAAAEHRSTlMSZJ8CAdEEAwMEAgUA/AEUQQBTPQAAAuJJREFUeNrtmt2WqyAMhTeQQNuD8P5vexDbOWP50UK8Oau5mDV1aT53QAgB+IsNX8DqAy54b/LfCwAw//53JA9I7qE0M2utkH+KAggeevkxjYIwByDjf7lPxgUBov6TKX+TAxivlsJAkAIYj9L/ovdBmgG4MkBZwo4wAQhVAasEyABMA8CeZACoNfFq8TfhGkC4FoCrAfEL+LbB/xwiSnYNgGDh8JzFABNEQ/Swr/H9bu39OVQDUgqMyamV0nrNTZ7pyfoUOSMAyN5T2lNMKmsONB+i1b3SdS8LK/CcgmC8VQ0fXTsJSK8/5P5siKyPehmzMwrItVpQRgGZCf8nFNRyTkkAuSn/xwDM+T8EYCb+JxrZzPo/ACBg0v9BiMxkAxwpmA9QXwEhTvvvKrACAnoKiM4IUEqNKjjzCXBMN0YeUxBQmRz1+/vFW/QYApSrLi6m3m2JZ3uduQ0oB6GUnCDurqqA/DmqoTa4c2VFegP2yHTjrRejpoIyQiq4vCDm96fRAzQVlH1oW5DuIve6NKKgaAKuXN+eHg2RrhYFdsq2SgRIjfSiB78r2NJo0r/rQWjXQfoA8rH8aOldGVs8vKWRD+1RABasnf5tgFJ+vagHAJWeofyfsnMpuysETgHSvTEWIxvz2HxQA6xjEbTQfBB8bTLQWmxGI295kbDOfHAxQCBjORqL1NUKLgaQB1/byEKN0JuTlQygVTclL5A4LnxvF2adRIy4U7vuTrVnrVscl5CgUlrWBCBE2U5ULEDcdEc62gExxLPLjz4AhEkBR7tQkyPS2yaU+EJcndmomyDoXRdtVluGCakH0am9TIwN3BX/rYrXUEFNVfw3a3aflwR19O6THfEPi5q6tll9UDfNe92nEJzdh48PDdAqGZqPvOetdjN0KoHyKYBa8frpe6the4vxYw8GuWdEpAqF/rH0A8DrWAJNnquAtQ0XNxgIHdwgGJve2TljHFazBuF7tkUE8Bfa9K2SazMwbgAAAABJRU5ErkJggg==';
+    const AGENTS = [{ id: 'all', name: '全部' }, { id: 'claude', name: 'Claude' }, { id: 'codex', name: 'ChatGPT' }];
+    const RECENT = 8;   // sessions on the overview itself
+    const MORE = 200;   // when "全部" is opened
+    const FOUND = 50;   // answers to a search
+
+    const panelStyles = `
+.dudu-page{height:100%;overflow:auto;color:var(--dsw-alias-label-primary);font-size:13px;line-height:20px}
+.dudu-page *{box-sizing:border-box}
+.dudu-wrap{max-width:1000px;margin:0 auto;padding:18px 28px 40px}
+.dudu-bar{display:flex;align-items:center;gap:8px;margin:0 0 16px}.dudu-search{flex:1 1 auto;min-width:0}
+.dudu-tabs{display:flex;gap:2px;flex:none}
+.dudu-tab{height:28px;padding:0 10px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;cursor:pointer}
+.dudu-tab:hover{background:var(--dsw-alias-interactive-bg-hover)}.dudu-tab[aria-pressed=true]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-weight:500}
+.dudu-phone{display:inline-flex;align-items:center;gap:6px;flex:none;padding:0 4px;color:var(--dsw-alias-label-secondary);font-size:12px}
+.dudu-index{flex:none;color:var(--dsw-alias-label-secondary);font-size:12px;font-variant-numeric:tabular-nums}
+.dudu-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dsw-alias-label-quaternary,#b8b8b8);flex:none}
+.dudu-dot--on,.dudu-dot--done{background:#2fb344}.dudu-dot--busy{background:#4176e6;animation:dudu-pulse 1.4s ease-in-out infinite}
+@keyframes dudu-pulse{50%{opacity:.35}}
+.dudu-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin:0 0 20px}
+.dudu-col{display:flex;flex-direction:column;gap:14px;min-width:0}
+.dudu-card{border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);padding:12px 14px;min-width:0}
+.dudu-label{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:0 0 6px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
+.dudu-name{display:flex;align-items:baseline;gap:8px;margin:6px 0 2px;font-weight:500}.dudu-name:first-of-type{margin-top:0}
+.dudu-warn{color:var(--dsw-alias-state-error-primary);font-weight:400;font-size:12px}
+.dudu-limit{display:grid;grid-template-columns:52px minmax(0,1fr) 36px 78px;align-items:center;gap:8px;padding:2px 0;font-variant-numeric:tabular-nums}
+.dudu-limit span:last-child{color:var(--dsw-alias-label-secondary);font-size:12px;text-align:right;white-space:nowrap}.dudu-limit span:nth-child(3){text-align:right}
+.dudu-meter{height:6px;border-radius:3px;background:var(--dsw-alias-border-l2);overflow:hidden}
+.dudu-meter i{display:block;height:100%;border-radius:3px;background:#4176e6}.dudu-meter i.warn{background:#e8a317}.dudu-meter i.hot{background:#e5484d}
+.dudu-run{display:flex;align-items:center;gap:8px;padding:3px 0;min-width:0}
+.dudu-run b{flex:1 1 auto;min-width:0;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dudu-run em{flex:0 1 38%;min-width:0;font-style:normal;color:var(--dsw-alias-label-secondary);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+.dudu-run span{flex:none;color:var(--dsw-alias-label-secondary);font-size:12px;white-space:nowrap}
+.dudu-run--open{cursor:pointer}.dudu-run--open:hover b{text-decoration:underline}
+.dudu-fold{display:flex;align-items:center;gap:8px;margin:2px 0 0;padding:3px 0;border:0;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;cursor:pointer;text-align:left}
+.dudu-fold:hover{color:var(--dsw-alias-label-primary)}
+.dudu-idle{max-height:180px;overflow:auto;margin-top:2px}
+.dudu-none{color:var(--dsw-alias-label-secondary)}
+.dudu-section{display:flex;justify-content:space-between;align-items:baseline;margin:0 0 6px;color:var(--dsw-alias-label-secondary);font-size:12px}
+.dudu-list{border-top:.5px solid var(--dsw-alias-border-l2)}
+.dudu-row{padding:7px 8px;border-bottom:.5px solid var(--dsw-alias-border-l2);cursor:pointer}.dudu-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dudu-main{display:flex;align-items:center;gap:10px;min-width:0}
+.dudu-title{flex:1 1 auto;min-width:0;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dudu-meta{flex:0 1 auto;display:flex;align-items:center;gap:8px;min-width:0;color:var(--dsw-alias-label-secondary);font-size:12px;white-space:nowrap}
+.dudu-meta span:first-child{max-width:200px;overflow:hidden;text-overflow:ellipsis}
+.dudu-badge{display:inline-block;flex:none;padding:0 7px;border:.5px solid var(--dsw-alias-border-l2);border-radius:999px;font-size:11px;line-height:17px;color:var(--dsw-alias-label-secondary)}
+.dudu-preview{margin:2px 0 0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.dudu-more{margin-top:8px;padding:8px 10px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-interactive-bg-hover);font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
+.dudu-more code{font-family:var(--dsw-font-mono,ui-monospace,monospace);font-size:12px;color:var(--dsw-alias-label-primary)}.dudu-more .dudu-actions{display:flex;gap:8px;margin-top:6px}
+.dudu-note{padding:22px 10px;color:var(--dsw-alias-label-secondary);text-align:center}.dudu-fail{margin-top:4px;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px}
+.dudu-count{margin:8px 2px 0;color:var(--dsw-alias-label-secondary);font-size:12px}
+.dudu-mark{background:color-mix(in srgb,#ffb800 38%,transparent);color:inherit;border-radius:2px}
+@media(max-width:760px){.dudu-wrap{padding:14px 14px 32px}.dudu-grid{grid-template-columns:minmax(0,1fr)}.dudu-bar{flex-wrap:wrap}.dudu-meta span:first-child{max-width:110px}}
+`;
+
+    const ago = (time) => {
+      const seconds = Math.max(0, (Date.now() - time) / 1000);
+      if (seconds < 60) return '刚刚';
+      if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
+      if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时前`;
+      if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)} 天前`;
+      return new Date(time).toLocaleDateString('zh-CN');
+    };
+    // How long, without "ago": 12 分钟, 3 小时, 2 天.
+    const span = (time) => {
+      const seconds = Math.max(0, (Date.now() - time) / 1000);
+      if (seconds < 60) return '';
+      if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`;
+      if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时`;
+      return `${Math.floor(seconds / 86400)} 天`;
+    };
+    const clock = (time) => new Date(time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+    // When a window starts over: the time of day when that is today, else the weekday too.
+    const resetText = (time) => {
+      if (!Number.isFinite(time)) return '';
+      const date = new Date(time);
+      const sameDay = date.toDateString() === new Date().toDateString();
+      return sameDay ? `${clock(time)} 重置` : `${date.toLocaleDateString('zh-CN', { weekday: 'short' })} ${clock(time)}`;
+    };
+    const shortPath = (path, home) => {
+      if (!path) return '';
+      const text = home && path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+      const parts = text.split('/');
+      return parts.length > 3 ? `…/${parts.slice(-2).join('/')}` : text;
+    };
+    const quote = (text) => `'${String(text).replace(/'/g, `'\\''`)}'`;
+    const resumeCommand = (session) => `${session.cwd ? `cd ${quote(session.cwd)} && ` : ''}${session.provider === 'claude' ? 'claude --resume' : 'codex resume'} ${session.id}`;
+    const agentName = (provider) => (provider === 'claude' ? 'Claude' : 'ChatGPT');
+    const termsOf = (query) => query.toLowerCase().split(/\s+/).filter(Boolean);
+    // A lone letter would light up half the words of a snippet.
+    const markable = (terms) => terms.filter((term) => term.length > 1 || /[^\x00-\x7f]/.test(term));
+    // The text with the words of the query marked.
+    const highlight = (text, terms) => {
+      terms = markable(terms);
+      if (!terms.length) return text;
+      const pattern = new RegExp(`(${terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
+      return text.split(pattern).map((part, index) => (index % 2 ? h('mark', { key: index, className: 'dudu-mark' }, part) : part));
+    };
+
+    function DuduGlyph({ size = 18 }) {
+      return h('img', { src: LOGO, width: size, height: size, alt: '', 'aria-hidden': 'true', draggable: false, style: { display: 'block' } });
+    }
+
+    // Reads something now and again after the time `delay` says (a number, or a function of the last reading); keeps the last
+    // reading when one fails.
+    function usePoll(read, delay) {
+      const [value, setValue] = useState(null);
+      useEffect(() => {
+        let alive = true;
+        let timer;
+        const tick = async () => {
+          let next = typeof delay === 'function' ? delay(null) : delay;
+          try {
+            const result = await read();
+            if (alive) setValue(result);
+            if (typeof delay === 'function') next = delay(result);
+          } catch { /* the last reading stays */ }
+          if (alive) timer = setTimeout(tick, next);
+        };
+        tick();
+        return () => { alive = false; clearTimeout(timer); };
+      }, []);
+      return value;
+    }
+
+    function Meter({ used }) {
+      const level = used >= 0.9 ? 'hot' : used >= 0.7 ? 'warn' : '';
+      return h('div', { className: 'dudu-meter', role: 'meter', 'aria-valuenow': Math.round(used * 100), 'aria-valuemin': 0, 'aria-valuemax': 100 },
+        h('i', { className: level, style: { width: `${Math.max(1, Math.round(used * 100))}%` } }));
+    }
+
+    function UsageCard({ usage }) {
+      const shown = (usage?.providers ?? []).filter((provider) => provider.state !== 'hidden');
+      if (usage && !shown.length) return null;
+      return h('div', { className: 'dudu-card', 'data-testid': 'dudu-usage' },
+        h('div', { className: 'dudu-label' }, '用量'),
+        !usage && h('div', { className: 'dudu-none' }, '…'),
+        shown.map((provider) => h(Fragment, { key: provider.id },
+          h('div', { className: 'dudu-name' }, provider.name,
+            provider.limited && h('span', { className: 'dudu-warn' }, '已限流'),
+            provider.state === 'login' && h('span', { className: 'dudu-none' }, '需要登录'),
+            provider.state === 'unavailable' && h('span', { className: 'dudu-none' }, '无法读取')),
+          provider.windows.map((window) => h('div', { className: 'dudu-limit', key: window.key },
+            h('span', null, window.label),
+            h(Meter, { used: window.used }),
+            h('span', null, `${Math.round(window.used * 100)}%`),
+            h('span', null, resetText(window.resetsAt)))))));
+    }
+
+    function RunningRow({ item, kind, home, onOpen }) {
+      const state = kind === 'busy' ? `忙${span(item.since) ? ` ${span(item.since)}` : ''}` : kind === 'done' ? `${ago(item.since)}完成` : `空闲${span(item.since) ? ` ${span(item.since)}` : ''}`;
+      const open = item.dshSessionId ? () => onOpen(item.dshSessionId) : undefined;
+      return h('div', { className: `dudu-run${open ? ' dudu-run--open' : ''}`, 'data-testid': 'dudu-running', 'data-state': kind, onClick: open },
+        h('i', { className: `dudu-dot dudu-dot--${kind === 'busy' ? 'busy' : kind === 'done' ? 'done' : ''}` }),
+        h('b', { title: item.title }, item.title || agentName(item.provider)),
+        h('em', { title: item.cwd ?? '' }, shortPath(item.cwd, home)),
+        h('span', null, state));
+    }
+
+    function RunningCard({ running, home, onOpen }) {
+      const [unfolded, setUnfolded] = useState(false);
+      const lead = running ? [...running.busy, ...running.done].slice(0, 8) : [];
+      const left = running ? running.idle.length + (running.busy.length + running.done.length - lead.length) : 0;
+      return h('div', { className: 'dudu-card', 'data-testid': 'dudu-runningcard' },
+        h('div', { className: 'dudu-label' }, '正在运行', running && running.busy.length > 0 && h('span', null, `${running.busy.length} 忙`)),
+        !running && h('div', { className: 'dudu-none' }, '…'),
+        running && lead.length === 0 && left === 0 && h('div', { className: 'dudu-none' }, '没有在运行的会话'),
+        lead.map((item) => h(RunningRow, { key: `${item.provider}:${item.id}`, item, kind: item.status, home, onOpen })),
+        left > 0 && h('button', { type: 'button', className: 'dudu-fold', onClick: () => setUnfolded(!unfolded), 'aria-expanded': unfolded },
+          `另有 ${left} 个空闲`, h('span', null, unfolded ? '收起' : '展开')),
+        unfolded && h('div', { className: 'dudu-idle' }, running.idle.map((item) => h(RunningRow, { key: `${item.provider}:${item.id}`, item, kind: 'idle', home, onOpen }))));
+    }
+
+    function SessionRow({ session, home, terms, expanded, busy, failure, onToggle, onOpen }) {
+      const [copied, setCopied] = useState(false);
+      const copy = async (event) => {
+        event.stopPropagation();
+        try { await navigator.clipboard.writeText(resumeCommand(session)); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* the page may not be allowed to copy */ }
+      };
+      return h('div', { className: 'dudu-row', 'data-testid': 'dudu-session', 'data-key': session.key, onClick: onToggle },
+        h('div', { className: 'dudu-main' },
+          h('span', { className: 'dudu-badge' }, agentName(session.provider)),
+          h('div', { className: 'dudu-title', title: session.title }, highlight(session.title, terms)),
+          h('div', { className: 'dudu-meta' },
+            session.cwd && h('span', { title: session.cwd }, shortPath(session.cwd, home)),
+            h('span', null, ago(session.updatedAt)),
+            h(Button, {
+              size: 'sm', variant: session.dshSessionId ? 'outline' : 'primary', className: 'dsbot-button', disabled: busy,
+              onClick: (event) => { event.stopPropagation(); onOpen(); },
+            }, busy ? '加载中…' : session.dshSessionId ? '打开' : '加载到 DSH'))),
+        session.evidence && h('div', { className: 'dudu-preview' }, highlight(session.evidence.text, terms)),
+        failure && h('div', { className: 'dudu-fail', role: 'alert' }, failure),
+        expanded && h('div', { className: 'dudu-more' },
+          session.preview && h('div', null, highlight(session.preview, terms)),
+          session.cwd && h('div', null, '目录：', h('code', null, session.cwd)),
+          h('div', null, '会话 ID：', h('code', null, session.id)),
+          h('div', { className: 'dudu-actions' },
+            h(Button, { size: 'sm', variant: 'outline', className: 'dsbot-button', onClick: copy }, copied ? '已复制' : '复制恢复命令'))));
+    }
+
+    function DuduPage({ openSession }) {
+      const [query, setQuery] = useState('');
+      const [agent, setAgent] = useState('all');
+      const [showAll, setShowAll] = useState(false);
+      const [data, setData] = useState(null);
+      const [error, setError] = useState('');
+      const [expanded, setExpanded] = useState('');
+      const [busy, setBusy] = useState('');
+      const [failure, setFailure] = useState({});
+      const latest = useRef(0);
+      const searching = query.trim() !== '' || agent !== 'all';
+      const limit = searching ? FOUND : showAll ? MORE : RECENT;
+      const usage = usePoll(() => request('overview/usage'), 120_000);
+      const running = usePoll(() => request('overview/running'), 5_000);
+      const phone = usePoll(() => request('state'), 30_000);
+      const fetchList = (refresh = false) => {
+        const ticket = ++latest.current;
+        return request('sessions/list', { query: query.trim(), ...(agent === 'all' ? {} : { provider: agent }), limit, refresh })
+          .then((value) => { if (ticket === latest.current) { setData(value); setError(''); } },
+            (problem) => { if (ticket === latest.current) setError(problem.message); });
+      };
+      useEffect(() => {
+        const timer = setTimeout(() => { fetchList(); }, data ? 180 : 0);
+        return () => clearTimeout(timer);
+      }, [query, agent, showAll]);
+      // While the conversations are still being read for the search, look again until they are.
+      useEffect(() => {
+        if (!data?.indexing?.running) return undefined;
+        const timer = setTimeout(() => { void fetchList(); }, 2000);
+        return () => clearTimeout(timer);
+      }, [data]);
+      const open = async (session) => {
+        setBusy(session.key);
+        setFailure((previous) => ({ ...previous, [session.key]: '' }));
+        try {
+          const result = session.dshSessionId ? { sessionId: session.dshSessionId } : await request('sessions/load', { provider: session.provider, id: session.id });
+          await openSession(result);
+          if (!session.dshSessionId) void fetchList();
+        } catch (problem) {
+          setFailure((previous) => ({ ...previous, [session.key]: problem.message }));
+        } finally { setBusy(''); }
+      };
+      const terms = termsOf(query);
+      const unavailable = data?.providers?.filter((provider) => provider.error) ?? [];
+      const online = Array.isArray(phone?.devices) && phone.devices.some((device) => Date.now() - device.lastSeenAt < 180_000);
+      const home = data?.home;
+      return h('div', { className: 'dudu-page', 'data-testid': 'dudu-page' },
+        h('div', { className: 'dudu-wrap' },
+          h('div', { className: 'dudu-bar' },
+            h('div', { className: 'dudu-search' }, h(Input, {
+              type: 'text', className: 'dsbot-input', value: query, placeholder: '搜索会话', 'aria-label': '搜索会话',
+              autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false, onChange: (event) => setQuery(event.target.value),
+            })),
+            data?.indexing?.running && h('span', { className: 'dudu-index', role: 'status' }, `索引 ${data.indexing.done} / ${data.indexing.total}`),
+            h('div', { className: 'dudu-tabs', role: 'group', 'aria-label': '筛选' }, AGENTS.map((item) => h('button', {
+              key: item.id, type: 'button', className: 'dudu-tab', 'aria-pressed': agent === item.id, onClick: () => setAgent(item.id),
+            }, item.name))),
+            h(Button, { size: 'sm', variant: 'outline', className: 'dsbot-button', onClick: () => { void fetchList(true); } }, '刷新'),
+            phone && h('span', { className: 'dudu-phone', 'data-testid': 'dudu-phone' }, h('i', { className: `dudu-dot${online ? ' dudu-dot--on' : ''}` }), online ? '手机已连接' : '手机未连接')),
+          !searching && h('div', { className: 'dudu-grid' },
+            h('div', { className: 'dudu-col' }, h(UsageCard, { usage })),
+            h('div', { className: 'dudu-col' }, h(RunningCard, { running, home, onOpen: (sessionId) => openSession({ sessionId }) }))),
+          error && h('p', { className: 'dsbot-error', role: 'alert' }, `读取会话失败：${error}`),
+          unavailable.map((provider) => h('p', { key: provider.id, className: 'dsbot-error', role: 'alert' }, `${provider.name}：${provider.error}`)),
+          !searching && h('div', { className: 'dudu-section' }, h('span', null, '最近'),
+            data && data.total > RECENT && h('button', { type: 'button', className: 'dudu-fold', onClick: () => setShowAll(!showAll) }, showAll ? '收起' : `全部 ${data.total}`)),
+          !data && !error && h('div', { className: 'dudu-note' }, '…'),
+          data && h('div', { className: 'dudu-list' },
+            data.sessions.length === 0
+              ? h('div', { className: 'dudu-note' }, searching ? '没有匹配的会话' : '没有会话')
+              : data.sessions.map((session) => h(SessionRow, {
+                key: session.key, session, home: data.home, terms, expanded: expanded === session.key, busy: busy === session.key,
+                failure: failure[session.key], onToggle: () => setExpanded(expanded === session.key ? '' : session.key), onOpen: () => open(session),
+              }))),
+          searching && data && data.total > data.sessions.length && h('div', { className: 'dudu-count' }, `${data.sessions.length} / ${data.total}`)));
+    }
+
+    // Until DSH's session list holds a session it cannot be opened: some builds put a created session in the list at once,
+    // others when the Host announces it a moment later.
+    async function untilListed(sessions, sessionId, timeout = 5000) {
+      const listed = () => {
+        const state = sessions.list.getSnapshot();
+        return state.ids.includes(sessionId) || sessionId in state.byId;
+      };
+      if (listed()) return;
+      await new Promise((resolve) => {
+        const done = () => { unsubscribe(); clearTimeout(timer); resolve(); };
+        const unsubscribe = sessions.list.subscribe(() => { if (listed()) done(); });
+        const timer = setTimeout(done, timeout);
+        // Ask for the list again, and look again once it has answered: it may have changed before anyone was listening.
+        Promise.resolve(sessions.refresh?.()).catch(() => {}).then(() => { if (listed()) done(); });
+      });
+    }
+
+    // The panel needs services only some DSH builds have, so it is a plugin of its own that waits for them.
+    const sessionsUi = {
+      name: 'dudu-sessions',
+      inject: ['slots', 'layout', 'uiWorkspace', 'sessions'],
+      apply(ctx) {
+        ctx.effect(() => {
+          const style = document.createElement('style');
+          style.textContent = panelStyles;
+          document.head.appendChild(style);
+          return () => style.remove();
+        });
+        const Page = () => h(DuduPage, {
+          // A session written by the host is stored, not yet running: DSH's own create resumes a stored session, which also
+          // puts it in the session list, and only then can it be opened.
+          openSession: async ({ sessionId, workspaceId }) => {
+            await ctx.sessions.create({ sessionId, ...(workspaceId ? { workspaceId } : {}) });
+            await untilListed(ctx.sessions, sessionId);
+            ctx.uiWorkspace.openSession(sessionId);
+            ctx.layout.selectPanel(null);
+          },
+        });
+        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID }, Page));
+        ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+          name: 'sidebar.panellist', id: PANEL_ID, order: 20, label: () => '嘟嘟',
+        }, DuduGlyph));
+      },
+    };
+
     return {
       name: 'dudu',
       inject: ['slots'],
@@ -869,6 +1200,7 @@ window.__ModuleLoader__.load({
             label: () => '供应商',
           }, ProvidersSettings));
           ctx.plugin(providerUi);
+          ctx.plugin(sessionsUi);
         }
       },
     };

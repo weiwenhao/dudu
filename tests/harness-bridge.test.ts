@@ -238,3 +238,18 @@ test('the model catalog always declares a context window large enough that DSH n
   assert.equal(info.provider, 'fake');
   assert.deepEqual(adapter.providerInfo('fake'), { id: 'fake', name: 'Fake Harness' });
 });
+
+test('starting a run says which DSH session runs which harness session, and a listener that fails changes nothing', async () => {
+  const driver = fakeDriver();
+  const links: any[] = [];
+  const bridge = new HarnessBridge({ driver, agentOf: () => undefined, onLink: (link: any) => links.push(link) });
+  await bridge.begin('s1', { prompts: [user('u1', 'hi')], promptText: 'hi', link: { nativeSessionId: 'native-9' } });
+  await bridge.begin('s2', { prompts: [user('u2', 'hi')], promptText: 'hi' });
+  assert.deepEqual(links, [
+    { route: 'fake', nativeSessionId: 'native-9', sessionId: 's1' },
+    { route: 'fake', nativeSessionId: 'native-1', sessionId: 's2' },
+  ]);
+  const careless = new HarnessBridge({ driver: fakeDriver(), agentOf: () => undefined, onLink: () => { throw new Error('bookkeeping failed'); } });
+  assert.ok(await careless.begin('s3', { prompts: [user('u3', 'hi')], promptText: 'hi' }), 'the run still starts');
+  assert.ok(await new HarnessBridge({ driver: fakeDriver(), agentOf: () => undefined }).begin('s4', { prompts: [user('u4', 'hi')], promptText: 'hi' }));
+});

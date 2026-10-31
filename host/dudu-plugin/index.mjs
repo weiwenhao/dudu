@@ -12,6 +12,8 @@ import { desktopPackageIdentity, writeDesktopRuntime } from './dist/desktop-runt
 import { createNativeDiagnostics } from './dist/native-diagnostics.mjs';
 import { migrateLegacyState } from './dist/legacy-state.mjs';
 import { createProviders } from './dist/providers/index.mjs';
+import { createLinkStore, createNativeSessions } from './dist/providers/native/index.mjs';
+import { createOverview } from './dist/providers/native/overview.mjs';
 import { claudeProvider } from './dist/providers/drivers/claude.mjs';
 import { codexProvider } from './dist/providers/drivers/codex.mjs';
 import { permissionOf } from './dist/providers/permission.mjs';
@@ -24,12 +26,13 @@ export const name = 'dudu';
 // so a DSH without it still runs the plugin.
 export const inject = {
   connection: true, typertGateway: true, clientModules: true, webServer: true, llm: true, agents: true,
-  sessionProjections: false,
+  sessionProjections: false, sessionPersistence: false, workspaceRegistry: false,
 };
 
 // The two halves do not depend on each other. The phone control needs a DSH new enough to hand out peers (the
 // Desktop's); the providers work wherever DSH can route models, such as `dsh web`.
 async function startProviders(ctx, folder) {
+  const links = await createLinkStore(folder);
   const providers = await createProviders({
     folder,
     providers: [claudeProvider, codexProvider],
@@ -38,15 +41,32 @@ async function startProviders(ctx, folder) {
       agents: ctx.agents,
       on: (event, handler) => ctx.on(event, handler),
       permissionOf: (agent) => permissionOf(ctx.sessionProjections, agent),
+      onLink: links.record,
     },
   });
-  const disposers = ['state', 'refresh', 'save'].map((action) => ctx.connection.fetch.register({
-    path: `/api/dudu/providers/${action}`, methods: ['POST'], requestBody: 'buffered',
-    fetch: (request) => providers.handle(action, request),
-  }));
+  // The sessions the harnesses already have, to browse and load into DSH. DSH's own stores are looked up when used.
+  const native = createNativeSessions({
+    sources: providers.sources, links, persistence: () => ctx.sessionPersistence, workspaces: () => ctx.workspaceRegistry,
+  });
+  const overview = createOverview({ sources: providers.sources, links, titleOf: native.titleOf });
+  const disposers = [
+    ...['state', 'refresh', 'save'].map((action) => ctx.connection.fetch.register({
+      path: `/api/dudu/providers/${action}`, methods: ['POST'], requestBody: 'buffered',
+      fetch: (request) => providers.handle(action, request),
+    })),
+    ...['list', 'load'].map((action) => ctx.connection.fetch.register({
+      path: `/api/dudu/sessions/${action}`, methods: ['POST'], requestBody: 'buffered',
+      fetch: (request) => native.handle(action, request),
+    })),
+    ...['usage', 'running'].map((action) => ctx.connection.fetch.register({
+      path: `/api/dudu/overview/${action}`, methods: ['POST'], requestBody: 'buffered',
+      fetch: (request) => overview.handle(action, request),
+    })),
+  ];
   return async () => {
     for (const dispose of disposers) dispose();
     await providers.close();
+    await links.flush();
   };
 }
 

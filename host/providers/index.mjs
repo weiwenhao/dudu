@@ -63,7 +63,7 @@ export async function createProviders({ host, providers, folder, log = console }
   function register(provider, detection) {
     const driver = provider.create({ installation: detection.installation });
     const bridge = new HarnessBridge({
-      driver, agentOf: (id) => host.agents.get(id), permissionOf: (agent) => host.permissionOf?.(agent),
+      driver, agentOf: (id) => host.agents.get(id), permissionOf: (agent) => host.permissionOf?.(agent), onLink: host.onLink,
     });
     // A tool the catalog does not list (an MCP tool, say) gets its mirror tool when the harness first calls it.
     bridge.onUnknownTool = (sessionId, name) => {
@@ -79,7 +79,7 @@ export async function createProviders({ host, providers, folder, log = console }
       }
     };
     const dispose = host.llm.registerAdapter([driver.route], createHarnessAdapter(bridge));
-    registered.set(driver.route, { bridge, driver, path: detection.path, dispose });
+    registered.set(driver.route, { bridge, driver, path: detection.path, environment: provider.environment, dispose });
   }
 
   async function refresh() {
@@ -122,6 +122,10 @@ export async function createProviders({ host, providers, folder, log = console }
 
   return {
     state: view,
+    /** The harnesses that are found and enabled, with what reading their sessions needs. */
+    sources: () => [...registered.values()].map(({ bridge, driver, path, environment }) => ({
+      id: driver.id, name: driver.name, route: driver.route, command: path, environment, driver, activeRuns: () => bridge.activeRuns(),
+    })),
     refresh: async () => { await refresh(); return view(); },
     async save({ id, enabled, path }) {
       const provider = providers.find((candidate) => candidate.id === id);

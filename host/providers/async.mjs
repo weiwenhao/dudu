@@ -7,6 +7,20 @@ export function deferred() {
   return { promise, resolve, reject };
 }
 
+/** `map` over an array with at most `limit` calls in flight; results keep the order of the items. */
+export async function mapLimit(items, limit, map) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await map(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 export function abortReason(signal) {
   return signal?.reason instanceof Error ? signal.reason : Object.assign(new Error('The request was aborted.'), { name: 'AbortError' });
 }

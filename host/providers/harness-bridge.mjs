@@ -70,6 +70,7 @@ export class HarnessRun {
     this.steps = new AsyncQueue();
     this.forwarded = new Set(prompts.map((message) => message.id));
     this.finished = false;
+    this.startedAt = Date.now();
     this.turnEnd = undefined;
     this.pump = this.#pump();
   }
@@ -138,10 +139,12 @@ export class HarnessRun {
 export class HarnessBridge {
   #runs = new Map();
 
-  constructor({ driver, agentOf = () => undefined, permissionOf = () => undefined }) {
+  constructor({ driver, agentOf = () => undefined, permissionOf = () => undefined, onLink }) {
     this.driver = driver;
     this.agentOf = agentOf;
     this.permissionOf = permissionOf;
+    // Told which DSH session runs which native session, so the sessions list can say where a session already is.
+    this.onLink = onLink;
     // Set by the owner of the agents: registers a mirror tool for a tool name the harness's catalog does not list.
     this.onUnknownTool = undefined;
   }
@@ -149,6 +152,13 @@ export class HarnessBridge {
   get route() { return this.driver.route; }
 
   runOf(sessionId) { return this.#runs.get(sessionId); }
+
+  /** The runs that are working now, for the overview. */
+  activeRuns() {
+    return [...this.#runs].filter(([, run]) => !run.finished).map(([sessionId, run]) => ({
+      route: this.route, sessionId, nativeSessionId: run.nativeSessionId, startedAt: run.startedAt, cwd: this.agentOf(sessionId)?.session?.header?.cwd,
+    }));
+  }
 
   async begin(sessionId, { prompts, promptText, link, model, effort, signal }) {
     await this.#runs.get(sessionId)?.close();
@@ -159,6 +169,7 @@ export class HarnessBridge {
     });
     const run = new HarnessRun({ sessionId, handle, prompts });
     this.#runs.set(sessionId, run);
+    try { this.onLink?.({ route: this.route, nativeSessionId: handle.nativeSessionId, sessionId }); } catch { /* bookkeeping only */ }
     return run;
   }
 

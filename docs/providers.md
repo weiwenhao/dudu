@@ -45,6 +45,57 @@ Codex 经 app-server 创建的线程，`codex resume` 本来就能列出。
 同一个会话不要同时在 DSH 和终端里写：Claude 没有会话锁，两个进程会各写各的记录。启动前会查 `~/.claude/sessions`，
 发现别的进程正占用就拒绝并说明。Codex 自己有单写者限制。
 
+## 嘟嘟：看电脑上已有的会话，搜索，加载进 DSH
+
+侧边栏的全局面板里有「嘟嘟」（用 Dudu 自己的 logo，插件列表里的 `dudu` 也是同一个）。点开是一屏总览，没有标题和说明文字：
+
+```
+[搜索会话]  [索引 N / M]  全部 Claude ChatGPT  刷新                        手机已连接
+用量（Claude 5 小时、每周）          正在运行（忙的、刚完成的、空闲只计数）
+Token（7 天的柱，今天，7 天）
+最近（8 条，一条一行）                                                       全部 N
+```
+
+一搜索，整页就是搜索结果；清空搜索回到总览。会话一行里有供应商、标题、目录、时间和按钮（**加载到 DSH**，已在 DSH
+里的是"打开"）；点一行展开，能看到第一条提示、目录、会话 ID 和"复制恢复命令"（`cd <目录> && claude --resume <id>`
+或 `codex resume <id>`）。
+
+- **用量**：问 harness 自己（OAR 的 `accountUsage`，Claude 是让 `claude --safe-mode` 报 `get_usage`，不碰凭据）：5 小时、
+  每周、用过的按模型窗口，和重置时间，两分钟读一次。这台电脑的 Codex 登录方式读不了限额，所以 ChatGPT 不显示；读不了的
+  harness 一律不占位置。
+- **Token**：Claude 读转写里每条消息的 usage（输入、输出、缓存都算，一条消息只算一次，子 agent 的转写也算），按本地日期；
+  ChatGPT 用 Codex 自己报的每日总数（`account/usage/read`）。**没有美元数**：Claude 只在会话结束时记一个总花费，没法按天拆，
+  也没法由 token 反推价格（拿 `cost-state` 做过线性拟合，对不上），要美元数得有一张价格表。
+- **正在运行**：Claude 自己登记着在跑的进程（`~/.claude/sessions`，有忙/空闲、从什么时候起、目录），所以终端里的和 DSH
+  里的都是准的；DSH 自己启动的 Codex 会话也算。终端里的 Codex 没有这样的登记，读不到。忙的和 10 分钟内刚完成的各占一行，
+  其余空闲的只数个数，点"展开"才列出。点一行，如果它已经在 DSH 里就打开那个会话，在终端里的不动它。
+- **手机**：已配对的手机最近 3 分钟内有过请求就是"已连接"，否则"未连接"，不数台数；`dsh web` 没有手机控制，就不显示。
+
+- **会话从哪来**：OAR 没有列会话的接口，所以读 harness 自己的存储，都放在 `host/providers/native/`。Claude 读
+  `~/.claude/projects/*/*.jsonl`，只读每个文件的头和尾（转写可以到几百 MB，里面大部分是请求内容）来取标题、目录和
+  第一条提示，标题的优先级是自己改的名、Claude 生成的标题、第一条话；Codex 用 `codex app-server` 的 `thread/list`
+  （`modelProviders: []` 才是"不过滤"，加 `useStateDbOnly`），和 `codex resume` 看到的一致，子 agent 不列出。
+- **搜索**：标题、第一条提示、目录、分支、会话 ID 马上能搜。对话内容在后台读进内存（这台电脑上所有 Claude 对话的文字
+  一共十几 MB，读一遍几秒），读完就能按内容搜，结果带命中的片段；读的时候搜索框旁边显示"索引 N / M"。内容只在内存
+  里，不写任何文件。每个词都要找到，标题里的词比别处的分量大。
+- **加载**：宿主把对话读成"轮 → 步 → 工具调用和结果"（Claude 按 `parentUuid` 处理回退重发的分支，Codex 用
+  `thread/read` 的 items，工具调用和结果用实时转写同一份代码读），生成 DSH 自己会写的那些事件，用 DSH 的
+  `sessionPersistence` 写进去，再在会话所在目录建（或沿用）工作区。页面随后调 DSH 自己的 `sessions.create`，对一个已
+  存储的会话它的意思是"接管并恢复"，DSH 于是把它当成普通会话打开：历史、工具卡片、原始时间都在。助手消息里带着 harness
+  自己的会话 id（`replayState`），所以在 DSH 里接着发消息就是 `resume` 同一个 Claude / Codex 会话，原会话文件里会多出
+  新的一轮，终端里 `claude --resume` / `codex resume` 照样能接着聊。
+- **记住放在哪了**：`<DSH_HOME>/dudu/links.json`（权限 600）记着"哪个 harness 会话在哪个 DSH 会话里"。从嘟嘟加载的、
+  以及在 DSH 里直接新建的 Claude / ChatGPT 会话都记。DSH 里的会话被删了，记录就失效，可以再加载。
+- **验证**：这台电脑上的 365 个真实会话（301 个 Claude、64 个 Codex）都读出来、生成日志，用 DSH 自己读存储时的校验函数
+  检查：321 个通过（共 12,025 轮），43 个没有可加载的对话（空会话或没记目录）。真实 DSH 界面里验证过：Web 运行时
+  （0.2.0-rc.2）和 Desktop 自带运行时（0.2.1-rc.3）都加载过 Claude 和 ChatGPT 的会话，历史和工具卡片和原生的一样，在 DSH
+  里问"之前说的暗号是什么"，两边都答对了，原会话里追加了这一轮。
+- **手机上**：没有嘟嘟页（导航里隐藏，页面只在 DSH 自己的窗口里注册）。
+- **限制**：工具结果超过 256 KB 的被截断；历史里的图片显示成 `[图片]`；Claude 的 `/compact` 摘要不显示；一条没有得到回答的
+  话（被打断）在 DSH 里是一轮被停止的对话，会话末尾没有收尾的工具调用会被去掉，这样接着发的消息才是新的一轮；非常长的
+  Codex 线程读取可能要几分钟，建索引时超过 25 秒的会跳过，不影响加载；目录已经不存在的会话不能加载；搜索只搜标题、目录和
+  对话文字，不搜工具输出。
+
 ## 访问模式
 
 OAR 没有审批通道：Claude 固定不弹权限确认，Codex 的审批策略固定是 never。所以 DSH 里不会弹出 harness 的审批和提问，
@@ -80,6 +131,10 @@ Orca 有两套：终端那套是用 PTY 加 shell 包装、全局 hook 脚本和
 同样被 `claude --resume` 列表隐藏（GH#28322）。这里的做法是直接在 DSH 里显示 harness 自己的会话，不加 hook，
 不动全局配置。
 
+嘟嘟页参考的是 Orca 的 AI Vault（会话库）：一行里放标题、目录、分支、时间，搜索结果带命中的片段，内容索引在后台建、页面
+说明进度。没有照搬的：Orca 把内容放进 SQLite 的全文索引（要先同意才建，工具输出只收 3072 字符以内），这里所有对话文字
+只有十几 MB，直接放内存，不写磁盘；Orca 的删除、拖进终端、跨主机这些也没做。
+
 ## 新增的界面文字（需要审核）
 
 - 供应商下拉框：按钮的无障碍名称 `供应商，当前 X`；X 来自 DeepSeek / Claude / ChatGPT。
@@ -91,6 +146,15 @@ Orca 有两套：终端那套是用 PTY 加 shell 包装、全局 hook 脚本和
   `… exited (code) before the turn finished.`、`The turn was interrupted.`、`The session's folder is not available: …`、
   `Could not start …`、`… did not take the message: …`。
 - 工具结果被截断时末尾的 `… (output truncated)`。
+- 嘟嘟页（侧边栏入口「嘟嘟」由你提供）：搜索框提示和无障碍名称 `搜索会话`；`索引 N / M`；筛选 `全部` / `Claude` / `ChatGPT`
+  （分组的无障碍名称 `筛选`）；`刷新`；`手机已连接` / `手机未连接`；卡片名 `用量`、`Token`、`正在运行`、`最近`；用量里的
+  `5 小时`、`每周`、`<模型> 每周`、`16:59 重置`、`周二 01:59`、`已限流`、`需要登录`、`无法读取`；Token 的 `今天`、`7 天`；
+  运行里的 `N 忙`、`忙 12 分钟`、`3 分钟前完成`、`刚刚完成`、`空闲 N 小时`、`另有 N 个空闲`、`展开` / `收起`、`没有在运行的会话`；
+  会话行的 `加载到 DSH` / `加载中…` / `打开`、展开后的 `目录：`、`会话 ID：`、`复制恢复命令` / `已复制`；
+  `全部 N`、`没有会话`、`没有匹配的会话`、`读取会话失败：…`、卡片读取中的 `…`。
+- 加载失败时显示在那一行下面的英文：`That harness is not available. Check Settings > 供应商.`、`This DSH cannot store a loaded
+  session.`、`That session is no longer on this computer.`、`The session does not say which folder it ran in.`、
+  `The session has no conversation to load.`、`The session's folder is not available: …`。
 
 ## 验证
 

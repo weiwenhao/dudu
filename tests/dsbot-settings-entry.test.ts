@@ -62,6 +62,31 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
   });
   const providersValue = { providers: [provider('claude', 'Claude'), provider('codex', 'ChatGPT', { state: 'missing', version: undefined, path: undefined, reason: 'ChatGPT was not found.' })] };
 
+  const sessionRow = (provider: string, id: string, title: string, extra: Record<string, unknown> = {}) => ({
+    key: `${provider}:${id}`, provider, id, title, preview: `first prompt of ${title}`, cwd: '/home/u/Code/app', branch: 'main', updatedAt: Date.now() - 5 * 60_000, ...extra,
+  });
+  const sessionsValue = {
+    sessions: [sessionRow('claude', 'c1', 'Fix the build'), sessionRow('codex', 'x1', 'Explain quokkas', { dshSessionId: 'session-old', evidence: { role: 'assistant', text: 'quokkas are small marsupials' } })],
+    total: 2, providers: [{ id: 'claude', name: 'Claude', count: 1 }, { id: 'codex', name: 'ChatGPT', count: 1 }], home: '/home/u', indexing: { running: true, done: 3, total: 9 },
+  };
+
+  const now = Date.now();
+  const overviewValues: Record<string, unknown> = {
+    '/api/dudu/overview/usage': { providers: [
+      { id: 'claude', name: 'Claude', state: 'ok', plan: 'Team', limited: false, windows: [
+        { key: 'five_hour', label: '5 小时', used: 0.14, resetsAt: now + 3 * 3600_000, core: true },
+        { key: 'seven_day', label: '每周', used: 0.334, resetsAt: now + 4 * 86_400_000, core: true },
+      ] },
+      { id: 'codex', name: 'ChatGPT', state: 'hidden', limited: false, windows: [] },
+    ] },
+    '/api/dudu/overview/running': {
+      busy: [{ provider: 'claude', id: 'r1', title: 'Fix the build', cwd: '/home/u/Code/app', status: 'busy', since: now - 12 * 60_000 }],
+      done: [{ provider: 'codex', id: 'r2', title: 'Explain quokkas', cwd: '/home/u/Code/zoo', status: 'done', since: now - 3 * 60_000, dshSessionId: 'session-r2' }],
+      idle: [{ provider: 'claude', id: 'r3', title: 'Old chat', cwd: '/home/u/Code/old', status: 'idle', since: now - 3 * 3600_000 }, { provider: 'claude', id: 'r4', title: '', cwd: null, status: 'idle', since: now - 86_400_000 }],
+      total: 4,
+    },
+  };
+
   const react = {
     createElement(type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): ElementNode {
       return { type, props: { ...(props ?? {}), children } };
@@ -125,6 +150,9 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
       requests.push(path);
       requestBodies.push({ path, body: JSON.parse(init?.body ?? '{}') as Record<string, unknown> });
       if (path.startsWith('/api/dudu/providers/')) return { ok: true, json: async () => providersValue };
+      if (path === '/api/dudu/sessions/list') return { ok: true, json: async () => sessionsValue };
+      if (path in overviewValues) return { ok: true, json: async () => overviewValues[path] };
+      if (path === '/api/dudu/sessions/load') return { ok: true, json: async () => ({ sessionId: 'session-new', workspaceId: 'ws-1', reused: false }) };
       return {
         ok: true,
         json: async () => ({
@@ -139,6 +167,9 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
       return 1;
     },
     clearInterval() {},
+    // Timers of the page must not keep the test process alive when it is done.
+    setTimeout: (callback: () => unknown, delay?: number) => { const timer = setTimeout(callback, delay); timer.unref(); return timer; },
+    clearTimeout,
   });
 
   vm.runInContext(source, context);
@@ -259,7 +290,7 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
   assert.equal(providers.options.name, 'settings.section');
   assert.equal((providers.options.label as () => string)(), '供应商');
   assert.equal(providers.options.order, 51);
-  assert.deepEqual(childPlugins.map((child) => child.name), ['dudu-providers']);
+  assert.deepEqual(childPlugins.map((child) => child.name), ['dudu-providers', 'dudu-sessions']);
   assert.deepEqual([...(childPlugins[0].inject as string[])], ['slots', 'modelDirectories', 'sessions', 'remote', 'remote.session']);
 
   hookState.length = 0;
@@ -286,4 +317,100 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
   const refresh = providerNodes.find((node) => node.type === 'button' && JSON.stringify(node.props.children).includes('重新检测'));
   await (refresh?.props.onClick as () => Promise<void>)();
   assert.equal(requests.at(-1), '/api/dudu/providers/refresh');
+
+  // The 嘟嘟 panel: an entry among DSH's global panels and a page for it, from a plugin of its own that needs the layout,
+  // the workspace navigation and the sessions service.
+  const sessionsUi = childPlugins[1];
+  assert.deepEqual([...(sessionsUi.inject as string[])], ['slots', 'layout', 'uiWorkspace', 'sessions']);
+  const panel: Array<{ options: Record<string, unknown>; component: Function }> = [];
+  const panelInjections: Array<() => void> = [];
+  const created: unknown[] = [];
+  const opened: unknown[] = [];
+  const selected: unknown[] = [];
+  const listState: { ids: string[]; byId: Record<string, unknown> } = { ids: [], byId: {} };
+  const listeners = new Set<() => void>();
+  (sessionsUi.apply as (ctx: unknown) => void)({
+    effect(effect: () => unknown) { effect(); },
+    slots: {
+      inject(_slot: string, activate: () => void) { panelInjections.push(activate); },
+      register(options: Record<string, unknown>, component: Function) { panel.push({ options, component }); return () => {}; },
+    },
+    // A DSH that announces a created session a moment later: the list gains it only after it was asked to refresh.
+    sessions: {
+      create: async (options: unknown) => { created.push(options); return 'session-new'; },
+      refresh: async () => { listState.ids.push('session-new'); for (const listener of listeners) listener(); },
+      list: { getSnapshot: () => listState, subscribe: (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); } },
+    },
+    uiWorkspace: { openSession: (sessionId: unknown) => { assert.ok(listState.ids.includes(sessionId as string), 'a session is opened once the list holds it'); opened.push(sessionId); } },
+    layout: { selectPanel: (panelId: unknown) => { selected.push(panelId); } },
+  });
+  for (const activate of panelInjections) activate();
+  const entry = panel.find((item) => item.options.name === 'sidebar.panellist');
+  const page = panel.find((item) => item.options.name === 'main');
+  assert.deepEqual([entry?.options.id, (entry?.options.label as () => string)(), entry?.options.order], ['dudu', '嘟嘟', 20]);
+  assert.equal(page?.options.key, 'dudu', 'the page is the one the entry selects');
+  const glyph = entry?.component({ size: 16 }) as ElementNode;
+  assert.equal(glyph.type, 'img');
+  assert.match(String(glyph.props.src), /^data:image\/png;base64,/);
+  assert.deepEqual([glyph.props.width, glyph.props.height], [16, 16]);
+
+  hookState.length = 0;
+  completedEffects.clear();
+  requests.length = 0;
+  requestBodies.length = 0;
+  const pageElement = page?.component() as ElementNode;
+  const render = () => { hookIndex = 0; return (pageElement.type as (props: unknown) => unknown)(pageElement.props); };
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  let pageNodes = descendants(render());
+  const said = (node: ElementNode) => JSON.stringify(descendants(node).map((child) => child.props.children));
+  const byId = (id: string) => pageNodes.find((node) => node.props['data-testid'] === id);
+
+  // The overview reads the sessions, the usage, what is running, the tokens and the phone: each on its own.
+  assert.deepEqual(requestBodies.find((entry) => entry.path === '/api/dudu/sessions/list')?.body, { query: '', limit: 8, refresh: false });
+  for (const path of ['/api/dudu/overview/usage', '/api/dudu/overview/running', '/api/dudu/state']) assert.ok(requests.includes(path), `${path} is read`);
+  assert.equal(pageNodes.some((node) => node.type === 'h1'), false, 'no title or explanation takes the space of the overview');
+  assert.equal(pageNodes.find((node) => node.type === 'input')?.props.placeholder, '搜索会话');
+
+  const usage = byId('dudu-usage');
+  assert.ok(usage && said(usage).includes('Claude') && said(usage).includes('5 小时') && said(usage).includes('每周') && said(usage).includes('14%') && said(usage).includes('33%'));
+  assert.equal(said(usage).includes('ChatGPT'), false, 'a harness that cannot report usage is left out');
+  assert.equal(descendants(usage).filter((node) => node.props.role === 'meter').length, 2);
+  const runningCard = byId('dudu-runningcard');
+  const runningRows = descendants(runningCard as ElementNode).filter((node) => node.props['data-testid'] === 'dudu-running');
+  assert.deepEqual(runningRows.map((node) => node.props['data-state']), ['busy', 'done'], 'working and just finished sessions have a line each');
+  assert.ok(said(runningRows[0]).includes('Fix the build') && said(runningRows[0]).includes('忙 12 分钟') && said(runningRows[0]).includes('~/Code/app'));
+  assert.ok(said(runningRows[1]).includes('3 分钟前完成'));
+  assert.equal(typeof runningRows[0].props.onClick, 'undefined', 'a terminal session is not opened from here');
+  assert.equal(typeof runningRows[1].props.onClick, 'function', 'one that is in DSH is');
+  assert.ok(said(runningCard as ElementNode).includes('另有 2 个空闲'), 'idle sessions are only counted');
+  assert.ok(pageNodes.some((node) => node.props['data-testid'] === 'dudu-phone' && JSON.stringify(descendants(node).map((child) => child.props.children)).includes('手机未连接')));
+
+  const rows = pageNodes.filter((node) => node.props['data-testid'] === 'dudu-session');
+  assert.deepEqual(rows.map((node) => node.props['data-key']), ['claude:c1', 'codex:x1']);
+  assert.ok(said(rows[0]).includes('Fix the build') && said(rows[0]).includes('~/Code/app'), 'a row shows its title and folder, the home folder as ~');
+  assert.ok(said(rows[1]).includes('quokkas are small marsupials'), 'a match inside the conversation shows where');
+  const buttonLabels = pageNodes.filter((node) => node.type === 'button' && node.props['data-testid'] === undefined).map((node) => JSON.stringify(node.props.children));
+  assert.ok(buttonLabels.includes('["加载到 DSH"]') && buttonLabels.includes('["打开"]'), 'a session is loaded or, when it is there already, opened');
+  assert.ok(pageNodes.some((node) => node.props.role === 'status' && JSON.stringify(node.props.children).includes('3 / 9')), 'the page says while conversations are still being read');
+
+  // Searching gives the whole page to the answers.
+  const search = pageNodes.find((node) => node.type === 'input');
+  (search?.props.onChange as (event: unknown) => void)({ target: { value: 'quokkas' } });
+  pageNodes = descendants(render());
+  assert.equal(byId('dudu-usage'), undefined);
+  assert.equal(byId('dudu-runningcard'), undefined);
+  assert.equal(pageNodes.filter((node) => node.props['data-testid'] === 'dudu-session').length, 2);
+  (search?.props.onChange as (event: unknown) => void)({ target: { value: '' } });
+  pageNodes = descendants(render());
+
+  // Loading writes the session on the host, then DSH's own create adopts it before it is opened.
+  const load = pageNodes.find((node) => node.type === 'button' && JSON.stringify(node.props.children) === '["加载到 DSH"]');
+  (load?.props.onClick as (event: unknown) => void)({ stopPropagation() {} });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(requestBodies.find((entry) => entry.path === '/api/dudu/sessions/load')?.body, { provider: 'claude', id: 'c1' });
+  // (what the page handed over was made inside the page's own realm, so compare it as plain data)
+  assert.deepEqual(JSON.parse(JSON.stringify(created)), [{ sessionId: 'session-new', workspaceId: 'ws-1' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(opened)), ['session-new']);
+  assert.deepEqual(JSON.parse(JSON.stringify(selected)), [null], 'the panel is left for the conversation');
 });

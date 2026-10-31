@@ -272,6 +272,8 @@ export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbac
 
   return {
     id, name, route: id,
+    /** The environment the harness runs in (an OAR overlay: `null` removes a name). */
+    environment: () => environment(),
 
     /** What the settings page shows about the harness on this computer: OAR looks where each vendor installs it. */
     async probe({ override } = {}) {
@@ -302,6 +304,11 @@ export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbac
         knowsTool: (toolName) => known.has(toolName),
         fallbackTool,
         refreshModels() { loaded = undefined; },
+        /** How much of the account's plan is used, asked of the harness itself (OAR starts it for the question). */
+        accountUsage() {
+          if (typeof runtime.accountUsage !== 'function') return Promise.resolve({ kind: 'unsupported' });
+          return runtime.accountUsage(installation, { env: environment(), timeoutMs: 30_000 });
+        },
         async listModels() {
           const models = await load();
           // The harness's own default comes first: a provider's first model is what the provider chip selects.
