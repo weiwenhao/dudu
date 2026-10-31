@@ -55,6 +55,24 @@ Issues · Active / Backlog / All issues · Backlog / Todo / In Progress / In Rev
 | Sessions | 搜索框 `Search sessions` · `No sessions` · `Could not read sessions` · 点开时 `Opening…` · 智能体名 `Claude`、`ChatGPT` |
 | 校验小组件声明时的拒绝理由（以后写在设置页里，`widgets.mjs`） | `It has no id.` `It has no name.` `It has no minimum size.` `Its recommended size is smaller than its minimum size.` 等 10 句 |
 
+## 设置窗口的新字（设计稿里没有，要你审）
+
+窗口的外形照设计文档：左边分区，右边卡片，右上角“打开项目文件夹”。
+
+| 位置 | 现在的写法 |
+|---|---|
+| 窗口 | 标题 `Settings`（设计文档写的是“嘟嘟设置”）· 分区 `General` `Connectors` `Rules` `Memory` `Widgets` `Skills` · 右上角 `Open project folder` |
+| General | `Project folder` · `Default` · `Change…` · `Folder path` · `Move the files into it` · `Save` · `Cancel` · `Issues` · `Export issues` · `Could not export the issues` |
+| 选的文件夹被拒绝时的理由（插件给，`host/assistant/project.mjs` 的 `REASONS`，共 14 句） | 例：`This folder is in a temporary location that the system can clear. Choose another folder.` · `This folder already has other files in it. Choose an empty folder, or one that 嘟嘟 created before.` |
+| Connectors | `No connectors` · `Not tested` · `Tested 3 min ago · OK` / `· Failed` · `Turn on <名字>`（开关，读屏）· `Details of <名字>` · 来源 `You` / `嘟嘟` · 种类 `Command` / `MCP` / `DSH` · `Allowed operations` · `Read` / `Write` · `Test` · `Remove` · `Removed <名字>` · `Undo` · `Skipped entries` · `Line 13: <原因>` |
+| 连接器库给的话（`host/assistant/connectors/text.mjs`，约 150 句；读不出的条目的原因和“添加了连接器”的记录行是你会看到的，其余是写给模型的） | 例：`The json block is not valid JSON (line 1, column 16).` · `Added connector "X" (id): … It is off until the owner turns it on.` |
+| Rules | 文件名 `TRIAGE.md`、`ASSIGN.md` · `Open` · `Empty` · `Not found` |
+| Memory | `Search memory` · `Nothing is remembered yet` · `Edit` · `Save` · `Cancel` · `Forget` · `This will be deleted` · `Delete` · `Since 2026-10-29` · `Superseded` · `Tidy runs` · `No tidy runs yet` · `Undo` · 预览里的 `3 conversation turns`、`entries`、`lines of the daily notes`、`skills`、`tidy notes`、`staged notes` |
+| Widgets | `On the dashboard`（开关，读屏 `Put Quota on the dashboard`）· `Built in` · `Reads issues` |
+| Skills | `No skills yet` · `Delete` · `Back to skills` |
+| 项目文件夹里的七个文件（`host/assistant/templates.mjs`，中文，每一句都要你审） | `AGENTS.md`（规则）`SOUL.md`（口吻）`USER.md` `MEMORY.md` `CONNECTORS.md`（格式示例，不登记任何连接器）`TRIAGE.md`（影响、工作量、优先级和截止；表里的数字和“Urgent 现在只在你明确说很急时才用”是提议）`ASSIGN.md`（分配的顺序和访问方式，注释里有两个例子） |
+| 整理（tidy）写进你文件里的字（`host/assistant/memory/tidy.mjs`） | `新建` `佐证` `细化` `取代` `技能` `待确认` `暂存` `记入` `修改` `撤销` `已撤销`，来源写成 `（来源 turn:12）` |
+
 ## 我替你定的小事（可以推翻）
 
 - project 的颜色：按 project 名字算一个固定的颜色，同名永远同色。文档写"按顺序分配"，那要在服务端存一份对应表，等设置文件做时再改。
@@ -77,5 +95,5 @@ Issues · Active / Backlog / All issues · Backlog / Todo / In Progress / In Rev
 
 - **New issue 的窗口**：设计稿只画了按钮；窗口是我做的最小版本（上表），样子和字都等你定；从分组条或 Board 列的"＋"打开时，新 issue 带那一组的状态、优先级、智能体或 project，窗口里不显示；建的时候不能选其他的，要在 issue 自己的页面里改。
 - 详情页的"Open session"和换智能体：按钮和菜单做好了，真正开会话、换会话要等会话那一块（`docs/assistant.md` 3.3、3.4）接上；右上"···"里的"撤销这次整理"和"忘记"也是。
-- Office、Inputs 两个小组件，设置弹窗（右上角的齿轮），宠物：还没有（Office 的场景在写，Inputs 要等连接器接上）。
+- Office、Inputs 两个小组件，宠物：还没有（Office 的场景在写，Inputs 要等连接器的读取接上）。设置里的“通用”还缺宠物和快捷键、模型、最近一次整理，“手机控制、供应商”仍在 DSH 自己的设置里。
 - 原来的"嘟嘟"页（读取 Claude、Codex 已有的会话、加载进 DSH）：现在是 Sessions 小组件，不在默认版面上，要用时在"Add widget"里加；没构建新界面时仍显示旧页。

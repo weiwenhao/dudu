@@ -4,6 +4,7 @@ import { ToastProvider } from './components/toast.jsx';
 import { Dashboard } from './dashboard/Dashboard.jsx';
 import { IssueDetail } from './issues/IssueDetail.jsx';
 import { Scope } from './lib/scope.jsx';
+import { SettingsDialog } from './settings/SettingsDialog.jsx';
 import { ServicesProvider } from './services.jsx';
 import { REGISTRY } from './widgets/index.js';
 
@@ -17,6 +18,8 @@ export const css = __DUDU_CSS__;
  */
 export function Page({ request, logo, actions = {} }) {
   const [route, setRoute] = useState({ name: 'dashboard' });
+  const [settings, setSettings] = useState(false);
+  const [version, setVersion] = useState(0); // a change made in the settings (a widget switched on or off) reloads the dashboard
   // `ids` is the list the person came from; stepping to the next issue passes none and keeps the one already held.
   const openIssue = useCallback((id, ids) => setRoute((current) => ({ name: 'issue', id, ids: ids ?? current.ids ?? [] })), []);
   // A session the harness has on this computer is loaded into DSH first (unless it already lives there), then opened.
@@ -40,9 +43,10 @@ export function Page({ request, logo, actions = {} }) {
           {route.name === 'issue' ? (
             <IssueDetail request={request} id={route.id} ids={route.ids} logo={logo} onBack={() => setRoute({ name: 'dashboard' })} onOpen={openIssue} openSession={openIssueSession} />
           ) : (
-            <Dashboard request={request} registry={REGISTRY} />
+            <Dashboard key={version} request={request} registry={REGISTRY} onSettings={() => setSettings(true)} />
           )}
         </ServicesProvider>
+        <SettingsDialog open={settings} onOpenChange={setSettings} request={request} onChanged={() => setVersion((n) => n + 1)} />
       </ToastProvider>
     </Scope>
   );

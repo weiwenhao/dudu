@@ -22,6 +22,7 @@ import { createIssuesApi, ISSUE_ACTIONS } from './dist/assistant/issues/api.mjs'
 import { createDashboard } from './dist/assistant/dashboard/index.mjs';
 import { createDashboardApi, DASHBOARD_ACTIONS } from './dist/assistant/dashboard/api.mjs';
 import { GridStackEngine } from './dist/assistant/dashboard/engine.mjs';
+import { openAssistant } from './dist/assistant/assistant.mjs';
 
 // Capture the loaded package once, so an old runtime cannot report newly installed files as its own.
 const runtimeIdentity = await desktopPackageIdentity(dirname(fileURLToPath(import.meta.url)));
@@ -87,6 +88,19 @@ async function startIssues(ctx, folder) {
     for (const dispose of disposers) dispose();
     issues.close();
   };
+}
+
+// 嘟嘟's own state (docs/assistant.md 2, 3.5, 3.6): the project folder with its Markdown files, the settings, the memory and the
+// connectors, and the calls the settings page makes on them. A project folder that cannot be opened turns off the memory and the
+// connectors only (the settings page says why); the rest of the plugin runs.
+async function startAssistant(ctx, dshHome, folder) {
+  const assistant = openAssistant({ dshHome, stateFolder: join(folder, 'assistant') });
+  for (const problem of assistant.problems) console.warn(`[dudu] The project folder is not available: ${problem}`);
+  const disposers = assistant.paths.map((path) => ctx.connection.fetch.register({
+    path: `/api/dudu/${path}`, methods: ['POST'], requestBody: 'buffered',
+    fetch: (request) => assistant.handle(path, request),
+  }));
+  return async () => { for (const dispose of disposers) dispose(); await assistant.close(); };
 }
 
 // The dashboard layout (docs/assistant.md 4.1): one small JSON file next to the issues. The engine of the grid library is the one the
@@ -187,6 +201,13 @@ export async function apply(ctx, config = {}) {
     console.info('[dudu] The dashboard is ready.');
   } catch (error) {
     console.warn(`[dudu] The dashboard is unavailable: ${error.message}`);
+  }
+
+  try {
+    stops.push(await startAssistant(ctx, dshHome, folder));
+    console.info('[dudu] The project folder, memory and connectors are ready.');
+  } catch (error) {
+    console.warn(`[dudu] The project folder, memory and connectors are unavailable: ${error.message}`);
   }
 
   if (typeof ctx.connection.createPeer === 'function') {

@@ -110,6 +110,29 @@ export const T = {
     },
     sessions: { search: 'Search sessions', empty: 'No sessions', loading: 'Looking for sessions…', failed: 'Could not read sessions', opening: 'Opening…', agents: { claude: 'Claude', codex: 'ChatGPT' } },
   },
+  // NEW: the settings window (the design draws sections and cards, not the words).
+  settings: {
+    title: 'Settings', openFolder: 'Open project folder', close: 'Close', failed: 'Could not load this page', retry: 'Retry', saved: 'Saved', unavailable: 'The project folder could not be opened.',
+    nav: { general: 'General', connectors: 'Connectors', rules: 'Rules', memory: 'Memory', widgets: 'Widgets', skills: 'Skills' },
+    general: {
+      folder: 'Project folder', isDefault: 'Default', change: 'Change…', path: 'Folder path', moveFiles: 'Move the files into it', save: 'Save', cancel: 'Cancel',
+      issues: 'Issues', exportIssues: 'Export issues', exportFailed: 'Could not export the issues',
+    },
+    connectors: {
+      empty: 'No connectors', on: 'On', test: 'Test', remove: 'Remove', allowed: 'Allowed operations', read: 'Read', write: 'Write', tools: 'Tools', never: 'Not tested',
+      testedOk: (when) => `Tested ${when} · OK`, testedFailed: (when) => `Tested ${when} · Failed`, turnOn: (name) => `Turn on ${name}`, expand: (name) => `Details of ${name}`,
+      source: { owner: 'You', dudu: '嘟嘟' }, kind: { cli: 'Command', mcp: 'MCP', dsh: 'DSH' }, skipped: 'Skipped entries', line: (n) => `Line ${n}`,
+      removed: (name) => `Removed ${name}`, undo: 'Undo', changed: 'This connector changed since it was shown. Look at it again, then turn it on.',
+    },
+    rules: { open: 'Open', empty: 'Empty', missing: 'Not found' },
+    memory: {
+      search: 'Search memory', empty: 'Nothing is remembered yet', edit: 'Edit', save: 'Save', cancel: 'Cancel', forget: 'Forget', willDelete: 'This will be deleted',
+      confirmForget: 'Delete', since: (date) => `Since ${date}`, superseded: 'Superseded', reviews: 'Tidy runs', noReviews: 'No tidy runs yet', undo: 'Undo',
+      counts: { turns: 'conversation turns', entries: 'entries', logLines: 'lines of the daily notes', skills: 'skills', reviews: 'tidy notes', staged: 'staged notes' },
+    },
+    widgets: { onDashboard: 'On the dashboard', builtIn: 'Built in', reads: (what) => `Reads ${what}`, switchOn: (name) => `Put ${name} on the dashboard` },
+    skills: { empty: 'No skills yet', delete: 'Delete', back: 'Back to skills' },
+  },
   agentState: { working: 'Working', needs_you: 'Needs you', stuck: 'Stuck', idle: 'Idle' },
   noAgent: 'No agent',
   today: 'Today',

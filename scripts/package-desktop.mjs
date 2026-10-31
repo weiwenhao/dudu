@@ -18,8 +18,8 @@ await mkdir(runtime);
 const copied = new Set();
 // The installed plugin has no node_modules of its own to resolve OAR from, so the one file that imports it is bundled,
 // with only the two runtimes the plugin uses. The licenses of what ends up inside travel with it.
-// The grid library's engine is bundled for the same reason (its relative imports carry no file extension, so Node cannot load it as it is).
-const bundled = new Set(['providers/oar-runtimes.mjs', 'assistant/dashboard/engine.mjs']);
+// The grid library's engine and the MCP client are bundled for the same reason (its relative imports carry no file extension, so Node cannot load it as it is).
+const bundled = new Set(['providers/oar-runtimes.mjs', 'assistant/dashboard/engine.mjs', 'assistant/connectors/mcp.mjs']);
 const noticeBlocks = [];
 async function bundleRuntime(file) {
   const target = join(runtime, file);

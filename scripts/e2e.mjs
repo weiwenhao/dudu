@@ -11,7 +11,9 @@ execFileSync('node', [join(root, 'scripts', 'package-desktop.mjs')], { cwd: root
 
 const named = process.argv.slice(2).filter((argument) => !argument.startsWith('-'));
 const files = named.length ? named : readdirSync(join(root, 'tests', 'e2e')).filter((file) => file.endsWith('.e2e.test.ts')).map((file) => join('tests', 'e2e', file));
-const result = spawnSync('node', ['--experimental-strip-types', '--test', ...process.argv.slice(2).filter((argument) => argument.startsWith('-')), ...files], {
+// Each file starts a DSH and a Chrome of its own; a few at a time keep a busy machine from timing out (--test-concurrency=N overrides).
+const flags = process.argv.slice(2).filter((argument) => argument.startsWith('-'));
+const result = spawnSync('node', ['--experimental-strip-types', '--test', ...(flags.some((flag) => flag.startsWith('--test-concurrency')) ? [] : ['--test-concurrency=3']), ...flags, ...files], {
   cwd: root, stdio: 'inherit', env: { ...process.env, DUDU_E2E_TGZ: join(root, '.local', 'release', `dudu-${version}.tgz`) },
 });
 process.exit(result.status ?? 1);
