@@ -5,18 +5,18 @@ import { Minus, Pencil, Plus, RotateCcw, Settings } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { useToast } from '../components/toast.jsx';
 import { cn } from '../lib/cn.js';
+import { isTyping } from '../lib/typing.js';
 import { T } from '../strings.js';
 import { AddWidgetDialog } from './AddWidgetDialog.jsx';
 import { dashboardApi } from './api.js';
 import { Lattice } from './Lattice.jsx';
-import { extent, GAP, metrics, SCREEN_ROWS, span } from './metrics.js';
+import { MAX_ROWS } from '../../../assistant/dashboard/widgets.mjs';
+import { extent, GAP, metrics, span } from './metrics.js';
 
 const D = T.dashboard;
-const MAX_ROWS = 12;
 const HANDLES = 'e,w,n,s,se,ne,sw';
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const sizeText = (w, h) => `${w}×${h}`;
-const isTyping = (target) => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
 /** A widget that throws shows this instead of itself and takes nothing else down with it. */
 class Guard extends Component {
@@ -62,7 +62,9 @@ export function Dashboard({ request, registry, onSettings }) {
   const [announce, setAnnounce] = useState('');
   const [chip, setChip] = useState(null); // { text, x, y } beside the pointer while resizing
   const M = useMemo(() => (area ? metrics(area) : null), [area]);
-  const shape = useMemo(() => (M && items ? extent(items, { cols: M.cols }) : null), [M, items]);
+  // What is on the board for this window: the default Issues is "all the columns", so its width is the window's until it is pulled.
+  const placed = useMemo(() => (M && items ? items.map((item) => (item.fill ? { ...item, x: 0, w: M.cols } : item)) : null), [M, items]);
+  const shape = useMemo(() => (M && placed ? extent(placed, { cols: M.cols }) : null), [M, placed]);
 
   // What the gridstack callbacks need is read from here, so they never act on an old render.
   const live = useRef({});
@@ -152,11 +154,17 @@ export function Dashboard({ request, registry, onSettings }) {
     } catch { setStatus('error'); }
   }, [show]);
 
+  // The bar offers Undo for the newest change only (the plugin keeps one), so each new bar replaces the one before it.
   const undoable = useCallback((message) => ({
-    message,
+    key: 'layout', message,
     action: {
       label: D.undo,
-      run: async () => { const result = await live.current.api.undo(); if (result.outcome === 'success') show(result.items); },
+      run: async () => {
+        try {
+          const result = await live.current.api.undo();
+          if (result.outcome === 'success') show(result.items);
+        } catch { live.current.toast({ message: D.saveFailed }); }
+      },
     },
   }), [show]);
 
@@ -261,14 +269,14 @@ export function Dashboard({ request, registry, onSettings }) {
   // The window changed: the cell and the columns follow it, the widgets keep their cells.
   useEffect(() => {
     if (!M || !items || !grid.current) return;
-    applyMetrics(Math.max(M.cols, ...items.map((item) => item.x + item.w)), M.cell);
+    applyMetrics(Math.max(M.cols, ...placed.map((item) => item.x + item.w)), M.cell);
     // The default Issues is "all the columns": it follows the window until it is pulled.
     for (const item of items) {
       if (!item.fill) continue;
       const node = grid.current.engine.nodes.find((candidate) => candidate.id === item.id);
       if (node && node.w !== M.cols) grid.current.update(node.el, { x: 0, w: M.cols });
     }
-  }, [M, items, applyMetrics]);
+  }, [M, items, placed, applyMetrics]);
   useEffect(() => { grid.current?.setStatic(!editing); }, [editing]);
 
   // ---- remove, add, restore
@@ -284,22 +292,26 @@ export function Dashboard({ request, registry, onSettings }) {
 
   const add = useCallback(async (type) => {
     setAdding(false);
-    const result = await live.current.api.add(type, live.current.M?.cols);
-    if (result.outcome !== 'success') { live.current.toast({ message: D.saveFailed }); return; }
-    show(result.items, { flash: result.items.find((item) => item.type === type)?.id });
-    if (result.undo) live.current.toast(undoable(result.undo.label));
+    try {
+      const result = await live.current.api.add(type, live.current.M?.cols);
+      if (result.outcome !== 'success') throw new Error(result.message);
+      show(result.items, { flash: result.items.find((item) => item.type === type)?.id });
+      if (result.undo) live.current.toast(undoable(result.undo.label));
+    } catch { live.current.toast({ message: D.saveFailed }); }
   }, [show, undoable]);
 
   const restore = useCallback(async () => {
-    const result = await live.current.api.reset();
-    if (result.outcome !== 'success') { live.current.toast({ message: D.saveFailed }); return; }
-    show(result.items);
-    if (result.undo) live.current.toast(undoable(result.undo.label));
+    try {
+      const result = await live.current.api.reset();
+      if (result.outcome !== 'success') throw new Error(result.message);
+      show(result.items);
+      if (result.undo) live.current.toast(undoable(result.undo.label));
+    } catch { live.current.toast({ message: D.saveFailed }); }
   }, [show, undoable]);
 
   // ---- the keyboard, for editing without a pointer: arrows move a widget by one cell, Shift + arrows resize it, Delete removes it
   const onCardKey = useCallback((event, id) => {
-    if (!live.current.editing) return;
+    if (!live.current.editing || event.target !== event.currentTarget) return; // a key typed inside the widget is not for the layout
     const node = grid.current?.engine.nodes.find((candidate) => candidate.id === id);
     const item = live.current.items.find((candidate) => candidate.id === id);
     if (!node || !item) return;
@@ -371,14 +383,14 @@ export function Dashboard({ request, registry, onSettings }) {
           <div ref={board} className={cn('grid-stack db-board', editing && 'db-editing', moving && 'db-moving')} />
         </div>
       </div>
-      {items && M && items.map((item) => {
+      {placed && M && placed.map((item) => {
         const host = hosts[item.id];
         if (!host) return null;
         const declared = byType[item.type];
         const size = { cols: item.w, rows: item.h, width: span(item.w, cell), height: span(item.h, cell) };
         return createPortal(
           <div className="db-card" tabIndex={editing ? 0 : -1} aria-label={declared?.label ?? item.type} onKeyDown={(event) => onCardKey(event, item.id)}>
-            <div className="db-surface">
+            <div className="db-surface" inert={editing ? '' : undefined}>
               <Guard source={sourceOf(item.type)}>
                 {declared
                   ? <declared.Component size={size} editing={editing} />

@@ -73,6 +73,7 @@ export const T = {
     dueSet: 'Due date set', dueRemoved: 'Due date removed', assigned: (name) => `Assigned to ${name}`, unassigned: 'Agent removed',
     updated: (count) => (count === 1 ? 'Updated 1 issue' : `Updated ${count} issues`), copied: (text) => `Copied ${text}`,
     snoozed: 'Snoozed', snoozeCleared: 'Snooze cleared', failed: 'Could not save the change',
+    region: 'Notifications',
   },
   // NEW: the Dates row of the filter menu: three fields with ready-made ranges.
   dates: {
@@ -98,6 +99,7 @@ export const T = {
   },
   // NEW: the words of the small widgets (the design names the widgets and what they show, not their wording).
   widgets: {
+    titles: { overview: 'Overview', upcoming: 'Upcoming', stuck: 'Stuck', quota: 'Quota', sessions: 'Sessions' }, // the design's names
     overview: { overdue: 'Overdue', thisWeek: 'Due this week', inProgress: 'In progress' },
     upcoming: { empty: 'Nothing is due' },
     stuck: { empty: 'Nothing is stuck' },

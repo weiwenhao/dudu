@@ -19,10 +19,10 @@ import { keepVisible, selectRow } from './selection.js';
 import { useFacets } from './use-facets.js';
 import { useIssueList } from './use-issue-list.js';
 import { DEFAULT_VIEW, listRequest, useViews } from './view.js';
+import { isTyping } from '../lib/typing.js';
 
 const TABS = ['active', 'backlog', 'all'];
 const SEARCH_DELAY_MS = 250;
-const isTyping = (target) => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
 export function IssuesWidget({ request, onOpen }) {
   const [tab, setTab] = useState('active');

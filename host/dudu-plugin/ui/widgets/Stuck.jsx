@@ -10,7 +10,7 @@ export function Stuck() {
   const { status, value } = usePolled(request, 'issues/list', { tab: 'active', filter: { agentState: ['stuck'] }, limit: 50 });
   const issues = value?.items ?? [];
   return (
-    <Frame title="Stuck">
+    <Frame title={T.widgets.titles.stuck}>
       {status === 'ready' && issues.length === 0 ? <Empty>{T.widgets.stuck.empty}</Empty> : <IssueLines issues={issues} note={(issue) => issue.ask} />}
     </Frame>
   );

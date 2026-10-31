@@ -1,9 +1,9 @@
 // The grid's size rules (docs/assistant.md 4.1, "网格" and "窗口大小、缩放、换屏幕"). Cells are square; six rows fill one screen; the
 // columns follow the width. Only two numbers matter: the usable width and height in CSS pixels, so a big screen, a Retina one and
 // the browser's zoom all go through the same rule.
+import { MIN_COLUMNS } from '../../../assistant/dashboard/widgets.mjs';
 export const GAP = 12;
 export const MIN_CELL = 100;
-export const MIN_COLUMNS = 4;
 export const SCREEN_ROWS = 6;
 
 /** Columns and cell edge for a usable area of `width` x `height`. */

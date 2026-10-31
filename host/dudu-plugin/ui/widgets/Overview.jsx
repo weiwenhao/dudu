@@ -25,7 +25,7 @@ export function Overview() {
   const soon = usePolled(request, 'issues/list', ask({ dueFrom: today, dueTo: today + 7 * DAY - 1 })).value?.total;
   const going = usePolled(request, 'issues/list', ask({ status: ['in_progress'], agentState: ['working'] })).value?.total;
   return (
-    <Frame title="Overview" className="flex items-center pb-3">
+    <Frame title={T.widgets.titles.overview} className="flex items-center pb-3">
       <div className="grid w-full grid-cols-3 @max-[300px]:grid-cols-1">
         <Stat value={overdue} label={T.widgets.overview.overdue} tone={overdue > 0 ? 'text-danger-foreground' : undefined} />
         <Stat value={soon} label={T.widgets.overview.thisWeek} className="@max-[300px]:hidden" />

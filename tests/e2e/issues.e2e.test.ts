@@ -208,3 +208,43 @@ test('an agent\'s question is answered on the issue page; Snooze hides it; Done 
   assert.equal(asleep.agentState, 'idle');
   await page.close();
 });
+
+test('stepping to the next issue keeps the list; Escape leaves a title as it was; older activity stays after a refresh', async () => {
+  const first = await add({ title: '步进 1', status: 'todo', priority: 'urgent' });
+  await add({ title: '步进 2', status: 'todo', priority: 'urgent' });
+  await add({ title: '步进 3', status: 'todo', priority: 'urgent' });
+  const page = await dudu.openPanel();
+  await titleOf(page, '步进 1').click();
+  const header = page.locator('header').filter({ hasText: '嘟嘟' });
+  const position = async () => (await header.innerText()).match(/\d+ \/ \d+/)?.[0];
+  const start = await position();
+  assert.match(start ?? '', /^\d+ \/ \d+$/);
+  // Next twice: the list is still held after the first step (it was lost once, so the arrows and the counter vanished).
+  await page.getByRole('button', { name: 'Next issue' }).click();
+  await page.getByRole('button', { name: 'Next issue' }).click();
+  await page.waitForFunction((from) => !document.body.innerText.includes(from), start ?? '');
+  assert.match((await position()) ?? '', /^\d+ \/ \d+$/);
+  await page.getByRole('button', { name: 'Previous issue' }).click();
+
+  // Escape in the title box is a cancel, not a save.
+  await page.getByRole('button', { name: 'Back to Issues' }).click();
+  await titleOf(page, '步进 1').click();
+  const title = page.getByRole('textbox', { name: 'Untitled' });
+  await title.click();
+  await title.fill('改了一半的标题');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => (document.querySelector('textarea[aria-label=Untitled]') as HTMLTextAreaElement | null)?.value === '步进 1');
+  assert.equal((await get(first.id)).title, '步进 1');
+
+  // A long activity: older entries that were asked for stay after the page refreshes itself (every five seconds).
+  const long = await add({ title: '记录很长的事', status: 'todo', priority: 'low' });
+  for (let n = 1; n <= 60; n++) await dudu.api('issues/log', { id: long.id, kind: 'note', text: `第 ${n} 条记录` });
+  await page.getByRole('button', { name: 'Back to Issues' }).click();
+  await titleOf(page, '记录很长的事').click();
+  await page.getByRole('button', { name: 'Load earlier' }).click();
+  await page.getByText('第 1 条记录', { exact: true }).waitFor();
+  await page.waitForTimeout(6500);
+  await page.getByText('第 1 条记录', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Load earlier' }).count(), 0, 'nothing older is left to load');
+  await page.close();
+});

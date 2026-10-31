@@ -43,6 +43,8 @@ test('the first dashboard is one Issues widget that fills it and follows the win
   await page.waitForFunction((before) => Number(document.querySelector('.grid-stack-item')?.getAttribute('gs-w')) < before, wide.w);
   const narrow = await cells(issuesItem(page));
   assert.ok(narrow.w >= 4 && narrow.w < wide.w, `${narrow.w} columns in a narrow window, ${wide.w} in a wide one`);
+  // The board is as wide as the window now holds, not as wide as it was: nothing to scroll sideways.
+  await page.waitForFunction(() => { const area = document.querySelector('.db-page'); return !!area && area.scrollWidth <= area.clientWidth + 1; });
   await page.setViewportSize({ width: 1800, height: 900 });
   await page.waitForFunction((before) => Number(document.querySelector('.grid-stack-item')?.getAttribute('gs-w')) > before, narrow.w);
   await page.close();
@@ -112,6 +114,29 @@ test('the keyboard moves, resizes and removes a widget in edit mode, and Escape 
 
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Edit layout' }).waitFor();
+  await page.close();
+});
+
+test('each change has its own bar with Undo for the newest change only, and a key typed inside a widget is not for the layout', async () => {
+  await dudu.api('dashboard/reset');
+  const page = await dudu.openPanel({ viewport: { width: 1440, height: 900 } });
+  await edit(page);
+  const before = await cells(issuesItem(page));
+  await page.locator('.db-card').first().focus();
+  await page.keyboard.press('Shift+ArrowLeft');
+  await page.waitForFunction((w) => Number(document.querySelector('.grid-stack-item')?.getAttribute('gs-w')) === w, before.w - 1);
+  await page.keyboard.press('ArrowDown');
+  await page.waitForFunction(() => Number(document.querySelector('.grid-stack-item')?.getAttribute('gs-y')) === 1);
+  assert.equal(await page.getByRole('button', { name: 'Undo' }).count(), 1, 'the plugin keeps one change to undo, so only one bar offers it');
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await page.waitForFunction(() => Number(document.querySelector('.grid-stack-item')?.getAttribute('gs-y')) === 0);
+  assert.equal((await cells(issuesItem(page))).w, before.w - 1, 'only the newest change was undone');
+
+  // In edit mode the widget's own controls are out of reach, so typing in one cannot move or remove the widget.
+  const focused = await page.evaluate(() => { const box = document.querySelector('.db-surface input, .db-surface textarea, .db-surface button') as HTMLElement | null; box?.focus(); return document.activeElement === box; });
+  assert.equal(focused, false);
+  await page.keyboard.press('Backspace');
+  assert.equal(await page.locator('.grid-stack-item').count(), 1);
   await page.close();
 });
 

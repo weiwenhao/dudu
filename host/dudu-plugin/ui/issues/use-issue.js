@@ -17,11 +17,14 @@ export function useIssue(request, id) {
       const page = await request('issues/get', cursor ? { id, logCursor: cursor } : { id });
       if (token !== sequence.current) return;
       if (page.outcome !== 'success') { setState({ id, status: 'missing', issue: null, log: [], nextLogCursor: null }); return; }
-      setState((previous) => ({
-        id, status: 'ready', issue: page.issue,
-        log: cursor && previous.id === id ? [...previous.log, ...page.log] : page.log,
-        nextLogCursor: page.nextLogCursor ?? null,
-      }));
+      setState((previous) => {
+        const same = previous.id === id;
+        if (cursor && same) return { id, status: 'ready', issue: page.issue, log: [...previous.log, ...page.log], nextLogCursor: page.nextLogCursor ?? null };
+        // A refresh brings the newest entries; the older ones the person already asked for stay where they were.
+        const oldest = page.log.at(-1)?.id ?? Infinity;
+        const older = same ? previous.log.filter((entry) => entry.id < oldest) : [];
+        return { id, status: 'ready', issue: page.issue, log: [...page.log, ...older], nextLogCursor: older.length ? previous.nextLogCursor : page.nextLogCursor ?? null };
+      });
     } catch {
       if (token === sequence.current) setState((previous) => (previous.issue ? previous : { ...previous, id, status: 'error' }));
     }

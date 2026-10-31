@@ -22,17 +22,22 @@ const propertyButton = 'flex h-8 w-full items-center gap-2 rounded-md px-2 text-
 function EditableText({ value, onSave, className, placeholder, multiline, label }) {
   const [draft, setDraft] = useState(value);
   const field = useRef(null);
+  const cancelled = useRef(false); // Escape leaves the box through blur, which would save what is in it
   useEffect(() => { setDraft(value); }, [value]);
   useEffect(() => { // a textarea grows with its text
     const el = field.current;
     if (el) { el.style.height = '0px'; el.style.height = `${el.scrollHeight}px`; }
   }, [draft]);
-  const save = () => { const next = draft.trim(); if (next !== value && (next || multiline)) onSave(next); else setDraft(value); };
+  const save = () => {
+    if (cancelled.current) { cancelled.current = false; setDraft(value); return; }
+    const next = draft.trim();
+    if (next !== value && (next || multiline)) onSave(next); else setDraft(value);
+  };
   return (
     <textarea
       ref={field} rows={1} value={draft} placeholder={placeholder} aria-label={label} spellCheck={false}
       onChange={(event) => setDraft(event.target.value)} onBlur={save}
-      onKeyDown={(event) => { if (!multiline && event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } if (event.key === 'Escape') { setDraft(value); event.currentTarget.blur(); } }}
+      onKeyDown={(event) => { if (!multiline && event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } if (event.key === 'Escape') { cancelled.current = true; setDraft(value); event.currentTarget.blur(); } }}
       className={cn('block w-full resize-none overflow-hidden rounded-md bg-transparent outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50', className)}
     />
   );

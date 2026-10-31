@@ -30,7 +30,7 @@ export function Sessions() {
     try { await openNativeSession(session); } catch (problem) { setFailure((previous) => ({ ...previous, [session.key]: problem instanceof Error ? problem.message : W.failed })); } finally { setBusy(''); }
   };
   return (
-    <Frame title="Sessions" className="flex flex-col gap-1">
+    <Frame title={T.widgets.titles.sessions} className="flex flex-col gap-1">
       <div className="relative mx-2 shrink-0">
         <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
         <input

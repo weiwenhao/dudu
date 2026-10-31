@@ -3,8 +3,8 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { flatten, SIZES, withEmptyGroups } from './flatten.js';
 import { GroupBar, SubGroupBar } from './groups.jsx';
 import { IssueRow } from './IssueRow.jsx';
+import { isTyping } from '../lib/typing.js';
 
-const isTyping = (target) => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
 /**
  * The rows of a view in one virtualized column, flat or grouped (a bar for each group, a line for each sub-group). Only the

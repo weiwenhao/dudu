@@ -87,7 +87,7 @@ export function Quota({ size }) {
   const tall = (size?.rows ?? 1) >= 2;
   return (
     <TooltipProvider>
-      <Frame title="Quota">
+      <Frame title={T.widgets.titles.quota}>
         {status === 'ready' && providers.length === 0
           ? <Empty>{Q.empty}</Empty>
           : providers.map((provider) => (tall ? <Block key={provider.id} provider={provider} /> : <Line key={provider.id} provider={provider} />))}

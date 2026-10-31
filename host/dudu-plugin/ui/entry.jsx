@@ -17,7 +17,8 @@ export const css = __DUDU_CSS__;
  */
 export function Page({ request, logo, actions = {} }) {
   const [route, setRoute] = useState({ name: 'dashboard' });
-  const openIssue = useCallback((id, ids = []) => setRoute({ name: 'issue', id, ids }), []);
+  // `ids` is the list the person came from; stepping to the next issue passes none and keeps the one already held.
+  const openIssue = useCallback((id, ids) => setRoute((current) => ({ name: 'issue', id, ids: ids ?? current.ids ?? [] })), []);
   // A session the harness has on this computer is loaded into DSH first (unless it already lives there), then opened.
   const openNativeSession = useCallback(async (session) => {
     const target = session.dshSessionId ? { sessionId: session.dshSessionId } : await request('sessions/load', { provider: session.provider, id: session.id });

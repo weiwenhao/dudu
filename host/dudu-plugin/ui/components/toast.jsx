@@ -2,6 +2,7 @@
 // and the announcing; the bar is ours. It lives inside the `.dudu` root (not in a portal), so it sits on the page, not the window.
 import * as React from 'react';
 import { Toast as ToastPrimitive } from 'radix-ui';
+import { T } from '../strings.js';
 import { Button } from './button.jsx';
 
 const SHOWN_MS = 6000;
@@ -14,11 +15,12 @@ export const useToast = () => React.useContext(ToastContext);
 export function ToastProvider({ children }) {
   const [items, setItems] = React.useState([]);
   const counter = React.useRef(0);
-  const toast = React.useCallback((item) => setItems((list) => [...list.slice(1 - AT_MOST), { id: ++counter.current, ...item }]), []);
+  // A toast with a `key` replaces the one before it that has the same key (an Undo that can only undo the newest change).
+  const toast = React.useCallback((item) => setItems((list) => [...list.filter((other) => item.key === undefined || other.key !== item.key).slice(1 - AT_MOST), { id: ++counter.current, ...item }]), []);
   const remove = (id) => setItems((list) => list.filter((item) => item.id !== id));
   return (
     <ToastContext.Provider value={toast}>
-      <ToastPrimitive.Provider duration={SHOWN_MS} swipeDirection="down" label="Notifications">
+      <ToastPrimitive.Provider duration={SHOWN_MS} swipeDirection="down" label={T.toast.region}>
         {children}
         {items.map((item) => (
           <ToastPrimitive.Root
