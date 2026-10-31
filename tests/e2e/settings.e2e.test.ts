@@ -99,7 +99,7 @@ test('Connectors: every one starts off, only the switch turns it on, a test runs
   assert.match(await readFile(join(folder, 'CONNECTORS.md'), 'utf8'), /## 写坏的/, 'what the owner wrote and the plugin could not read is still in the file');
 
   await row.getByRole('button', { name: 'Test' }).click();
-  await row.getByText(/Tested .* · OK/).waitFor();
+  await row.getByText(/^OK · /).waitFor();
   await row.getByRole('button', { name: 'Remove' }).click();
   await row.waitFor({ state: 'detached' });
   await window.getByText('Removed 示例读取器').waitFor();
@@ -114,7 +114,7 @@ test('Rules shows the two rule files and Skills the skills; the owner reads and 
   const page = await dudu.openPanel();
   let window = await settings(page, 'Rules');
   await window.getByText('TRIAGE.md', { exact: true }).waitFor();
-  await window.getByText('影响、工作量、优先级和截止').waitFor();
+  await window.getByText('重要又简单的先做', { exact: false }).waitFor();
   await window.getByText('ASSIGN.md', { exact: true }).waitFor();
 
   await window.getByRole('button', { name: 'Skills', exact: true }).click();
@@ -137,11 +137,11 @@ test('Memory lists what is remembered; Forget shows what would go and only then 
   const page = await dudu.openPanel();
   const window = await settings(page, 'Memory');
   await window.getByText('合同类的回复先抄送法务。').waitFor();
-  await window.getByRole('searchbox', { name: 'Search memory' }).fill('续费');
+  await window.getByRole('searchbox', { name: 'Search records' }).fill('续费');
   await window.getByText('合同类的回复先抄送法务。').waitFor({ state: 'detached' });
   await window.getByText('周四前处理服务器续费。').waitFor();
 
-  await window.getByRole('button', { name: 'Forget m2' }).click();
+  await window.getByRole('button', { name: /^Forget: 周四前处理服务器续费/ }).click();
   const confirm = page.getByRole('dialog').filter({ hasText: 'This will be deleted' });
   await confirm.getByText('周四前处理服务器续费。').waitFor();
   assert.match(await readFile(join(folder, 'MEMORY.md'), 'utf8'), /周四前处理服务器续费/, 'the preview deletes nothing');

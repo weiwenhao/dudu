@@ -22,14 +22,14 @@ const declare = (id, label, description, min, size, needs) => Object.freeze({
 
 // The table in 4.1. The names are the doc's; the one-line descriptions are for the add list and are NEW wording for the owner to review.
 export const BUILT_IN_WIDGETS = Object.freeze([
-  declare('issues', 'Issues', 'Every issue, as a list or a board.', [4, 2], [FILL, 6], ['issues']), // NEW description
-  declare('overview', 'Overview', 'Overdue, due this week and in progress.', [2, 2], [4, 2], ['issues']), // NEW description
-  declare('upcoming', 'Upcoming', 'Issues with a due date, soonest first.', [2, 2], [4, 4], ['issues']), // NEW description
-  declare('stuck', 'Stuck', 'Issues that are stuck or waiting on someone.', [2, 2], [4, 2], ['issues']), // NEW description
-  declare('inputs', 'Inputs', 'Whether each connector works and what it read today.', [2, 2], [4, 2], ['inputs']), // NEW description
-  declare('quota', 'Quota', 'Subscription usage, one line per agent.', [2, 1], [2, 1], ['quota']), // NEW description
-  declare('sessions', 'Sessions', 'Search and open sessions.', [3, 2], [4, 4], ['sessions']), // NEW description
-  declare('office', 'Office', 'A 3D office: each active issue is someone at a desk.', [4, 3], [6, 4], ['issues']), // NEW description
+  declare('issues', 'Issues', 'Every issue, as a list or a board', [4, 2], [FILL, 6], ['issues']), // NEW description
+  declare('overview', 'Overview', 'Overdue, due this week and in progress', [2, 2], [4, 2], ['issues']), // NEW description
+  declare('upcoming', 'Upcoming', 'Issues with a due date, soonest first', [2, 2], [4, 4], ['issues']), // NEW description
+  declare('stuck', 'Stuck', 'Issues an agent is stuck on', [2, 2], [4, 2], ['issues']), // NEW description
+  declare('inputs', 'Inputs', 'Whether each connector works and what it read today', [2, 2], [4, 2], ['inputs']), // NEW description
+  declare('quota', 'Quota', 'Subscription usage, one line per agent', [2, 1], [2, 1], ['quota']), // NEW description
+  declare('sessions', 'Sessions', 'Search and open sessions', [3, 2], [4, 4], ['sessions']), // NEW description
+  declare('office', 'Office', 'Each active issue as someone at a desk', [4, 3], [6, 4], ['issues']), // NEW description
 ]);
 
 const refuse = (reason) => ({ ok: false, reason });

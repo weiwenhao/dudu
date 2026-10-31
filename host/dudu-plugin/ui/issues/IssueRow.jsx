@@ -24,7 +24,7 @@ export function IssueRow({ issue, now, show, selected, selecting, onSelect, menu
     >
       <span className="flex size-4 shrink-0 items-center justify-center">
         <Checkbox
-          checked={selected} aria-label={T.bulk.select(issue.title)}
+          checked={selected} aria-label={T.bulk.select(issue.id)}
           className={cn(!selected && !selecting && 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100')}
           onClick={(event) => { event.stopPropagation(); onSelect(issue.id, event.shiftKey); }}
         />

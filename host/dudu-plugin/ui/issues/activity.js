@@ -6,7 +6,7 @@ const dayName = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric
 const dayYear = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 const startOfDay = (ms) => { const date = new Date(ms); date.setHours(0, 0, 0, 0); return date.getTime(); };
 
-/** When something happened, as the Activity of an issue writes it: "12 min ago", "Yesterday 17:40", "Oct 30 09:05". */
+/** When something happened, as the Activity of an issue writes it: "12m ago", "Yesterday 17:40", "Oct 30 09:05". */
 export function when(ms, now = Date.now()) {
   const minutes = Math.floor((now - ms) / 60000);
   if (minutes < 1) return T.activity.justNow;

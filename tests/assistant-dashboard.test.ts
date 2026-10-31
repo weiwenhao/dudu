@@ -86,7 +86,7 @@ test('the built-in widgets are the table of the design doc, and a declaration th
   ]);
   for (const widget of known) {
     assert.deepEqual(validateDeclaration(widget), { ok: true }, widget.id);
-    assert.match(widget.description, /^[A-Z].*\.$/, 'a one-line sentence');
+    assert.match(widget.description, /^[A-Z][^.\n]*$/, 'a short phrase on one line, without a full stop');
     assert.ok(widget.needs.length && widget.needs.every((need: string) => NEEDS.includes(need)), widget.id);
   }
   assert.equal(MAX_ROWS, 12);
@@ -123,7 +123,7 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
   // Issues fills until it is given a width: a height alone keeps it filling, it cannot go sideways, and "fill" gives the width back.
   const shorter = await s.ok('resize', { type: 'issues', h: 4 });
   assert.deepEqual(shorter.layout.widgets, [{ id: 'issues', type: 'issues', x: 0, y: 0, w: 'fill', h: 4 }]);
-  assert.equal(shorter.undo.label, '“Issues” resized to full width × 4');
+  assert.equal(shorter.undo.label, '「Issues」resized to full width × 4');
   assert.equal((await s.call('move', { type: 'issues', x: 3 })).body.outcome, 'no_op');
   assert.deepEqual(box((await s.ok('resize', { type: 'issues', w: 5 })).layout, 'issues'), [0, 0, 5, 4]);
   assert.deepEqual(box((await s.ok('resize', { type: 'issues', w: 'fill' })).layout, 'issues'), [0, 0, 'fill', 4]);
@@ -132,16 +132,16 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
   // No room beside a filling Issues, so a new widget goes below everything, at its recommended size; the file is then written whole.
   const quota = await s.ok('add', { type: 'quota', columns: 9 });
   assert.deepEqual(box(quota.layout, 'quota'), [0, 6, 2, 1]);
-  assert.equal(quota.undo.label, 'Added “Quota”');
+  assert.equal(quota.undo.label, 'Added「Quota」');
   assert.deepEqual(s.onDisk(), quota.layout);
   assert.deepEqual(readdirSync(join(s.dir, 'state')), ['dashboard.json'], 'the temporary file is gone');
   assert.match(readFileSync(s.file, 'utf8'), /^\{\n {2}"v": 1,\n {2}"widgets": \[\n {4}\{"id":"issues"/, 'one widget per line');
 
   // The owner drags Issues smaller: the page sends the whole layout and says which widget it was.
   const dragged = await s.ok('set', { layout: { v: 1, widgets: [{ id: 'issues', type: 'issues', x: 0, y: 0, w: 5, h: 6 }, ...quota.layout.widgets.slice(1)] }, type: 'issues' });
-  assert.equal(dragged.undo.label, '“Issues” resized to 5×6');
+  assert.equal(dragged.undo.label, '「Issues」resized to 5×6');
   assert.deepEqual(dragged.corrections, []);
-  assert.equal((await s.ok('get')).undo.label, '“Issues” resized to 5×6', 'the page can ask what undo would do');
+  assert.equal((await s.ok('get')).undo.label, '「Issues」resized to 5×6', 'the page can ask what undo would do');
 
   // Adding scans each row left to right and top to bottom, never pushing; the room beside Issues is used first.
   assert.deepEqual(box((await s.ok('add', { type: 'overview', columns: 9 })).layout, 'overview'), [5, 0, 4, 2]);
@@ -151,18 +151,18 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
   assert.deepEqual(box(full.layout, 'quota'), [0, 6, 2, 1], 'nothing else moved');
   const again = await s.call('add', { type: 'office' });
   assert.equal(again.body.outcome, 'no_op', 'one widget per type');
-  assert.equal(again.body.undo.label, 'Added “Office”', 'a call that changes nothing leaves the undo entry alone');
+  assert.equal(again.body.undo.label, 'Added「Office」', 'a call that changes nothing leaves the undo entry alone');
 
   // 嘟嘟 moves Quota onto Overview: what it lands on is pushed down, and what that lands on, and so on; the rest stays.
   const pushed = await s.ok('move', { type: 'quota', x: 5, y: 1 });
-  assert.equal(pushed.undo.label, 'Moved “Quota”');
+  assert.equal(pushed.undo.label, 'Moved「Quota」');
   assert.deepEqual(['issues', 'quota', 'overview', 'sessions', 'office'].map((type) => box(pushed.layout, type)), [[0, 0, 5, 6], [5, 1, 2, 1], [5, 2, 4, 2], [5, 4, 4, 4], [2, 8, 6, 4]]);
   assertSound(pushed.layout);
 
   // Undo takes back the last change, once (the one before it stays); the layout it restores is the one on disk.
   const undone = await s.ok('undo');
   assert.deepEqual(undone.layout, full.layout);
-  assert.deepEqual(undone.undone, { label: 'Moved “Quota”' });
+  assert.deepEqual(undone.undone, { label: 'Moved「Quota」' });
   assert.equal(undone.undo, null);
   assert.deepEqual(s.onDisk(), full.layout);
   const twice = await s.call('undo');
@@ -172,7 +172,7 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
   // A size below the minimum or above twelve rows is clamped and says so; whatever it grows over is pushed down.
   const resized = await s.ok('resize', { type: 'overview', w: 1, h: 99 });
   assert.deepEqual(resized.corrections, [{ type: 'overview', reason: 'size', from: { w: 1, h: 99 }, to: { w: 2, h: 12 } }]);
-  assert.equal(resized.undo.label, '“Overview” resized to 2×12');
+  assert.equal(resized.undo.label, '「Overview」resized to 2×12');
   assert.deepEqual(box(resized.layout, 'overview'), [5, 0, 2, 12]);
   assert.deepEqual([box(resized.layout, 'office'), box(resized.layout, 'sessions')], [[2, 12, 6, 4], [5, 16, 4, 4]], 'Sessions and Office both go below it, and Office, the later push, takes the row first');
   assertSound(resized.layout);
@@ -180,7 +180,7 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
 
   // Removing leaves the space empty (nothing falls upward).
   const removed = await s.ok('remove', { type: 'sessions' });
-  assert.equal(removed.undo.label, 'Removed “Sessions”');
+  assert.equal(removed.undo.label, 'Removed「Sessions」');
   assert.deepEqual(box(removed.layout, 'office'), [2, 12, 6, 4]);
   assert.equal((await s.call('remove', { type: 'sessions' })).body.outcome, 'no_op');
 
@@ -189,12 +189,12 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
   assert.equal(unknown.body.outcome, 'needs_clarification');
   assert.match(unknown.body.message, /size is needed/);
   const weather = await s.ok('add', { type: '@acme/weather.forecast', w: 3, h: 2, columns: 12, name: 'Weather' });
-  assert.equal(weather.undo.label, 'Added “Weather”', 'the page tells the name of a widget this build has no declaration for');
+  assert.equal(weather.undo.label, 'Added「Weather」', 'the page tells the name of a widget this build has no declaration for');
   assert.deepEqual(box(weather.layout, '@acme/weather.forecast'), [7, 0, 3, 2]);
-  assert.equal((await s.ok('move', { type: '@acme/weather.forecast', y: 30 })).undo.label, 'Moved “@acme/weather.forecast”', 'without a name it is the id');
+  assert.equal((await s.ok('move', { type: '@acme/weather.forecast', y: 30 })).undo.label, 'Moved「@acme/weather.forecast」', 'without a name it is the id');
   assert.deepEqual((await s.ok('undo')).layout, weather.layout);
   const kept = await s.ok('set', { layout: { v: 1, widgets: weather.layout.widgets.filter((item: Item) => item.type !== 'office') }, type: 'office' });
-  assert.equal(kept.undo.label, 'Removed “Office”');
+  assert.equal(kept.undo.label, 'Removed「Office」');
   assert.ok(kept.layout.widgets.some((item: Item) => item.type === '@acme/weather.forecast'));
   assert.equal((await s.call('set', { layout: kept.layout })).body.outcome, 'no_op', 'the same layout again changes nothing');
 
@@ -215,15 +215,15 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
     assert.equal((await s.call('undo')).body.outcome, 'no_op', action);
   };
   const base = (await s.ok('get')).layout;
-  await roundTrip('add', { type: 'upcoming', columns: 12 }, 'Added “Upcoming”');
-  await roundTrip('move', { type: 'quota', x: 3, y: 40 }, 'Moved “Quota”');
-  await roundTrip('resize', { type: 'issues', w: 4, h: 3 }, '“Issues” resized to 4×3');
-  await roundTrip('remove', { type: 'quota' }, 'Removed “Quota”');
+  await roundTrip('add', { type: 'upcoming', columns: 12 }, 'Added「Upcoming」');
+  await roundTrip('move', { type: 'quota', x: 3, y: 40 }, 'Moved「Quota」');
+  await roundTrip('resize', { type: 'issues', w: 4, h: 3 }, '「Issues」resized to 4×3');
+  await roundTrip('remove', { type: 'quota' }, 'Removed「Quota」');
   await roundTrip('reset', {}, 'Restored default');
-  await roundTrip('set', { layout: { v: 1, widgets: base.widgets.map((item: Item) => (item.type === 'issues' ? { ...item, y: 60 } : item)) }, type: 'issues' }, 'Moved “Issues”');
+  await roundTrip('set', { layout: { v: 1, widgets: base.widgets.map((item: Item) => (item.type === 'issues' ? { ...item, y: 60 } : item)) }, type: 'issues' }, 'Moved「Issues」');
   await s.ok('move', { type: 'quota', y: 41 });
   await s.ok('remove', { type: 'quota' });
-  assert.equal((await s.ok('undo')).undone.label, 'Removed “Quota”');
+  assert.equal((await s.ok('undo')).undone.label, 'Removed「Quota」');
   assert.equal((await s.call('undo')).body.outcome, 'no_op', 'the move before it cannot be undone any more');
 
   // Wrong values are answers, not failures; a widget that is not there is an error.

@@ -45,16 +45,16 @@ export const T = {
     properties: 'Properties', project: 'Project', activity: 'Activity', leaveComment: 'Leave a comment…', send: 'Send',
     needsYou: 'Needs you', untitled: 'Untitled', description: 'Add description…', loadEarlier: 'Load earlier', notFound: 'This issue does not exist.', back: 'Back to Issues',
     previous: 'Previous issue', next: 'Next issue', position: (index, total) => `${index} / ${total}`, noDueDate: 'No due date', noProjectSet: 'No project',
-    setDue: 'Set due date', clearDue: 'Clear', dueDate: 'Due date', setPriority: 'Set priority…',
+    clearDue: 'Clear', dueDate: 'Due date', setPriority: 'Set priority…',
     // NEW: the buttons beside the title, the agent menu and the reply box (the doc names them; the words are mine).
     copyId: 'Copy ID', openSession: 'Open session', openSource: 'Open source', snooze: 'Snooze', setAgent: 'Set agent…',
-    agentNote: 'A new session starts with the log of this issue as its first message. The old session is closed.',
-    reply: 'Reply…', sendReply: 'Send reply', result: 'Add a result…', saveResult: 'Save', skipResult: 'Skip',
+    agentNote: 'Starts a new session. The old one is closed.',
+    reply: 'Leave a reply…', sendReply: 'Send reply', result: 'Add a result…', saveResult: 'Save', skipResult: 'Skip',
   },
   // NEW: Snooze hides what an agent asked, until the time chosen; the status does not change.
   snooze: { laterToday: 'Later today', tomorrow: 'Tomorrow', nextWeek: 'Next week', clear: 'Clear snooze', until: (date) => `Snoozed until ${date}` },
   activity: {
-    you: 'You', justNow: 'just now', minutesAgo: (n) => `${n} min ago`, hoursAgo: (n) => (n === 1 ? '1 h ago' : `${n} h ago`), yesterday: 'Yesterday',
+    you: 'You', justNow: 'just now', minutesAgo: (n) => `${n}m ago`, hoursAgo: (n) => `${n}h ago`, yesterday: 'Yesterday', // 2h ago, as the design writes it
     created: 'created the issue', createdFromMessage: 'created the issue from a message', createdFromSession: 'created the issue from a session',
     status: (from, to) => `changed status from ${from} to ${to}`, priority: (to) => `changed priority to ${to}`,
     due: (date) => `set the due date to ${date}`, dueRemoved: 'removed the due date',
@@ -66,7 +66,7 @@ export const T = {
     cancel: 'Cancel', create: 'Create issue', failed: 'Could not create the issue',
   },
   // NEW: ticking rows for a bulk change, and the bar that appears.
-  bulk: { toolbar: 'Bulk actions', selected: (count) => `${count} selected`, clear: 'Clear selection', select: (title) => `Select ${title}` },
+  bulk: { toolbar: 'Bulk actions', selected: (count) => `${count} selected`, clear: 'Clear selection', select: (id) => `Select DUDU-${id}` },
   // NEW: what the bar at the bottom says after a change, with its Undo.
   toast: {
     undo: 'Undo', markedDone: 'Marked as Done', status: (name) => `Status set to ${name}`, priority: (name) => `Priority set to ${name}`,
@@ -84,15 +84,14 @@ export const T = {
   search: { label: 'Search issues', placeholder: 'Search issues…' },
   total: (count) => (count === 1 ? '1 issue' : `${count.toLocaleString('en-US')} issues`),
   // NEW: the + of a group bar or board column, and the menu of a board column.
-  addTo: (name) => `Add issue to ${name}`,
-  lane: { options: (name) => `${name} options`, collapse: 'Collapse column', expand: 'Expand column' },
+  addTo: (name) => `New issue in ${name}`, // the design's label for the + of a group or column
+  lane: { options: 'Column options', collapse: 'Collapse column', expand: 'Expand column' },
   // The dashboard. "Edit layout", "Add widget", "Restore default" and "Done" are the design's words; the rest is mine (NEW).
   dashboard: {
-    editLayout: 'Edit layout', editHint: 'Drag a widget to move it, pull an edge to resize it.', addWidget: 'Add widget', restoreDefault: 'Restore default', done: 'Done',
-    settings: 'Settings', board: 'Dashboard', remove: (name) => `Remove ${name}`, addTitle: 'Add widget', addDescription: 'Pick a widget to put on the dashboard.', added: 'Added',
+    editLayout: 'Edit layout', editHint: 'Drag to move, pull an edge to resize', addWidget: 'Add widget', restoreDefault: 'Restore default', done: 'Done', // the hint is the design's line
+    settings: 'Settings', board: 'Dashboard', remove: 'Remove widget', addTitle: 'Add widget', addDescription: 'Pick a widget to put on the dashboard.', added: 'Added',
     add: 'Add', source: (name) => `From ${name}`, noMore: 'Every widget is on the dashboard.',
-    didAdd: (name) => `Added “${name}”`, didRemove: (name) => `Removed “${name}”`, didMove: (name) => `Moved “${name}”`, didResize: (name, size) => `“${name}” resized to ${size}`,
-    didRestore: 'Restored default layout', minimum: 'Minimum size', maximum: 'Maximum size', undo: 'Undo',
+    minimum: 'Minimum size', maximum: 'Maximum size', undo: 'Undo',
     placed: (name, x, y) => `${name}: column ${x}, row ${y}`, sized: (name, w, h) => `${name}: ${w} by ${h}`,
     broken: (name) => `This widget could not be shown`, brokenFrom: (source) => `From ${source}`, missing: (source) => `This widget comes from ${source}, which is not installed.`,
     loadFailed: 'Could not load the dashboard', retry: 'Retry', saveFailed: 'Could not save the layout',
@@ -100,7 +99,7 @@ export const T = {
   // NEW: the words of the small widgets (the design names the widgets and what they show, not their wording).
   widgets: {
     titles: { overview: 'Overview', upcoming: 'Upcoming', stuck: 'Stuck', inputs: 'Inputs', quota: 'Quota', sessions: 'Sessions' }, // the design's names
-    inputs: { empty: 'No connectors are on', readToday: 'Read today', made: 'Issues made', allWorking: 'All working', failing: (n) => `${n} failing`, failed: (when) => `Failed · ${when}`, never: 'Not read yet', count: (n) => `${n} read` },
+    inputs: { empty: 'No connectors are on', readToday: 'Read today', made: 'Issues made', allWorking: 'All working', failed: (when) => `Failed · ${when}`, never: 'Not read yet', count: (n) => `${n} read` },
     overview: { overdue: 'Overdue', thisWeek: 'Due this week', inProgress: 'In progress' },
     upcoming: { empty: 'Nothing is due' },
     stuck: { empty: 'Nothing is stuck' },
@@ -109,26 +108,34 @@ export const T = {
       resets: (when) => `resets ${when}`, resetsAt: (when) => `Resets ${when}`, limitReached: (when) => `Limit reached, resets ${when}`, label: (name, percent) => `${name} ${percent}% used`,
       login: 'Sign in to see usage',
     },
-    sessions: { search: 'Search sessions', empty: 'No sessions', loading: 'Looking for sessions…', failed: 'Could not read sessions', opening: 'Opening…', agents: { claude: 'Claude', codex: 'ChatGPT' } },
+    sessions: { search: 'Search sessions', empty: 'No sessions', failed: 'Could not read sessions', opening: 'Opening…', agents: { claude: 'Claude', codex: 'ChatGPT' } },
   },
   // NEW: the settings window (the design draws sections and cards, not the words).
   settings: {
-    title: 'Settings', openFolder: 'Open project folder', close: 'Close', failed: 'Could not load this page', retry: 'Retry', saved: 'Saved', unavailable: 'The project folder could not be opened.',
+    title: 'Settings', openFolder: 'Open project folder', failed: 'Could not load this page', retry: 'Retry', unavailable: 'The project folder could not be opened.',
     nav: { general: 'General', connectors: 'Connectors', rules: 'Rules', memory: 'Memory', widgets: 'Widgets', skills: 'Skills' },
     general: {
       folder: 'Project folder', isDefault: 'Default', change: 'Change…', path: 'Folder path', moveFiles: 'Move the files into it', save: 'Save', cancel: 'Cancel',
       issues: 'Issues', exportIssues: 'Export issues', exportFailed: 'Could not export the issues',
     },
     connectors: {
-      empty: 'No connectors', on: 'On', test: 'Test', remove: 'Remove', allowed: 'Allowed operations', read: 'Read', write: 'Write', tools: 'Tools', never: 'Not tested',
-      testedOk: (when) => `Tested ${when} · OK`, testedFailed: (when) => `Tested ${when} · Failed`, turnOn: (name) => `Turn on ${name}`, expand: (name) => `Details of ${name}`,
-      source: { owner: 'You', dudu: '嘟嘟' }, kind: { cli: 'Command', mcp: 'MCP', dsh: 'DSH' }, skipped: 'Skipped entries', line: (n) => `Line ${n}`,
-      removed: (name) => `Removed ${name}`, undo: 'Undo', changed: 'This connector changed since it was shown. Look at it again, then turn it on.',
+      empty: 'No connectors', test: 'Test', remove: 'Remove', allowed: 'Allowed operations', read: 'Read', write: 'Write', never: 'Not tested',
+      testedOk: (when) => `OK · ${when}`, testedFailed: (when) => `Failed · ${when}`, turnOn: (name) => `Turn on ${name}`, expand: (name) => `Details of ${name}`,
+      addedByDudu: 'Added by 嘟嘟', kind: { cli: 'Command', mcp: 'MCP', dsh: 'DSH extension' }, skipped: 'Skipped entries', line: (n) => `Line ${n}`,
+      removed: (name) => `Removed ${name}`, undo: 'Undo',
     },
     rules: { open: 'Open', empty: 'Empty', missing: 'Not found' },
     memory: {
-      search: 'Search memory', empty: 'Nothing is remembered yet', edit: 'Edit', save: 'Save', cancel: 'Cancel', forget: 'Forget', willDelete: 'This will be deleted',
+      search: 'Search records', editOf: (text) => `Edit: ${text}`, forgetOf: (text) => `Forget: ${text}`, empty: 'Nothing is remembered yet', edit: 'Edit', save: 'Save', cancel: 'Cancel', forget: 'Forget', willDelete: 'This will be deleted',
       confirmForget: 'Delete', since: (date) => `Since ${date}`, superseded: 'Superseded', reviews: 'Tidy runs', noReviews: 'No tidy runs yet', undo: 'Undo',
+      summary: (counts) => {
+        const updated = (counts.refine ?? 0) + (counts.supersede ?? 0) + (counts.corroborate ?? 0);
+        const parts = [];
+        if (updated) parts.push(`${updated} ${updated === 1 ? 'entry' : 'entries'} updated`);
+        if (counts.new) parts.push(`${counts.new} ${counts.new === 1 ? 'entry' : 'entries'} added`);
+        if (counts.skill) parts.push(`${counts.skill} ${counts.skill === 1 ? 'skill' : 'skills'} added`);
+        return parts.length ? parts.join(', ') : 'No changes';
+      },
       counts: { turns: 'conversation turns', entries: 'entries', logLines: 'lines of the daily notes', skills: 'skills', reviews: 'tidy notes', staged: 'staged notes' },
     },
     widgets: { onDashboard: 'On the dashboard', builtIn: 'Built in', reads: (what) => `Reads ${what}`, switchOn: (name) => `Put ${name} on the dashboard` },

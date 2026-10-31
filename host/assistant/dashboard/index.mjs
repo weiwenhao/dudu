@@ -30,13 +30,13 @@ import { dirname } from 'node:path';
 import { add, changeBetween, defaultLayout, move, normalize, remove, reset, resize, VERSION } from './layout.mjs';
 import { BUILT_IN_WIDGETS, FILL } from './widgets.mjs';
 
-// The words of the undo bar. "Removed", "Moved" and "resized" are the examples in docs/assistant.md 4.1 (which writes the name in 「」;
-// the quote marks here are the English ones). The rest is NEW wording for the owner to review.
+// The words of the undo bar, written as the design draws them (Removed「Stuck」: the name in 「」, no space); "Added", "Restored default",
+// "Changed layout" and the full-width form are not in the design and are NEW wording.
 const LABELS = {
-  add: (name) => `Added “${name}”`, // NEW
-  remove: (name) => `Removed “${name}”`,
-  move: (name) => `Moved “${name}”`,
-  resize: (name, w, h) => (w === FILL ? `“${name}” resized to full width × ${h}` : `“${name}” resized to ${w}×${h}`), // the full-width form is NEW
+  add: (name) => `Added「${name}」`, // NEW
+  remove: (name) => `Removed「${name}」`,
+  move: (name) => `Moved「${name}」`,
+  resize: (name, w, h) => (w === FILL ? `「${name}」resized to full width × ${h}` : `「${name}」resized to ${w}×${h}`), // the full-width form is NEW
   reset: () => 'Restored default', // NEW
   many: () => 'Changed layout', // NEW
 };

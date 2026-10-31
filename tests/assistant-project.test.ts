@@ -84,7 +84,7 @@ test('a new project folder gets the seven template files, never overwrites what 
   assert.equal(memory.remember({ text: '数据库用 Postgres', src: said.ref }).outcome, 'success');
   assert.match(memory.context().text, /--- AGENTS\.md ---\n# 嘟嘟的规则/);
   assert.match(memory.context().text, /--- SOUL\.md ---\n我自己写的口吻/);
-  assert.match(readFileSync(join(folder, 'MEMORY.md'), 'utf8'), /^# 记住的事\n\n<!-- 事实和决定[^\n]*-->\n\n<!-- m1 \| /);
+  assert.match(readFileSync(join(folder, 'MEMORY.md'), 'utf8'), /^# 记住的事\n\n<!-- 格式同 USER.md[^\n]*-->\n\n<!-- m1 \| /);
   assert.equal(memory.forget({ source: said.ref, preview: false }).outcome, 'success');
   assert.equal(readFileSync(join(folder, 'MEMORY.md'), 'utf8'), TEMPLATES['MEMORY.md']);
   assert.deepEqual(['AGENTS.md', 'TRIAGE.md', 'ASSIGN.md'].map((name) => readFileSync(join(folder, name), 'utf8')), [TEMPLATES['AGENTS.md'], TEMPLATES['TRIAGE.md'], TEMPLATES['ASSIGN.md']]);

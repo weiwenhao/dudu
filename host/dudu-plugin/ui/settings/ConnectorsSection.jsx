@@ -37,8 +37,7 @@ function Connector({ request, connector, reload, onRemoved }) {
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>{C.kind[connector.kind] ?? connector.kind}</span>
             <span>·</span>
-            <span>{C.source[connector.source] ?? connector.source}</span>
-            <span>·</span>
+            {connector.source === 'dudu' && <><span>{C.addedByDudu}</span><span>·</span></>}
             <span>{test ? (test.ok ? C.testedOk(when(test.at)) : C.testedFailed(when(test.at))) : C.never}</span>
           </div>
         </div>

@@ -300,7 +300,7 @@ test('remember writes at once, a superseded entry changes in place, and context 
   const first = ok(memory.remember({ text: '数据库用 MySQL', src: asked.ref }));
   assert.deepEqual(first.record, { id: 'm1', file: 'MEMORY', since: '2026-10-29', status: 'active', src: ['turn:1'], text: '数据库用 MySQL' });
   assert.match(w.read('MEMORY.md'), /<!-- m1 \| 2026-10-29 \| active \| turn:1 -->\n数据库用 MySQL\n$/);
-  assert.equal(w.read('memory/2026-10-29.md'), '# 2026-10-29\n\n- 09:00 记入 [m1] MEMORY：数据库用 MySQL（来源 turn:1）\n');
+  assert.equal(w.read('memory/2026-10-29.md'), '# 2026-10-29\n\n- 09:00 记下 [m1] MEMORY：数据库用 MySQL（来源 turn:1）\n');
   const again = memory.remember({ text: '数据库用 MySQL。', src: asked.ref });
   assert.equal(again.outcome, 'no_op'); // the same words, so it is already there
   assert.equal(again.record.id, 'm1');
@@ -554,8 +554,8 @@ test('tidy: stage, gate, merge, write a review, undo it', async (t) => {
   // since is the day the owner first said it, not the day of the run
   assert.deepEqual(parseCurated(w.read('USER.md')).entries.map((e) => [e.id, e.since, e.status, e.src, e.text]), [['u1', '2026-10-29', 'active', ['turn:1', 'turn:3'], '周报周五下午发']]);
   const reviewFile = w.read('reviews/2026-10-31.md');
-  assert.match(reviewFile, new RegExp(`^# 2026-10-31\\n\\n## ${promoted.review} · 09:00\\n\\n- 新建 \\[u1\\] USER：周报周五下午发（来源 turn:1,turn:3）\\n\\n<!-- dudu-review \\{.*\\} -->\\n$`));
-  assert.match(w.read('memory/2026-10-31.md'), /- 09:00 新建 \[u1\] USER：周报周五下午发（来源 turn:1,turn:3）/);
+  assert.match(reviewFile, new RegExp(`^# 2026-10-31\\n\\n## ${promoted.review} · 09:00\\n\\n- 新增 \\[u1\\] USER：周报周五下午发（来源 turn:1,turn:3）\\n\\n<!-- dudu-review \\{.*\\} -->\\n$`));
+  assert.match(w.read('memory/2026-10-31.md'), /- 09:00 新增 \[u1\] USER：周报周五下午发（来源 turn:1,turn:3）/);
   assert.equal(model.prompts.length, 3);
   w.clock.now += 60_000;
 

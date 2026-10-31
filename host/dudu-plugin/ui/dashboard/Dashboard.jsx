@@ -398,7 +398,7 @@ export function Dashboard({ request, registry, onSettings }) {
               </Guard>
             </div>
             <div className="db-frame" aria-hidden="true" />
-            <button type="button" className="db-remove" aria-label={D.remove(declared?.label ?? item.type)} onClick={() => remove(item.id)}><Minus className="size-3.5" aria-hidden="true" /></button>
+            <button type="button" className="db-remove" aria-label={D.remove} onClick={() => remove(item.id)}><Minus className="size-3.5" aria-hidden="true" /></button>
           </div>,
           host,
           item.id,

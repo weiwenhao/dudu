@@ -53,8 +53,8 @@ test('ticked rows change together, Shift ticks a run, and Undo puts every one ba
   const page = await dudu.openPanel();
   await rowOf(page, '批量 D').waitFor();
 
-  await page.getByRole('checkbox', { name: 'Select 批量 A' }).click();
-  await page.getByRole('checkbox', { name: 'Select 批量 D' }).click({ modifiers: ['Shift'] });
+  await page.getByRole('checkbox', { name: `Select DUDU-${ids[0]}` }).click();
+  await page.getByRole('checkbox', { name: `Select DUDU-${ids[3]}` }).click({ modifiers: ['Shift'] });
   const bar = page.getByRole('toolbar', { name: 'Bulk actions' });
   await bar.getByText('4 selected').waitFor();
 
@@ -69,7 +69,7 @@ test('ticked rows change together, Shift ticks a run, and Undo puts every one ba
   assert.deepEqual(await Promise.all(ids.map(async (id) => (await get(id)).status)), Array(4).fill('todo'));
 
   // Escape lets go of the ticks.
-  await page.getByRole('checkbox', { name: 'Select 批量 B' }).click();
+  await page.getByRole('checkbox', { name: `Select DUDU-${ids[1]}` }).click();
   await bar.getByText('1 selected').waitFor();
   await page.keyboard.press('Escape');
   await bar.waitFor({ state: 'detached' });
@@ -135,7 +135,7 @@ test('a group bar and a board column add an issue to their own group, and a colu
   await page.getByRole('combobox', { name: 'Grouping', exact: true }).click();
   await page.getByRole('option', { name: 'Status', exact: true }).click();
   await page.getByRole('button', { name: 'Display options' }).click(); // closes it again
-  await page.getByRole('button', { name: 'Add issue to In Progress' }).click();
+  await page.getByRole('button', { name: 'New issue in In Progress' }).click();
   await page.getByRole('textbox', { name: 'Issue title' }).fill('从分组条里新建的事');
   await page.getByRole('button', { name: 'Create issue' }).click();
   await rowOf(page, '从分组条里新建的事').waitFor();
@@ -147,12 +147,12 @@ test('a group bar and a board column add an issue to their own group, and a colu
   await page.getByRole('button', { name: 'Display options' }).click();
   const lane = page.getByRole('region', { name: 'In Progress' });
   await lane.getByText('从分组条里新建的事').waitFor();
-  await lane.getByRole('button', { name: 'Add issue to In Progress' }).click();
+  await lane.getByRole('button', { name: 'New issue in In Progress' }).click();
   await page.getByRole('textbox', { name: 'Issue title' }).fill('从看板列里新建的事');
   await page.getByRole('button', { name: 'Create issue' }).click();
   await lane.getByText('从看板列里新建的事').waitFor();
 
-  await lane.getByRole('button', { name: 'In Progress options' }).click();
+  await lane.getByRole('button', { name: 'Column options' }).click();
   await page.getByRole('button', { name: 'Collapse column' }).click();
   await lane.getByText('从看板列里新建的事').waitFor({ state: 'detached' });
   await lane.getByRole('button', { name: 'Expand column: In Progress' }).click();
@@ -168,7 +168,7 @@ test('an agent\'s question is answered on the issue page; Snooze hides it; Done 
   await titleOf(page, '要回答的事').click();
   const card = page.getByRole('region', { name: 'Needs you' });
   await card.getByText('第 3 条接受还是回绝？').waitFor();
-  await card.getByRole('textbox', { name: 'Reply…' }).fill('接受');
+  await card.getByRole('textbox', { name: 'Leave a reply…' }).fill('接受');
   await page.keyboard.press('Control+Enter');
   await card.waitFor({ state: 'detached' });
   await page.getByText('接受', { exact: true }).waitFor();

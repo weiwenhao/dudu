@@ -32,8 +32,8 @@ const RELATIONS = ['new', 'corroborate', 'refine', 'supersede', 'ask'];
 // What counts as the owner asking for something to be remembered. The model must also say explicit: true for the gate to open.
 export const EXPLICIT = /记一下|记住|记着|记下|帮我记|请记|别忘了|不要忘|remember (?:that|this|to)\b|please remember|keep in mind|don'?t forget|make a note|note that|write (?:this|that) down/i;
 
-// Words written into the owner's files (the day's flow and the reviews). NEW: all of them wait for the owner's review.
-export const WORD = { new: '新建', corroborate: '佐证', refine: '细化', supersede: '取代', skill: '技能', ask: '待确认', staged: '暂存', remembered: '记入', edited: '修改', undo: '撤销', undone: '已撤销' };
+// Words written into the owner's files (the day's notes and the reviews): plain ones (reviewed in the owner's style, 2026-10-31).
+export const WORD = { new: '新增', corroborate: '又提到', refine: '补充', supersede: '改成', skill: '新增技能', ask: '待确认', staged: '暂存', remembered: '记下', edited: '修改', undo: '撤销', undone: '已撤销' };
 
 const SYSTEM = `You maintain the long-term memory of a personal assistant called 嘟嘟 (dudu). The user message is one JSON object:
 - today: the date.
@@ -81,7 +81,7 @@ function parseReply(reply) {
   return null;
 }
 
-/** One line of the day's flow: "- 14:05 新建 [m5] MEMORY：text（来源 turn:12）". Every line names its source. */
+/** One line of the day's flow: "- 14:05 新增 [m5] MEMORY：text（来源 turn:12）". Every line names its source. */
 export const flowLine = (at, label, subject, body, src) => `- ${timeOf(at)} ${label}${subject ? ` ${subject}` : ''}${body ? `：${oneLine(body)}` : ''}（来源 ${src.join(',')}）`;
 
 function opLine(op) {

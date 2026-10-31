@@ -56,8 +56,8 @@ function Record({ request, record, reload }) {
           </>
         ) : (
           <>
-            <Button variant="ghost" size="xs" aria-label={`${M.edit} ${record.id}`} onClick={() => setEditing(true)}>{M.edit}</Button>
-            <Button variant="ghost" size="xs" aria-label={`${M.forget} ${record.id}`} onClick={() => setForgetting(true)}>{M.forget}</Button>
+            <Button variant="ghost" size="xs" aria-label={M.editOf(record.text.slice(0, 40))} onClick={() => setEditing(true)}>{M.edit}</Button>
+            <Button variant="ghost" size="xs" aria-label={M.forgetOf(record.text.slice(0, 40))} onClick={() => setForgetting(true)}>{M.forget}</Button>
           </>
         )}
       </div>
@@ -91,7 +91,7 @@ export function MemorySection({ request }) {
             <ul className="flex flex-col gap-2">
               {value.reviews.map((review) => (
                 <li key={review.id} className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate">{review.summary ?? review.id}</span>
+                  <span className="min-w-0 flex-1 truncate">{M.summary(review.summary ?? {})}</span>
                   <span className="text-xs text-muted-foreground">{review.at ? when(review.at) : ''}</span>
                   {!review.undone && <Button variant="ghost" size="xs" onClick={async () => { await request('memory/undo', { id: review.id }); reviews.reload(); records.reload(); }}>{M.undo}</Button>}
                 </li>

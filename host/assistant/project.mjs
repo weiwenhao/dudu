@@ -21,21 +21,21 @@ import { MARKER, TEMPLATES } from './templates.mjs';
 
 export { MARKER };
 
-// Sentences for the settings page. NEW: all of them wait for the owner's review.
+// Sentences for the settings page, short and plain (reviewed in the owner's style, 2026-10-31).
 export const REASONS = {
   empty: 'Enter a folder path.',
   relative: 'Use a full path.',
-  temp: 'This folder is in a temporary location that the system can clear. Choose another folder.',
-  not_directory: 'This path is a file, not a folder.',
-  not_dudu: 'This folder already has other files in it. Choose an empty folder, or one that 嘟嘟 created before.',
-  unwritable: '嘟嘟 cannot write to this folder.',
-  unreadable: '嘟嘟 cannot read this folder.',
-  link: 'This path is a link that leads nowhere.',
-  source_link: 'The current folder is a link. Move its files by hand.',
-  source_not_dudu: 'The current folder is not a 嘟嘟 folder, so its files were not moved.',
+  temp: 'That is a temporary folder the system may clear. Choose another.',
+  not_directory: 'That path is a file, not a folder.',
+  not_dudu: 'That folder already has other files. Choose an empty one, or one 嘟嘟 made.',
+  unwritable: '嘟嘟 can\'t write to that folder.',
+  unreadable: '嘟嘟 can\'t read that folder.',
+  link: 'That path is a link that leads nowhere.',
+  source_link: 'The current folder is a link. Move its files yourself.',
+  source_not_dudu: 'The current folder is not a 嘟嘟 folder, so nothing was moved.',
   destination_not_empty: 'The new folder must be empty.',
-  nested: 'The new folder cannot be inside the current one, or the other way round.',
-  same: 'This is already the folder in use.',
+  nested: 'The new folder can\'t be inside the current one, or the other way round.',
+  same: 'That is already the folder in use.',
   move_failed: 'The files could not be moved. Nothing was deleted.',
 };
 

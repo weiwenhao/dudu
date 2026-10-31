@@ -17,7 +17,7 @@ function LaneMenu({ label, onCollapse }) {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon-xs" className="text-muted-foreground" aria-label={T.lane.options(label)}><MoreHorizontal /></Button>
+        <Button variant="ghost" size="icon-xs" className="text-muted-foreground" aria-label={T.lane.options}><MoreHorizontal /></Button>
       </PopoverTrigger>
       <PopoverContent className="w-[184px]" align="end">
         <button

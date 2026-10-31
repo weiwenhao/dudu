@@ -59,7 +59,7 @@ test('pulling an edge resizes the widget, names the size beside the pointer, sav
   await page.locator('.db-chip').waitFor();
   assert.match(await page.locator('.db-chip').innerText(), /^\d+×6$/);
   await page.mouse.up();
-  await toast(page, 'Issues” resized to').waitFor();
+  await toast(page, 'Issues」resized to').waitFor();
   const after = await cells(issuesItem(page));
   assert.ok(after.w < before.w && after.w >= 4, `${before.w} -> ${after.w} columns`);
   const stored = await saved();
@@ -106,7 +106,7 @@ test('the keyboard moves, resizes and removes a widget in edit mode, and Escape 
 
   await page.keyboard.press('Delete');
   await page.locator('.grid-stack-item').waitFor({ state: 'detached' });
-  await toast(page, 'Removed “Issues”').waitFor();
+  await toast(page, 'Removed「Issues」').waitFor();
   assert.equal((await dudu.api('dashboard/get')).layout.widgets.length, 0);
   await page.getByRole('button', { name: 'Undo' }).last().click(); // the bar holds the last few changes; the newest is the last
   await page.locator('.grid-stack-item').waitFor();
