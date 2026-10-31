@@ -276,9 +276,14 @@ Issue 是嘟嘟里唯一的工作单位：一件要办的事，来自连接器�
 状态由规则判定，不调用模型：`running`、`waiting_owner`、`finished`、`idle`、`error`。
 
 - DSH：有没答的提问或审批 → `waiting_owner`；在跑 → `running`。
-- Claude：注册表 `busy` → `running`；进程在、`idle`，最后一条是助手消息而且以提问结尾、或有没回答的 `AskUserQuestion` → `waiting_owner`；进程没了、最后一条是助手的最终回答 → `finished`。
-- Codex：看线程状态和最后一项。
-- 这些规则要用真实会话校准（验证 6）。
+- Claude（2026-10-31 用这台电脑上 317 份真实记录校准过）：
+  - 注册表有四种状态，不是两种：`busy` 和 `shell`（提示符闲着、后台还有命令在跑，Claude 自己的界面也当它在干活）→ `running`；`waiting` → `waiting_owner`（问题取没答的 `AskUserQuestion`，否则取工具调用，否则取注册表自己写的 `waitingFor`）；`idle` → 看记录的末尾。
+  - 记录的末尾大多不是对话：`turn_duration`、标题、模式、几百 KB 的请求副本、本地斜杠命令的输出都要跳过。"最终回答"= 助手消息的 `stop_reason` 是 `end_turn`、`stop_sequence`、`max_tokens` 或 `refusal`（空的要跟着一条 `turn_duration` 才算）→ `finished`；以提问结尾 → `waiting_owner`（进程在不在都算：OAR 开的会话在两轮之间进程总是不在）；以 API 错误结尾 → `error`；用户按了 Esc、压缩摘要 → `idle`。
+  - 进程没了而最后一条是没回答的提问、工具调用、工具结果或截断的消息 → `error`（这台电脑上一周内有 7 份：终端里被关掉的会话）。
+  - 没有进程的会话，从记录里读出的提问或错误只在 7 天内算数（`staleMs`），再旧就是 `idle`；有进程、注册表的 `waiting` 和 DSH 自己说的不看年龄。
+  - 文件的 mtime 不是活动时间（标题和模式会在对话停了几天后还往里追加）：`lastActivityAt` 取最后一条对话记录或注册表的最后一次状态变化。
+- Codex：新起的 app-server 里每个线程的状态都是 `notLoaded`，没法用；改问 `thread/turns/list`（`limit: 1`，最新在前）：进行中且线程 10 分钟内写过 → `running`；助手消息带 `questions`，或最后一条 `final_answer` 以提问结尾 → `waiting_owner`；`completed` → `finished`；`failed` → `error`；`interrupted` 或没有轮次 → `idle`；只重读 `updatedAt` 变了的线程。
+- 没验证的：Claude 注册表 `waiting` 和权限弹窗（没有 `waitingFor`，多半读成 `busy`）、Codex 的 `inProgress` 和 `questions` 在活会话上的样子。
 
 节奏：Claude 注册表和 DSH 状态每 10 秒；文件扫描每 60 秒，只看 mtime；Codex 每 120 秒。
 
@@ -694,8 +699,8 @@ host/assistant/
              createMemory({ dir, llm }) → { capture, remember, recall, context, forget, records, tidy }
   issues/    index.mjs schema.mjs api.mjs（已做，2026-10-31）
              createIssues({ file, now, sessionState, actor }) → { list, get, add, update, log, assign, snooze, complete, cancel, search, facets, counts, undo, events, export, close }；api.mjs 是桌面的 `POST /api/dudu/issues/<动作>`（页面就是主人，body 里的 `actor` 不算），由 `host/dudu-plugin/index.mjs` 的 `startIssues` 接上，库在 `<DSH_HOME>/dudu/assistant/issues.db`
-  sessions/  index.mjs states.mjs
-             createSessions({ readers, runners, links, now }) → { snapshots, onChange, read, open, close, resume, send }
+  sessions/  index.mjs states.mjs readers.mjs（已做，2026-10-31）
+             createSessions({ readers, runners, links, now, file, ignore, intervals }) → { snapshots, onChange, read, open, close, resume, send, stateOf, poll, dispose }；`stateOf(key)` 直接给 `createIssues({ sessionState })`；`readers` 是 `{ claude, codex, dsh }`，前两个来自 `readers.mjs`，`dsh` 由插件适配层给
   dispatch/  index.mjs
              createDispatch({ issues, sessions, rules, llm }) → { triage, assign, handover }
   dashboard/ index.mjs layout.mjs
