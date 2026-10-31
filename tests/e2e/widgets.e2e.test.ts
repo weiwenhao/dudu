@@ -88,3 +88,20 @@ test('Sessions lists what Claude Code already has, finds words inside, and opens
   await page.getByText('排查 CI 超时的原因').first().waitFor();
   await page.close();
 });
+
+test('Office puts a person at a desk for each Active issue, in real WebGL, and a click on a name tag opens the issue', async () => {
+  await dudu.api('dashboard/reset');
+  const page = await dudu.openPanel({ viewport: { width: 1600, height: 960 } });
+  await room(page);
+  await addWidget(page, 'Office');
+  await page.getByRole('button', { name: 'Done' }).click();
+  const office = page.getByRole('region', { name: 'Office' });
+  const active = (await dudu.api('issues/list', { tab: 'active', limit: 200 })).items as Array<{ id: number; title: string }>;
+  await office.locator('[data-office-stage][data-mode="scene"]').waitFor({ timeout: 30_000 });
+  await office.locator('[data-office-tag]').first().waitFor();
+  assert.equal(await office.locator('[data-office-tag]').count(), active.length, 'one name tag for each Active issue');
+  await office.getByRole('img', { name: new RegExp(`^Office: ${active.length} issues?`) }).waitFor(); // the one sentence for a screen reader
+  await office.locator('[data-office-tag]').first().click();
+  await page.getByRole('button', { name: 'Back to Issues' }).waitFor();
+  await page.close();
+});

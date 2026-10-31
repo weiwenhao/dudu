@@ -3,12 +3,13 @@
 import { BUILT_IN_WIDGETS } from '../../../assistant/dashboard/widgets.mjs';
 import { Inputs } from './Inputs.jsx';
 import { IssuesCard } from './IssuesCard.jsx';
+import { OfficeCard } from './OfficeCard.jsx';
 import { Overview } from './Overview.jsx';
 import { Quota } from './Quota.jsx';
 import { Sessions } from './Sessions.jsx';
 import { Stuck } from './Stuck.jsx';
 import { Upcoming } from './Upcoming.jsx';
 
-const COMPONENTS = { issues: IssuesCard, overview: Overview, upcoming: Upcoming, stuck: Stuck, inputs: Inputs, quota: Quota, sessions: Sessions };
+const COMPONENTS = { issues: IssuesCard, overview: Overview, upcoming: Upcoming, stuck: Stuck, inputs: Inputs, quota: Quota, sessions: Sessions, office: OfficeCard };
 
 export const REGISTRY = BUILT_IN_WIDGETS.filter((widget) => COMPONENTS[widget.id]).map((widget) => ({ ...widget, Component: COMPONENTS[widget.id] }));
