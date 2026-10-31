@@ -16,7 +16,7 @@ function setup() {
 test('every action of the page is served and nothing else', async () => {
   const { call, close } = setup();
   try {
-    assert.deepEqual([...ISSUE_ACTIONS].sort(), ['add', 'assign', 'cancel', 'complete', 'counts', 'events', 'export', 'facets', 'get', 'list', 'log', 'reply', 'search', 'snooze', 'undo', 'update']);
+    assert.deepEqual([...ISSUE_ACTIONS].sort(), ['add', 'assign', 'cancel', 'complete', 'counts', 'events', 'export', 'facets', 'get', 'list', 'log', 'reply', 'resume', 'search', 'snooze', 'undo', 'update']);
     assert.equal((await call('nope', {})).status, 404);
     assert.equal((await call('constructor', {})).status, 404, 'an action name is never looked up on the object prototype');
   } finally { close(); }
@@ -102,5 +102,78 @@ test('a reply goes into the log as a decision, clears the question and is handed
     const empty = await (await api.handle('reply', new Request('http://dsh.test/', { method: 'POST', body: JSON.stringify({ id: issue.id, text: '  ' }) }))).json();
     assert.equal(empty.outcome, 'needs_clarification', 'an empty reply is refused and is not handed on');
     assert.equal(handed.length, 1);
+  } finally { issues.close(); }
+});
+
+test('giving an issue an agent tells the plugin, once, and only when it was given', async () => {
+  const issues = createIssues({ file: ':memory:' });
+  const told: Array<[number, string | null, string | null]> = [];
+  const api = createIssuesApi({ issues, onAssign: (issue: { id: number; agent: string | null; session: string | null }) => { told.push([issue.id, issue.agent, issue.session]); } });
+  const post = async (action: string, body: unknown) => (await api.handle(action, new Request('http://dsh.test/', { method: 'POST', body: JSON.stringify(body) }))).json();
+  try {
+    const { issue } = issues.add({ title: '续费服务器' });
+    assert.equal((await post('assign', { id: issue.id, agent: 'claude' })).outcome, 'success');
+    assert.deepEqual(told, [[issue.id, 'claude', null]]);
+    assert.equal((await post('assign', { id: issue.id, agent: 'claude' })).outcome, 'no_op', 'the same agent again changes nothing');
+    assert.equal((await post('assign', { id: 999, agent: 'claude' })).outcome, 'error', 'an issue that is not there is an answer');
+    assert.equal((await post('assign', { agent: 'claude' })).outcome, 'needs_clarification');
+    assert.equal(told.length, 1, 'only a given agent is told');
+
+    // An issue that has a session keeps it when the page names its agent again, and gives it up when another is named.
+    issues.assign(issue.id, { agent: 'claude', session: 'dsh:abc' });
+    const same = await post('assign', { id: issue.id, agent: 'claude' });
+    assert.equal(same.outcome, 'no_op');
+    assert.equal(same.issue.session, 'dsh:abc', 'the session that works is not thrown away for a click on its own agent');
+    assert.equal(told.length, 1);
+    assert.equal((await post('assign', { id: issue.id, agent: 'codex' })).issue.session, null);
+    assert.deepEqual(told.at(-1), [issue.id, 'codex', null]);
+    assert.equal((await post('assign', { id: issue.id, agent: null })).outcome, 'success');
+    assert.deepEqual(told.at(-1), [issue.id, null, null], 'taking the agent away is told too');
+  } finally { issues.close(); }
+});
+
+test('a hook of the plugin that fails does not undo or fail what the owner did', async () => {
+  const issues = createIssues({ file: ':memory:' });
+  const warned: string[] = [];
+  const origin = console.warn;
+  console.warn = (line: string) => { warned.push(line); };
+  const failing = () => { throw new Error('the session service is gone'); };
+  const api = createIssuesApi({ issues, onAssign: failing, onReply: failing, onResume: failing });
+  const post = async (action: string, body: unknown) => (await api.handle(action, new Request('http://dsh.test/', { method: 'POST', body: JSON.stringify(body) }))).json();
+  try {
+    const { issue } = issues.add({ title: '回访客户', agent: 'claude', ask: '约周几？' });
+    assert.equal((await post('assign', { id: issue.id, agent: 'codex' })).outcome, 'success');
+    assert.equal(issues.get(issue.id).issue.agent, 'codex');
+    assert.equal((await post('reply', { id: issue.id, text: '周四' })).outcome, 'success');
+    assert.equal(issues.get(issue.id).issue.ask, '');
+    issues.assign(issue.id, { agent: 'codex', session: 'dsh:x' });
+    const resumed = await post('resume', { id: issue.id });
+    assert.equal(resumed.outcome, 'error', 'a session that could not be put back is said not to be');
+    assert.ok(warned.length >= 3 && warned.every((line) => /session service is gone/.test(line)), warned.join('\n'));
+  } finally { console.warn = origin; issues.close(); }
+});
+
+test('the page can ask for the session of an issue to be put back; what it is told is what the plugin answers', async () => {
+  const issues = createIssues({ file: ':memory:' });
+  const asked: number[] = [];
+  const api = createIssuesApi({ issues, onResume: (issue: { id: number }) => { asked.push(issue.id); return { outcome: 'success', key: 'dsh:abc' }; } });
+  const bare = createIssuesApi({ issues });
+  const post = async (handler: typeof api, body: unknown) => (await handler.handle('resume', new Request('http://dsh.test/', { method: 'POST', body: JSON.stringify(body) }))).json();
+  try {
+    const { issue } = issues.add({ title: '续费服务器', agent: 'claude', session: 'dsh:abc' });
+    const answer = await post(api, { id: issue.id });
+    assert.deepEqual([answer.outcome, answer.key, answer.issue.id], ['success', 'dsh:abc', issue.id]);
+    assert.deepEqual(asked, [issue.id]);
+    assert.equal((await post(api, { id: 999 })).outcome, 'error');
+    assert.deepEqual(asked, [issue.id], 'an issue that is not there is not asked about');
+    assert.equal((await post(bare, { id: issue.id })).outcome, 'no_op', 'a plugin that keeps no sessions says so');
+    // The page opens a session it holds no issue for: the key alone is enough, and the plugin is told there is no issue.
+    const told: unknown[] = [];
+    const byKey = createIssuesApi({ issues, onResume: (issue: unknown) => { told.push(issue); return { outcome: 'no_op' }; } });
+    assert.equal((await post(byKey, { session: 'dsh:xyz' })).outcome, 'no_op');
+    assert.deepEqual(told, [{ id: null, session: 'dsh:xyz' }]);
+    const neither = await post(byKey, {});
+    assert.equal(neither.outcome, 'needs_clarification');
+    assert.equal(told.length, 1);
   } finally { issues.close(); }
 });

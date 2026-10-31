@@ -1,3 +1,4 @@
+import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +20,9 @@ import { codexProvider } from './dist/providers/drivers/codex.mjs';
 import { permissionOf } from './dist/providers/permission.mjs';
 import { createIssues } from './dist/assistant/issues/index.mjs';
 import { createIssuesApi, ISSUE_ACTIONS } from './dist/assistant/issues/api.mjs';
+import { createAgentSessions } from './dist/assistant/home/agent-sessions.mjs';
+import { createDshSessions } from './dist/assistant/home/dsh-sessions.mjs';
+import { createAssignment } from './dist/assistant/home/assign.mjs';
 import { createDashboard } from './dist/assistant/dashboard/index.mjs';
 import { createDashboardApi, DASHBOARD_ACTIONS } from './dist/assistant/dashboard/api.mjs';
 import { GridStackEngine } from './dist/assistant/dashboard/engine.mjs';
@@ -29,10 +33,11 @@ const runtimeIdentity = await desktopPackageIdentity(dirname(fileURLToPath(impor
 
 export const name = 'dudu';
 // Services every DSH has are required. The access mode a session is in is only read to scope what a harness may do,
-// so a DSH without it still runs the plugin.
+// so a DSH without it still runs the plugin; so does one without what the sessions of issues use (docs/dsh-session-control.md).
 export const inject = {
   connection: true, typertGateway: true, clientModules: true, webServer: true, llm: true, agents: true,
   sessionProjections: false, sessionPersistence: false, workspaceRegistry: false,
+  sessionController: false, permissionPresets: false, userQuestions: false, agentDefaultModel: false,
 };
 
 // The two halves do not depend on each other. The phone control needs a DSH new enough to hand out peers (the
@@ -77,9 +82,16 @@ async function startProviders(ctx, folder) {
 }
 
 // The issues of 嘟嘟 (docs/assistant.md): one SQLite file in the plugin's state folder, served to the desktop interface.
-async function startIssues(ctx, folder) {
-  const issues = createIssues({ file: join(folder, 'assistant', 'issues.db') });
-  const api = createIssuesApi({ issues });
+// `assignment` is the issues' hooks into the sessions they are given to; startAssignment fills it in once the store is open.
+async function startIssues(ctx, folder, assignment = {}) {
+  const issues = createIssues({ file: join(folder, 'assistant', 'issues.db'), sessionState: (key) => assignment.sessionState?.(key) ?? null });
+  const api = createIssuesApi({
+    issues,
+    onAssign: (issue) => assignment.onAssign?.(issue),
+    onReply: (issue, text) => assignment.onReply?.(issue, text),
+    onResume: (issue) => assignment.onResume?.(issue),
+  });
+  assignment.issues = issues;
   const disposers = ISSUE_ACTIONS.map((action) => ctx.connection.fetch.register({
     path: `/api/dudu/issues/${action}`, methods: ['POST'], requestBody: 'buffered',
     fetch: (request) => api.handle(action, request),
@@ -90,17 +102,44 @@ async function startIssues(ctx, folder) {
   };
 }
 
+// --- startAssignment: the sessions the issues are given to (docs/assistant.md 3.3 and 3.4, docs/dsh-session-control.md) ---
+// An issue that is given an agent gets a DSH session in its project folder, follows it, and hands what the owner answers to it. Both DSH
+// runtimes serve it from the services every plugin can inject: no phone peer is needed.
+async function startAssignment(ctx, folder, assignment) {
+  if (!assignment.issues) throw new Error('there are no issues');
+  const dsh = createDshSessions(ctx);
+  // DSH lists the models of the harnesses the first time it is asked, which takes a moment; the first issue given to an agent need not wait.
+  void dsh.models().catch(() => {});
+  const agentSessions = createAgentSessions({ dsh });
+  const hooks = createAssignment({
+    issues: assignment.issues,
+    agentSessions,
+    // An issue that names no project is worked on in 嘟嘟's own folder (3.2): the project folder the settings name, once startAssistant has
+    // opened it (`assignment.projectFolder`), else the standard one.
+    defaultCwd: async () => { const home = assignment.projectFolder?.() ?? join(folder, 'home'); await mkdir(home, { recursive: true }); return home; },
+  });
+  Object.assign(assignment, { sessionState: hooks.sessionState, onAssign: hooks.onAssign, onReply: hooks.onReply, onResume: hooks.onResume });
+  // The sessions of the issues that are open are followed again after a restart; reading their logs does not hold the plugin back.
+  hooks.restore().catch((error) => console.warn(`[dudu] The sessions of the open issues could not be followed again: ${error.message}`));
+  return async () => {
+    for (const hook of ['sessionState', 'onAssign', 'onReply', 'onResume']) delete assignment[hook];
+    hooks.dispose();
+    agentSessions.dispose();
+  };
+}
+
 // 嘟嘟's own state (docs/assistant.md 2, 3.5, 3.6): the project folder with its Markdown files, the settings, the memory and the
 // connectors, and the calls the settings page makes on them. A project folder that cannot be opened turns off the memory and the
 // connectors only (the settings page says why); the rest of the plugin runs.
-async function startAssistant(ctx, dshHome, folder) {
+async function startAssistant(ctx, dshHome, folder, assignment = {}) {
   const assistant = openAssistant({ dshHome, stateFolder: join(folder, 'assistant') });
+  assignment.projectFolder = () => assistant.folder; // an issue without a project is worked on there (startAssignment)
   for (const problem of assistant.problems) console.warn(`[dudu] The project folder is not available: ${problem}`);
   const disposers = assistant.paths.map((path) => ctx.connection.fetch.register({
     path: `/api/dudu/${path}`, methods: ['POST'], requestBody: 'buffered',
     fetch: (request) => assistant.handle(path, request),
   }));
-  return async () => { for (const dispose of disposers) dispose(); await assistant.close(); };
+  return async () => { delete assignment.projectFolder; for (const dispose of disposers) dispose(); await assistant.close(); };
 }
 
 // The dashboard layout (docs/assistant.md 4.1): one small JSON file next to the issues. The engine of the grid library is the one the
@@ -188,12 +227,20 @@ export async function apply(ctx, config = {}) {
     console.warn(`[dudu] Providers are unavailable: ${error.message}`);
   }
 
+  const assignment = {}; // startAssignment fills it in: what the issues do when one is given an agent, answered, or its session is opened
   try {
-    stops.push(await startIssues(ctx, folder));
+    stops.push(await startIssues(ctx, folder, assignment));
     console.info('[dudu] Issues are ready.');
   } catch (error) {
     // A database written by a newer version stays untouched (SCHEMA_TOO_NEW); the rest of the plugin keeps working.
     console.warn(`[dudu] Issues are unavailable: ${error.message}`);
+  }
+
+  try {
+    stops.push(await startAssignment(ctx, folder, assignment));
+    console.info('[dudu] Sessions for issues are ready.');
+  } catch (error) {
+    console.warn(`[dudu] Sessions for issues are unavailable: ${error.message}`);
   }
 
   try {
@@ -204,7 +251,7 @@ export async function apply(ctx, config = {}) {
   }
 
   try {
-    stops.push(await startAssistant(ctx, dshHome, folder));
+    stops.push(await startAssistant(ctx, dshHome, folder, assignment));
     console.info('[dudu] The project folder, memory and connectors are ready.');
   } catch (error) {
     console.warn(`[dudu] The project folder, memory and connectors are unavailable: ${error.message}`);

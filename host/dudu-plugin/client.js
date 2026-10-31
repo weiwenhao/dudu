@@ -1171,7 +1171,18 @@ window.__ModuleLoader__.load({
             return () => style.remove();
           });
         }
-        const actions = { openSession };
+        // The page opens a session in DSH as `{ sessionId, workspaceId }`. One that the plugin started for an issue may have been folded away in
+        // the sidebar: the plugin puts it back first, and says which workspace it lives in (DSH ties a session to its folder, and refuses to
+        // adopt it into another); it does nothing for a session it does not know.
+        const actions = {
+          openSession: async (target) => {
+            let workspaceId = target?.workspaceId;
+            if (target?.sessionId) {
+              try { workspaceId = workspaceId ?? (await request('issues/resume', { session: `dsh:${target.sessionId}` }))?.workspaceId; } catch { /* it opens as it is */ }
+            }
+            await openSession({ ...target, ...(workspaceId ? { workspaceId } : {}) });
+          },
+        };
         const IssuesPage = () => h(ui.Page, { request, logo: LOGO, actions });
         ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID }, ui ? IssuesPage : Page));
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({

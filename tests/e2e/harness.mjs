@@ -2,6 +2,8 @@
 // HOME, driven by a real Chrome through Playwright. Nothing here touches the owner's DSH (~/.dsh, port 3170) or Desktop.
 //
 //   const dudu = await startDudu();            // package, install, start, log in
+//   const dudu = await startDudu({ model: { replies } });   // ... with a scripted model as DSH's default (see mock-model.mjs); dudu.model.requests
+//   const dudu = await startDudu({ env: { NAME: 'value' } });   // more environment for DSH (and so for the plugin and what it starts)
 //   const page = await dudu.openPanel();       // a fresh page on the 嘟嘟 panel
 //   await dudu.api('issues/add', { fields });  // the plugin's own HTTP API, as the logged-in page would call it
 //   await dudu.stop();                         // browser, DSH and the temporary home are gone
@@ -14,6 +16,7 @@ import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { startMockModel } from './mock-model.mjs';
 
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -40,7 +43,7 @@ async function waitForUrl(child, output) {
   throw new Error('dsh web did not print its address in time.');
 }
 
-export async function startDudu({ colorScheme = 'light', viewport = { width: 1440, height: 900 }, patch = '', files = {} } = {}) {
+export async function startDudu({ colorScheme = 'light', viewport = { width: 1440, height: 900 }, patch = '', files = {}, env: moreEnv = {}, model } = {}) {
   const tgz = await packagedPlugin();
   const folder = await mkdtemp(join(tmpdir(), 'dudu-e2e-'));
   const home = join(folder, 'dsh');
@@ -53,8 +56,16 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
   }
   const env = {
     PATH: process.env.PATH, HOME: user, TMPDIR: process.env.TMPDIR, LANG: process.env.LANG ?? 'en_US.UTF-8',
-    DSH_HOME: home, DUDU_ALLOW_TEMP_HOME: '1', NO_COLOR: '1', ...(process.env.DUDU_E2E_ENV ? JSON.parse(process.env.DUDU_E2E_ENV) : {}),
+    DSH_HOME: home, DUDU_ALLOW_TEMP_HOME: '1', NO_COLOR: '1', ...(process.env.DUDU_E2E_ENV ? JSON.parse(process.env.DUDU_E2E_ENV) : {}), ...moreEnv,
   };
+  // A scripted model on a local port, which DSH is told to use as its default: no real model, no real credential. Its key is a made-up one.
+  const mock = model ? await startMockModel(model === true ? {} : model) : null;
+  if (mock) env.DUDU_MOCK_MODEL_KEY = 'mock-key';
+  const modelPatch = mock ? [
+    '- id: llm-pi-ai', '  config:', '    providers:', '      mock:', '        displayName: Mock', '        api: openai-completions',
+    `        baseURL: ${mock.url}`, '        apiKeyEnv: DUDU_MOCK_MODEL_KEY', '        models:', '          - id: mock-1', '            name: Mock', '            contextWindow: 100000',
+    '- id: agent-default-model', '  config:', '    provider: mock', '    model: mock-1',
+  ].join('\n') : '';
   const state = { folder, child: null, browser: null, stopped: false };
   const stop = async () => {
     if (state.stopped) return;
@@ -64,6 +75,7 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
       state.child.kill('SIGTERM');
       await new Promise((done) => { const timer = setTimeout(() => { state.child.kill('SIGKILL'); done(); }, 10_000); state.child.once('exit', () => { clearTimeout(timer); done(); }); });
     }
+    await mock?.stop().catch(() => {});
     await rm(folder, { recursive: true, force: true });
   };
   process.once('exit', () => { state.child?.kill('SIGKILL'); });
@@ -75,7 +87,7 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
     // The phone port is not bound in the web runtime, but a fixed one must never be asked for; the notice is the first-run modal.
     await writeFile(join(home, 'profiles', 'web', 'cordis.patch.yml'), [
       '- id: dudu', '  config:', '    port: 0',
-      '- id: ui-settings-general', '  name: "@deepseek-ai/dsh-client-ui-settings-general"', '  config:', '    welcomeNoticeVersion: 2026-09-28.1', patch,
+      '- id: ui-settings-general', '  name: "@deepseek-ai/dsh-client-ui-settings-general"', '  config:', '    welcomeNoticeVersion: 2026-09-28.1', modelPatch, patch,
     ].join('\n') + '\n');
 
     const output = { text: '' };
@@ -93,7 +105,7 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
 
     const pages = new Set();
     const dudu = {
-      base, context, folder, home, viewport,
+      base, context, folder, home, viewport, model: mock,
       /** POST to the plugin as the logged-in browser does; the answer is the JSON the page would get. */
       async api(action, body = {}) {
         const response = await context.request.post(`${base}/api/dudu/${action}`, { data: body });
