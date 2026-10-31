@@ -18,6 +18,8 @@ import { chromium } from 'playwright-core';
 const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const STARTUP_MS = 90_000;
+// The DSH to test against: the installed one, or another build's CLI (the Desktop app ships its own: see AGENTS.md) named in DUDU_E2E_DSH.
+const DSH = process.env.DUDU_E2E_DSH || 'dsh';
 
 /** The packaged plugin of this checkout (built fresh unless DUDU_E2E_TGZ names one that already is). */
 async function packagedPlugin() {
@@ -69,7 +71,7 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
     // A copy under a name of its own: the package manager keys `file:` installs by path.
     const archive = join(folder, `dudu-e2e-${process.pid}-${Date.now()}.tgz`);
     await copyFile(tgz, archive);
-    await run('dsh', ['plugin', '--profile', 'web', 'add', `file:${archive}`], { env, cwd: folder, maxBuffer: 16 * 1024 * 1024 });
+    await run(DSH, ['plugin', '--profile', 'web', 'add', `file:${archive}`], { env, cwd: folder, maxBuffer: 16 * 1024 * 1024 });
     // The phone port is not bound in the web runtime, but a fixed one must never be asked for; the notice is the first-run modal.
     await writeFile(join(home, 'profiles', 'web', 'cordis.patch.yml'), [
       '- id: dudu', '  config:', '    port: 0',
@@ -77,7 +79,7 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
     ].join('\n') + '\n');
 
     const output = { text: '' };
-    state.child = spawn('dsh', ['web', '--host', '127.0.0.1', '--no-open', '--port', '0'], { env, cwd: folder, stdio: ['ignore', 'pipe', 'pipe'] });
+    state.child = spawn(DSH, ['web', '--host', '127.0.0.1', '--no-open', '--port', '0'], { env, cwd: folder, stdio: ['ignore', 'pipe', 'pipe'] });
     for (const stream of [state.child.stdout, state.child.stderr]) stream.on('data', (chunk) => { output.text += chunk; });
     const login = await waitForUrl(state.child, output);
     const base = login.origin;
