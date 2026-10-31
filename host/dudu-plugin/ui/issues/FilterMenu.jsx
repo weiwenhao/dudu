@@ -1,10 +1,10 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Check } from 'lucide-react';
-import { Command, CommandInput, CommandItem, CommandList, CommandSeparator } from '../components/command.jsx';
+import { Command, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from '../components/command.jsx';
 import { Popover, PopoverAnchor, PopoverContent } from '../components/popover.jsx';
 import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
-import { FILTER_FIELDS, FILTER_GROUPS } from './filters.jsx';
+import { FILTER_FIELDS, FILTER_GROUPS, FILTER_ROWS } from './filters.jsx';
 import { Triangle } from './icons.jsx';
 
 const Kbd = ({ children }) => <kbd className="ml-auto rounded border bg-muted px-1.5 text-xs text-muted-foreground">{children}</kbd>;
@@ -15,24 +15,37 @@ function CheckBox({ on }) {
     : <span className="size-4 shrink-0 rounded-[4px] border border-input shadow-xs dark:bg-input/30" />;
 }
 
-/** The second list: the options of one field, each with a checkbox and a count; ticking filters the list at once. */
-function FilterOptions({ field, options, selected, onToggle, inputRef, onBack }) {
+function Options({ fieldKey, options, filter, onToggle }) {
+  return options.map((option) => {
+    const on = (filter[fieldKey] ?? []).includes(option.value);
+    return (
+      <CommandItem key={String(option.value)} value={`${fieldKey}:${option.label}`} onSelect={() => onToggle(fieldKey, option.value)} data-checked={on}>
+        <CheckBox on={on} />
+        {option.icon}
+        <span className="truncate">{option.label}</span>
+        {option.count != null && <span className="ml-auto text-muted-foreground">{option.count}</span>}
+      </CommandItem>
+    );
+  });
+}
+
+/**
+ * The second list: the options of the highlighted row, each with a checkbox and a count; ticking filters the list at once. A row
+ * that holds several fields (Dates) lists each under its own heading.
+ */
+function FilterOptions({ row, sections, filter, onToggle, inputRef, onBack }) {
   return (
     <Command onKeyDown={(event) => { if (event.key === 'ArrowLeft' && !event.target.value) { event.preventDefault(); onBack(); } }}>
-      <CommandInput ref={inputRef} placeholder={T.filterOptions} aria-label={field.name} />
+      <CommandInput ref={inputRef} placeholder={T.filterOptions} aria-label={row.name} />
       <CommandSeparator />
       <CommandList>
-        {options.map((option) => {
-          const on = selected.includes(option.value);
-          return (
-            <CommandItem key={String(option.value)} value={option.label} onSelect={() => onToggle(option.value)} data-checked={on}>
-              <CheckBox on={on} />
-              {option.icon}
-              <span className="truncate">{option.label}</span>
-              <span className="ml-auto text-muted-foreground">{option.count}</span>
-            </CommandItem>
-          );
-        })}
+        {sections.length === 1
+          ? <Options fieldKey={sections[0].key} options={sections[0].options} filter={filter} onToggle={onToggle} />
+          : sections.map((section) => (
+            <CommandGroup key={section.key} heading={FILTER_FIELDS[section.key].name}>
+              <Options fieldKey={section.key} options={section.options} filter={filter} onToggle={onToggle} />
+            </CommandGroup>
+          ))}
       </CommandList>
     </Command>
   );
@@ -46,7 +59,7 @@ function FilterOptions({ field, options, selected, onToggle, inputRef, onBack })
 export function FilterMenu({ open, anchor, onOpenChange, filter, counts, facets, onToggle }) {
   const [hot, setHot] = useState('status');
   const rows = useRef({});
-  const field = FILTER_FIELDS[hot];
+  const row = FILTER_ROWS[hot];
   // The second menu is placed beside the highlighted row, which only exists once the first menu has mounted: render once more
   // after that, so the anchor is read from the row and not from nothing.
   const [, remeasure] = useState(0);
@@ -71,9 +84,9 @@ export function FilterMenu({ open, anchor, onOpenChange, filter, counts, facets,
               <Fragment key={index}>
                 <CommandSeparator />
                 {group.map((key) => (
-                  <CommandItem key={key} value={key} keywords={[FILTER_FIELDS[key].name]} ref={(element) => { rows.current[key] = element; }}>
-                    {FILTER_FIELDS[key].rowIcon}
-                    <span>{FILTER_FIELDS[key].name}</span>
+                  <CommandItem key={key} value={key} keywords={[FILTER_ROWS[key].name]} ref={(element) => { rows.current[key] = element; }}>
+                    {FILTER_ROWS[key].rowIcon}
+                    <span>{FILTER_ROWS[key].name}</span>
                     <Triangle direction="right" className={cn('ml-auto size-2 text-muted-foreground')} />
                   </CommandItem>
                 ))}
@@ -81,18 +94,18 @@ export function FilterMenu({ open, anchor, onOpenChange, filter, counts, facets,
             ))}
           </CommandList>
         </Command>
-        {open && field && (
+        {open && row && (
           <Popover open onOpenChange={(next) => { if (!next) onOpenChange(false); }}>
             <PopoverAnchor virtualRef={optionsAnchor} />
             {/* Focus lands in the first menu a moment after this one mounts, which would count as "outside" and dismiss it (and the
                 first menu with it): only Escape closes this one, and the first menu's own outside-click closes both. */}
             <PopoverContent
-              side="left" align="start" alignOffset={-8} sideOffset={8} className="w-[232px]" aria-label={field.name}
+              side="left" align="start" alignOffset={-8} sideOffset={8} className="w-[232px]" aria-label={row.name}
               onOpenAutoFocus={(event) => event.preventDefault()} onInteractOutside={(event) => event.preventDefault()}
             >
               <FilterOptions
-                field={field} options={field.options({ counts, facets })} selected={filter[hot] ?? []} inputRef={optionsInput}
-                onToggle={(value) => onToggle(hot, value)} onBack={() => fieldInput.current?.focus()}
+                row={row} filter={filter} inputRef={optionsInput} onToggle={onToggle} onBack={() => fieldInput.current?.focus()}
+                sections={row.fields.map((key) => ({ key, options: FILTER_FIELDS[key].options({ counts, facets }) }))}
               />
             </PopoverContent>
           </Popover>

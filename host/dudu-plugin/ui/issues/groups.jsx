@@ -1,4 +1,5 @@
-import { Box } from 'lucide-react';
+import { Box, Plus } from 'lucide-react';
+import { Button } from '../components/button.jsx';
 import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
 import { AgentAvatar, PriorityIcon, projectColor, StatusIcon, Triangle } from './icons.jsx';
@@ -12,8 +13,8 @@ export function GroupIcon({ field, groupKey, className = 'size-4' }) {
   return <Box className={className} style={{ color: projectColor(groupKey) }} aria-hidden="true" />;
 }
 
-/** The grey bar of a group: the triangle folds it, then its icon, name and how many rows it has. */
-export function GroupBar({ entry, onToggle }) {
+/** The grey bar of a group: the triangle folds it, then its icon, name and how many rows it has; + adds an issue to the group. */
+export function GroupBar({ entry, onToggle, onAdd }) {
   return (
     <div className="h-full pt-1">
       <div className="flex h-9 items-center gap-3 rounded-lg bg-muted pr-2 pl-3">
@@ -28,6 +29,7 @@ export function GroupBar({ entry, onToggle }) {
           <h2 className="font-medium">{entry.label}</h2>
           <span className="text-muted-foreground">{entry.count}</span>
         </span>
+        <Button variant="ghost" size="icon-xs" className="ml-auto text-muted-foreground" aria-label={T.addTo(entry.label)} onClick={onAdd}><Plus /></Button>
       </div>
     </div>
   );

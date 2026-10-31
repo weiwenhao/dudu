@@ -8,6 +8,17 @@ const NO_STORE = { 'cache-control': 'no-store' };
 
 const meta = ({ reason, groupId }) => ({ reason, groupId });
 
+// The owner's answer to what an agent asked: it goes into the log as a decision and clears the question (the page's Needs you mark
+// goes with it). `onReply(issue, text)` is the plugin's hand-over of the answer to the agent's session, when there is one.
+async function reply(issues, { id, text, ...rest }, { onReply }) {
+  const logged = issues.log(id, { kind: 'decision', text, ...meta(rest) });
+  if (logged.outcome !== 'success') return logged;
+  const cleared = issues.update(id, { ask: '' }, meta(rest));
+  const issue = cleared.issue ?? logged.issue;
+  await onReply?.(issue, text);
+  return { outcome: 'success', issue, entry: logged.entry };
+}
+
 const CALLS = {
   list: (issues, body) => issues.list(body),
   get: (issues, { id, logLimit, logCursor }) => issues.get(id, { logLimit, logCursor }),
@@ -21,6 +32,7 @@ const CALLS = {
   search: (issues, { q, limit, tab }) => issues.search(q, { limit, tab }),
   facets: (issues, body) => issues.facets(body),
   counts: (issues) => issues.counts(),
+  reply,
   undo: (issues, { target }) => issues.undo(target),
   events: (issues, body) => issues.events(body),
   export: (issues) => issues.export(),
@@ -28,7 +40,7 @@ const CALLS = {
 
 export const ISSUE_ACTIONS = Object.keys(CALLS);
 
-export function createIssuesApi({ issues }) {
+export function createIssuesApi({ issues, onReply }) {
   return {
     async handle(action, request) {
       const call = Object.hasOwn(CALLS, action) ? CALLS[action] : null;
@@ -36,7 +48,7 @@ export function createIssuesApi({ issues }) {
       try {
         const body = await request.json().catch(() => { throw new SyntaxError('The request body is not JSON.'); });
         if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new SyntaxError('The request body must be a JSON object.');
-        return Response.json(await call(issues, body), { headers: NO_STORE });
+        return Response.json(await call(issues, body, { onReply }), { headers: NO_STORE });
       } catch (error) {
         const bad = error instanceof SyntaxError;
         return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: bad ? 400 : 500, headers: NO_STORE });

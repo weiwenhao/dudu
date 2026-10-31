@@ -1,3 +1,5 @@
+import { Checkbox } from '../components/checkbox.jsx';
+import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
 import { dueInfo, shortDate } from './due.js';
 import { AgentAvatar, DueDate, PriorityIcon, ProjectChip, StatusIcon } from './icons.jsx';
@@ -6,21 +8,27 @@ import { StatusMenu } from './StatusMenu.jsx';
 const Muted = ({ children, title }) => <span className="w-[72px] shrink-0 truncate text-right text-xs text-muted-foreground @max-[560px]:hidden" title={title}>{children}</span>;
 
 /**
- * One row, 44px, as in Linear: [room for the select box] priority, id, status, title … project, agent, due date. `show` says
- * which of those the person has switched on in Display properties (and which the grouping already says).
+ * One row, 44px, as in Linear: [select box] priority, id, status, title … project, agent, due date. `show` says which of those
+ * the person has switched on in Display properties (and which the grouping already says). The box shows when the mouse is on the
+ * row, and on every row once any is ticked; its place is always kept so the columns line up.
  */
-export function IssueRow({ issue, now, show, menuOpen, onMenuOpenChange, onStatus, onHover, onOpen }) {
+export function IssueRow({ issue, now, show, selected, selecting, onSelect, menuOpen, onMenuOpenChange, onStatus, onHover, onOpen }) {
   const priority = T.priority[issue.priority] ?? T.priority.none;
   const due = dueInfo(issue.dueAt, now);
   const status = T.status[issue.status];
   return (
     <div
-      className="group flex h-11 cursor-pointer items-center gap-2 rounded-lg px-3 hover:bg-accent/60 has-[[data-state=open]]:bg-accent"
+      className={cn('group flex h-11 cursor-pointer items-center gap-2 rounded-lg px-3 hover:bg-accent/60 has-[[data-state=open]]:bg-accent', selected && 'bg-accent/60')}
       onMouseEnter={() => onHover(issue.id)} onMouseLeave={() => onHover(null)}
       onClick={(event) => { if (!event.target.closest('button, input, [role=combobox]')) onOpen(issue); }}
     >
-      {/* The checkbox column (bulk select) is kept so the columns line up with the design; the control comes with selection. */}
-      <span className="size-4 shrink-0" aria-hidden="true" />
+      <span className="flex size-4 shrink-0 items-center justify-center">
+        <Checkbox
+          checked={selected} aria-label={T.bulk.select(issue.title)}
+          className={cn(!selected && !selecting && 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100')}
+          onClick={(event) => { event.stopPropagation(); onSelect(issue.id, event.shiftKey); }}
+        />
+      </span>
       {show.priority && (
         <span className="flex size-4 shrink-0 items-center justify-center" role="img" aria-label={T.priorityOf(priority)} title={T.priorityOf(priority)}>
           <PriorityIcon priority={issue.priority} />

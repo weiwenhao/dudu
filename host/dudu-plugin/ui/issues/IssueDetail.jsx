@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Box, CalendarDays, ChevronDown, ChevronRight, ChevronUp } from 'lucide-react';
+import { ArrowUp, BellOff, Box, CalendarDays, ChevronDown, ChevronRight, ChevronUp, Copy, ExternalLink } from 'lucide-react';
 import { Button } from '../components/button.jsx';
+import { useToast } from '../components/toast.jsx';
 import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
 import { actorName, describe, when } from './activity.js';
+import { AgentMenu } from './AgentMenu.jsx';
 import { dueInfo, DUE_TONE } from './due.js';
 import { DueMenu } from './DueMenu.jsx';
 import { AgentAvatar, PriorityIcon, projectColor, StatusIcon } from './icons.jsx';
 import { AGENT_NAMES } from './model.js';
 import { PriorityMenu } from './PriorityMenu.jsx';
+import { SnoozeMenu } from './SnoozeMenu.jsx';
 import { StatusMenu } from './StatusMenu.jsx';
 import { useIssue } from './use-issue.js';
 
@@ -61,7 +64,7 @@ function LogLine({ entry, logo, now }) {
   );
 }
 
-function AskCard({ issue, since, now }) {
+function AskCard({ issue, since, now, onReply }) {
   const name = AGENT_NAMES[issue.agent] ?? issue.agent ?? '';
   return (
     <section className="rounded-xl border" aria-label={T.detail.needsYou}>
@@ -74,35 +77,68 @@ function AskCard({ issue, since, now }) {
         </div>
         <p className="break-words whitespace-pre-wrap">{issue.ask}</p>
       </div>
+      <div className="border-t p-2"><Composer onSend={onReply} placeholder={T.detail.reply} send={T.detail.sendReply} bare /></div>
     </section>
   );
 }
 
-function Composer({ onSend }) {
+/** A box to write in: ⌘/Ctrl+Enter or the arrow sends. `bare` drops its own border (inside a card that has one). */
+function Composer({ onSend, placeholder = T.detail.leaveComment, send = T.detail.send, bare }) {
   const [text, setText] = useState('');
-  const send = async () => { const value = text.trim(); if (!value) return; setText(''); await onSend(value); };
+  const submit = async () => { const value = text.trim(); if (!value) return; setText(''); await onSend(value); };
   return (
-    <div className="flex flex-col gap-2 rounded-xl border p-3 shadow-xs">
+    <div className={cn('flex flex-col gap-2', !bare && 'rounded-xl border p-3 shadow-xs')}>
       <textarea
-        value={text} rows={2} placeholder={T.detail.leaveComment} aria-label={T.detail.leaveComment}
+        value={text} rows={2} placeholder={placeholder} aria-label={placeholder}
         onChange={(event) => setText(event.target.value)}
-        onKeyDown={(event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); send(); } }}
-        className="block min-h-10 w-full resize-none bg-transparent outline-none placeholder:text-muted-foreground"
+        onKeyDown={(event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); submit(); } }}
+        className="block min-h-10 w-full resize-none bg-transparent px-1 outline-none placeholder:text-muted-foreground"
       />
       <div className="flex justify-end">
-        <Button variant="outline" size="icon-sm" className="size-7 rounded-full" aria-label={T.detail.send} disabled={!text.trim()} onClick={send}><ArrowUp /></Button>
+        <Button variant="outline" size="icon-sm" className="size-7 rounded-full" aria-label={send} disabled={!text.trim()} onClick={submit}><ArrowUp /></Button>
       </div>
     </div>
   );
 }
 
+/** After the owner marks an issue Done: one line to say how it went, which can be skipped. */
+function ResultPrompt({ onSave, onSkip }) {
+  const [text, setText] = useState('');
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border p-3">
+      <textarea
+        value={text} rows={2} autoFocus placeholder={T.detail.result} aria-label={T.detail.result} onChange={(event) => setText(event.target.value)}
+        className="block min-h-10 w-full resize-none bg-transparent px-1 outline-none placeholder:text-muted-foreground"
+      />
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={onSkip}>{T.detail.skipResult}</Button>
+        <Button size="sm" disabled={!text.trim()} onClick={() => onSave(text.trim())}>{T.detail.saveResult}</Button>
+      </div>
+    </div>
+  );
+}
+
+const firstLink = (text) => /https?:\/\/\S+/.exec(text ?? '')?.[0] ?? null;
+
 /**
  * An issue's page, as designed: breadcrumb and previous/next on top; the title, description, Activity and a comment box on the
  * left; Properties (status, priority, agent, due date) and Project on the right. `ids` is the list the person came from.
  */
-export function IssueDetail({ request, id, ids, logo, onBack, onOpen }) {
-  const { status, issue, log, nextLogCursor, change, addNote, loadEarlier } = useIssue(request, id);
+export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSession }) {
+  const { status, issue, log, nextLogCursor, change, assign, snooze, addNote, reply, undo, loadEarlier } = useIssue(request, id);
+  const toast = useToast();
+  const [askResult, setAskResult] = useState(null); // the id of an issue the owner just marked Done and may say how it went
   const now = Date.now();
+  // Every change on this page says so at the bottom, with Undo for that one change.
+  const done = (result, message) => {
+    if (result?.outcome === 'success' && result.eventId) toast({ message, action: { label: T.toast.undo, run: () => undo({ eventId: result.eventId }) } });
+    else if (result && result.outcome !== 'no_op') toast({ message: T.toast.failed });
+  };
+  const copyId = async () => {
+    try { await navigator.clipboard.writeText(`DUDU-${id}`); toast({ message: T.toast.copied(`DUDU-${id}`) }); } catch { toast({ message: T.toast.failed }); }
+  };
+  const source = issue ? firstLink(issue.sourceRef) : null;
+  const snoozed = issue?.snoozeUntil != null && issue.snoozeUntil > now;
   const position = ids.indexOf(id);
   const due = issue ? dueInfo(issue.dueAt, now) : null;
   const askedAt = log.find((entry) => entry.kind === 'blocked')?.at ?? null;
@@ -134,7 +170,31 @@ export function IssueDetail({ request, id, ids, logo, onBack, onOpen }) {
         ) : !issue ? null : (
           <div className="mx-auto flex w-full max-w-[960px] gap-14 px-6 pt-10 pb-16">
             <div className="flex min-w-0 flex-1 flex-col gap-4">
-              <EditableText value={issue.title} label={T.detail.untitled} placeholder={T.detail.untitled} className="text-2xl/8 font-semibold" onSave={(title) => change({ title })} />
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <EditableText value={issue.title} label={T.detail.untitled} placeholder={T.detail.untitled} className="text-2xl/8 font-semibold" onSave={(title) => change({ title })} />
+                </div>
+                <div className="flex shrink-0 items-center gap-0.5 pt-1">
+                  <Button variant="ghost" size="icon-sm" aria-label={T.detail.copyId} title={T.detail.copyId} onClick={copyId}><Copy /></Button>
+                  <Button
+                    variant="ghost" size="icon-sm" aria-label={issue.session ? T.detail.openSession : T.detail.openSource} title={issue.session ? T.detail.openSession : T.detail.openSource}
+                    disabled={!issue.session && !source} onClick={() => (issue.session ? openSession?.(issue) : window.open(source, '_blank', 'noopener,noreferrer'))}
+                  >
+                    <ExternalLink />
+                  </Button>
+                  <SnoozeMenu
+                    snoozedUntil={snoozed ? issue.snoozeUntil : null}
+                    onSnooze={async (until) => done(await snooze(until), until == null ? T.toast.snoozeCleared : T.toast.snoozed)}
+                  >
+                    <Button
+                      variant="ghost" size="icon-sm" className={cn(snoozed && 'text-warning-foreground')} disabled={!issue.ask && !snoozed}
+                      aria-label={T.detail.snooze} title={snoozed ? T.snooze.until(new Date(issue.snoozeUntil).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })) : T.detail.snooze}
+                    >
+                      <BellOff />
+                    </Button>
+                  </SnoozeMenu>
+                </div>
+              </div>
               <EditableText value={issue.brief} label={T.detail.description} placeholder={T.detail.description} multiline className="text-[15px]/6" onSave={(brief) => change({ brief })} />
               <hr className="my-2" />
               <h2 className="font-semibold">{T.detail.activity}</h2>
@@ -142,23 +202,38 @@ export function IssueDetail({ request, id, ids, logo, onBack, onOpen }) {
                 {nextLogCursor && <li><Button variant="ghost" size="sm" onClick={loadEarlier}>{T.detail.loadEarlier}</Button></li>}
                 {[...log].reverse().map((entry) => <LogLine key={entry.id} entry={entry} logo={logo} now={now} />)}
               </ul>
-              {issue.ask && issue.agentState === 'needs_you' && <AskCard issue={issue} since={askedAt} now={now} />}
+              {issue.ask && issue.agentState === 'needs_you' && <AskCard issue={issue} since={askedAt} now={now} onReply={reply} />}
+              {askResult === issue.id && issue.status === 'done' && !issue.outcome && (
+                <ResultPrompt onSkip={() => setAskResult(null)} onSave={async (outcome) => { setAskResult(null); await change({ outcome }); }} />
+              )}
               <Composer onSend={addNote} />
             </div>
             <aside className="flex w-[220px] shrink-0 flex-col gap-6 pt-1" aria-label={T.detail.properties}>
               <div>
                 <Section>{T.detail.properties}</Section>
-                <StatusMenu status={issue.status} onSelect={(next) => change({ status: next })}>
+                <StatusMenu
+                  status={issue.status}
+                  onSelect={async (next) => {
+                    const result = await change({ status: next });
+                    done(result, next === 'done' ? T.toast.markedDone : T.toast.status(T.status[next]));
+                    if (next === 'done' && result?.outcome === 'success') setAskResult(issue.id);
+                  }}
+                >
                   <button type="button" className={propertyButton}><StatusIcon status={issue.status} />{T.status[issue.status]}</button>
                 </StatusMenu>
-                <PriorityMenu priority={issue.priority} onSelect={(next) => change({ priority: next })}>
+                <PriorityMenu priority={issue.priority} onSelect={async (next) => done(await change({ priority: next }), T.toast.priority(T.priority[next]))}>
                   <button type="button" className={propertyButton}><PriorityIcon priority={issue.priority} />{T.priority[issue.priority]}</button>
                 </PriorityMenu>
-                <div className={cn(propertyButton, 'cursor-default hover:bg-transparent')}>
-                  <AgentAvatar agent={issue.agent} state={issue.agentState} />
-                  {issue.agent ? (AGENT_NAMES[issue.agent] ?? issue.agent) : T.noAgent}
-                </div>
-                <DueMenu dueAt={issue.dueAt} onChange={(dueAt) => change({ dueAt })}>
+                <AgentMenu
+                  agent={issue.agent} note={T.detail.agentNote}
+                  onSelect={async (next) => done(await assign(next), next ? T.toast.assigned(AGENT_NAMES[next] ?? next) : T.toast.unassigned)}
+                >
+                  <button type="button" className={propertyButton}>
+                    <AgentAvatar agent={issue.agent} state={issue.agentState} />
+                    {issue.agent ? (AGENT_NAMES[issue.agent] ?? issue.agent) : T.noAgent}
+                  </button>
+                </AgentMenu>
+                <DueMenu dueAt={issue.dueAt} onChange={async (dueAt) => done(await change({ dueAt }), dueAt == null ? T.toast.dueRemoved : T.toast.dueSet)}>
                   <button type="button" className={cn(propertyButton, due && DUE_TONE[due.kind])} title={due?.hint}>
                     <CalendarDays className="size-4" aria-hidden="true" />{due ? due.text : T.detail.noDueDate}
                   </button>

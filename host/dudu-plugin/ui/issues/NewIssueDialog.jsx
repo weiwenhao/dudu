@@ -5,9 +5,9 @@ import { T } from '../strings.js';
 
 /**
  * "New issue": a title and, if you like, a description. The issue starts in Todo with no project and no agent (the store's
- * defaults); everything else is set from its own page.
+ * defaults), or with the value of the group it was added from (`preset`); everything else is set from its own page.
  */
-export function NewIssueDialog({ open, onOpenChange, onCreate }) {
+export function NewIssueDialog({ open, onOpenChange, onCreate, preset = {} }) {
   const [title, setTitle] = useState('');
   const [brief, setBrief] = useState('');
   const [busy, setBusy] = useState(false);
@@ -18,7 +18,7 @@ export function NewIssueDialog({ open, onOpenChange, onCreate }) {
     setBusy(true);
     setProblem('');
     try {
-      const result = await onCreate({ title: title.trim(), ...(brief.trim() ? { brief: brief.trim() } : {}) });
+      const result = await onCreate({ ...preset, title: title.trim(), ...(brief.trim() ? { brief: brief.trim() } : {}) });
       if (result?.outcome !== 'success') throw new Error(result?.message || T.newIssue.failed);
       reset();
       onOpenChange(false);

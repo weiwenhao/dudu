@@ -16,7 +16,7 @@ function setup() {
 test('every action of the page is served and nothing else', async () => {
   const { call, close } = setup();
   try {
-    assert.deepEqual([...ISSUE_ACTIONS].sort(), ['add', 'assign', 'cancel', 'complete', 'counts', 'events', 'export', 'facets', 'get', 'list', 'log', 'search', 'snooze', 'undo', 'update']);
+    assert.deepEqual([...ISSUE_ACTIONS].sort(), ['add', 'assign', 'cancel', 'complete', 'counts', 'events', 'export', 'facets', 'get', 'list', 'log', 'reply', 'search', 'snooze', 'undo', 'update']);
     assert.equal((await call('nope', {})).status, 404);
     assert.equal((await call('constructor', {})).status, 404, 'an action name is never looked up on the object prototype');
   } finally { close(); }
@@ -83,4 +83,24 @@ test('a wrong value is an answer, a body that is not a JSON object is a 400', as
       assert.equal(typeof bad.body.error, 'string');
     }
   } finally { close(); }
+});
+
+test('a reply goes into the log as a decision, clears the question and is handed on to the agent\'s session', async () => {
+  const issues = createIssues({ file: ':memory:' });
+  const handed: Array<[number, string]> = [];
+  const api = createIssuesApi({ issues, onReply: (issue: { id: number }, text: string) => { handed.push([issue.id, text]); } });
+  try {
+    const { issue } = issues.add({ title: '归档报销单', status: 'in_progress', agent: 'deepseek', ask: '第 3 张发票缺少抬头' });
+    const response = await api.handle('reply', new Request('http://dsh.test/', { method: 'POST', body: JSON.stringify({ id: issue.id, text: '抬头用公司全称' }) }));
+    const answer = await response.json();
+    assert.equal(answer.outcome, 'success');
+    assert.equal(answer.issue.ask, '');
+    assert.equal(answer.issue.agentState, 'idle', 'the Needs you mark goes with the question');
+    assert.deepEqual(handed, [[issue.id, '抬头用公司全称']]);
+    const { log } = issues.get(issue.id);
+    assert.ok(log.some((entry: { kind: string; text: string; actor: string }) => entry.kind === 'decision' && entry.text === '抬头用公司全称' && entry.actor === 'owner'));
+    const empty = await (await api.handle('reply', new Request('http://dsh.test/', { method: 'POST', body: JSON.stringify({ id: issue.id, text: '  ' }) }))).json();
+    assert.equal(empty.outcome, 'needs_clarification', 'an empty reply is refused and is not handed on');
+    assert.equal(handed.length, 1);
+  } finally { issues.close(); }
 });

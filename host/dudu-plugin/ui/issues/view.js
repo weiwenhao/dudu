@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { storeFilter } from './dates.js';
 
 const DAY = 86400000;
 const HOUR = 3600000;
@@ -27,9 +28,10 @@ const COMPLETED_DAYS = { day: 1, week: 7, month: 30 };
  * store compares with when issues were finished; it is rounded to the hour so the request, and with it the list, does not
  * change on every render.
  */
-export function listRequest(tab, view, now = Date.now()) {
+export function listRequest(tab, view, now = Date.now(), search = '') {
   const request = { tab };
-  const filter = { ...view.filter };
+  const filter = storeFilter(view.filter, now);
+  if (/[\p{L}\p{N}]/u.test(search)) filter.q = search.trim(); // a search with no word in it would only be refused
   if (view.completed === 'none') filter.completedFrom = Number.MAX_SAFE_INTEGER;
   else if (COMPLETED_DAYS[view.completed]) filter.completedFrom = Math.floor(now / HOUR) * HOUR - COMPLETED_DAYS[view.completed] * DAY;
   if (Object.keys(filter).length) request.filter = filter;

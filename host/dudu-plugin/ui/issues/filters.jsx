@@ -1,5 +1,6 @@
-import { Activity, Bot, Box, Plug } from 'lucide-react';
+import { Activity, Bot, Box, CalendarDays, Plug } from 'lucide-react';
 import { T } from '../strings.js';
+import { DATE_FIELDS } from './dates.js';
 import { PriorityIcon, StatusIcon } from './icons.jsx';
 import { AGENT_NAMES, AGENT_STATE_ORDER, PRIORITY_ORDER, STATUS_ORDER } from './model.js';
 
@@ -7,8 +8,14 @@ const SOURCE_ORDER = ['owner', 'dudu', 'connector', 'session'];
 const fixed = (order, label, counts, icon) => order.map((value) => ({ value, label: label(value), count: counts?.[value] ?? 0, icon: icon?.(value) }));
 const found = (list) => new Map((list ?? []).map((entry) => [entry.key, entry.count]));
 
+// A date field has ready-made ranges and no counts; one is ticked at a time.
+const dateField = (key) => ({
+  name: T.dates[key], order: DATE_FIELDS[key], label: (value) => T.dates[value],
+  options: () => DATE_FIELDS[key].map((value) => ({ value, label: T.dates[value], count: null })),
+});
+
 /**
- * The fields of the filter menu, in the design's order. `label(value)` is how a ticked value reads on a chip; `options(data)` is the
+ * The fields a filter can hold, in the design's order. `label(value)` is how a ticked value reads on a chip; `options(data)` is the
  * list the second menu shows: `{ value, label, count, icon }`, counted from the list's own counts (status, priority) or from the
  * store's facets (the rest). `order` fixes the order a chip lists its values in.
  */
@@ -38,9 +45,20 @@ export const FILTER_FIELDS = {
     name: T.fields.source, rowIcon: <Plug className="size-4 text-muted-foreground" aria-hidden="true" />, order: SOURCE_ORDER, label: (value) => T.source[value],
     options: ({ facets }) => { const counts = found(facets?.source); return SOURCE_ORDER.map((value) => ({ value, label: T.source[value], count: counts.get(value) ?? 0 })); },
   },
+  due: dateField('due'),
+  created: dateField('created'),
+  updated: dateField('updated'),
 };
 
-// The menu's groups, a line between each (Dates, in the first, is not built yet: the design names it without its options).
-export const FILTER_GROUPS = [['status', 'agent', 'agentState', 'priority'], ['project'], ['source']];
+// The rows of the menu: a field each, except Dates, which holds three.
+const rowOf = (key) => ({ name: FILTER_FIELDS[key].name, rowIcon: FILTER_FIELDS[key].rowIcon, fields: [key] });
+export const FILTER_ROWS = {
+  status: rowOf('status'), agent: rowOf('agent'), agentState: rowOf('agentState'), priority: rowOf('priority'),
+  dates: { name: T.dates.name, rowIcon: <CalendarDays className="size-4 text-muted-foreground" aria-hidden="true" />, fields: ['due', 'created', 'updated'] },
+  project: rowOf('project'), source: rowOf('source'),
+};
+
+// The menu's groups, a line between each.
+export const FILTER_GROUPS = [['status', 'agent', 'agentState', 'priority', 'dates'], ['project'], ['source']];
 
 export const FILTER_KEYS = Object.keys(FILTER_FIELDS);

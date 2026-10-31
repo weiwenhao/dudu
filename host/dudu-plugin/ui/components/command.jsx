@@ -29,6 +29,17 @@ export const CommandEmpty = React.forwardRef(function CommandEmpty(props, ref) {
   return <CommandPrimitive.Empty ref={ref} data-slot="command-empty" className="py-6 text-center text-sm text-muted-foreground" {...props} />;
 });
 
+/** A run of rows under a small heading (the Dates part of the filter menu has three). */
+export const CommandGroup = React.forwardRef(function CommandGroup({ className, ...props }, ref) {
+  return (
+    <CommandPrimitive.Group
+      ref={ref} data-slot="command-group"
+      className={cn('overflow-hidden text-foreground [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:text-muted-foreground', className)}
+      {...props}
+    />
+  );
+});
+
 export const CommandSeparator = React.forwardRef(function CommandSeparator({ className, ...props }, ref) {
   return <CommandPrimitive.Separator ref={ref} data-slot="command-separator" className={cn('-mx-1.5 my-1.5 h-px bg-border', className)} {...props} />;
 });

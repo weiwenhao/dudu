@@ -46,7 +46,13 @@ export const T = {
     needsYou: 'Needs you', untitled: 'Untitled', description: 'Add description…', loadEarlier: 'Load earlier', notFound: 'This issue does not exist.', back: 'Back to Issues',
     previous: 'Previous issue', next: 'Next issue', position: (index, total) => `${index} / ${total}`, noDueDate: 'No due date', noProjectSet: 'No project',
     setDue: 'Set due date', clearDue: 'Clear', dueDate: 'Due date', setPriority: 'Set priority…',
+    // NEW: the buttons beside the title, the agent menu and the reply box (the doc names them; the words are mine).
+    copyId: 'Copy ID', openSession: 'Open session', openSource: 'Open source', snooze: 'Snooze', setAgent: 'Set agent…',
+    agentNote: 'A new session starts with the log of this issue as its first message. The old session is closed.',
+    reply: 'Reply…', sendReply: 'Send reply', result: 'Add a result…', saveResult: 'Save', skipResult: 'Skip',
   },
+  // NEW: Snooze hides what an agent asked, until the time chosen; the status does not change.
+  snooze: { laterToday: 'Later today', tomorrow: 'Tomorrow', nextWeek: 'Next week', clear: 'Clear snooze', until: (date) => `Snoozed until ${date}` },
   activity: {
     you: 'You', justNow: 'just now', minutesAgo: (n) => `${n} min ago`, hoursAgo: (n) => (n === 1 ? '1 h ago' : `${n} h ago`), yesterday: 'Yesterday',
     created: 'created the issue', createdFromMessage: 'created the issue from a message', createdFromSession: 'created the issue from a session',
@@ -59,6 +65,26 @@ export const T = {
     title: 'New issue', description: 'Create an issue with a title and an optional description.', titlePlaceholder: 'Issue title', briefPlaceholder: 'Add description…',
     cancel: 'Cancel', create: 'Create issue', failed: 'Could not create the issue',
   },
+  // NEW: ticking rows for a bulk change, and the bar that appears.
+  bulk: { toolbar: 'Bulk actions', selected: (count) => `${count} selected`, clear: 'Clear selection', select: (title) => `Select ${title}` },
+  // NEW: what the bar at the bottom says after a change, with its Undo.
+  toast: {
+    undo: 'Undo', markedDone: 'Marked as Done', status: (name) => `Status set to ${name}`, priority: (name) => `Priority set to ${name}`,
+    dueSet: 'Due date set', dueRemoved: 'Due date removed', assigned: (name) => `Assigned to ${name}`, unassigned: 'Agent removed',
+    updated: (count) => (count === 1 ? 'Updated 1 issue' : `Updated ${count} issues`), copied: (text) => `Copied ${text}`,
+    snoozed: 'Snoozed', snoozeCleared: 'Snooze cleared', failed: 'Could not save the change',
+  },
+  // NEW: the Dates row of the filter menu: three fields with ready-made ranges.
+  dates: {
+    name: 'Dates', due: 'Due date', created: 'Created', updated: 'Updated',
+    overdue: 'Overdue', today: 'Today', next7: 'Next 7 days', next30: 'Next 30 days', day: 'Past day', week: 'Past week', month: 'Past month',
+  },
+  // NEW: the search box and the footer of All issues.
+  search: { label: 'Search issues', placeholder: 'Search issues…' },
+  total: (count) => (count === 1 ? '1 issue' : `${count.toLocaleString('en-US')} issues`),
+  // NEW: the + of a group bar or board column, and the menu of a board column.
+  addTo: (name) => `Add issue to ${name}`,
+  lane: { options: (name) => `${name} options`, collapse: 'Collapse column', expand: 'Expand column' },
   agentState: { working: 'Working', needs_you: 'Needs you', stuck: 'Stuck', idle: 'Idle' },
   noAgent: 'No agent',
   today: 'Today',
