@@ -102,7 +102,7 @@ dudu 插件（唯一依赖 DSH 的地方；两边共用同一套处理函数）
   settings.json  issues.db  index/turns.db  index/sessions.db
 ```
 
-SQLite 文件不放进项目文件夹：用户可能把它指到同步盘，SQLite 在同步盘上会坏。`issues.db`（含上下文日志）是真相、不能重建，所以要能导出成可读文件；`index/` 随时可以删掉重建。
+SQLite 文件不放进项目文件夹：用户可能把它指到同步盘，SQLite 在同步盘上会坏。`issues.db`（含上下文日志）是真相、不能重建，所以要能导出成可读文件；`index/sessions.db` 随时可以删掉重建；`index/turns.db` 不行：它存着每一轮的原文和整理的暂存，只能靠接线时从 DSH 的日志重新喂回去（`capture` 按 key 去重，喂两遍不会重复）。
 
 ## 3. 功能设计
 
@@ -323,7 +323,7 @@ Issue 是嘟嘟里唯一的工作单位：一件要办的事，来自连接器�
 嘟嘟会话的工作目录，也是嘟嘟的 Markdown 文件所在。
 
 - 你可以自己指定；不指定就用默认的 `<DSH_HOME>/dudu/home`（`DSH_HOME` 默认 `~/.dsh`）。第一次打开自动创建，放入模板文件（`AGENTS.md`、`SOUL.md`、`USER.md`、`MEMORY.md`、`CONNECTORS.md`、`TRIAGE.md`、`ASSIGN.md`），以它为工作区创建嘟嘟会话，路径写进 `settings.json`。模板写成字符串的 JS 模块（打包只跟 import 走）。
-- 不能在临时目录：用 `fs.realpath` 之后，和 `os.tmpdir()`、`/tmp`、`/private/tmp`、`/var/folders`、Windows 的 `%TEMP%` 比，指定的和默认的都检查，包括经过符号链接指进去的。隔离的测试环境用环境变量 `DUDU_ALLOW_TEMP_HOME=1` 放行，只给测试用。
+- 不能在临时目录：用 `fs.realpath` 之后，和 `os.tmpdir()`、`/tmp`、`/private/tmp`、`/var/tmp`、`/var/folders`、环境变量 `TMPDIR`、`TMP`、`TEMP` 比，指定的和默认的都检查，包括经过符号链接指进去的。隔离的测试环境用环境变量 `DUDU_ALLOW_TEMP_HOME=1` 放行，只给测试用。
 - 必须是专用的：目录非空、又没有嘟嘟的标记（`AGENTS.md` 第一行 `<!-- dudu-home -->`）时拒绝，免得把别的项目搅进来。
 - 工作区由插件明确指定，不用 DSH 的默认工作区。
 - 改位置是迁移：搬内容，让嘟嘟会话改用新的工作区（验证 9）。手机上只显示路径，不选文件夹。
@@ -694,9 +694,9 @@ Issues 前端怎么搭（2026-10-31 查的，星数和更新日期来自 GitHub�
 ```
 host/assistant/
   segment.mjs                          Intl.Segmenter 切词，memory 和 issues 共用
-  project.mjs  templates.mjs           项目文件夹：解析、校验、首次创建、设置；模板（字符串）
+  project.mjs  templates.mjs           项目文件夹：解析、校验、首次创建、迁移；模板（字符串）（已做，2026-10-31）
   memory/    index.mjs files.mjs turns.mjs skills.mjs
-             createMemory({ dir, llm }) → { capture, remember, recall, context, forget, records, tidy }
+             createMemory({ dir, indexDir, llm, now }) → { capture, remember, recall, context, forget, records, update, tidy, undoReview, reviews, rules, skills, close }（已做，2026-10-31；还有 secrets.mjs、tidy.mjs）
   issues/    index.mjs schema.mjs api.mjs（已做，2026-10-31）
              createIssues({ file, now, sessionState, actor }) → { list, get, add, update, log, assign, snooze, complete, cancel, search, facets, counts, undo, events, export, close }；api.mjs 是桌面的 `POST /api/dudu/issues/<动作>`（页面就是主人，body 里的 `actor` 不算），由 `host/dudu-plugin/index.mjs` 的 `startIssues` 接上，库在 `<DSH_HOME>/dudu/assistant/issues.db`
   sessions/  index.mjs states.mjs readers.mjs（已做，2026-10-31）
@@ -724,7 +724,7 @@ tests/assistant-*.test.ts
 ### 7.3 测试和验收
 
 - 单元：`npm test`，每个库有自己的测试文件；规模测试（5 万条）默认不跑，用环境变量打开。
-- 固定场景：评测用的 3 天场景（242 轮、20 个问题）收进 `tests/`，≥ 19/20，改过的事实 4/4。
+- 固定场景：3 天、61 轮、10 个问题（含改过的事实、被取代的决定、没做完的待办）收进 `tests/assistant-memory.test.ts`，全部命中；对话和问题都是写代码的人编的，只证明流程通，不证明规模和真实对话上的质量（242 轮的旧评测不在仓库里）。
 - 会话读取：用假的存储目录做用例（Claude 的 jsonl 和注册表、Codex 的线程），每条状态规则一个用例。
 - issue：六个状态的流转（会话开始 → In Progress，做完 → In Review，选 Done → Done，撤销回到之前）；会话的每种状态对应哪个智能体状态；`ask` 有内容时头像上有 Needs you 标记，筛选 Agent state 找得到；推迟只藏 `ask`；标 Done 时会话还在跑不被打断；优先级由嘟嘟综合影响和工作量得出，你改过的不被覆盖；日志追加、可补充，读完能交给另一个智能体。
 - Issues 小组件：按 project 和按 Status 分组都对；五万条时列表不卡（只渲染看得见的行）；小组件窄时按顺序藏列（先 Project 胶囊，再日期）；弹层（筛选、显示选项、状态菜单）不被格子裁掉；浅色深色都读得清；详情页窄到放不下两栏时，属性移到标题下面；Tailwind 的样式不漏到 DSH 别的页面（拿真实页面前后对比）。
