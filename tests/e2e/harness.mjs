@@ -10,7 +10,7 @@
 //
 // The URL `dsh web` prints carries a login token: it is read from the process in memory, never printed or written down.
 import { execFile, spawn } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -23,6 +23,15 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const STARTUP_MS = 90_000;
 // The DSH to test against: the installed one, or another build's CLI (the Desktop app ships its own: see AGENTS.md) named in DUDU_E2E_DSH.
 const DSH = process.env.DUDU_E2E_DSH || 'dsh';
+
+/**
+ * Dashboard commands go through the three icons in the top right, above the board. The same in a real DSH and in the standalone fixture.
+ */
+export async function panelAction(page, action) {
+  const entry = page.getByRole('toolbar', { name: 'Dudu menu', exact: true });
+  await entry.getByRole('button', { name: action, exact: true }).click();
+  if (action === 'Edit layout') await page.getByRole('toolbar', { name: 'Edit layout', exact: true }).waitFor();
+}
 
 /** The packaged plugin of this checkout (built fresh unless DUDU_E2E_TGZ names one that already is). */
 async function packagedPlugin() {
@@ -43,7 +52,7 @@ async function waitForUrl(child, output) {
   throw new Error('dsh web did not print its address in time.');
 }
 
-export async function startDudu({ colorScheme = 'light', viewport = { width: 1440, height: 900 }, patch = '', files = {}, env: moreEnv = {}, model } = {}) {
+export async function startDudu({ colorScheme = 'light', viewport = { width: 1440, height: 900 }, patch = '', files = {}, env: moreEnv = {}, model, plugins = [] } = {}) {
   const tgz = await packagedPlugin();
   const folder = await mkdtemp(join(tmpdir(), 'dudu-e2e-'));
   const home = join(folder, 'dsh');
@@ -61,20 +70,42 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
   // A scripted model on a local port, which DSH is told to use as its default: no real model, no real credential. Its key is a made-up one.
   const mock = model ? await startMockModel(model === true ? {} : model) : null;
   if (mock) env.DUDU_MOCK_MODEL_KEY = 'mock-key';
+  if (mock && model.nativeCodex) {
+    await mkdir(join(user, '.codex'), { recursive: true });
+    await writeFile(join(user, '.codex', 'config.toml'), [
+      'model = "gpt-5.5"', 'model_provider = "dudu_e2e"', 'model_reasoning_effort = "low"',
+      'sandbox_mode = "workspace-write"',
+      '[model_providers.dudu_e2e]', 'name = "Test model"', `base_url = "${mock.url}"`,
+      'env_key = "DUDU_MOCK_MODEL_KEY"', 'wire_api = "responses"', 'supports_websockets = false',
+    ].join('\n'));
+  }
   const modelPatch = mock ? [
     '- id: llm-pi-ai', '  config:', '    providers:', '      mock:', '        displayName: Mock', '        api: openai-completions',
-    `        baseURL: ${mock.url}`, '        apiKeyEnv: DUDU_MOCK_MODEL_KEY', '        models:', '          - id: mock-1', '            name: Mock', '            contextWindow: 100000',
+    `        baseURL: ${mock.url}`, '        apiKeyEnv: DUDU_MOCK_MODEL_KEY',
+    `        models: ${JSON.stringify(model.models ?? [{ id: 'mock-1', name: 'Mock', contextWindow: 100000 }])}`,
     '- id: agent-default-model', '  config:', '    provider: mock', '    model: mock-1',
   ].join('\n') : '';
-  const state = { folder, child: null, browser: null, stopped: false };
+  const state = { folder, child: null, browser: null, stopped: false, output: { text: '' } };
+  const stopChild = async () => {
+    if (!state.child || state.child.exitCode !== null) return;
+    state.child.kill('SIGTERM');
+    await new Promise((done) => {
+      const timer = setTimeout(() => { state.child.kill('SIGKILL'); done(); }, 10_000);
+      state.child.once('exit', () => { clearTimeout(timer); done(); });
+    });
+  };
+  const launch = async (port = '0') => {
+    const output = { text: '' };
+    state.output = output;
+    state.child = spawn(DSH, ['web', '--host', '127.0.0.1', '--no-open', '--port', port], { env, cwd: folder, stdio: ['ignore', 'pipe', 'pipe'] });
+    for (const stream of [state.child.stdout, state.child.stderr]) stream.on('data', (chunk) => { output.text += chunk; });
+    return waitForUrl(state.child, output);
+  };
   const stop = async () => {
     if (state.stopped) return;
     state.stopped = true;
     await state.browser?.close().catch(() => {});
-    if (state.child && state.child.exitCode === null) {
-      state.child.kill('SIGTERM');
-      await new Promise((done) => { const timer = setTimeout(() => { state.child.kill('SIGKILL'); done(); }, 10_000); state.child.once('exit', () => { clearTimeout(timer); done(); }); });
-    }
+    await stopChild();
     await mock?.stop().catch(() => {});
     await rm(folder, { recursive: true, force: true });
   };
@@ -84,16 +115,14 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
     const archive = join(folder, `dudu-e2e-${process.pid}-${Date.now()}.tgz`);
     await copyFile(tgz, archive);
     await run(DSH, ['plugin', '--profile', 'web', 'add', `file:${archive}`], { env, cwd: folder, maxBuffer: 16 * 1024 * 1024 });
+    for (const plugin of plugins) await run(DSH, ['plugin', '--profile', 'web', 'add', plugin], { env, cwd: folder, maxBuffer: 16 * 1024 * 1024 });
     // The phone port is not bound in the web runtime, but a fixed one must never be asked for; the notice is the first-run modal.
     await writeFile(join(home, 'profiles', 'web', 'cordis.patch.yml'), [
       '- id: dudu', '  config:', '    port: 0',
       '- id: ui-settings-general', '  name: "@deepseek-ai/dsh-client-ui-settings-general"', '  config:', '    welcomeNoticeVersion: 2026-09-28.1', modelPatch, patch,
     ].join('\n') + '\n');
 
-    const output = { text: '' };
-    state.child = spawn(DSH, ['web', '--host', '127.0.0.1', '--no-open', '--port', '0'], { env, cwd: folder, stdio: ['ignore', 'pipe', 'pipe'] });
-    for (const stream of [state.child.stdout, state.child.stderr]) stream.on('data', (chunk) => { output.text += chunk; });
-    const login = await waitForUrl(state.child, output);
+    const login = await launch();
     const base = login.origin;
 
     state.browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -106,6 +135,19 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
     const pages = new Set();
     const dudu = {
       base, context, folder, home, viewport, model: mock,
+      diagnostics: () => state.output.text.replace(/https?:\/\/\S+/g, '[URL redacted]'),
+      /** Change only this test profile's package selection; restart() applies it on runtimes without profile hot reload. */
+      async removePlugin(name) {
+        await run(DSH, ['plugin', '--profile', 'web', 'remove', name], { env, cwd: folder, maxBuffer: 16 * 1024 * 1024 });
+      },
+      /** Restart the same isolated home, keeping its sessions, model and browser origin. */
+      async restart() {
+        await stopChild();
+        const next = await launch(new URL(base).port);
+        const auth = await context.newPage();
+        try { await auth.goto(next.href); await auth.waitForLoadState('domcontentloaded'); }
+        finally { await auth.close(); }
+      },
       /** POST to the plugin as the logged-in browser does; the answer is the JSON the page would get. */
       async api(action, body = {}) {
         const response = await context.request.post(`${base}/api/dudu/${action}`, { data: body });
@@ -113,7 +155,7 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
         return response.json();
       },
       /** A new page, on the 嘟嘟 panel. `views` is what the page remembers of its display options (per tab), set before it loads. */
-      async openPanel({ views, viewport: size } = {}) {
+      async openPanel({ views, viewport: size, selectPanel = true } = {}) {
         const page = await context.newPage();
         if (size) await page.setViewportSize(size);
         // The browser keeps the display options per origin, so a test starts from what it names (nothing, by default): once per tab,
@@ -128,7 +170,7 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
         pages.add(page);
         page.once('close', () => pages.delete(page));
         await page.goto(`${base}/`);
-        await page.getByRole('button', { name: '嘟嘟' }).first().click({ timeout: 60_000 });
+        if (selectPanel) await page.getByRole('button', { name: 'Dudu' }).first().click({ timeout: 60_000 });
         return page;
       },
       /** After a failed test: a picture of every page still open (in .local/e2e-failures, or DUDU_E2E_SHOTS), then close them all. */

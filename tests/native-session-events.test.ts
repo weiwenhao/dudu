@@ -67,6 +67,23 @@ test('a loaded session is a log DSH reads: contiguous, with turns and steps that
   assert.deepEqual(events[3].data, { provider: 'claude', model: 'default', reasoningEffort: 'medium' });
 });
 
+test('imports reserve an empty system head before any user content; incremental sync never adds another', () => {
+  const { events } = build();
+  const head = events.find((event: any) => event.surfaceOp);
+  assert.equal(head?.type, 'system/message');
+  assert.deepEqual(head?.data, {
+    turn: 1, step: 1, message: {
+      id: 'id-1', role: 'system', source: { kind: 'system-prompt' }, content: [],
+    },
+  });
+  assert.equal(events.filter((event: any) => event.type === 'system/message').length, 1);
+  const update = buildSessionEvents({
+    history: history(), route: 'claude', model: 'default', sessionId: 'session-new',
+    configure: false, offset: events.length, turnOffset: 3,
+  }).events;
+  assert.equal(update.filter((event: any) => event.type === 'system/message').length, 0);
+});
+
 test('a message nobody answered becomes a turn the person stopped, so no step is left open', () => {
   const { events } = build();
   const ends = events.filter((event: any) => event.type === 'turn/end').map((event: any) => event.data.reason.kind);

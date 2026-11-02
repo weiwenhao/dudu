@@ -49,6 +49,8 @@ macOS 本地开发和更新可直接运行 `npm run desktop:update`。脚本打�
 代码指纹和服务探测全部匹配后才报告成功。热重载不可用时自动正常退出并重新打开
 DSH；运行中的任务可能使 DSH 显示自己的退出确认，脚本不会强制终止进程。
 可用 `-- --restart` 明确选择重启，`-- --app "/path/DeepSeek Harness.app"` 指定应用。
+每次打包、安装后都重启 Desktop，可直接运行 `npm run desktop:install`；
+它复用同一更新脚本，相当于 `npm run desktop:update -- --restart`。
 日志、结果回执和更新前的 profile 文件保存在 `.local/desktop-updates/`；
 原有配对和连接配置保留。
 安装包路径包含源码指纹，同版本修改也会安装新的包，避免包管理器复用旧缓存。

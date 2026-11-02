@@ -10,14 +10,15 @@
  * looking like the middle of this one. A turn nothing is left of is dropped.
  */
 export function settled(turns) {
-  for (const turn of turns) turn.steps = turn.steps.filter((step) => step.blocks.length > 0);
+  for (const turn of turns) turn.steps = turn.steps.filter((step) => step.input || step.blocks.length > 0);
   for (let i = turns.length - 1; i >= 0; i--) {
     const turn = turns[i];
+    if (turn.complete === false) break;
     const last = turn.steps.at(-1);
     if (last?.calls.length) {
       last.blocks = last.blocks.filter((block) => block.type !== 'tool-call');
       last.calls = [];
-      if (!last.blocks.length) turn.steps.pop();
+      if (!last.input && !last.blocks.length) turn.steps.pop();
     }
     if (turn.steps.length) break;
     turns.pop();

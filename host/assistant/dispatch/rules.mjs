@@ -57,6 +57,13 @@ function namedBy(right) {
   return lowest;
 }
 
+/** A direct permission statement in the current user's own words, not an agent's request or an ambiguous "yes". */
+export function explicitAccess(text) {
+  const statement = String(text ?? '').trim();
+  if (/[?？]|```/.test(statement) || !/允许|同意|授权|可以改|设(?:置)?(?:为|成)|改成|切(?:换)?(?:为|到)|\b(?:allow|grant|set|switch)\b/i.test(statement)) return null;
+  return namedBy(statement);
+}
+
 const plain = (text) => String(text ?? '').toLowerCase().normalize('NFKC').replace(/[\s\p{P}\p{S}]+/gu, '');
 
 /** Whether two kinds of issue are the same sort of thing: one contains the other (at least two characters). "Redshift" is "Redshift 账号". */
@@ -96,6 +103,28 @@ export function allowedAccess(assign, issue) {
     if (mode !== null && (allowed === null || RANK[mode] < RANK[allowed])) allowed = mode;
   }
   return allowed ?? 'read-only';
+}
+
+/** Literal folder/model choices from matching owner rules. Never take a working directory from model output. */
+export function sessionOptions(assign, issue, { home = '' } = {}) {
+  const folders = new Set();
+  const models = new Set();
+  for (const { left, right } of ruleLines(assign)) {
+    if (!left.split(/[、，,;；/|]|\s+和\s+|\s+and\s+|\s+or\s+/i).some((term) => covers(term, issue?.kind))) continue;
+    for (const match of right.matchAll(/`([^`]+)`|"([^"]+)"|'([^']+)'|((?<![\w:/])(?:~\/|\/|[A-Za-z]:[\\/])[^\s，,；;`"']+)/g)) {
+      const value = match[1] ?? match[2] ?? match[3] ?? match[4];
+      if (!/^(?:~\/|\/|[A-Za-z]:[\\/])/.test(value) || /[$\n\r]/.test(value)) continue;
+      if (value.startsWith('~/')) { if (home) folders.add(`${home.replace(/[\\/]$/, '')}/${value.slice(2)}`); }
+      else folders.add(value);
+    }
+    for (const match of right.matchAll(/(?:\bmodel\b|模型)\s*[:：=]?\s*[`"']?([A-Za-z0-9][A-Za-z0-9_.:/-]*)/gi)) models.add(match[1]);
+  }
+  if (folders.size > 1 || models.size > 1) return { problem: 'ASSIGN.md gives conflicting folders or models for this issue.' };
+  return {
+    access: allowedAccess(assign, issue),
+    ...(folders.size ? { cwd: [...folders][0] } : {}),
+    ...(models.size ? { model: [...models][0] } : {}),
+  };
 }
 
 /** What is given: what the model asked for, but never more than is allowed; with no request, what is allowed. */

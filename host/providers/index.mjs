@@ -2,6 +2,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHarnessAdapter, HarnessBridge } from './harness-bridge.mjs';
 import { createMirrorTool, createMirrorTools } from './mirror-tools.mjs';
+import { createHarnessInput } from './input.mjs';
 
 // The providers of DSH: the harnesses installed on this computer. A harness that is found and enabled becomes a
 // model route of its own (`claude`, `codex`); a session that selects the route is run by that harness, and the
@@ -34,21 +35,27 @@ export async function createProviders({ host, providers, folder, log = console }
   let settings = await readSettings(settingsFile);
   const status = new Map();         // provider id -> what the settings page shows
   const registered = new Map();     // route -> { bridge, driver, path, dispose }
-  const mirrored = new Map();       // agent id -> { route, dispose }
+  const mirrored = new Map();       // agent id -> { agent, route, bridge, dispose }
   let closed = false;
+
+  const routeOf = (agent) => host.providerOf?.(agent) ?? agent.options?.provider;
 
   function syncMirrorTools(agent, route) {
     const wanted = registered.get(route)?.bridge;
     const current = mirrored.get(agent.id);
-    if (current?.route === (wanted ? route : undefined)) return;
+    if (current?.agent === agent && current.bridge === wanted) return;
     current?.dispose();
     mirrored.delete(agent.id);
     if (!wanted) return;
+    const disposers = [];
+    const dispose = () => { for (const stop of disposers) { try { stop(); } catch { /* the agent is gone */ } } };
     try {
-      const disposers = createMirrorTools({ bridge: wanted }).map((definition) => agent.ctx.tools.register(definition));
-      mirrored.set(agent.id, { route, dispose: () => { for (const dispose of disposers) { try { dispose(); } catch { /* the agent is gone */ } } } });
+      for (const definition of createMirrorTools({ bridge: wanted })) disposers.push(agent.ctx.tools.register(definition));
+      mirrored.set(agent.id, { agent, route, bridge: wanted, dispose });
     } catch (error) {
+      dispose();
       log.warn?.(`[dudu] Could not register the ${route} tools for a session: ${error.message}`);
+      throw error;
     }
   }
 
@@ -56,6 +63,11 @@ export async function createProviders({ host, providers, folder, log = console }
     const entry = registered.get(provider.route);
     if (!entry) return;
     registered.delete(provider.route);
+    for (const [id, current] of mirrored) {
+      if (current.bridge !== entry.bridge) continue;
+      current.dispose();
+      mirrored.delete(id);
+    }
     entry.dispose();
     void entry.bridge.dispose();
   }
@@ -64,7 +76,14 @@ export async function createProviders({ host, providers, folder, log = console }
     const driver = provider.create({ installation: detection.installation });
     const bridge = new HarnessBridge({
       driver, agentOf: (id) => host.agents.get(id), permissionOf: (agent) => host.permissionOf?.(agent), onLink: host.onLink,
+      eventsOf: host.eventsOf,
+      inputOf: createHarnessInput({ attachments: () => host.attachments?.(), folder: join(folder, 'input-images') }),
     });
+    // AgentOptions keeps the host's default route after restore. Recheck the actual adapter before replaying tools.
+    bridge.beforeStep = (sessionId) => {
+      const agent = host.agents.get(sessionId);
+      if (agent) syncMirrorTools(agent, driver.route);
+    };
     // A tool the catalog does not list (an MCP tool, say) gets its mirror tool when the harness first calls it.
     bridge.onUnknownTool = (sessionId, name) => {
       const agent = host.agents.get(sessionId);
@@ -98,10 +117,11 @@ export async function createProviders({ host, providers, folder, log = console }
       // A refresh is how a new model or a changed login shows up.
       else if (wanted) registered.get(provider.route).driver.refreshModels?.();
     }
+    for (const agent of host.agents.list?.() ?? []) syncMirrorTools(agent, routeOf(agent));
   }
 
   const disposers = [
-    host.on('agent/created', ({ agent }) => syncMirrorTools(agent, agent.options?.provider)),
+    host.on('agent/created', ({ agent }) => syncMirrorTools(agent, routeOf(agent))),
     host.on('session/event', (session, event) => {
       if (event?.type !== 'model/selection') return;
       const agent = host.agents.get(session.id);
@@ -115,8 +135,6 @@ export async function createProviders({ host, providers, folder, log = console }
   ];
 
   await refresh();
-  // Agents that already exist when the plugin loads (a hot reload) get their tools too.
-  for (const agent of host.agents.list?.() ?? []) syncMirrorTools(agent, agent.options?.provider);
 
   const view = () => ({ providers: providers.map((provider) => status.get(provider.id)).filter(Boolean) });
 

@@ -31,7 +31,10 @@ test('the system messages become the system prompt, the rest are user inputs, an
   const answer = await llm([{ role: 'system', content: 'rules' }, { role: 'user', content: 'what came in' }], { signal });
   assert.equal(answer, '{"items":[]}');
   assert.equal(seen[0].provider, 'deepseek-official');
-  assert.equal(seen[0].system, 'rules');
+  assert.ok(seen[0].system.startsWith('rules\n\n'));
+  assert.match(seen[0].system, /Your English name is Dudu/);
+  assert.match(seen[0].system, /named boss, always lowercase/);
+  assert.match(seen[0].system, /Keep quoted messages, source content and protocol identifiers verbatim/);
   assert.deepEqual(seen[0].messages, [{ role: 'user', content: [{ type: 'text', text: 'what came in' }] }]);
   assert.equal(seen[0].signal, signal);
 });

@@ -1,11 +1,11 @@
 // 嘟嘟's settings window in the real thing: the project folder the plugin made, the connectors of its CONNECTORS.md (a real program
 // behind one), the rules, the memory the owner can read and forget from, the skills, the widgets switch, and the issues export.
 import assert from 'node:assert/strict';
-import { chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { after, afterEach, before, test } from 'node:test';
 import type { Page } from 'playwright-core';
-import { startDudu } from './harness.mjs';
+import { panelAction, startDudu } from './harness.mjs';
 
 let dudu: Awaited<ReturnType<typeof startDudu>>;
 let folder: string;
@@ -17,9 +17,9 @@ after(async () => { await dudu?.stop(); });
 afterEach(async (context) => { await dudu.settle(context.name, context.passed === false); });
 
 const settings = async (page: Page, section?: string) => {
-  await page.getByRole('region', { name: 'Dashboard' }).getByRole('button', { name: 'Settings' }).click(); // DSH has a Settings of its own
+  await panelAction(page, 'Settings'); // DSH has a Settings of its own
   const window = page.getByRole('dialog');
-  await window.getByRole('heading', { name: 'Settings' }).waitFor();
+  await window.getByRole('heading', { name: 'Dudu settings' }).waitFor();
   if (section) await window.getByRole('button', { name: section, exact: true }).click();
   return window;
 };
@@ -59,52 +59,29 @@ test('the project folder is made on the first start with the seven files, and Ge
   await page.close();
 });
 
-test('Connectors: every one starts off, only the switch turns it on, a test runs a real program, and Remove can be undone', async () => {
-  const program = join(dudu.folder, 'demo-cli');
-  await writeFile(program, '#!/bin/sh\necho "hi from the demo connector"\n');
-  await chmod(program, 0o755);
+test('Connectors show saved source prompts with deletion and Undo, without switches or execution configuration', async () => {
   await writeFile(join(folder, 'CONNECTORS.md'), `# 连接器
 
 ## 示例读取器
-<!-- id: demo | enabled: false | source: owner | since: 2026-10-31 -->
-读一行字。
+<!-- id: demo | source: owner -->
+每天从收件箱收集需要我回复的合同邮件，保留原文链接。
 
-\`\`\`json
-{ "kind": "cli", "command": ${JSON.stringify(program)}, "allow": [{ "run": "hello", "readOnly": true }, "change"] }
-\`\`\`
-
-## 写坏的
-<!-- id: broken | enabled: false -->
-\`\`\`json
-{ "kind": "cli"
-\`\`\`
+## 项目讨论
+收集项目群里分配给我的工作。
 `);
   const page = await dudu.openPanel();
   const window = await settings(page, 'Connectors');
   const row = window.getByRole('listitem').filter({ hasText: '示例读取器' });
   await row.waitFor();
-  const turnOn = window.getByRole('switch', { name: 'Turn on 示例读取器' });
-  assert.equal(await turnOn.getAttribute('aria-checked'), 'false');
-  await window.getByText('Skipped entries').waitFor();
-  await window.getByText(/Line \d+: .*not valid JSON/).waitFor();
-
-  // Open it: what it may do, read or write; nothing is on until the owner says so.
-  await row.getByRole('button', { name: 'Details of 示例读取器' }).click();
-  await row.getByText('hello', { exact: true }).waitFor();
-  assert.equal(await row.getByText('Read', { exact: true }).count(), 1);
-  assert.equal(await row.getByText('Write', { exact: true }).count(), 1);
-  await turnOn.click();
-  await window.getByRole('switch', { name: 'Turn on 示例读取器' }).and(window.locator('[aria-checked=true]')).waitFor();
-  assert.match(await readFile(join(folder, 'CONNECTORS.md'), 'utf8'), /id: demo \| enabled: true/);
-  assert.match(await readFile(join(folder, 'CONNECTORS.md'), 'utf8'), /## 写坏的/, 'what the owner wrote and the plugin could not read is still in the file');
-
-  await row.getByRole('button', { name: 'Test' }).click();
-  await row.getByText(/^OK · /).waitFor();
-  await row.getByRole('button', { name: 'Remove' }).click();
+  await row.getByText('每天从收件箱收集需要我回复的合同邮件，保留原文链接。').waitFor();
+  assert.equal(await window.getByRole('switch').count(), 0);
+  assert.equal(await window.getByRole('button', { name: 'Test', exact: true }).count(), 0);
+  await row.getByRole('button', { name: 'Remove 示例读取器' }).click();
   await row.waitFor({ state: 'detached' });
   await window.getByText('Removed 示例读取器').waitFor();
   await window.getByRole('button', { name: 'Undo' }).click();
   await window.getByRole('listitem').filter({ hasText: '示例读取器' }).waitFor();
+  assert.match(await readFile(join(folder, 'CONNECTORS.md'), 'utf8'), /## 项目讨论/);
   await page.close();
 });
 
@@ -118,7 +95,7 @@ test('Rules shows the two rule files and Skills the skills; the owner reads and 
   await window.getByText('ASSIGN.md', { exact: true }).waitFor();
 
   await window.getByRole('button', { name: 'Skills', exact: true }).click();
-  await window.getByRole('button', { name: /读飞书/ }).click();
+  await window.getByRole('button', { name: '读飞书', exact: true }).click();
   await window.getByText('先问日程，再问任务。').waitFor();
   await window.getByRole('button', { name: 'Delete' }).click();
   await window.getByText('No skills yet').waitFor();
@@ -169,5 +146,14 @@ test('Widgets: the switch puts a widget on the dashboard and takes it off; Gener
   assert.match(download.suggestedFilename(), /^dudu-issues-\d{4}-\d{2}-\d{2}\.json$/);
   const exported = JSON.parse(await readFile((await download.path()) as string, 'utf8'));
   assert.ok(exported.issues.some((issue: { title: string }) => issue.title === '导出这一件'));
+  await page.close();
+});
+
+test('the assistant settings embed existing provider controls and the phone-control entry', async () => {
+  const page = await dudu.openPanel();
+  const window = await settings(page, 'Providers');
+  await window.getByRole('heading', { name: 'Claude', exact: true }).waitFor();
+  await window.getByRole('heading', { name: 'ChatGPT', exact: true }).waitFor();
+  assert.equal(await window.getByRole('button', { name: 'Phone control', exact: true }).count(), 1);
   await page.close();
 });

@@ -54,13 +54,13 @@ test('a failure that is a status and a body reads as the status and what the bod
 
 test('start makes the session, picks the model, sets the access mode and only then sends the first message', async () => {
   const world = fakeDsh();
-  const { sessions, started } = await startOne(world, { issue: { ref: 'DUDU-7', title: '回复供应商' }, agent: 'claude' });
+  const { sessions, started } = await startOne(world, { issue: { ref: 'APP-7', title: '回复供应商' }, agent: 'claude' });
   assert.deepEqual(started, { outcome: 'success', key: 'dsh:s1', sessionId: 's1', agent: 'claude', provider: 'claude', model: 'default', access: 'read-only', cwd: folder });
   assert.deepEqual(world.calls.filter(([name]) => name !== 'watch').map(([name]) => name), ['models', 'createSession', 'selectModel', 'setAccess', 'prompt']);
-  assert.deepEqual(world.ofKind('createSession')[0][1], { cwd: folder, title: 'DUDU-7 回复供应商' }, 'the sidebar says which issue it is');
+  assert.deepEqual(world.ofKind('createSession')[0][1], { cwd: folder, title: 'APP-7 回复供应商' }, 'the sidebar says which issue it is');
   const named = fakeDsh();
-  const { sessions: other } = await startOne(named, { issue: { ref: 'DUDU-8', title: 'x', project: { name: 'docs', path: folder } } });
-  assert.deepEqual(named.ofKind('createSession')[0][1], { cwd: folder, title: 'DUDU-8 x', workspaceTitle: 'docs' }, 'a new folder in the sidebar is named for the project');
+  const { sessions: other } = await startOne(named, { issue: { ref: 'APP-8', title: 'x', project: { name: 'docs', path: folder } } });
+  assert.deepEqual(named.ofKind('createSession')[0][1], { cwd: folder, title: 'APP-8 x', workspaceTitle: 'docs' }, 'a new folder in the sidebar is named for the project');
   other.dispose();
   assert.deepEqual(world.ofKind('setAccess')[0].slice(1), ['s1', 'read-only'], 'read-only unless told (3.3)');
   assert.deepEqual(world.ofKind('prompt')[0].slice(1, 3), ['s1', 'Do the thing.']);
@@ -204,6 +204,21 @@ test('a question of the agent is the state waiting_owner until it is answered; t
   sessions.dispose();
 });
 
+test('a direct forwarded message stays a user prompt and cannot answer a pending question or approval', async () => {
+  const world = fakeDsh();
+  const { sessions } = await startOne(world);
+  const asked = world.say.ask('s1', 'May I write?', undefined, 'approval')!;
+  let answered = false;
+  void asked.answer.then(() => { answered = true; });
+  assert.equal((await sessions.send('dsh:s1', 'Allow', { direct: true })).kind, 'message');
+  assert.equal(world.ofKind('prompt').at(-1)[2], 'Allow');
+  assert.equal(answered, false);
+  assert.equal(sessions.stateOf('dsh:s1'), 'waiting_owner');
+  await sessions.send('dsh:s1', 'Reject');
+  assert.equal(await asked.answer, 'Reject');
+  sessions.dispose();
+});
+
 test('a question that DSH\'s own window answered, or that was cancelled, is not waited on any more', async () => {
   const world = fakeDsh();
   const { sessions } = await startOne(world);
@@ -299,7 +314,7 @@ test('closing folds the session away, resuming puts it back, and speaking to a c
   assert.equal(sessions.snapshotOf('dsh:s1')!.closed, true);
   assert.equal((await sessions.close('dsh:s1')).outcome, 'no_op');
   assert.equal(sessions.reader.list().length, 0, 'a closed session is not on the list of what is followed');
-  assert.deepEqual(await sessions.resume('dsh:s1'), { outcome: 'success', key: 'dsh:s1', workspaceId: 'ws-of-s1' }, 'and where it lives, which a window needs to adopt it');
+  assert.deepEqual(await sessions.resume('dsh:s1'), { outcome: 'success', key: 'dsh:s1', sessionId: 's1', workspaceId: 'ws-of-s1' }, 'and the session identity and workspace needed to open it');
   const open = await sessions.resume('dsh:s1');
   assert.deepEqual([open.outcome, open.workspaceId], ['no_op', 'ws-of-s1']);
   assert.equal(sessions.snapshotOf('dsh:s1')!.closed, false);
@@ -401,6 +416,17 @@ test('a reader that cannot tell about a session does not break the adoption', as
   const sessions = createAgentSessions({ dsh: world.dsh, log: quiet });
   assert.deepEqual(await sessions.adopt('dsh:s9'), { outcome: 'success', key: 'dsh:s9', state: 'idle' });
   sessions.dispose();
+});
+
+test('adopting a currently running conversation preserves its live state over a previous completed turn', async () => {
+  const world = fakeDsh({ turns: new Map([['working', { last: 'answer', at: 1, ending: 'Previous task completed.' }]]) });
+  const sessions = createAgentSessions({ dsh: { ...world.dsh, isRunning: (id: string) => id === 'working' }, log: quiet });
+  try {
+    assert.equal((await sessions.adopt('dsh:working', { agent: 'claude', cwd: folder })).state, 'running');
+    assert.equal(sessions.stateOf('dsh:working'), 'running');
+    assert.equal(sessions.snapshotOf('dsh:working').ending, '', 'a previous turn does not become the current work');
+    assert.equal(world.ofKind('prompt').length, 0);
+  } finally { sessions.dispose(); }
 });
 
 test('the same sessions in the shapes of the sessions library: a runner that starts in a folder and a reader of what DSH knows', async () => {
@@ -639,4 +665,19 @@ test('a DSH that lacks a service says which, when the call that needs it is made
   await assert.rejects(adapter.setAccess('s', 'read-only'), /no agents service/);
   await assert.rejects(adapter.archive('s'), /no workspaceRegistry service/);
   assert.equal(await adapter.lastTurn('s'), null, 'a session DSH cannot read is no news');
+});
+
+test('changing a cold session access resolves that same DSH agent and refuses a running turn', async () => {
+  const calls: any[] = [];
+  const agent = { session: { id: 'existing' }, status: 'idle' };
+  const adapter = createDshSessions({
+    agents: { get: () => undefined },
+    sessionController: { resolveAgent: async (id: string) => { calls.push(['resolve', id]); return { agent }; } },
+    permissionPresets: { set: (session: any, mode: string) => calls.push(['set', session.id, mode]) },
+  });
+  await adapter.setAccess('existing', 'workspace-write');
+  assert.deepEqual(calls, [['resolve', 'existing'], ['set', 'existing', 'workspace-write']]);
+  agent.status = 'running';
+  await assert.rejects(adapter.setAccess('existing', 'danger-full-access'), /current turn stops/);
+  assert.equal(calls.filter(([name]) => name === 'set').length, 1);
 });

@@ -63,6 +63,7 @@ export async function buildClient() {
     const { outputFiles, metafile } = await build({
       entryPoints: [join(ui, 'entry.jsx')], bundle: true, write: false, metafile: true, format: 'cjs', platform: 'browser', target: 'es2022',
       jsx: 'automatic', minify: true, legalComments: 'none', logLevel: 'warning', outfile: join(work, 'ui.cjs'),
+      loader: { '.png': 'dataurl', '.webp': 'dataurl' },
       external: SHARED, define: { 'process.env.NODE_ENV': '"production"', __DUDU_CSS__: JSON.stringify(css) },
     });
     const shell = await readFile(join(plugin, 'client.js'), 'utf8');
@@ -75,7 +76,13 @@ return module.exports;
 ${shell}
 })();
 `;
-    return { text, notices: await collectNotices(root, metafile), size: { js: outputFiles[0].text.length, css: css.length } };
+    const notices = await collectNotices(root, metafile);
+    // the Office's scene is marvis-office's (not an npm package): where it comes from and on what footing travels with the plugin too
+    const marvis = join(ui, 'widgets', 'office', 'marvis');
+    if (Object.values(metafile.outputs).some((output) => Object.keys(output.inputs).some((input) => input.includes('widgets/office/marvis/')))) {
+      notices.push(`marvis-office (https://github.com/winterBI/marvis-office, commit 6b6aba4)\n\n${(await readFile(join(marvis, 'SOURCE.md'), 'utf8')).trim()}\n`);
+    }
+    return { text, notices, size: { js: outputFiles[0].text.length, css: css.length } };
   } finally {
     await rm(work, { recursive: true, force: true });
   }

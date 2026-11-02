@@ -61,13 +61,14 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
   let main: (() => { type: unknown; props: { request: unknown; logo?: string; actions?: { openSession?: unknown } } }) | undefined;
   const disposers: Array<() => void> = [];
   const ctx: Record<string, unknown> = {
+    locale: { getLocale: () => ({ active: 'en' }), subscribe: () => () => {} },
     effect: (work: () => unknown) => { const dispose = work(); if (typeof dispose === 'function') disposers.push(dispose as () => void); },
     slots: {
       inject: (_name: string, work: () => void) => work(),
       register: (options: { name: string }, component: typeof main) => { if (options.name === 'main') main = component; return () => {}; },
       entries: () => [], entriesOfSlot: () => [], subscribe: () => () => {},
     },
-    plugin: (child: { name?: string; apply: (ctx: unknown) => void }) => { if (child.name === 'dudu-sessions') child.apply({ ...ctx, sessions: {}, layout: {}, uiWorkspace: {} }); },
+    plugin: (child: { name?: string; apply: (ctx: unknown) => void }) => { if (child.name === 'dudu-sessions') child.apply({ ...ctx, sessions: {}, layout: { selectPanel() {} }, uiWorkspace: {} }); },
     modelDirectories: {},
   };
   try {

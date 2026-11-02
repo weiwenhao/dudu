@@ -1,23 +1,34 @@
 // The layout of the 嘟嘟 dashboard as pure functions (docs/assistant.md 4.1 "存放、谁能改"). No imports but widgets.mjs, no file system.
 //
-//   layout = { v: 1, widgets: [{ id, type, x, y, w, h }] }
+//   layout = { v: 3, widgets: [{ id, type, x, y, w, h }] }
 //
 // x and y count columns and rows from 0, w and h count cells. `w` is the string "fill" while Issues has never been resized: it then
-// takes every column, whatever the window. There is one widget per type and `id` is that type. Widgets are kept in reading order
-// (row, then column). The functions below take a layout that normalize() produced and return a new one; nothing is changed in place.
+// takes every column, whatever the window; `h` is "fill" the same way: every row the window shows (a widget that fills its height is at
+// row 0, as one that fills its width is at column 0). Only the page knows how many rows the window shows, so it says (`rows`, see below);
+// where it has not been said, a filling height counts FILL_ROWS rows. There is one widget per type and `id` is that type. Widgets are kept
+// in reading order (row, then column). The functions below take a layout that normalize() produced and return a new one; nothing is
+// changed in place.
+//
+// Version 1 was a grid of ten columns, version 2 had twenty and version 3 has fifteen, each with rows as tall as a column is wide. A layout of
+// an older version is read with every cell count scaled to fifteen columns (migrate(): version 1 by a half more, version 2 by a quarter fewer,
+// the same place and size in pixels), and the old default Issues (full width, six rows of version 1) is the new default (full width, full height).
 //
 // The grid rules are gridstack's and are not written again here. Every push is done by its engine (the GridStackEngine class passed
 // in, see engine.mjs), driven the way GridStack itself drives it, so the plugin process puts widgets where the page does. Two things
 // belong to the page alone: the half-overlap rule (a gesture: a drag must cover half of a widget to push it) and the number of
-// columns (the window's), so here a position the caller names that lands on a widget pushes it, and `w` has no upper bound but
-// MAX_COLUMNS.
+// rows the window shows, so here a position the caller names that lands on a widget pushes it, and `w` has no upper bound but
+// MAX_COLUMNS. The caller (the page) passes `rows` in the context of every call that puts widgets in a grid.
 //
 // Results are { outcome: 'success' | 'no_op' | 'needs_clarification' | 'error', layout, change?, corrections?, message?, next? };
 // wrong input never throws. `change` says what was done, { kind: 'add' | 'remove' | 'move' | 'resize' | 'reset' | 'many', type, w?, h? },
 // and `corrections` lists what had to be fixed on the way, { type, reason: 'size' | 'position' | 'overlap' | 'duplicate' | 'unusable', from?, to? }.
-import { BUILT_IN_WIDGETS, FILL, MAX_COLUMNS, MAX_ROWS, MAX_Y, MIN_COLUMNS } from './widgets.mjs';
+import { BUILT_IN_WIDGETS, FILL, FILL_ROWS, MAX_COLUMNS, MAX_ROWS, MAX_Y, MIN_COLUMNS, REMOVED_WIDGETS } from './widgets.mjs';
 
-export const VERSION = 1;
+export const VERSION = 3;
+export const PREVIOUS_VERSION = 2; // twenty columns; still read, and scaled by three quarters
+export const FIRST_VERSION = 1; // ten columns; still read, and scaled by one and a half
+// What a file or the page may say: the current version and the two before it.
+export const READABLE_VERSIONS = [FIRST_VERSION, PREVIOUS_VERSION, VERSION];
 
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 const whole = (value) => (typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null);
@@ -27,10 +38,16 @@ const entry = (type, x, y, w, h) => ({ id: type, type, x, y, w, h });
 const inReadingOrder = (a, b) => a.y - b.y || a.x - b.x;
 const declarationsOf = (known) => new Map((known ?? BUILT_IN_WIDGETS).map((declaration) => [declaration.id, declaration]));
 const nameOf = (declarations, type) => declarations.get(type)?.label ?? type;
-const fillsOf = (items) => new Set(items.filter((item) => item.w === FILL).map((item) => item.type));
-// How many columns the widgets themselves need; a widget that fills has no edge of its own, it adapts.
-const extentOf = (items) => items.reduce((edge, item) => Math.max(edge, item.w === FILL ? 0 : item.x + item.w), 0);
+// What fills, by type: its width (every column) and its height (every row the window shows).
+const fillsOf = (items) => ({
+  wide: new Set(items.filter((item) => item.w === FILL).map((item) => item.type)),
+  tall: new Set(items.filter((item) => item.h === FILL).map((item) => item.type)),
+});
 const has = (layout, type) => layout.widgets.some((item) => item.type === type);
+// The rows a window shows, as the page says them: a whole number; anything else is not said.
+export const rowsOf = (value) => (Number.isInteger(value) && value >= 1 && value <= MAX_Y ? value : FILL_ROWS);
+// What a widget that fills its height counts in the grid: every row the window shows, and never fewer than its minimum.
+const fillHeight = (declaration, rows) => Math.max(declaration?.min.h ?? 1, rowsOf(rows));
 
 export function defaultLayout() {
   const { id, size } = BUILT_IN_WIDGETS.find((widget) => widget.id === 'issues');
@@ -44,17 +61,20 @@ function needEngine(Engine) {
   if (typeof Engine !== 'function') throw new TypeError('The GridStackEngine class is needed: pass it as `engine` (see engine.mjs).');
 }
 
-const nodeOf = (item, declaration) => ({
-  id: item.type, x: item.x, y: item.y, w: item.w === FILL ? MAX_COLUMNS : item.w, h: item.h,
-  minW: declaration?.min.w, minH: declaration?.min.h, maxH: MAX_ROWS,
-});
+const nodeOf = (item, declaration, rows) => {
+  const h = item.h === FILL ? fillHeight(declaration, rows) : item.h;
+  return {
+    id: item.type, x: item.x, y: item.y, w: item.w === FILL ? MAX_COLUMNS : item.w, h,
+    minW: declaration?.min.w, minH: declaration?.min.h, maxH: Math.max(MAX_ROWS, h),
+  };
+};
 
 // A grid filled the way GridStack.load() fills a blank one: nodes in reading order, and `_loading` (the flag load() sets), which makes a
 // node that lands on an earlier one go below it instead of pushing it away. float is the dashboard's mode: nothing falls upward.
-function gridOf(Engine, items, declarations) {
+function gridOf(Engine, items, declarations, rows) {
   needEngine(Engine);
   const grid = new Engine({ column: MAX_COLUMNS, mode: 'float' });
-  const nodes = items.map((item) => nodeOf(item, declarations.get(item.type))).sort(inReadingOrder);
+  const nodes = items.map((item) => nodeOf(item, declarations.get(item.type), rows)).sort(inReadingOrder);
   grid.batchUpdate();
   grid._loading = true;
   try {
@@ -66,8 +86,15 @@ function gridOf(Engine, items, declarations) {
   return grid;
 }
 
-const itemsOf = (grid, fills) => grid.nodes
-  .map((node) => entry(node.id, node.x, node.y, fills.has(node.id) && node.x === 0 && node.w === MAX_COLUMNS ? FILL : node.w, node.h))
+// A widget keeps filling only while it is still what filling means: the width at column 0 and every column, the height at row 0 and
+// every row the window shows. Anything the engine moved or sized differently has a number of cells of its own (never more than MAX_ROWS
+// rows: a window taller than that gives a widget that stops filling the most a widget can have).
+const itemsOf = (grid, { wide, tall }, declarations, rows) => grid.nodes
+  .map((node) => entry(
+    node.id, node.x, node.y,
+    wide.has(node.id) && node.x === 0 && node.w === MAX_COLUMNS ? FILL : node.w,
+    tall.has(node.id) && node.y === 0 && node.h === fillHeight(declarations.get(node.id), rows) ? FILL : Math.min(node.h, MAX_ROWS),
+  ))
   .sort(inReadingOrder);
 
 // What GridStack.update() does for a move or a resize, call for call, so the same things are pushed.
@@ -81,17 +108,17 @@ function update(grid, type, patch) {
 }
 
 // Only if the engine itself fails on a layout (it should not): every widget still gets a place of its own.
-function stacked(items) {
+function stacked(items, declarations, rows) {
   let y = 0;
   return [...items].sort(inReadingOrder).map((item) => {
     const placed = { ...item, x: 0, y };
-    y += item.h;
+    y += item.h === FILL ? fillHeight(declarations.get(item.type), rows) : item.h;
     return placed;
   });
 }
 
 // --- reading a layout that somebody else wrote (the file, the page)
-function read(value, declarations, corrections) {
+function read(value, declarations, corrections, rows) {
   const unusable = () => {
     corrections.push({ type: null, reason: 'unusable' });
     return null;
@@ -99,19 +126,62 @@ function read(value, declarations, corrections) {
   if (!isObject(value)) return unusable();
   const type = [value.type, value.id].find((name) => typeof name === 'string' && name.length > 0 && name.length <= 200);
   if (!type) return unusable();
+  if (REMOVED_WIDGETS.includes(type)) {
+    corrections.push({ type, reason: 'removed' });
+    return null;
+  }
   // A type this build has never heard of (a plugin that is not installed) has no minimum to hold it to: it keeps what it asked for.
   const declaration = declarations.get(type);
   const min = declaration?.min ?? { w: 1, h: 1 };
   const recommended = declaration?.size ?? min;
-  const asked = { w: value.w === FILL ? FILL : whole(value.w), h: whole(value.h) };
+  const asked = { w: value.w === FILL ? FILL : whole(value.w), h: value.h === FILL ? FILL : whole(value.h) };
   const wide = asked.w ?? recommended.w;
+  const tall = asked.h ?? recommended.h;
   const w = wide === FILL ? FILL : clamp(wide, min.w, MAX_COLUMNS);
-  const h = clamp(asked.h ?? recommended.h, min.h, MAX_ROWS);
   const x = w === FILL ? 0 : clamp(whole(value.x) ?? 0, 0, MAX_COLUMNS - w);
   const y = clamp(whole(value.y) ?? 0, 0, MAX_Y);
+  // A height fills from row 0: asked for at a lower row (the page moved the widget away from it) it is the rows the window shows, as a number.
+  const h = tall === FILL ? (y === 0 ? FILL : Math.min(MAX_ROWS, fillHeight(declaration, rows))) : clamp(tall, min.h, MAX_ROWS);
   if (w !== value.w || h !== value.h) corrections.push({ type, reason: 'size', from: { w: plain(value.w), h: plain(value.h) }, to: { w, h } });
   if (x !== value.x || y !== value.y) corrections.push({ type, reason: 'position', from: { x: plain(value.x), y: plain(value.y) }, to: { x, y } });
   return entry(type, x, y, w, h);
+}
+
+// A cell count at a new scale: the edges scale and the size is the difference of the scaled edges, so two widgets that touched still touch
+// (a size scaled on its own would leave a gap or an overlap of a cell now and then). A size with no number to place it by is scaled alone,
+// and anything that is not a number is left as it is.
+const scaled = (next, from, to) => {
+  const edge = (value) => Math.round((value * to) / from);
+  const number = (value) => typeof value === 'number' && Number.isFinite(value);
+  for (const [at, size] of [['x', 'w'], ['y', 'h']]) {
+    if (number(next[at])) {
+      const start = edge(next[at]);
+      if (number(next[size])) next[size] = Math.max(1, edge(next[at] + next[size]) - start);
+      next[at] = start;
+    } else if (number(next[size])) next[size] = Math.max(1, edge(next[size]));
+  }
+  return next;
+};
+
+/**
+ * A layout of version 1 (ten columns) or 2 (twenty) as one of version 3 (fifteen): every x, y, w and h is scaled by 3/2 or by 3/4 in one
+ * step (never through the other version, which would round twice), which is the same place and size in pixels; the old default Issues of
+ * version 1 (full width, six rows) fills the height as well. Whatever is not a number (a "fill" width, a damaged value) is left for
+ * normalize() to deal with, which also holds each widget to its minimum and pushes down what then overlaps. Anything that is not a layout
+ * of an older version is returned as it is.
+ */
+export function migrate(input) {
+  if (!isObject(input) || ![FIRST_VERSION, PREVIOUS_VERSION].includes(input.v) || !Array.isArray(input.widgets)) return input;
+  const [from, to] = input.v === FIRST_VERSION ? [2, 3] : [4, 3];
+  return {
+    ...input, v: VERSION,
+    widgets: input.widgets.map((value) => {
+      if (!isObject(value)) return value;
+      const next = scaled({ ...value }, from, to);
+      if (input.v === FIRST_VERSION && value.w === FILL && value.h === 6 && [value.type, value.id].includes('issues')) next.h = FILL;
+      return next;
+    }),
+  };
 }
 
 /**
@@ -119,17 +189,19 @@ function read(value, declarations, corrections) {
  * its input (only for a missing engine, which is a programming mistake). Unknown types are kept (they come from plugins that are not
  * installed); sizes are clamped to the minimum of the widget and to MAX_ROWS rows; a second widget of one type is dropped; widgets that
  * overlap are separated by pushing the later one (in reading order) down, like GridStack.load(). Input that is no layout at all gives
- * the default one. `known` is the list of declarations to hold widgets to (the built-in ones by default).
+ * the default one. `known` is the list of declarations to hold widgets to (the built-in ones by default); `rows` is how many rows the
+ * window shows, which a widget that fills its height counts (FILL_ROWS when it is not said). A layout of version 1 or 2 is migrated first.
  */
-export function normalize(input, { known, engine } = {}) {
+export function normalize(rawInput, { known, engine, rows } = {}) {
   needEngine(engine);
+  const input = migrate(rawInput);
   if (!isObject(input) || !Array.isArray(input.widgets)) return { layout: defaultLayout(), corrections: [{ type: null, reason: 'unusable' }] };
   const declarations = declarationsOf(known);
   const corrections = [];
   const items = [];
   const seen = new Set();
   for (const value of input.widgets) {
-    const item = read(value, declarations, corrections);
+    const item = read(value, declarations, corrections, rows);
     if (!item) continue;
     if (seen.has(item.type)) {
       corrections.push({ type: item.type, reason: 'duplicate' });
@@ -140,9 +212,9 @@ export function normalize(input, { known, engine } = {}) {
   }
   let placed;
   try {
-    placed = itemsOf(gridOf(engine, items, declarations), fillsOf(items));
+    placed = itemsOf(gridOf(engine, items, declarations, rows), fillsOf(items), declarations, rows);
   } catch {
-    placed = stacked(items);
+    placed = stacked(items, declarations, rows);
   }
   const asked = new Map(items.map((item) => [item.type, item]));
   for (const item of placed) {
@@ -176,7 +248,7 @@ const settled = (layout, items, change, message, corrections) => (JSON.stringify
 
 function typeOf(request) {
   const { type } = request;
-  if (typeof type !== 'string' || !type || type.length > 200) throw new Invalid('type must be the id of a widget, such as "quota".', 'Call dashboard_get to see the ids.');
+  if (typeof type !== 'string' || !type || type.length > 200 || REMOVED_WIDGETS.includes(type)) throw new Invalid('type must be the id of a widget, such as "quota".', 'Call dashboard_get to see the ids.');
   return type;
 }
 
@@ -185,9 +257,9 @@ function number(name, value, low, high) {
   return value;
 }
 
-// A width is a whole number of columns, or "fill"; heights, and widths and heights past their bounds, are clamped by the caller.
+// A width is a whole number of columns, or "fill"; a height is a whole number of rows, or "fill"; sizes past their bounds are clamped by the caller.
 const width = (value) => (value === FILL ? FILL : number('w', value, 1, Number.MAX_SAFE_INTEGER));
-const height = (value) => number('h', value, 1, Number.MAX_SAFE_INTEGER);
+const height = (value) => (value === FILL ? FILL : number('h', value, 1, Number.MAX_SAFE_INTEGER));
 
 const absent = (layout, type, declarations) => ({
   outcome: 'error', layout, message: `There is no ${nameOf(declarations, type)} on the dashboard.`, next: 'Call dashboard_get to see what is on it, or dashboard_add to put it there.',
@@ -198,9 +270,10 @@ const absent = (layout, type, declarations) => ({
  * top to bottom, and never pushes anything; when no slot is free it ends up below everything. `columns` is the number of columns the page
  * shows (at least MIN_COLUMNS), which decides what fits in a row; without it only the columns the widgets already use count, so a
  * lone Issues (which fills) never has room beside it. With x and y it lands there and pushes what is under it down. The size is the
- * recommended one unless w and h are given; a type this build does not know needs both. A type already on the dashboard is a no_op.
+ * recommended one unless w and h are given (each may be "fill"); a type this build does not know needs both. A type already on the dashboard
+ * is a no_op. `rows` (in the context) is how many rows the window shows, which what fills its height counts.
  */
-export const add = guarded((layout, request, { known, engine }) => {
+export const add = guarded((layout, request, { known, engine, rows }) => {
   const type = typeOf(request);
   const declarations = declarationsOf(known);
   if (has(layout, type)) return noOp(layout, `${nameOf(declarations, type)} is already on the dashboard.`, 'Use dashboard_move or dashboard_resize to change it.');
@@ -211,32 +284,34 @@ export const add = guarded((layout, request, { known, engine }) => {
   const min = declaration?.min ?? { w: 1, h: 1 };
   const asked = { w: request.w === undefined ? declaration.size.w : width(request.w), h: request.h === undefined ? declaration.size.h : height(request.h) };
   const w = asked.w === FILL ? FILL : clamp(asked.w, min.w, MAX_COLUMNS);
-  const h = clamp(asked.h, min.h, MAX_ROWS);
+  const h = asked.h === FILL ? FILL : clamp(asked.h, min.h, MAX_ROWS);
   const corrections = w === asked.w && h === asked.h ? [] : [{ type, reason: 'size', from: asked, to: { w, h } }];
   if ((request.x === undefined) !== (request.y === undefined)) throw new Invalid('x and y go together: give both or neither.', 'Leave both out to use the first free slot.');
-  const columns = request.columns === undefined ? 0 : number('columns', request.columns, 1, MAX_COLUMNS);
+  // Older clients send their viewport column count. The layout now has one fixed width.
   const at = request.x === undefined ? null : { x: number('x', request.x, 0, MAX_COLUMNS - 1), y: number('y', request.y, 0, MAX_Y) };
 
   const fills = fillsOf(layout.widgets);
-  if (w === FILL) fills.add(type);
-  const grid = gridOf(engine, layout.widgets, declarations);
+  if (w === FILL) fills.wide.add(type);
+  if (h === FILL) fills.tall.add(type);
+  const grid = gridOf(engine, layout.widgets, declarations, rows);
   if (at) {
     // GridStack has just saved where everything stands when it is asked to add (its change event does that), and a widget that was
     // pushed away and is no longer in the way goes back toward that place: only what has to move moves.
     grid.saveInitial();
-    grid.addNode(nodeOf(entry(type, at.x, at.y, w, h), declaration));
-    return success(itemsOf(grid, fills), { kind: 'add', type }, corrections);
+    grid.addNode(nodeOf(entry(type, at.x, at.y, w, h), declaration, rows));
+    return success(itemsOf(grid, fills, declarations, rows), { kind: 'add', type }, corrections);
   }
-  const scan = Math.max(MIN_COLUMNS, columns, extentOf(layout.widgets), w === FILL ? 0 : w);
-  const node = nodeOf(entry(type, 0, 0, w, h), declaration);
+  const scan = MIN_COLUMNS;
+  const node = nodeOf(entry(type, 0, 0, w, h), declaration, rows);
   if (w === FILL) node.w = scan;
   grid.findEmptyPosition(node, grid.nodes, scan);
-  const items = [...itemsOf(grid, fills), entry(type, node.x, node.y, w, h)].sort(inReadingOrder);
+  // What fills its height fills it from row 0 only: put lower down, it has the rows it would have had (a number of its own).
+  const items = [...itemsOf(grid, fills, declarations, rows), entry(type, node.x, node.y, w, h === FILL && node.y !== 0 ? node.h : h)].sort(inReadingOrder);
   return success(items, { kind: 'add', type }, corrections);
 });
 
 /** move: { type, x?, y? } (at least one; the other stays). Whatever it lands on is pushed down. */
-export const move = guarded((layout, request, { known, engine }) => {
+export const move = guarded((layout, request, { known, engine, rows }) => {
   const type = typeOf(request);
   const declarations = declarationsOf(known);
   if (!has(layout, type)) return absent(layout, type, declarations);
@@ -244,29 +319,32 @@ export const move = guarded((layout, request, { known, engine }) => {
   if (request.x !== undefined) patch.x = number('x', request.x, 0, MAX_COLUMNS - 1);
   if (request.y !== undefined) patch.y = number('y', request.y, 0, MAX_Y);
   if (!Object.keys(patch).length) throw new Invalid('Say where to put it: x (column) and/or y (row), counted from 0.');
-  const grid = gridOf(engine, layout.widgets, declarations);
+  const grid = gridOf(engine, layout.widgets, declarations, rows);
   update(grid, type, patch);
-  return settled(layout, itemsOf(grid, fillsOf(layout.widgets)), { kind: 'move', type }, 'It is already there.');
+  return settled(layout, itemsOf(grid, fillsOf(layout.widgets), declarations, rows), { kind: 'move', type }, 'It is already there.');
 });
 
 /**
- * resize: { type, w?, h? } (at least one; the other stays, and a widget that fills keeps filling unless w is given). w may be "fill".
- * A size below the widget's minimum or above MAX_ROWS rows is clamped, and says so in `corrections`. Whatever it grows over is pushed down.
+ * resize: { type, w?, h? } (at least one; the other stays, and a widget that fills keeps filling the side that is not given). w may be
+ * "fill" (every column) and h may be "fill" (every row the window shows: `rows` in the context). A size below the widget's minimum or
+ * above MAX_ROWS rows is clamped, and says so in `corrections`. Whatever it grows over is pushed down.
  */
-export const resize = guarded((layout, request, { known, engine }) => {
+export const resize = guarded((layout, request, { known, engine, rows }) => {
   const type = typeOf(request);
   const declarations = declarationsOf(known);
   if (!has(layout, type)) return absent(layout, type, declarations);
   const patch = {};
   const wide = request.w === undefined ? undefined : width(request.w);
+  const tall = request.h === undefined ? undefined : height(request.h);
   if (wide !== undefined) patch.w = wide === FILL ? MAX_COLUMNS : wide;
-  if (request.h !== undefined) patch.h = height(request.h);
+  if (tall !== undefined) patch.h = tall === FILL ? fillHeight(declarations.get(type), rows) : tall;
   if (!Object.keys(patch).length) throw new Invalid('Say the size: w (columns) and/or h (rows).');
   const fills = fillsOf(layout.widgets);
-  if (wide !== undefined) fills[wide === FILL ? 'add' : 'delete'](type);
-  const grid = gridOf(engine, layout.widgets, declarations);
+  if (wide !== undefined) fills.wide[wide === FILL ? 'add' : 'delete'](type);
+  if (tall !== undefined) fills.tall[tall === FILL ? 'add' : 'delete'](type);
+  const grid = gridOf(engine, layout.widgets, declarations, rows);
   update(grid, type, patch);
-  const items = itemsOf(grid, fills);
+  const items = itemsOf(grid, fills, declarations, rows);
   const { w, h } = items.find((item) => item.type === type);
   const was = layout.widgets.find((item) => item.type === type);
   const asked = { w: request.w ?? was.w, h: request.h ?? was.h };

@@ -17,6 +17,7 @@ import { createDashboard } from '../../host/assistant/dashboard/index.mjs';
 import { createDashboardApi } from '../../host/assistant/dashboard/api.mjs';
 import { createIssues } from '../../host/assistant/issues/index.mjs';
 import { createIssuesApi } from '../../host/assistant/issues/api.mjs';
+import { createSettings } from '../../host/assistant/settings.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..', '..');
@@ -30,6 +31,7 @@ async function script() {
       const css = await compileCss(work);
       const { outputFiles } = await build({
         entryPoints: [join(here, 'fixture-entry.jsx')], bundle: true, write: false, format: 'iife', platform: 'browser', target: 'es2022', jsx: 'automatic',
+        loader: { '.png': 'dataurl', '.webp': 'dataurl' },
         minify: true, logLevel: 'warning', outfile: join(work, 'fixture.js'), define: { 'process.env.NODE_ENV': '"production"', __DUDU_CSS__: JSON.stringify(css) },
       });
       return outputFiles[0].text;
@@ -52,11 +54,19 @@ export async function startFixture({ handlers = {}, viewport = { width: 1440, he
   const sessions = {};
   const issues = createIssues({ file: ':memory:', sessionState: (key) => sessions[key] ?? null });
   const folder = await mkdtemp(join(tmpdir(), 'dudu-fixture-dashboard-'));
+  const settings = createSettings({ file: join(folder, 'settings.json') });
   const dashboard = createDashboard({ file: join(folder, 'dashboard.json'), engine: await engine() });
   const apis = { issues: createIssuesApi({ issues }), dashboard: createDashboardApi({ dashboard }) };
   const opened = [];
+  const added = []; // sessions the page was asked to list in DSH's sidebar without opening them
+  const speech = { catalog: null };
+  const sent = []; // what the pet's conversation was asked to send: { sessionId, text, attachments: [{ kind, name, ... }] }
+  const contexts = []; // the page attached to each message (`where` of assistant/context), or null
   const answer = async (action, body) => {
     if (handlers[action]) return handlers[action](body);
+    if (action === 'assistant/context') { contexts.push(body.where ?? null); return { outcome: 'success' }; }
+    if (action === 'assistant/settings') return body.patch === undefined ? settings.get() : settings.set(body.patch);
+    if (action === 'assistant/state') return { outcome: 'success', projectFolder: folder, counts: issues.counts() };
     const [area, name] = action.split('/');
     if (!apis[area]) return {};
     const response = await apis[area].handle(name, new Request('http://fixture.test/', { method: 'POST', body: JSON.stringify(body) }));
@@ -67,18 +77,22 @@ export async function startFixture({ handlers = {}, viewport = { width: 1440, he
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   const pages = new Set();
   return {
-    issues, sessions, dashboard, opened,
+    issues, sessions, dashboard, opened, added, speech, sent, contexts,
     /** A page on the dashboard, which starts from the default layout unless `keepLayout` (the plugin keeps it between pages, as the real one does). */
-    async open({ size = viewport, keepLayout = false } = {}) {
+    async open({ size = viewport, keepLayout = false, widgetPreview, theme = colorScheme, deviceScaleFactor = 1 } = {}) {
       if (!keepLayout) dashboard.reset();
-      const context = await browser.newContext({ viewport: size, colorScheme });
+      const context = await browser.newContext({ viewport: size, colorScheme: theme, deviceScaleFactor });
       const page = await context.newPage();
       pages.add(page);
       await page.exposeFunction('__request', answer);
       await page.exposeFunction('__opened', (target) => { opened.push(target); });
-      await page.route('http://fixture.test/**', (route) => (route.request().url().endsWith('/fixture.js')
+      await page.exposeFunction('__added', (target) => { added.push(target); });
+      await page.exposeFunction('__voiceCatalog', () => speech.catalog);
+      await page.exposeFunction('__sent', (message) => { sent.push(message); });
+      await page.route('http://localhost/**', (route) => (route.request().url().endsWith('/fixture.js')
         ? route.fulfill({ contentType: 'text/javascript', body: code }) : route.fulfill({ contentType: 'text/html', body: html })));
-      await page.goto('http://fixture.test/');
+      const query = widgetPreview ? `?${new URLSearchParams({ widget: widgetPreview.id, cols: String(widgetPreview.cols), rows: String(widgetPreview.rows) })}` : '';
+      await page.goto(`http://localhost/${query}`);
       return page;
     },
     async stop() {

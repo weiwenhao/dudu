@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isHumanPrompt, listClaudeSessions, promptText } from '../host/providers/native/claude-store.mjs';
@@ -94,6 +94,56 @@ test('an unchanged transcript is not read again, a changed one is', async (t) =>
   assert.deepEqual(await listClaudeSessions({ root: join(root, 'missing') }), []);
 });
 
+test('session activity comes from conversation records, independent of file touches and metadata writes', async (t) => {
+  const root = await folder(t);
+  const file = join(root, 'project', `${id(1)}.jsonl`);
+  const prompt = user('u1', null, 'An old task');
+  const answer = assistant('a1', 'u1', 'm1', { type: 'text', text: 'An old answer' });
+  const at = Date.parse(answer.timestamp);
+  await writeFile(file, lines([prompt, answer]));
+  const cache = new Map();
+  assert.equal((await listClaudeSessions({ root, cache }))[0].updatedAt, at);
+  const touched = new Date('2026-11-02T02:00:00Z');
+  await utimes(file, touched, touched);
+  assert.equal((await listClaudeSessions({ root, cache }))[0].updatedAt, at);
+  await appendFile(file, lines([
+    { type: 'ai-title', aiTitle: 'Renamed task', timestamp: touched.toISOString() },
+    { type: 'file-history-snapshot', timestamp: touched.toISOString() },
+    { type: 'user', isMeta: true, timestamp: touched.toISOString(), message: { content: 'Injected context' } },
+    { type: 'assistant', isSidechain: true, timestamp: touched.toISOString(), message: { content: 'Subagent metadata' } },
+  ]));
+  const [renamed] = await listClaudeSessions({ root, cache });
+  assert.equal(renamed.updatedAt, at);
+  assert.equal(renamed.title, 'Renamed task');
+  const next = user('u2', 'a1', 'A new message');
+  await appendFile(file, lines([next]));
+  assert.equal((await listClaudeSessions({ root, cache }))[0].updatedAt, Date.parse(next.timestamp));
+});
+
+test('activity is found behind large trailing metadata and sessions sort by conversation time', async (t) => {
+  const root = await folder(t);
+  const old = join(root, 'project', `${id(1)}.jsonl`);
+  const recent = join(root, 'project', `${id(2)}.jsonl`);
+  const before = user('u1', null, 'Older task');
+  const after = user('u2', null, 'Newer task');
+  await writeFile(old, lines([before, { type: 'api-request', body: 'x'.repeat(2 * 1024 * 1024) }]));
+  await writeFile(recent, lines([after]));
+  await utimes(old, new Date(), new Date());
+  await utimes(recent, new Date('2026-10-01'), new Date('2026-10-01'));
+  const sessions = await listClaudeSessions({ root });
+  assert.deepEqual(sessions.map((session) => session.id), [id(2), id(1)]);
+  assert.equal(sessions[1].updatedAt, Date.parse(before.timestamp));
+});
+
+test('missing conversation timestamps remain unknown instead of taking the file time', async (t) => {
+  const root = await folder(t);
+  await writeFile(join(root, 'project', `${id(1)}.jsonl`), lines([
+    { type: 'user', message: { content: 'Undated conversation' } },
+    { type: 'ai-title', aiTitle: 'Undated task', timestamp: '2026-11-02T00:00:00Z' },
+  ]));
+  assert.equal((await listClaudeSessions({ root }))[0].updatedAt, 0);
+});
+
 async function transcript(t: { after: (cleanup: () => Promise<void>) => void }, records: unknown[]) {
   const root = await folder(t);
   const file = join(root, 'project', `${id(1)}.jsonl`);
@@ -149,7 +199,7 @@ test('what Claude Code wrote itself, sidechains and a branch the person rewound 
   assert.deepEqual(said, ['first answer', 'answer on the kept branch', 'third answer']);
 });
 
-test('a conversation that stopped in the middle of a tool call ends at its last finished words', async (t) => {
+test('unanswered Claude input stays visible as an open turn', async (t) => {
   const source = await transcript(t, [
     user('u1', null, 'one'),
     assistant('a1', 'u1', 'm1', { type: 'text', text: 'done' }),
@@ -159,10 +209,9 @@ test('a conversation that stopped in the middle of a tool call ends at its last 
     user('u3', 'a3', 'three, never answered'),
   ]);
   const history = await readClaudeHistory(source);
-  assert.deepEqual(history.turns.map((turn: { prompt: string }) => turn.prompt), ['one', 'two'], 'a message nothing answered is dropped');
-  const last = history.turns[1].steps.at(-1);
-  assert.deepEqual(last.blocks, [{ type: 'text', text: 'working' }], 'the words stay, the call that never finished does not');
-  assert.deepEqual(last.calls, [], 'the conversation never ends on a call: the next message must start a new turn');
+  assert.deepEqual(history.turns.map((turn: { prompt: string }) => turn.prompt), ['one', 'two', 'three, never answered']);
+  assert.equal(history.turns[2].complete, false);
+  assert.deepEqual(history.turns[2].steps, []);
 });
 
 test('the results of tool calls can be left out when only the words are wanted', async (t) => {
@@ -176,4 +225,22 @@ test('the results of tool calls can be left out when only the words are wanted',
   const light = await readClaudeHistory({ ...source, results: false });
   assert.equal(full.turns[0].results.get('toolu_1').output.length, 5000);
   assert.equal(light.turns[0].results.get('toolu_1').output, '');
+});
+
+test('a Claude tool loop is not imported as completed turns while it is still growing', async (t) => {
+  const working = assistant('a2', 'u2', 'm2', { type: 'text', text: 'Working.' });
+  Object.assign(working.message, { stop_reason: 'tool_use' });
+  const source = await transcript(t, [
+    user('u1', null, 'first'), assistant('a1', 'u1', 'm1', { type: 'text', text: 'Done.' }),
+    user('u2', 'a1', 'next'), working,
+  ]);
+  const pending = await readClaudeHistory(source);
+  assert.equal(pending.turns.length, 2);
+  assert.equal(pending.turns[1].complete, false);
+  const finished = assistant('a3', 'a2', 'm3', { type: 'text', text: 'Finished.' });
+  Object.assign(finished.message, { stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 20 } });
+  await appendFile(source.file, lines([finished]));
+  const history = await readClaudeHistory(source);
+  assert.equal(history.turns.length, 2);
+  assert.deepEqual(history.turns[1].steps[1].usage, { inputTokens: 10, outputTokens: 5, totalTokens: 35, cacheReadTokens: 20 });
 });

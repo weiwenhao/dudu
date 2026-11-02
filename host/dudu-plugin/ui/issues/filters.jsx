@@ -10,7 +10,7 @@ const found = (list) => new Map((list ?? []).map((entry) => [entry.key, entry.co
 
 // A date field has ready-made ranges and no counts; one is ticked at a time.
 const dateField = (key) => ({
-  name: T.dates[key], order: DATE_FIELDS[key], label: (value) => T.dates[value],
+  get name() { return T.dates[key]; }, order: DATE_FIELDS[key], label: (value) => T.dates[value],
   options: () => DATE_FIELDS[key].map((value) => ({ value, label: T.dates[value], count: null })),
 });
 
@@ -21,28 +21,28 @@ const dateField = (key) => ({
  */
 export const FILTER_FIELDS = {
   status: {
-    name: T.fields.status, rowIcon: <StatusIcon status="backlog" />, order: STATUS_ORDER, label: (value) => T.status[value],
+    get name() { return T.fields.status; }, rowIcon: <StatusIcon status="backlog" />, order: STATUS_ORDER, label: (value) => T.status[value],
     options: ({ counts }) => fixed(STATUS_ORDER, (value) => T.status[value], counts?.status, (value) => <StatusIcon status={value} />),
   },
   agent: {
-    name: T.fields.agent, rowIcon: <Bot className="size-4 text-muted-foreground" aria-hidden="true" />,
+    get name() { return T.fields.agent; }, rowIcon: <Bot className="size-4 text-muted-foreground" aria-hidden="true" />,
     label: (value) => (value == null ? T.noAgent : (AGENT_NAMES[value] ?? value)),
     options: ({ facets }) => (facets?.agent ?? []).map(({ key, count }) => ({ value: key, label: key == null ? T.noAgent : (AGENT_NAMES[key] ?? key), count })),
   },
   agentState: {
-    name: T.fields.agentState, rowIcon: <Activity className="size-4 text-muted-foreground" aria-hidden="true" />, order: AGENT_STATE_ORDER, label: (value) => T.agentState[value],
+    get name() { return T.fields.agentState; }, rowIcon: <Activity className="size-4 text-muted-foreground" aria-hidden="true" />, order: AGENT_STATE_ORDER, label: (value) => T.agentState[value],
     options: ({ facets }) => { const counts = found(facets?.agentState); return AGENT_STATE_ORDER.map((value) => ({ value, label: T.agentState[value], count: counts.get(value) ?? 0 })); },
   },
   priority: {
-    name: T.fields.priority, rowIcon: <PriorityIcon priority="high" />, order: PRIORITY_ORDER, label: (value) => T.priority[value],
+    get name() { return T.fields.priority; }, rowIcon: <PriorityIcon priority="high" />, order: PRIORITY_ORDER, label: (value) => T.priority[value],
     options: ({ counts }) => fixed(PRIORITY_ORDER, (value) => T.priority[value], counts?.priority, (value) => <PriorityIcon priority={value} />),
   },
   project: {
-    name: T.fields.project, rowIcon: <Box className="size-4 text-muted-foreground" aria-hidden="true" />, label: (value) => (value == null ? T.noProject : value),
+    get name() { return T.fields.project; }, rowIcon: <Box className="size-4 text-muted-foreground" aria-hidden="true" />, label: (value) => (value == null ? T.noProject : value),
     options: ({ facets }) => (facets?.project ?? []).map(({ key, count }) => ({ value: key, label: key == null ? T.noProject : key, count })),
   },
   source: {
-    name: T.fields.source, rowIcon: <Plug className="size-4 text-muted-foreground" aria-hidden="true" />, order: SOURCE_ORDER, label: (value) => T.source[value],
+    get name() { return T.fields.source; }, rowIcon: <Plug className="size-4 text-muted-foreground" aria-hidden="true" />, order: SOURCE_ORDER, label: (value) => T.source[value],
     options: ({ facets }) => { const counts = found(facets?.source); return SOURCE_ORDER.map((value) => ({ value, label: T.source[value], count: counts.get(value) ?? 0 })); },
   },
   due: dateField('due'),
@@ -51,10 +51,10 @@ export const FILTER_FIELDS = {
 };
 
 // The rows of the menu: a field each, except Dates, which holds three.
-const rowOf = (key) => ({ name: FILTER_FIELDS[key].name, rowIcon: FILTER_FIELDS[key].rowIcon, fields: [key] });
+const rowOf = (key) => ({ get name() { return FILTER_FIELDS[key].name; }, rowIcon: FILTER_FIELDS[key].rowIcon, fields: [key] });
 export const FILTER_ROWS = {
   status: rowOf('status'), agent: rowOf('agent'), agentState: rowOf('agentState'), priority: rowOf('priority'),
-  dates: { name: T.dates.name, rowIcon: <CalendarDays className="size-4 text-muted-foreground" aria-hidden="true" />, fields: ['due', 'created', 'updated'] },
+  dates: { get name() { return T.dates.name; }, rowIcon: <CalendarDays className="size-4 text-muted-foreground" aria-hidden="true" />, fields: ['due', 'created', 'updated'] },
   project: rowOf('project'), source: rowOf('source'),
 };
 

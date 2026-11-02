@@ -25,7 +25,7 @@ function store(options: any = {}) {
   };
   return {
     issues, file, dir, clock, states, ok,
-    add: (fields: any, meta?: any) => ok(issues.add(fields, meta)).issue,
+    add: (fields: any, meta?: any) => ok(issues.add(fields.agent && fields.project === undefined ? { ...fields, project: { name: 'work', path: '/work' } } : fields, meta)).issue,
     open: (extra: any = {}) => {
       const other = createIssues({ file, now: () => clock.now, ...extra });
       opened.push(other);
@@ -60,7 +60,7 @@ test('add creates an issue with the documented defaults', (t) => {
   assert.equal(result.outcome, 'success');
   assert.equal(typeof result.eventId, 'number');
   assert.deepEqual(result.issue, {
-    id: 1, ref: 'DUDU-1', title: '回复供应商合同的修改意见', brief: '', status: 'todo', agentState: 'idle', ask: '', priority: 'none',
+    id: 1, ref: null, title: '回复供应商合同的修改意见', brief: '', status: 'todo', agentState: 'idle', ask: '', priority: 'none',
     impact: null, effort: null, kind: '', project: null, dueAt: null, snoozeUntil: null, agent: null, session: null, outcome: null,
     source: 'owner', sourceRef: '', resolvedAt: null, createdAt: T0, updatedAt: T0,
   });
@@ -74,7 +74,7 @@ test('add keeps every field it is given and records the session the issue starts
     project: { name: 'infra', path: '/work/infra' }, dueAt: T0 + DAY, agent: 'claude', session: 'claude:abc', source: 'connector', sourceRef: 'lark:om_1',
   });
   assert.deepEqual(issue, {
-    id: 1, ref: 'DUDU-1', title: 'Renew certificate', brief: 'Expires Friday', status: 'in_progress', agentState: 'needs_you', ask: 'Which CA?',
+    id: 1, ref: 'INF-1', title: 'Renew certificate', brief: 'Expires Friday', status: 'in_progress', agentState: 'needs_you', ask: 'Which CA?',
     priority: 'high', impact: 3, effort: 'm', kind: 'ops', project: { name: 'infra', path: '/work/infra' }, dueAt: T0 + DAY, snoozeUntil: null,
     agent: 'claude', session: 'claude:abc', outcome: null, source: 'connector', sourceRef: 'lark:om_1', resolvedAt: null, createdAt: T0, updatedAt: T0,
   });
@@ -112,24 +112,24 @@ test('add by anyone but the owner cannot create a finished issue without an outc
   assert.equal(s.add({ title: 'y', status: 'canceled' }).resolvedAt, T0 + 1000);
 });
 
-test('ids are DUDU-n refs accepted in every spelling, and never reused', (t) => {
+test('internal ids are available before project assignment and never reused', (t) => {
   const s = store();
   t.after(s.cleanup);
-  assert.deepEqual([s.add({ title: 'a' }).ref, s.add({ title: 'b' }).ref, s.add({ title: 'c' }).ref], ['DUDU-1', 'DUDU-2', 'DUDU-3']);
-  for (const spelling of [2, '2', 'DUDU-2', 'dudu-2', ' Dudu-2 ']) assert.equal(s.issues.get(spelling).issue.id, 2, String(spelling));
-  for (const bad of ['', 'DUDU-', 'DUDU-0', 'x-2', '2.5', -1, 0, null, undefined, {}, 'DUDU-2; DROP']) {
+  assert.deepEqual([s.add({ title: 'a' }).ref, s.add({ title: 'b' }).ref, s.add({ title: 'c' }).ref], [null, null, null]);
+  for (const spelling of [2, '2', '#2', ' 2 ']) assert.equal(s.issues.get(spelling).issue.id, 2, String(spelling));
+  for (const bad of ['', 'DUDU-', 'DUDU-0', '2.5', -1, 0, null, undefined, {}, 'DUDU-2; DROP']) {
     assert.equal(s.issues.get(bad).outcome, 'needs_clarification', String(bad));
   }
   const missing = s.issues.get(99);
   assert.equal(missing.outcome, 'error');
-  assert.match(missing.message, /DUDU-99/);
+  assert.match(missing.message, /99/);
   // A rejected add takes no id, and the id of a row deleted afterwards (the forget path) is never handed out again.
   assert.equal(s.issues.add({ title: '' }).outcome, 'needs_clarification');
   const raw = new DatabaseSync(s.file);
   t.after(() => raw.close());
   assert.throws(() => raw.exec("INSERT INTO issues (title, status, created_at, updated_at) VALUES ('x', 'nonsense', 1, 1)"), /CHECK/);
   raw.exec('DELETE FROM issues WHERE id = 3');
-  assert.equal(s.add({ title: 'd' }).ref, 'DUDU-4');
+  assert.equal(s.add({ title: 'd' }).id, 4);
 });
 
 // --- lists: tabs, order, paging
@@ -660,16 +660,16 @@ test('update edits any field, says no_op when nothing changed, and refuses what 
   t.after(s.cleanup);
   const issue = s.add({ title: 'old title', project: { name: 'docs', path: '/w/docs' }, impact: 2, effort: 's' });
   const edited = s.ok(s.issues.update(issue.id, {
-    title: ' new title ', brief: 'summary', ask: 'q?', priority: 'urgent', impact: null, effort: 'l', kind: 'ops', project: { name: 'infra', path: null },
+    title: ' new title ', brief: 'summary', ask: 'q?', priority: 'urgent', impact: null, effort: 'l', kind: 'ops', project: { name: 'infra', path: '/work/infra' },
     dueAt: T0 + DAY, snoozeUntil: T0 + 2 * DAY, agent: 'codex', session: 'codex:1', outcome: 'maybe', source: 'dudu', sourceRef: 'x',
   })).issue;
   assert.deepEqual(edited, {
-    id: 1, ref: 'DUDU-1', title: 'new title', brief: 'summary', status: 'todo', agentState: 'idle', ask: 'q?', priority: 'urgent', impact: null, effort: 'l',
-    kind: 'ops', project: { name: 'infra', path: null }, dueAt: T0 + DAY, snoozeUntil: T0 + 2 * DAY, agent: 'codex', session: 'codex:1', outcome: 'maybe',
+    id: 1, ref: 'INF-1', title: 'new title', brief: 'summary', status: 'todo', agentState: 'idle', ask: 'q?', priority: 'urgent', impact: null, effort: 'l',
+    kind: 'ops', project: { name: 'infra', path: '/work/infra' }, dueAt: T0 + DAY, snoozeUntil: T0 + 2 * DAY, agent: 'codex', session: 'codex:1', outcome: 'maybe',
     source: 'dudu', sourceRef: 'x', resolvedAt: null, createdAt: T0, updatedAt: T0 + 1000,
   });
-  const cleared = s.ok(s.issues.update(issue.id, { project: null, dueAt: null, snoozeUntil: null, agent: null, session: null, outcome: '', effort: null })).issue;
-  assert.deepEqual([cleared.project, cleared.dueAt, cleared.agent, cleared.session, cleared.outcome, cleared.effort], [null, null, null, null, null, null]);
+  const cleared = s.ok(s.issues.update(issue.id, { dueAt: null, snoozeUntil: null, outcome: '', effort: null })).issue;
+  assert.deepEqual([cleared.project, cleared.dueAt, cleared.agent, cleared.session, cleared.outcome, cleared.effort], [{ name: 'infra', path: '/work/infra' }, null, 'codex', 'codex:1', null, null]);
 
   const same = s.issues.update(issue.id, { title: 'new title', priority: 'urgent' });
   assert.equal(same.outcome, 'no_op');
@@ -690,30 +690,32 @@ test('update edits any field, says no_op when nothing changed, and refuses what 
 test('assign links an agent and a session, remembers every session, and closes the one it replaces', (t) => {
   const s = store();
   t.after(s.cleanup);
-  const issue = s.add({ title: 'x' });
+  const issue = s.add({ title: 'x', project: { name: 'work', path: '/work' } });
   s.states.set('claude:s1', 'running');
   const first = s.ok(s.issues.assign(issue.id, { agent: 'claude', session: 'claude:s1', reason: 'Best for contracts', actor: 'dudu' }));
   assert.deepEqual([first.issue.agent, first.issue.session, first.issue.agentState], ['claude', 'claude:s1', 'working']);
   assert.equal(s.issues.assign(issue.id, { agent: 'claude', session: 'claude:s1' }).outcome, 'no_op');
 
   const opened = s.clock.now;
-  s.ok(s.issues.assign(issue.id, { agent: 'codex', session: 'codex:s2' }));
+  assert.equal(s.issues.assign(issue.id, { agent: 'codex', session: 'codex:s2' }).outcome, 'needs_clarification');
+  s.ok(s.issues.assign(issue.id, { agent: 'claude', session: 'claude:s2' }));
   const { sessions } = s.issues.get(issue.id).issue;
   assert.deepEqual(sessions.map((session: any) => [session.key, session.agent, session.open, session.closeReason, session.state]), [
-    ['codex:s2', 'codex', true, null, null],
+    ['claude:s2', 'claude', true, null, null],
     ['claude:s1', 'claude', false, 'switch', 'running'],
   ]);
   assert.equal(sessions[1].closedAt, opened);
   assert.equal(sessions[0].openedAt, opened);
 
-  s.ok(s.issues.assign(issue.id, { agent: 'codex' }));
+  assert.equal(s.issues.assign(issue.id, { agent: 'claude' }).outcome, 'no_op');
+  s.ok(s.issues.update(issue.id, { session: null }));
   assert.equal(s.issues.get(issue.id).issue.session, null);
   assert.ok(s.issues.get(issue.id).issue.sessions.every((session: any) => !session.open));
-  s.ok(s.issues.assign(issue.id, { agent: null }));
-  assert.equal(s.issues.get(issue.id).issue.agent, null);
+  assert.equal(s.issues.assign(issue.id, { agent: null }).outcome, 'needs_clarification');
+  assert.equal(s.issues.get(issue.id).issue.agent, 'claude');
   // Resuming a closed session opens it again as a new entry.
   s.ok(s.issues.assign(issue.id, { agent: 'claude', session: 'claude:s1' }));
-  assert.deepEqual(s.issues.get(issue.id).issue.sessions.map((session: any) => [session.key, session.open]), [['claude:s1', true], ['codex:s2', false], ['claude:s1', false]]);
+  assert.deepEqual(s.issues.get(issue.id).issue.sessions.map((session: any) => [session.key, session.open]), [['claude:s1', true], ['claude:s2', false], ['claude:s1', false]]);
 
   assert.equal(s.issues.assign(issue.id, {}).outcome, 'needs_clarification');
   assert.equal(s.issues.assign(issue.id, { agent: '' , session: 5 }).outcome, 'needs_clarification');
@@ -756,6 +758,37 @@ test('log appends entries of the documented kinds and get pages them newest firs
   assert.equal(s.issues.get(issue.id, { logLimit: 0 }).outcome, 'needs_clarification');
 });
 
+test('get preserves the active question identity and time outside the current log page and clears it with the ask', (t) => {
+  const s = store();
+  t.after(s.cleanup);
+  const issue = s.add({ title: 'chronological discussion' });
+  s.ok(s.issues.update(issue.id, { ask: 'Which option?' }, { actor: 'dudu' }));
+  const question = s.issues.get(issue.id).log[0];
+  for (let n = 0; n < 5; n++) s.ok(s.issues.log(issue.id, { kind: 'note', text: `Comment ${n}` }));
+  const first = s.issues.get(issue.id, { logLimit: 2 });
+  assert.ok(!first.log.some((entry: any) => entry.id === question.id));
+  assert.deepEqual(first.activeQuestion, question);
+  const next = s.issues.get(issue.id, { logLimit: 2, logCursor: first.nextLogCursor });
+  assert.deepEqual(next.activeQuestion, question);
+  s.ok(s.issues.update(issue.id, { ask: '' }, { actor: 'dudu' }));
+  assert.equal(s.issues.get(issue.id).activeQuestion, null);
+  s.ok(s.issues.update(issue.id, { ask: 'Which option?' }, { actor: 'dudu' }));
+  assert.ok(s.issues.get(issue.id).activeQuestion.id > question.id, 'a repeated question keeps its own new event');
+});
+
+test('a question supplied at creation is recorded once and available to the detail discussion', (t) => {
+  const s = store();
+  t.after(s.cleanup);
+  const issue = s.add({ title: 'Waiting work', status: 'in_review', ask: 'Which option?' }, { actor: 'dudu' });
+  const { activeQuestion, log } = s.issues.get(issue.id);
+  assert.equal(activeQuestion.text, issue.ask);
+  assert.equal(activeQuestion.actor, 'dudu');
+  assert.equal(activeQuestion.at, issue.createdAt);
+  assert.equal(log.filter((entry: any) => entry.kind === 'blocked').length, 1);
+  s.ok(s.issues.log(issue.id, { kind: 'note', text: 'A later comment' }));
+  assert.equal(s.issues.get(issue.id).activeQuestion.id, activeQuestion.id);
+});
+
 test('changes write their own log entries: status, priority, due, assignment, a new ask, and the origin', (t) => {
   const s = store();
   t.after(s.cleanup);
@@ -788,7 +821,7 @@ test('every change leaves an event: who, what was before and after, why, and whi
   const x = s.add({ title: 'x' });
   s.add({ title: 'y' });
   const changed = s.ok(s.issues.update(x.id, { priority: 'high', dueAt: T0 + DAY }, { actor: 'dudu', reason: 'Due Friday per the email', groupId: 'tidy-1' }));
-  const { events } = s.issues.events({ issueId: 'DUDU-1' });
+  const { events } = s.issues.events({ issueId: '#1' });
   assert.deepEqual(events, [
     { id: changed.eventId, at: T0 + 2000, actor: 'dudu', action: 'update', issueId: 1, before: { priority: 'none', dueAt: null }, after: { priority: 'high', dueAt: T0 + DAY }, reason: 'Due Friday per the email', groupId: 'tidy-1', undoes: null, undoneBy: null },
     { id: 1, at: T0, actor: 'owner', action: 'add', issueId: 1, before: null, after: null, reason: '', groupId: null, undoes: null, undoneBy: null },
@@ -887,7 +920,7 @@ test('undo of a batch reverts every change that shares its groupId and leaves ad
   t.after(s.cleanup);
   const a = s.add({ title: 'a' });
   const b = s.add({ title: 'b' });
-  const c = s.add({ title: 'c' });
+  const c = s.add({ title: 'c', project: { name: 'work', path: '/work' } });
   const meta = { actor: 'dudu', groupId: 'tidy-9' };
   const first = s.ok(s.issues.update(a.id, { priority: 'high' }, meta));
   s.ok(s.issues.update(b.id, { dueAt: T0 + DAY }, meta));
@@ -897,13 +930,13 @@ test('undo of a batch reverts every change that shares its groupId and leaves ad
 
   // Asking by any event of the batch means the whole batch.
   const result = s.ok(s.issues.undo(first.eventId));
-  assert.deepEqual(result.issues.map((issue: any) => issue.id).sort(), [1, 2, 3]);
-  assert.deepEqual(result.skipped.map((entry: any) => [entry.issueId, entry.reason]), [[added.issue.id, 'an added issue stays; cancel it instead']]);
+  assert.deepEqual(result.issues.map((issue: any) => issue.id).sort(), [1, 2]);
+  assert.deepEqual(result.skipped.map((entry: any) => [entry.issueId, entry.reason]), [[added.issue.id, 'an added issue stays; cancel it instead'], [c.id, 'the assignment is locked']]);
   const now = (id: number) => s.issues.get(id).issue;
-  assert.deepEqual([now(1).priority, now(1).kind, now(2).dueAt, now(3).agent, now(3).session], ['none', 'untouched by the batch', null, null, null]);
+  assert.deepEqual([now(1).priority, now(1).kind, now(2).dueAt, now(3).agent, now(3).session], ['none', 'untouched by the batch', null, 'claude', 'claude:1']);
   assert.equal(now(4).title, 'd');
-  // The session it opened is history now, and closed.
-  assert.deepEqual(now(3).sessions.map((session: any) => [session.key, session.open]), [['claude:1', false]]);
+  // Undo cannot unassign a worker or close its session.
+  assert.deepEqual(now(3).sessions.map((session: any) => [session.key, session.open]), [['claude:1', true]]);
   assert.equal(s.issues.undo({ groupId: 'tidy-9' }).outcome, 'no_op');
   assert.equal(s.issues.undo({ groupId: 'no-such-batch' }).outcome, 'no_op');
 });
@@ -1268,6 +1301,7 @@ test('list, counts, groups and facets agree with a plain model over many random 
       fields.agent = pickOne(['claude', 'codex']);
       fields.session = pickOne(fields.agent === 'claude' ? ['claude:run', 'claude:wait', 'claude:old'] : ['codex:err', 'codex:old']);
     }
+    if (!fields.project) fields.agent = null;
     const issue = s.add(fields);
     if (random() < 0.4) {
       s.clock.now += Math.floor(random() * 20) * DAY;
@@ -1397,14 +1431,14 @@ test('the state folder is created when it does not exist yet', (t) => {
 test('export is plain JSON holding every issue, log entry, session and event', (t) => {
   const s = store();
   t.after(s.cleanup);
-  const x = s.add({ title: 'x', source: 'connector', sourceRef: 'lark:1' }, { actor: 'dudu' });
+  const x = s.add({ title: 'x', project: { name: 'work', path: '/work' }, source: 'connector', sourceRef: 'lark:1' }, { actor: 'dudu' });
   s.add({ title: 'y' });
   s.ok(s.issues.update(x.id, { priority: 'high' }, { actor: 'dudu', reason: 'Quick' }));
   s.ok(s.issues.assign(x.id, { agent: 'claude', session: 'claude:1' }));
   s.ok(s.issues.log(x.id, { kind: 'note', text: 'hello', data: { a: 1 } }));
   const exported = s.issues.export();
   assert.deepEqual(JSON.parse(JSON.stringify(exported)), exported);
-  assert.deepEqual(Object.keys(exported).sort(), ['events', 'exportedAt', 'issues', 'log', 'sessions', 'version']);
+  assert.deepEqual(Object.keys(exported).sort(), ['events', 'exportedAt', 'issues', 'log', 'projects', 'references', 'sessions', 'version']);
   assert.equal(exported.exportedAt, s.clock.now);
   assert.deepEqual(exported.issues.map((row: any) => [row.id, row.title, row.priority]), [[1, 'x', 'high'], [2, 'y', 'none']]);
   assert.deepEqual(exported.log.map((row: any) => [row.kind, row.data]), [['source', { source: 'connector', sourceRef: 'lark:1' }], ['priority', { from: 'none', to: 'high', impact: null, effort: null }], ['assign', { agent: 'claude', session: 'claude:1' }], ['note', { a: 1 }]]);
@@ -1472,7 +1506,7 @@ function buildBig() {
       const result = issues.add({
         title, brief: open ? '供应商发来修改稿，第 3 条要你定接受还是回绝，请在周五前给出结论并同步给法务。' : '',
         status: open ? pickOne(['backlog', 'todo', 'todo', 'todo', 'in_progress', 'in_review']) : 'todo',
-        priority: pickOne(['none', 'urgent', 'high', 'medium', 'low']), project: name ? { name, path: `/work/${name}` } : null, agent: pickOne(agents),
+        priority: pickOne(['none', 'urgent', 'high', 'medium', 'low']), project: name ? { name, path: `/work/${name}` } : null, agent: name ? pickOne(agents) : null,
         dueAt: open && random() < 0.5 ? clock.now + Math.floor((random() - 0.3) * 20 * DAY) : null,
       });
       addTimes.push(performance.now() - began);

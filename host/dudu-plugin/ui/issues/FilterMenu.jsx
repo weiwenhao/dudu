@@ -69,11 +69,13 @@ export function FilterMenu({ open, anchor, onOpenChange, filter, counts, facets,
   const buttonAnchor = useRef(null);
   buttonAnchor.current = anchor?.element ?? null;
   const fieldInput = useRef(null);
+  const menu = useRef(null);
   const optionsInput = useRef(null);
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverAnchor virtualRef={buttonAnchor} />
       <PopoverContent
+        ref={menu}
         align={anchor?.align ?? 'end'} className="w-[232px]" aria-label={T.addFilter}
         onCloseAutoFocus={(event) => { event.preventDefault(); anchor?.element?.focus(); }}
       >
@@ -97,11 +99,11 @@ export function FilterMenu({ open, anchor, onOpenChange, filter, counts, facets,
         {open && row && (
           <Popover open onOpenChange={(next) => { if (!next) onOpenChange(false); }}>
             <PopoverAnchor virtualRef={optionsAnchor} />
-            {/* Focus lands in the first menu a moment after this one mounts, which would count as "outside" and dismiss it (and the
-                first menu with it): only Escape closes this one, and the first menu's own outside-click closes both. */}
             <PopoverContent
               side="left" align="start" alignOffset={-8} sideOffset={8} className="w-[232px]" aria-label={row.name}
-              onOpenAutoFocus={(event) => event.preventDefault()} onInteractOutside={(event) => event.preventDefault()}
+              onOpenAutoFocus={(event) => event.preventDefault()}
+              onFocusOutside={(event) => event.preventDefault()}
+              onPointerDownOutside={(event) => { if (menu.current?.contains(event.target)) event.preventDefault(); }}
             >
               <FilterOptions
                 row={row} filter={filter} inputRef={optionsInput} onToggle={onToggle} onBack={() => fieldInput.current?.focus()}

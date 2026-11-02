@@ -7,9 +7,11 @@
 //
 // The plugin hooks into three actions, each optional (`createIssuesApi({ issues, onReply, onAssign, onResume })`): a hook never fails
 // the change that was made, a failure of it is only reported on the console.
+import { issueMessage } from './message.mjs';
+import { issueApiDocument } from './contract.mjs';
 const NO_STORE = { 'cache-control': 'no-store' };
 
-const meta = ({ reason, groupId }) => ({ reason, groupId });
+const meta = ({ reason, groupId }, { actor = 'owner' } = {}) => ({ reason, groupId, actor });
 
 async function hand(hook, ...args) {
   try { return await hook?.(...args); } catch (error) { console.warn(`[dudu] An issue hook failed: ${error.message}`); return undefined; }
@@ -17,10 +19,11 @@ async function hand(hook, ...args) {
 
 // The owner's answer to what an agent asked: it goes into the log as a decision and clears the question (the page's Needs you mark
 // goes with it). `onReply(issue, text)` is the plugin's hand-over of the answer to the agent's session, when there is one.
-async function reply(issues, { id, text, ...rest }, { onReply }) {
-  const logged = issues.log(id, { kind: 'decision', text, ...meta(rest) });
+async function reply(issues, { id, text, ...rest }, scope) {
+  const { onReply } = scope;
+  const logged = issues.log(id, { kind: 'decision', text, ...meta(rest, scope) });
   if (logged.outcome !== 'success') return logged;
-  const cleared = issues.update(id, { ask: '' }, meta(rest));
+  const cleared = issues.update(id, { ask: '' }, meta(rest, scope));
   const issue = cleared.issue ?? logged.issue;
   await hand(onReply, issue, text);
   return { outcome: 'success', issue, entry: logged.entry };
@@ -28,14 +31,15 @@ async function reply(issues, { id, text, ...rest }, { onReply }) {
 
 // Naming an agent gives the issue to it. `onAssign(issue)` is the plugin's start of the work (a session for the agent). Naming the agent the
 // issue has already, while it has a session, changes nothing: the session that works is not thrown away for a click on the same name.
-async function assign(issues, { id, agent, session, ...rest }, { onAssign }) {
+async function assign(issues, { id, agent, session, project, ...rest }, scope) {
+  const { onAssign } = scope;
   if (agent && session === undefined) {
     const current = issues.get(id, { logLimit: 1 });
-    if (current.outcome === 'success' && current.issue.agent === agent && current.issue.session) {
+    if (current.outcome === 'success' && current.issue.agent === agent && current.issue.session && (!project || project.path === current.issue.project?.path)) {
       return { outcome: 'no_op', message: 'The issue has this agent and its session already.', issue: current.issue };
     }
   }
-  const result = issues.assign(id, { agent, session, ...meta(rest) });
+  const result = issues.assign(id, { agent, session, ...(project === undefined ? {} : { project }), ...meta(rest, scope) });
   if (result.outcome === 'success') await hand(onAssign, result.issue);
   return result;
 }
@@ -59,28 +63,101 @@ async function resume(issues, { id, session }, { onResume }) {
 }
 
 const CALLS = {
+  schema: () => ({ outcome: 'success', apiVersion: 1, document: issueApiDocument() }),
+  office: (issues) => issues.office(),
   list: (issues, body) => issues.list(body),
   get: (issues, { id, logLimit, logCursor }) => issues.get(id, { logLimit, logCursor }),
-  add: (issues, { fields, ...rest }) => issues.add(fields ?? {}, meta(rest)),
-  update: (issues, { id, patch, ...rest }) => issues.update(id, patch ?? {}, meta(rest)),
-  log: (issues, { id, kind, text, data, ...rest }) => issues.log(id, { kind, text, data, ...meta(rest) }),
+  add: async (issues, { fields, ...rest }, scope) => {
+    const { onAssign } = scope;
+    const result = issues.add(fields ?? {}, meta(rest, scope));
+    if (result.outcome === 'success' && result.issue.agent) await hand(onAssign, result.issue);
+    return result;
+  },
+  update: async (issues, { id, patch, ...rest }, scope) => {
+    const { onChange } = scope;
+    const result = issues.update(id, patch ?? {}, meta(rest, scope));
+    if (result.outcome === 'success') await hand(onChange, result.issue);
+    return result;
+  },
+  log: (issues, { id, kind, text, data, ...rest }, scope) => issues.log(id, { kind, text, data, ...meta(rest, scope) }),
+  message: async (issues, { id, text }, scope) => {
+    const { onMention } = scope;
+    const got = issues.get(id, { logLimit: 1 });
+    if (!got.issue) return got;
+    const message = issueMessage(text, got.issue.agent);
+    if (message.error) return { outcome: 'needs_clarification', code: message.error };
+    if (message.target && message.target !== 'dudu' && !got.issue.project?.path) return { outcome: 'needs_clarification', code: 'choose_project' };
+    if (message.target && !onMention) return { outcome: 'error', code: 'delivery_failed' };
+    const logged = issues.log(id, { kind: 'note', text: message.text, data: message.target ? { mention: message.target } : null, ...meta({}, scope) });
+    if (logged.outcome !== 'success' || !message.target) return logged;
+    try {
+      const result = await onMention(got.issue, message, logged.entry);
+      if (!result || !['success', 'no_op'].includes(result.outcome)) {
+        return { ...logged, outcome: 'error', code: 'delivery_failed', saved: true };
+      }
+      return { ...logged, issue: issues.get(id, { logLimit: 1 }).issue ?? got.issue, delivery: result };
+    } catch {
+      return { ...logged, outcome: 'error', code: 'delivery_failed', saved: true };
+    }
+  },
   assign,
-  snooze: (issues, { id, until, ...rest }) => issues.snooze(id, until, meta(rest)),
-  complete: (issues, { id, outcome, ...rest }) => issues.complete(id, { outcome, ...meta(rest) }),
-  cancel: (issues, { id, reason, ...rest }) => issues.cancel(id, { ...meta(rest), reason }), // the reason of a cancel is the reason
+  snooze: (issues, { id, until, ...rest }, scope) => issues.snooze(id, until, meta(rest, scope)),
+  complete: async (issues, { id, outcome, ...rest }, scope) => {
+    const { onChange } = scope;
+    const result = issues.complete(id, { outcome, ...meta(rest, scope) });
+    if (result.outcome === 'success') await hand(onChange, result.issue);
+    return result;
+  },
+  cancel: async (issues, { id, reason, ...rest }, scope) => {
+    const { onChange } = scope;
+    const result = issues.cancel(id, { ...meta(rest, scope), reason });
+    if (result.outcome === 'success') await hand(onChange, result.issue);
+    return result;
+  },
   search: (issues, { q, limit, tab }) => issues.search(q, { limit, tab }),
   facets: (issues, body) => issues.facets(body),
   counts: (issues) => issues.counts(),
   reply,
   resume,
-  undo: (issues, { target }) => issues.undo(target),
+  session: async (issues, { id }, { onSession }) => {
+    const got = issues.get(id, { logLimit: 1 });
+    if (!got.issue) return got;
+    return { outcome: 'success', ...(await onSession?.(got.issue) ?? {}) };
+  },
+  delete: async (issues, { id, token }, { onDelete }) => {
+    if (!token) return issues.forget(id);
+    const checked = issues.forget(id, { token, checkOnly: true, allowActive: true });
+    if (checked.outcome !== 'success') return checked;
+    if (checked.issue.sessions.length && !onDelete) return { outcome: 'error', code: 'session_cleanup_unavailable' };
+    try { await onDelete?.(checked.issue); }
+    catch { return { outcome: 'error', code: 'session_cleanup_failed' }; }
+    return issues.forget(id, { token, allowActive: true });
+  },
+  undo: (issues, { target }, scope) => issues.undo({ ...(target && typeof target === 'object' ? target : { eventId: target }), actor: scope.actor }),
+  forget: async (issues, { id, token }, { onForget }) => {
+    const before = token ? issues.get(id, { logLimit: 1 }).issue : null;
+    const result = issues.forget(id, { token });
+    if (result.forgotten) await hand(onForget, before);
+    return result;
+  },
   events: (issues, body) => issues.events(body),
   export: (issues) => issues.export(),
 };
 
 export const ISSUE_ACTIONS = Object.keys(CALLS);
 
-export function createIssuesApi({ issues, onReply, onAssign, onResume }) {
+export function createIssueCommands({ issues, actor = 'owner', ...hooks }) {
+  return {
+    async execute(action, body = {}) {
+      if (!Object.hasOwn(CALLS, action)) return { outcome: 'error', code: 'unknown_action' };
+      if (body === null || typeof body !== 'object' || Array.isArray(body)) return { outcome: 'needs_clarification', code: 'invalid_request' };
+      return CALLS[action](issues, body, { ...hooks, actor });
+    },
+  };
+}
+
+export function createIssuesApi({ issues, ...hooks }) {
+  const commands = createIssueCommands({ ...hooks, issues, actor: 'owner' });
   return {
     async handle(action, request) {
       const call = Object.hasOwn(CALLS, action) ? CALLS[action] : null;
@@ -88,7 +165,7 @@ export function createIssuesApi({ issues, onReply, onAssign, onResume }) {
       try {
         const body = await request.json().catch(() => { throw new SyntaxError('The request body is not JSON.'); });
         if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new SyntaxError('The request body must be a JSON object.');
-        return Response.json(await call(issues, body, { onReply, onAssign, onResume }), { headers: NO_STORE });
+        return Response.json(await commands.execute(action, body), { headers: NO_STORE });
       } catch (error) {
         const bad = error instanceof SyntaxError;
         return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: bad ? 400 : 500, headers: NO_STORE });

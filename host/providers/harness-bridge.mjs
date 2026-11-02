@@ -1,5 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { AsyncQueue, abortReason, deferred } from './async.mjs';
+import { createHarnessActivity } from './activity.mjs';
 
 // An external harness (Claude Code, Codex) runs a turn with its own loop, tools and permissions. DSH's loop
 // still drives the conversation step by step: each DSH step replays one assistant message of the harness, and
@@ -29,16 +30,27 @@ export async function assertDirectory(cwd) {
 
 /**
  * What a request is: the start of a turn, or another step of one the harness is already running.
- * A turn ends with an assistant message that calls no tool, so everything after the last such message
- * belongs to the current turn. Prompts typed by the user are its opener and, after it, steering.
+ * DSH's turn/start boundary separates new input from a stopped tool-ended turn. Without a host history reader,
+ * older runtimes fall back to the last assistant message without tools. User prompts open a turn or steer it.
  */
-export function analyzeRequest(messages, route) {
-  let start = 0;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'assistant' && !hasToolCalls(messages[i])) { start = i + 1; break; }
+export function analyzeRequest(messages, route, events) {
+  const boundary = events?.findLastIndex((event) => event.type === 'turn/start') ?? -1;
+  let prompts;
+  let continuing;
+  if (boundary >= 0) {
+    const current = events.slice(boundary + 1);
+    const ids = new Set(current.filter((event) => event.type === 'user/message').map((event) => event.data.id));
+    prompts = messages.filter((message) => isPrompt(message) && ids.has(message.id));
+    continuing = current.some((event) => event.type === 'assistant/message');
+  } else {
+    let start = 0;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant' && !hasToolCalls(messages[i])) { start = i + 1; break; }
+    }
+    const segment = messages.slice(start);
+    prompts = segment.filter(isPrompt);
+    continuing = segment.some((message) => message.role === 'assistant');
   }
-  const segment = messages.slice(start);
-  const prompts = segment.filter(isPrompt);
   let link;
   for (let i = messages.length - 1; i >= 0; i--) {
     const source = messages[i].source;
@@ -48,7 +60,7 @@ export function analyzeRequest(messages, route) {
     }
   }
   return {
-    continuing: segment.some((message) => message.role === 'assistant'),
+    continuing,
     prompts,
     promptText: prompts.map((message) => textOf(message.content)).filter(Boolean).join('\n\n'),
     link,
@@ -63,7 +75,7 @@ export function analyzeRequest(messages, route) {
 export class HarnessRun {
   #tools = new Map();
 
-  constructor({ sessionId, handle, prompts }) {
+  constructor({ sessionId, handle, prompts, activity }) {
     this.sessionId = sessionId;
     this.handle = handle;
     this.nativeSessionId = handle.nativeSessionId;
@@ -72,6 +84,7 @@ export class HarnessRun {
     this.finished = false;
     this.startedAt = Date.now();
     this.turnEnd = undefined;
+    this.activity = activity;
     this.pump = this.#pump();
   }
 
@@ -87,6 +100,8 @@ export class HarnessRun {
   #route(event) {
     switch (event.type) {
       case 'tool-result': this.#tool(event.id).resolve(event); break;
+      case 'compaction-start':
+      case 'compaction-end': this.activity?.update(event); break;
       case 'turn-end': this.#end(event); break;
       default: this.steps.push(event);
     }
@@ -96,6 +111,7 @@ export class HarnessRun {
     if (this.finished) return;
     this.finished = true;
     this.turnEnd = event;
+    this.activity?.end(event);
     this.steps.push(event);
     this.steps.close();
     for (const call of this.#tools.values()) call.reject(harnessError('The harness ended before the tool finished.', 'HARNESS_EXITED'));
@@ -123,13 +139,14 @@ export class HarnessRun {
     });
   }
 
-  pushUserMessage(text) { void this.handle.pushUserMessage?.(text); }
+  pushUserMessage(text, images) { return this.handle.pushUserMessage?.(text, images); }
 
   async interrupt() {
     if (!this.finished) await this.handle.interrupt?.();
   }
 
   async close() {
+    this.activity?.end();
     await this.handle.close?.();
     await this.pump.catch(() => {});
   }
@@ -139,12 +156,14 @@ export class HarnessRun {
 export class HarnessBridge {
   #runs = new Map();
 
-  constructor({ driver, agentOf = () => undefined, permissionOf = () => undefined, onLink }) {
+  constructor({ driver, agentOf = () => undefined, permissionOf = () => undefined, onLink, inputOf, eventsOf }) {
     this.driver = driver;
     this.agentOf = agentOf;
     this.permissionOf = permissionOf;
     // Told which DSH session runs which native session, so the sessions list can say where a session already is.
     this.onLink = onLink;
+    this.inputOf = inputOf ?? (async (messages) => ({ prompt: messages.map((message) => textOf(message.content)).filter(Boolean).join('\n\n') }));
+    this.eventsOf = eventsOf;
     // Set by the owner of the agents: registers a mirror tool for a tool name the harness's catalog does not list.
     this.onUnknownTool = undefined;
   }
@@ -160,14 +179,16 @@ export class HarnessBridge {
     }));
   }
 
-  async begin(sessionId, { prompts, promptText, link, model, effort, signal }) {
+  async begin(sessionId, { prompts, link, model, effort, signal }) {
     await this.#runs.get(sessionId)?.close();
     const agent = this.agentOf(sessionId);
+    const input = await this.inputOf(prompts, { signal });
     const handle = await this.driver.start({
-      sessionId, agent, prompt: promptText, resume: link?.nativeSessionId, cwd: agent?.session?.header?.cwd,
+      sessionId, agent, ...input, resume: link?.nativeSessionId, cwd: agent?.session?.header?.cwd,
       model, effort, permission: this.permissionOf(agent), signal,
     });
-    const run = new HarnessRun({ sessionId, handle, prompts });
+    const activity = createHarnessActivity({ session: agent?.session, route: this.route, nativeSessionId: handle.nativeSessionId, signal });
+    const run = new HarnessRun({ sessionId, handle, prompts, activity });
     this.#runs.set(sessionId, run);
     try { this.onLink?.({ route: this.route, nativeSessionId: handle.nativeSessionId, sessionId }); } catch { /* bookkeeping only */ }
     return run;
@@ -187,6 +208,7 @@ function usageOf(usage = {}) {
   return {
     inputTokens: usage.inputTokens ?? 0,
     outputTokens: usage.outputTokens ?? 0,
+    ...(usage.totalTokens === undefined ? {} : { totalTokens: usage.totalTokens }),
     ...(usage.cacheReadTokens === undefined ? {} : { cacheReadTokens: usage.cacheReadTokens }),
     ...(usage.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: usage.cacheWriteTokens }),
     ...(usage.reasoningTokens === undefined ? {} : { reasoningTokens: usage.reasoningTokens }),
@@ -228,6 +250,7 @@ export function createHarnessAdapter(bridge) {
     let index = 0;
     let open;
     let calls = 0;
+    let usage;
     const closeOpen = function* () {
       if (!open) return;
       yield { type: 'block-end', index: open.index, block: { type: open.type, text: open.text } };
@@ -255,12 +278,15 @@ export function createHarnessAdapter(bridge) {
           yield { type: 'block-start', index: at, blockType: 'tool-call' };
           yield { type: 'tool-call-delta', index: at, id: event.id, name: event.name, argumentsDelta: args };
           yield { type: 'block-end', index: at, block: { type: 'tool-call', id: event.id, name: event.name, arguments: args } };
+        } else if (event.type === 'usage') {
+          usage ??= {};
+          for (const [key, value] of Object.entries(event.usage)) usage[key] = (usage[key] ?? 0) + value;
         } else if (event.type === 'step-end' || event.type === 'turn-end') {
           yield* closeOpen();
           if (event.type === 'turn-end' && event.ok === false) {
             throw event.error instanceof Error ? event.error : harnessError(String(event.error ?? 'The harness failed.'), 'HARNESS_FAILED');
           }
-          yield { type: 'usage', usage: usageOf(event.usage) };
+          if (usage || event.usage) yield { type: 'usage', usage: usageOf(usage ?? event.usage) };
           yield {
             type: 'finish',
             reason: { kind: calls > 0 ? 'tool-calls' : 'stop' },
@@ -293,20 +319,23 @@ export function createHarnessAdapter(bridge) {
         yield* single(options.purpose === 'session-title' ? titleOf(options.messages) : '');
         return;
       }
-      const request = analyzeRequest(options.messages, bridge.route);
+      bridge.beforeStep?.(options.sessionId);
+      const events = await bridge.eventsOf?.(options.sessionId, signal);
+      const request = analyzeRequest(options.messages, bridge.route, events);
       let run = bridge.runOf(options.sessionId);
       if (request.continuing && !run) {
         throw harnessError('The harness is no longer running this turn. Send the message again.', 'HARNESS_LOST');
       }
       if (!request.continuing) {
-        if (!request.promptText.trim()) throw harnessError('There is nothing to send to the harness.', 'HARNESS_NO_PROMPT');
+        if (!request.promptText.trim() && !request.prompts.some((message) => message.content.some((block) => block.type === 'image'))) throw harnessError('There is nothing to send to the harness.', 'HARNESS_NO_PROMPT');
         run = await bridge.begin(options.sessionId, { ...request, model: options.model, effort: options.reasoningEffort, signal });
       } else {
         // Input typed while the harness works reaches DSH as steering; hand each message over once.
         for (const prompt of request.prompts) {
           if (run.forwarded.has(prompt.id)) continue;
+          const input = await bridge.inputOf([prompt], { signal });
+          await run.pushUserMessage(input.prompt, input.images);
           run.forwarded.add(prompt.id);
-          run.pushUserMessage(textOf(prompt.content));
         }
       }
       yield* step(run, signal);

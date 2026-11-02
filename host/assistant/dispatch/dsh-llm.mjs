@@ -6,6 +6,8 @@
 // It is the one place that streams a model call (dispatch/index.mjs and memory/ only know "messages in, text out"). The model is the one
 // DSH has as its default, unless that is Claude Code or Codex: those are harnesses that run a whole session, not a place to ask one
 // question, so then the first model of another route is used. A DSH that has none says so, and the callers do not do the step.
+import { PERSONAL_IDENTITY } from '../identity.mjs';
+
 const HARNESS = new Set(['claude', 'codex']);
 
 /** The route and model for a one-shot call: DSH's default when it is a plain model, else the first model of a route that is. */
@@ -32,7 +34,7 @@ export function createDshLlm(ctx) {
   return async function llm(messages, { signal } = {}) {
     const picked = pickModel(await service('sessionController').modelCatalog());
     if (!picked) throw new Error('This DSH has no model to ask.');
-    const system = messages.filter((message) => message.role === 'system').map((message) => textOf(message.content)).join('\n\n');
+    const system = [...messages.filter((message) => message.role === 'system').map((message) => textOf(message.content)), PERSONAL_IDENTITY].join('\n\n');
     const asked = messages.filter((message) => message.role !== 'system').map((message) => ({ role: 'user', content: [{ type: 'text', text: textOf(message.content) }] }));
     let text = '';
     for await (const chunk of service('llm').stream({ ...picked, messages: asked, ...(system ? { system } : {}), signal })) {

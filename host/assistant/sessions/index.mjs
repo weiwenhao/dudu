@@ -31,6 +31,7 @@
 //       snapshots: [{ key, provider, id, dshSessionId, title, cwd, state, stateSince, lastActivityAt, excerpt (<= 300), pending }],
 //       the most recently active first; sources: { claude: 'ok' | 'pending' | 'error: ...', codex, dsh } for the readers given
 //   stateOf(key)   -> the state or null; synchronous: it is the `sessionState` hook of createIssues as it is
+//   snapshotOf(key) -> the current snapshot or null, resolving native/DSH aliases as stateOf does
 //   onChange(cb)   -> unsubscribe; cb({ key, from, to, snapshot }) once for every change of a session's state, not debounced. A session
 //                     seen for the first time has from null, one that is gone has to null. The first read of a reader whose sessions
 //                     the index did not hold yet (a first run) says nothing: it is the baseline.
@@ -255,12 +256,13 @@ export function createSessions({
 
   function snapshotOf(key, provider, facts, dsh, dshId, at, before) {
     const verdict = judge(provider, { ...facts, dsh }, { now: at, ...rules });
+    const activity = [facts.lastActivityAt, dsh?.at].filter(Number.isFinite);
     return {
       key, provider, id: facts.id, dshSessionId: provider === 'dsh' ? facts.id : dshId, title: oneLine(facts.title ?? '', TITLE_CHARS), cwd: facts.cwd ?? null,
       state: verdict.state,
       // A state that has not changed keeps the time it began even when a reader has nothing better than its own clock to say.
       stateSince: verdict.stateSince ?? (before?.state === verdict.state ? before.stateSince : facts.updatedAt ?? at),
-      lastActivityAt: Math.max(...[facts.lastActivityAt, dsh?.at].filter(Number.isFinite), facts.updatedAt ?? 0),
+      lastActivityAt: activity.length ? Math.max(...activity) : facts.updatedAt ?? 0,
       excerpt: oneLine(facts.excerpt || dsh?.excerpt || '', EXCERPT_CHARS), pending: verdict.pending,
     };
   }
@@ -522,5 +524,5 @@ export function createSessions({
     db.close();
   }
 
-  return { snapshots, onChange, read, open, close, resume, send, stateOf, poll, dispose };
+  return { snapshots, snapshotOf: (key) => copy(current.get(resolve(key))) ?? null, onChange, read, open, close, resume, send, stateOf, poll, dispose };
 }

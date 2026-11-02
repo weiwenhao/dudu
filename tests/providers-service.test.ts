@@ -10,7 +10,7 @@ function fakeHost() {
   const adapters = new Map<string, any>();
   const agents = new Map<string, any>();
   const host: any = {
-    adapters, agents,
+    adapters,
     llm: {
       registerAdapter(routes: string[], adapter: any) {
         for (const route of routes) adapters.set(route, adapter);
@@ -132,6 +132,58 @@ test('disposing an agent removes its tools and stops its harness run', async (t)
   assert.equal(agent.tools.size, 2);
   host.emit('agent/disposed', { agent });
   assert.equal(agent.tools.size, 0);
+});
+
+test('restored agents use the durable selected provider instead of the host default', async (t) => {
+  const { host } = await setup(t);
+  host.providerOf = (agent: any) => agent.selection?.provider;
+  const restored = host.addAgent('restored', 'deepseek-official');
+  restored.selection = { provider: 'fake' };
+  host.emit('agent/created', { agent: restored });
+  assert.deepEqual([...restored.tools.keys()], ['Bash', 'Read']);
+});
+
+test('a request registers the executing harness tools when the cached host options use another route', async (t) => {
+  const { host } = await setup(t);
+  const restored = host.addAgent('restored', 'deepseek-official');
+  host.emit('agent/created', { agent: restored });
+  const steps = host.adapters.get('fake').stream({
+    sessionId: restored.id, messages: [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'Check tools.' }] }],
+  });
+  await assert.rejects(steps.next(), /not needed/);
+  assert.deepEqual([...restored.tools.keys()], ['Bash', 'Read']);
+});
+
+test('refresh and provider replacement remove stale mirror closures and bind the current bridge', async (t) => {
+  const { host, provider, providers } = await setup(t);
+  const agent = host.addAgent('s1', 'fake');
+  host.emit('agent/created', { agent });
+  const first = agent.tools.get('Bash');
+  await providers.save({ id: 'fake', enabled: false });
+  assert.equal(agent.tools.size, 0);
+  await providers.save({ id: 'fake', enabled: true });
+  assert.equal(agent.tools.size, 2);
+  assert.notEqual(agent.tools.get('Bash'), first);
+  const second = agent.tools.get('Bash');
+  provider.detection = ready('/updated/fake-cli');
+  await providers.refresh();
+  assert.equal(agent.tools.size, 2);
+  assert.notEqual(agent.tools.get('Bash'), second);
+});
+
+test('partial registration failure rolls back tools and can be retried', async (t) => {
+  const { host } = await setup(t);
+  const agent = host.addAgent('s1', 'fake');
+  const register = agent.ctx.tools.register;
+  agent.ctx.tools.register = (definition: any) => {
+    if (definition.name === 'Read') throw new Error('Fixture registration failure.');
+    return register(definition);
+  };
+  assert.throws(() => host.emit('agent/created', { agent }), /registration failure/);
+  assert.equal(agent.tools.size, 0);
+  agent.ctx.tools.register = register;
+  host.emit('agent/created', { agent });
+  assert.equal(agent.tools.size, 2);
 });
 
 test('agents that exist when the plugin loads are covered, and closing leaves nothing registered', async (t) => {

@@ -1,6 +1,7 @@
 import { open, readdir, stat } from 'node:fs/promises';
+import { Buffer } from 'node:buffer';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { mapLimit } from '../async.mjs';
 import { oneLine } from './text.mjs';
 
@@ -11,6 +12,7 @@ import { oneLine } from './text.mjs';
 
 const HEAD_BYTES = 256 * 1024;
 const TAIL_BYTES = 768 * 1024;
+const ACTIVITY_SCAN_BYTES = 48 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Text Claude Code writes as the user on its own behalf: not something the person typed.
 const SYNTHETIC = /^\s*(?:<(?:system-reminder|local-command-caveat|local-command-stdout|local-command-stderr|user-prompt-submit-hook|task-notification|ide_[a-z_]+)\b|\[Request interrupted by user)/i;
@@ -64,6 +66,49 @@ function parse(line) {
   try { return JSON.parse(line); } catch { return undefined; }
 }
 
+function activityTime(record) {
+  if (!record || record.isSidechain || record.isMeta || record.isCompactSummary) return 0;
+  const content = blocksOf(record.message?.content);
+  const conversation = record.type === 'assistant' || (record.type === 'user' &&
+    (isHumanPrompt(record) || content.some((block) => ['image', 'tool_result'].includes(block?.type)))) ||
+    (record.type === 'system' && record.subtype === 'turn_duration');
+  const at = conversation && typeof record.timestamp === 'string' ? Date.parse(record.timestamp) : NaN;
+  return Number.isFinite(at) && at > 0 ? at : 0;
+}
+
+/** Metadata rewrites can touch an old transcript. Only a timestamp in its actual conversation establishes activity. */
+async function lastActivity(file, size) {
+  const handle = await open(file, 'r');
+  try {
+    let position = size;
+    let scanned = 0;
+    let pending = Buffer.alloc(0);
+    while (position > 0 && scanned < ACTIVITY_SCAN_BYTES) {
+      const start = Math.max(0, position - TAIL_BYTES);
+      const chunk = Buffer.alloc(position - start);
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, start);
+      scanned += chunk.length;
+      const data = Buffer.concat([chunk.subarray(0, bytesRead), pending]);
+      let from = 0;
+      if (start > 0) {
+        const newline = data.indexOf(0x0a);
+        if (newline === -1) { pending = data; position = start; continue; }
+        pending = data.subarray(0, newline);
+        from = newline + 1;
+      }
+      let latest = 0;
+      for (const line of data.subarray(from).toString('utf8').split('\n')) {
+        // Request blobs and snapshots are large; skip parsing them when their type is already at the start.
+        if (line.startsWith('{"type":"') && !/^\{"type":"(?:user|assistant|system)"/.test(line)) continue;
+        latest = Math.max(latest, activityTime(parse(line)));
+      }
+      if (latest) return latest;
+      position = start;
+    }
+    return 0;
+  } finally { await handle.close(); }
+}
+
 async function summarize(file, info) {
   const id = info.name.slice(0, -'.jsonl'.length);
   const head = wholeLines(await readSlice(file, 0, Math.min(info.size, HEAD_BYTES)), { cutStart: false, cutEnd: info.size > HEAD_BYTES });
@@ -97,8 +142,21 @@ async function summarize(file, info) {
   return {
     provider: 'claude', id, cwd: cwd ?? null, branch: branch ?? null, entrypoint: entrypoint ?? null,
     title: oneLine(customTitle || aiTitle || firstPrompt), preview: oneLine(firstPrompt, 300),
-    createdAt: createdAt ?? null, updatedAt: info.mtimeMs, size: info.size, file,
+    createdAt: createdAt ?? null, updatedAt: await lastActivity(file, info.size),
+    mtimeMs: info.mtimeMs, size: info.size, file,
   };
+}
+
+/** One summary, cached by the file stamp rather than by the displayed conversation time. */
+export async function readClaudeSummary({ file, cache = new Map() }) {
+  let info;
+  try { info = await stat(file); } catch { return undefined; }
+  const known = cache.get(file);
+  if (known && known.mtimeMs === info.mtimeMs && known.size === info.size) return known.summary;
+  let summary;
+  try { summary = await summarize(file, { name: basename(file), size: info.size, mtimeMs: info.mtimeMs }); } catch { summary = undefined; }
+  cache.set(file, { mtimeMs: info.mtimeMs, size: info.size, summary });
+  return summary;
 }
 
 /** The Claude Code sessions on this computer, newest first. `cache` keeps what an unchanged file already told. */
@@ -113,15 +171,6 @@ export async function listClaudeSessions({ root = claudeProjectsRoot(), cache = 
     try { names = await readdir(join(root, project.name)); } catch { continue; }
     for (const name of names) if (name.endsWith('.jsonl') && UUID.test(name.slice(0, -'.jsonl'.length))) files.push({ file: join(root, project.name, name), name });
   }
-  const sessions = await mapLimit(files, 8, async ({ file, name }) => {
-    let info;
-    try { info = await stat(file); } catch { return undefined; }
-    const known = cache.get(file);
-    if (known && known.mtimeMs === info.mtimeMs && known.size === info.size) return known.summary;
-    let summary;
-    try { summary = await summarize(file, { name, size: info.size, mtimeMs: info.mtimeMs }); } catch { summary = undefined; }
-    cache.set(file, { mtimeMs: info.mtimeMs, size: info.size, summary });
-    return summary;
-  });
+  const sessions = await mapLimit(files, 8, ({ file }) => readClaudeSummary({ file, cache }));
   return sessions.filter(Boolean).sort((a, b) => b.updatedAt - a.updatedAt);
 }

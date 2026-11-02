@@ -1,24 +1,31 @@
 import { useState } from 'react';
-import { Check } from 'lucide-react';
+import { Box, Check } from 'lucide-react';
 import { Command, CommandInput, CommandItem, CommandList, CommandSeparator } from '../components/command.jsx';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
 import { T } from '../strings.js';
 import { AgentAvatar } from './icons.jsx';
 import { AGENT_NAMES } from './model.js';
+import { CreateProjectDialog, ProjectChoices } from './ProjectMenu.jsx';
 
 const AGENTS = Object.keys(AGENT_NAMES);
 
 /**
- * The agent menu: No agent and the agents there are, the current one ticked. `note` is a line under the list (an agent change
- * starts a new session; the page says so). `children` is the trigger.
+ * Assignment requires a project first. Saved assignments can keep the trigger as a static label.
  */
-export function AgentMenu({ agent, onSelect, note, align = 'start', side, children }) {
+export function AgentMenu({ agent, project, request, onSelect, locked = false, align = 'start', side, children }) {
   const [open, setOpen] = useState(false);
-  const pick = (value) => { setOpen(false); onSelect(value); };
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
+  const [selected, setSelected] = useState(project);
+  const [choosing, setChoosing] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const pick = (value) => { setOpen(false); onSelect(value, selected); };
+  const changeOpen = (value) => { setOpen(value); if (value) { setSelected(project); setChoosing(Boolean(request && !project?.path)); } };
+  if (locked) return children;
+  return (<>
+    <Popover open={open} onOpenChange={changeOpen}>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent className="w-[248px]" align={align} side={side} aria-label={T.fields.agent}>
+        {choosing ? <ProjectChoices request={request} project={selected} onSelect={(value) => { setSelected(value); setChoosing(false); }} onCreate={() => { setOpen(false); setCreating(true); }} /> : <>
+        {request && <button type="button" onClick={() => setChoosing(true)} className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs text-muted-foreground hover:bg-accent"><Box className="size-3.5" />{selected?.name ?? T.projects.choose}</button>}
         <Command>
           <CommandInput placeholder={T.detail.setAgent} aria-label={T.detail.setAgent} />
           <CommandSeparator />
@@ -36,9 +43,9 @@ export function AgentMenu({ agent, onSelect, note, align = 'start', side, childr
               </CommandItem>
             ))}
           </CommandList>
-        </Command>
-        {note && <p className="px-2 pt-1.5 pb-1 text-xs text-muted-foreground">{note}</p>}
+        </Command></>}
       </PopoverContent>
     </Popover>
-  );
+    <CreateProjectDialog request={request} open={creating} onOpenChange={setCreating} onCreated={(value) => { setSelected(value); setChoosing(false); setOpen(true); }} />
+  </>);
 }

@@ -3,6 +3,8 @@ import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
 import { DUE_TONE } from './due.js';
 import { AGENT_LETTERS, AGENT_NAMES } from './model.js';
+import { AgentLogo } from './AgentLogo.jsx';
+import { agentLogo } from './agent-logos.js';
 
 const STATUS_COLOR = {
   backlog: 'text-status-backlog',
@@ -82,24 +84,24 @@ export function ProjectChip({ name }) {
 
 export function DueDate({ info, className }) {
   return (
-    <span className={cn('inline-flex items-center gap-1', DUE_TONE[info.kind], className)} title={info.hint}>
-      <CalendarDays className="size-3" aria-hidden="true" />
+    <span className={cn('inline-flex items-center gap-1 whitespace-nowrap', DUE_TONE[info.kind], className)} title={info.hint}>
+      <CalendarDays className="size-3 shrink-0" aria-hidden="true" />
       {info.text}
     </span>
   );
 }
 
-// What the agent is doing, as a mark on the avatar's corner: a turning ring, an amber dot, a red dot; Idle draws nothing.
+// Running and failed sessions retain their activity marks; In Review is shown by the issue status.
 const BADGE = {
   working: 'animate-spin border-[1.5px] border-muted-foreground/30 border-t-foreground bg-background motion-reduce:animate-none',
-  needs_you: 'bg-warning',
   stuck: 'bg-destructive',
 };
 
-export function AgentAvatar({ agent, state }) {
+export function AgentAvatar({ agent, state, compact = false }) {
+  const frame = cn('relative flex shrink-0 select-none', compact ? 'size-4' : 'size-6');
   if (!agent) {
     return (
-      <span className="relative flex size-6 shrink-0 select-none" title={T.noAgent}>
+      <span className={frame} title={T.noAgent}>
         <span className="flex size-full items-center justify-center rounded-full border border-dashed border-muted-foreground/50 text-muted-foreground">
           <User className="size-3" aria-hidden="true" />
         </span>
@@ -109,9 +111,9 @@ export function AgentAvatar({ agent, state }) {
   const name = AGENT_NAMES[agent] ?? agent;
   const letter = AGENT_LETTERS[agent] ?? name.slice(0, 1).toUpperCase();
   return (
-    <span className="relative flex size-6 shrink-0 select-none" title={`${name} · ${T.agentState[state] ?? T.agentState.idle}`}>
-      <span className="flex size-full items-center justify-center rounded-full bg-muted text-xs text-muted-foreground">{letter}</span>
-      {BADGE[state] && <span className={cn('absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full ring-2 ring-background', BADGE[state])} />}
+    <span className={frame} title={`${name} · ${T.agentState[state] ?? T.agentState.idle}`}>
+      <span className={cn('flex size-full items-center justify-center text-xs text-muted-foreground', !agentLogo(agent) && 'rounded-full bg-muted')}>{agentLogo(agent) ? <AgentLogo agent={agent} className={compact ? 'size-4' : 'size-5'} /> : letter}</span>
+      {BADGE[state] && <span className={cn('absolute -right-0.5 -bottom-0.5 rounded-full ring-background', compact ? 'size-1.5 ring-1' : 'size-2.5 ring-2', BADGE[state])} />}
     </span>
   );
 }

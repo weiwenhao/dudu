@@ -1,5 +1,7 @@
 // Schema of issues.db. PRAGMA user_version is the number of applied migrations; migrations only move forward.
 // SQLite only uses a partial index when the query's WHERE contains the index's WHERE term literally, so queries import these.
+import { shortenProjectKeys } from './references.mjs';
+
 export const OPEN_SQL = "status NOT IN ('done','canceled')";
 export const FINISHED_SQL = "status IN ('done','canceled')";
 
@@ -98,6 +100,26 @@ const MIGRATIONS = [
   -- searched, never read back, so the segmented copy is not stored a second time.
   CREATE VIRTUAL TABLE issues_fts USING fts5(title, brief, outcome, content = '', contentless_delete = 1, tokenize = 'unicode61 remove_diacritics 2');
   `,
+  `CREATE INDEX issues_session ON issues(session) WHERE session IS NOT NULL;`,
+  `
+  ALTER TABLE issues ADD COLUMN project_key TEXT;
+  ALTER TABLE issues ADD COLUMN project_number INTEGER;
+  CREATE UNIQUE INDEX issues_reference ON issues(project_key, project_number) WHERE project_key IS NOT NULL;
+  CREATE TABLE issue_projects (
+    identity TEXT PRIMARY KEY,
+    key TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    next_number INTEGER NOT NULL DEFAULT 1
+  );
+  -- Reservations survive moving, undoing and forgetting an issue; project numbers are never reused.
+  CREATE TABLE issue_project_numbers (
+    identity TEXT NOT NULL REFERENCES issue_projects(identity),
+    issue_id INTEGER NOT NULL,
+    number INTEGER NOT NULL,
+    PRIMARY KEY (identity, issue_id),
+    UNIQUE (identity, number)
+  );
+  `,
+  shortenProjectKeys,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
@@ -120,7 +142,11 @@ export function migrate(db) {
     // Another process may have migrated while this one waited for the lock.
     const found = version(db);
     if (found > SCHEMA_VERSION) throw new SchemaTooNew(found);
-    for (let v = found; v < SCHEMA_VERSION; v++) db.exec(MIGRATIONS[v]);
+    for (let v = found; v < SCHEMA_VERSION; v++) {
+      const migration = MIGRATIONS[v];
+      if (typeof migration === 'function') migration(db);
+      else db.exec(migration);
+    }
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (error) {

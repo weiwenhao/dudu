@@ -4,7 +4,7 @@
 //
 // createIssues throws SchemaTooNew (code 'SCHEMA_TOO_NEW') when the file was written by a newer app; the file is left
 // untouched. Everything else returns { outcome: 'success' | 'no_op' | 'needs_clarification' | 'error', issue?, message?,
-// next? }: wrong input never throws, only database failures do. Times are ms UTC. Ids are 12, '12', 'DUDU-12' or 'dudu-12'.
+// next? }: wrong input never throws, only database failures do. Times are ms UTC. Ids are 12, '12', '#12' or a project reference.
 //
 //   list(view)              view = { tab: 'active'|'backlog'|'all', filter, group, subGroup, order, reverse, completedLast,
 //                                    limit (1..200, default 50), cursor, groupFilter }
@@ -16,7 +16,7 @@
 //   facets(view)            -> { facets: { project, agent, agentState, source: [{ key, label, count }] } }: the filter menu's
 //                           options over the view's tab and filter, each field leaving out its own filter; null is "none";
 //                           an option with count 0 is listed only while the filter selects it
-//   get(id, { logLimit, logCursor })   -> { issue (with sessions), log, nextLogCursor }
+//   get(id, { logLimit, logCursor })   -> { issue (with sessions), log, activeQuestion, nextLogCursor }
 //   add(fields, meta) / update(id, patch, meta) / assign(id, { agent, session, ...meta }) / snooze(id, until, meta)
 //   complete(id, { outcome, ...meta }) / cancel(id, { reason, ...meta }) / log(id, { kind, text, data, ...meta })
 //                           meta = { actor, reason, groupId }; every successful change returns { issue, eventId }
@@ -34,10 +34,12 @@
 // A null key is the "none" group (no project, no agent). The agent state is a SQL function over the current session
 // state, so filtering and grouping by it is exact for paging and counts, at one JS call per scanned row.
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { dirname, isAbsolute } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { matchQuery, segment } from '../segment.mjs';
 import { FINISHED_SQL, migrate, OPEN_SQL, SCHEMA_VERSION, SchemaTooNew } from './schema.mjs';
+import { createReferences } from './references.mjs';
 
 export { SchemaTooNew };
 export const STATUSES = ['backlog', 'todo', 'in_progress', 'in_review', 'done', 'canceled'];
@@ -161,9 +163,9 @@ function parseFields(input) {
   return fields;
 }
 
-function parseId(value) {
-  const match = /^(?:dudu-)?([1-9]\d{0,14})$/i.exec(String(value ?? '').trim());
-  if (!match) throw new Invalid(`"${String(value).slice(0, 40)}" is not an issue id; use 12 or DUDU-12.`);
+function numericId(value) {
+  const match = /^#?([1-9]\d{0,14})$/.exec(String(value ?? '').trim());
+  if (!match) throw new Invalid(`"${String(value).slice(0, 40)}" is not an issue id; use its internal id or project reference.`);
   return Number(match[1]);
 }
 
@@ -173,6 +175,7 @@ const FILTER_PARSERS = {
   dueFrom: timestamp, dueTo: timestamp, createdFrom: timestamp, createdTo: timestamp, updatedFrom: timestamp, updatedTo: timestamp,
   completedFrom: timestamp,
   q: (value) => {
+    if (referenceId(value)) return String(value).trim().toUpperCase();
     const query = matchQuery(typeof value === 'string' ? value : '');
     if (!query) throw new Invalid('needs at least one word');
     return query;
@@ -272,8 +275,9 @@ function filterSql(filter, skip = null) {
     params.push(filter[key]);
   }
   if (filter.q) {
-    sql.push('id IN (SELECT rowid FROM issues_fts WHERE issues_fts MATCH ?)');
-    params.push(filter.q);
+    const ref = referenceId(filter.q);
+    sql.push(ref ? ref.sql : 'id IN (SELECT rowid FROM issues_fts WHERE issues_fts MATCH ?)');
+    params.push(...(ref ? ref.params : [filter.q]));
   }
   return { sql: sql.join(' AND '), params };
 }
@@ -335,12 +339,15 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
     db.exec('PRAGMA synchronous = NORMAL');
     db.exec('PRAGMA foreign_keys = ON');
     migrate(db);
+    createReferences(db).backfill();
   } catch (error) {
     db.close();
     throw error;
   }
 
   const statements = new Map();
+  const references = createReferences(db);
+  const forgetPreviews = new Map();
   function stmt(sql) {
     let statement = statements.get(sql);
     if (!statement) {
@@ -371,14 +378,22 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
   db.function('dudu_agent_state', (status, ask, snoozeUntil, session) => agentStateOf(status, ask, snoozeUntil, session));
 
   const toIssue = (row) => ({
-    id: row.id, ref: `DUDU-${row.id}`, ...fieldsOf(row), agentState: agentStateOf(row.status, row.ask, row.snooze_until, row.session),
+    id: row.id, ref: row.project_key ? `${row.project_key}-${row.project_number}` : null, ...fieldsOf(row), agentState: agentStateOf(row.status, row.ask, row.snooze_until, row.session),
     createdAt: row.created_at, updatedAt: row.updated_at,
   });
 
   function loadRow(id) {
     const row = stmt('SELECT * FROM issues WHERE id = ?').get(id);
-    if (!row) throw new Missing(`There is no issue DUDU-${id}.`);
+    if (!row) throw new Missing(`There is no issue ${id}.`);
     return row;
+  }
+
+  function parseId(value) {
+    const ref = projectReference(value);
+    if (!ref) return numericId(value);
+    const row = stmt('SELECT id FROM issues WHERE project_key = ? COLLATE NOCASE AND project_number = ?').get(ref.key, ref.number);
+    if (!row) throw new Missing(`There is no issue ${String(value).trim()}.`);
+    return row.id;
   }
 
   // The public methods all go through here: input mistakes become results, only database failures throw.
@@ -453,11 +468,24 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
       }
     }
     stmt(`UPDATE issues SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`).run(...params, at, id);
+    if ('project' in after) references.assign(id, after.project);
   }
 
   // Status moves carry their own bookkeeping; this is the one place that knows it.
   function settle(current, fields, ctx) {
     const next = { ...current, ...fields };
+    if (current !== BLANK && current.agent && (
+      ('agent' in fields && next.agent !== current.agent) ||
+      ('project' in fields && (next.project?.path !== current.project?.path || next.project?.name !== current.project?.name))
+    )) throw new Invalid('An assigned agent and its project cannot be changed.');
+    if (current !== BLANK && 'project' in fields && current.project?.path !== next.project?.path) {
+      if (!('session' in fields)) next.session = null;
+      if (!('ask' in fields)) next.ask = '';
+      if (!next.project?.path) next.agent = null;
+    }
+    if (fields.agent && (!next.project?.path || !isAbsolute(next.project.path))) {
+      throw new Invalid('Choose a project folder before assigning an agent.', 'Select or create a project, then choose an agent.');
+    }
     if (next.status !== current.status) {
       if (isFinished(current.status) && !('outcome' in fields)) next.outcome = null; // the old result belongs to the old status
       next.resolvedAt = isFinished(next.status) ? ctx.at : null;
@@ -504,19 +532,22 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
         .run(next.title, next.brief, next.status, next.ask, next.priority, next.impact, next.effort, next.kind, next.project?.name ?? null, next.project?.path ?? null,
           next.dueAt, next.snoozeUntil, next.agent, next.session, ctx.at, ctx.at, next.resolvedAt, next.outcome, next.source, next.sourceRef);
       const id = Number(lastInsertRowid);
+      references.assign(id, next.project);
       stmt('INSERT INTO issues_fts (rowid, title, brief, outcome) VALUES (?, ?, ?, ?)').run(id, segment(next.title), segment(next.brief), segment(next.outcome));
       if (next.session) trackSessions(id, next, ctx.at);
       const eventId = addEvent(ctx, 'add', id, null, null);
       // An issue the owner typed themselves has no origin to record; created_at and source already say it.
       if (next.source !== OWNER || next.sourceRef || ctx.reason) addLog(id, ctx, { kind: 'source', text: ctx.reason, data: { source: next.source, sourceRef: next.sourceRef } });
+      if (next.ask) addLog(id, ctx, { kind: 'blocked', text: next.ask });
       return success({ issue: toIssue(loadRow(id)), eventId });
     });
   }
 
   function assign(rawId, input) {
-    const { agent, session, ...meta } = input ?? {};
+    const { agent, session, project, ...meta } = input ?? {};
     if (agent === undefined) throw new Invalid('agent is required (null un-assigns)');
-    return change(rawId, { agent, session: session ?? null }, 'assign', meta);
+    const current = fieldsOf(loadRow(parseId(rawId)));
+    return change(rawId, { agent, session: session ?? (current.agent === agent ? current.session : null), ...(project === undefined ? {} : { project }) }, 'assign', meta);
   }
 
   function snooze(rawId, until, meta) {
@@ -574,8 +605,8 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
     const current = fieldsOf(row);
     const before = JSON.parse(event.before);
     const after = JSON.parse(event.after);
-    const untouched = Object.keys(before).filter((key) => same(current[key], after[key]));
-    if (!untouched.length) return { skipped: 'it was changed again since' };
+    const untouched = Object.keys(before).filter((key) => same(current[key], after[key]) && !(current.agent && ['agent', 'project', 'session'].includes(key)));
+    if (!untouched.length) return { skipped: current.agent && Object.keys(before).some((key) => ['agent', 'project', 'session'].includes(key)) ? 'the assignment is locked' : 'it was changed again since' };
     const restored = pick(before, untouched);
     const next = { ...current, ...restored };
     updateRow(row.id, restored, ctx.at);
@@ -605,6 +636,39 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
       }
       if (!issues.length) return noOp('Nothing could be undone.', { skipped });
       return success({ issue: issues.at(-1), issues, skipped, kept });
+    });
+  }
+
+  // Forget only this issue's local records. The external source and DSH's session log belong to their own stores.
+  function forget(rawId, { token, checkOnly = false, allowActive = false } = {}) {
+    const id = parseId(rawId);
+    const got = get(id, { logLimit: 1 });
+    const version = () => stmt('SELECT MAX(id) AS id FROM issue_events WHERE issue_id = ?').get(id).id;
+    if (!token) {
+      const preview = { token: randomUUID(), at: now(), version: version() };
+      for (const [key, value] of forgetPreviews) if (now() - value.at > 10 * 60_000) forgetPreviews.delete(key);
+      if (forgetPreviews.size >= 100) forgetPreviews.delete(forgetPreviews.keys().next().value);
+      forgetPreviews.set(id, preview);
+      return success({
+        preview: true, token: preview.token, issue: got.issue,
+        counts: {
+          log: stmt('SELECT COUNT(*) AS n FROM issue_log WHERE issue_id = ?').get(id).n,
+          sessions: got.issue.sessions.length,
+          events: stmt('SELECT COUNT(*) AS n FROM issue_events WHERE issue_id = ?').get(id).n,
+        },
+      });
+    }
+    const preview = forgetPreviews.get(id);
+    if (!preview || preview.token !== token || now() - preview.at > 10 * 60_000 || preview.version !== version()) throw new Invalid('Preview this issue again before forgetting it.');
+    if (!allowActive && got.issue.sessions.some((session) => ['running', 'waiting_owner'].includes(session.state))) throw new Invalid('Stop the working session before forgetting this issue.');
+    if (checkOnly) return success({ issue: got.issue });
+    return write(() => {
+      stmt('DELETE FROM issues_fts WHERE rowid = ?').run(id);
+      stmt('DELETE FROM issue_events WHERE issue_id = ?').run(id);
+      stmt('DELETE FROM issues WHERE id = ?').run(id);
+      addEvent(context({}), 'forget', id, null, null);
+      forgetPreviews.delete(id);
+      return success({ id, forgotten: true });
     });
   }
 
@@ -740,9 +804,13 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
       open: s.closed_at === null, state: stateOf(s.session_key),
     }));
     const rows = stmt('SELECT * FROM issue_log WHERE issue_id = ? AND id < ? ORDER BY id DESC LIMIT ?').all(id, before, limit + 1);
+    // Keep the actual question available even when newer discussion has pushed it outside the current log page.
+    const question = row.ask ? stmt("SELECT * FROM issue_log WHERE issue_id = ? AND kind = 'blocked' AND text = ? ORDER BY id DESC LIMIT 1").get(id, row.ask) : null;
+    const entry = (r) => ({ id: r.id, at: r.at, actor: r.actor, kind: r.kind, text: r.text, data: parseJson(r.data) });
     return success({
       issue: { ...toIssue(row), sessions },
-      log: rows.slice(0, limit).map((r) => ({ id: r.id, at: r.at, actor: r.actor, kind: r.kind, text: r.text, data: parseJson(r.data) })),
+      log: rows.slice(0, limit).map(entry),
+      activeQuestion: question ? entry(question) : null,
       nextLogCursor: rows.length > limit ? rows[limit - 1].id : null,
     });
   }
@@ -753,6 +821,11 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
     if (!match) throw new Invalid('The search needs at least one word.');
     const max = check('limit', integer(1, 200), limit);
     const scope = check('tab', oneOf(Object.keys(TABS)), tab) === 'all' ? null : TABS[tab][0];
+    const ref = referenceId(query);
+    if (ref) {
+      const row = stmt(`SELECT * FROM issues WHERE ${and(ref.sql, scope)}`).get(...ref.params);
+      return success({ items: row ? [toIssue(row)] : [], total: row ? 1 : 0 });
+    }
     const from = `FROM issues_fts JOIN issues ON issues.id = issues_fts.rowid WHERE ${and('issues_fts MATCH ?', scope)}`;
     const rows = stmt(`SELECT issues.* ${from} ORDER BY bm25(issues_fts, 4.0, 1.0, 1.0), issues.updated_at DESC LIMIT ?`).all(match, max);
     return success({ items: rows.map(toIssue), total: stmt(`SELECT COUNT(*) AS n ${from}`).get(match).n });
@@ -767,6 +840,18 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
     }
     const active = byStatus.todo + byStatus.in_progress + byStatus.in_review;
     return { byStatus, byPriority, active, total: Object.values(byStatus).reduce((a, b) => a + b, 0) };
+  }
+
+  function office() {
+    const active = TABS.active[0];
+    const board = [0, 0, 0, 0];
+    const counts = { total: 0, working: 0, needs_you: 0, stuck: 0, idle: 0 };
+    for (const row of stmt(`SELECT status, agent IS NOT NULL AS assigned, ${AGENT_STATE_SQL} AS state, COUNT(*) AS n FROM issues WHERE ${active} GROUP BY status, assigned, state`).all()) {
+      board[row.assigned ? ['todo', 'in_progress', 'in_review'].indexOf(row.status) + 1 : 0] += row.n;
+      if (row.assigned) { counts.total += row.n; counts[row.state] += row.n; }
+    }
+    const rows = stmt(`SELECT * FROM issues WHERE ${active} AND agent IS NOT NULL ORDER BY ${ORDERS.priority.keys.join(', ')} LIMIT 24`).all();
+    return success({ items: rows.map(toIssue), counts, board });
   }
 
   function events(options) {
@@ -793,10 +878,18 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
       log: rows('SELECT * FROM issue_log ORDER BY id', (row) => ({ ...row, data: parseJson(row.data) })),
       sessions: rows('SELECT * FROM issue_sessions ORDER BY id'),
       events: rows('SELECT * FROM issue_events ORDER BY id', (row) => ({ ...row, before: parseJson(row.before), after: parseJson(row.after) })),
+      projects: rows('SELECT * FROM issue_projects ORDER BY identity'),
+      references: rows('SELECT * FROM issue_project_numbers ORDER BY identity, number'),
     };
   }
 
   return {
+    office: guarded(office),
+    findBySession: guarded((session) => {
+      const row = stmt("SELECT * FROM issues WHERE session = ? ORDER BY status IN ('done','canceled'), updated_at DESC, id DESC LIMIT 1").get(check('session', text(300, true), session));
+      return success({ issue: row ? toIssue(row) : null });
+    }),
+    sessionOwners: (key) => stmt('SELECT DISTINCT issue_id AS id FROM issue_sessions WHERE session_key = ? UNION SELECT id FROM issues WHERE session = ?').all(key, key).map((row) => row.id),
     list: guarded(list),
     facets: guarded(facets),
     get: guarded(get),
@@ -810,10 +903,23 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
     search: guarded(search),
     counts,
     undo: guarded(undo),
+    forget: guarded(forget),
     events: guarded(events),
     export: exportAll,
     close() {
       if (db.isOpen) db.close();
     },
   };
+}
+
+function referenceId(value) {
+  const ref = projectReference(value);
+  if (ref) return { sql: 'project_key = ? COLLATE NOCASE AND project_number = ?', params: [ref.key, ref.number] };
+  const match = /^#([1-9]\d{0,14})$/.exec(String(value ?? '').trim());
+  return match ? { sql: 'id = ?', params: [Number(match[1])] } : null;
+}
+
+function projectReference(value) {
+  const match = /^#?([a-z]{1,3})-([1-9]\d{0,14})$/i.exec(String(value ?? '').trim());
+  return match ? { key: match[1].toUpperCase(), number: Number(match[2]) } : null;
 }

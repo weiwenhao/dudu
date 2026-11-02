@@ -2,7 +2,9 @@ import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { blocksOf, isHumanPrompt, promptText } from './claude-store.mjs';
 import { settled } from './history.mjs';
+import { imageFromBase64, SESSION_IMAGE_BUDGET } from './images.mjs';
 import { clip, oneLine } from './text.mjs';
+import { claudeUsage } from '../usage.mjs';
 
 // The conversation inside a Claude Code transcript. A transcript is a log of records, and most of its bytes are not
 // conversation (the requests Claude sent, attachments, snapshots), so lines are filtered before they are parsed and
@@ -37,6 +39,21 @@ function compactBlocks(content, { results = true } = {}) {
   return blocks;
 }
 
+const picturesOf = (content) => blocksOf(content).filter((block) => block?.type === 'image');
+
+/**
+ * What the person sent as the parts of one message, in order: their words, then the pictures they pasted (Claude Code writes the
+ * pictures after the text), each with its bytes. A picture that is a link, or would not fit what is kept in memory, is a marker.
+ */
+function promptParts(pictures, text, budget) {
+  const parts = text ? [{ type: 'text', text }] : [];
+  for (const picture of pictures) {
+    const source = picture.source;
+    parts.push(source?.type === 'base64' ? imageFromBase64(source.data, source.media_type, budget) : { type: 'image', skipped: true });
+  }
+  return parts;
+}
+
 /**
  * Turns of a transcript: each begins with something the person typed and holds the steps Claude took in answer, one per
  * assistant message (a message is written as one record per block, sharing the message id), with the results of
@@ -47,34 +64,50 @@ export function turnsOf(records) {
   let turn;
   let step;
   for (const record of records) {
-    if (record.type === 'user') {
+    if (record.type === 'end') {
+      if (turn) { turn.complete = true; turn.endedAt = record.at; }
+    } else if (record.type === 'user') {
       const results = record.blocks.filter((block) => block.type === 'tool_result');
       if (results.length) {
         if (turn) for (const result of results) turn.results.set(result.id, { output: result.output, isError: result.isError });
         continue;
       }
       if (record.prompt === undefined) continue;
-      turn = { at: record.at, prompt: record.prompt, steps: [], results: new Map() };
+      if (turn?.complete === false) { turn.complete = true; turn.interrupted = true; }
+      turn = {
+        id: record.uuid,
+        at: record.at, prompt: record.prompt, ...(record.pictures ? { pictures: record.pictures } : {}), ...(record.parts ? { parts: record.parts } : {}),
+        complete: false, steps: [], results: new Map(),
+      };
       turns.push(turn);
       step = undefined;
     } else if (turn) {
+      turn.complete = !Object.hasOwn(record, 'stopReason') || ![null, 'tool_use'].includes(record.stopReason);
+      turn.endedAt = record.at;
       if (!step || step.messageId !== record.messageId) {
         step = { messageId: record.messageId, at: record.at, model: record.model, blocks: [], calls: [] };
         turn.steps.push(step);
       }
+      step.at = Math.max(step.at, record.at);
       for (const block of record.blocks) {
         if (block.type === 'tool_use') {
           step.calls.push(block);
           step.blocks.push({ type: 'tool-call', id: block.id, name: block.name, arguments: JSON.stringify(block.input) });
         } else if (block.type === 'text' || block.type === 'reasoning') step.blocks.push(block);
       }
+      if (record.usage) step.usage = record.usage;
     }
   }
   return turns;
 }
 
-/** Read a Claude Code transcript as a conversation. */
-export async function readClaudeHistory({ file, id, results = true }) {
+/**
+ * Read a Claude Code transcript as a conversation. A turn with pasted pictures says how many (`pictures`); `images: true` also
+ * keeps them (as `parts` of the turn, with their bytes). They are big, so only a load asks for them: a list, a search or a
+ * preview leaves them out.
+ */
+export async function readClaudeHistory({ file, id, results = true, images = false }) {
+  const budget = { left: SESSION_IMAGE_BUDGET };
   const kept = [];
   const positions = new Map();
   let customTitle = ''; let aiTitle = ''; let cwd = null; let branch = null; let createdAt = null; let model = null;
@@ -84,10 +117,15 @@ export async function readClaudeHistory({ file, id, results = true }) {
     if (start.startsWith('{"type":"')) {
       if (start.startsWith('{"type":"ai-title"')) aiTitle = parse(line)?.aiTitle ?? aiTitle;
       else if (start.startsWith('{"type":"custom-title"')) customTitle = parse(line)?.customTitle ?? customTitle;
-      else if (!start.startsWith('{"type":"user"') && !start.startsWith('{"type":"assistant"')) continue;
-    } else if (!line.includes('"type":"assistant"') && !line.includes('"type":"user"')) continue;
+      else if (!start.startsWith('{"type":"user"') && !start.startsWith('{"type":"assistant"') && !start.startsWith('{"type":"system"')) continue;
+    } else if (!line.includes('"type":"assistant"') && !line.includes('"type":"user"') && !line.includes('"type":"system"')) continue;
     const record = parse(line);
-    if (!record || (record.type !== 'user' && record.type !== 'assistant') || record.isSidechain) continue;
+    if (!record || record.isSidechain) continue;
+    if (record.type === 'system' && record.subtype === 'turn_duration') {
+      kept.push({ type: 'end', at: Date.parse(record.timestamp) });
+      continue;
+    }
+    if (record.type !== 'user' && record.type !== 'assistant') continue;
     if (!cwd && typeof record.cwd === 'string') cwd = record.cwd;
     if (!branch && typeof record.gitBranch === 'string' && record.gitBranch !== 'HEAD') branch = record.gitBranch;
     const at = Date.parse(record.timestamp);
@@ -104,9 +142,18 @@ export async function readClaudeHistory({ file, id, results = true }) {
     const entry = {
       uuid: record.uuid, type: record.type, at: Number.isNaN(at) ? createdAt ?? Date.now() : at,
       messageId: record.message?.id ?? record.uuid, model: record.message?.model,
+      ...(Object.hasOwn(record.message ?? {}, 'stop_reason') ? { stopReason: record.message.stop_reason } : {}),
+      usage: claudeUsage(record.message?.usage),
       blocks: compactBlocks(record.message?.content, { results }),
       ...(human ? { prompt: promptText(record.message.content) } : {}),
     };
+    if (human) {
+      const pictures = picturesOf(record.message.content);
+      if (pictures.length) {
+        entry.pictures = pictures.length;
+        if (images) entry.parts = promptParts(pictures, entry.prompt, budget);
+      }
+    }
     if (record.type === 'assistant' && typeof entry.model === 'string' && entry.model !== '<synthetic>') model = entry.model;
     positions.set(entry.uuid, kept.length);
     kept.push(entry);

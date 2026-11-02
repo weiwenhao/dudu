@@ -7,6 +7,7 @@ import { groupLabel, withEmptyGroups } from './flatten.js';
 import { GroupIcon } from './groups.jsx';
 import { IssueCard } from './IssueCard.jsx';
 import { PRIORITY_ORDER, STATUS_ORDER } from './model.js';
+import { useIssueShortcuts } from './use-issue-shortcuts.js';
 
 // A lane asks for its next page when its last card is this close (px) to the bottom of what it shows.
 const NEAR_END = 240;
@@ -31,7 +32,7 @@ function LaneMenu({ label, onCollapse }) {
   );
 }
 
-function Lane({ column, field, subField, now, show, menuFor, setMenuFor, onStatus, onOpen, loadMoreIn, collapsed, onToggle, onAdd }) {
+function Lane({ column, field, subField, now, show, menuFor, setMenuFor, onStatus, onOpen, loadMoreIn, collapsed, onToggle, onAdd, onHover, request, onChange, onAssign, onDelete, onOpenSession, onPreviewSession }) {
   const scroller = useRef(null);
   const label = groupLabel(field, column.key);
   const leaves = column.groups ?? [{ ...column, key: undefined }];
@@ -80,6 +81,7 @@ function Lane({ column, field, subField, now, show, menuFor, setMenuFor, onStatu
               <div key={issue.id} role="listitem">
                 <IssueCard
                   issue={issue} now={now} show={show} menuOpen={menuFor === issue.id} onStatus={onStatus} onOpen={() => onOpen(issue.id)}
+                  onHover={onHover} request={request} onChange={onChange} onAssign={onAssign} onDelete={onDelete} onOpenSession={onOpenSession} onPreviewSession={onPreviewSession}
                   onMenuOpenChange={(open) => setMenuFor(open ? issue.id : (current) => (current === issue.id ? null : current))}
                 />
               </div>
@@ -96,10 +98,11 @@ function Lane({ column, field, subField, now, show, menuFor, setMenuFor, onStatu
  * fetched as they are scrolled to. Rows, when set, split each lane into sections. There is no dragging between lanes: the
  * status icon of a card changes its status.
  */
-export function Board({ list, view, tab, show, collapsed, onToggleLane, onAddToLane, onStatus, onOpen }) {
+export function Board({ list, view, tab, show, collapsed, onToggleLane, onAddToLane, onStatus, onOpen, request, onChange, onAssign, onDelete, onOpenSession, onPreviewSession }) {
   const field = view.group ?? 'status';
   const now = useMemo(() => Date.now(), [list.groups]); // eslint-disable-line react-hooks/exhaustive-deps -- recomputed when the data is
   const [menuFor, setMenuFor] = useState(null);
+  const onHover = useIssueShortcuts();
   let columns = list.groups ?? [];
   if (view.showEmpty) columns = withEmptyGroups(columns, field, tab);
   // Lanes follow the workflow (Todo, In Progress, In Review …), not the list's "what is being done first" order.
@@ -114,6 +117,7 @@ export function Board({ list, view, tab, show, collapsed, onToggleLane, onAddToL
         <Lane
           key={String(column.key)} column={column} field={field} subField={view.subGroup} now={now} show={show}
           menuFor={menuFor} setMenuFor={setMenuFor} onStatus={onStatus} onOpen={(id) => onOpen(id, ids)} loadMoreIn={list.loadMoreIn}
+          onHover={onHover} request={request} onChange={onChange} onAssign={onAssign} onDelete={onDelete} onOpenSession={onOpenSession} onPreviewSession={onPreviewSession}
           collapsed={collapsed.has(`lane:${String(column.key)}`)} onToggle={() => onToggleLane(`lane:${String(column.key)}`)}
           onAdd={() => onAddToLane({ field, groupKey: column.key })}
         />

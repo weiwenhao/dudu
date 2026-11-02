@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { getLocale, intlLocale, subscribeLocale } from './locale.mjs';
 
 const ScopeContext = React.createContext(null);
 
@@ -12,11 +13,12 @@ const ScopeContext = React.createContext(null);
  */
 const FILL = { width: '100%', height: '100%', minHeight: 0 };
 
-export function Scope({ children }) {
+export function Scope({ children, floating = false }) {
+  React.useSyncExternalStore(subscribeLocale, getLocale);
   const [element, setElement] = React.useState(null);
   return (
     <ScopeContext.Provider value={element}>
-      <div ref={setElement} className="dudu" style={FILL}>{children}</div>
+      <div ref={setElement} className="dudu" lang={intlLocale()} style={floating ? { display: 'contents' } : FILL}>{children}</div>
     </ScopeContext.Provider>
   );
 }

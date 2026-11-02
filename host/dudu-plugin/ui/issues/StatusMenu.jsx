@@ -19,22 +19,33 @@ export function StatusMenu({ status, open, onOpenChange, onSelect, children }) {
     <Popover open={controlled ? open : own} onOpenChange={setOpen}>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent className="w-[232px]" alignOffset={-8}>
-        <Command>
-          <CommandInput placeholder={T.changeStatus} aria-label={T.changeStatus}>
-            <kbd className="ml-auto rounded border bg-muted px-1.5 text-xs text-muted-foreground">S</kbd>
-          </CommandInput>
-          <CommandSeparator />
-          <CommandList>
-            {STATUS_ORDER.map((id) => (
-              <CommandItem key={id} value={T.status[id]} onSelect={() => { setOpen(false); onSelect(id); }}>
-                <StatusIcon status={id} />
-                <span>{T.status[id]}</span>
-                {id === status && <Check className="ml-auto" aria-hidden="true" />}
-              </CommandItem>
-            ))}
-          </CommandList>
-        </Command>
+        <StatusChoices status={status} onSelect={(id) => { setOpen(false); onSelect(id); }} />
       </PopoverContent>
     </Popover>
   );
+}
+
+export function StatusChoices({ status, onSelect, shortcut = true }) {
+  return <Command defaultValue={T.status[status]} onKeyDown={(event) => {
+    if (!event.nativeEvent.isComposing && !event.target.value && /^[1-6]$/.test(event.key)) {
+      event.preventDefault(); onSelect(STATUS_ORDER[Number(event.key) - 1]);
+    }
+  }}>
+          <CommandInput placeholder={T.changeStatus} aria-label={T.changeStatus}>
+            {shortcut && <kbd className="ml-auto rounded border bg-muted px-1.5 text-xs text-muted-foreground">S</kbd>}
+          </CommandInput>
+          <CommandSeparator />
+          <CommandList>
+            {STATUS_ORDER.map((id, index) => (
+              <CommandItem key={id} value={T.status[id]} onSelect={() => onSelect(id)}>
+                <StatusIcon status={id} />
+                <span>{T.status[id]}</span>
+                <span className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
+                  {id === status && <Check aria-hidden="true" />}
+                  <kbd>{index + 1}</kbd>
+                </span>
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>;
 }

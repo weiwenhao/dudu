@@ -2,20 +2,21 @@
 // Like the issues API: the dashboard never throws for a wrong value, it answers { outcome: 'needs_clarification', message, next }; so a
 // request fails only when the body is not a JSON object, the action is unknown, or something breaks that should not.
 //
-// The page is the owner: there is no actor. `set` takes { layout, type?, name? } (type: the widget the owner dragged, resized, added or
-// removed, which names the undo entry; name: its display name when it is a widget a plugin brought); the other actions take the fields
-// of the dashboard's own calls, see index.mjs.
+// The page is the owner: there is no actor. `set` takes { layout, type?, name?, rows? } (type: the widget the owner dragged, resized, added or
+// removed, which names the undo entry; name: its display name when it is a widget a plugin brought; rows: how many rows the window shows,
+// which a widget that fills its height counts); the other actions take the fields of the dashboard's own calls, see index.mjs.
 const NO_STORE = { 'cache-control': 'no-store' };
 
 const CALLS = {
-  get: (dashboard) => dashboard.get(),
-  set: (dashboard, { layout, type, name }) => dashboard.set(layout, { type, name }),
-  reset: (dashboard) => dashboard.reset(),
+  get: (dashboard, body) => dashboard.get(body),
+  catalog: (dashboard, { widgets }) => dashboard.catalog(widgets),
+  set: (dashboard, { layout, type, name, rows }) => dashboard.set(layout, { type, name, rows }),
+  reset: (dashboard, body) => dashboard.reset(body),
   add: (dashboard, body) => dashboard.add(body),
   move: (dashboard, body) => dashboard.move(body),
   resize: (dashboard, body) => dashboard.resize(body),
   remove: (dashboard, body) => dashboard.remove(body),
-  undo: (dashboard) => dashboard.undo(),
+  undo: (dashboard, body) => dashboard.undo(body),
 };
 
 export const DASHBOARD_ACTIONS = Object.keys(CALLS);

@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { startFixture } from './fixture.mjs';
+import { panelAction } from './harness.mjs';
 
 const undone: string[] = [];
 const reviews = [
@@ -24,7 +25,7 @@ after(async () => { await fixture?.stop(); });
 
 test('Memory: a tidy run reads as one line, and Undo puts it back', async () => {
   const page = await fixture.open();
-  await page.getByRole('region', { name: 'Dashboard' }).getByRole('button', { name: 'Settings' }).click();
+  await panelAction(page, 'Settings');
   const window = page.getByRole('dialog');
   await window.getByRole('button', { name: 'Memory', exact: true }).click();
   await window.getByText('3 entries updated, 1 skill added').waitFor();

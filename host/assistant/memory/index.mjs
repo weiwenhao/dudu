@@ -141,7 +141,8 @@ export function createMemory({ dir, indexDir, llm = null, now = Date.now }) {
       if (input[name] != null && (typeof input[name] !== 'string' || input[name].length > max)) throw new Invalid(`${name} must be text of at most ${max} characters`);
     }
     const text = full.slice(0, MAX_TURN_CHARS);
-    const { id, existing } = turns.add({ src, text, at, session: input.session ?? null, key: input.key ?? null });
+    const { id, existing, forgotten } = turns.add({ src, text, at, session: input.session ?? null, key: input.key ?? null });
+    if (forgotten) return noOp('This message was forgotten.');
     if (existing) return noOp('This message was indexed before.', { id, ref: `turn:${id}` });
     return success({ id, ref: `turn:${id}`, date: dayOf(at), ...(text.length < full.length ? { truncated: true } : {}) });
   }
@@ -448,6 +449,7 @@ export function createMemory({ dir, indexDir, llm = null, now = Date.now }) {
     reviews: guarded((options) => success({ reviews: tidy.reviews(options ?? {}) })),
     rules: guarded(() => success({ rules: { 'TRIAGE.md': files.read('TRIAGE.md')?.text ?? null, 'ASSIGN.md': files.read('ASSIGN.md')?.text ?? null } })),
     skills: publicSkills,
+    pending: () => turns.after(turns.cursor(), 1).length > 0,
     close() {
       turns.close();
     },

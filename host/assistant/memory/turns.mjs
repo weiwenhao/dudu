@@ -49,6 +49,9 @@ const MIGRATIONS = [
   );
   CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
   `,
+  `
+  CREATE TABLE forgotten_turns (key TEXT PRIMARY KEY) WITHOUT ROWID;
+  `,
 ];
 const SCHEMA_VERSION = MIGRATIONS.length;
 
@@ -141,6 +144,7 @@ export function createTurns({ file, now = Date.now }) {
   return {
     /** Indexes one turn. { id, existing }: a turn with a key that was indexed before is not indexed again. */
     add({ src, text, at = now(), session = null, key = null }) {
+      if (key && stmt('SELECT key FROM forgotten_turns WHERE key = ?').get(key)) return { forgotten: true };
       const known = key ? stmt('SELECT id FROM turns WHERE key = ?').get(key) : null;
       if (known) return { id: known.id, existing: true };
       return write(() => {
@@ -191,6 +195,8 @@ export function createTurns({ file, now = Date.now }) {
     /** Deletes turns and their index rows. Returns how many turns were deleted. */
     remove(ids) {
       return write(() => {
+        // Replay after a restart must not resurrect a message the owner forgot.
+        stmt('INSERT OR IGNORE INTO forgotten_turns (key) SELECT key FROM turns WHERE key IS NOT NULL AND id IN (SELECT value FROM json_each(?))').run(idsJson(ids));
         stmt('DELETE FROM turns_fts WHERE rowid IN (SELECT value FROM json_each(?))').run(idsJson(ids));
         return stmt('DELETE FROM turns WHERE id IN (SELECT value FROM json_each(?))').run(idsJson(ids)).changes;
       });

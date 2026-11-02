@@ -25,7 +25,7 @@ export function openWithSystem(path, { platform = process.platform, run = execFi
   return new Promise((resolve) => { run(command, args, (error) => resolve(error ? { ok: false, message: error.message } : { ok: true })); });
 }
 
-export function openAssistant({ dshHome, stateFolder, env = process.env, llm = null, now = Date.now, openPath = openWithSystem }) {
+export function openAssistant({ dshHome, stateFolder, env = process.env, llm = null, now = Date.now, openPath = openWithSystem, dsh = null, state = () => ({}), beforeFolderChange = () => null }) {
   const settings = createSettings({ file: join(stateFolder, 'settings.json'), now });
   const problems = [];
   let model = llm;
@@ -43,9 +43,12 @@ export function openAssistant({ dshHome, stateFolder, env = process.env, llm = n
     memory = null;
     connectors = null;
     folder = ensured.path;
-    memory = createMemory({ dir: folder, indexDir: join(stateFolder, 'index'), llm: model, now });
+    memory = createMemory({ dir: folder, indexDir: join(stateFolder, 'index'), llm: (messages, options) => {
+      if (!model) return Promise.reject(new Error('There is no model yet.'));
+      return model(messages, options);
+    }, now });
     // Secrets are looked up by the name the registry gives them; the environment is the one place this knows of.
-    connectors = createConnectors({ file: join(folder, 'CONNECTORS.md'), secrets: (ref) => env[ref], env, now });
+    connectors = createConnectors({ file: join(folder, 'CONNECTORS.md'), secrets: (ref) => env[ref], env, now, dsh });
     return ensured;
   }
 
@@ -63,12 +66,22 @@ export function openAssistant({ dshHome, stateFolder, env = process.env, llm = n
     const check = checkFolder(path, { env });
     if (!check.ok) return { outcome: 'needs_clarification', message: check.reason, code: check.code, next: 'Choose another folder.' };
     if (folder && check.path === folder) return { outcome: 'no_op', message: 'This is already the folder in use.' };
+    const held = await beforeFolderChange();
+    if (held) return held;
+    const previous = connectors;
+    await previous?.close();
     if (move && folder) {
       const moved = migrate(folder, path, { env });
-      if (!moved.ok) return { outcome: 'needs_clarification', message: moved.reason, code: moved.code, next: 'Choose another folder.' };
+      if (!moved.ok) {
+        connectors = createConnectors({ file: join(folder, 'CONNECTORS.md'), secrets: (ref) => env[ref], env, now, dsh });
+        return { outcome: 'needs_clarification', message: moved.reason, code: moved.code, next: 'Choose another folder.' };
+      }
     }
     const started = start(path);
-    if (!started.ok) return { outcome: 'needs_clarification', message: started.reason, code: started.code, next: 'Choose another folder.' };
+    if (!started.ok) {
+      if (folder) connectors = createConnectors({ file: join(folder, 'CONNECTORS.md'), secrets: (ref) => env[ref], env, now, dsh });
+      return { outcome: 'needs_clarification', message: started.reason, code: started.code, next: 'Choose another folder.' };
+    }
     problems.length = 0;
     const saved = settings.set({ projectFolder: path === standard ? null : path });
     return saved.outcome === 'success' ? { outcome: 'success', projectFolder: folder, isDefault: path === standard } : saved;
@@ -85,7 +98,7 @@ export function openAssistant({ dshHome, stateFolder, env = process.env, llm = n
 
   // The owner-facing calls, by the path the page posts to. Each takes the parsed body.
   const CALLS = {
-    'assistant/state': () => ({ outcome: 'success', projectFolder: folder, isDefault: folder === standard, defaultFolder: standard, stateFolder, problems: [...problems] }),
+    'assistant/state': async () => ({ outcome: 'success', projectFolder: folder, isDefault: folder === standard, defaultFolder: standard, stateFolder, problems: [...problems], ...await state() }),
     'assistant/settings': ({ patch } = {}) => (patch === undefined ? settings.get() : settings.set(patch)),
     'assistant/folder': changeFolder,
     'assistant/open': open,
@@ -99,11 +112,6 @@ export function openAssistant({ dshHome, stateFolder, env = process.env, llm = n
     'skills/read': ({ name }) => need(memory) ?? memory.skills.read(name),
     'skills/remove': ({ name }) => need(memory) ?? memory.skills.remove(name),
     'connectors/list': () => need(connectors) ?? connectors.owner.list(),
-    'connectors/discover': (body) => need(connectors) ?? connectors.owner.discover(body),
-    'connectors/enable': ({ id, digest }) => need(connectors) ?? connectors.owner.enable(id, { digest }),
-    'connectors/disable': ({ id }) => need(connectors) ?? connectors.owner.disable(id),
-    'connectors/tick': ({ id, tools }) => need(connectors) ?? connectors.owner.tick(id, tools ?? null),
-    'connectors/test': ({ id }) => need(connectors) ?? connectors.owner.test(id),
     'connectors/remove': ({ id }) => need(connectors) ?? connectors.owner.remove(id),
     'connectors/undo': ({ token }) => need(connectors) ?? connectors.owner.undo(token),
   };

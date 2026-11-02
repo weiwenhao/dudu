@@ -403,6 +403,26 @@ test('remember writes at once, a superseded entry changes in place, and context 
 
 // --- forget -----------------------------------------------------------------------------------------------------------
 
+test('forgotten messages stay forgotten when DSH replays its history after restart', async (t) => {
+  const w = world();
+  t.after(w.cleanup);
+  const memory = w.open();
+  const message = { role: 'owner', text: '记一下：样品放在仓库西门。', session: 'durable', key: 'durable:12' };
+  const said = ok(memory.capture(message));
+  ok(memory.remember({ text: '样品放在仓库西门', src: said.ref }));
+  assert.equal(ok(memory.forget({ source: said.ref })).preview, true);
+  assert.equal(memory.capture(message).id, said.id, 'a preview does not exclude the source');
+  ok(memory.forget({ source: said.ref, preview: false }));
+  memory.close();
+  const restored = w.open();
+  assert.equal(restored.capture(message).outcome, 'no_op');
+  assert.deepEqual(ok(await restored.recall('仓库西门')).hits, []);
+  assert.equal(ok(restored.records()).total, 0);
+  assert.equal(restored.pending(), false);
+  assert.equal(restored.capture({ ...message, key: 'durable:20' }).outcome, 'success', 'a new message from the owner can say it again');
+  assert.equal(restored.pending(), true);
+});
+
 test('forget previews first, then deletes the turns, the entries, the flow, the review items, the skill and the index rows', async (t) => {
   const model = scripted();
   const w = world({ llm: model.llm });

@@ -150,6 +150,20 @@ test('Codex failures name the login command for its own CLI', () => {
   assert.equal(error.message, 'ChatGPT is not logged in. Run `codex login` in a terminal.');
 });
 
+test('compaction lifecycle survives OAR normalization without opening or closing a model message', () => {
+  for (const normalizer of [claude(), codex()]) {
+    const events = run(normalizer, [
+      frame([{ kind: 'compaction_started' }]),
+      frame([{ kind: 'compaction_ended', outcome: 'completed' }]),
+      said('After compaction.'),
+      turnEnded({ kind: 'completed' }),
+    ]);
+    assert.deepEqual(types(events), ['compaction-start', 'compaction-end', 'text-delta', 'step-end', 'turn-end']);
+    assert.equal(events[1].outcome, 'completed');
+  }
+  assert.deepEqual(run(codex(), [frame([{ kind: 'compaction_started' }], {}, ['child'])]), []);
+});
+
 // ---- tool cards -------------------------------------------------------------------------------------------------
 
 test('Claude tools are drawn with DSH cards: a terminal, diffs, numbered lines and search results', () => {
@@ -250,11 +264,23 @@ test('a turn through OAR streams the harness\'s words and tool calls, then ends 
   const handle = await driver.start({ prompt: 'list files', cwd, signal: new AbortController().signal });
   assert.ok(handle.nativeSessionId, 'the OAR session id is the harness\'s own session id');
   const events = await collect(handle);
-  assert.deepEqual(types(events), ['text-delta', 'tool-call', 'step-end', 'tool-result', 'text-delta', 'step-end', 'turn-end']);
+  assert.deepEqual(types(events), ['text-delta', 'tool-call', 'step-end', 'tool-result', 'text-delta', 'usage', 'step-end', 'turn-end']);
   assert.deepEqual(events[1], { type: 'tool-call', id: events[1].id, name: 'Bash', input: { command: 'ls' } });
   assert.equal(events[3].output, 'a.txt');
   assert.equal(turns[0].input, 'list files');
   await handle.close();
+});
+
+test('usage after turn_ended in the same frame is published before closing; cumulative counters are charged once', () => {
+  const normalizer = claude();
+  const usage = (input: number, output: number, cacheRead: number) => ({ kind: 'usage', usage: { tokens: { input, output, cacheRead } } });
+  const first = run(normalizer, [said('Working.'), frame([usage(100, 20, 40)]), frame([usage(100, 20, 40)])]);
+  assert.deepEqual(first.filter((event) => event.type === 'usage').map((event) => event.usage), [
+    { inputTokens: 60, outputTokens: 20, totalTokens: 120, cacheReadTokens: 40 },
+  ]);
+  const final = run(normalizer, [frame([{ kind: 'turn_ended', outcome: { kind: 'completed' } }, usage(130, 30, 50)])]);
+  assert.deepEqual(types(final), ['usage', 'step-end', 'turn-end']);
+  assert.deepEqual(final[0].usage, { inputTokens: 20, outputTokens: 10, totalTokens: 40, cacheReadTokens: 10 });
 });
 
 test('a harness session starts where the DSH session works, with the mode, model and effort it was given and a clean environment', async (t) => {
@@ -309,6 +335,52 @@ test('stopping interrupts the turn and it ends as interrupted', async (t) => {
   await handle.close();
 });
 
+test('the turn signal stops OAR while DSH is waiting on a mirror tool, without another stream call', async () => {
+  const controller = new AbortController();
+  const disposed = Promise.withResolvers<void>();
+  let interrupted = 0;
+  let closing = 0;
+  const session = {
+    id: 'native-cancel', rawEvents: () => () => {},
+    prompt: async () => ({ kind: 'accepted' }),
+    abort: async () => { interrupted++; },
+    dispose: async () => { closing++; await disposed.promise; },
+  };
+  const handle = await startRun(session, { signal: controller.signal });
+  controller.abort(new Error('stopped at tool'));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(interrupted, 1, 'stopping the host turn actively interrupts the native work');
+  assert.equal(closing, 1, 'the old native writer is released before another prompt is needed');
+  let closed = false;
+  const waitForExit = handle.close().then(() => { closed = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closed, false, 'close still waits for the actual OAR disposal');
+  disposed.resolve();
+  await waitForExit;
+  assert.equal(closing, 1);
+});
+
+test('a stop during OAR startup releases the eventual session without sending the cancelled prompt', async () => {
+  const controller = new AbortController();
+  const opened = Promise.withResolvers<any>();
+  let prompted = 0;
+  let disposed = 0;
+  const pending = startOarRun({
+    runtime: { session: () => opened.promise }, installation: BUNDLED, sessionOptions: {},
+    prompt: 'cancelled task', normalizer: codex(), name: 'ChatGPT', signal: controller.signal,
+  });
+  controller.abort(new Error('stopped during startup'));
+  opened.resolve({
+    id: 'native-cancel', rawEvents: () => () => {},
+    prompt: async () => { prompted++; return { kind: 'accepted' }; },
+    abort: async () => {},
+    dispose: async () => { disposed++; },
+  });
+  await assert.rejects(pending, /stopped during startup/);
+  assert.equal(prompted, 0);
+  assert.equal(disposed, 1);
+});
+
 test('input typed while the harness works is steered into the turn', async (t) => {
   const cwd = await workDirectory(t);
   const { runtime } = scripted(async (turn) => {
@@ -320,6 +392,34 @@ test('input typed while the harness works is steered into the turn', async (t) =
   await wait(10);
   await handle.pushUserMessage('use tabs');
   assert.equal((await events).find((event) => event.type === 'text-delta').text, 'got: use tabs');
+});
+
+test('image-only input and steering attachments reach the OAR prompt and steer APIs', async (t) => {
+  const cwd = await workDirectory(t);
+  const image = join(cwd, 'image.png');
+  await writeFile(image, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7P8AAAAASUVORK5CYII=', 'base64'));
+  const images = [{ path: image, mediaType: 'image/png' }];
+  const seen: any[] = [];
+  const { runtime: inner } = scripted(async (turn) => {
+    await until(() => turn.steered.length > 0);
+    turn.say('Received.');
+  });
+  const runtime = { ...inner, session: async (...args: any[]) => {
+    const session = await (inner.session as any)(...args);
+    return {
+      ...session,
+      prompt: (text: string, options: any) => { seen.push(['prompt', text, options]); return session.prompt(text, options); },
+      steer: (text: string, options: any) => { seen.push(['steer', text, options]); return session.steer(text, options); },
+    };
+  } };
+  const handle = await createCodexProvider({ runtime }).create({ installation: BUNDLED }).start({ cwd, prompt: '', images });
+  const events = collect(handle);
+  await handle.pushUserMessage('Also this.', images);
+  await events;
+  assert.deepEqual(seen[0], ['prompt', '', { images }]);
+  assert.equal(seen[1][0], 'steer');
+  assert.deepEqual(seen[1][2].images, images);
+  await handle.close();
 });
 
 test('a turn that fails reaches DSH as a failed turn with the harness\'s words', async (t) => {
@@ -419,7 +519,7 @@ test('closing a run whose turn just ended waits for its process to stop, so the 
 
 // A harness whose input is a queue answers a message written during its turn with a turn of its own, after this one.
 function queueingSession(steerReply: any = { kind: 'accepted' }) {
-  const steered: Array<{ text: string; inputId: string }> = [];
+  const steered: { text: string; inputId: string }[] = [];
   let observer: (record: unknown) => void = () => {};
   const session = {
     id: 'native-1', rawEvents: (callback: (record: unknown) => void) => { observer = callback; return () => {}; },
@@ -468,7 +568,7 @@ test('a message taken into the turn itself does not keep the turn open, and neit
   const refused = queueingSession({ kind: 'rejected', code: 'no_active_turn', reason: 'no active turn' });
   const second = await startRun(refused.session, { queuesSteer: true });
   const finished = collect(second);
-  await second.pushUserMessage('too late');
+  await assert.rejects(second.pushUserMessage('too late'), (error: any) => error.code === 'HARNESS_REJECTED');
   refused.emit(turnEnded({ kind: 'completed' }));
   assert.equal((await finished).at(-1).type, 'turn-end');
 });
@@ -500,4 +600,63 @@ test('a failed turn ends at once even while a message waits', async () => {
   await handle.pushUserMessage('pending');
   emit(turnEnded({ kind: 'failed', failure: 'quota', reason: 'Usage limit reached' }));
   assert.equal((await seen).at(-1).error.message, 'Usage limit reached');
+});
+
+test('a native refusal of forwarded input is not silently reported as a successful turn', async () => {
+  const { session, steered, emit } = queueingSession();
+  const handle = await startRun(session, { queuesSteer: true });
+  const seen = collect(handle);
+  await handle.pushUserMessage('extra task');
+  emit(acknowledged(steered[0].inputId));
+  emit(frame([{ kind: 'input_dropped', inputId: steered[0].inputId, reason: 'runtime_refused', message: 'queue refused' }]));
+  emit(turnEnded({ kind: 'completed' }));
+  const end = (await seen).at(-1);
+  assert.equal(end.ok, false);
+  assert.equal(end.error.code, 'HARNESS_REJECTED');
+  assert.match(end.error.message, /queue refused/);
+});
+
+test('native compaction counts as an active queued follow-up while its first text is still pending', async () => {
+  const { session, steered, emit } = queueingSession();
+  const handle = await startRun(session, { queuesSteer: true, followUpMs: 10 });
+  const seen = collect(handle);
+  await handle.pushUserMessage('extra task');
+  emit(turnEnded({ kind: 'completed' }));
+  emit(frame([{ kind: 'compaction_started' }]));
+  await wait(20);
+  emit(frame([{ kind: 'compaction_ended', outcome: 'completed' }]));
+  emit(acknowledged(steered[0].inputId));
+  emit(said('After native compaction.'));
+  emit(turnEnded({ kind: 'completed' }));
+  const events = await seen;
+  assert.equal(events.find(event => event.type === 'text-delta')?.text, 'After native compaction.');
+  assert.equal(events.at(-1).ok, true);
+});
+
+test('a Codex child thread with an empty agent path cannot finish its parent or publish child text and compaction there', async () => {
+  const { session, emit } = queueingSession();
+  const handle = await startRun(session);
+  const seen = collect(handle);
+  for (const record of [
+    frame([{ kind: 'compaction_started' }]), said('Child text.'), turnEnded({ kind: 'completed' }),
+  ]) emit({ ...record, sessionId: 'child-thread' });
+  emit({ ...said('Parent text.'), sessionId: session.id });
+  emit({ ...turnEnded({ kind: 'completed' }), sessionId: session.id });
+  assert.deepEqual(types(await seen), ['text-delta', 'step-end', 'turn-end']);
+});
+
+test('a model alias is named with what it means today, so that what the menu shows is what runs', async () => {
+  const runtime = { listModels: async () => ({ kind: 'ok', models: [
+    { id: 'default', displayName: 'Default (recommended)', resolvedId: 'claude-sonnet-5-5', default: true },
+    { id: 'opus', displayName: 'Opus', resolvedId: 'claude-opus-5-5' },
+    { id: 'fable', displayName: 'Fable 5.1', resolvedId: 'claude-fable-5-1' },
+    { id: 'claude-haiku-4-5-20251001', displayName: 'Haiku', resolvedId: 'claude-haiku-4-5-20251001' },
+    { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    { id: 'gpt', displayName: 'GPT', resolvedId: 'some-other-model' },
+  ] }) };
+  const driver = createClaudeProvider({ runtime }).create({ installation: BUNDLED });
+  assert.deepEqual((await driver.listModels()).map((model: any) => model.name), [
+    'Default (recommended) · Sonnet 5.5', 'Opus 5.5', 'Fable 5.1', 'Haiku 4.5', 'Opus 4.8', 'GPT',
+  ]);
+  assert.equal((await driver.resolveModel('opus')).name, 'Opus 5.5');
 });

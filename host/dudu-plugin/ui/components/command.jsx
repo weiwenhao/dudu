@@ -2,6 +2,7 @@
 import * as React from 'react';
 import { Command as CommandPrimitive } from 'cmdk';
 import { cn } from '../lib/cn.js';
+import { T } from '../strings.js';
 
 export const Command = React.forwardRef(function Command({ className, ...props }, ref) {
   return <CommandPrimitive ref={ref} data-slot="command" className={cn('flex w-full flex-col overflow-hidden', className)} {...props} />;
@@ -22,7 +23,7 @@ export const CommandInput = React.forwardRef(function CommandInput({ className, 
 });
 
 export const CommandList = React.forwardRef(function CommandList({ className, ...props }, ref) {
-  return <CommandPrimitive.List ref={ref} data-slot="command-list" className={cn('max-h-[300px] scroll-py-1 overflow-x-hidden overflow-y-auto', className)} {...props} />;
+  return <CommandPrimitive.List ref={ref} data-slot="command-list" label={T.command.suggestions} className={cn('max-h-[300px] scroll-py-1 overflow-x-hidden overflow-y-auto', className)} {...props} />;
 });
 
 export const CommandEmpty = React.forwardRef(function CommandEmpty(props, ref) {

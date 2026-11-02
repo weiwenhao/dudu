@@ -226,7 +226,7 @@ export function claudeReader({ root = claudeProjectsRoot(), registry = claudeSes
     const next = new Map();
     for (const summary of found) {
       const before = known.get(summary.id);
-      next.set(summary.id, { summary, size: summary.size, mtimeMs: summary.updatedAt, tail: before?.tail ?? null, stamp: before?.stamp });
+      next.set(summary.id, { summary, size: summary.size, mtimeMs: summary.mtimeMs, tail: before?.tail ?? null, stamp: before?.stamp });
     }
     known.clear();
     for (const [id, entry] of next) known.set(id, entry);

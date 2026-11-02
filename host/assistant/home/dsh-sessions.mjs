@@ -6,7 +6,10 @@
 // Every service is looked up when it is used: a DSH that lacks one still runs the plugin, and the call that needs it says so. Both
 // runtimes have all of them (the npm `dsh web` 0.2.0-rc.2 and the Desktop's bundled CLI 0.2.1-rc.3); neither needs `connection.createPeer`.
 import { randomUUID } from 'node:crypto';
+import { conversationPage } from '../../providers/native/preview.mjs';
 
+const SAID_TTL = 10_000;
+const SAID_KEPT = 6;
 const textOf = (content) => (typeof content === 'string' ? content : (Array.isArray(content) ? content : []).filter((block) => block?.type === 'text').map((block) => block.text).join('\n'));
 
 /** The first of the promises to be kept; rejected only when every one of them is not. */
@@ -52,7 +55,8 @@ export function approvalText(request) {
   return `${said}\n回复“允许”放开这一次，其他回复都不放开。`;
 }
 
-export function createDshSessions(ctx) {
+export function createDshSessions(ctx, { hidden = () => false } = {}) {
+  const said = new Map(); // session id -> { at, messages }: the conversation of a DSH session as it was read lately
   const service = (name) => {
     let found;
     try { found = ctx[name]; } catch { found = undefined; } // reading a service the plugin did not ask for throws
@@ -62,6 +66,64 @@ export function createDshSessions(ctx) {
   const optional = (name) => { try { return ctx[name]; } catch { return undefined; } };
 
   return {
+    isRunning: (sessionId) => optional('agents')?.get(sessionId)?.status === 'running',
+    projects: () => (optional('workspaceRegistry')?.list() ?? []).map((item) => ({ name: item.title, path: item.path, id: item.id })),
+    async list() {
+      const result = await service('sessionController').list();
+      return result.items ?? result;
+    },
+
+    async catalog({ query = '' } = {}) {
+      const controller = service('sessionController');
+      const result = await controller.list();
+      const registry = optional('workspaceRegistry');
+      const workspaces = registry?.list() ?? [];
+      const archived = new Set(registry?.archivedSessionIds ?? []);
+      const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      let hits = new Map();
+      if (terms.length && typeof controller.search === 'function') {
+        try {
+          const found = await controller.search({ query: query.trim() }, new AbortController().signal);
+          hits = new Map((found.items ?? found).map((item) => [item.sessionId, item.snippet]));
+        } catch { /* Older runtimes still support metadata search. */ }
+      }
+      return (result.items ?? result).filter((item) => {
+        const id = item.sessionId ?? item.id;
+        return id && !hidden(id) && !id.startsWith('dudu-assistant-') && !item.blank && !item.parentSessionId && item.origin !== 'subagent' && !archived.has(id);
+      }).map((item) => {
+        const id = item.sessionId ?? item.id;
+        const values = item.projections?.values ?? {};
+        const title = typeof values.title === 'string' ? values.title : values.title?.title ?? item.title ?? '';
+        const workspace = workspaces.find((candidate) => candidate.sessionIds.includes(id) || candidate.path === item.cwd);
+        const selection = values.modelSelection?.next ?? values.modelSelection?.lastUsed ?? optional('agents')?.get(id)?.options;
+        return {
+          key: `dsh:${id}`, id, provider: 'dsh', dshSessionId: id, workspaceId: workspace?.id,
+          agent: ['claude', 'codex'].includes(selection?.provider) ? selection.provider : 'deepseek',
+          project: workspace ? { name: workspace.title, path: workspace.path } : null,
+          title, cwd: item.cwd, updatedAt: item.updatedAt ?? 0,
+          ...(hits.has(id) ? { evidence: { text: hits.get(id) } } : {}),
+        };
+      }).filter((item) => !terms.length || hits.has(item.id) || terms.every((term) => `${item.title} ${item.cwd} ${item.id}`.toLowerCase().includes(term)));
+    },
+
+    async read(key, { before, fresh = false } = {}) {
+      const id = String(key).replace(/^dsh:/, '');
+      if (!id || id.startsWith('dudu-assistant-')) return { outcome: 'needs_clarification', message: 'Name an agent session.' };
+      // inspect() hands over every event of the session, which is a lot for a long one: what was said a moment ago is not asked again.
+      const seen = said.get(id);
+      let messages = !fresh && seen && Date.now() - seen.at < SAID_TTL ? seen.messages : undefined;
+      if (!messages) {
+        const { events } = await service('sessionController').inspect(id);
+        messages = events.filter((event) => ['user/message', 'assistant/message'].includes(event.type)).map((event) => ({
+          role: event.type === 'user/message' ? 'user' : 'assistant', at: event.time, text: textOf(event.data?.message?.content ?? event.data?.content).slice(0, 4000),
+        })).filter((message) => message.text.trim());
+        said.delete(id);
+        said.set(id, { at: Date.now(), messages });
+        while (said.size > SAID_KEPT) said.delete(said.keys().next().value);
+      }
+      return conversationPage(messages, before);
+    },
+
     async models() {
       const catalog = await service('sessionController').modelCatalog();
       return { default: catalog.default, groups: catalog.groups.map((group) => ({ id: group.id, models: group.models.map((model) => ({ id: model.id })) })) };
@@ -94,8 +156,14 @@ export function createDshSessions(ctx) {
 
     /** The access mode is one of DSH's permission presets (`read-only`, `workspace-write`, `danger-full-access`); the harness routes read it from there. */
     async setAccess(sessionId, mode) {
-      const agent = service('agents').get(sessionId);
+      let agent = service('agents').get(sessionId);
+      if (!agent && service('sessionController').resolveAgent) {
+        const found = await service('sessionController').resolveAgent(sessionId);
+        if (found?.error) throw found.error;
+        agent = found?.agent ?? found;
+      }
       if (!agent) throw new Error('The session is not running in this DSH.');
+      if (agent.status === 'running') throw new Error('Wait until the current turn stops before changing its access.');
       service('permissionPresets').set(agent.session, mode); // throws for a preset this DSH does not have: the session then does not start
     },
 

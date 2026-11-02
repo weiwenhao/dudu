@@ -1,17 +1,17 @@
-/* The dashboard: widgets on a grid of square cells, laid out by gridstack (float mode: nothing closes the gaps, what a widget lands
+/* The dashboard: widgets on a grid of cells (a column is --db-cell wide, a row --db-row tall: about the same), laid out by gridstack (float mode: nothing closes the gaps, what a widget lands
  * on is pushed down). The look is the settled demo's (.local/dashboard-demo/index-gridstack.html), written for our tokens.
- * Bare selectors on purpose: the build puts `.dudu` in front of each. The page sets --db-cell, --db-gap, --db-ext (columns used),
+ * Bare selectors on purpose: the build puts `.dudu` in front of each. The page sets --db-cell, --db-row, --db-gap, --db-ext (columns used),
  * --db-rows and --db-bw (their width) on `.db-wrap`.
  *
  * gridstack's cell is a card plus a gap: the card is inset by half the gap on every side, so the lines between cells fall in the
  * middle of the gaps, which is where the construction lines are drawn. The board is therefore one gap wider and taller than the
  * cards, and is pulled back by half a gap. */
-.db-page { flex: 1; min-height: 0; overflow: auto; padding: 20px 24px; scrollbar-gutter: stable; }
+.db-page { flex: 1; min-height: 0; overflow: auto; padding: 0 24px 20px; scrollbar-gutter: stable; }
 .db-wrap { position: relative; display: flow-root; width: 100%; min-width: var(--db-bw, 0px); --db-line: color-mix(in srgb, var(--foreground) 30%, transparent); --db-shadow: rgb(0 0 0 / 0.2); }
 .db-board {
   position: relative;
   width: calc(var(--db-bw, 1092px) + var(--db-gap, 12px));
-  min-height: calc(var(--db-rows, 6) * (var(--db-cell, 126px) + var(--db-gap, 12px)));
+  min-height: calc(var(--db-rows, 6) * (var(--db-row, var(--db-cell, 126px)) + var(--db-gap, 12px)));
   margin: calc(var(--db-gap, 12px) / -2) 0 calc(var(--db-gap, 12px) / -2) calc((100% - var(--db-bw, 1092px)) / 2 - var(--db-gap, 12px) / 2);
 }
 .db-board.grid-stack-animate { transition: none; }
@@ -72,3 +72,7 @@
 /* The size label beside the pointer while resizing ("4×2 · Minimum size"). */
 .db-chip { position: fixed; z-index: 1200; padding: 0 8px; border-radius: 6px; background: var(--ring); color: #fff; font-size: 12px; line-height: 20px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; box-shadow: 0 0 0 2px var(--background); }
 @media (prefers-reduced-motion: reduce) { .db-board.grid-stack-animate .grid-stack-item { transition: none; } .db-card.db-flash .db-frame { animation: none; } }
+
+/* DSH's window markers keep blank space draggable and the controls clickable on Desktop. The board starts below this row. */
+.db-header { flex: none; display: flex; align-items: center; justify-content: flex-end; min-height: 48px; padding: 8px 24px; padding-inline-start: max(24px, var(--dsh-frame-leading-clearance, 0px)); }
+.db-entry { display: flex; align-items: center; gap: 8px; }

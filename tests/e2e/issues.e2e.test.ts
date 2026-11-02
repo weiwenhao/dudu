@@ -53,8 +53,8 @@ test('ticked rows change together, Shift ticks a run, and Undo puts every one ba
   const page = await dudu.openPanel();
   await rowOf(page, '批量 D').waitFor();
 
-  await page.getByRole('checkbox', { name: `Select DUDU-${ids[0]}` }).click();
-  await page.getByRole('checkbox', { name: `Select DUDU-${ids[3]}` }).click({ modifiers: ['Shift'] });
+  await page.getByRole('checkbox', { name: 'Select 批量 A', exact: true }).click();
+  await page.getByRole('checkbox', { name: 'Select 批量 D', exact: true }).click({ modifiers: ['Shift'] });
   const bar = page.getByRole('toolbar', { name: 'Bulk actions' });
   await bar.getByText('4 selected').waitFor();
 
@@ -69,7 +69,7 @@ test('ticked rows change together, Shift ticks a run, and Undo puts every one ba
   assert.deepEqual(await Promise.all(ids.map(async (id) => (await get(id)).status)), Array(4).fill('todo'));
 
   // Escape lets go of the ticks.
-  await page.getByRole('checkbox', { name: `Select DUDU-${ids[1]}` }).click();
+  await page.getByRole('checkbox', { name: 'Select 批量 B', exact: true }).click();
   await bar.getByText('1 selected').waitFor();
   await page.keyboard.press('Escape');
   await bar.waitFor({ state: 'detached' });
@@ -126,6 +126,42 @@ test('All issues finds Chinese words and writes the total in its footer', async 
   await page.close();
 });
 
+test('status, display and nested filter popovers close with a click outside', async () => {
+  await add({ title: '弹层关闭验收' });
+  const page = await dudu.openPanel();
+  const outside = async () => {
+    const dashboard = page.getByRole('region', { name: 'Dashboard', exact: true });
+    const box = await dashboard.boundingBox();
+    assert.ok(box);
+    // Wait for a stable click target; a raw mouse event can beat Radix's deferred outside listener on its opening frame.
+    await dashboard.click({ position: { x: 30, y: box.height - 30 } });
+    await page.locator('.dudu [data-slot="popover-content"]').waitFor({ state: 'hidden' });
+  };
+  await rowOf(page, '弹层关闭验收').getByRole('button', { name: /Change status/ }).click();
+  await page.getByRole('combobox', { name: 'Change status…' }).waitFor();
+  await outside();
+  await issues(page).getByRole('button', { name: 'Display options' }).click();
+  await page.getByText('Display properties', { exact: true }).waitFor();
+  await page.getByRole('combobox', { name: 'Grouping', exact: true }).click();
+  await page.getByRole('option', { name: 'Agent', exact: true }).waitFor();
+  await page.getByRole('dialog', { name: 'Display options', exact: true }).getByText('Grouping', { exact: true }).click();
+  await page.getByRole('option', { name: 'Agent', exact: true }).waitFor({ state: 'hidden' });
+  await page.getByRole('dialog', { name: 'Display options', exact: true }).waitFor();
+  await page.getByRole('combobox', { name: 'Grouping', exact: true }).click();
+  await page.getByRole('option', { name: 'Status', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Display options', exact: true }).waitFor();
+  await page.getByRole('combobox', { name: 'Grouping', exact: true }).click();
+  await outside();
+  await issues(page).getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Add filter' }).waitFor();
+  await page.getByRole('combobox', { name: 'Status', exact: true }).waitFor();
+  const box = await issues(page).boundingBox();
+  assert.ok(box);
+  await issues(page).click({ position: { x: 30, y: box.height - 30 } });
+  await page.waitForFunction(() => !document.querySelector('.dudu [data-slot="popover-content"]'));
+  await page.close();
+});
+
 test('a group bar and a board column add an issue to their own group, and a column folds', async () => {
   await add({ title: '分组里已有的事', status: 'in_progress', priority: 'none' });
   const page = await dudu.openPanel();
@@ -160,34 +196,58 @@ test('a group bar and a board column add an issue to their own group, and a colu
   await page.close();
 });
 
-test('an agent\'s question is answered on the issue page; Snooze hides it; Done asks how it went; the agent changes in the menu', async () => {
-  const answered = await add({ title: '要回答的事', status: 'in_progress', priority: 'urgent', agent: 'claude', ask: '第 3 条接受还是回绝？' });
-  const snoozed = await add({ title: '要推迟的事', status: 'in_progress', priority: 'urgent', agent: 'claude', ask: '要不要同时升级 npm？' });
+test('comments preserve an agent question; Done asks how it went; a saved agent and project stay locked', async () => {
+  const answered = await add({ title: '要回答的事', status: 'in_review', priority: 'urgent', ask: '第 3 条接受还是回绝？' });
   const page = await dudu.openPanel();
 
   await titleOf(page, '要回答的事').click();
-  const card = page.getByRole('region', { name: 'Needs you' });
+  const card = page.getByRole('region', { name: 'In Review', exact: true });
   await card.getByText('第 3 条接受还是回绝？').waitFor();
-  await card.getByRole('textbox', { name: 'Leave a reply…' }).fill('接受');
+  assert.equal(await page.locator('.dudu textarea').count(), 1);
+  await page.getByRole('textbox', { name: 'Leave a comment…' }).fill('接受');
   await page.keyboard.press('Control+Enter');
-  await card.waitFor({ state: 'detached' });
-  await page.getByText('接受', { exact: true }).waitFor();
+  await page.getByRole('listitem').getByText('接受', { exact: true }).waitFor();
   const afterReply = await get(answered.id);
-  assert.equal(afterReply.ask, '');
+  assert.equal(afterReply.ask, '第 3 条接受还是回绝？', 'a plain comment does not answer or send work');
   const { log } = await dudu.api('issues/get', { id: answered.id });
-  assert.ok(log.some((entry: { kind: string; text: string }) => entry.kind === 'decision' && entry.text === '接受'));
+  assert.ok(log.some((entry: { kind: string; text: string }) => entry.kind === 'note' && entry.text === '接受'));
 
-  // Copy ID puts DUDU-n on the clipboard; the agent menu changes the agent and says what it did.
-  await page.getByRole('button', { name: 'Copy ID' }).click();
-  await toast(page, `Copied DUDU-${answered.id}`).waitFor();
-  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `DUDU-${answered.id}`);
-  await page.getByRole('complementary', { name: 'Properties' }).getByRole('button', { name: /Claude/ }).click();
+  assert.equal((await get(answered.id)).ref, null);
+  assert.equal(await page.getByRole('button', { name: 'Copy ID' }).count(), 0, 'no public reference before choosing a project');
+  await page.getByRole('complementary', { name: 'Properties' }).getByRole('button', { name: 'No agent' }).click();
+  await page.getByRole('option', { name: 'Create project' }).click();
+  const project = page.getByRole('dialog', { name: 'Create project' });
+  await project.getByRole('textbox', { name: 'Project name' }).fill('Issue checks');
+  await project.getByRole('textbox', { name: 'Project folder' }).fill(dudu.folder);
+  await project.getByRole('button', { name: 'Create project', exact: true }).click();
+  for (const [name, color] of [['Claude', 'rgb(217, 119, 87)'], ['ChatGPT', 'rgb(3, 3, 3)'], ['DeepSeek', 'rgb(77, 107, 254)']]) {
+    const icon = page.getByRole('option', { name, exact: true }).locator('[data-agent-logo]');
+    await icon.waitFor();
+    assert.equal(await icon.evaluate((node) => getComputedStyle(node).color), color, `${name} keeps its brand colour in the agent menu`);
+  }
   await page.getByRole('option', { name: 'ChatGPT' }).click();
   await toast(page, 'Assigned to ChatGPT').waitFor();
-  assert.equal((await get(answered.id)).agent, 'codex');
+  const codex = page.getByRole('complementary', { name: 'Properties' }).locator('[data-agent-logo="codex"]');
+  assert.equal(await codex.evaluate((node) => getComputedStyle(node).color), 'rgb(3, 3, 3)');
+  assert.equal(await codex.locator('rect').count(), 0, 'Codex keeps the same unbacked mark as the other interface logos');
+  const composer = page.getByRole('textbox', { name: 'Leave a comment…' });
+  await composer.fill('@');
+  const mention = page.getByRole('option', { name: '@ChatGPT', exact: true }).locator('[data-agent-logo="codex"]');
+  await mention.waitFor();
+  assert.equal(await mention.evaluate((node) => getComputedStyle(node).color), 'rgb(3, 3, 3)', 'mention suggestions use the same Codex icon');
+  await composer.fill('');
+  const assigned = await get(answered.id);
+  assert.equal(assigned.agent, 'codex');
+  assert.equal(assigned.ref, 'ISS-1');
+  const properties = page.getByRole('complementary', { name: 'Properties' });
+  assert.equal(await properties.getByRole('button', { name: 'ChatGPT', exact: true }).isDisabled(), true);
+  assert.equal(await properties.getByRole('button', { name: 'Issue checks', exact: true }).isDisabled(), true);
+  await page.getByRole('button', { name: 'Copy ID' }).click();
+  await toast(page, `Copied ${assigned.ref}`).waitFor();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), assigned.ref);
 
   // Marking it Done offers a line for the result, which is kept when it is saved.
-  await page.getByRole('button', { name: 'In Progress', exact: true }).click();
+  await properties.getByRole('button', { name: /^In (Progress|Review)$/ }).click();
   await page.getByRole('option', { name: 'Done' }).click();
   await toast(page, 'Marked as Done').waitFor();
   await page.getByRole('textbox', { name: 'Add a result…' }).fill('已回复供应商');
@@ -195,17 +255,6 @@ test('an agent\'s question is answered on the issue page; Snooze hides it; Done 
   await page.waitForFunction(() => true);
   assert.equal((await get(answered.id)).outcome, '已回复供应商');
 
-  // Another issue: Snooze takes its question away until the time chosen.
-  await page.getByRole('button', { name: 'Back to Issues' }).click();
-  await titleOf(page, '要推迟的事').click();
-  await page.getByRole('region', { name: 'Needs you' }).waitFor();
-  await page.getByRole('button', { name: 'Snooze', exact: true }).click();
-  await page.getByRole('button', { name: 'Tomorrow' }).click();
-  await toast(page, 'Snoozed').waitFor();
-  await page.getByRole('region', { name: 'Needs you' }).waitFor({ state: 'detached' });
-  const asleep = await get(snoozed.id);
-  assert.ok(asleep.snoozeUntil > Date.now());
-  assert.equal(asleep.agentState, 'idle');
   await page.close();
 });
 
@@ -215,7 +264,8 @@ test('stepping to the next issue keeps the list; Escape leaves a title as it was
   await add({ title: '步进 3', status: 'todo', priority: 'urgent' });
   const page = await dudu.openPanel();
   await titleOf(page, '步进 1').click();
-  const header = page.locator('header').filter({ hasText: '嘟嘟' });
+  const header = page.locator('.dudu header').filter({ has: page.getByRole('button', { name: 'Back to Issues', exact: true }) });
+  assert.equal(await header.getByText('Dudu', { exact: true }).count(), 0, 'the redundant brand breadcrumb is gone');
   const position = async () => (await header.innerText()).match(/\d+ \/ \d+/)?.[0];
   const start = await position();
   assert.match(start ?? '', /^\d+ \/ \d+$/);
@@ -229,11 +279,11 @@ test('stepping to the next issue keeps the list; Escape leaves a title as it was
   // Escape in the title box is a cancel, not a save.
   await page.getByRole('button', { name: 'Back to Issues' }).click();
   await titleOf(page, '步进 1').click();
+  await page.getByRole('button', { name: 'Untitled', exact: true }).click();
   const title = page.getByRole('textbox', { name: 'Untitled' });
-  await title.click();
   await title.fill('改了一半的标题');
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => (document.querySelector('textarea[aria-label=Untitled]') as HTMLTextAreaElement | null)?.value === '步进 1');
+  await page.getByRole('button', { name: 'Untitled', exact: true }).waitFor();
   assert.equal((await get(first.id)).title, '步进 1');
 
   // A long activity: older entries that were asked for stay after the page refreshes itself (every five seconds).
@@ -247,4 +297,20 @@ test('stepping to the next issue keeps the list; Escape leaves a title as it was
   await page.getByText('第 1 条记录', { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Load earlier' }).count(), 0, 'nothing older is left to load');
   await page.close();
+});
+
+test('a draft agent can change before the issue is created', async () => {
+  await dudu.api('projects/create', { name: 'Draft selection', path: process.cwd() });
+  const page = await dudu.openPanel();
+  await issues(page).getByRole('button', { name: 'New issue', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New issue', exact: true });
+  await dialog.getByRole('button', { name: 'No agent', exact: true }).click();
+  await page.getByRole('option', { name: /Draft selection/ }).click();
+  await page.getByRole('option', { name: 'Claude', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Claude', exact: true }).click();
+  await page.getByRole('option', { name: 'ChatGPT', exact: true }).click();
+  await dialog.getByRole('button', { name: 'ChatGPT', exact: true }).click();
+  await page.getByRole('option', { name: 'No agent', exact: true }).click();
+  await dialog.getByRole('button', { name: 'No agent', exact: true }).waitFor();
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
 });

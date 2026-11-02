@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { AsyncQueue } from './async.mjs';
+import { AsyncQueue, abortReason } from './async.mjs';
 import { assertDirectory, harnessError } from './harness-bridge.mjs';
+import { inclusiveUsage, usageDelta } from './usage.mjs';
 
 // Claude Code and Codex are driven by OAR (@botiverse/oar). OAR starts the installed CLI, speaks its protocol, resumes
 // sessions and lists models. What lives here is DSH's side of it: reading OAR's record stream as the steps the bridge
@@ -14,10 +15,27 @@ const MAX_OUTPUT = 256 * 1024;
 // How long a turn that has ended waits for the follow-up the harness still owes a message it took in the meantime.
 const FOLLOW_UP_MS = 5000;
 // What shows the harness doing something again after its turn has ended.
-const ACTIVITY = new Set(['turn_active', 'turn_started', 'text_delta', 'reasoning', 'tool_call_started']);
+const ACTIVITY = new Set(['turn_active', 'turn_started', 'text_delta', 'reasoning', 'tool_call_started', 'compaction_started']);
 
 const text = (value) => (typeof value === 'string' ? value : '');
 const titleCase = (id) => id[0].toUpperCase() + id.slice(1);
+
+/** `claude-opus-5-5` -> 'Opus 5.5', `claude-sonnet-5` -> 'Sonnet 5', `claude-haiku-4-5-20251001` -> 'Haiku 4.5'; '' for anything else. */
+const resolvedName = (resolved) => {
+  const match = /^claude-([a-z]+)-(\d+(?:-\d{1,2})?)(?:-\d{8})?$/.exec(text(resolved));
+  return match ? `${titleCase(match[1])} ${match[2].replace('-', '.')}` : '';
+};
+
+/**
+ * What the menu calls a model: the harness's own name when it says which version it is (`Opus 5.5`); an alias such as `Opus` or `Default`
+ * is followed by what it means today, so that what is chosen is what runs. The harness's name for a model is kept as it is otherwise.
+ */
+export function modelName(model) {
+  const name = model.displayName || model.id;
+  const meant = resolvedName(model.resolvedId);
+  if (!meant || /\d/.test(name) || name.includes(meant)) return name;
+  return model.id === 'default' ? `${name} · ${meant}` : meant;
+}
 
 /** Names in `base` that match a pattern and must not reach the harness, as an OAR environment overlay (null removes). */
 export function scrubbedEnvironment(patterns, { keep = [], base = process.env } = {}) {
@@ -64,6 +82,7 @@ export class OarNormalizer {
   #calls = new Map();    // callId -> { name }, for the calls announced to the bridge
   #inStep = 0;
   #finished = false;
+  #usage;
 
   constructor({ name, login }) {
     this.name = name;
@@ -96,6 +115,15 @@ export class OarNormalizer {
 
   #frame(record, events) {
     if ((record.agentPath?.length ?? 0) > 0) return;   // a subagent's work is shown through its own call
+    // Some runtimes put usage after turn_ended in the same frame. Read it before the terminal boundary.
+    for (const event of record.body?.events ?? []) {
+      if (event.kind !== 'usage') continue;
+      const usage = inclusiveUsage(event.usage?.total ?? event.usage?.tokens);
+      if (!usage) continue;
+      const delta = usageDelta(usage, this.#usage);
+      this.#usage = usage;
+      if (Object.values(delta).some((value) => value > 0)) events.push({ type: 'usage', usage: delta });
+    }
     for (const event of record.body?.events ?? []) {
       switch (event.kind) {
         case 'text_delta': if (event.text) { this.#open = true; events.push({ type: 'text-delta', text: event.text }); } break;
@@ -105,12 +133,14 @@ export class OarNormalizer {
         case 'tool_call_started': this.#start(event, record, events); break;
         case 'tool_call_input': this.#input(event, events); break;
         case 'tool_call_ended': this.#end(event, record, events); break;
+        case 'compaction_started': events.push({ type: 'compaction-start' }); break;
+        case 'compaction_ended': events.push({ type: 'compaction-end', outcome: event.outcome, ...(event.reason ? { reason: event.reason } : {}) }); break;
         case 'turn_ended': this.#turnEnded(event, events); break;
         default: break;
       }
       if (this.#finished) return;
     }
-    if (this.isMessageEnd(record)) this.#closeStep(events);
+    if (this.isMessageEnd(record) && this.#inStep > 0) this.#closeStep(events);
   }
 
   #start(event, record, events) {
@@ -188,7 +218,7 @@ async function* drain(queue) {
 }
 
 /** One OAR session for one DSH turn. Resolves once the prompt is accepted. */
-export async function startOarRun({ runtime, installation, sessionOptions, prompt, normalizer, name, signal, queuesSteer = false, followUpMs = FOLLOW_UP_MS }) {
+export async function startOarRun({ runtime, installation, sessionOptions, prompt, images, normalizer, name, signal, queuesSteer = false, followUpMs = FOLLOW_UP_MS }) {
   if (signal?.aborted) throw signal.reason ?? harnessError('The request was aborted.', 'ABORTED');
   let session;
   try { session = await runtime.session(installation, sessionOptions); }
@@ -200,23 +230,54 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   // asks to close the run waits for the process that the end of the turn already started to stop.
   let disposal;
   const dispose = () => (disposal ??= session.dispose().catch(() => {}));
+  if (signal?.aborted) {
+    await dispose();
+    throw abortReason(signal);
+  }
+  let unsubscribe = () => {};
+  let stopping;
+  async function close() {
+    finished = true;
+    clearTimeout(holdTimer);
+    signal?.removeEventListener('abort', onAbort);
+    unsubscribe();
+    events.close();
+    await dispose();
+  }
+  function interrupt() {
+    return stopping ??= (async () => {
+      if (!finished) await session.abort().catch(() => {});
+      await close();
+    })();
+  }
+  function onAbort() { void interrupt(); }
   const finish = (event) => {
     if (finished) return;
     finished = true;
+    clearTimeout(holdTimer);
+    signal?.removeEventListener('abort', onAbort);
     events.push(event);
     events.close();
     // After the observer returns: the session is still reading the frame this record came from.
-    queueMicrotask(dispose);
+    queueMicrotask(() => { unsubscribe(); void dispose(); });
   };
   // A message written while the harness works is either taken into the turn or, for a harness whose input is a queue,
   // answered by a turn of its own once this one ends. Such a message is tracked until the harness shows it picked it up.
   const waiting = new Set();
+  const forwarded = new Set();
   let held;
   let holdTimer;
   const release = () => { clearTimeout(holdTimer); const event = held; held = undefined; if (event) finish(event); };
-  const unsubscribe = session.rawEvents((record) => {
+  unsubscribe = session.rawEvents((record) => {
     if (finished) return;
-    const seen = record.kind === 'frame' ? record.body?.events ?? [] : [];
+    // Codex child threads may have an empty agentPath; their own sessionId still keeps their ends and text out of the parent.
+    if (record.sessionId !== undefined && record.sessionId !== session.id) return;
+    const seen = record.kind === 'frame' && (record.agentPath?.length ?? 0) === 0 ? record.body?.events ?? [] : [];
+    const dropped = seen.find((event) => event.kind === 'input_dropped' && forwarded.has(event.inputId));
+    if (dropped) {
+      finish({ type: 'turn-end', ok: false, error: harnessError(`${name} did not take the message: ${dropped.message || dropped.reason}`, 'HARNESS_REJECTED') });
+      return;
+    }
     for (const event of seen) if (event.kind === 'user_message' && event.inputId) waiting.delete(event.inputId);
     if (held && seen.some((event) => ACTIVITY.has(event.kind))) {
       clearTimeout(holdTimer);
@@ -229,14 +290,22 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
       else finish(event);
     }
   });
+  // DSH uses the same signal for the whole turn, including its mirror-tool waits between model streams.
+  if (!finished) signal?.addEventListener('abort', onAbort, { once: true });
+  if (signal?.aborted) {
+    await interrupt();
+    throw abortReason(signal);
+  }
 
   let outcome;
-  try { outcome = await session.prompt(prompt); }
+  try { outcome = await session.prompt(prompt, images?.length ? { images } : undefined); }
   catch (error) { outcome = { kind: 'rejected', reason: error instanceof Error ? error.message : String(error) }; }
+  if (signal?.aborted) {
+    await interrupt();
+    throw abortReason(signal);
+  }
   if (outcome.kind === 'rejected') {
-    finished = true;
-    unsubscribe();
-    await dispose();
+    await close();
     throw harnessError(`${name} did not take the message: ${outcome.reason}`, 'HARNESS_REJECTED');
   }
 
@@ -244,21 +313,17 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     nativeSessionId: session.id,
     events: drain(events),
     // Real steering where the harness takes it; OAR reports whether it did, and a miss means the turn had just ended.
-    async pushUserMessage(content) {
+    async pushUserMessage(content, images) {
       if (typeof session.steer !== 'function') return;
       const inputId = randomUUID();
+      forwarded.add(inputId);
       if (queuesSteer) waiting.add(inputId);
-      const outcome = await session.steer(content, { inputId }).catch(() => undefined);
+      const outcome = await session.steer(content, { inputId, ...(images?.length ? { images } : {}) });
       if (!outcome || outcome.kind === 'rejected') waiting.delete(inputId);
+      if (outcome?.kind === 'rejected') throw harnessError(`${name} did not take the message: ${outcome.reason}`, 'HARNESS_REJECTED');
     },
-    async interrupt() { await session.abort().catch(() => {}); },
-    async close() {
-      finished = true;
-      clearTimeout(holdTimer);
-      unsubscribe();
-      events.close();
-      await dispose();
-    },
+    interrupt,
+    close,
   };
 }
 
@@ -305,21 +370,22 @@ export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbac
         fallbackTool,
         refreshModels() { loaded = undefined; },
         /** How much of the account's plan is used, asked of the harness itself (OAR starts it for the question). */
-        accountUsage() {
+        accountUsage(extra) {
           if (typeof runtime.accountUsage !== 'function') return Promise.resolve({ kind: 'unsupported' });
-          return runtime.accountUsage(installation, { env: environment(), timeoutMs: 30_000 });
+          // `extra` adds to the overlay (`null` removes a name): the plan's usage read without an API key in the environment, say.
+          return runtime.accountUsage(installation, { env: environment(extra), timeoutMs: 30_000 });
         },
         async listModels() {
           const models = await load();
           // The harness's own default comes first: a provider's first model is what the provider chip selects.
           return [...models.filter((model) => model.default), ...models.filter((model) => !model.default)]
-            .map((model) => ({ provider: id, id: model.id, name: model.displayName || model.id }));
+            .map((model) => ({ provider: id, id: model.id, name: modelName(model), ...(model.resolvedId ? { resolvedId: model.resolvedId } : {}) }));
         },
         async resolveModel(modelId) {
           const model = (await load()).find((candidate) => candidate.id === modelId);
           const levels = Array.isArray(model?.effortLevels) ? model.effortLevels : [];
           return {
-            id: modelId, name: model?.displayName || modelId,
+            id: modelId, name: model ? modelName(model) : modelId,
             ...(levels.length ? {
               reasoning: {
                 efforts: levels.map((level) => ({ id: level, name: titleCase(level) })),
@@ -328,7 +394,7 @@ export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbac
             } : {}),
           };
         },
-        async start({ resume, prompt, cwd, model, effort, permission, signal }) {
+        async start({ resume, prompt, images, cwd, model, effort, permission, signal }) {
           if (signal?.aborted) throw signal.reason ?? harnessError('The request was aborted.', 'ABORTED');
           await assertDirectory(cwd);
           await before?.({ resume });
@@ -342,7 +408,7 @@ export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbac
             ...specific,
             env: environment(specific.env),
           };
-          return startOarRun({ runtime, installation, sessionOptions, prompt, normalizer: normalizer({ name, login }), name, signal, queuesSteer });
+          return startOarRun({ runtime, installation, sessionOptions, prompt, images, normalizer: normalizer({ name, login }), name, signal, queuesSteer });
         },
       };
     },

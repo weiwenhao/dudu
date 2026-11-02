@@ -6,6 +6,8 @@
 /* The dashboard's grid: gridstack's own rules, then ours (the look of the settled demo). */
 @import "gridstack/dist/gridstack.min.css";
 @import "./dashboard/dashboard.css";
+@import "./pet/pet.css";
+@import "../widget.css";
 @source "./";
 
 /* DSH marks dark mode on <body>; the `dark:` classes of shadcn follow it. */
@@ -46,6 +48,12 @@
   --status-canceled: #95a2b3;
   --warning-foreground: #8a5300;
   --danger-foreground: #b91c1c;
+  --dudu-soft: #eef3fd;
+  --dudu-strong: #2f5fd0;
+  --dudu-on: #ffffff;
+  --dudu-success: #177a3c;
+  --dudu-shadow: #0f111514;
+  --dudu-chatgpt-color: #030303;
   font-family: var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Arial, sans-serif);
   font-size: 13px;
   line-height: 20px;
@@ -55,6 +63,12 @@
 body[data-ds-dark-theme] .dudu {
   --warning-foreground: #f59e0b;
   --danger-foreground: #f25a5a;
+  --dudu-soft: #2b3347;
+  --dudu-strong: #5686fe;
+  --dudu-on: #0f1115;
+  --dudu-success: #22c55e;
+  --dudu-shadow: #00000066;
+  --dudu-chatgpt-color: var(--foreground);
 }
 
 @theme inline {
@@ -103,11 +117,42 @@ body[data-ds-dark-theme] .dudu {
 
 /* What preflight would have reset, for our own elements only. Once scoped, these sit below every utility (`.dudu .class`) and
  * above DSH's bare element selectors. */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; border: 0 solid var(--border); }
-button, input, select, textarea { font: inherit; letter-spacing: inherit; color: inherit; background: transparent; border-radius: 0; }
-button { cursor: pointer; text-align: inherit; }
-button:disabled { cursor: default; }
-h1, h2, h3, h4 { font-size: inherit; font-weight: inherit; color: inherit; }
-ul, ol { list-style: none; }
-a { color: inherit; text-decoration: inherit; }
-svg { display: block; }
+/* DSH's global superellipse corners must not turn the design's circles and pills into squircles. */
+/* Embedded DSH conversations keep their own control geometry and typography. */
+*:not(:where(.dudu-host-conversation, .dudu-host-conversation *)),
+*:not(:where(.dudu-host-conversation, .dudu-host-conversation *))::before,
+*:not(:where(.dudu-host-conversation, .dudu-host-conversation *))::after { box-sizing: border-box; margin: 0; padding: 0; border: 0 solid var(--border); corner-shape: round; }
+:is(button, input, select, textarea):not(:where(.dudu-host-conversation *)) { font: inherit; letter-spacing: inherit; color: inherit; background: transparent; border-radius: 0; }
+button:not(:where(.dudu-host-conversation *)) { cursor: pointer; text-align: inherit; }
+button:disabled:not(:where(.dudu-host-conversation *)) { cursor: default; }
+:is(h1, h2, h3, h4):not(:where(.dudu-host-conversation *)) { font-size: inherit; font-weight: inherit; color: inherit; }
+:is(ul, ol):not(:where(.dudu-host-conversation *)) { list-style: none; }
+a:not(:where(.dudu-host-conversation *)) { color: inherit; text-decoration: inherit; }
+svg:not(:where(.dudu-host-conversation *)) { display: block; }
+
+/* The settings design uses the larger switch, with the same Radix keyboard and focus behavior. */
+.dudu-settings input, .dudu-settings textarea { background: var(--card); }
+.dudu-settings [data-slot="switch"] { width: 40px; height: 24px; padding: 2px; border: 0; }
+.dudu-settings [data-slot="switch-thumb"] { width: 20px; height: 20px; translate: 0; transform: none; background: var(--background); }
+.dudu-settings [data-slot="switch"][data-state="checked"] [data-slot="switch-thumb"] { translate: 16px 0; }
+.dudu-settings [data-slot="button"].border { height: 30px; padding-right: 14px; padding-left: 14px; border-radius: 10px; box-shadow: none; }
+.dudu-settings .dudu-connector-actions [data-slot="button"] { height: 26px; padding: 0 10px; border-radius: 8px; font-size: 12px; }
+
+/* The existing phone/provider forms also sit inside the settings design, using the same shadcn controls. */
+.dsbot-settings--embedded { padding: 0; font-size: 13px; line-height: 20px; }
+.dsbot-settings--embedded > h2 { display: none; }
+.dsbot-settings--embedded h3 { margin: 22px 4px 8px; font-size: 13px; line-height: 20px; font-weight: 600; }
+.dsbot-settings--embedded .dudu-provider-section:first-of-type h3 { margin-top: 0; }
+.dsbot-settings--embedded .dsbot-settings-row { display: flex; min-height: 60px; gap: 14px; padding: 16px 20px; border: 1px solid var(--border); border-radius: 20px; }
+.dsbot-settings--embedded .dsbot-field-title { flex-shrink: 0; min-width: 90px; font-size: 14px; font-weight: 600; }
+.dsbot-settings--embedded .dsbot-settings-row > :last-child { min-width: 0; flex: 1; }
+.dsbot-settings--embedded .dsbot-settings-row > [data-slot="switch"] { flex: none; margin-left: auto; }
+.dsbot-settings--embedded .dsbot-address-field { flex: 1; min-width: 0; gap: 8px; }
+.dsbot-settings--embedded .dsbot-input { min-width: 0; height: 32px; border-radius: 10px; padding: 5px 10px; font-size: 13px; }
+.dsbot-settings--embedded .dsbot-button { height: 30px; border-radius: 10px; box-shadow: none; }
+.dsbot-settings--embedded [data-slot="button"].bg-primary { background: var(--dudu-strong); color: var(--dudu-on); }
+.dsbot-settings--embedded .dsbot-addresses, .dsbot-settings--embedded .dudu-provider-card { overflow: hidden; border: 1px solid var(--border); border-radius: 20px; }
+.dsbot-settings--embedded .dsbot-addresses .dsbot-settings-row, .dsbot-settings--embedded .dudu-provider-card .dsbot-settings-row { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+.dsbot-settings--embedded .dsbot-addresses .dsbot-settings-row:first-child, .dsbot-settings--embedded .dudu-provider-card .dsbot-settings-row:first-child { border-top: 0; }
+.dsbot-settings--embedded .dsbot-device { min-height: 76px; padding: 16px 20px; border: 1px solid var(--border); border-radius: 20px; }
+.dsbot-settings--embedded .dsbot-actions { margin-top: 12px; }

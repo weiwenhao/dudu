@@ -5,6 +5,8 @@ window.__ModuleLoader__.load({
     const { Button, Input } = require('@deepseek-ai/dsh-client-ui-primitives');
     // The React interface (ui/, built by scripts/build-client.mjs) is compiled in front of this file; unbuilt, it is absent.
     const ui = typeof __DUDU_UI__ === 'function' ? __DUDU_UI__(require) : null;
+    const S = ui?.T.shell;
+    const useLanguage = () => { if (ui) useSyncExternalStore(ui.subscribeLocale, ui.getLocale); };
 
     const styles = `
 .dsbot-settings{max-width:760px;padding:0 0 24px;color:var(--dsw-alias-label-primary);font-size:14px;line-height:22px}
@@ -31,7 +33,7 @@ window.__ModuleLoader__.load({
         body: JSON.stringify(body), credentials: 'same-origin',
       });
       const value = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(value.error || '连接暂时不可用。');
+      if (!response.ok) throw new Error(value.error || (S?.unavailable ?? '连接暂时不可用。'));
       return value;
     }
 
@@ -49,7 +51,8 @@ window.__ModuleLoader__.load({
       }, h('section', { className: 'dsbot-dialog' }, children));
     }
 
-    function Settings() {
+    function Settings({ embedded = false } = {}) {
+      useLanguage();
       const [snapshot, setSnapshot] = useState(null);
       const [draft, setDraft] = useState(null);
       const [busy, setBusy] = useState(false);
@@ -163,60 +166,61 @@ window.__ModuleLoader__.load({
         } catch (failure) { setError(failure.message); }
         finally { setBusy(false); }
       };
-      if (!draft) return h('div', { className: 'dsbot-settings' }, error || '正在读取连接配置…');
+      if (!draft) return h('div', { className: 'dsbot-settings' }, error || (S?.reading ?? '正在读取连接配置…'));
       const addressConfig = () => ({
         name: draft.name,
         addresses: [draft.lanAddress, ...draft.addresses.map((row) => row.value)],
       });
       const generateAddress = (address) => run('generate', { ...addressConfig(), address });
       const dialog = (content, close, label) => h(Dialog, { close, label }, content);
-      const input = (props) => h(Input, { ...props, className: `dsbot-input${props.className ? ` ${props.className}` : ''}` });
-      const button = (props, label) => h(Button, {
-        ...props, size: 'sm', className: `dsbot-button${props.className ? ` ${props.className}` : ''}`,
+      const input = (props) => h(embedded ? ui.Input : Input, { ...props, className: `dsbot-input${props.className ? ` ${props.className}` : ''}` });
+      const button = (props, label) => h(embedded ? ui.Button : Button, {
+        ...props, ...(embedded && props.variant === 'primary' ? { variant: 'default' } : {}),
+        size: 'sm', className: `dsbot-button${props.className ? ` ${props.className}` : ''}`,
       }, label);
-      return h('div', { className: 'dsbot-settings' },
-        h('h2', null, '手机控制'),
+      return h('div', { className: `dsbot-settings${embedded ? ' dsbot-settings--embedded' : ''}` },
+        h('h2', null, (S?.phone ?? '手机控制')),
         h('section', { className: 'dsbot-settings-section' },
           h('div', { className: 'dsbot-settings-row' },
-            h('label', { className: 'dsbot-field-title', htmlFor: 'dsbot-computer-name' }, '电脑名称'),
+            h('label', { className: 'dsbot-field-title', htmlFor: 'dsbot-computer-name' }, (S?.computerName ?? '电脑名称')),
             input({ id: 'dsbot-computer-name', type: 'text', maxLength: 80, value: draft.name,
-              'aria-label': '电脑名称', disabled: busy, onChange: (event) => editName(event.target.value) })),
-          h('h3', null, '连接地址'),
+              'aria-label': (S?.computerName ?? '电脑名称'), disabled: busy, onChange: (event) => editName(event.target.value) })),
+          h('h3', null, (S?.addresses ?? '连接地址')),
           h('div', { className: 'dsbot-addresses' },
             h('div', { className: 'dsbot-settings-row dsbot-address-row dsbot-address-row--default', key: 'lan-address' },
-              h('label', { className: 'dsbot-field-title', htmlFor: 'dsbot-lan-address' }, '内网地址'),
+              h('label', { className: 'dsbot-field-title', htmlFor: 'dsbot-lan-address' }, (S?.lan ?? '内网地址')),
               h('div', { className: 'dsbot-address-field' },
                 input({ id: 'dsbot-lan-address', type: 'text', value: draft.lanAddress, readOnly: true,
-                  'aria-label': '内网地址', autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false }),
+                  'aria-label': (S?.lan ?? '内网地址'), autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false }),
                 button({ type: 'button', variant: 'primary', disabled: busy || !draft.lanAddress.trim(),
-                  'aria-label': '为内网地址生成二维码', onClick: () => generateAddress(draft.lanAddress) },
-                busy ? '处理中…' : '生成二维码'))),
+                  'aria-label': (S?.lanCode ?? '为内网地址生成二维码'), onClick: () => generateAddress(draft.lanAddress) },
+                busy ? (S?.busy ?? '处理中…') : (S?.generate ?? '生成二维码')))),
             draft.addresses.map((row, index) =>
               h('div', { className: 'dsbot-settings-row dsbot-address-row', key: row.id },
-                h('label', { className: 'dsbot-field-title', htmlFor: `dsbot-address-${row.id}` }, `连接地址 ${index + 2}`),
+                h('label', { className: 'dsbot-field-title', htmlFor: `dsbot-address-${row.id}` }, (S?.address(index + 2) ?? `连接地址 ${index + 2}`)),
                 h('div', { className: 'dsbot-address-field' },
                   input({ id: `dsbot-address-${row.id}`, type: 'url', value: row.value, maxLength: 2048,
-                    'aria-label': `连接地址 ${index + 2}`, autoCapitalize: 'none', autoCorrect: 'off',
+                    'aria-label': (S?.address(index + 2) ?? `连接地址 ${index + 2}`), autoCapitalize: 'none', autoCorrect: 'off',
                     spellCheck: false, disabled: busy, onChange: (event) => editAddress(row.id, event.target.value) }),
                   button({ type: 'button', variant: 'primary', disabled: busy || !row.value.trim(),
                     onClick: () => generateAddress(row.value) },
-                  busy ? '处理中…' : '生成二维码'),
+                  busy ? (S?.busy ?? '处理中…') : (S?.generate ?? '生成二维码')),
                   button({ type: 'button', variant: 'ghost', className: 'dsbot-danger-button', disabled: busy,
-                    'aria-label': `删除连接地址 ${index + 2}`, onClick: () => removeAddress(row.id) }, '删除'))))),
+                    'aria-label': (S?.removeAddress(index + 2) ?? `删除连接地址 ${index + 2}`), onClick: () => removeAddress(row.id) }, (S?.remove ?? '删除')))))),
           h('div', { className: 'dsbot-actions' },
-            button({ type: 'button', variant: 'outline', disabled: busy || draft.addresses.length >= 31, onClick: addAddress }, '添加地址'),
-            button({ type: 'button', variant: 'primary', disabled: busy, onClick: () => run('save', addressConfig()) }, '保存'),
-            saved && h('span', { className: 'dsbot-muted', role: 'status' }, '已保存')),
+            button({ type: 'button', variant: 'outline', disabled: busy || draft.addresses.length >= 31, onClick: addAddress }, (S?.addAddress ?? '添加地址')),
+            button({ type: 'button', variant: 'primary', disabled: busy, onClick: () => run('save', addressConfig()) }, (S?.save ?? '保存')),
+            saved && h('span', { className: 'dsbot-muted', role: 'status' }, (S?.saved ?? '已保存'))),
           error && h('p', { className: 'dsbot-error', role: 'alert' }, error)),
-        h('section', { className: 'dsbot-settings-section' }, h('h3', null, '已配对设备'),
+        h('section', { className: 'dsbot-settings-section' }, h('h3', null, (S?.devices ?? '已配对设备')),
           snapshot.devices.length ? snapshot.devices.map((device) => h('div', { className: 'dsbot-device', key: device.id },
             h('div', { className: 'dsbot-device-copy' }, h('div', null, device.name), h('div', { className: 'dsbot-muted' },
-              `配对于 ${new Date(device.pairedAt).toLocaleDateString()}`)),
-            button({ type: 'button', variant: 'ghost', className: 'dsbot-danger-button', disabled: busy, onClick: () => setConfirming(device) }, '撤销')))
-            : h('div', { className: 'dsbot-empty' }, '暂无配对设备')),
+              (S?.paired(new Date(device.pairedAt).toLocaleDateString(ui?.intlLocale())) ?? ''))),
+            button({ type: 'button', variant: 'ghost', className: 'dsbot-danger-button', disabled: busy, onClick: () => setConfirming(device) }, (S?.revoke ?? '撤销'))))
+            : h('div', { className: 'dsbot-empty' }, (S?.noDevices ?? '暂无配对设备'))),
         code && dialog([
           h('div', { className: 'dsbot-dialog-head', key: 'head' },
-            h('h3', null, '打开 Dudu 扫码'), button({ type: 'button', variant: 'ghost', onClick: () => setCode(null), autoFocus: true }, '关闭')),
+            h('h3', null, (S?.scan ?? '打开 Dudu 扫码')), button({ type: 'button', variant: 'ghost', onClick: () => setCode(null), autoFocus: true }, (S?.close ?? '关闭'))),
           h('div', { className: 'dsbot-qr', key: 'qr', dangerouslySetInnerHTML: { __html: code.svg } }),
           h('p', { key: 'host' }, new URL(code.url).host),
           h('div', { className: 'dsbot-actions', key: 'copy', style: { justifyContent: 'center', marginTop: 16 } },
@@ -227,16 +231,16 @@ window.__ModuleLoader__.load({
               } catch {
                 setCopyState('failed');
               }
-            } }, copyState === 'copied' ? '已复制' : '复制配对链接')),
-          copyState === 'failed' && h('p', { className: 'dsbot-error', key: 'copy-error' }, '复制失败，请扫码连接'),
-          h('p', { className: 'dsbot-muted', key: 'expiry' }, '二维码 10 分钟内有效'),
-        ], () => setCode(null), '配对手机'),
+            } }, copyState === 'copied' ? (S?.copied ?? '已复制') : (S?.copyPairing ?? '复制配对链接'))),
+          copyState === 'failed' && h('p', { className: 'dsbot-error', key: 'copy-error' }, (S?.copyFailed ?? '复制失败，请扫码连接')),
+          h('p', { className: 'dsbot-muted', key: 'expiry' }, (S?.expiry ?? '二维码 10 分钟内有效')),
+        ], () => setCode(null), (S?.pair ?? '配对手机')),
         confirming && dialog([
-          h('h3', { key: 'title' }, `撤销 ${confirming.name} 的连接？`),
+          h('h3', { key: 'title' }, (S?.revokeQuestion(confirming.name) ?? '')),
           h('div', { className: 'dsbot-actions', key: 'actions' },
-            button({ type: 'button', variant: 'ghost', disabled: busy, autoFocus: true, onClick: () => setConfirming(null) }, '取消'),
-            button({ type: 'button', variant: 'primary', disabled: busy, onClick: () => run('revoke', { id: confirming.id }) }, '撤销配对')),
-        ], () => setConfirming(null), '撤销配对'));
+            button({ type: 'button', variant: 'ghost', disabled: busy, autoFocus: true, onClick: () => setConfirming(null) }, (S?.cancel ?? '取消')),
+            button({ type: 'button', variant: 'primary', disabled: busy, onClick: () => run('revoke', { id: confirming.id }) }, (S?.revokePairing ?? '撤销配对'))),
+        ], () => setConfirming(null), (S?.revokePairing ?? '撤销配对')));
     }
 
 
@@ -673,6 +677,7 @@ window.__ModuleLoader__.load({
 
     function providerChip({ Menu, IconChevronDownOutlineRegular, IconCordisPluginOutlineRegular }, service) {
       return function ProviderChip({ sessionId }) {
+        useLanguage();
         const { directory, state } = useDirectory(service, sessionId);
         const catalog = useSyncExternalStore(service.catalog.store.subscribe, service.catalog.store.getSnapshot);
         const [open, setOpen] = useState(false);
@@ -705,7 +710,7 @@ window.__ModuleLoader__.load({
             className: 'dudu-seat',
             'aria-haspopup': 'menu',
             'aria-expanded': open,
-            'aria-label': `供应商，当前 ${current.name}`,
+            'aria-label': S?.providerChip(current.name) ?? `供应商，当前 ${current.name}`,
             title: error || undefined,
             'data-testid': 'dudu-provider-chip',
             disabled: state.status === 'selecting',
@@ -764,7 +769,8 @@ window.__ModuleLoader__.load({
     // What the settings page says about a harness the plugin looked for.
     const PROVIDER_STATES = { ready: '可用', missing: '未找到', unsupported: '版本不受支持', broken: '无法运行' };
 
-    function ProvidersSettings() {
+    function ProvidersSettings({ embedded = false } = {}) {
+      useLanguage();
       const [providers, setProviders] = useState(null);
       const [paths, setPaths] = useState({});
       const [busy, setBusy] = useState(false);
@@ -785,38 +791,46 @@ window.__ModuleLoader__.load({
         catch (failure) { setError(failure.message); }
         finally { setBusy(false); }
       };
-      if (!providers) return h('div', { className: 'dsbot-settings' }, error || '正在读取…');
-      const button = (props, label) => h(Button, { ...props, size: 'sm', className: 'dsbot-button' }, label);
-      return h('div', { className: 'dsbot-settings' },
-        h('h2', null, '供应商'),
-        providers.map((provider) => h('section', { className: 'dsbot-settings-section', key: provider.id },
+      if (!providers) return h('div', { className: 'dsbot-settings' }, error || (S?.loading ?? '正在读取…'));
+      const button = (props, label) => h(embedded ? ui.Button : Button, {
+        ...props, ...(embedded && props.variant === 'primary' ? { variant: 'default' } : {}),
+        size: 'sm', className: 'dsbot-button',
+      }, label);
+      return h('div', { className: `dsbot-settings${embedded ? ' dsbot-settings--embedded' : ''}` },
+        h('h2', null, (S?.providers ?? '供应商')),
+        providers.map((provider) => h('section', { className: 'dsbot-settings-section dudu-provider-section', key: provider.id },
           h('h3', null, provider.name),
+          h('div', { className: 'dudu-provider-card' },
           h('div', { className: 'dsbot-settings-row' },
-            h('span', { className: 'dsbot-field-title' }, '状态'),
+            h('span', { className: 'dsbot-field-title' }, (S?.state ?? '状态')),
             h('div', null,
-              h('div', null, [PROVIDER_STATES[provider.state] ?? provider.state, provider.version].filter(Boolean).join(' ')),
+              h('div', null, [(S?.providerStates ?? PROVIDER_STATES)[provider.state] ?? provider.state, provider.version].filter(Boolean).join(' ')),
               provider.path && h('div', { className: 'dsbot-muted' }, provider.path),
               (provider.state === 'unsupported' || provider.state === 'broken') && provider.reason && h('div', { className: 'dsbot-muted' }, provider.reason))),
           h('div', { className: 'dsbot-settings-row' },
-            h('label', { className: 'dsbot-field-title', htmlFor: `dudu-provider-enabled-${provider.id}` }, '启用'),
-            h('input', {
+            h('label', { className: 'dsbot-field-title', htmlFor: `dudu-provider-enabled-${provider.id}` }, (S?.enable ?? '启用')),
+            embedded ? h(ui.Switch, {
+              id: `dudu-provider-enabled-${provider.id}`, checked: provider.enabled, disabled: busy,
+              'aria-label': `${S.enable}: ${provider.name}`,
+              onCheckedChange: (enabled) => run('save', { id: provider.id, enabled }),
+            }) : h('input', {
               id: `dudu-provider-enabled-${provider.id}`, type: 'checkbox', className: 'dudu-checkbox', checked: provider.enabled, disabled: busy,
               onChange: (event) => run('save', { id: provider.id, enabled: event.target.checked }),
             })),
           h('div', { className: 'dsbot-settings-row' },
-            h('label', { className: 'dsbot-field-title', htmlFor: `dudu-provider-path-${provider.id}` }, '可执行文件路径'),
+            h('label', { className: 'dsbot-field-title', htmlFor: `dudu-provider-path-${provider.id}` }, (S?.executable ?? '可执行文件路径')),
             h('div', { className: 'dsbot-address-field' },
-              h(Input, {
+              h(embedded ? ui.Input : Input, {
                 id: `dudu-provider-path-${provider.id}`, type: 'text', className: 'dsbot-input', value: paths[provider.id] ?? '',
-                placeholder: '留空则自动查找', autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false, disabled: busy,
+                placeholder: (S?.autoFind ?? '留空则自动查找'), autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false, disabled: busy,
                 onChange: (event) => { setPaths((previous) => ({ ...previous, [provider.id]: event.target.value })); setSaved(''); },
               }),
               button({
                 type: 'button', variant: 'primary', disabled: busy || (paths[provider.id] ?? '') === provider.configuredPath,
-                onClick: () => run('save', { id: provider.id, path: paths[provider.id] ?? '' }, '已保存'),
-              }, '保存'))))),
+                onClick: () => run('save', { id: provider.id, path: paths[provider.id] ?? '' }, (S?.saved ?? '已保存')),
+              }, (S?.save ?? '保存'))))))),
         h('div', { className: 'dsbot-actions' },
-          button({ type: 'button', variant: 'outline', disabled: busy, onClick: () => run('refresh', {}) }, busy ? '处理中…' : '重新检测'),
+          button({ type: 'button', variant: 'outline', disabled: busy, onClick: () => run('refresh', {}) }, busy ? (S?.busy ?? '处理中…') : (S?.detect ?? '重新检测')),
           saved && h('span', { className: 'dsbot-muted', role: 'status' }, saved)),
         error && h('p', { className: 'dsbot-error', role: 'alert' }, error));
     }
@@ -856,6 +870,7 @@ window.__ModuleLoader__.load({
     const FOUND = 50;   // answers to a search
 
     const panelStyles = `
+[role="tree"] [role="treeitem"][data-row-key^="session:"]{padding-inline-start:calc(24px + var(--dsh-workspace-indent,0px))}
 .dudu-page{height:100%;overflow:auto;color:var(--dsw-alias-label-primary);font-size:13px;line-height:20px}
 .dudu-page *{box-sizing:border-box}
 .dudu-wrap{max-width:1000px;margin:0 auto;padding:18px 28px 40px}
@@ -1046,7 +1061,7 @@ window.__ModuleLoader__.load({
           session.cwd && h('div', null, '目录：', h('code', null, session.cwd)),
           h('div', null, '会话 ID：', h('code', null, session.id)),
           h('div', { className: 'dudu-actions' },
-            h(Button, { size: 'sm', variant: 'outline', className: 'dsbot-button', onClick: copy }, copied ? '已复制' : '复制恢复命令'))));
+            h(Button, { size: 'sm', variant: 'outline', className: 'dsbot-button', onClick: copy }, copied ? (S?.copied ?? '已复制') : '复制恢复命令'))));
     }
 
     function DuduPage({ openSession }) {
@@ -1084,7 +1099,7 @@ window.__ModuleLoader__.load({
         setBusy(session.key);
         setFailure((previous) => ({ ...previous, [session.key]: '' }));
         try {
-          const result = session.dshSessionId ? { sessionId: session.dshSessionId } : await request('sessions/load', { provider: session.provider, id: session.id });
+          const result = await request('sessions/load', { provider: session.provider, id: session.id });
           await openSession(result);
           if (!session.dshSessionId) void fetchList();
         } catch (problem) {
@@ -1126,18 +1141,20 @@ window.__ModuleLoader__.load({
           searching && data && data.total > data.sessions.length && h('div', { className: 'dudu-count' }, `${data.sessions.length} / ${data.total}`)));
     }
 
-    // Until DSH's session list holds a session it cannot be opened: some builds put a created session in the list at once,
-    // others when the Host announces it a moment later.
+    // A session written by the plugin must be discovered before DSH's workspace can select it.
     async function untilListed(sessions, sessionId, timeout = 5000) {
       const listed = () => {
         const state = sessions.list.getSnapshot();
         return state.ids.includes(sessionId) || sessionId in state.byId;
       };
       if (listed()) return;
-      await new Promise((resolve) => {
+      await new Promise((resolve, reject) => {
         const done = () => { unsubscribe(); clearTimeout(timer); resolve(); };
         const unsubscribe = sessions.list.subscribe(() => { if (listed()) done(); });
-        const timer = setTimeout(done, timeout);
+        const timer = setTimeout(() => {
+          unsubscribe();
+          reject(new Error(S?.unavailable ?? '连接暂时不可用。'));
+        }, timeout);
         // Ask for the list again, and look again once it has answered: it may have changed before anyone was listening.
         Promise.resolve(sessions.refresh?.()).catch(() => {}).then(() => { if (listed()) done(); });
       });
@@ -1146,21 +1163,129 @@ window.__ModuleLoader__.load({
     // The panel needs services only some DSH builds have, so it is a plugin of its own that waits for them.
     const sessionsUi = {
       name: 'dudu-sessions',
-      inject: ['slots', 'layout', 'uiWorkspace', 'sessions'],
+      inject: ['slots', 'layout', 'uiWorkspace', 'sessions', 'remote', 'remote.session', 'modelDirectories'],
       apply(ctx) {
+        if (ui?.AgentLogo) ctx.slots.inject('sidebar.session.row.leading', () => ctx.slots.register({
+          name: 'sidebar.session.row.leading', id: 'dudu-agent-logo', order: 20,
+        }, ({ sessionId }) => {
+          const provider = useSyncExternalStore(ctx.sessions.list.subscribe, () => {
+            const state = ctx.sessions.list.getSnapshot();
+            const values = state.byId[sessionId]?.projectionValues ?? state.projectionsBySession?.[sessionId]?.values;
+            const selection = values?.modelSelection?.next ?? values?.modelSelection?.lastUsed;
+            return selection?.provider;
+          });
+          useEffect(() => { void ctx.sessions.refreshProjections?.(sessionId).catch(() => {}); }, [sessionId]);
+          const agent = ['deepseek-account', 'deepseek-official'].includes(provider) ? 'deepseek' : provider;
+          if (!['claude', 'codex', 'deepseek'].includes(agent)) return null;
+          return h('span', { className: 'dudu', style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16 } }, h(ui.AgentLogo, { agent, className: 'size-3.5' }));
+        }));
+        ctx.effect(() => {
+          if (!ctx.sessions.list?.subscribe || !window.addEventListener) return undefined;
+          let closed = false;
+          let roster = '';
+          let selected = '';
+          const foreground = { running: false, pending: false };
+          const background = { running: false, pending: false };
+          const ids = () => ctx.sessions.list.getSnapshot().ids.filter((id) => !id.startsWith('dudu-assistant-'));
+          const opened = () => {
+            const snapshot = ctx.sessions.list.getSnapshot();
+            return ids().filter((id) => {
+              const retained = snapshot.byId[id]?.retainedBy;
+              return retained?.mainView > 0 || retained?.duduIssuePreview > 0;
+            });
+          };
+          const sync = async (lane, targets, recover) => {
+            lane.pending = true;
+            if (closed || lane.running || document.visibilityState === 'hidden') return;
+            lane.running = true;
+            try {
+              while (lane.pending && !closed && document.visibilityState !== 'hidden') {
+                lane.pending = false;
+                const sessionIds = targets();
+                if (!sessionIds.length) continue;
+                try {
+                  const result = await request('sessions/sync', { sessionIds, recover });
+                  if (!closed && (result.updated?.length || result.replacements?.length)) await ctx.sessions.refresh();
+                } catch { /* a disconnected window retries on focus or the next pass */ }
+              }
+            } finally { lane.running = false; }
+          };
+          // The visible conversation must not wait behind a long history elsewhere in the sidebar.
+          const syncOpened = () => { void sync(foreground, opened, true); };
+          const syncAll = () => { void sync(background, ids, false); };
+          const changed = () => {
+            const snapshot = ctx.sessions.list.getSnapshot();
+            const next = ids().sort().join('\n');
+            const active = opened().map((id) => `${id}:${snapshot.byId[id]?.running}`).sort().join('\n');
+            if (active !== selected) { selected = active; syncOpened(); }
+            if (next !== roster) { roster = next; syncAll(); }
+          };
+          const unsubscribe = ctx.sessions.list.subscribe(changed);
+          const timer = setInterval(syncAll, 15_000);
+          const activeTimer = setInterval(syncOpened, 5_000);
+          const focus = () => { syncOpened(); syncAll(); };
+          window.addEventListener('focus', focus);
+          document.addEventListener('visibilitychange', focus);
+          changed();
+          return () => {
+            closed = true; clearInterval(timer); clearInterval(activeTimer); unsubscribe();
+            window.removeEventListener('focus', focus);
+            document.removeEventListener('visibilitychange', focus);
+          };
+        });
+        // This is an ordinary Session in the controller, but has its own entry point on the dashboard.
+        ctx.effect(() => {
+          const source = ctx.sessions.list;
+          if (typeof source?.getSnapshot !== 'function') return undefined;
+          const original = source.getSnapshot;
+          let previous;
+          let filtered;
+          function snapshot() {
+            const value = original.call(source);
+            if (value === previous) return filtered;
+            previous = value;
+            const ids = value.ids.filter((id) => !id.startsWith('dudu-assistant-'));
+            // DSH also reads byId to render the selected session and its model picker.
+            filtered = ids.length === value.ids.length ? value : { ...value, ids };
+            return filtered;
+          }
+          source.getSnapshot = snapshot;
+          return () => { if (source.getSnapshot === snapshot) source.getSnapshot = original; };
+        });
         ctx.effect(() => {
           const style = document.createElement('style');
           style.textContent = panelStyles;
           document.head.appendChild(style);
           return () => style.remove();
         });
-        // A session written by the host is stored, not yet running: DSH's own create resumes a stored session, which also
-        // puts it in the session list, and only then can it be opened.
-        const openSession = async ({ sessionId, workspaceId }) => {
-          await ctx.sessions.create({ sessionId, ...(workspaceId ? { workspaceId } : {}) });
+        // Refresh discovers stored sessions; opening retains/resumes them through DSH's workspace.
+        // session.create is for blank conversations and newer hosts mint a different ID for a nonblank target.
+        const prepareSession = async ({ sessionId }) => {
+          if (sessionId.startsWith('dudu-assistant-')) {
+            await ctx.sessions.refresh();
+          } else {
+            const synchronized = await request('sessions/sync', { sessionIds: [sessionId], recover: true });
+            const replacement = synchronized.replacements?.find((entry) => entry.previousId === sessionId);
+            if (replacement) sessionId = replacement.sessionId;
+            await ctx.sessions.refresh();
+          }
           await untilListed(ctx.sessions, sessionId);
+          return sessionId;
+        };
+        const openSession = async (target, { from } = {}) => {
+          const sessionId = await prepareSession(target);
           ctx.uiWorkspace.openSession(sessionId);
           ctx.layout.selectPanel(null);
+          if (from?.width > 0 && from?.height > 0 && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            await new Promise(requestAnimationFrame);
+            // The public main slot is display:contents; its parent is DSH's conversation column.
+            const surface = document.querySelector('[data-slot="main"]')?.parentElement;
+            const to = surface?.getBoundingClientRect();
+            if (to?.width > 0 && to?.height > 0) surface.animate([
+              { transformOrigin: 'top left', transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`, clipPath: 'inset(0 round 20px)', opacity: 0.6 },
+              { transformOrigin: 'top left', transform: 'none', clipPath: 'inset(0 round 0px)', opacity: 1 },
+            ], { duration: 240, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+          }
         };
         const Page = () => h(DuduPage, { openSession });
         if (ui) {
@@ -1175,26 +1300,153 @@ window.__ModuleLoader__.load({
         // the sidebar: the plugin puts it back first, and says which workspace it lives in (DSH ties a session to its folder, and refuses to
         // adopt it into another); it does nothing for a session it does not know.
         const actions = {
-          openSession: async (target) => {
+          retainSession: async (target) => {
+            const sessionId = await prepareSession(target);
+            const reference = ctx.sessions.retain(sessionId, { source: 'duduIssuePreview' });
+            try { await reference.ready; return reference; }
+            catch (error) { reference.release(); throw error; }
+          },
+          voiceCatalog: async () => {
+            const result = await ctx.remote.speech?.catalog();
+            return result?.error ? null : result?.value ?? null;
+          },
+          watchVoiceCatalog: (receive) => {
+            if (!ctx.remote.$stream) return undefined;
+            let closed = false;
+            const stream = ctx.remote.$stream({
+              name: 'dudu speech readiness',
+              open: (signal) => ctx.remote.speech.follow(signal),
+              ended: () => new Error('Speech readiness ended.'),
+              carrierFailed: () => { if (!closed) receive(null); },
+            });
+            void (async () => {
+              try {
+                for await (const item of stream) {
+                  if (!closed) receive(item.value);
+                  item.accept();
+                }
+              } catch { if (!closed) receive(null); }
+            })();
+            return () => { closed = true; void stream.dispose(); };
+          },
+          transcribeVoice: async (audio, signal) => {
+            const result = await ctx.remote.speech.transcribe(audio, signal);
+            if (result.error) throw new Error(result.error.message);
+            return result.value;
+          },
+          readConversation: async ({ sessionId, cursor }, beforeSeq) => {
+            const result = await ctx.remote.session.page({
+              address: { kind: 'session', sessionId }, throughSeq: cursor, maxMessages: 100,
+              ...(beforeSeq === undefined ? {} : { beforeSeq }),
+            });
+            if (result.error) throw new Error(result.error.message);
+            return result.value ?? result;
+          },
+          conversationModels: async (sessionId) => {
+            await ctx.sessions.refresh();
+            const reference = ctx.sessions.retain(sessionId, { source: 'duduConversation' });
+            try {
+              await reference.ready;
+              return { directory: ctx.modelDirectories.directoryFor(sessionId), release: () => reference.release() };
+            } catch (error) {
+              reference.release();
+              throw error;
+            }
+          },
+          conversationImage: async (sessionId, attachment) => {
+            const result = await ctx.remote.session.attachment({ sessionId, attachmentId: attachment.attachmentId });
+            if (result.error) throw new Error(result.error.message);
+            const value = result.value ?? result;
+            return `data:${value.attachment.mediaType};base64,${value.data}`;
+          },
+          // `attachments` are what waits in the box, in the order picked: a picture ({ kind: 'image', mediaType, data, name }) travels in the prompt;
+          // a file ({ kind: 'file', file, name }) is uploaded to the session first, as DSH's own box does, and the prompt carries its receipt.
+          // As there, the attachments come before the words.
+          sendConversation: async (sessionId, text, attachments = []) => {
+            const content = [];
+            for (const item of attachments) {
+              if (item.kind !== 'file') { content.push({ type: 'image', mediaType: item.mediaType, data: item.data, name: item.name }); continue; }
+              const uploader = ctx.get?.('fileUpload');
+              if (!uploader) throw new Error('This DSH cannot take files.');
+              const uploaded = await uploader.upload(sessionId, item.file, item.name);
+              if (uploaded.error) throw new Error(uploaded.error.message);
+              content.push({ type: 'file', receiptId: (uploaded.value ?? uploaded).receiptId });
+            }
+            if (text) content.push({ type: 'text', text });
+            const result = await ctx.remote.session.prompt({
+              requestId: `dudu-${crypto.randomUUID()}`, sessionId, mode: 'queue',
+              content,
+              clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            });
+            if (result.error) throw new Error(result.error.message);
+            return result.value ?? result;
+          },
+          stopConversation: async (sessionId) => {
+            const result = await ctx.remote.session.cancel({ sessionId });
+            if (result.error) throw new Error(result.error.message);
+          },
+          openAssistantModel: async () => {
+            const target = await request('assistant/conversation');
+            if (target.outcome !== 'success') throw new Error(target.message);
+            await openSession(target);
+          },
+          // A session the plugin has just written into DSH is stored, not yet known to this window: it is made known (DSH lists it in its sidebar)
+          // without being opened.
+          addSession: async ({ sessionId }) => {
+            await ctx.sessions.refresh();
+            await untilListed(ctx.sessions, sessionId);
+          },
+          // The page of the plugin in DSH's main area (a reminder beside the pet opens an issue there).
+          openPanel: () => { ctx.layout.selectPanel(PANEL_ID); },
+          openSession: async (target, options) => {
             let workspaceId = target?.workspaceId;
             if (target?.sessionId) {
               try { workspaceId = workspaceId ?? (await request('issues/resume', { session: `dsh:${target.sessionId}` }))?.workspaceId; } catch { /* it opens as it is */ }
             }
-            await openSession({ ...target, ...(workspaceId ? { workspaceId } : {}) });
+            await openSession({ ...target, ...(workspaceId ? { workspaceId } : {}) }, options);
           },
         };
-        const IssuesPage = () => h(ui.Page, { request, logo: LOGO, actions });
-        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID }, ui ? IssuesPage : Page));
+        const petInShell = Boolean(ui?.AssistantOverlay && ctx.slots.spec?.('shell.overlay'));
+        if (petInShell) {
+          ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+            name: 'shell.overlay', id: 'dudu-assistant', order: 50,
+          }, () => h(ui.AssistantOverlay, { request, actions })));
+        }
+        const widgetSource = ui?.createWidgetSource?.(ctx.slots);
+        if (widgetSource) ctx.effect(() => () => widgetSource.close());
+        const extraSections = { providers: ProvidersSettings, phone: Settings };
+        const IssuesPage = (props = {}) => h(ui.SlotPage ?? ui.Page, {
+          request, logo: LOGO, actions, petInShell, widgetSource, renderSlot: props.renderSlot, extraSections,
+          renderConversation: (reference) => h(props.SessionProvider, { session: reference }, props.renderSlot('dudu.issue.conversation', {})),
+        });
+        ctx.slots.inject('main', () => {
+          const dispose = ctx.slots.register({
+            name: 'main', key: PANEL_ID,
+            children: {
+              ...(widgetSource ? { 'dudu.widget': { kind: 'list', scope: 'root' } } : {}),
+              'dudu.issue.conversation': { kind: 'single', scope: 'session' },
+            },
+          }, ui ? IssuesPage : Page);
+          const conversation = ctx.slots.register({ name: 'dudu.issue.conversation' }, (props) => props.renderFactorySlot('conversation.content', {
+            variant: 'embedded', phase: 'active', hero: false,
+          }));
+          const widgets = (ui?.REGISTRY ?? []).map((widget) => ctx.slots.register({
+            name: 'dudu.widget', id: widget.id, label: widget.label,
+          }, widget.Component));
+          ctx.layout.selectPanel(PANEL_ID);
+          return () => { for (const stop of widgets) stop(); conversation(); dispose(); };
+        });
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-          name: 'sidebar.panellist', id: PANEL_ID, order: 20, label: () => '嘟嘟',
-        }, DuduGlyph));
+          name: 'sidebar.panellist', id: PANEL_ID, order: 20, label: () => ui?.T.brand ?? '嘟嘟',
+        }, (props) => h(DuduGlyph, props)));
       },
     };
 
     return {
       name: 'dudu',
-      inject: ['slots'],
+      inject: ['slots', 'locale'],
       apply(ctx) {
+        ctx.effect(() => ui?.connectLocale(ctx.locale));
         ctx.effect(() => {
           const style = document.createElement('style');
           style.textContent = styles;
@@ -1208,7 +1460,7 @@ window.__ModuleLoader__.load({
           name: 'settings.section',
           id: 'dudu-mobile-control',
           order: 50,
-          label: () => '手机控制',
+          label: () => (S?.phone ?? '手机控制'),
         }, Settings));
         // Phone pages run this same module inside their own frontend; only DSH's own window reports.
         if (!window.__DSBOT_PAGE__) {
@@ -1219,7 +1471,7 @@ window.__ModuleLoader__.load({
             name: 'settings.section',
             id: 'dudu-providers',
             order: 51,
-            label: () => '供应商',
+            label: () => (S?.providers ?? '供应商'),
           }, ProvidersSettings));
           ctx.plugin(providerUi);
           ctx.plugin(sessionsUi);

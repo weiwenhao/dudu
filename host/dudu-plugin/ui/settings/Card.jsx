@@ -4,13 +4,13 @@ import { T } from '../strings.js';
 /** A titled card of a settings page (DSH's settings are cards too): title, an optional action at its right, the body. */
 export function Card({ title, action, children }) {
   return (
-    <section aria-label={title} className="rounded-xl border">
-      <header className="flex h-11 items-center gap-2 px-4">
-        <h3 className="font-medium">{title}</h3>
-        <span className="flex-1" />
-        {action}
-      </header>
-      <div className="border-t px-4 py-3">{children}</div>
+    <section aria-label={title}>
+      <h3 className="mx-1 mb-2 font-semibold">{title}</h3>
+      <div className="rounded-[20px] border px-5">
+        {action ? <div className="flex min-h-[60px] items-center gap-3.5 py-3">
+          <div className="min-w-0 flex-1">{children}</div>{action}
+        </div> : children}
+      </div>
     </section>
   );
 }

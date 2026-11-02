@@ -52,7 +52,11 @@ type Done = { after: (cleanup: () => Promise<void>) => void };
 
 async function claudeHome(t: Done) {
   const base = await mkdtemp(join(tmpdir(), 'dudu-sessions-'));
-  t.after(() => rm(base, { recursive: true, force: true }));
+  const cleanup: Array<() => Promise<void>> = [];
+  t.after(async () => {
+    for (const close of cleanup.reverse()) await close();
+    await rm(base, { recursive: true, force: true });
+  });
   const root = join(base, 'projects');
   const registry = join(base, 'sessions');
   await mkdir(join(root, 'app'), { recursive: true });
@@ -60,7 +64,7 @@ async function claudeHome(t: Done) {
   const file = (n: number) => join(root, 'app', `${id(n)}.jsonl`);
   const text = (records: unknown[]) => records.map((record) => `${JSON.stringify(record)}\n`).join('');
   return {
-    base, root, registry, file,
+    base, root, registry, file, beforeRemove: (close: () => Promise<void>) => cleanup.push(close),
     transcript: (n: number, records: unknown[]) => writeFile(file(n), text(records)),
     append: (n: number, records: unknown[]) => appendFile(file(n), text(records)),
     remove: (n: number) => rm(file(n)),
@@ -295,7 +299,7 @@ test('Codex: the last turn of each thread through a fake app-server, and only a 
 test('DSH: its own rules; a Claude or Codex session that DSH drives is one session with its DSH side; 嘟嘟\'s own is never reported', async (t) => {
   const home = await claudeHome(t);
   const links = await createLinkStore(join(home.base, 'dudu'));
-  t.after(() => links.flush());
+  home.beforeRemove(() => links.flush());
   // A Claude session DSH drives, between its turns (no process), and a Codex session the same way, linked only by what DSH's list says.
   await home.transcript(30, [prompt(T0 - HOUR), said(T0 - HOUR + 1000, 'Done.'), turnEnd(T0 - HOUR + 2000)]);
   links.record({ route: 'claude', nativeSessionId: id(30), sessionId: 'dsh-30' });
@@ -381,7 +385,7 @@ test('a question arrives, a session starts and one is deleted: exact change even
   sessions.onChange((event: any) => events.push(event));
   const issues = createIssues({ file: ':memory:', sessionState: sessions.stateOf, now });
   t.after(() => issues.close());
-  const issue = issues.add({ title: 'Fix the build', status: 'in_progress', agent: 'claude', session: `claude:${id(1)}` }).issue;
+  const issue = issues.add({ project: { name: 'work', path: '/work' }, title: 'Fix the build', status: 'in_progress', agent: 'claude', session: `claude:${id(1)}` }).issue;
 
   // The first read on an empty index is the baseline: it holds three sessions and says nothing.
   assert.equal(issues.get(issue.id).issue.agentState, 'idle', 'before the first read the session is unknown');

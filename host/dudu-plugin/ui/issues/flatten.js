@@ -24,12 +24,12 @@ export function flatten(groups, { collapsed, group: field, subGroup: subField })
   };
   for (const group of groups) {
     const id = `g:${String(group.key)}`;
-    entries.push({ type: 'group', id, field, groupKey: group.key, label: groupLabel(field, group.key), count: group.count, folded: collapsed.has(id) });
+    entries.push({ type: 'group', id, field, groupKey: group.key, get label() { return groupLabel(field, group.key); }, count: group.count, folded: collapsed.has(id) });
     if (collapsed.has(id)) continue;
     if (group.groups) {
       for (const sub of group.groups) {
         const subId = `s:${String(group.key)}|${String(sub.key)}`;
-        entries.push({ type: 'subgroup', id: subId, field: subField, groupKey: sub.key, label: groupLabel(subField, sub.key), count: sub.count, folded: collapsed.has(subId) });
+        entries.push({ type: 'subgroup', id: subId, field: subField, groupKey: sub.key, get label() { return groupLabel(subField, sub.key); }, count: sub.count, folded: collapsed.has(subId) });
         if (!collapsed.has(subId)) push(sub.items, sub.cursor, { key: group.key, subKey: sub.key });
       }
     } else {

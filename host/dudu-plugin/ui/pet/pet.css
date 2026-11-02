@@ -1,0 +1,70 @@
+/* Geometry and the eye positions follow Pet.dc.html and its original bitmap. */
+.dudu-pet-dock { position: fixed; right: 24px; bottom: 20px; width: 64px; height: 64px; z-index: 30; pointer-events: auto; }
+.dudu-pet { position: absolute; inset: 0; width: 64px; height: 64px; padding: 0; border: 0; border-radius: 20px; background: none; filter: drop-shadow(0 3px 5px #2850be47); }
+.dudu-pet-body { display: block; position: relative; width: 64px; height: 64px; animation: dudu-pet-bob 5s ease-in-out infinite; }
+.dudu-pet img { display: block; width: 64px; height: 64px; }
+.dudu-pet:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
+.dudu-pet-eye { position: absolute; border-radius: 50%; background: radial-gradient(120% 120% at 40% 25%, #2a3f78, #0d1733 70%); animation: dudu-pet-blink 6s infinite; transition: translate .2s; }
+.dudu-pet-eye--left { left: 19.7px; top: 32.4px; width: 5.6px; height: 9px; }
+.dudu-pet-eye--right { left: 32.1px; top: 30.9px; width: 5.7px; height: 9px; }
+.dudu-pet-eye i { position: absolute; right: 15%; top: 12%; width: 36%; height: 25%; border-radius: 50%; background: #fff; opacity: .92; }
+.dudu-pet--listening .dudu-pet-body, .dudu-pet--listening .dudu-pet-eye { animation: none; }
+.dudu-pet--open .dudu-pet-eye { translate: -1.2px -1.4px; }
+.dudu-pet--reply .dudu-pet-eye { translate: -1.4px 0; }
+.dudu-pet:hover:not(.dudu-pet--open):not(.dudu-pet--reply) .dudu-pet-eye { translate: 0 -1.4px; }
+.dudu-pet--listening .dudu-pet-eye { scale: 1.18; }
+.dudu-pet-conversation { position: absolute; right: 0; bottom: 76px; width: min(440px, calc(100vw - 48px)); height: min(520px, calc(100dvh - 124px)); display: flex; flex-direction: column; border: 1px solid var(--input); border-radius: 20px; background: var(--card); box-shadow: 0 12px 32px var(--dudu-shadow); overflow: hidden; }
+.dudu-pet-conversation header { flex: none; display: flex; justify-content: space-between; align-items: center; height: 46px; padding: 0 10px 0 16px; color: var(--muted-foreground); font-size: 12px; }
+.dudu-pet-messages { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: auto; padding: 0 16px 8px; }
+.dudu-pet-thread { display: flex; flex-direction: column; flex-shrink: 0; gap: 12px; margin-top: auto; }
+.dudu-pet-day { align-self: center; color: var(--muted-foreground); font-size: 12px; }
+.dudu-pet-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+.dudu-pet-message--owner { align-self: flex-end; max-width: 84%; padding: 7px 12px; background: var(--dudu-soft); border-radius: 14px 14px 4px 14px; }
+.dudu-pet-message--dudu { align-self: flex-start; max-width: 92%; }
+.dudu-pet-message--action { display: flex; align-items: baseline; gap: 8px; max-width: 100%; padding: 2px 0; font-size: 12px; }
+.dudu-pet-message--action svg { align-self: center; color: var(--dudu-success); }
+.dudu-pet-message--action > span:first-of-type { flex-shrink: 0; }
+.dudu-pet-message-image { display: block; max-width: 100%; max-height: 200px; margin: 4px 0; border-radius: 10px; object-fit: contain; }
+.dudu-pet-input { flex: none; display: flex; flex-direction: column; gap: 6px; margin: 4px 12px 12px; padding: 10px 8px 8px; border: 1px solid var(--input); border-radius: 16px; background: var(--card); }
+.dudu-pet-input:focus-within { border-color: var(--ring); }
+.dudu-pet-input textarea { min-width: 0; width: 100%; min-height: 40px; max-height: 120px; resize: none; border: 0; outline: none; box-shadow: none; padding: 3px 6px; background: transparent; font: inherit; line-height: 22px; }
+.dudu-pet-input textarea::placeholder { color: var(--muted-foreground); }
+.dudu-pet-input-tools { display: flex; align-items: center; min-width: 0; gap: 4px; }
+.dudu-pet-line { position: relative; --token: 0px; }
+.dudu-pet-line textarea { text-indent: var(--token); }
+.dudu-pet-token { position: absolute; left: 6px; top: 3px; line-height: 22px; color: var(--dudu-strong); font-weight: 500; pointer-events: none; }
+.dudu-pet-where { position: absolute; left: calc(6px + var(--token)); right: 6px; top: 3px; line-height: 22px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.dudu-pet-attachments { display: flex; gap: 8px; overflow-x: auto; padding: 2px 5px 5px; }
+.dudu-pet-attachment { flex: none; position: relative; width: 64px; height: 64px; }
+.dudu-pet-attachment img { display: block; width: 64px; height: 64px; box-sizing: border-box; object-fit: cover; border: 1px solid var(--border); border-radius: 16px; }
+.dudu-pet-attachment button { position: absolute; right: 4px; top: 4px; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: rgb(15 17 21 / .62); color: #fff; opacity: 0; transition: opacity .12s; }
+.dudu-pet-attachment button svg { width: 12px; height: 12px; stroke-width: 2.5; }
+.dudu-pet-attachment:hover button, .dudu-pet-attachment button:focus-visible { opacity: 1; }
+.dudu-pet-attachment button:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+@media (hover: none) { .dudu-pet-attachment button { opacity: 1; } }
+.dudu-pet-file { display: flex; align-items: center; gap: 10px; width: 220px; height: 64px; box-sizing: border-box; padding: 0 12px 0 10px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); }
+.dudu-pet-file-mark { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 12px; background: var(--dudu-soft); color: var(--dudu-strong); }
+.dudu-pet-file-mark svg { width: 20px; height: 20px; stroke-width: 1.5; }
+.dudu-pet-file-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 18px; }
+.dudu-pet-file-text span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.dudu-pet-file-text small { color: var(--muted-foreground); font-size: 12px; }
+.dudu-pet-message-file { display: flex; align-items: center; gap: 8px; max-width: 100%; margin: 4px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); font-size: 13px; line-height: 18px; }
+.dudu-pet-input .dudu-pet-send { width: 30px; height: 30px; border-radius: 50%; background: var(--dudu-strong); color: var(--dudu-on); }
+.dudu-pet-bubble { position: absolute; right: 76px; bottom: 14px; width: max-content; max-width: min(330px, calc(100vw - 136px)); padding: 12px 14px; border: 1px solid var(--input); border-radius: 16px; background: var(--card); box-shadow: 0 8px 24px var(--dudu-shadow); overflow-wrap: anywhere; }
+.dudu-pet-bubble::after { content: ""; position: absolute; right: -6px; bottom: 15px; width: 10px; height: 10px; background: var(--card); border-top: 1px solid var(--input); border-right: 1px solid var(--input); transform: rotate(45deg); }
+.dudu-pet-hint { display: none; padding: 8px 12px; font-size: 12px; line-height: 19px; white-space: nowrap; }
+.dudu-pet-dock:has(.dudu-pet:hover, .dudu-pet:focus-visible) .dudu-pet-hint { display: block; }
+.dudu-pet-ring { position: absolute; inset: 0; width: 64px; height: 64px; border-radius: 50%; border: 2px solid var(--ring); opacity: .4; animation: dudu-pet-ring 1.8s ease-out infinite; pointer-events: none; }
+.dudu-pet-ring--second { animation-delay: .9s; }
+.dudu-pet-bubble small { display: block; margin-top: 8px; color: var(--muted-foreground); font-size: 11px; white-space: nowrap; }
+.dudu-pet-bubble button { margin-top: 6px; color: var(--muted-foreground); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
+.dudu-pet-reminder { position: absolute; right: 76px; bottom: 14px; width: 296px; max-width: calc(100vw - 136px); box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--input); border-radius: 16px; background: var(--card); box-shadow: 0 8px 24px var(--dudu-shadow); font-size: 14px; overflow-wrap: anywhere; }
+.dudu-pet-reminder::after { content: ""; position: absolute; right: -6px; bottom: 15px; width: 10px; height: 10px; background: var(--card); border-top: 1px solid var(--input); border-right: 1px solid var(--input); transform: rotate(45deg); }
+.dudu-pet-reminder-head { display: flex; align-items: center; gap: 8px; height: 24px; margin-right: -6px; font-size: 12px; line-height: 16px; }
+.dudu-pet-reminder-text { margin-top: 2px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.dudu-pet-reminder-open { margin-top: 8px; padding: 0; color: var(--muted-foreground); font-size: 12px; line-height: 16px; text-decoration: underline; text-underline-offset: 2px; }
+@keyframes dudu-pet-bob { 50% { transform: translateY(-2px); } }
+@keyframes dudu-pet-blink { 0%, 94%, 100% { transform: scaleY(1); } 97% { transform: scaleY(.12); } }
+@keyframes dudu-pet-ring { from { transform: scale(.8); opacity: .5; } to { transform: scale(1.5); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .dudu-pet-body, .dudu-pet-eye, .dudu-pet-ring { animation: none; } }
+@media (max-width: 600px) { .dudu-pet-dock { right: 16px; bottom: 16px; } }

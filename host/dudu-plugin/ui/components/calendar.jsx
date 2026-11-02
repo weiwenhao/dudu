@@ -1,14 +1,17 @@
 // shadcn/ui Calendar: react-day-picker with shadcn's classes. react-day-picker's own stylesheet is not used; every part is
 // styled here, so it lives under `.dudu` like the rest.
 import { DayPicker } from 'react-day-picker';
+import { enUS, zhCN } from 'react-day-picker/locale';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '../lib/cn.js';
+import { getLocale } from '../lib/locale.mjs';
 
 const navButton = 'inline-flex size-7 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50';
 
 export function Calendar({ className, classNames, showOutsideDays = true, ...props }) {
   return (
     <DayPicker
+      locale={getLocale() === 'zh' ? zhCN : enUS}
       showOutsideDays={showOutsideDays} className={cn('p-1', className)}
       classNames={{
         months: 'relative flex flex-col', month: 'flex w-full flex-col gap-2',

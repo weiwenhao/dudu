@@ -94,7 +94,7 @@ const dayOf = (ms) => {
 export function triageMessages({ triage, now, connector, operation, openIssues, output }) {
   const when = new Date(now);
   const issues = openIssues.length
-    ? openIssues.map((issue) => `DUDU-${issue.id} | ${STATUS_NAMES[issue.status] ?? issue.status} | ${cell(issue.title, 120)} | kind: ${cell(issue.kind, 60) || '-'} | from: ${cell(issue.ref, 80) || '-'}`).join('\n')
+    ? openIssues.map((issue) => `${issue.id} | ${STATUS_NAMES[issue.status] ?? issue.status} | ${cell(issue.title, 120)} | kind: ${cell(issue.kind, 60) || '-'} | from: ${cell(issue.ref, 80) || '-'}`).join('\n')
     : '(none)';
   const user = [
     `Today is ${dayOf(now)} (${when.toLocaleDateString('en-US', { weekday: 'long' })}). Dates and times are the owner's local time.`,
@@ -115,7 +115,7 @@ export function triageMessages({ triage, now, connector, operation, openIssues, 
  */
 export function assignMessages({ assign, issue, agents, history }) {
   const lines = [
-    `${issue.ref} · ${cell(issue.title, 200)}`,
+    `${issue.ref ?? `#${issue.id}`} · ${cell(issue.title, 200)}`,
     `status: ${STATUS_NAMES[issue.status] ?? issue.status} · priority: ${issue.priority} · due: ${issue.dueAt == null ? 'none' : dayOf(issue.dueAt)}`,
     `kind: ${cell(issue.kind, 100) || '-'}`,
     `project: ${issue.project ? cell(issue.project.name, 100) : '-'}`,

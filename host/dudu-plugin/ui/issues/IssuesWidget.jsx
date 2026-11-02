@@ -13,18 +13,20 @@ import { appliedFilters, removeFilter, toggleFilter } from './filter-state.js';
 import { FilterBar } from './FilterBar.jsx';
 import { FilterMenu } from './FilterMenu.jsx';
 import { IssueList } from './IssueList.jsx';
-import { leafIds, presetOf } from './model.js';
+import { AGENT_NAMES, leafIds, presetOf } from './model.js';
 import { NewIssueDialog } from './NewIssueDialog.jsx';
 import { keepVisible, selectRow } from './selection.js';
 import { useFacets } from './use-facets.js';
 import { useIssueList } from './use-issue-list.js';
 import { DEFAULT_VIEW, listRequest, useViews } from './view.js';
 import { isTyping } from '../lib/typing.js';
+import { DeleteIssuesDialog } from './DeleteIssuesDialog.jsx';
 
 const TABS = ['active', 'backlog', 'all'];
 const SEARCH_DELAY_MS = 250;
+const allItems = (groups) => groups.flatMap((group) => group.groups ? allItems(group.groups) : group.items ?? []);
 
-export function IssuesWidget({ request, onOpen }) {
+export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession }) {
   const [tab, setTab] = useState('active');
   const [creating, setCreating] = useState(null); // null, or { preset } while the New issue window is open
   const [search, setSearch] = useState('');
@@ -50,9 +52,33 @@ export function IssuesWidget({ request, onOpen }) {
       if (result?.outcome === 'success') toast({ message: status === 'done' ? T.toast.markedDone : T.toast.status(T.status[status]), action: undoable({ eventId: result.eventId }) });
     } catch { toast({ message: T.toast.failed }); } finally { refresh(); }
   }, [request, patch, refresh, toast, undoable]);
+  const changeProperty = useCallback(async (issue, changes) => {
+    if (changes.status) return changeStatus(issue, changes.status);
+    patch(issue.id, changes);
+    try {
+      const result = await request('issues/update', { id: issue.id, patch: changes });
+      if (result.outcome === 'success') {
+        const message = changes.priority ? T.toast.priority(T.priority[changes.priority])
+          : Object.hasOwn(changes, 'dueAt') ? changes.dueAt == null ? T.toast.dueRemoved : T.toast.dueSet : T.toast.updated(1);
+        toast({ message, action: undoable({ eventId: result.eventId }) });
+      } else if (result.outcome !== 'no_op') toast({ message: T.toast.failed });
+    } catch { toast({ message: T.toast.failed }); } finally { refresh(); }
+  }, [request, patch, refresh, toast, undoable, changeStatus]);
+  const assignCard = useCallback(async (issue, agent, project) => {
+    try {
+      const result = await request('issues/assign', { id: issue.id, agent, project });
+      if (result.outcome === 'success') toast({ message: T.toast.assigned(AGENT_NAMES[agent]), action: undoable({ eventId: result.eventId }) });
+      else if (result.outcome !== 'no_op') toast({ message: T.toast.failed });
+    } catch { toast({ message: T.toast.failed }); } finally { refresh(); }
+  }, [request, refresh, toast, undoable]);
 
   // Ticked rows: what they are, and what a bulk change does to them all in one group, so one Undo puts them all back.
   const [selected, setSelected] = useState(() => new Set());
+  const [deleting, setDeleting] = useState(null);
+  const selectedIssues = (list.groups ? allItems(list.groups) : list.items).filter((issue) => selected.has(issue.id));
+  const assignmentLocked = selectedIssues.length !== selected.size || selectedIssues.some((issue) => issue.agent);
+  const sharedProject = selectedIssues[0]?.project;
+  const assignmentProject = sharedProject?.path && selectedIssues.every((issue) => issue.project?.path === sharedProject.path) ? sharedProject : undefined;
   const anchor = useRef(null);
   const select = useCallback((id, shift, ids) => { setSelected((current) => selectRow(current, id, { shift, anchor: anchor.current, ids })); anchor.current = id; }, []);
   const visibleIds = useMemo(() => (list.groups ? leafIds(list.groups) : list.items.map((issue) => issue.id)), [list.items, list.groups]);
@@ -95,7 +121,7 @@ export function IssuesWidget({ request, onOpen }) {
   useEffect(() => {
     const onKey = (event) => {
       if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
-      if (!root.current?.getClientRects().length) return; // a hidden page does not take keys
+      if (!root.current?.getClientRects().length || root.current.closest('[inert]')) return;
       if (event.key === 'Escape' && !event.defaultPrevented) { setSelected((current) => (current.size ? new Set() : current)); return; }
       if (event.key.toLowerCase() !== 'f' || !filterButton.current) return;
       event.preventDefault();
@@ -109,15 +135,15 @@ export function IssuesWidget({ request, onOpen }) {
   const addTo = useCallback((entry) => setCreating({ preset: presetOf(entry.field, entry.groupKey) }), []);
 
   return (
-    <section ref={root} aria-label={T.issues} className="@container relative flex h-full min-h-0 flex-col">
+    <section ref={root} aria-label={T.widgets.titles.issues} className="@container relative flex h-full min-h-0 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-2 px-4">
-        <h2 className="font-semibold">{T.issues}</h2>
+        <h2 className="font-semibold">{T.widgets.titles.issues}</h2>
         <span className="flex-1" />
         <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => setCreating({ preset: {} })}><Plus />{T.newIssue.title}</Button>
       </header>
       <Tabs.Root value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
         <div className="flex h-11 shrink-0 items-center gap-1.5 px-3">
-          <Tabs.List className="flex items-center gap-1.5" aria-label={T.issues}>
+          <Tabs.List className="flex items-center gap-1.5" aria-label={T.widgets.titles.issues}>
             {TABS.map((id) => (
               <Tabs.Trigger key={id} value={id} asChild>
                 <Button variant={tab === id ? 'secondary' : 'outline'} size="sm" className={cn('h-7 rounded-full px-3 text-xs', tab === id && 'font-medium')}>{T.tabs[id]}</Button>
@@ -162,11 +188,13 @@ export function IssuesWidget({ request, onOpen }) {
           <div className="flex flex-1 items-center justify-center text-muted-foreground">{T.empty}</div>
         ) : (
           view.layout === 'board'
-            ? <Board list={list} view={view} tab={tab} show={show} collapsed={collapsed} onToggleLane={toggleGroup} onAddToLane={addTo} onStatus={changeStatus} onOpen={onOpen} />
+            ? <Board list={list} view={view} tab={tab} show={show} collapsed={collapsed} onToggleLane={toggleGroup} onAddToLane={addTo} onStatus={changeStatus} onOpen={onOpen}
+                request={request} onChange={changeProperty} onAssign={assignCard} onDelete={(issue) => setDeleting([issue.id])} onOpenSession={onOpenSession} onPreviewSession={onPreviewSession} />
             : (
               <IssueList
                 list={list} view={view} tab={tab} show={show} collapsed={collapsed} onToggleGroup={toggleGroup} onAddToGroup={addTo}
                 selected={selected} onSelect={select} onStatus={changeStatus} onOpen={onOpen}
+                request={request} onChange={changeProperty} onAssign={assignCard} onDelete={(issue) => setDeleting([issue.id])} onOpenSession={onOpenSession} onPreviewSession={onPreviewSession}
               />
             )
         )}
@@ -176,13 +204,18 @@ export function IssuesWidget({ request, onOpen }) {
       </Tabs.Root>
       {selected.size > 0 && view.layout !== 'board' && (
         <BulkBar
+          request={request}
+          project={assignmentProject} assignmentLocked={assignmentLocked}
           count={selected.size} onClear={() => setSelected(new Set())}
           onStatus={(status) => bulk({ status }, (id, groupId) => request('issues/update', { id, patch: { status }, groupId }))}
           onPriority={(priority) => bulk({ priority }, (id, groupId) => request('issues/update', { id, patch: { priority }, groupId }))}
-          onAgent={(agent) => bulk({ agent }, (id, groupId) => request('issues/assign', { id, agent, groupId }))}
+          onAgent={(agent, project) => bulk({ agent, ...(project ? { project } : {}) }, (id, groupId) => request('issues/assign', { id, agent, ...(project ? { project } : {}), groupId }))}
+          onDelete={() => setDeleting([...selected])}
         />
       )}
+      <DeleteIssuesDialog request={request} ids={deleting} onClose={() => setDeleting(null)} onDeleted={() => { setSelected(new Set()); refresh(); }} />
       <NewIssueDialog
+        request={request}
         open={creating !== null} onOpenChange={(open) => { if (!open) setCreating(null); }} preset={creating?.preset}
         onCreate={async (fields) => { const result = await request('issues/add', { fields }); if (result?.outcome === 'success') refresh(); return result; }}
       />

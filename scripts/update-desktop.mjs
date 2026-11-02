@@ -45,6 +45,7 @@ async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--help')) {
     console.log('npm run desktop:update -- [--app "/Applications/DeepSeek Harness.app"] [--restart]');
+    console.log('npm run desktop:install -- [--app "/Applications/DeepSeek Harness.app"]');
     console.log('Packages and installs dudu through Desktop, tries hot reload, and restarts DSH if needed.');
     return;
   }
@@ -147,7 +148,7 @@ async function main() {
       waitForRuntime: (timeoutMs) => waitForDesktopRuntime({ folder: runtimeFolder, expected, after, timeoutMs, probe }),
       restart: async () => {
         if ((await mainPids()).length) {
-          console.log('Hot reload is unavailable; asking DSH to quit normally...');
+          console.log(restartRequired ? 'Restart requested; asking DSH to quit normally...' : 'Hot reload is unavailable; asking DSH to quit normally...');
           await run('osascript', [
             '-e', 'on run argv', '-e', 'tell application (item 1 of argv) to quit', '-e', 'end run', app,
           ], 'quit', 45_000);

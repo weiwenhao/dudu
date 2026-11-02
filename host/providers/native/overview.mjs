@@ -6,6 +6,10 @@ import { withAppServer } from './codex-store.mjs';
 
 const USAGE_TTL = 120_000;
 
+// What makes Claude Code answer as if it were paid by use: with one of these in its environment it cannot report how much of a plan is
+// used. A host that was started with a key in its environment still has the owner's own sign-in for the plan.
+const PAID_BY_USE = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'];
+
 const WEEKLY = /week/i;
 
 /** One usage window as the page shows it: a short name, how much is used, and when it starts over. */
@@ -61,20 +65,33 @@ export function codexLimitsView(source, reply) {
 /** Codex's rate limits, asked of an app-server. */
 const readCodexLimits = (source) => withAppServer({ command: source.command, env: source.environment?.(), timeoutMs: 30_000 }, (request) => request('account/rateLimits/read', {}));
 
-export function createOverview({ sources, links, titleOf, claude = {}, codexLimits = readCodexLimits, now = Date.now }) {
+export function createOverview({ sources, links, titleOf, claude = {}, codexLimits = readCodexLimits, balance, env = process.env, now = Date.now }) {
   let usageCache; let usagePending;
 
   const sourceOf = (id) => sources().find((source) => source.id === id);
 
+  /** What a harness says about its plan; Claude, when it says it cannot, is asked again with the paid-by-use settings left out of its environment. */
+  async function snapshotOf(source) {
+    const snapshot = await source.driver.accountUsage?.();
+    const names = source.id === 'claude' && snapshot?.kind === 'unsupported' ? PAID_BY_USE.filter((name) => env[name]) : [];
+    if (!names.length) return snapshot;
+    const again = await source.driver.accountUsage?.(Object.fromEntries(names.map((name) => [name, null])));
+    return again?.kind === 'available' ? again : snapshot;
+  }
+
   async function readUsage() {
+    // DeepSeek has a wallet, not a plan: its row is the balance of the account, read while the harnesses are asked.
+    const wallet = balance ? Promise.resolve().then(balance).catch(() => undefined) : undefined;
     const views = await Promise.all(sources().map(async (source) => {
       try {
-        const view = usageView(source, await source.driver.accountUsage?.());
-        if (view.state !== 'hidden' || source.id !== 'codex') return view;
-        return codexLimitsView(source, await codexLimits(source));
+        let view = usageView(source, await snapshotOf(source));
+        if (view.state === 'hidden' && source.id === 'codex') view = codexLimitsView(source, await codexLimits(source));
+        // A harness that is installed always has its row: "—" when its plan cannot be read, never a missing line.
+        return view.state === 'hidden' ? { ...view, state: 'unavailable' } : view;
       } catch { return { id: source.id, name: source.name, state: 'unavailable', plan: '', limited: false, windows: [] }; }
     }));
-    return { providers: views };
+    const row = await wallet; // none without an account
+    return { providers: row && row.state !== 'hidden' ? [...views, row] : views };
   }
 
   function usage({ refresh = false } = {}) {

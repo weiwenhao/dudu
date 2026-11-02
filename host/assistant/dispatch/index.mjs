@@ -1,10 +1,11 @@
 // 嘟嘟's dispatch: from what comes in to who does it (docs/assistant.md 1.2 steps 1-3, 3.1 "收进来", 3.2, 3.3).
 //
-//   const dispatch = createDispatch({ issues, connectors, rules, llm, agents, now = Date.now, file, limits });
+//   const dispatch = createDispatch({ issues, connectors, collect, rules, llm, agents, now = Date.now, file, limits });
 //
 //   issues      createIssues(...): the only thing dispatch writes, besides its own file
-//   connectors  createConnectors(...), or a function that gives the one in use now (null when there is none: the project folder can move): dispatch uses only read(name, args, { signal }), readTools() and dudu.list(); never anything that changes
-//               a connector (enable, register, update, remove, call): only the owner turns a connector on, and the model never touches one
+//   connectors  createConnectors(...), or a function giving the current registry after a folder move. Dispatch only lists saved source prompts.
+//   collect     async (source, { signal, since }) -> { outcome, content, chars? }. Reads through an isolated DSH collection session using
+//               installed tools and skills; it never executes launch configuration from the source registry.
 //   rules       () -> { rules: { 'TRIAGE.md': text | null, 'ASSIGN.md': text | null } } (memory.rules; sync or async), read on every call
 //   llm         async (messages: [{ role: 'system' | 'user', content }], { signal }) -> string. The only way a model is used, one call per changed
 //               output and one per assignment. Called with an AbortSignal that fires after 60 seconds (and when dispatch is disposed): a model
@@ -16,10 +17,9 @@
 // Every operation answers { outcome: 'success' | 'no_op' | 'needs_clarification' | 'error', message?, next?, ... } and never throws for what a
 // person, a connector or the model can cause; only a database failure of the issues store does, and then intake says so as an error.
 //
-//   intake({ only? })   async. Reads what the enabled connectors offer to read and turns what the owner has to deal with into issues.
-//       For every enabled connector (only = an id or a list of ids to look at), every read operation that needs no value the code cannot give
-//       (a {date} or {today} is today's local date; any other required value skips the operation, and the result says so) is run once. An output
-//       that is the same as the last one dealt with costs nothing. A changed one is one model call: the output (secrets blanked, capped) as marked
+//   intake({ only? })   async. Reads each saved prompt (only = an id or a list of ids) and turns what the owner has to deal with into issues.
+//       Each source is collected once per run; unchanged output needs no triage call. A changed output is one model call:
+//       the output (secrets blanked, capped) as marked
 //       material, with the open issues, under TRIAGE.md; the answer is read strictly (answer.mjs). Then, per item:
 //         new     -> an issue (Todo, source connector, sourceRef "<connector>:<ref>"), written as 嘟嘟, with the log of where it came from, why
 //                    this priority and why this due date; never twice for the same "<connector>:<ref>"
@@ -34,16 +34,17 @@
 //            connectors: [{ id, name, ok, error?, operations: [{ operation, label, status, ... }] }], skipped: [{ connector, operation, reason }], waiting }
 //       An operation's status is read (a model call was made: items, created, noted, ignored, duplicates, deferred, rejected), unchanged, empty,
 //       skipped, deferred or failed (error). waiting is null or { outputs, items }: what the next run still has to do.
-//   assign(issueId)     async. Hands a Todo issue that has no agent to one: one model call over ASSIGN.md, the issue, the enabled agents and what
+//   assign(issueId)     async. Hands a Todo issue that has no agent to one, only with a selected or rule-specified project:
+//       one model call over ASSIGN.md, the issue, the enabled agents and what
 //       the agents handled before for the same kind of issue. A chosen agent -> issues.assign (as 嘟嘟, with the reason); the session only when
 //       it is one that history offered and is free. -> { outcome: 'success', assigned: true, agent, session, reused, access, requested, allowed,
 //       reason, issue }. `access` is for whoever starts the session: what the model asked for, never above what ASSIGN.md allows for this kind
 //       (rules.mjs), read-only when it says nothing. No agent (the model is not sure, names one that is not available, or none is enabled) ->
 //       { outcome: 'needs_clarification', assigned: false, ask, ... }: the issue stays Todo and its ask is "交给谁处理？". Already assigned, not
 //       Todo, finished, unknown -> no_op. A model that fails or answers with something unusable -> error, and nothing changes.
-//   state()             async. For the Inputs widget: { outcome, lastRunAt, running, connectors: [{ id, name, enabled, operations, lastRead:
-//       { at, ok, items, created, error? } | null, readToday, createdToday }], createdToday }. operations is how many read operations the
-//       connector has; items and readToday count what the model found in outputs that changed; the day's counters start again each local day.
+//   state()             async. For the Inputs widget: { outcome, lastRunAt, running, connectors: [{ id, name, lastRead:
+//       { at, ok, items, created, error? } | null, readToday, createdToday }], createdToday }. items and readToday count what the model found
+//       in outputs that changed; the day's counters start again each local day.
 //   dispose()           async. Stops what is running (the model call, the connector read) and waits for it; later calls are no_ops.
 //
 // Nothing here logs, and nothing that holds a secret is stored in an issue, in intake.json or in a result.
@@ -51,13 +52,14 @@ import { createHash } from 'node:crypto';
 import { redact, findSecret } from '../memory/secrets.mjs';
 import { parseAssign, parseTriage } from './answer.mjs';
 import { assignMessages, triageMessages } from './prompts.mjs';
-import { allowedAccess, grantAccess, sameKind, tablePriority, urgentAllowed } from './rules.mjs';
-import { createIntakeState, dayOf } from './state.mjs';
+import { allowedAccess, grantAccess, sameKind, sessionOptions, tablePriority, urgentAllowed } from './rules.mjs';
+import { basename } from 'node:path';
+import { homedir } from 'node:os';
+import { createIntakeState } from './state.mjs';
 import { WORDS as W } from './words.mjs';
 
 export const LIMITS = Object.freeze({ newPerRun: 20, callsPerRun: 5, modelMs: 60_000, outputChars: 12_000, openIssues: 50, history: 30, historyScan: 200, tries: 3 });
 
-const PREFIX = 'connector_'; // connectors/index.mjs: an operation is called connector_<id>_<operation>
 const OPEN = ['backlog', 'todo', 'in_progress', 'in_review'];
 const BUSY_SESSION = ['running', 'waiting_owner', 'error'];
 
@@ -79,7 +81,7 @@ const refOf = (ref) => (findSecret(ref) ? `ref-${fingerprint(ref).slice(0, 16)}`
 class ModelError extends Error {}
 class Stopped extends Error {}
 
-export function createDispatch({ issues, connectors = null, rules = null, llm = null, agents = null, now = Date.now, file, limits = {} } = {}) {
+export function createDispatch({ issues, connectors = null, collect = null, rules = null, llm = null, agents = null, now = Date.now, file, limits = {} } = {}) {
   if (!issues || typeof issues.add !== 'function') throw new TypeError('createDispatch needs the issues store.');
   if (typeof file !== 'string' || !file) throw new TypeError('createDispatch needs the file to keep the intake state in (intake.json).');
   const cap = { ...LIMITS, ...limits };
@@ -148,28 +150,8 @@ export function createDispatch({ issues, connectors = null, rules = null, llm = 
   }
 
   async function listConnectors() {
-    let tools = [];
-    try {
-      tools = (await live()?.readTools?.()) ?? []; // first: it is what makes a server say why it cannot be reached
-    } catch { /* the list below says the rest */ }
     const listed = await listViews();
-    return listed.error ? listed : { views: listed.views, tools: Array.isArray(tools) ? tools : [] };
-  }
-
-  const operationsOf = (view, tools) => tools
-    .filter((tool) => typeof tool?.name === 'string' && tool.name.startsWith(`${PREFIX}${view.id}_`))
-    .map((tool) => ({ tool, name: tool.name.slice(PREFIX.length + view.id.length + 1), label: view.operations?.find((op) => op.name === tool.name)?.label ?? tool.name }));
-
-  // The values the code can give: today's date for {date} and {today}. Anything else that is required means the operation is skipped.
-  function argumentsFor(tool, date) {
-    const args = {};
-    const properties = tool.inputSchema?.properties ?? {};
-    for (const name of tool.inputSchema?.required ?? []) {
-      const type = properties[name]?.type;
-      if ((name === 'date' || name === 'today') && (type === undefined || type === 'string')) args[name] = date;
-      else return { missing: name };
-    }
-    return { args };
+    return listed.error ? listed : { views: listed.views };
   }
 
   const openIssues = () => {
@@ -272,17 +254,24 @@ export function createDispatch({ issues, connectors = null, rules = null, llm = 
   async function processOutput(view, entry, run) {
     const op = { operation: entry.name, label: safe(entry.label, 160) };
     const failed = (error) => ({ op: { ...op, status: 'failed', error }, failed: error, items: 0, created: 0 });
-    const filled = argumentsFor(entry.tool, dayOf(run.at));
-    if (filled.missing) return { op: { ...op, status: 'skipped', reason: W.needsValue(filled.missing) }, skipped: true };
+    if (run.calls >= cap.callsPerRun || run.collections >= cap.callsPerRun) {
+      run.waiting.outputs++;
+      return { op: { ...op, status: 'deferred', reason: W.callLimit(cap.callsPerRun) }, deferred: true };
+    }
 
     let read;
     try {
-      read = await live().read(entry.tool.name, filled.args, { signal: stop.signal });
+      if (!collect) throw new Error('The DSH collection service is unavailable.');
+      run.collections++;
+      const signal = AbortSignal.any([stop.signal, AbortSignal.timeout(cap.modelMs * 2)]);
+      read = await collect(view, { signal, since: state.load().reads[view.id]?.at });
     } catch (error) {
       read = { outcome: 'error', message: error?.message };
     }
     checkStop();
     if (read?.outcome !== 'success') return failed(safe(read?.message ?? W.readFailed, 300));
+    const current = (await listViews()).views?.find((item) => item.id === view.id);
+    if (!current || (current.prompt ?? current.description) !== (view.prompt ?? view.description)) return { op: { ...op, status: 'skipped' }, skipped: true };
 
     const key = `${view.id}/${entry.name}`;
     const content = clip(redact(String(read.content ?? '')), cap.outputChars);
@@ -342,8 +331,8 @@ export function createDispatch({ issues, connectors = null, rules = null, llm = 
   async function runIntake(only, run) {
     const found = await listConnectors();
     if (found.error) return { outcome: 'error', message: found.error };
-    const chosen = found.views.filter((view) => view.enabled && (!only || only.has(view.id)));
-    if (!chosen.length) return noOp(only ? W.noSuchConnector([...only]) : W.noneEnabled);
+    const chosen = found.views.filter((view) => !only || only.has(view.id));
+    if (!chosen.length) return noOp(only ? W.noSuchConnector([...only]) : 'No source prompts have been saved.');
 
     run.triage = (await readRules()).triage;
     const reports = [];
@@ -355,7 +344,7 @@ export function createDispatch({ issues, connectors = null, rules = null, llm = 
       checkStop();
       const report = { id: view.id, name: view.name, ok: true, operations: [] };
       const sum = { attempted: 0, items: 0, created: 0, error: null };
-      const operations = operationsOf(view, found.tools);
+      const operations = [{ name: 'source', label: view.name }];
       if (!operations.length && view.error) { // a server that cannot be reached is a read that failed: nobody would notice otherwise
         sum.attempted++;
         sum.error = safe(view.error, 300);
@@ -414,7 +403,7 @@ export function createDispatch({ issues, connectors = null, rules = null, llm = 
     if (running) return noOp(W.busy);
     const only = input?.only == null ? null : new Set([].concat(input.only).map(String));
     running = true;
-    const run = { at: now(), calls: 0, attempted: 0, created: [], noted: [], waiting: { outputs: 0, items: 0 }, triage: null };
+    const run = { at: now(), calls: 0, collections: 0, attempted: 0, created: [], noted: [], waiting: { outputs: 0, items: 0 }, triage: null };
     const job = runIntake(only, run).catch((error) => {
       if (error instanceof Stopped) return noOp(W.disposed);
       // What was done before the failure stays done, and is said.
@@ -441,7 +430,7 @@ export function createDispatch({ issues, connectors = null, rules = null, llm = 
     const held = new Set(page.items.filter((past) => !isFinished(past.status) && past.session).map((past) => past.session));
     const groups = new Map();
     for (const past of page.items) {
-      if (past.id === issue.id || !past.kind) continue;
+      if (past.id === issue.id || !past.kind || past.project?.path !== issue.project?.path) continue;
       const full = issues.get(past.id, { logLimit: 1 });
       if (full.outcome !== 'success') continue;
       for (const session of full.issue.sessions) {
@@ -479,8 +468,13 @@ export function createDispatch({ issues, connectors = null, rules = null, llm = 
   }
 
   async function decide(issue) {
+    const originalProject = issue.project?.path ?? null;
     const available = await availableAgents();
     const files = await readRules();
+    const options = sessionOptions(files.assign, issue, { home: homedir() });
+    const project = issue.project?.path ? issue.project : options.cwd ? { name: basename(options.cwd), path: options.cwd } : null;
+    if (options.problem || !project) return leaveToOwner(issue, options.problem ?? '请先选择项目，再分配智能体。');
+    issue = { ...issue, project };
     let choice = { agent: null, session: null, access: null, reason: W.noAgentOn };
     let history = [];
     if (available.length) {
@@ -497,7 +491,7 @@ export function createDispatch({ issues, connectors = null, rules = null, llm = 
     }
 
     const again = latest(issue.id); // the owner may have given it to someone while the model thought
-    if (!again || again.agent || again.status !== 'todo') return noOp(W.changedMeanwhile(issue.ref), { issue: again ?? issue });
+    if (!again || again.agent || again.status !== 'todo' || (again.project?.path ?? null) !== originalProject) return noOp(W.changedMeanwhile(issue.ref), { issue: again ?? issue });
     if (choice.agent === null) return leaveToOwner(again, choice.reason);
     if (!available.some((agent) => agent.id === choice.agent)) return leaveToOwner(again, W.unavailable(safe(choice.agent, 40), choice.reason));
 
@@ -508,7 +502,7 @@ export function createDispatch({ issues, connectors = null, rules = null, llm = 
     const access = grantAccess(choice.access, allowed);
     const reason = safe(choice.reason, 500);
     const notes = [choice.session && !offered ? W.sessionDropped : null, W.access(access, choice.access, allowed)].filter(Boolean);
-    const assigned = issues.assign(again.id, { agent: choice.agent, session, actor: 'dudu', reason: `${reason} · ${notes.join(' · ')}` });
+    const assigned = issues.assign(again.id, { agent: choice.agent, session, project: again.project?.path ? again.project : project, actor: 'dudu', reason: `${reason} · ${notes.join(' · ')}` });
     if (assigned.outcome !== 'success') return { outcome: assigned.outcome, message: safe(assigned.message, 300), issue: assigned.issue ?? again };
     if (again.ask === W.whoShouldTake) issues.update(again.id, { ask: '' }, { actor: 'dudu' });
     return success({
@@ -556,8 +550,7 @@ export function createDispatch({ issues, connectors = null, rules = null, llm = 
       const last = data.reads[view.id];
       const counters = today.connectors[view.id];
       return {
-        id: view.id, name: view.name, enabled: view.enabled,
-        operations: view.kind === 'dsh' ? 0 : (view.operations ?? []).filter((op) => op.readOnly && op.ticked).length,
+        id: view.id, name: view.name,
         lastRead: last ? { at: last.at, ok: last.ok, items: last.items, created: last.created, ...(last.error ? { error: last.error } : {}) } : null,
         readToday: counters?.read ?? 0, createdToday: counters?.created ?? 0,
       };

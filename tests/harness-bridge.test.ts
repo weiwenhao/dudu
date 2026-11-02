@@ -39,9 +39,12 @@ function fakeDriver() {
   };
 }
 
-function setup() {
+function setup(events?: any[]) {
   const driver = fakeDriver();
-  const bridge = new HarnessBridge({ driver, agentOf: () => ({ session: { header: { cwd: '/work/project' } } }), permissionOf: () => 'workspace-write' });
+  const bridge = new HarnessBridge({
+    driver, agentOf: () => ({ session: { header: { cwd: '/work/project' } } }), permissionOf: () => 'workspace-write',
+    ...(events ? { eventsOf: async () => events } : {}),
+  });
   return { driver, bridge, adapter: createHarnessAdapter(bridge) };
 }
 
@@ -67,6 +70,51 @@ test('a request is the opener of a turn, one more step of it, or steering that a
   // Another route's replay state is never mistaken for this harness's session.
   const other = { ...assistant([], { nativeSessionId: 'x' }), source: { kind: 'model', provider: 'other', model: 'm', replayState: { nativeSessionId: 'x' } } };
   assert.equal(analyzeRequest([user('u1', 'go'), other, user('u2', 'again')], 'fake').link, undefined);
+});
+
+test('persisted turn boundaries distinguish new Claude/Codex input from stopped tool-ended history', () => {
+  for (const route of ['claude', 'codex']) for (const kind of ['completed', 'aborted', 'error']) {
+    const old = { ...assistant(['t1']), source: { kind: 'model', provider: route, model: 'm', replayState: { harness: route, nativeSessionId: 'native-old' } } };
+    const messages = [user('u1', 'old task'), old, tool('t1', 'old result'), context('ctx'), user('u2', 'new task')];
+    const events = [
+      { type: 'turn/start', data: { turn: 1 } }, { type: 'user/message', data: user('u1', 'old task') },
+      { type: 'assistant/message', data: { message: old } }, { type: 'turn/end', data: { turn: 1, reason: { kind } } },
+      { type: 'turn/start', data: { turn: 2 } }, { type: 'user/message', data: user('u2', 'new task') },
+    ];
+    const fresh = analyzeRequest(messages, route, events);
+    assert.equal(fresh.continuing, false, `${route}: ${kind} history has ended`);
+    assert.equal(fresh.promptText, 'new task');
+    assert.deepEqual(fresh.link, { harness: route, nativeSessionId: 'native-old' });
+    events.push(
+      { type: 'assistant/message', data: { message: old } },
+      { type: 'user/message', data: user('u3', 'steer this turn') },
+    );
+    const continuing = analyzeRequest([...messages, old, tool('t1', 'new result'), user('u3', 'steer this turn')], route, events);
+    assert.equal(continuing.continuing, true);
+    assert.deepEqual(continuing.prompts.map((message: any) => message.id), ['u2', 'u3']);
+  }
+});
+
+test('a cold tool-ended session starts the new turn on its native ID without resending the old task', async () => {
+  const events = [
+    { type: 'turn/start', data: { turn: 1 } }, { type: 'turn/end', data: { turn: 1, reason: { kind: 'aborted' } } },
+    { type: 'turn/start', data: { turn: 2 } }, { type: 'user/message', data: user('u2', 'new task') },
+  ];
+  const { driver, adapter } = setup(events);
+  const messages = [user('u1', 'old task'), assistant(['t1'], { nativeSessionId: 'native-old' }), tool('t1', 'old result'), user('u2', 'new task')];
+  const pending = collect(adapter.stream({ sessionId: 's1', messages }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(driver.started.length, 1);
+  assert.equal(driver.started[0].resume, 'native-old');
+  assert.equal(driver.started[0].prompt, 'new task');
+  driver.handles[0].push({ type: 'text-delta', text: 'Resumed.' });
+  driver.handles[0].push({ type: 'turn-end', ok: true });
+  await pending;
+
+  const missing = setup([...events, { type: 'assistant/message', data: { message: assistant(['current-tool']) } }]);
+  await assert.rejects(collect(missing.adapter.stream({ sessionId: 's1', messages })),
+    (error: any) => error.code === 'HARNESS_LOST');
+  assert.equal(missing.driver.started.length, 0, 'a missing mid-turn process cannot be restarted by repeating work');
 });
 
 test('a turn is replayed step by step: the tool call waits for the harness result and the session id is recorded', async () => {

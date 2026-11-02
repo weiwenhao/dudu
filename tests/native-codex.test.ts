@@ -127,3 +127,42 @@ test('a thread summary falls back when Codex has not named or previewed a thread
   assert.equal(threadSummary({ id: 'x', preview: 'multi\nline   preview', cwd: null, updatedAt: 1 }).title, 'multi line preview');
   assert.equal(threadSummary({ id: 'x', preview: 'p', updatedAt: 1 }).cwd, null);
 });
+
+test('ongoing Codex turns remain visible and open when another app-server calls them interrupted', () => {
+  const done = { id: 'one', completedAt: 10, startedAt: 1, items: [
+    { type: 'userMessage', content: [{ type: 'text', text: 'first' }] },
+    { type: 'agentMessage', text: 'done' },
+  ] };
+  const working = { id: 'two', completedAt: null, startedAt: 11, status: 'interrupted', items: [
+    { type: 'userMessage', content: [{ type: 'text', text: 'next' }] },
+    { type: 'reasoning', id: 'r', summary: [], content: ['Real native reasoning.'] },
+    { type: 'agentMessage', text: 'still working' },
+  ] };
+  const pending = codexHistory({ ...thread('t'), turns: [done, working] });
+  assert.equal(pending.turns.length, 2);
+  assert.equal(pending.turns[1].complete, false);
+  assert.equal(pending.turns[1].interrupted, undefined);
+  const metrics = new Map([['two', { endedAt: 20000, items: new Map(), usage: { inputTokens: 80, outputTokens: 20, totalTokens: 100 } }]]);
+  const history = codexHistory({ ...thread('t'), turns: [done, { ...working, status: 'completed' }] }, { metrics });
+  assert.equal(history.turns.length, 2);
+  assert.equal(history.turns[1].endedAt, 20000);
+  assert.deepEqual(history.turns[1].steps[0].blocks[0], { type: 'reasoning', text: 'Real native reasoning.' });
+  assert.equal(history.turns[1].steps[0].usage.totalTokens, 100);
+});
+
+test('Codex preserves mid-turn user messages and waits for a running tool result', () => {
+  const history = codexHistory({ ...thread('t'), turns: [{
+    id: 'live', startedAt: 11, completedAt: null, items: [
+      { type: 'userMessage', id: 'u1', content: [{ type: 'text', text: 'first instruction' }] },
+      { type: 'agentMessage', id: 'a1', text: 'Checking.' },
+      { type: 'userMessage', id: 'u2', content: [{ type: 'text', text: 'additional instruction' }] },
+      { type: 'agentMessage', id: 'a2', text: 'Following up.' },
+      { type: 'commandExecution', id: 'tool', command: 'ls', cwd: '/work', status: 'inProgress', aggregatedOutput: 'partial' },
+    ],
+  }] });
+  assert.equal(history.turns.length, 1);
+  assert.equal(history.turns[0].id, 'live');
+  assert.deepEqual(history.turns[0].steps.map((step: any) => step.input?.prompt), [undefined, 'additional instruction']);
+  assert.equal(history.turns[0].results.size, 0);
+  assert.equal(history.turns[0].steps.flatMap((step: any) => step.blocks).some((block: any) => block.type === 'tool-call'), false);
+});

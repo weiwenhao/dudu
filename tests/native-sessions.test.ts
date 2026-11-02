@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createLinkStore, createNativeSessions, metadataWeight, termsOf } from '../host/providers/native/index.mjs';
@@ -19,7 +19,7 @@ const reply = (uuid: string, parentUuid: string, messageId: string, text: string
 const lines = (records: unknown[]) => records.map((record) => `${JSON.stringify(record)}\n`).join('');
 
 // Three Claude sessions on disk, a DSH store that remembers what is written to it, and a workspace registry.
-async function setup(t: { after: (cleanup: () => Promise<void>) => void }, { persistence = true } = {}) {
+async function setup(t: { after: (cleanup: () => Promise<void>) => void }, { persistence = true, now }: { persistence?: boolean; now?: () => number } = {}) {
   const base = await mkdtemp(join(tmpdir(), 'dudu-native-'));
   const root = join(base, 'projects');
   await mkdir(join(root, 'app'), { recursive: true });
@@ -36,6 +36,10 @@ async function setup(t: { after: (cleanup: () => Promise<void>) => void }, { per
       stored.set(header.id, entry);
       return { append: async (events: any[]) => { entry.events.push(...events); }, flush: async () => {}, close: async () => {} };
     },
+    open: async (sessionId: string) => {
+      const entry = stored.get(sessionId)!;
+      return { read: async () => ({ events: [...entry.events] }), append: async (events: any[]) => { entry.events.push(...events); }, flush: async () => {}, close: async () => {} };
+    },
   };
   const registry = {
     create: async (path: string) => {
@@ -51,9 +55,9 @@ async function setup(t: { after: (cleanup: () => Promise<void>) => void }, { per
   };
   const source = { id: 'claude', name: 'Claude', route: 'claude', driver };
   const service = createNativeSessions({
-    sources: () => [source], links, claude: { root }, persistence: () => (persistence ? store : undefined), workspaces: () => registry,
+    sources: () => [source], links, claude: { root }, persistence: () => (persistence ? store : undefined), workspaces: () => registry, ...(now ? { now } : {}),
   });
-  return { service, stored, attached, links, base, root, put, source };
+  return { service, stored, attached, links, base, root, put, source, store, registry };
 }
 
 test('the sessions of a harness are listed newest first, with what shows them apart', async (t) => {
@@ -68,6 +72,50 @@ test('the sessions of a harness are listed newest first, with what shows them ap
   assert.ok(result.sessions.every((session: any, index: number, all: any[]) => index === 0 || all[index - 1].updatedAt >= session.updatedAt));
   assert.deepEqual((await service.list({ provider: 'codex' })).sessions, []);
   assert.equal((await service.list({ limit: 2 })).sessions.length, 2);
+});
+
+test('list, preview, import and synchronization preserve the native file and its recorded activity time', async (t) => {
+  const { service, root } = await setup(t);
+  const file = join(root, 'app', `${id(1)}.jsonl`);
+  const original = await readFile(file);
+  const records = original.toString().trim().split('\n').map((line) => JSON.parse(line));
+  const recordedAt = Date.parse(records.findLast((record) => record.type === 'assistant').timestamp);
+  await utimes(file, new Date(), new Date());
+  const before = await stat(file);
+  const loaded = await service.load({ provider: 'claude', id: id(1) });
+  for (let check = 0; check < 3; check++) {
+    const listing = await service.list({ refresh: true });
+    const row = listing.sessions.find((session: any) => session.id === id(1));
+    assert.equal(row.updatedAt, recordedAt);
+    assert.equal('mtimeMs' in row, false);
+    assert.equal((await service.describe({ provider: 'claude', id: id(1) })).updatedAt, recordedAt);
+    await service.read({ provider: 'claude', id: id(1) });
+    assert.deepEqual((await service.sync({ sessionIds: [loaded.sessionId], fresh: true })).updated, []);
+  }
+  await service.settled();
+  assert.deepEqual(await readFile(file), original);
+  const after = await stat(file);
+  assert.equal(after.mtimeMs, before.mtimeMs);
+  assert.equal(after.size, before.size);
+});
+
+test('reading native history returns bounded conversation text without tool output or reasoning', async (t) => {
+  const { service, put } = await setup(t);
+  const records: unknown[] = [];
+  for (let n = 0; n < 15; n++) {
+    records.push(user(`u${n}`, null, `prompt ${n}`));
+    const message = reply(`a${n}`, `u${n}`, `m${n}`, `${n}:${'x'.repeat(5000)}`);
+    message.message.content.push({ type: 'thinking', thinking: 'private reasoning' } as any);
+    message.message.content.push({ type: 'tool_use', id: `t${n}`, name: 'Bash', input: { command: 'sensitive command' } } as any);
+    records.push(message);
+  }
+  await put(4, records);
+  const result = await service.read({ provider: 'claude', id: id(4) });
+  assert.equal(result.untrusted, true);
+  assert.equal(result.messages.length, 20);
+  assert.equal(result.messages[0].text, 'prompt 5');
+  assert.ok(result.messages.every((message: any) => message.text.length <= 4000));
+  assert.ok(!JSON.stringify(result).match(/private reasoning|sensitive command/));
 });
 
 test('a search needs every word, and a word in the title says more than one in the first prompt', async (t) => {
@@ -105,7 +153,7 @@ test('loading writes a session DSH can open, in the session\'s own folder, and r
   const selection = entry.events.find((event: any) => event.type === 'model/selection');
   assert.deepEqual(selection.data, { provider: 'claude', model: 'claude-sonnet-5-5', reasoningEffort: 'medium' }, 'the model the conversation used, when the harness offers it');
   const assistant = entry.events.find((event: any) => event.type === 'assistant/message');
-  assert.deepEqual(assistant.data.message.source.replayState, { harness: 'claude', nativeSessionId: id(1) });
+  assert.deepEqual(assistant.data.message.source.replayState, { harness: 'claude', nativeSessionId: id(1), nativeTurnId: 'a' });
   assert.deepEqual(attached, [result.sessionId]);
   assert.equal(links.get('claude', id(1)), result.sessionId);
   assert.equal((await service.list()).sessions.find((session: any) => session.id === id(1)).dshSessionId, result.sessionId);
@@ -121,6 +169,63 @@ test('loading a session twice opens the one that is there, even when both clicks
   assert.equal(stored.size, 1);
 });
 
+test('loading again reads TUI changes immediately into the same DSH session, without duplicating them', async (t) => {
+  const { service, stored, put } = await setup(t);
+  const original = [user('a', null, 'sync this'), reply('b', 'a', 'm1', 'first answer')];
+  await put(5, original);
+  const first = await service.load({ provider: 'claude', id: id(5) });
+  await put(5, [...original, user('c', 'b', 'continue'), reply('d', 'c', 'm2', 'new TUI answer')]);
+  const updated = await service.load({ provider: 'claude', id: id(5) });
+  assert.equal(updated.sessionId, first.sessionId);
+  assert.equal(updated.updated, true);
+  const entry = stored.get(first.sessionId)!;
+  assert.equal(entry.events.filter((event: any) => event.type === 'user/message').length, 2);
+  assert.ok(JSON.stringify(entry.events).includes('new TUI answer'));
+  const length = entry.events.length;
+  await service.load({ provider: 'claude', id: id(5) });
+  assert.equal(entry.events.length, length);
+  assert.ok(entry.events.every((event: any, index: number) => event.seq === index));
+});
+
+test('opening restores a missing native link from durable identity and synchronizes the same DSH session', async (t) => {
+  const { service, stored, links, root, put, source, store, registry } = await setup(t);
+  const original = [user('u1', null, 'first'), reply('a1', 'u1', 'm1', 'first answer')];
+  await put(5, original);
+  const { sessionId } = await service.load({ provider: 'claude', id: id(5) });
+  links.forget('claude', id(5));
+  await put(5, [...original, user('u2', 'a1', 'second'), reply('a2', 'u2', 'm2', 'external answer')]);
+  const restored = createNativeSessions({
+    sources: () => [source], links, claude: { root }, persistence: () => store, workspaces: () => registry,
+    controller: () => ({ inspect: async (target: string) => stored.get(target) }),
+  });
+  assert.deepEqual(await restored.sync({ sessionIds: [sessionId] }), { updated: [] });
+  assert.deepEqual(await restored.sync({ sessionIds: [sessionId], recover: true }), { updated: [sessionId] });
+  assert.equal(links.get('claude', id(5)), sessionId);
+  assert.equal(stored.size, 1);
+  assert.equal(stored.get(sessionId)!.events.filter((event: any) => event.type === 'user/message').length, 2);
+  assert.deepEqual(await restored.sync({ sessionIds: [sessionId], recover: true }), { updated: [] });
+});
+
+test('automatic link recovery respects explicit deletions and a newer import of the same conversation', async (t) => {
+  const { service, stored, links, root, source, store, registry } = await setup(t);
+  const { sessionId } = await service.load({ provider: 'claude', id: id(1) });
+  const events = stored.get(sessionId)!.events;
+  let inspected = 0;
+  const restored = createNativeSessions({
+    sources: () => [source], links, claude: { root }, persistence: () => store, workspaces: () => registry,
+    controller: () => ({ inspect: async () => { inspected++; return { events }; } }),
+  });
+  assert.deepEqual(await restored.sync({ sessionIds: ['older-copy'], recover: true }), { updated: [] });
+  assert.equal(links.get('claude', id(1)), sessionId, 'a historical copy cannot steal a newer link');
+  await links.retire({ sessionId, provider: 'claude', id: id(1) });
+  inspected = 0;
+  assert.deepEqual(await restored.sync({ sessionIds: [sessionId], recover: true }), { updated: [] });
+  assert.equal(inspected, 0, 'deleted sessions are not reopened for recovery');
+  assert.equal(links.get('claude', id(1)), undefined);
+  assert.deepEqual(await restored.sync({ sessionIds: ['another-copy'], recover: true }), { updated: [] });
+  assert.equal(links.get('claude', id(1)), undefined, 'a duplicate cannot resurrect explicitly deleted native work');
+});
+
 test('a link to a DSH session that no longer exists is dropped, and the session can be loaded again', async (t) => {
   const { service, stored, links } = await setup(t);
   const first = await service.load({ provider: 'claude', id: id(2) });
@@ -130,6 +235,31 @@ test('a link to a DSH session that no longer exists is dropped, and the session 
   assert.equal(links.get('claude', id(2)), undefined);
   const second = await service.load({ provider: 'claude', id: id(2) });
   assert.notEqual(second.sessionId, first.sessionId);
+});
+
+test('removing an issue keeps its native history browsable and an explicit import creates a fresh DSH copy', async (t) => {
+  const { service, stored, links, base } = await setup(t);
+  const first = await service.load({ provider: 'claude', id: id(1) });
+  await links.retire({ provider: 'dsh', id: first.sessionId, sessionId: first.sessionId });
+  const listed = (await service.list({ refresh: true })).sessions.find((session: any) => session.id === id(1));
+  assert.ok(listed);
+  assert.equal(listed.dshSessionId, undefined);
+  assert.equal((await service.describe({ provider: 'claude', id: id(1) })).id, id(1));
+  assert.equal((await service.read({ provider: 'claude', id: id(1) })).outcome, 'success');
+  const second = await service.load({ provider: 'claude', id: id(1) });
+  assert.notEqual(second.sessionId, first.sessionId);
+  assert.equal(stored.size, 2);
+  assert.equal(links.get('claude', id(1)), second.sessionId);
+  assert.equal(links.removed(first.sessionId), true);
+  assert.equal(links.removed(second.sessionId), false);
+  assert.equal(links.hidden('claude', id(1)), true, 'import alone does not re-enable automatic issue creation');
+  links.record({ route: 'claude', nativeSessionId: id(1), sessionId: first.sessionId });
+  assert.equal(links.get('claude', id(1)), second.sessionId, 'a late archived event cannot replace the new link');
+  await links.flush();
+  const reopened = await createLinkStore(join(base, 'state'));
+  assert.equal(reopened.get('claude', id(1)), second.sessionId);
+  assert.equal(reopened.hidden('claude', id(1)), true);
+  assert.equal(reopened.removed(first.sessionId), true);
 });
 
 test('loading says plainly why it cannot', async (t) => {
@@ -172,4 +302,39 @@ test('which DSH session holds a native one is kept across restarts, privately', 
   assert.equal((await createLinkStore(join(base, 'state'))).get('codex', 'thread-1'), undefined);
   await writeFile(join(base, 'state', 'links.json'), '[1,2');
   assert.equal((await createLinkStore(join(base, 'state'))).get('codex', 'thread-1'), undefined, 'an unreadable file starts again instead of failing');
+});
+
+test('a conversation that keeps changing is read again for the search only once in a while, not each time it changes', async (t) => {
+  let clock = Date.now();
+  const { service, put } = await setup(t, { now: () => clock });
+  await service.list();
+  await service.settled();
+  assert.equal((await service.list({ query: 'giraffe' })).sessions.length, 0);
+  // The session is worked in: it changes, and the list is asked for again after the listing's own time to live.
+  await put(1, [user('a', null, 'fix the failing build'), reply('b', 'a', 'm1', 'The zebra in the config was wrong.'), reply('c', 'b', 'm2', 'A giraffe in the lockfile too.'), { type: 'ai-title', aiTitle: 'Build repair' }]);
+  clock += 30_000;
+  await service.list();
+  await service.settled();
+  assert.equal((await service.list({ query: 'giraffe' })).sessions.length, 0, 'a big transcript is not read again seconds after it was');
+  clock += 6 * 60_000;
+  await service.list();
+  await service.settled();
+  assert.deepEqual((await service.list({ query: 'giraffe' })).sessions.map((session: any) => session.id), [id(1)], 'it is, once the wait is over');
+});
+
+test('a loaded session starts on the model the conversation really used, found by the alias that means it', async (t) => {
+  const { service, stored, source, put } = await setup(t);
+  (source.driver as any).listModels = async () => [
+    { provider: 'claude', id: 'default', name: 'Default (recommended)', resolvedId: 'claude-sonnet-5-5' },
+    { provider: 'claude', id: 'opus', name: 'Opus 5.5', resolvedId: 'claude-opus-5-5' },
+    { provider: 'claude', id: 'sonnet', name: 'Sonnet 5.5', resolvedId: 'claude-sonnet-5-5' },
+  ];
+  const withModel = (model: string) => reply('b', 'a', 'm1', 'done');
+  const record = (model: string) => ({ ...withModel(model), message: { ...withModel(model).message, model } });
+  await put(1, [user('a', null, 'fix the failing build'), record('claude-opus-5-5')]);
+  const opus = stored.get((await service.load({ provider: 'claude', id: id(1) })).sessionId)!;
+  assert.equal(opus.events.find((event: any) => event.type === 'model/selection').data.model, 'opus');
+  await put(2, [user('a', null, 'explain quokkas to me'), record('claude-sonnet-5-5')]);
+  const sonnet = stored.get((await service.load({ provider: 'claude', id: id(2) })).sessionId)!;
+  assert.equal(sonnet.events.find((event: any) => event.type === 'model/selection').data.model, 'sonnet', 'the alias that is a choice, not default');
 });

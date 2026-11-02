@@ -4,6 +4,10 @@
 
 验证环境：npm 的 `dsh web` 0.2.0-rc.2，和 Desktop 自带 CLI 0.2.1-rc.3（`dsh web`，插件 `port: 0`），隔离的 `DSH_HOME` 和 `HOME`，Chrome。**没有真实模型**：这里没有 `DEEPSEEK_API_KEY`，用的是本机的脚本模型（`tests/e2e/mock-model.mjs`，OpenAI 兼容，流式），DSH 把它当默认模型；DSH 的循环、会话、侧栏、问题工具、审批和页面都是真的。没有跑登录后的真实 Claude、Codex（隔离的 HOME 里没有登录）。
 
+2026-10-31 后续要求：工作 Agent 不管理项目事项；`finished` 只表示这一轮结束。`progress.mjs` 由嘟嘟读取最后几段对话，判断未完或可以交给主人审阅，再更新 issue。这里的会话事实与事项进度是两层，不能互相代替；当前规则以 `docs/assistant.md` 3.2、3.3 为准。
+
+2026-11-01 后续要求：@ 对应 Agent 只转发用户消息，通过 `prompt(..., mode: 'queue')` 进入已有会话，不解析问题答案或授权。下面的 `answerOf` / `outcomeOf` 是兼容的显式 `issues/reply` API 和 DSH 原生问题流程，不是 @ 的路由行为。来源为 `session` 的已有对话不由嘟嘟自动审阅、评论或请求确认。
+
 ## 用到的接口
 
 插件的 `inject` 里都写成可选（`sessionController`、`permissionPresets`、`userQuestions`、`agentDefaultModel`，`workspaceRegistry`、`sessionProjections` 原来就有），缺哪个，用到它的那一步报"This DSH has no … service"，别的功能照常。
@@ -12,7 +16,7 @@
 |---|---|
 | 能用哪些模型 | `ctx.sessionController.modelCatalog()` → `{ default, groups: [{ id, models }] }`。路由：`deepseek-official`（DSH 自己的）、`claude`、`codex`（装了并启用才有；Claude 的模型有 `default`） |
 | 建会话 | `ctx.workspaceRegistry.create(cwd, 标题?)`（目录要存在，同一目录幂等）→ `ctx.sessionController.create({ workspaceId })` → `{ sessionId }`。`workspaceId` 和 `cwd` 不能同时给。空白会话不在侧栏里，第一条消息之后才出现 |
-| 侧栏里叫什么 | `ctx.sessionController.rename({ sessionId, title })`，写成 `DUDU-12 标题` |
+| 侧栏里叫什么 | `ctx.sessionController.rename({ sessionId, title })`，写成 `APP-12 标题`（项目关键词和该项目内的序号） |
 | 选模型 | `ctx.sessionController.selectModel({ sessionId, provider, model })`。**会同时把它写成 DSH 之后所有新会话的默认模型**（profile 的 `agent-default-model`，实测补丁文件里多了一条）。所以选完用 `ctx.agentDefaultModel.saveSelection(原来的)` 放回去（实测补丁文件里那条也消失）；会话本来就在这个模型上（DeepSeek）就不选 |
 | 访问模式 | `ctx.permissionPresets.set(ctx.agents.get(id).session, 'read-only' \| 'workspace-write' \| 'danger-full-access')`。两个运行时都有这三个名字；新会话默认是 `workspace-write`，所以要在第一条消息之前设。写进会话日志（`permission/preset`、`sandbox/mode`），聊天框里显示 Read Only；Claude、Codex 路由也从这里读（`permissionOf`） |
 | 第一条、后续的消息 | `ctx.sessionController.prompt({ requestId, sessionId, mode: 'queue' \| 'steer', content: [{ type: 'text', text }] }, signal)` → `{ accepted: true }`。`queue` 是下一轮。重启后的冷会话它自己恢复 |
@@ -41,21 +45,23 @@
 
 - 会话在跑时 `archiveSession` 拒绝（`WorkspaceActiveSessionError`，"the session is active (turn)"）；`{ stopActivity: true }` 先收起再停。
 - 收起的会话不接新的一轮（`ArchivedSessionGate` 让它以 `blocked` 结束），所以发消息前先放回来。
-- 页面里打开 issue 的会话：`ctx.sessions.create({ sessionId, workspaceId })` → 等它进列表 → `ctx.uiWorkspace.openSession(id)` → `ctx.layout.selectPanel(null)`。**必须带 `workspaceId`**，不带就是 `session/conflict: … belongs to "<项目目录>", not "<DSH 的目录>"`（会话和目录绑死）。插件的 `issues/resume`（收起的先放回）把会话所在的工作区 id 一起返回，`client.js` 的 `actions.openSession` 用它。
+- 页面里打开 issue 的会话（2026-11-02 按 Desktop 0.2.1-rc.5 更新）：`issues/resume` 将收起的会话放回，返回 `sessionId`、`key` 和 `workspaceId`；客户端同步原生历史，`ctx.sessions.refresh()` 发现已存储的原会话，等原 ID 进入列表后调用 `ctx.uiWorkspace.openSession(id)` → `ctx.layout.selectPanel(null)`。等待超时明确失败。**不调用 `sessions.create` 打开已有对话**：新版 DSH 的该接口用于创建或复用空白会话，对已有工作记录的 ID 会创建另一个空白会话。旧版曾用 create 恢复会话，并要求带 `workspaceId` 避免目录冲突；这条旧路径已经移除。真实 Desktop 运行时的回归覆盖从事项打开 Claude/Codex，检查历史可见且没有多出会话。
+- Done 时自动收起会话已由 `onChange` 接通，并在隔离 DSH 的端到端测试中验证；进行中的一轮不被强停，停下来后收起。
+- Delete 事项使用 `archiveSession(id, { stopActivity: true })` 清理当前和历史会话，并持久标记原生/DSH 别名，旧副本及采集不自动恢复事项。原生会话仍可搜索、预览、手动重新导入；导入创建新的 DSH 副本，只有显式接管才新建事项。DSH 的公开持久化服务没有删除文件的方法，日志仍保留；共享给其他事项的会话不清理。清理期间暂停 issue 状态反映，失败时恢复，避免丢掉尚未回答的问题。
 
 ## 重启 DSH
 
 会话在磁盘上，重启后 `ctx.agents.list()` 是空的，`list` 里 `agentAvailable: false`。`inspect(id)` 能读出上一轮怎么结束（`completed`；被打断的那一轮 DSH 补一个 `interrupted`），插件启动时对打开的 issue 的会话这样读一遍（`restore`），之后照常跟着事件走。实测（两个运行时一样）：
 
-- 重启前做完的：还是 In Review，`ask` 还在；主人回复，DSH 自己把冷会话恢复，新一轮照常跑完。
-- 重启时在等回答的、在跑的：这一轮没了（`interrupted`），issue 停在 In Progress、智能体状态 Idle，`ask` 已清掉（关机时问题被放弃）。主人再回复，就是一条普通消息，会话恢复接着做。
+- 重启前已经由嘟嘟判断完成的：保持 In Review 和确认问题；尚未审阅的 `finished` 或 `idle` 会话重新安排嘟嘟审阅，不能仅凭结束状态转入 In Review。显式 @ Agent 回复时，DSH 自己把冷会话恢复。
+- 重启时在等回答的、在跑的：这一轮没了（`interrupted`），旧的阻塞问题被放弃；嘟嘟读中断前的最近对话判断进展。主人在唯一留言框显式 @ 对应 Agent 后，才把消息传到会话继续做；普通留言只记日志。
 
 ## 试错记录：哪里不行
 
 1. 瀑布事件的监听器只记日志、不调 `next()`：`workspace/session-activity` 被它弄坏，`archiveSession` 在 DSH 里抛 `Cannot read properties of undefined (reading 'length')`，**整个 DSH 进程退出**。观察瀑布事件也得 `return next()`；`api-session/*`、`session/event`、`agent/*` 是 emit 事件，只听就行。
 2. `selectModel` 改默认模型（见上）：不处理，主人下一个新会话、嘟嘟自己的对话都会换成 Claude。
 3. 模型目录第一次列出要 1.6 秒（装着 claude、codex），之后 11 毫秒；第一次分配会等它，插件启动时先列一次。
-4. 没登录的 Claude 路由：回合"成功"结束，智能体说的是 `Not logged in · Please run /login`（不是错误；issue 进 In Review，评论里就是这句）。没登录的 Codex 路由：`ChatGPT is not logged in. Run \`codex login\` in a terminal.`，要等 20 秒到 80 秒以上才报。
+4. 没登录的 Claude 路由：回合"成功"结束，智能体说的是 `Not logged in · Please run /login`，DSH 没报错误。旧接线曾因此把 issue 推到 In Review；现在必须由嘟嘟读这句话判断未完成。没登录的 Codex 路由：`ChatGPT is not logged in. Run \`codex login\` in a terminal.`，要等 20 秒到 80 秒以上才报。
 5. 页面里 `ctx.sessions.create({ sessionId })` 不带工作区：见上。
 6. 两个运行时的差别：Desktop 的请求里多一条 `time-context` 的用户消息，`ctx.connection.createPeer` 只有 Desktop 有，这里用不到；其余一样。
 
@@ -67,4 +73,3 @@
 
 - 登录后的真实 Claude、Codex 回合；真实的 DeepSeek；真实的 Desktop 窗口（只用了 Desktop 自带的 CLI）。
 - 多个窗口同时打开同一个会话时，问题的卡片两处都有，先答的算（只在单元测试里按这个规则写过，没开两个浏览器试）。
-- Done 时自动收起会话（`closeFor` 写了、没接，见报告）。

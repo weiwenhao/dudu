@@ -13,6 +13,7 @@ import { dirname } from 'node:path';
 export const DEFAULTS = Object.freeze({
   projectFolder: null,
   pet: Object.freeze({ enabled: true, doubleSpace: true, voice: true }),
+  widgets: Object.freeze({ developer: false }),
   views: Object.freeze({}),
 });
 
@@ -35,6 +36,9 @@ function parsePatch(patch) {
       if (!isObject(value) || Object.values(value).some((view) => !isObject(view))) return wrong('views is an object of one object per tab.');
       if (JSON.stringify(value).length > MAX_VIEWS_BYTES) return wrong('views is too large to keep.');
       clean.views = value;
+    } else if (key === 'widgets') {
+      if (!isObject(value) || Object.keys(value).some((name) => name !== 'developer') || typeof value.developer !== 'boolean') return wrong('widgets is { developer: true or false }.');
+      clean.widgets = { developer: value.developer };
     } else {
       return wrong(`Unknown setting "${key}". Known: ${Object.keys(DEFAULTS).join(', ')}.`);
     }

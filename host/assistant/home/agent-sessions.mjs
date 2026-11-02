@@ -251,10 +251,10 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
     // Where the session lives is what a window must be told to adopt it, so the answer always says.
     let where = {};
     try { const workspaceId = await dsh.workspaceOf?.(id); if (workspaceId) where = { workspaceId }; } catch { /* the window will say */ }
-    return folded ? { outcome: 'success', key, ...where } : { outcome: 'no_op', message: 'The session is open already.', key, ...where };
+    return folded ? { outcome: 'success', key, sessionId: id, ...where } : { outcome: 'no_op', message: 'The session is open already.', key, sessionId: id, ...where };
   }
 
-  async function send(key, text, { steer = false } = {}) {
+  async function send(key, text, { steer = false, direct = false } = {}) {
     const id = idOf(key);
     if (!id) return clarify(`"${key}" is not a DSH session key (dsh:<id>).`);
     if (typeof text !== 'string' || !text.trim()) return clarify('text must not be empty.', 'Write what to say to the session.');
@@ -262,7 +262,7 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
     const entry = entries.get(id) ?? followed(id);
     // The question the agent waits on is answered with these words; nothing else is sent.
     const waiter = entry.waiters[0];
-    if (waiter) {
+    if (waiter && !direct) {
       waiter.resolve(text.trim());
       return { outcome: 'success', kind: 'answer', key };
     }
@@ -274,6 +274,16 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
     if (entry.seen === seen && !entry.running) { begins(entry); entry.running = true; }
     settle(entry);
     return { outcome: 'success', kind: 'message', key, ...(resumed ? { resumed: true } : {}) };
+  }
+
+  async function setAccess(key, access) {
+    const id = idOf(key);
+    const entry = entries.get(id);
+    if (!entry) return clarify('Name a followed agent session.');
+    if (!ACCESS_MODES.includes(access)) return clarify(`access must be one of: ${ACCESS_MODES.join(', ')}.`);
+    if (dsh.isRunning?.(id) ?? entry.running) return clarify('Wait until the current turn stops before changing its access.');
+    try { await dsh.setAccess(id, access); } catch (error) { return failure(error); }
+    return { outcome: 'success', key, access };
   }
 
   async function stop(key) {
@@ -309,6 +319,8 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
     const id = idOf(key);
     if (!id) return clarify(`"${key}" is not a DSH session key (dsh:<id>).`);
     const entry = entries.get(id) ?? followed(id, { agent, cwd });
+    const running = dsh.isRunning?.(id);
+    if (typeof running === 'boolean') entry.running = running;
     try {
       const turn = await dsh.lastTurn?.(id);
       if (turn && !entry.running && !entry.waiters.length) {
@@ -352,7 +364,13 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
   };
 
   return {
-    start, send, stop, close, resume, adopt, stateOf, snapshotOf, runner, reader,
+    start, send, setAccess, stop, close, resume, adopt, stateOf, snapshotOf, runner, reader,
+    forget(key) {
+      const id = idOf(key);
+      const entry = entries.get(id);
+      entries.delete(id);
+      for (const waiter of entry?.waiters.splice(0) ?? []) waiter.reject(new Error('The issue was deleted.'));
+    },
     has: (key) => entries.has(idOf(key)),
     keys: () => [...entries.values()].map((entry) => entry.key),
     onChange(callback) { listeners.add(callback); return () => listeners.delete(callback); },

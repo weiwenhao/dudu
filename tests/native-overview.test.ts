@@ -156,3 +156,55 @@ test('running: the registry and DSH\'s own runs, named by the sessions list, ove
   assert.equal((await post('usage')).status, 200);
   assert.equal((await post('nothing')).status, 404);
 });
+
+// ---- a row for every harness, Claude read without a paid-by-use environment, and the DeepSeek balance --------------------
+
+test('a harness that cannot report its plan keeps its row as "—", Codex included', async () => {
+  const quiet = { kind: 'unsupported', reason: 'quota_unavailable' };
+  const service = createOverview({
+    sources: () => [
+      { id: 'claude', name: 'Claude', route: 'claude', driver: { accountUsage: async () => quiet } },
+      { id: 'codex', name: 'ChatGPT', route: 'codex', command: 'codex', driver: { accountUsage: async () => quiet } },
+    ],
+    links: { get: () => undefined }, titleOf: () => undefined, codexLimits: async () => ({}), env: {},
+  });
+  const { providers } = await service.usage();
+  assert.deepEqual(providers.map((provider: any) => [provider.id, provider.state, provider.windows.length]), [['claude', 'unavailable', 0], ['codex', 'unavailable', 0]]);
+});
+
+test('Claude that answers "unsupported" while the host has a key in its environment is asked again without it, and the plan\'s own reading wins', async () => {
+  const asked: (Record<string, unknown> | undefined)[] = [];
+  const source = (answer: (extra?: Record<string, unknown>) => unknown) => ({
+    id: 'claude', name: 'Claude', route: 'claude',
+    driver: { accountUsage: async (extra?: Record<string, unknown>) => { asked.push(extra); return answer(extra); } },
+  });
+  const read = async (env: Record<string, string>, answer: (extra?: Record<string, unknown>) => unknown) => (await createOverview({
+    sources: () => [source(answer)], links: { get: () => undefined }, titleOf: () => undefined, env,
+  }).usage()).providers[0];
+
+  // A key in the environment: the first reading says unsupported, the second (the key taken out of the overlay) is the plan's.
+  const plan = await read({ ANTHROPIC_API_KEY: 'x', ANTHROPIC_BASE_URL: 'https://gateway.test', PATH: '/bin' }, (extra) => (extra ? claudeSnapshot : { kind: 'unsupported' }));
+  assert.equal(plan.state, 'ok');
+  assert.deepEqual(plan.windows.map((window: any) => window.label), ['5 小时', '每周', 'Opus 每周']);
+  assert.deepEqual(asked, [undefined, { ANTHROPIC_API_KEY: null, ANTHROPIC_BASE_URL: null }], 'only the names that are set are taken out, and only for the second reading');
+
+  // Nothing of the kind in the environment: there is nothing else to try, and the row says "—".
+  asked.length = 0;
+  assert.equal((await read({ PATH: '/bin' }, () => ({ kind: 'unsupported' }))).state, 'unavailable');
+  assert.equal(asked.length, 1);
+  // A second reading that is no better (no sign-in for a plan either) changes nothing.
+  asked.length = 0;
+  assert.equal((await read({ ANTHROPIC_API_KEY: 'x' }, (extra) => (extra ? { kind: 'reauth_required' } : { kind: 'unsupported' }))).state, 'unavailable');
+  assert.equal(asked.length, 2);
+});
+
+test('DeepSeek\'s balance is a row of its own when an account has one, read while the harnesses are asked; nothing without an account', async () => {
+  const base = { sources: () => [{ id: 'claude', name: 'Claude', route: 'claude', driver: { accountUsage: async () => claudeSnapshot } }], links: { get: () => undefined }, titleOf: () => undefined, env: {} };
+  const wallet = { id: 'deepseek', name: 'DeepSeek', kind: 'balance', state: 'ok', plan: '', limited: false, windows: [], balance: [{ currency: 'CNY', text: '¥12.34' }] };
+  const ids = async (balance?: () => unknown) => (await createOverview({ ...base, balance }).usage()).providers.map((provider: any) => provider.id);
+  assert.deepEqual(await ids(), ['claude'], 'without a reader there is no row');
+  assert.deepEqual(await ids(async () => wallet), ['claude', 'deepseek']);
+  assert.deepEqual(await ids(async () => ({ ...wallet, state: 'hidden' })), ['claude'], 'no account, no row');
+  assert.deepEqual(await ids(async () => { throw new Error('the account did not answer'); }), ['claude'], 'a reader that fails costs the other rows nothing');
+  assert.deepEqual(await ids(async () => ({ ...wallet, state: 'unavailable', balance: undefined })), ['claude', 'deepseek'], 'an account whose balance cannot be read says "—"');
+});

@@ -54,6 +54,7 @@ if (!roots.length) throw new Error('The desktop plugin has no runtime entrypoint
 for (const file of roots) await copyRuntime(file);
 // The interface (React, Radix, Tailwind output) is built into dist/client.js, around the hand-written client.js.
 noticeBlocks.push(...(await writeClient(join(runtime, 'client.js'))).notices);
+noticeBlocks.push(`Lobe Icons - Claude, OpenAI and DeepSeek brand marks\n\n${await readFile(join(root, 'licenses', 'lobe-icons.txt'), 'utf8')}`);
 if (noticeBlocks.length) {
   await writeFile(join(runtime, 'THIRD_PARTY_NOTICES.txt'), `This plugin bundles the following packages.\n\n${[...new Set(noticeBlocks)].join('\n----------------------------------------\n\n')}`);
 }

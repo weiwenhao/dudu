@@ -1,20 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { flatten, SIZES, withEmptyGroups } from './flatten.js';
 import { GroupBar, SubGroupBar } from './groups.jsx';
 import { IssueRow } from './IssueRow.jsx';
-import { isTyping } from '../lib/typing.js';
+import { useIssueShortcuts } from './use-issue-shortcuts.js';
 
 
 /**
  * The rows of a view in one virtualized column, flat or grouped (a bar for each group, a line for each sub-group). Only the
  * visible rows are in the DOM, so tens of thousands of issues do not slow it. S opens the status menu of the row under the mouse.
  */
-export function IssueList({ list, view, tab, show, collapsed, onToggleGroup, onAddToGroup, selected, onSelect, onStatus, onOpen }) {
+export function IssueList({ list, view, tab, show, collapsed, onToggleGroup, onAddToGroup, selected, onSelect, onStatus, onOpen,
+  request, onChange, onAssign, onDelete, onOpenSession, onPreviewSession }) {
   const scroller = useRef(null);
   const now = useMemo(() => Date.now(), [list.items, list.groups]); // eslint-disable-line react-hooks/exhaustive-deps -- recomputed when the data is
   const [menuFor, setMenuFor] = useState(null);
-  const hovered = useRef(null);
+  const hover = useIssueShortcuts();
   const field = view.group ?? (view.layout === 'board' ? 'status' : null);
   const entries = useMemo(() => {
     if (!field || !list.groups) return list.items.map((issue) => ({ type: 'issue', id: `i:${issue.id}`, issue }));
@@ -35,17 +36,6 @@ export function IssueList({ list, view, tab, show, collapsed, onToggleGroup, onA
     for (const row of visible) if (entries[row.index]?.type === 'more') loadMoreIn(entries[row.index].path);
   }, [field, hasMore, last, entries, visible, loadMore, loadMoreIn]);
 
-  useEffect(() => {
-    const onKey = (event) => {
-      if (event.key.toLowerCase() !== 's' || event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
-      if (hovered.current == null) return;
-      event.preventDefault();
-      setMenuFor(hovered.current);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-  const hover = useCallback((id) => { hovered.current = id; }, []);
   const ids = useMemo(() => entries.filter((entry) => entry.type === 'issue').map((entry) => entry.issue.id), [entries]);
   const total = ids.length;
   return (
@@ -64,6 +54,7 @@ export function IssueList({ list, view, tab, show, collapsed, onToggleGroup, onA
               <IssueRow
                 issue={issue} now={now} show={show} menuOpen={menuFor === issue.id} onHover={hover} onStatus={onStatus} onOpen={() => onOpen(issue.id, ids)}
                 selected={selected.has(issue.id)} selecting={selected.size > 0} onSelect={(id, shift) => onSelect(id, shift, ids)}
+                request={request} onChange={onChange} onAssign={onAssign} onDelete={onDelete} onOpenSession={onOpenSession} onPreviewSession={onPreviewSession}
                 onMenuOpenChange={(open) => setMenuFor(open ? issue.id : (current) => (current === issue.id ? null : current))}
               />
             </div>

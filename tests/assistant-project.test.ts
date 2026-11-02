@@ -64,7 +64,7 @@ test('a new project folder gets the seven template files, never overwrites what 
   // CONNECTORS.md shows the format and registers nothing: no heading, no comment line at the start of a line, nothing enabled.
   const connectors = TEMPLATES['CONNECTORS.md'];
   assert.ok(!/^## /m.test(connectors) && !/^<!--/m.test(connectors) && !/^```/m.test(connectors));
-  assert.match(connectors, /enabled: false/);
+  assert.match(connectors, /Prompt/);
   assert.doesNotMatch(connectors, /enabled: true/);
   assert.ok(connectors.split('\n').filter((line) => /^\s*(##|<!--|```)/.test(line)).every((line) => line.startsWith('    ')), 'the example is indented');
 

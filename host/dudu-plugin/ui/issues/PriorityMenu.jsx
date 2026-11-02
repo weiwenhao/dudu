@@ -13,20 +13,31 @@ export function PriorityMenu({ priority, onSelect, children }) {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent className="w-[232px]" align="start" aria-label={T.fields.priority}>
-        <Command>
+        <PriorityChoices priority={priority} onSelect={(id) => { setOpen(false); onSelect(id); }} />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+export function PriorityChoices({ priority, onSelect }) {
+  return <Command defaultValue={T.priority[priority]} onKeyDown={(event) => {
+    if (!event.nativeEvent.isComposing && !event.target.value && /^[0-4]$/.test(event.key)) {
+      event.preventDefault(); onSelect(['none', 'urgent', 'high', 'medium', 'low'][Number(event.key)]);
+    }
+  }}>
           <CommandInput placeholder={T.detail.setPriority} aria-label={T.detail.setPriority} />
           <CommandSeparator />
           <CommandList>
             {PRIORITY_ORDER.map((id) => (
-              <CommandItem key={id} value={T.priority[id]} onSelect={() => { setOpen(false); onSelect(id); }}>
+              <CommandItem key={id} value={T.priority[id]} onSelect={() => onSelect(id)}>
                 <PriorityIcon priority={id} />
                 <span>{T.priority[id]}</span>
-                {id === priority && <Check className="ml-auto" aria-hidden="true" />}
+                <span className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
+                  {id === priority && <Check aria-hidden="true" />}
+                  <kbd>{['none', 'urgent', 'high', 'medium', 'low'].indexOf(id)}</kbd>
+                </span>
               </CommandItem>
             ))}
           </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
+        </Command>;
 }

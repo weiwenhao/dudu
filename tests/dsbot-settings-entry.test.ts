@@ -321,7 +321,7 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
   // The 嘟嘟 panel: an entry among DSH's global panels and a page for it, from a plugin of its own that needs the layout,
   // the workspace navigation and the sessions service.
   const sessionsUi = childPlugins[1];
-  assert.deepEqual([...(sessionsUi.inject as string[])], ['slots', 'layout', 'uiWorkspace', 'sessions']);
+  assert.deepEqual([...(sessionsUi.inject as string[])], ['slots', 'layout', 'uiWorkspace', 'sessions', 'remote', 'remote.session', 'modelDirectories']);
   const panel: Array<{ options: Record<string, unknown>; component: Function }> = [];
   const panelInjections: Array<() => void> = [];
   const created: unknown[] = [];
@@ -335,7 +335,7 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
       inject(_slot: string, activate: () => void) { panelInjections.push(activate); },
       register(options: Record<string, unknown>, component: Function) { panel.push({ options, component }); return () => {}; },
     },
-    // A DSH that announces a created session a moment later: the list gains it only after it was asked to refresh.
+    // The host has already stored the imported conversation; refresh discovers its original identity.
     sessions: {
       create: async (options: unknown) => { created.push(options); return 'session-new'; },
       refresh: async () => { listState.ids.push('session-new'); for (const listener of listeners) listener(); },
@@ -349,7 +349,10 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
   const page = panel.find((item) => item.options.name === 'main');
   assert.deepEqual([entry?.options.id, (entry?.options.label as () => string)(), entry?.options.order], ['dudu', '嘟嘟', 20]);
   assert.equal(page?.options.key, 'dudu', 'the page is the one the entry selects');
-  const glyph = entry?.component({ size: 16 }) as ElementNode;
+  const icon = entry?.component({ size: 16 }) as ElementNode;
+  const wrapped = typeof icon.type === 'function' ? icon.type(icon.props) : icon;
+  const nested = wrapped.props?.children;
+  const glyph = (nested && typeof nested.type === 'function' ? nested.type(nested.props) : wrapped) as ElementNode;
   assert.equal(glyph.type, 'img');
   assert.match(String(glyph.props.src), /^data:image\/png;base64,/);
   assert.deepEqual([glyph.props.width, glyph.props.height], [16, 16]);
@@ -404,13 +407,13 @@ test('dsbot registers its existing controls as a DSH Settings section', async ()
   (search?.props.onChange as (event: unknown) => void)({ target: { value: '' } });
   pageNodes = descendants(render());
 
-  // Loading writes the session on the host, then DSH's own create adopts it before it is opened.
+  // Loading writes the session on the host, then refreshing discovers it without creating an extra conversation.
   const load = pageNodes.find((node) => node.type === 'button' && JSON.stringify(node.props.children) === '["加载到 DSH"]');
   (load?.props.onClick as (event: unknown) => void)({ stopPropagation() {} });
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.deepEqual(requestBodies.find((entry) => entry.path === '/api/dudu/sessions/load')?.body, { provider: 'claude', id: 'c1' });
   // (what the page handed over was made inside the page's own realm, so compare it as plain data)
-  assert.deepEqual(JSON.parse(JSON.stringify(created)), [{ sessionId: 'session-new', workspaceId: 'ws-1' }]);
+  assert.deepEqual(created, [], 'opening a stored conversation never calls session.create');
   assert.deepEqual(JSON.parse(JSON.stringify(opened)), ['session-new']);
-  assert.deepEqual(JSON.parse(JSON.stringify(selected)), [null], 'the panel is left for the conversation');
+  assert.deepEqual(JSON.parse(JSON.stringify(selected)), ['dudu', null], 'the dashboard opens first, then a chosen session');
 });

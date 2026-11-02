@@ -1,8 +1,9 @@
 import { T } from '../strings.js';
+import { intlLocale } from '../lib/locale.mjs';
 
 const DAY = 86400000;
-const withoutYear = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
-const withYear = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+const withoutYear = { format: (ms) => new Intl.DateTimeFormat(intlLocale(), { month: 'short', day: 'numeric' }).format(ms) };
+const withYear = { format: (ms) => new Intl.DateTimeFormat(intlLocale(), { month: 'short', day: 'numeric', year: 'numeric' }).format(ms) };
 const startOfDay = (ms) => { const date = new Date(ms); date.setHours(0, 0, 0, 0); return date.getTime(); };
 
 /**
