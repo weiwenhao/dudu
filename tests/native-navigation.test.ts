@@ -20,6 +20,9 @@ const icon = {
   ],
 };
 
+/** What DSH reported: the list without what 嘟嘟 adds itself (ids that start with `dudu.`). */
+const reported = (items: any[]) => items.filter((item) => !item.id.startsWith('dudu.'));
+
 const snapshot = {
   schemaVersion: NAVIGATION_SCHEMA_VERSION,
   sidebar: [
@@ -217,15 +220,16 @@ test('an icon the browser drew is a small real PNG, and nothing else passes as o
 test('the store starts empty, keeps lists a snapshot leaves out, clears ones it sends empty, and ignores repeats', async () => {
   let clock = 1000;
   const store = await createNavigationStore({ now: () => clock });
-  assert.deepEqual(store.get(), {
-    schemaVersion: 1, available: false, updatedAt: 0, sidebar: [], views: [], settings: [],
-  });
+  const empty = store.get();
+  assert.deepEqual([empty.available, empty.updatedAt, empty.views], [false, 0, []]);
+  assert.deepEqual(reported(empty.sidebar), [], 'nothing of DSH\'s yet');
+  assert.deepEqual(reported(empty.settings), []);
 
   assert.equal(await store.ingest(snapshot), true);
   const first = store.get();
   assert.equal(first.available, true);
   assert.equal(first.updatedAt, 1000);
-  assert.equal(first.sidebar.length, 3);
+  assert.equal(reported(first.sidebar).length, 3);
 
   clock = 2000;
   assert.equal(await store.ingest(snapshot), false, 'an identical snapshot changes nothing');
@@ -235,8 +239,8 @@ test('the store starts empty, keeps lists a snapshot leaves out, clears ones it 
   const second = store.get();
   assert.equal(second.updatedAt, 2000);
   assert.deepEqual(second.views, []);
-  assert.equal(second.sidebar.length, 3, 'a list that is absent stays as it was');
-  assert.equal(second.settings.length, 2);
+  assert.equal(reported(second.sidebar).length, 3, 'a list that is absent stays as it was');
+  assert.equal(reported(second.settings).length, 2);
 
   await assert.rejects(store.ingest({ schemaVersion: 7 }), /Unsupported navigation snapshot/);
   await store.close();
@@ -282,7 +286,7 @@ test('the snapshot survives a restart and is routed again by the running plugin'
   const restored = reopened.get();
   assert.equal(restored.available, true);
   assert.equal(restored.updatedAt, 5000);
-  assert.deepEqual(restored.sidebar[0].open, { web: { page: 'plugins' } });
+  assert.deepEqual(reported(restored.sidebar)[0].open, { web: { page: 'plugins' } });
   await reopened.close();
 });
 
@@ -324,7 +328,7 @@ test('DSH reports its navigation to the plugin, which keeps only a bounded, vali
   const accepted = await post(JSON.stringify(snapshot));
   assert.equal(accepted.status, 200);
   assert.deepEqual(await accepted.json(), { changed: true });
-  assert.equal(control.navigation.get().sidebar.length, 3);
+  assert.equal(reported(control.navigation.get().sidebar).length, 3);
 
   const repeated = await post(JSON.stringify(snapshot));
   assert.deepEqual(await repeated.json(), { changed: false });
@@ -335,5 +339,26 @@ test('DSH reports its navigation to the plugin, which keeps only a bounded, vali
   assert.equal(notJSON.status, 400);
   const huge = await post(JSON.stringify({ schemaVersion: 1, sidebar: [{ id: 'a', title: 'x'.repeat(600 * 1024) }] }));
   assert.equal(huge.status, 400);
-  assert.equal(control.navigation.get().sidebar.length, 3, 'rejected input leaves the snapshot alone');
+  assert.equal(reported(control.navigation.get().sidebar).length, 3, 'rejected input leaves the snapshot alone');
+});
+
+test('the plugin adds native primary routes and grouped settings ahead of registry entries', async () => {
+  const store = await createNavigationStore({ now: () => 1 });
+  await store.ingest(snapshot);
+  const { sidebar, settings } = store.get();
+  assert.deepEqual(sidebar.filter((item: any) => item.group === 'primary').map((item: any) => [item.id, item.open.native]), [
+    ['dudu.conversation', 'assistant'], ['dudu.board', 'board'], ['dudu.collector', 'collector'],
+  ]);
+  assert.deepEqual(sidebar.slice(3).map((item: any) => item.id), ['plugins', 'schedules', 'insight']);
+  assert.ok(sidebar.slice(1, 3).every((item: any) => sanitizeIcon(item.icon) !== undefined), 'native route icons pass the same validation as registry icons');
+  const own = settings.filter((item: any) => item.group === 'dudu');
+  assert.deepEqual(own.map((item: any) => item.id), ['dudu.general', 'dudu.statuses', 'dudu.connectors', 'dudu.collectors', 'dudu.rules', 'dudu.memory', 'dudu.skills', 'dudu.dsh']);
+  assert.deepEqual(own.slice(0, 7).map((item: any) => item.open), ['general', 'statuses', 'connectors', 'collectors', 'rules', 'memory', 'skills'].map((section) => ({
+    native: 'dudu-settings', target: section, web: { page: 'dudu', target: section },
+  })));
+  assert.deepEqual(own[7].open, { native: 'dsh-settings' });
+  assert.ok(own.every((item: any) => sanitizeIcon(item.icon) !== undefined), 'every icon is drawable');
+  assert.ok(settings.slice(0, own.length).every((item: any) => item.group === 'dudu'), 'ahead of DSH\'s');
+  assert.ok(reported(settings).every((item: any) => item.group === undefined), 'what DSH reports has no group');
+  await store.close();
 });

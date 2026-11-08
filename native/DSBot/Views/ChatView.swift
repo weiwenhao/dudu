@@ -12,10 +12,9 @@ struct ChatView: View {
     @State private var speechCapture = NativeSpeechCapture()
     @State private var voicePress = VoicePressState()
     @State private var draft = ""
-    @State private var draftRevision = 0
     @State private var previousDraftTarget: DraftTarget?
     @State private var preparedPhotos: [PreparedPhotoAttachment] = []
-    @State private var sendingPhotoIDs: Set<String> = []
+    @State private var failedAttachments: [DraftTarget: [SubmittedComposerAttachments]] = [:]
     @State private var compressedPhotoBytes = 0
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var isPhotoPickerPresented = false
@@ -26,6 +25,7 @@ struct ChatView: View {
     @State private var awayFromLatest = false
     @State private var latestJump = 0
     @State private var historyFailure: String?
+    @State private var historyRequestID: UUID?
     @State private var isVoiceMode = false
     /// The open "+" sheet. The page rides along in the item so presentation and page cannot disagree.
     @State private var attachmentSheetRequest: AttachmentSheetRequest?
@@ -40,13 +40,21 @@ struct ChatView: View {
     @State private var preparedFiles: [UploadedFile] = []
     @State private var uploadingFileName: String?
     @State private var chromeHeight: CGFloat = 0
+    @State private var composerHeight: CGFloat = DSBotLayout.composerHeight
     @State private var taskOverlayHeight: CGFloat = 0
     @State private var goalOverlayHeight: CGFloat = 0
     @State private var queueOverlayHeight: CGFloat = 0
     @State private var queueEditor: QueuedMessage?
+    @State private var queueEditorError: String?
+    @State private var queueUpdate: QueueUpdate?
     @State private var contextPicker: ContextPicker?
     @State private var keyboardVisible = false
     @State private var composerFocused = false
+    @StateObject private var assistantCompletion = AssistantCompletions()
+    @State private var editorSelection: ComposerSelection?
+    @State private var assistantContextOn = false
+    /// Only Dudu's pending files need their bytes again: @issue stages them on that issue's session.
+    @State private var assistantFileData: [String: Data] = [:]
 
     var body: some View {
         messageHistory
@@ -80,11 +88,14 @@ struct ChatView: View {
             }
             .sheet(item: $queueEditor) { message in
                 QueuedMessageEditor(
-                    message: message, isSaving: store.updatingQueueItemID != nil,
+                    message: message, isSaving: queueUpdate?.action == "edit",
+                    error: queueEditorError,
                     onSave: { updateQueue(message, action: "edit", text: $0) },
                     onCancel: { queueEditor = nil }
                 )
                 .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(DSBotStyle.canvas)
             }
             .onChange(of: store.queuedMessages) { _, messages in
                 if let editing = queueEditor, !messages.contains(where: { $0.id == editing.id }) {
@@ -118,6 +129,7 @@ struct ChatView: View {
             .accessibilityHidden(isOverlayOpen)
         }
         .onChange(of: isVoiceMode) { _, isOn in
+            if isOn { assistantCompletion.close() }
             // Build the recognizer now, off the main thread, so the first press does not wait for it.
             if isOn { speechCapture.prepare() }
         }
@@ -140,12 +152,23 @@ struct ChatView: View {
             }
         }
         .onChange(of: draftTarget) { _, _ in
+            assistantCompletion.reset()
+            editorSelection = nil
+            assistantContextOn = false
+            resetComposerAttachments()
             restoreDraft()
+            if let target = draftTarget, let attachments = failedAttachments.removeValue(forKey: target) {
+                for submitted in attachments.reversed() { restoreSubmittedAttachments(submitted) }
+            }
+            queueUpdate = nil
+            queueEditorError = nil
             followsLatestMessage = true
             awayFromLatest = false
             historyFailure = nil
+            historyRequestID = nil
         }
         .onDisappear {
+            assistantCompletion.close()
             saveDraft()
             cancelVoiceCapture()
             speechCapture.onRecognition = nil
@@ -170,7 +193,7 @@ struct ChatView: View {
                       sessionID == store.selectedSession?.id,
                       computerID == store.activeComputer?.id else { return }
                 preparedPhotos.append(contentsOf: result.photos)
-                compressedPhotoBytes = result.totalBytes
+                compressedPhotoBytes = preparedPhotos.reduce(0) { $0 + $1.compressedBytes }
                 if result.rejectedCount > 0 {
                     photoNotice = "部分照片未添加"
                 }
@@ -181,35 +204,6 @@ struct ChatView: View {
             guard phase != .active else { return }
             cancelVoiceCapture()
         }
-        .onChange(of: store.selectedSession?.id) { _, _ in
-            goalEditor = nil
-            queueEditor = nil
-            photoLoadGeneration += 1
-            preparedPhotos = []
-            preparedFiles = []
-            uploadingFileName = nil
-            composerIntent = .message
-            sendingPhotoIDs = []
-            compressedPhotoBytes = 0
-            photoNotice = nil
-            selectedPhotos = []
-            composerFocused = false
-            cancelVoiceCapture()
-        }
-        .onChange(of: store.activeComputer?.id) { _, _ in
-            goalEditor = nil
-            queueEditor = nil
-            photoLoadGeneration += 1
-            preparedPhotos = []
-            preparedFiles = []
-            uploadingFileName = nil
-            sendingPhotoIDs = []
-            compressedPhotoBytes = 0
-            photoNotice = nil
-            selectedPhotos = []
-            composerFocused = false
-            cancelVoiceCapture()
-        }
         .onChange(of: composerFocused) { _, focused in
             DSBotLog.record(focused ? "keyboard.focus" : "keyboard.dismiss")
         }
@@ -218,13 +212,14 @@ struct ChatView: View {
         }
         .onChange(of: isOverlayOpen) { _, isOpen in
             guard isOpen else { return }
+            assistantCompletion.close()
             composerFocused = false
             cancelVoiceCapture()
         }
     }
 
     private var hasConversationContent: Bool {
-        store.transcript != nil ? !store.transcriptRows.isEmpty : !store.messages.isEmpty
+        !store.displayedTranscriptRows.isEmpty || !store.messages.isEmpty
     }
 
     private var sessionApprovals: [Approval] {
@@ -241,7 +236,7 @@ struct ChatView: View {
     private var conversationAccess: ConversationAccess? {
         guard let target = draftTarget else { return nil }
         return ConversationAccess(
-            target: target, connected: store.status == .connected,
+            target: target, connected: store.canReadConversation,
             request: { method, parameters in
                 try await store.conversationRequest(method, parameters: parameters, target: target)
             },
@@ -262,7 +257,6 @@ struct ChatView: View {
     private func updateDraft(_ value: String) {
         guard draft != value else { return }
         draft = value
-        draftRevision &+= 1
         saveDraft()
     }
 
@@ -272,7 +266,6 @@ struct ChatView: View {
             store.messageDrafts[previousDraftTarget] = draft.isEmpty ? nil : draft
         }
         previousDraftTarget = draftTarget
-        draftRevision &+= 1
         updateDraft(draftTarget.flatMap { store.messageDrafts[$0] } ?? "")
     }
 
@@ -281,10 +274,35 @@ struct ChatView: View {
         store.messageDrafts[previousDraftTarget] = draft.isEmpty ? nil : draft
     }
 
+    private func resetComposerAttachments() {
+        goalEditor = nil
+        queueEditor = nil
+        photoLoadGeneration += 1
+        preparedPhotos = []
+        preparedFiles = []
+        assistantFileData = [:]
+        uploadingFileName = nil
+        composerIntent = .message
+        compressedPhotoBytes = 0
+        photoNotice = nil
+        selectedPhotos = []
+        composerFocused = false
+        cancelVoiceCapture()
+    }
+
+    private func restoreSubmittedAttachments(_ submitted: SubmittedComposerAttachments) {
+        let photoIDs = Set(preparedPhotos.map(\.id))
+        let fileIDs = Set(preparedFiles.map(\.id))
+        preparedPhotos.insert(contentsOf: submitted.photos.filter { !photoIDs.contains($0.id) }, at: 0)
+        preparedFiles.insert(contentsOf: submitted.files.filter { !fileIDs.contains($0.id) }, at: 0)
+        assistantFileData.merge(submitted.fileData) { current, _ in current }
+        compressedPhotoBytes = preparedPhotos.reduce(0) { $0 + $1.compressedBytes }
+    }
+
     private var messageHistory: some View {
         let items = historyItems
         let target = draftTarget
-        let canLoadAttachments = store.status == .connected && !store.isLoadingSession
+        let canLoadAttachments = store.canReadConversation
         let emptyStateVisible = showsEmptyState
         let loadingStateVisible = showsLoadingState
         let access = conversationAccess
@@ -294,7 +312,10 @@ struct ChatView: View {
                 topInset: historyTopInset + 7, bottomInset: chromeHeight + 11,
                 canLoadAttachments: canLoadAttachments, keyboardVisible: keyboardVisible,
                 isCovered: isOverlayOpen, followsLatest: $followsLatestMessage,
-                awayFromLatest: $awayFromLatest, jumpToken: latestJump
+                awayFromLatest: $awayFromLatest, jumpToken: latestJump,
+                onReachedStart: {
+                    if let target { loadEarlierHistory(target: target) }
+                }
             ) { item in
                 historyContent(item, target: target, canLoadAttachments: canLoadAttachments)
                     .environment(\.conversationAccess, access)
@@ -323,24 +344,25 @@ struct ChatView: View {
 
     private var historyItems: [ConversationHistoryItem] {
         guard hasConversationContent else { return [] }
-        guard store.transcript != nil else { return store.messages.map(ConversationHistoryItem.message) }
-        var items: [ConversationHistoryItem] = [
-            .controls(
-                hasEarlier: store.transcript?.hasMore == true,
-                isLoading: store.historyLoadTarget == draftTarget && draftTarget != nil,
-                failure: historyFailure
-            )
-        ]
-        for row in store.transcriptRows {
-            items.append(.transcript(row, store.transcriptTimeSeparators[row.id]))
-            if case let .turn(turn) = row, turn.outcome == .running {
-                items.append(.running(turnID: turn.id, startedAt: turn.startedAt))
-            }
+        guard store.transcript != nil else {
+            return store.messages.map(ConversationHistoryItem.message) +
+                ConversationHistoryItem.transcriptItems(store.displayedTranscriptRows)
         }
-        items += sessionApprovals.map { .approval($0, isResponding: store.isRespondingApprovals.contains($0.id)) }
+        var items: [ConversationHistoryItem] = []
+        let isLoadingHistory = historyRequestID != nil
+            || (store.historyLoadTarget == draftTarget && draftTarget != nil)
+        if isLoadingHistory || historyFailure != nil {
+            items.append(.controls(isLoading: isLoadingHistory, failure: historyFailure))
+        }
+        var trailing: [ConversationHistoryItem] = sessionApprovals.map {
+            .approval($0, isResponding: store.isRespondingApprovals.contains($0.id))
+        }
         if draftTarget != nil {
-            items += store.questions.map(ConversationHistoryItem.questions)
+            trailing += store.questions.map(ConversationHistoryItem.questions)
         }
+        items += ConversationHistoryItem.transcriptItems(
+            store.displayedTranscriptRows, timeSeparators: store.transcriptTimeSeparators, trailing: trailing
+        )
         return items
     }
 
@@ -362,29 +384,20 @@ struct ChatView: View {
                 .padding(.top, 2)
         case let .message(message):
             ChatMessageRow(message: message).equatable()
-        case let .controls(hasEarlier, isLoading, failure):
+        case let .controls(isLoading, failure):
             VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    if hasEarlier, let target {
-                        Button {
-                            loadEarlierHistory(target: target)
-                        } label: {
-                            HStack(spacing: 6) {
-                                if isLoading { ProgressView().controlSize(.small) }
-                                else { Text("加载更早") }
-                            }
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
-                        }
-                        .disabled(isLoading || !canLoadAttachments)
-                        .accessibilityIdentifier("chat.history.older")
-                    }
-                    Spacer()
-                    ConversationPerformanceButton()
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity, minHeight: 28)
+                        .accessibilityLabel("加载更早")
+                        .accessibilityIdentifier("chat.history.loading")
                 }
-                .font(.system(size: 13))
-                .foregroundStyle(DSBotStyle.chatTertiary)
-                if let failure { ConversationFailureView(message: failure) }
+                if let failure {
+                    ConversationFailureView(message: failure) {
+                        if let target { loadEarlierHistory(target: target) }
+                    }
+                }
             }
         case let .approval(approval, isResponding):
             PlanReviewCard(
@@ -402,10 +415,15 @@ struct ChatView: View {
     }
 
     private func loadEarlierHistory(target: DraftTarget) {
-        guard store.historyLoadTarget != target else { return }
+        guard historyRequestID == nil, store.historyLoadTarget != target,
+              store.transcript?.hasMore == true,
+              store.status == .connected, !store.isLoadingSession else { return }
+        let requestID = UUID()
+        historyRequestID = requestID
         followsLatestMessage = false
         historyFailure = nil
         Task { @MainActor in
+            defer { if historyRequestID == requestID { historyRequestID = nil } }
             do {
                 try await store.loadEarlierHistory(target: target)
             } catch {
@@ -523,10 +541,13 @@ struct ChatView: View {
                     .offset(y: -queueOverlayHeight)
                 queuedMessagesPanel
                 contextChips
+                if assistantCompletion.query != nil, !isVoiceMode, !isOverlayOpen {
+                    AssistantSuggestions(completion: assistantCompletion, onSelect: chooseAssistantCompletion)
+                }
                 composerCapsule
             }
             .background {
-                if store.goal != nil || !store.queuedMessages.isEmpty {
+                if store.goal != nil || !store.displayedQueuedMessages.isEmpty {
                     DSBotPanelBackdrop()
                         .padding(.top, -goalOverlayHeight - queueOverlayHeight)
                         .animation(.easeOut(duration: 0.18), value: goalOverlayHeight)
@@ -546,7 +567,7 @@ struct ChatView: View {
             if abs(chromeHeight - height) > 0.5 { chromeHeight = height }
         }
         .background(alignment: .bottom) {
-            bottomEdge(height: DSBotLayout.composerHeight + gap + 8)
+            bottomEdge(height: composerHeight + gap + 8)
         }
     }
 
@@ -616,13 +637,14 @@ struct ChatView: View {
 
     @ViewBuilder
     private var queuedMessagesPanel: some View {
-        if !store.queuedMessages.isEmpty {
+        if !store.displayedQueuedMessages.isEmpty {
             QueuedMessagesPanel(
-                messages: store.queuedMessages,
+                messages: store.displayedQueuedMessages,
                 isRunning: store.selectedSession?.status == "running",
                 isConnected: store.status == .connected,
-                busyItemID: store.updatingQueueItemID,
-                onEdit: { composerFocused = false; queueEditor = $0 },
+                busyItemID: queueUpdate?.itemID ?? store.updatingQueueItemID,
+                busyAction: queueUpdate?.action,
+                onEdit: { composerFocused = false; queueEditorError = nil; queueEditor = $0 },
                 onRemove: { updateQueue($0, action: "remove") },
                 onSteer: { updateQueue($0, action: "steer") },
                 onOverlayHeightChange: { queueOverlayHeight = $0 }
@@ -631,8 +653,13 @@ struct ChatView: View {
     }
 
     private func updateQueue(_ message: QueuedMessage, action: String, text: String? = nil) {
+        guard queueUpdate == nil else { return }
         let target = draftTarget
+        let update = QueueUpdate(itemID: message.id, action: action)
+        queueUpdate = update
+        queueEditorError = nil
         Task {
+            defer { if queueUpdate?.id == update.id { queueUpdate = nil } }
             do {
                 try await store.updateQueuedMessage(message, action: action, text: text)
                 guard target == draftTarget else { return }
@@ -641,9 +668,19 @@ struct ChatView: View {
                 guard target == draftTarget else { return }
                 let failure = action == "edit" ? "编辑失败：这条消息可能已经开始发送。"
                     : action == "remove" ? "删除失败：这条消息可能已经开始发送。" : "插话发送失败，请重试。"
-                commandResult = DSBotToastMessage(text: failure, kind: .error)
+                if action == "edit", queueEditor?.id == message.id {
+                    queueEditorError = failure
+                } else {
+                    commandResult = DSBotToastMessage(text: failure, kind: .error)
+                }
             }
         }
+    }
+
+    private struct QueueUpdate {
+        let id = UUID()
+        let itemID: String
+        let action: String
     }
 
     // MARK: Empty conversation and keyboard
@@ -674,54 +711,76 @@ struct ChatView: View {
         // Project and mode are chosen once, on the new-task page. A conversation that has begun has them
         // fixed, so the row is gone.
         if store.isChoosingWorkspace || (store.selectedSession != nil && store.isBlankSession && hasContextChips) {
-            // The row scrolls, with a soft fade at the edge, only when both names are long.
             ViewThatFits(in: .horizontal) {
-                contextChipRow
-                ScrollView(.horizontal, showsIndicators: false) { contextChipRow }
-                    .mask(
-                        LinearGradient(
-                            stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.93),
-                                    .init(color: .clear, location: 1)],
-                            startPoint: .leading, endPoint: .trailing
-                        )
-                    )
+                contextChipRow(compactMode: false)
+                    .fixedSize(horizontal: true, vertical: false)
+                contextChipRow(compactMode: true)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 2)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("context.chips")
         }
     }
 
-    /// DSH's two hero selectors: the workspace and the working mode (标准模式, 极简模式 ...).
-    private var contextChipRow: some View {
+    private func contextChipRow(compactMode: Bool) -> some View {
         HStack(spacing: 8) {
-            if let project = store.currentWorkspaceName ?? (store.isChoosingWorkspace ? "选择工作区" : nil) {
-                ContextChip(
-                    glyph: .folder, title: project, showsChevron: !store.workspaces.isEmpty,
-                    identifier: "context.project", maxTextWidth: 150
-                ) {
-                    composerFocused = false
-                    contextPicker = .project
-                }
-            }
-            if let preset = store.currentPreset {
-                let canChange = (store.isChoosingWorkspace || store.isBlankSession) && store.presets.count > 1
-                ContextChip(
-                    glyph: .mode, title: preset.name, showsChevron: canChange,
-                    identifier: "context.mode", maxTextWidth: 110
-                ) {
-                    if canChange {
-                        composerFocused = false
-                        contextPicker = .mode
-                    }
-                }
-            }
+            projectContextChip
+            providerContextChip
+                .layoutPriority(1)
             Spacer(minLength: 0)
+            modeContextChip(iconOnly: compactMode)
+                .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 2)
+    }
+
+    /// DSH's new-task selectors, in the existing native chip and sheet styles.
+    @ViewBuilder
+    private var projectContextChip: some View {
+        if let project = store.currentWorkspaceName ?? (store.isChoosingWorkspace ? "选择工作区" : nil) {
+            ContextChip(
+                glyph: store.currentWorkspaceName == nil ? .workspace : .workspaceOpen,
+                title: project, showsChevron: !store.workspaces.isEmpty,
+                identifier: "context.project", maxTextWidth: 150
+            ) {
+                composerFocused = false
+                contextPicker = .project
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func modeContextChip(iconOnly: Bool) -> some View {
+        if store.usesAgentPresets, let preset = store.currentPreset {
+            let canChange = (store.isChoosingWorkspace || store.isBlankSession) && store.presets.count > 1
+            ContextChip(
+                glyph: .mode, title: preset.name, showsChevron: canChange,
+                identifier: "context.mode", maxTextWidth: 110, iconOnly: iconOnly
+            ) {
+                if canChange {
+                    composerFocused = false
+                    contextPicker = .mode
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var providerContextChip: some View {
+        if let provider = store.currentProvider, store.providers.count > 1 {
+            ContextChip(
+                glyph: .model, title: provider.name, showsChevron: true,
+                identifier: "context.provider", maxTextWidth: 90, agent: provider.agent
+            ) {
+                composerFocused = false
+                contextPicker = .provider
+            }
+            .disabled(store.isChoosingProvider || store.isSending)
+        }
     }
 
     private var hasContextChips: Bool {
-        store.currentWorkspaceName != nil || store.currentPreset != nil
+        store.currentWorkspaceName != nil || (store.usesAgentPresets && store.currentPreset != nil) || store.currentProvider != nil
     }
 
     @ViewBuilder
@@ -734,10 +793,10 @@ struct ChatView: View {
                 )
             }
             ContextPickerSheet(
-                title: "项目", footnote: nil, rows: rows, emptyText: "暂无已登记的项目",
+                title: "项目", rows: rows, emptyText: "暂无已登记的项目",
                 identifierPrefix: "context.project."
             ) { chooseProject($0) }
-            .presentationDetents([.height(ContextPickerSheet.height(rows: rows.count, hasFootnote: false))])
+            .presentationDetents([.height(ContextPickerSheet.height(rows: rows.count))])
             .presentationDragIndicator(.hidden)
             .presentationBackground(ComposerAttachmentSheet.background)
         case .mode:
@@ -747,10 +806,26 @@ struct ChatView: View {
                 )
             }
             ContextPickerSheet(
-                title: "模式", footnote: "模式在会话开始前选择，之后不能更改。", rows: rows, emptyText: "暂无可选模式",
+                title: "模式", rows: rows, emptyText: "暂无可选模式",
                 identifierPrefix: "context.mode."
             ) { chooseMode($0) }
-            .presentationDetents([.height(ContextPickerSheet.height(rows: rows.count, hasFootnote: true) + 40)])
+            .presentationDetents([.height(ContextPickerSheet.height(rows: rows.count))])
+            .presentationDragIndicator(.hidden)
+            .presentationBackground(ComposerAttachmentSheet.background)
+        case .provider:
+            let rows = store.providers.map {
+                ContextPickerSheet.Row(
+                    id: $0.id, title: $0.name, subtitle: nil, isSelected: $0.id == store.currentProvider?.id,
+                    agent: $0.agent
+                )
+            }
+            ContextPickerSheet(
+                title: "供应商", rows: rows, emptyText: "", identifierPrefix: "context.provider."
+            ) { id in
+                contextPicker = nil
+                Task { await store.chooseProvider(id) }
+            }
+            .presentationDetents([.height(ContextPickerSheet.height(rows: rows.count))])
             .presentationDragIndicator(.hidden)
             .presentationBackground(ComposerAttachmentSheet.background)
         }
@@ -768,8 +843,9 @@ struct ChatView: View {
         // An empty conversation keeps its mode and is reused by the host when it can be.
         let blank = store.isBlankSession
         let session = store.selectedSession?.id
-        let preset = blank ? store.selectedPresetId : nil
-        Task { await store.createSession(workspaceId: workspaceId, agentPreset: preset, reusing: blank ? session : nil) }
+        let preset = blank && store.usesAgentPresets ? store.selectedPresetId : nil
+        let model = blank ? store.selectedModelId : nil
+        Task { await store.createSession(workspaceId: workspaceId, agentPreset: preset, reusing: blank ? session : nil, modelId: model) }
     }
 
     private func chooseMode(_ presetId: String) {
@@ -796,8 +872,8 @@ struct ChatView: View {
             || !preparedFiles.isEmpty
     }
 
-    /// One glass capsule shared with the toolbar buttons: "+" on the left, the text field (or the
-    /// hold-to-talk bar) in the middle and a single voice / keyboard / send control on the right.
+    /// One glass capsule shared with the toolbar buttons. A running session keeps input-mode switching
+    /// beside Send/Stop, so a primary action never prevents using the other input mode.
     @ViewBuilder
     private var composerCapsule: some View {
         if store.isChoosingWorkspace {
@@ -817,7 +893,7 @@ struct ChatView: View {
                 DSBotIcon(.plus, size: 24, strokeWidth: 1.5)
                     .foregroundStyle(DSBotStyle.ink.opacity(0.3))
                     .frame(width: DSBotLayout.composerHeight, height: DSBotLayout.composerHeight)
-                Text("选择一个工作区开始")
+                Text("选择工作区")
                     .font(.system(size: 16))
                     .foregroundStyle(DSBotStyle.muted)
                 Spacer(minLength: 0)
@@ -832,7 +908,7 @@ struct ChatView: View {
                 .strokeBorder(DSBotStyle.chatDivider, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
                 .allowsHitTesting(false)
         }
-        .accessibilityLabel("选择一个工作区开始")
+        .accessibilityLabel("选择工作区")
         .accessibilityIdentifier("composer.inert")
     }
 
@@ -851,11 +927,12 @@ struct ChatView: View {
                     onRemoveFile: { file in
                         DSBotLog.record("files.remove")
                         preparedFiles.removeAll { $0.id == file.id }
+                        assistantFileData.removeValue(forKey: file.id)
                     }
                 )
                 .transition(.opacity)
             }
-            HStack(alignment: .bottom, spacing: 0) {
+            ComposerLayout(hasAttachments: hasAttachmentTiles, isVoiceMode: isVoiceMode) {
                 plusButton
                 if isVoiceMode {
                     holdToTalkBar
@@ -866,10 +943,13 @@ struct ChatView: View {
             }
             .frame(minHeight: DSBotLayout.composerHeight)
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+            if abs(composerHeight - height) > 0.5 { composerHeight = height }
+        }
         .background {
             Color.clear
                 .dsbotGlass(in: RoundedRectangle(
-                    cornerRadius: hasAttachmentTiles ? 28 : DSBotLayout.composerHeight / 2, style: .continuous
+                    cornerRadius: DSBotLayout.composerCornerRadius, style: .continuous
                 ))
                 .allowsHitTesting(false)
         }
@@ -885,9 +965,12 @@ struct ChatView: View {
                     onCancelled: cancelVoiceCapture
                 )
                 .frame(height: DSBotLayout.composerHeight)
-                .padding(.horizontal, DSBotLayout.composerHeight)
+                .padding(.leading, DSBotLayout.composerHeight)
+                .padding(.trailing, trailingControlWidth)
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("composer.container")
     }
 
     private var plusButton: some View {
@@ -907,6 +990,9 @@ struct ChatView: View {
     }
 
     private var placeholder: String {
+        if store.isAssistantConversation, assistantContextOn {
+            return store.assistantPageContext?.label ?? "Dudu"
+        }
         switch composerIntent {
         case .goal: return "输入目标，智能体将持续执行"
         case .message: return store.planMode ? "描述你的任务以生成计划" : "发消息"
@@ -924,18 +1010,72 @@ struct ChatView: View {
                     Text("/目标")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(DSBotStyle.blue)
-                        .padding(.vertical, 12.5)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("目标指令，点按取消")
                 .accessibilityIdentifier("composer.goal.token")
             }
-            ComposerTextView(text: draftBinding, isFocused: $composerFocused, placeholder: placeholder)
+            if store.isAssistantConversation, assistantContextOn {
+                Button {
+                    assistantContextOn = false
+                } label: {
+                    Text("上下文").font(.system(size: 16)).foregroundStyle(DSBotStyle.blue)
+                }
+                .buttonStyle(.plain)
+            }
+            ComposerTextView(
+                text: draftBinding, isFocused: $composerFocused, placeholder: placeholder,
+                selectionRequest: editorSelection,
+                highlights: store.isAssistantConversation ? AssistantCompletion.highlights(draft, skills: assistantCompletion.skills) : [],
+                completionActive: assistantCompletion.query != nil,
+                onEditingChange: { edit in
+                    guard store.isAssistantConversation else { return }
+                    assistantCompletion.inspect(edit, store: store,
+                                                enabled: !isVoiceMode && !isOverlayOpen && composerIntent == .message)
+                },
+                onCompletionKey: handleAssistantCompletionKey,
+                onBackspaceAtStart: {
+                    guard assistantContextOn else { return false }
+                    assistantContextOn = false
+                    return true
+                },
+                onTapEditor: { assistantCompletion.reopen() }
+            )
                 .id(draftTarget)
         }
         .padding(.leading, 1)
+        .padding(.vertical, 12.5)
         .frame(minHeight: DSBotLayout.composerHeight)
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded { composerFocused = true })
+    }
+
+    private func chooseAssistantCompletion(_ item: AssistantCompletions.Candidate) {
+        guard let (text, range) = assistantCompletion.choose(item, in: draft) else { return }
+        updateDraft(text)
+        editorSelection = ComposerSelection(range: range)
+        composerFocused = true
+    }
+
+    private func handleAssistantCompletionKey(_ key: String) -> Bool {
+        guard assistantCompletion.query != nil else { return false }
+        if key == UIKeyCommand.inputEscape { assistantCompletion.close(); return true }
+        let count = assistantCompletion.candidates.count
+        if key == UIKeyCommand.inputUpArrow || key == UIKeyCommand.inputDownArrow {
+            if count > 0 {
+                assistantCompletion.selected = (assistantCompletion.selected + (key == UIKeyCommand.inputUpArrow ? -1 : 1) + count) % count
+            }
+            return true
+        }
+        if key == "choose" {
+            if assistantCompletion.status == .loading { return true }
+            if count > 0 {
+                chooseAssistantCompletion(assistantCompletion.candidates[min(count - 1, assistantCompletion.selected)])
+                return true
+            }
+        }
+        return false
     }
 
     private var holdToTalkBar: some View {
@@ -947,16 +1087,51 @@ struct ChatView: View {
             .accessibilityHidden(true)
     }
 
-    @ViewBuilder
+    private var isProcessingMessage: Bool {
+        store.selectedSession?.status == "running" || store.isSending || isCompacting
+    }
+
+    private var showsInputModeToggle: Bool {
+        isProcessingMessage || isVoiceMode || !hasSendableContent
+    }
+
+    private var trailingControlWidth: CGFloat {
+        let controls = (showsInputModeToggle ? 1 : 0) + (hasSendableContent || isProcessingMessage ? 1 : 0)
+        return CGFloat(controls) * DSBotLayout.composerHeight
+    }
+
     private var trailingControl: some View {
-        if !hasSendableContent,
-           store.selectedSession?.status == "running" || store.isSending || isCompacting {
+        HStack(spacing: 0) {
+            if showsInputModeToggle { inputModeToggle }
+            primaryComposerAction
+        }
+        .frame(width: trailingControlWidth, height: DSBotLayout.composerHeight)
+    }
+
+    private var inputModeToggle: some View {
+        Button(action: isVoiceMode ? showKeyboard : showVoiceMode) {
+            Group {
+                if isVoiceMode { DSBotKeyboardGlyph(size: 25) }
+                else { DSBotVoiceGlyph(size: 25) }
+            }
+            .foregroundStyle(DSBotStyle.ink)
+            .frame(width: DSBotLayout.composerHeight, height: DSBotLayout.composerHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isVoiceMode ? "切换到键盘" : "语音输入")
+        .accessibilityIdentifier(isVoiceMode ? "composer.keyboard" : "composer.voice")
+    }
+
+    @ViewBuilder
+    private var primaryComposerAction: some View {
+        if !hasSendableContent, isProcessingMessage {
             Button {
                 DSBotLog.record("session.stop")
                 Task { await store.stopSession() }
             } label: {
                 Group {
-                    if store.isStoppingSession {
+                    if store.isStoppingSession || store.isSending {
                         ProgressView().tint(DSBotStyle.ink)
                     } else {
                         RoundedRectangle(cornerRadius: 3).fill(DSBotStyle.ink).frame(width: 14, height: 14)
@@ -968,24 +1143,15 @@ struct ChatView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(store.isStoppingSession || store.status != .connected)
+            .disabled(store.isStoppingSession || store.isSending || store.status != .connected)
             .accessibilityLabel("停止任务")
             .accessibilityIdentifier("composer.stop")
-        } else if isVoiceMode && !hasSendableContent {
-            Button(action: showKeyboard) {
-                DSBotKeyboardGlyph(size: 25)
-                    .foregroundStyle(DSBotStyle.ink)
-                    .frame(width: DSBotLayout.composerHeight, height: DSBotLayout.composerHeight)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("切换到键盘")
-            .accessibilityIdentifier("composer.keyboard")
         } else if hasSendableContent {
             Button(action: send) {
                 Group {
                     if store.isSending {
                         ProgressView().tint(DSBotStyle.ink)
+                            .accessibilityIdentifier("composer.sending")
                     } else {
                         DSBotIcon(.send, size: 20)
                     }
@@ -1000,19 +1166,9 @@ struct ChatView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(store.isSending || isGoalWorking || store.selectedSession == nil || uploadingFileName != nil)
+            .disabled(store.isSending || store.isChoosingProvider || isGoalWorking || store.selectedSession == nil || uploadingFileName != nil)
             .accessibilityLabel("发送")
             .accessibilityIdentifier("composer.send")
-        } else {
-            Button(action: showVoiceMode) {
-                DSBotVoiceGlyph(size: 25)
-                    .foregroundStyle(DSBotStyle.ink)
-                    .frame(width: DSBotLayout.composerHeight, height: DSBotLayout.composerHeight)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("语音输入")
-            .accessibilityIdentifier("composer.voice")
         }
     }
 
@@ -1050,13 +1206,19 @@ struct ChatView: View {
             onGoal: { dismissAttachmentSheet(then: .goal) },
             onPlan: { dismissAttachmentSheet(then: .plan) },
             onCompact: { dismissAttachmentSheet(then: .compact) },
+            contextOn: assistantContextOn,
+            contextAvailable: store.assistantPageContext != nil,
+            onContext: { dismissAttachmentSheet(then: .assistantContext) },
             onStopTask: { Task { await store.stopSession() } },
             onClose: { attachmentSheetRequest = nil }
         )
         .presentationDetents([.height(
             page == .modelSettings
-                ? ComposerAttachmentSheet.Layout.height(modelRows: store.models.count, effortRows: store.currentEfforts.count)
-                : ComposerAttachmentSheet.Layout.height(commandRows: rows)
+                ? ComposerAttachmentSheet.Layout.height(
+                    modelRows: store.currentProviderModels.count, effortRows: store.currentEfforts.count,
+                    modelGroups: store.currentModelGroups.count
+                )
+                : ComposerAttachmentSheet.Layout.height(commandRows: rows, primaryRows: store.isAssistantConversation ? 1 : 2)
         )])
         .presentationDragIndicator(.hidden)
         .presentationBackground(ComposerAttachmentSheet.background)
@@ -1086,6 +1248,9 @@ struct ChatView: View {
             runPlanCommand(argument: store.planMode ? "off" : nil)
         case .compact:
             compactConversation()
+        case .assistantContext:
+            assistantContextOn.toggle()
+            composerFocused = true
         }
     }
 
@@ -1117,13 +1282,13 @@ struct ChatView: View {
         goalEditorError = nil
         Task {
             let argument = "edit \(text)"
-            let outcome = await store.runCommand(.goal, argument: argument)
+            let outcome = await store.runCommand(.goal, argument: argument) { message in
+                guard draftTarget == request.target, goalEditor?.id == request.id else { return }
+                goalEditorError = message
+            }
             isGoalWorking = false
             guard draftTarget == request.target, goalEditor?.id == request.id else { return }
-            guard let outcome else {
-                goalEditorError = store.error
-                return
-            }
+            guard let outcome else { return }
             if outcome.isError {
                 goalEditorError = CommandText.message(for: .goal, argument: argument, outcome: outcome)
             } else {
@@ -1209,6 +1374,7 @@ struct ChatView: View {
                 guard sessionID == store.selectedSession?.id,
                       computerID == store.activeComputer?.id else { return }
                 preparedFiles.append(uploaded)
+                if store.isAssistantConversation { assistantFileData[uploaded.id] = picked.data }
                 uploadingFileName = nil
             } catch let error as FileAttachments.LoadError {
                 uploadingFileName = nil
@@ -1291,26 +1457,44 @@ struct ChatView: View {
               !store.isSending else { return }
 
         DSBotLog.record("message.send")
-        let submittedDraftRevision = draftRevision
-        let sentPhotoIDs = Set(preparedPhotos.map(\.id))
+        let target = DraftTarget(computerID: computerID, sessionID: sessionID)
+        let submittedText = draft
+        let submitted = SubmittedComposerAttachments(
+            photos: preparedPhotos, files: preparedFiles, fileData: assistantFileData
+        )
+        let forwarding = store.isAssistantConversation && text.hasPrefix("@")
+        if !forwarding { followSentMessage() }
+        assistantCompletion.close()
         let files = preparedFiles
         let sentFileIDs = Set(files.map(\.id))
-        sendingPhotoIDs.formUnion(sentPhotoIDs)
+        let recipient = assistantCompletion.recipient
+        let fileData = assistantFileData.filter { sentFileIDs.contains($0.key) }
+        let pageContext = assistantContextOn ? store.assistantPageContext : nil
         Task {
+            guard draftTarget == target else { return }
+            var handedOff = false
             do {
-                try await store.send(text: text, attachments: attachments, files: files)
-                sendingPhotoIDs.subtract(sentPhotoIDs)
-                guard store.selectedSession?.id == sessionID,
-                      store.activeComputer?.id == computerID else { return }
-                if draftRevision == submittedDraftRevision {
+                try await store.send(
+                    text: text, attachments: attachments, files: files,
+                    assistantRecipient: recipient, assistantFiles: fileData, assistantContext: pageContext,
+                    draftText: submittedText
+                ) {
+                    handedOff = true
                     updateDraft("")
+                    preparedPhotos = []
+                    preparedFiles = []
+                    assistantFileData = [:]
+                    compressedPhotoBytes = 0
+                    composerFocused = false
                 }
-                preparedPhotos.removeAll { sentPhotoIDs.contains($0.id) }
-                preparedFiles.removeAll { sentFileIDs.contains($0.id) }
-                compressedPhotoBytes = preparedPhotos.reduce(0) { $0 + $1.compressedBytes }
-                composerFocused = false
             } catch {
-                sendingPhotoIDs.subtract(sentPhotoIDs)
+                guard handedOff else { return }
+                if draftTarget == target, previousDraftTarget == target {
+                    updateDraft(store.messageDrafts[target] ?? "")
+                    restoreSubmittedAttachments(submitted)
+                } else {
+                    failedAttachments[target, default: []].append(submitted)
+                }
                 // DSBotStore exposes a safe, user-facing error in its published state.
             }
         }
@@ -1335,8 +1519,14 @@ struct ChatView: View {
                 preserveVoiceTranscriptAsDraft(text, sessionID: sessionID, computerID: computerID)
                 return
             }
-            try? await store.send(text: text)
+            followSentMessage()
+            try? await store.send(text: text, assistantContext: assistantContextOn ? store.assistantPageContext : nil)
         }
+    }
+
+    private func followSentMessage() {
+        followsLatestMessage = true
+        latestJump &+= 1
     }
 
     private func preserveVoiceTranscriptAsDraft(
@@ -1387,6 +1577,7 @@ struct ChatView: View {
         }
         if arguments.contains("-dsbot-review-project-picker") { contextPicker = .project }
         if arguments.contains("-dsbot-review-mode-picker") { contextPicker = .mode }
+        if arguments.contains("-dsbot-review-provider-picker") { contextPicker = .provider }
         if arguments.contains("-dsbot-review-typing-sheet-goal") {
             // Typing first, then "+" (which drops focus while the sheet rises), then 目标.
             composerFocused = true
@@ -1446,7 +1637,7 @@ struct ChatView: View {
 }
 
 private enum PendingSheetAction {
-    case photos, files, goal, plan, compact
+    case photos, files, goal, plan, compact, assistantContext
 }
 
 
@@ -1465,6 +1656,12 @@ private struct GoalEditorRequest: Identifiable {
     let goalID: String
     let objective: String
     let target: DraftTarget
+}
+
+private struct SubmittedComposerAttachments {
+    let photos: [PreparedPhotoAttachment]
+    let files: [UploadedFile]
+    let fileData: [String: Data]
 }
 
 private struct ChatMessageRow: View, Equatable {

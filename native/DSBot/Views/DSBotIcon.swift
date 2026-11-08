@@ -7,10 +7,14 @@ enum DSBotGlyph: CaseIterable {
     case plugins, skills, schedule, computer, account, options
     case message, queue, trace, context, team
     case down, up, right, select, reconnect, permission, model
-    case scan, focus, stop, send, terminal, open, search, folder, file, back, copy
+    case scan, focus, stop, send, terminal, open, search, folder, workspace, workspaceOpen, file, back, copy
     case goal, plan, compact, attach
     case think, browse, code, globe, question, pause, play, trash, editLine, mode, sliders
-    case archive, archiveRestore
+    case archive, archiveRestore, info
+    case inbox, selectRows, shareToIssue, shareToSession, hide, restore, openLink, selectAll
+    case issueProject, issueLabel, dueDate
+    /// The desktop's icons of an agent state, before the name of a group of the board (`AgentStateIcon`).
+    case stateIdle, stateWorking, stateBlocked, stateUnassigned
 
     var lucide: LucideIconName {
         switch self {
@@ -54,6 +58,8 @@ enum DSBotGlyph: CaseIterable {
         case .open: return .cornerDownRight
         case .search: return .search
         case .folder: return .folder
+        case .workspace: return .folder
+        case .workspaceOpen: return .folderOpen
         case .file: return .file
         case .back: return .chevronLeft
         case .copy: return .copy
@@ -74,6 +80,22 @@ enum DSBotGlyph: CaseIterable {
         case .sliders: return .slidersHorizontal
         case .archive: return .archive
         case .archiveRestore: return .archiveRestore
+        case .info: return .info
+        case .inbox: return .inbox
+        case .selectRows: return .listChecks
+        case .shareToIssue: return .listPlus
+        case .shareToSession: return .messageSquarePlus
+        case .hide: return .eyeOff
+        case .restore: return .rotateCcw
+        case .openLink: return .externalLink
+        case .selectAll: return .checkCheck
+        case .issueProject: return .box
+        case .issueLabel: return .tag
+        case .dueDate: return .calendar
+        case .stateIdle: return .circle
+        case .stateWorking: return .loaderCircle
+        case .stateBlocked: return .octagonPause
+        case .stateUnassigned: return .user
         }
     }
 
@@ -82,6 +104,10 @@ enum DSBotGlyph: CaseIterable {
         case .goal: return "Goal"
         case .queue: return "Queue"
         case .mode: return "AgentPreset"
+        case .workspace: return "Workspace"
+        case .workspaceOpen: return "WorkspaceOpen"
+        case .think: return "Think"
+        case .dueDate: return "IssueDue"
         default: return nil
         }
     }

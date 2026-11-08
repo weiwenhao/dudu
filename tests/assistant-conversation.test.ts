@@ -104,6 +104,38 @@ test('session actions require an assigned agent session and load native links be
   } finally { issues.close(); }
 });
 
+test('assistant session discovery uses the shared catalog despite runtime snapshots and forwards queries, cursors and takeover identity', async () => {
+  const calls: any[] = [];
+  const signal = new AbortController().signal;
+  const row = { provider: 'claude', id: 'existing', key: 'claude:existing', title: 'Saved conversation' };
+  const tools = assistantTools({
+    assistant: {}, issues: {}, dashboard: {}, dsh: {},
+    assignment: {
+      snapshots: { snapshots: async (options: any) => ({ outcome: 'success', snapshots: [options.state] }) },
+      sessionCatalog: {
+        list: async (options: any, context: any) => { calls.push(['list', options, context.signal]); return { sessions: [row] }; },
+        read: async (input: any, context: any) => { calls.push(['read', input, context.signal]); return { outcome: 'success', untrusted: true, messages: [], nextCursor: 120 }; },
+      },
+      takeOverSession: async (input: any) => { calls.push(['takeover', input]); return { outcome: 'no_op', issue: { id: 7, session: row.key, status: 'backlog' } }; },
+    },
+  });
+  const call = async (name: string, args: any) => JSON.parse(await tools.find((tool: any) => tool.name === name).execute(args, { signal }));
+  const query = 'Hi Shreyas, the read-only MySQL';
+  assert.equal((await call('sessions_list', {})).sessions[0].key, row.key);
+  assert.equal((await call('sessions_search', { query, provider: 'claude', limit: 10 })).sessions[0].key, row.key);
+  assert.equal((await call('sessions_read', { session: row.key, query, before: 240 })).nextCursor, 120);
+  assert.deepEqual((await call('sessions_list', { state: 'running' })).snapshots, ['running']);
+  const managed = await call('sessions_takeover', { provider: row.provider, id: row.id });
+  assert.equal(managed.issue.id, 7);
+  assert.equal(managed.issue.status, 'backlog');
+  assert.deepEqual(calls, [
+    ['list', {}, signal],
+    ['list', { query, provider: 'claude', limit: 10 }, signal],
+    ['read', { provider: 'claude', id: 'existing', query, before: 240 }, signal],
+    ['takeover', { provider: 'claude', id: 'existing' }],
+  ]);
+});
+
 test('forwarding uses the current user words, without generated labels, and never answers a blocking tool', async () => {
   const issues = createIssues({ file: ':memory:' });
   try {

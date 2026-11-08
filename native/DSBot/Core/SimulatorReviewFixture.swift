@@ -60,6 +60,14 @@ private actor ReviewComputerRepository: DSBotComputerStorage {
     )
 
     init() {
+        if ProcessInfo.processInfo.arguments.contains("-dsbot-review-dual-addresses") {
+            library.computers[0].url = "http://192.168.31.201:3170/dsbot?pair=" + String(repeating: "A", count: 43)
+            library.computers[0].addresses = [
+                ConnectionAddress(kind: .lan, url: "http://192.168.31.201:3170"),
+                ConnectionAddress(kind: .internet, url: "https://dudu.example.com"),
+            ]
+            library.computers[0].probeId = "review-phone"
+        }
         if ProcessInfo.processInfo.arguments.contains("-dsbot-review-unpaired") {
             library = ComputerLibrary(computers: [], activeId: nil)
         } else if ProcessInfo.processInfo.arguments.contains("-dsbot-review-many-computers") {
@@ -102,6 +110,26 @@ private actor ReviewComputerRepository: DSBotComputerStorage {
         return library
     }
 
+    func activateAuthenticated(localId: String, readyId: String, endpoint: ConnectionEndpoint) async -> ComputerLibrary {
+        if let index = library.computers.firstIndex(where: { $0.id == localId }) {
+            library.computers[index].url = endpoint.originalURL
+            library.computers[index].addresses = endpoint.addresses
+            library.computers[index].probeId = endpoint.probeId
+            library.computers[index].addressesEdited = endpoint.addressesEdited
+        }
+        library.activeId = localId
+        return library
+    }
+
+    func updateAddresses(localId: String, endpoint: ConnectionEndpoint) async throws -> ComputerLibrary {
+        guard let index = library.computers.firstIndex(where: { $0.id == localId }) else {
+            throw DSBotFailure.switchedComputer
+        }
+        library.computers[index].addresses = endpoint.addresses
+        library.computers[index].addressesEdited = true
+        return library
+    }
+
     func remove(_ localId: String) -> ComputerLibrary {
         library.computers.removeAll { $0.id == localId }
         if library.activeId == localId { library.activeId = library.computers.first?.id }
@@ -110,6 +138,19 @@ private actor ReviewComputerRepository: DSBotComputerStorage {
 }
 
 private actor ReviewTransport: DSBotTransport {
+    private var connectedEndpoint: ConnectionEndpoint?
+    private var searchRequests = 0
+
+    func resolvedEndpoint() async -> ConnectionEndpoint? { connectedEndpoint }
+
+    func verifyEndpoint(_ endpoint: ConnectionEndpoint) async throws -> ConnectionEndpoint {
+        try await Task.sleep(for: .milliseconds(400))
+        if ProcessInfo.processInfo.arguments.contains("-dsbot-review-address-failed") {
+            throw DSBotFailure.identityMismatch
+        }
+        guard let route = endpoint.addresses.first else { throw DSBotFailure.invalidLink }
+        return try endpoint.selecting(route)
+    }
     private var onEvent: (@Sendable (JSONValue) async -> Void)?
     private var onDisconnect: (@Sendable () async -> Void)?
     private var connectionCount = 0
@@ -124,6 +165,7 @@ private actor ReviewTransport: DSBotTransport {
     private var renamedSessions: [String: String] = [:]
     private var pinnedSessions: [String] = []
     private var archivedSessions: Set<String> = []
+    private var sessionListRequests = 0
     private static let richSidebar = ProcessInfo.processInfo.arguments.contains("-dsbot-review-sidebar-rich")
     /// `-dsbot-review-long-names` uses names as long as the real desktop's, to check chip layout.
     private static let longNames = ProcessInfo.processInfo.arguments.contains("-dsbot-review-long-names")
@@ -140,6 +182,8 @@ private actor ReviewTransport: DSBotTransport {
     private var compactionCount = 0
     private var compactionRunning = false
     private var wasStopped = false
+    private var awaitingFirstOutputAt: Double?
+    private var queueUpdateCount = 0
     private var wantsTranscript = false
     private var answeredParityQuestions = false
     private var streamingTask: Task<Void, Never>?
@@ -198,6 +242,11 @@ private actor ReviewTransport: DSBotTransport {
         }
         self.onEvent = onEvent
         self.onDisconnect = onDisconnect
+        if let preferred = endpoint.addresses.first {
+            connectedEndpoint = try endpoint.selecting(preferred)
+        } else {
+            connectedEndpoint = endpoint
+        }
         computerID = expectedComputerId ?? "review-desktop"
         return (computerID, endpoint.name)
     }
@@ -286,8 +335,15 @@ private actor ReviewTransport: DSBotTransport {
     func request(_ method: String, params: [String: JSONValue], timeoutSeconds: UInt64) async throws -> JSONValue {
         if ProcessInfo.processInfo.arguments.contains("-dsbot-review-parity") {
             switch method {
-            case "session.page": return try encode(ConversationParityFixture.older)
+            case "session.page":
+                if ProcessInfo.processInfo.arguments.contains("-dsbot-review-slow-history-page") {
+                    try await Task.sleep(nanoseconds: 4_000_000_000)
+                }
+                return try encode(ConversationParityFixture.older)
             case "session.changes":
+                if ProcessInfo.processInfo.arguments.contains("-dsbot-review-changes-expired") {
+                    throw DSBotFailure.remote("NOT_FOUND")
+                }
                 if ProcessInfo.processInfo.arguments.contains("-dsbot-review-changes-unavailable") {
                     throw DSBotFailure.protocolError
                 }
@@ -313,8 +369,20 @@ private actor ReviewTransport: DSBotTransport {
         }
         switch method {
         case "session.list":
+            sessionListRequests += 1
+            if sessionListRequests > 1,
+               ProcessInfo.processInfo.arguments.contains("-dsbot-review-slow-session-refresh") {
+                try await Task.sleep(nanoseconds: 4_000_000_000)
+            }
             return try encode(sessions)
         case "session.search":
+            searchRequests += 1
+            if ProcessInfo.processInfo.arguments.contains("-dsbot-review-search-retry") {
+                if searchRequests == 1 { throw DSBotFailure.remote("UPSTREAM_UNAVAILABLE") }
+                if searchRequests == 2 {
+                    return try encode(SessionSearchPage(items: [], hasMore: false, indexing: true))
+                }
+            }
             let query = params["query"]?.stringValue ?? ""
             let hits = sessions.compactMap { session -> SessionSearchHit? in
                 guard session.blank != true,
@@ -367,7 +435,14 @@ private actor ReviewTransport: DSBotTransport {
                         efforts: [Choice(id: "high", name: "High"), Choice(id: "max", name: "Max")],
                         defaultEffort: "high"
                     ),
-                    Choice(id: "deepseek-reasoner", name: "DeepSeek · 深度思考")
+                    Choice(id: "deepseek-reasoner", name: "DeepSeek · 深度思考"),
+                    Choice(id: "claude:sonnet", name: "Claude Sonnet"),
+                    Choice(id: "codex:gpt", name: "GPT", efforts: [Choice(id: "low", name: "Low"), Choice(id: "high", name: "High")], defaultEffort: "high")
+                ]),
+                "providers": try encode([
+                    SessionProvider(id: "deepseek", name: "DeepSeek", modelIds: ["deepseek", "deepseek-reasoner"], defaultModelId: "deepseek", isDefault: true),
+                    SessionProvider(id: "claude", name: "Claude", modelIds: ["claude:sonnet"], defaultModelId: "claude:sonnet"),
+                    SessionProvider(id: "codex", name: "ChatGPT", modelIds: ["codex:gpt"], defaultModelId: "codex:gpt")
                 ]),
                 "permissions": try encode([
                     Choice(id: "ask", name: "操作前询问"),
@@ -401,11 +476,13 @@ private actor ReviewTransport: DSBotTransport {
             newSessionCount += 1
             newSessionWorkspace = params["workspaceId"]?.stringValue ?? newSessionWorkspace
             presetID = params["agentPreset"]?.stringValue ?? "standard"
+            modelID = params["modelId"]?.stringValue ?? "deepseek"
+            effortID = modelID == "deepseek" || modelID == "codex:gpt" ? "high" : ""
             return try encode(sessions.first!)
         case "session.configure":
             if let model = params["modelId"]?.stringValue {
                 modelID = model
-                effortID = model == "deepseek" ? "high" : ""
+                effortID = model == "deepseek" || model == "codex:gpt" ? "high" : ""
             }
             effortID = params["reasoningEffort"]?.stringValue ?? effortID
             permissionID = params["permissionId"]?.stringValue ?? permissionID
@@ -436,6 +513,19 @@ private actor ReviewTransport: DSBotTransport {
             await publishSnapshot(selectedID)
             return .bool(true)
         case "session.attachment":
+            if let source = params["source"]?.stringValue {
+                guard source == "/review/%E8%AE%BE%E7%BD%AE%2520screenshot.png",
+                      params["seq"]?.numberValue == 2 else { throw DSBotFailure.remote("NOT_FOUND") }
+                if ProcessInfo.processInfo.arguments.contains("-dsbot-review-slow-image") {
+                    try await Task.sleep(for: .seconds(2))
+                }
+                let arguments = ProcessInfo.processInfo.arguments
+                if let index = arguments.firstIndex(of: "-dsbot-review-markdown-file"),
+                   arguments.indices.contains(index + 1) {
+                    let bytes = try Data(contentsOf: URL(fileURLWithPath: arguments[index + 1]))
+                    return .object(["mediaType": .string("image/png"), "data": .string(bytes.base64EncodedString())])
+                }
+            }
             let renderer = UIGraphicsImageRenderer(size: CGSize(width: 240, height: 360))
             let image = renderer.image { context in
                 UIColor(red: 0.77, green: 0.85, blue: 0.89, alpha: 1).setFill()
@@ -460,15 +550,30 @@ private actor ReviewTransport: DSBotTransport {
         case "session.send":
             let id = params["id"]?.stringValue ?? selectedID
             let text = params["text"]?.stringValue ?? ""
+            if ProcessInfo.processInfo.arguments.contains("-dsbot-review-slow-send") {
+                try await Task.sleep(nanoseconds: 4_000_000_000)
+            }
             if ProcessInfo.processInfo.arguments.contains("-dsbot-review-queue"), !wasStopped {
                 queues[id, default: []].append(QueuedMessage(id: "queued-phone", text: text, editable: true))
             } else {
                 sentMessages[id, default: []].append(ChatMessage(id: UUID().uuidString, role: "user", text: text))
             }
+            if ProcessInfo.processInfo.arguments.contains("-dsbot-review-awaiting-first-output") {
+                awaitingFirstOutputAt = Date().timeIntervalSince1970 * 1_000
+                wasStopped = false
+            }
             await publishSnapshot(id)
             return .bool(true)
         case "session.queue.update":
             let id = params["id"]?.stringValue ?? selectedID
+            queueUpdateCount += 1
+            if ProcessInfo.processInfo.arguments.contains("-dsbot-review-slow-queue-update") {
+                try await Task.sleep(nanoseconds: 4_000_000_000)
+            }
+            if queueUpdateCount == 1,
+               ProcessInfo.processInfo.arguments.contains("-dsbot-review-failing-queue-update") {
+                throw DSBotFailure.remote("UPSTREAM_ERROR")
+            }
             guard let index = queues[id]?.firstIndex(where: { $0.id == params["itemId"]?.stringValue }) else {
                 throw DSBotFailure.remote("NOT_FOUND")
             }
@@ -627,8 +732,10 @@ private actor ReviewTransport: DSBotTransport {
     }
 
     private var sessions: [SessionSummary] {
+        let isRunning = (ProcessInfo.processInfo.arguments.contains("-dsbot-review-running")
+            || awaitingFirstOutputAt != nil) && !wasStopped
         var values = [
-            SessionSummary(id: "review-chat", title: "优化手机上的对话体验", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now, status: ProcessInfo.processInfo.arguments.contains("-dsbot-review-running") && !wasStopped ? "running" : "idle"),
+            SessionSummary(id: "review-chat", title: "优化手机上的对话体验", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now, status: isRunning ? "running" : "idle"),
             SessionSummary(id: "review-second", title: "检查连接与配对", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now - 18 * 60_000, status: "idle"),
             SessionSummary(id: "review-notes", title: "整理本周的项目进展", workspaceId: "notes", workspaceName: "日常", updatedAt: now - 41 * 60_000, status: "idle"),
             SessionSummary(id: "review-fourth", title: "接口设计与实现", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now - 2 * 3_600_000, status: "idle"),
@@ -675,6 +782,12 @@ private actor ReviewTransport: DSBotTransport {
         // What the conversation menu changed.
         return values.map { session in
             var changed = session
+            let agent: SessionAgent = session.id == "review-second" ? .claude : session.id == "review-notes" ? .codex : .deepseek
+            changed.agent = session.id.hasPrefix("review-new-") ? (modelID.hasPrefix("claude:") ? .claude : modelID.hasPrefix("codex:") ? .codex : .deepseek) : agent
+            changed.agentState = session.status == "running" ? .working
+                : session.id == "review-second" || session.id == "review-notes" ? .blocked : .idle
+            // one of the two that need you is a finished run (a check), the other a question (red)
+            if session.id == "review-notes" { changed.agentFinished = true }
             if let title = renamedSessions[session.id] { changed.title = title }
             if let rank = pinnedSessions.firstIndex(of: session.id) {
                 changed.pinned = true
@@ -722,7 +835,12 @@ private actor ReviewTransport: DSBotTransport {
                 )
             }
         } else if id == "review-chat" {
-            messages = [
+            messages = ProcessInfo.processInfo.arguments.contains("-dsbot-review-markdown-image") ? [
+                ChatMessage(id: "review-question", role: "user", text: "用 markdown 格式发图片给我看看"),
+                ChatMessage(id: "review-answer", role: "assistant",
+                            text: "供应商页：\n\n![图片](/review/设置%20screenshot.png)\n\n图片后面的消息。",
+                            process: nil)
+            ] : [
                 ChatMessage(id: "review-question", role: "user", text: "把手机上的交互整理一下，保留现在的布局。"),
                 ChatMessage(id: "review-answer", role: "assistant", text: "我会按这几个地方逐项检查：\n\n**输入与发送**\n\n照片入口保持在左侧，键盘和更多选项放在右侧。长按说话，松开发送，上移取消。\n\n**会话与导航**\n\n最近会话按活跃时间排列，也可以按项目分组。弹层支持点空白区域或再次点入口关闭。\n\n**连接与设置**\n\n电脑可以随时切换，设置入口集中在侧栏底部。",
                     process: ProcessInfo.processInfo.arguments.contains("-dsbot-review-process")
@@ -798,8 +916,52 @@ private actor ReviewTransport: DSBotTransport {
     /// The legacy review messages as transcript entries, plus a richer history behind `-dsbot-review-rich`.
     private func reviewTranscript(_ id: String, messages: [ChatMessage]) -> Transcript {
         let arguments = ProcessInfo.processInfo.arguments
+        if id == "review-chat", arguments.contains("-dsbot-review-partial-history") {
+            // A paged tail may start inside a tall interrupted turn, followed by two short rows.
+            let progress = (0..<60).flatMap { index in
+                [
+                    TranscriptEntry(
+                        type: "assistant", id: "partial-tool-\(index)", seq: Double(index * 2 + 100),
+                        text: nil, turn: 130, step: index + 1,
+                        calls: [TranscriptCall(
+                            id: "partial-call-\(index)", name: "shell", activity: "commands",
+                            detail: "Check the current build and its runtime", status: "done"
+                        )]
+                    ),
+                    TranscriptEntry(
+                        type: "assistant", id: "partial-progress-\(index)", seq: Double(index * 2 + 101),
+                        text: "检查第 \(index + 1) 项的结果。", turn: 130, step: index + 1
+                    )
+                ]
+            }
+            return Transcript(entries: progress + [
+                TranscriptEntry(type: "user", id: "partial-user", seq: 300, text: "重启好了，你看看吧"),
+                TranscriptEntry(
+                    type: "assistant", id: "partial-answer", seq: 301,
+                    text: "看过了，这次重启已经生效，插件正常加载了。", turn: 131, step: 1
+                )
+            ], turns: [
+                TranscriptTurn(turn: 130, end: now - 60_000, outcome: "interrupted"),
+                TranscriptTurn(turn: 131, start: now - 30_000, end: now, outcome: "done")
+            ], live: nil)
+        }
         if id == "review-chat", arguments.contains("-dsbot-review-parity") {
             return ConversationParityFixture.transcript
+        }
+        if id == "review-chat", arguments.contains("-dsbot-review-interleaved") {
+            let running = arguments.contains("-dsbot-review-running") && !wasStopped
+            return Transcript(entries: [
+                TranscriptEntry(type: "user", id: "interleaved-question", seq: 1, time: now - 60_000, text: "这是什么问题？"),
+                TranscriptEntry(type: "assistant", id: "interleaved-before", seq: 3, time: now - 50_000,
+                                text: "先检查日志。", turn: 1, step: 1),
+                TranscriptEntry(type: "user", id: "interleaved-follow-up", seq: 5, time: now - 40_000,
+                                text: "这个气泡是什么，也无法关闭？",
+                                attachments: [TranscriptAttachment(kind: "image", name: "测试图片", id: "review-image")]),
+                TranscriptEntry(type: "assistant", id: "interleaved-after", seq: 7, time: now - 30_000,
+                                text: "我会修复附件传话和气泡关闭。", turn: 1, step: 2)
+            ], turns: [TranscriptTurn(
+                turn: 1, start: now - 59_000, end: running ? nil : now - 20_000, outcome: running ? nil : "done"
+            )], live: nil)
         }
         if id == "review-chat", arguments.contains("-dsbot-review-message-actions") {
             let first = now - 900_000
@@ -871,6 +1033,13 @@ private actor ReviewTransport: DSBotTransport {
             )] : [])
         }
         guard id == "review-chat", arguments.contains("-dsbot-review-rich") else {
+            if id == "review-chat", let awaitingFirstOutputAt {
+                turns.append(TranscriptTurn(
+                    turn: turn + 1, start: awaitingFirstOutputAt,
+                    end: wasStopped ? awaitingFirstOutputAt + 1_000 : nil,
+                    outcome: wasStopped ? "stopped" : nil
+                ))
+            }
             return Transcript(entries: entries + compactionEntries(), turns: turns, live: nil)
         }
 

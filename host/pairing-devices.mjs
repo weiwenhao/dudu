@@ -36,10 +36,22 @@ export function connectionAddress(value) {
   }
   if (originalProtocol === 'ws:') url.protocol = 'http:';
   else if (originalProtocol === 'wss:') url.protocol = 'https:';
-  url.pathname = '/dsbot';
-  url.search = '';
-  url.hash = '';
-  return url.href;
+  return url.origin;
+}
+
+/** A default for imported addresses; a user may explicitly classify a LAN domain. */
+export function connectionKind(address) {
+  const host = new URL(connectionAddress(address)).hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host === '::1'
+    || /^(fc|fd)[0-9a-f]{2}:|^fe[89ab][0-9a-f]:/u.test(host)) return 'lan';
+  const octets = host.split('.').map(Number);
+  if (octets.length === 4 && /^\d+\.\d+\.\d+\.\d+$/u.test(host)
+    && octets.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
+    const [a, b] = octets;
+    if (a === 10 || a === 127 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31)
+      || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127)) return 'lan';
+  }
+  return 'public';
 }
 
 export async function createPairingStore({
@@ -115,19 +127,38 @@ export async function createPairingStore({
       return createHmac('sha256', data.secret)
         .update(`dsbot-probe:v1:${nonce}`).digest('base64url');
     },
+    routeProof(deviceId, nonce) {
+      if (typeof deviceId !== 'string' || typeof nonce !== 'string'
+        || !/^[A-Za-z0-9_-]{16,128}$/u.test(nonce)) return undefined;
+      const device = data.devices.find((item) => item.id === deviceId);
+      if (!device || (!device.pairedAt && device.expiresAt <= now())) return undefined;
+      // Knowing a device ID permits only a nonce-bound identity proof, never authentication.
+      // The phone derives this key from its credential locally; no credential goes to an unverified route.
+      return {
+        computerId: data.id,
+        deviceId: device.id,
+        deviceProof: createHmac('sha256', Buffer.from(device.tokenHash, 'hex'))
+          .update(`dsbot-route:v1:${nonce}:${data.id}:${device.id}`).digest('base64url'),
+      };
+    },
     list() {
       return data.devices.filter((device) => device.pairedAt)
         .sort((a, b) => b.lastSeenAt - a.lastSeenAt).map(publicDevice);
     },
-    async issue({ address, name }) {
+    async issue({ address, name, addresses }) {
+      if (addresses !== undefined && (!Array.isArray(addresses) || !addresses.length || addresses.length > 32)) {
+        throw new Error('连接地址格式不正确。');
+      }
+      const routes = (addresses ?? []).map((route) => {
+        if (!route || !['lan', 'public'].includes(route.kind)) throw new Error('连接地址格式不正确。');
+        return { kind: route.kind, url: connectionAddress(route.url) };
+      });
       let pairingAddress;
       let secureCookie;
       try {
         const parsed = new URL(address);
         const canonicalAddress = connectionAddress(address);
-        pairingAddress = ['http:', 'https:'].includes(parsed.protocol) && parsed.pathname !== '/dsbot'
-          ? `${connectionOrigin(address)}/`
-          : canonicalAddress;
+        pairingAddress = `${canonicalAddress}/`;
         secureCookie = parsed.protocol === 'https:' || parsed.protocol === 'wss:';
       } catch (error) {
         if (error.message.includes('连接地址') || error.message.includes('完整')) throw error;
@@ -146,8 +177,9 @@ export async function createPairingStore({
       data.devices.push(device);
       try { await save(); }
       catch (error) { data.devices = data.devices.filter((item) => item !== device); throw error; }
-      const query = new URLSearchParams({ pair: token, computer: data.id });
+      const query = new URLSearchParams({ pair: token, computer: data.id, device: device.id });
       if (typeof name === 'string') query.set('name', name);
+      for (const route of routes) query.append(route.kind, route.url);
       const separator = pairingAddress.includes('?') ? '&' : '?';
       return { id: device.id, url: `${pairingAddress}${separator}${query}`, expiresAt: device.expiresAt };
     },

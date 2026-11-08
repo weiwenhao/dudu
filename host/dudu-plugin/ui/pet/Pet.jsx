@@ -1,14 +1,19 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowUp, Check, ChevronDown, ChevronUp, Expand, FileText, Mic, Square, X } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, ArrowUp, Check, ChevronDown, ChevronUp, Expand, EyeOff, FileText, LoaderCircle, Mic, RotateCcw, Settings, Square, X } from 'lucide-react';
 import { T } from '../strings.js';
 import { Button } from '../components/button.jsx';
-import { intlLocale } from '../lib/locale.mjs';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '../components/context-menu.jsx';
 import { readySpeech, recordSpeech } from './voice.mjs';
-import { Models } from './Models.jsx';
+import { ConversationControls } from './Models.jsx';
 import { PlusMenu } from './PlusMenu.jsx';
+import { Suggestions, useSuggestions } from './Suggestions.jsx';
+import { addressedMessage, highlightParts, issueAddress } from './completion.mjs';
 import { getWhere, useWhere } from '../lib/where.js';
 import { Reminder } from './Reminder.jsx';
+import { RunningStatus } from './RunningStatus.jsx';
+import { turnStart } from './running.mjs';
 import { useReminders } from './use-reminders.js';
+import { isPetInteraction } from './overlays.js';
 import pet from './pet.png';
 
 const P = T.pet;
@@ -65,15 +70,20 @@ const encodeImage = (file) => new Promise((resolve, reject) => {
   reader.onload = () => resolve({ mediaType: file.type, data: String(reader.result).split(',')[1], name: file.name });
   reader.readAsDataURL(file);
 });
+const encodeDrafts = (items) => Promise.all(items.map(async (item) => item.kind === 'image'
+  ? { kind: 'image', ...await encodeImage(item.file) } : { kind: 'file', file: item.file, name: item.file.name }));
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const formatBytes = (bytes) => bytes < 1024 ? `${bytes} B` : bytes < 1024 ** 2 ? `${(bytes / 1024).toFixed(bytes < 10240 ? 1 : 0)} KB` : `${(bytes / 1024 ** 2).toFixed(bytes < 10 * 1024 ** 2 ? 1 : 0)} MB`;
 const extensionOf = (name) => { const dot = name.lastIndexOf('.'); return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1, dot + 6).toUpperCase() : ''; };
 // What was dropped, without the folders among it (a folder arrives as a file that cannot be read).
 const droppedFiles = (transfer) => { const entries = [...transfer.items]; return [...transfer.files].filter((_file, index) => !entries[index]?.webkitGetAsEntry?.()?.isDirectory); };
 
-export function Pet({ request, actions = {}, version = 0, suppressed = false }) {
-  const [settings, setSettings] = useState({ enabled: true, doubleSpace: true, voice: true });
+export function Pet({ request, actions = {}, renderPermission, version = 0, suppressed = false, onSettings }) {
+  // Load the saved visibility before showing the pet, including after a reload.
+  const [settings, setSettings] = useState({ enabled: false, doubleSpace: true, voice: true });
   const [open, setOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [hiding, setHiding] = useState(false);
   const [earlier, setEarlier] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -81,6 +91,8 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
   const [draft, setDraft] = useState('');
   const [drafts, setDrafts] = useState([]); // what waits to be sent with the words, in the order it was picked: { id, kind: 'image' | 'file', file, url? }
   const [problem, setProblem] = useState('');
+  const [sendProblem, setSendProblem] = useState('');
+  const [retrying, setRetrying] = useState(false);
   const [sending, setSending] = useState(false);
   const [expanding, setExpanding] = useState(false);
   const [context, setContext] = useState(false); // "Context" is on: the page the owner is on goes with each message, until it is taken off
@@ -96,6 +108,7 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
   const [bubble, setBubble] = useState('');
   const [speechCatalog, setSpeechCatalog] = useState(null);
   const input = useRef(null);
+  const mirror = useRef(null); // the draft again, behind the transparent text of the field, with the /skill and the @address in blue
   const files = useRef(null);
   const draftItems = useRef([]);
   const button = useRef(null);
@@ -115,10 +128,12 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
   const prepend = useRef(null);
   const notify = useRef(false);
   const calls = useRef(new Map());
+  const sendingNow = useRef(false);
+  const failedRelay = useRef(null);
   const hostVoice = readySpeech(speechCatalog) && Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder && window.AudioContext && window.OfflineAudioContext);
   const available = hostVoice;
   // What the pet says by itself, when nothing else is speaking: the conversation closed, nobody dictating, no reply or problem bubble.
-  const reminders = useReminders({ request, actions, active: settings.enabled && !suppressed, quiet: !open && !listening && !bubble && !problem });
+  const reminders = useReminders({ request, actions, active: settings.enabled && !suppressed, quiet: !open && !menuOpen && !listening && !bubble });
 
   useEffect(() => { alive.current = true; return () => {
     alive.current = false; speech.current?.stop(true);
@@ -127,29 +142,51 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
   useEffect(() => {
     const element = input.current;
     if (element) { element.style.height = 'auto'; element.style.height = `${Math.min(element.scrollHeight, 120)}px`; }
+    // The copy behind the field is the field's size and wraps where it does: the same width (less a scroll bar, if the field has one), the same scroll.
+    if (element && mirror.current) {
+      mirror.current.style.height = `${element.offsetHeight}px`;
+      mirror.current.style.paddingRight = `${6 + element.offsetWidth - element.clientWidth}px`;
+      mirror.current.scrollTop = element.scrollTop;
+    }
   }, [draft, open]);
   useEffect(() => {
     if (!settings.enabled || !settings.voice || !actions.voiceCatalog) return;
     let active = true;
-    const check = () => actions.voiceCatalog().then((value) => {
-      if (active) setSpeechCatalog((previous) => JSON.stringify(previous) === JSON.stringify(value) ? previous : value);
-    }).catch(() => { if (active) setSpeechCatalog(null); });
+    const publish = (value) => {
+      if (!active) return;
+      setSpeechCatalog((previous) => JSON.stringify(previous) === JSON.stringify(value) ? previous : value);
+      if (!readySpeech(value)) setProblem((previous) => previous === P.voiceFailed ? '' : previous);
+    };
+    const check = () => actions.voiceCatalog().then(publish).catch(() => publish(null));
     void check();
-    const stop = actions.watchVoiceCatalog?.((value) => { if (active) setSpeechCatalog(value); });
+    const stop = actions.watchVoiceCatalog?.(publish);
     const timer = stop ? null : setInterval(() => { if (document.visibilityState === 'visible') void check(); }, 2000);
     return () => { active = false; stop?.(); clearInterval(timer); };
   }, [actions, settings.enabled, settings.voice]);
   useEffect(() => {
     if (available && settings.voice) return;
     if (speech.current) { speech.current.cancel = true; speech.current.stop(true); }
-    setListening(false);
-    setHeard('');
-    setProblem((value) => value === P.voiceFailed ? '' : value);
+    // The capture's completion callback owns listening/heard state after the native stop settles.
   }, [available, settings.voice]);
   useEffect(() => {
     let active = true;
-    request('assistant/settings').then((value) => { if (active && value.settings?.pet) setSettings(value.settings.pet); }).catch(() => {});
-    return () => { active = false; };
+    let timer;
+    let attempt = 0;
+    // The pet is not drawn until the settings have said it is on, so one read that failed (the plugin was still starting after a reload, or the computer was busy) left it gone for good:
+    // the owner found it missing from the corner (2026-11-07). The read is tried again, a little later each time, until it answers.
+    const load = () => {
+      request('assistant/settings').then((value) => {
+        if (!active) return;
+        if (!value.settings?.pet) throw new Error('no pet settings');
+        setSettings(value.settings.pet);
+        if (!value.settings.pet.enabled) { setMenuOpen(false); setOpen(false); setBubble(''); }
+        if (!value.settings.pet.voice) setProblem((previous) => previous === P.voiceFailed ? '' : previous);
+      }).catch(() => {
+        if (active) timer = setTimeout(load, Math.min(30_000, 1000 * 2 ** attempt++));
+      });
+    };
+    load();
+    return () => { active = false; clearTimeout(timer); };
   }, [request, version]);
   useEffect(() => { openRef.current = open; if (open) input.current?.focus(); }, [open]);
   useEffect(() => {
@@ -196,6 +233,9 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
     }
     return started.current;
   }, [request]);
+  const suggestions = useSuggestions({ actions, request, ensure, input, text: draft, setText: setDraft, open });
+  const { close: closeSuggestions, recipient: relayRecipient } = suggestions;
+  const marked = useMemo(() => highlightParts(draft, suggestions.skillNames), [draft, suggestions.skillNames]);
 
   const openFull = async () => {
     if (expanding || !actions.openSession) return;
@@ -235,11 +275,42 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
 
   const send = useCallback(async (text) => {
     const attached = draftItems.current;
-    if ((!text.trim() && !attached.length) || !actions.sendConversation || sending) return;
+    if ((!text.trim() && !attached.length) || !actions.sendConversation || sendingNow.current) return;
+    sendingNow.current = true;
     setProblem('');
+    setSendProblem('');
     setNotice('');
     setSending(true);
+    closeSuggestions();
+    const addressed = addressedMessage(text);
     try {
+      if (addressed) {
+        if (addressed.error) { setSendProblem(T.detail.messageErrors[addressed.error]); return; }
+        const recipient = relayRecipient;
+        const message = {
+          id: addressed.id, text: addressed.body,
+          ...(recipient && issueAddress(recipient).toLowerCase() === addressed.id.toLowerCase() ? { session: recipient.session } : {}),
+        };
+        if (failedRelay.current?.id === addressed.id && failedRelay.current.text === addressed.body && failedRelay.current.attachments === attached) {
+          message.retryEntry = failedRelay.current.entryId;
+        }
+        const result = attached.length
+          ? await actions.forwardIssue(message, await encodeDrafts(attached))
+          : await request('issues/forward', message);
+        if (!['success', 'no_op'].includes(result.outcome)) {
+          if (result.saved && result.entry?.id) failedRelay.current = { id: addressed.id, text: addressed.body, attachments: attached, entryId: result.entry.id };
+          setSendProblem(result.saved ? T.detail.messageErrors.delivery_failed
+            : result.code !== 'delivery_failed' && T.detail.messageErrors[result.code] || T.activity.notDelivered(result.message || T.shell.unavailable));
+          return;
+        }
+        if (alive.current) {
+          failedRelay.current = null;
+          setDraft(''); setBubble(''); setNotice(`✓ @${issueAddress(result.issue)} · ${result.issue.title}`);
+          for (const item of attached) if (item.url) URL.revokeObjectURL(item.url);
+          draftItems.current = []; setDrafts([]);
+        }
+        return;
+      }
       const target = await ensure();
       // Each message is read with what the owner chose for it: the page they are on, or nothing.
       const now = getWhere();
@@ -247,16 +318,19 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
       const set = await request('assistant/context', { where: attachedPage });
       if (set.outcome !== 'success') throw new Error(set.message);
       notify.current = true;
-      const items = await Promise.all(attached.map(async (item) => item.kind === 'image' ? { kind: 'image', ...await encodeImage(item.file) } : { kind: 'file', file: item.file, name: item.file.name }));
+      const items = await encodeDrafts(attached);
       await actions.sendConversation(target.sessionId, text.trim(), items);
       if (alive.current) {
         setDraft(''); setBubble('');
         for (const item of attached) if (item.url) URL.revokeObjectURL(item.url);
         draftItems.current = []; setDrafts([]);
       }
-    } catch { notify.current = false; if (alive.current) setProblem(P.failed); }
-    finally { if (alive.current) setSending(false); }
-  }, [actions, ensure, request, sending]);
+    } catch (error) {
+      notify.current = false;
+      if (alive.current) setSendProblem(T.activity.notDelivered(error.message || T.shell.unavailable));
+    }
+    finally { sendingNow.current = false; if (alive.current) setSending(false); }
+  }, [actions, ensure, request, closeSuggestions, relayRecipient]);
 
   useEffect(() => { contextOn.current = context; }, [context]);
   useLayoutEffect(() => { line.current?.style.setProperty('--token', context && token.current ? `${token.current.offsetWidth + 6}px` : '0px'); }, [context, open]);
@@ -286,7 +360,7 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
     if (!picked.length) return;
     const next = [...draftItems.current, ...picked.map((file) => (imageTypes.has(file.type)
       ? { id: crypto.randomUUID(), kind: 'image', file, url: URL.createObjectURL(file) } : { id: crypto.randomUUID(), kind: 'file', file }))];
-    draftItems.current = next; setDrafts(next); setProblem('');
+    draftItems.current = next; setDrafts(next); setProblem(''); setSendProblem('');
     input.current?.focus();
   };
   const removeDraft = (id) => {
@@ -306,6 +380,21 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
     setListening(false);
     if (cancel) setHeard('');
   }, []);
+
+  const hide = async () => {
+    if (hiding) return;
+    setHiding(true);
+    setProblem('');
+    try {
+      const result = await request('assistant/settings', { patch: { pet: { enabled: false } } });
+      if (result.outcome !== 'success') throw new Error();
+      if (!alive.current) return;
+      setMenuOpen(false); setOpen(false); setBubble('');
+      setSettings(result.settings.pet);
+      window.dispatchEvent(new Event('dudu:settings-changed'));
+    } catch { if (alive.current) setProblem(T.toast.failed); }
+    finally { if (alive.current) setHiding(false); }
+  };
 
   const startVoice = useCallback((autoSend = false) => {
     if (!available || speech.current || suppressed || !settings.enabled || !settings.voice) return;
@@ -347,7 +436,10 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
   }, [available, speechCatalog, actions, suppressed, settings.enabled, settings.voice, send]);
 
   useEffect(() => {
-    if (!settings.enabled || suppressed) { stopVoice(true); return; }
+    if (!settings.enabled || suppressed) {
+      if (speech.current) { speech.current.cancel = true; speech.current.stop(true); }
+      return;
+    }
     let holding = false;
     let timer;
     let tapped = 0;
@@ -357,7 +449,8 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
       if (event.defaultPrevented || event.isComposing) return;
       if (event.code === 'Escape') {
         if (speech.current) { event.preventDefault(); cancel(); }
-        else if (openRef.current && !document.querySelector('[data-radix-popper-content-wrapper]')) { event.preventDefault(); setOpen(false); button.current?.focus(); }
+        else if (openRef.current && !document.querySelector('[data-radix-popper-content-wrapper], [role="menu"], [aria-modal="true"]')) { event.preventDefault(); setOpen(false); button.current?.focus(); }
+        setBubble('');
         return;
       }
       if (event.code !== 'Space' || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || editable(event.target) || document.querySelector('[aria-modal="true"],[role="menu"],[role="listbox"]')) return;
@@ -384,19 +477,24 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
   }, [settings, suppressed, available, startVoice, stopVoice]);
 
   useEffect(() => {
-    if (!open || suppressed || !settings.enabled) return;
+    if ((!open && !bubble) || suppressed || !settings.enabled) return;
     const dismiss = (event) => {
-      if (event.composedPath().includes(dock.current) || event.target instanceof Element && event.target.closest('[data-pet-menu]')) return;
-      setOpen(false);
-      setBubble('');
-      stopVoice(true);
+      if (event.composedPath().includes(dock.current)) return;
+      // Let React identify portaled descendants before handling an outside press.
+      queueMicrotask(() => {
+        if (isPetInteraction(event) || event.target instanceof Element && event.target.closest('[data-pet-menu]')) return;
+        setOpen(false);
+        setBubble('');
+        stopVoice(true);
+      });
     };
     document.addEventListener('pointerdown', dismiss, true);
     return () => document.removeEventListener('pointerdown', dismiss, true);
-  }, [open, suppressed, settings.enabled, stopVoice]);
+  }, [open, bubble, suppressed, settings.enabled, stopVoice]);
 
   if (!settings.enabled || suppressed) return null;
   const today = new Date().toDateString();
+  const began = turnStart(messages); // when the work now going on began, for the running line
   const older = messages.filter((message) => new Date(message.at).toDateString() !== today);
   const current = messages.filter((message) => new Date(message.at).toDateString() === today);
   const loadEarlier = async () => {
@@ -438,21 +536,27 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
             {earlier && older.map(renderMessage)}
             <div className="dudu-pet-day">{T.today}</div>
             {current.map(renderMessage)}
-            {(conversation?.running || compacting) && <div className="text-muted-foreground" role="status" aria-label={P.working}>…</div>}
+            {(conversation?.running || compacting) && <RunningStatus since={compacting ? undefined : began} />}
             {notice && <div className="dudu-pet-day" role="status">{notice}</div>}
-            {problem && <div role="alert" className="text-danger-foreground">
-              <p>{problem}</p>
-              <Button variant="ghost" size="sm" onClick={async () => {
+            </div>
+          </div>
+          {(sendProblem || problem) && <div role="alert" className="dudu-pet-error">
+              <AlertCircle className="size-3.5 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1 break-words">{sendProblem || problem}</span>
+              <Button variant="ghost" size="icon-xs" aria-label={T.retry} title={T.retry} onClick={async () => {
+                if (retrying) return;
+                if (sendProblem) { await send(draft); return; }
+                setRetrying(true);
                 try {
                   const ready = await ensure();
                   await read(ready);
                   setProblem('');
                 } catch { setProblem(P.failed); }
-              }}>{T.retry}</Button>
-            </div>}
-            </div>
-          </div>
-          <form className="dudu-pet-input" ref={box} onSubmit={(event) => { event.preventDefault(); void send(draft); }}
+                finally { setRetrying(false); }
+              }} disabled={sending || retrying}>{sending || retrying ? <LoaderCircle className="animate-spin" /> : <RotateCcw />}</Button>
+              <Button variant="ghost" size="icon-xs" aria-label={P.close} title={P.close} onClick={() => { setSendProblem(''); setProblem(''); }}><X /></Button>
+          </div>}
+          <form className="dudu-pet-input" ref={box} aria-busy={sending} onSubmit={(event) => { event.preventDefault(); void send(draft); }}
             onDragOver={(event) => { if ([...event.dataTransfer.types].includes('Files')) event.preventDefault(); }}
             onDrop={(event) => { event.preventDefault(); attach(droppedFiles(event.dataTransfer)); }}>
             {drafts.length > 0 && <div className="dudu-pet-attachments">
@@ -472,10 +576,17 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
             <div className="dudu-pet-line" ref={line}>
               {context && <span className="dudu-pet-token" ref={token}>{P.context}</span>}
               {context && !draft && whereLabel(where) && <span className="dudu-pet-where" aria-hidden="true">{whereLabel(where)}</span>}
-              <textarea ref={input} rows={1} value={draft} onChange={(event) => setDraft(event.target.value)} onPaste={(event) => {
+              <div className="dudu-pet-mirror" ref={mirror} aria-hidden="true">
+                {marked.map((part, index) => (part.mark ? <span key={index} className="dudu-pet-mark">{part.text}</span> : part.text))}{draft.endsWith('\n') ? '\n' : ''}
+              </div>
+              <textarea ref={input} rows={1} value={draft} onChange={(event) => { setDraft(event.target.value); suggestions.inspect(event.target); }}
+                onScroll={(event) => { if (mirror.current) mirror.current.scrollTop = event.currentTarget.scrollTop; }}
+                onClick={(event) => suggestions.inspect(event.currentTarget, true)} onSelect={(event) => suggestions.inspect(event.currentTarget)}
+                {...suggestions.controls} onPaste={(event) => {
                 const pasted = [...(event.clipboardData?.files ?? [])];
                 if (pasted.length) { event.preventDefault(); attach(pasted); }
               }} onKeyDown={(event) => {
+                if (suggestions.keyDown(event)) return;
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(draft); }
                 // The word is taken off the way a typed one is: Backspace at the start of the line.
                 else if (event.key === 'Backspace' && context && event.currentTarget.selectionStart === 0 && event.currentTarget.selectionEnd === 0) { event.preventDefault(); setContext(false); }
@@ -485,33 +596,51 @@ export function Pet({ request, actions = {}, version = 0, suppressed = false }) 
               <input ref={files} type="file" multiple hidden tabIndex={-1} onChange={(event) => { attach(event.target.files); event.target.value = ''; }} />
               <PlusMenu anchor={box} disabled={sending} contextOn={context} contextAvailable={Boolean(where)} compactDisabled={compacting || Boolean(conversation?.running)}
                 onFile={() => files.current?.click()} onContext={() => { setContext(!context); input.current?.focus(); }} onCompact={() => void compact()} />
-              <span className="flex-1" />
-              <Models sessionId={conversation?.sessionId} model={conversation?.model} actions={actions} onError={setProblem} />
+              <ConversationControls sessionId={conversation?.sessionId} model={conversation?.model} actions={actions}
+                renderPermission={renderPermission} locked={sending || Boolean(conversation?.running)} onError={setProblem} />
               {available && settings.voice && <Button type="button" variant="ghost" size="icon-sm" aria-label={P.voice} aria-pressed={listening} onClick={() => listening ? stopVoice(false) : startVoice(false)}><Mic /></Button>}
               {conversation?.running
-                ? <Button type="button" variant="ghost" size="icon-sm" aria-label={P.stop} onClick={() => actions.stopConversation?.(conversation.sessionId).catch(() => setProblem(P.failed))}><Square /></Button>
-                : <Button type="submit" size="icon-sm" className="dudu-pet-send" aria-label={P.send} disabled={(!draft.trim() && !drafts.length) || sending}><ArrowUp /></Button>}
+                ? <Button type="button" variant="ghost" size="icon-sm" className="dudu-pet-stop" aria-label={P.stop} onClick={() => actions.stopConversation?.(conversation.sessionId).catch(() => setProblem(P.failed))}><Square /></Button>
+                : <Button type="submit" size="icon-sm" className="dudu-pet-send" aria-label={P.send} disabled={(!draft.trim() && !drafts.length) || sending}>{sending ? <LoaderCircle className="animate-spin" /> : <ArrowUp />}</Button>}
             </div>
+            <Suggestions suggestions={suggestions} anchor={box} input={input} />
           </form>
         </section>
       )}
-      {(listening || (!open && (bubble || problem))) && (
+      {(listening || (!open && bubble)) && (
         <div className="dudu-pet-bubble" role="status">
-          {listening ? <><div>{heard}</div><small>{P.release}</small></> : <><div>{bubble || problem}</div><button type="button" onClick={() => { setOpen(true); setBubble(''); }}>{P.open}</button></>}
+          {listening ? <><div>{heard}</div><small>{P.release}</small></> : <>
+            <div className="-mr-1.5 flex items-start gap-2">
+              <div className="min-w-0 flex-1">{bubble}</div>
+              <button type="button" className="inline-flex size-5 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground hover:bg-muted" aria-label={P.close} onClick={() => setBubble('')}><X className="size-3.5" /></button>
+            </div>
+            <button type="button" className="dudu-pet-bubble-open" onClick={() => { setOpen(true); setBubble(''); }}>{P.open}</button>
+          </>}
         </div>
       )}
       {reminders.reminder && <Reminder reminder={reminders.reminder} more={reminders.more} onClose={reminders.close} onOpen={reminders.open} />}
-      {!open && !bubble && !problem && !listening && !reminders.reminder && <div className="dudu-pet-bubble dudu-pet-hint" role="tooltip">
-        {settings.doubleSpace && <div>{P.doubleSpace}</div>}{available && settings.voice && <div>{P.holdSpace}</div>}
-      </div>}
       {listening && <><i className="dudu-pet-ring" aria-hidden="true" /><i className="dudu-pet-ring dudu-pet-ring--second" aria-hidden="true" /></>}
-      <button ref={button} type="button" className={`dudu-pet${listening ? ' dudu-pet--listening' : ''}${open ? ' dudu-pet--open' : bubble ? ' dudu-pet--reply' : ''}`} aria-label={P.open} aria-expanded={open} onClick={() => { setOpen(!open); setBubble(''); }}>
-        <span className="dudu-pet-body">
-          <img src={pet} width="64" height="64" alt="" />
-          <i className="dudu-pet-eye dudu-pet-eye--left" aria-hidden="true"><i /></i>
-          <i className="dudu-pet-eye dudu-pet-eye--right" aria-hidden="true"><i /></i>
-        </span>
-      </button>
+      <ContextMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        <ContextMenuTrigger asChild>
+          <button ref={button} type="button" className={`dudu-pet${listening ? ' dudu-pet--listening' : ''}${open ? ' dudu-pet--open' : bubble ? ' dudu-pet--reply' : ''}`} aria-label={P.open} aria-expanded={open} onClick={() => { setOpen(!open); setBubble(''); }}>
+            <span className="dudu-pet-body">
+              <img src={pet} width="64" height="64" alt="" />
+              <i className="dudu-pet-eye dudu-pet-eye--left" aria-hidden="true"><i /></i>
+              <i className="dudu-pet-eye dudu-pet-eye--right" aria-hidden="true"><i /></i>
+            </span>
+          </button>
+        </ContextMenuTrigger>
+        <ContextMenuContent data-pet-menu="" data-pet-context-menu=""
+          className="dudu-pet-menu w-[128px] rounded-xl border-input p-1"
+          onCloseAutoFocus={(event) => { event.preventDefault(); button.current?.focus({ preventScroll: true }); }}>
+          <ContextMenuItem className="h-[26px] gap-2 rounded-lg px-2 text-xs [&_svg]:size-3.5" onSelect={onSettings}>
+            <Settings strokeWidth={1.7} aria-hidden="true" />{T.dashboard.settings}
+          </ContextMenuItem>
+          <ContextMenuItem className="h-[26px] gap-2 rounded-lg px-2 text-xs [&_svg]:size-3.5" disabled={hiding} onSelect={() => void hide()}>
+            <EyeOff strokeWidth={1.7} aria-hidden="true" />{P.hide}
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
     </div>
   );
 }

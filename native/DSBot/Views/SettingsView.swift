@@ -10,15 +10,22 @@ private struct SettingsRow: Identifiable, Equatable {
 struct SettingsView: View {
     @ObservedObject var store: DSBotStore
     @Environment(\.dismiss) private var dismiss
-    /// DSH's settings page boots behind the list while the user chooses, so a category opens at once.
+    /// Only DSH's own settings need an embedded page, created when its list is entered.
     @StateObject private var embeddedSession = EmbeddedPageSession()
     @State private var embeddedRetryToken = 0
     @State private var selectedRowID: String?
+    /// DSH's own pages are one level down, behind "其他设置" (owner, 2026-11-08), not listed beside 嘟嘟's.
+    @State private var showsDSHSettings = false
+
+    /// 嘟嘟's own settings pages, and the entry that leads to DSH's, from the plugin.
+    private var duduItems: [NavigationItem] {
+        store.activeNavigation.settings.filter { $0.group == "dudu" }
+    }
 
     /// DSH's own settings sections, from the plugin. A host that cannot list them yet falls back to the
     /// sections the settings page itself reports once it has loaded.
     private var rows: [SettingsRow] {
-        let provided = store.activeNavigation.settings
+        let provided = store.activeNavigation.settings.filter { $0.group != "dudu" }
         if !provided.isEmpty {
             return provided.map { SettingsRow(id: $0.id, title: $0.title, icon: $0.icon) }
         }
@@ -34,19 +41,21 @@ struct SettingsView: View {
         ZStack {
             pageBackground.ignoresSafeArea()
 
-            EmbeddedPageView(
-                store: store,
-                page: .settings,
-                session: embeddedSession,
-                retryToken: embeddedRetryToken,
-                isVisible: selectedRow != nil,
-                isInteractive: selectedRow != nil
-            )
-            .allowsHitTesting(selectedRow != nil)
-            .accessibilityHidden(selectedRow == nil)
+            if showsDSHSettings {
+                EmbeddedPageView(
+                    store: store,
+                    page: .settings,
+                    session: embeddedSession,
+                    retryToken: embeddedRetryToken,
+                    isVisible: selectedRow != nil,
+                    isInteractive: selectedRow != nil
+                )
+                .allowsHitTesting(selectedRow != nil)
+                .accessibilityHidden(selectedRow == nil)
+            }
 
             if selectedRow == nil {
-                settingsHome
+                (showsDSHSettings ? AnyView(dshSettingsPage) : AnyView(settingsHome))
                     .transition(.opacity)
             }
         }
@@ -61,14 +70,14 @@ struct SettingsView: View {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button(action: leave) {
-                    DSBotIcon(selectedRow == nil ? .close : .back, size: 20)
+                    DSBotIcon(closes ? .close : .back, size: 20)
                         .foregroundStyle(DSBotStyle.ink)
                 }
-                .accessibilityLabel(selectedRow == nil ? "关闭设置" : "返回设置栏目")
-                .accessibilityIdentifier(selectedRow == nil ? "settings.close" : "settings.dsh.back")
+                .accessibilityLabel(closes ? "关闭设置" : "返回设置栏目")
+                .accessibilityIdentifier(closes ? "settings.close" : "settings.dsh.back")
             }
             ToolbarItem(placement: .principal) {
-                Text(selectedRow?.title ?? "设置")
+                Text(selectedRow?.title ?? (showsDSHSettings ? "其他设置" : "设置"))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(DSBotStyle.ink)
                     .lineLimit(1)
@@ -96,14 +105,35 @@ struct SettingsView: View {
         selectedRow == nil ? DSBotStyle.settingsBackground : .white
     }
 
-    /// Close the list, or go back from a section to the list.
+    /// DSH's own pages, as DSH lists them: the page the "其他设置" row opens.
+    private var dshSettingsPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                dshSettingsCard
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 12)
+            .padding(.bottom, 30)
+            .frame(maxWidth: 640)
+            .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(DSBotStyle.settingsBackground.ignoresSafeArea())
+    }
+
+    /// The first level closes the settings; the levels below it go back one.
+    private var closes: Bool { selectedRow == nil && !showsDSHSettings }
+
+    /// Close the settings, or go back one level: from a DSH section to DSH's list, from that list to the settings.
     private func leave() {
-        if selectedRow == nil {
-            refreshCatalogAfterEmbeddedSettings()
-            dismiss()
-        } else {
+        if selectedRow != nil {
             selectedRowID = nil
             refreshCatalogAfterEmbeddedSettings()
+        } else if showsDSHSettings {
+            showsDSHSettings = false
+        } else {
+            refreshCatalogAfterEmbeddedSettings()
+            dismiss()
         }
     }
 
@@ -116,7 +146,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 connectionCard
-                dshSettingsCard
+                duduSettingsCard
             }
             .padding(.horizontal, 18)
             .padding(.top, 12)
@@ -172,6 +202,59 @@ struct SettingsView: View {
         .accessibilityHint("查看、切换或添加电脑")
     }
 
+    /// 嘟嘟's native settings pages, and the separate entry to DSH's own pages.
+    private var duduSettingsCard: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(duduItems.enumerated()), id: \.element.id) { index, item in
+                if index > 0 { rowDivider }
+                duduRow(item)
+            }
+        }
+        .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func duduRow(_ item: NavigationItem) -> some View {
+        let label = HStack(spacing: 12) {
+            Group {
+                if let icon = item.icon {
+                    NavigationIconView(icon: icon, size: 22)
+                } else {
+                    DSBotIcon(.settings)
+                }
+            }
+            .foregroundStyle(DSBotStyle.ink)
+            .frame(width: 28)
+            // Keep the approved name when an older plugin or cached catalog supplies the old label.
+            Text(item.target == .dshSettings ? "其他设置" : item.title)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(DSBotStyle.ink)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            DSBotIcon(.right, size: 16)
+                .foregroundStyle(DSBotStyle.muted)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(minHeight: 58)
+        .contentShape(Rectangle())
+        if item.target == .dshSettings {
+            Button {
+                showsDSHSettings = true
+                DSBotLog.record("settings.dsh.open")
+            } label: { label }
+                .buttonStyle(DSBotRowButtonStyle())
+                .accessibilityIdentifier("settings.dsh")
+        } else {
+            NavigationLink {
+                DuduSettingsPage(store: store, item: item)
+                    .id(store.activeComputer?.id)
+            } label: { label }
+                .buttonStyle(DSBotRowButtonStyle())
+                .accessibilityIdentifier("settings.\(item.id)")
+        }
+    }
+
     /// DSH's settings sections, as DSH lists them (with its icons). The first read of the list is a
     /// request to the plugin, not a page load, so it appears at once.
     private var dshSettingsCard: some View {
@@ -209,7 +292,7 @@ struct SettingsView: View {
                         DSBotIcon(.reconnect)
                             .foregroundStyle(DSBotStyle.ink)
                             .frame(width: 28)
-                        Text("重新加载设置")
+                        Text("重试")
                             .font(.system(size: 15, weight: .medium))
                             .foregroundStyle(DSBotStyle.ink)
                         Spacer(minLength: 0)
@@ -315,4 +398,63 @@ struct SettingsView: View {
         }
     }
 
+}
+
+/// One of 嘟嘟's settings pages, using the app's own controls and navigation bar.
+private struct DuduSettingsPage: View {
+    @ObservedObject var store: DSBotStore
+    let item: NavigationItem
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var navigator: SettingsNavigator
+    @State private var toast: DSBotToastMessage?
+
+    init(store: DSBotStore, item: NavigationItem) {
+        self.store = store
+        self.item = item
+        _navigator = StateObject(wrappedValue: SettingsNavigator(section: item.target.settingsSection ?? "general"))
+    }
+
+    var body: some View {
+        NativeSettingsView(navigator: navigator, store: store, topInset: 0) { toast = $0 }
+        .overlay(alignment: .top) {
+            DSBotToastOverlay(message: toast) { message in
+                if toast?.id == message.id { toast = nil }
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 8)
+        }
+        .background(DSBotStyle.settingsBackground.ignoresSafeArea())
+        .navigationBarBackButtonHidden(true)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .toolbarBackground(DSBotStyle.settingsBackground, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.light, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    if navigator.canPop { navigator.pop() } else { dismiss() }
+                } label: {
+                    if navigator.current?.page?.isForm == true {
+                        Text("取消")
+                    } else {
+                        DSBotIcon(.back, size: 20).foregroundStyle(DSBotStyle.ink)
+                    }
+                }
+                .disabled(navigator.current?.busy == true)
+                .accessibilityLabel(navigator.current?.page?.isForm == true ? "取消" : "返回")
+                .accessibilityIdentifier("settings.dudu.back")
+            }
+            ToolbarItem(placement: .principal) {
+                Text(navigator.title ?? item.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(DSBotStyle.ink)
+                    .lineLimit(1)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                NativeSettingsSaveButton(navigator: navigator, store: store) { toast = $0 }
+            }
+        }
+        .interactiveDismissDisabled(navigator.current?.busy == true)
+    }
 }

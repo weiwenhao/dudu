@@ -63,8 +63,9 @@ before(async () => {
   }));
   await writeFile(join(probe, 'cordis.patch.yml'), '- insert:\n    - id: dudu-native-sync-probe\n      name: dudu-native-sync-probe\n');
   await writeFile(join(probe, 'index.mjs'), `
+import { readSessionHistory } from ${JSON.stringify(new URL('../../host/dudu-plugin/dist/dsh-session-history.mjs', import.meta.url).href)};
 export const name = 'dudu-native-sync-probe';
-export const inject = ['connection', 'sessionController'];
+export const inject = ['connection', 'sessionController', 'sessionQuery'];
 export function apply(ctx) {
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/dudu-native-sync-probe', methods: ['POST'], requestBody: 'buffered',
@@ -72,7 +73,7 @@ export function apply(ctx) {
       const { sessionId, select, list } = await request.json();
       if (list) return Response.json(await ctx.sessionController.list());
       if (select) await ctx.sessionController.selectModel({ sessionId, provider: 'mock', model: 'mock-1' });
-      return Response.json(await ctx.sessionController.inspect(sessionId));
+      return Response.json(await readSessionHistory({ controller: ctx.sessionController, query: ctx.sessionQuery }, sessionId));
     },
   }));
 }
@@ -226,9 +227,9 @@ test('opening a sidebar session restores missing native links and immediately ch
   await writeFile(linksFile, JSON.stringify(links));
   await dudu.restart();
   const page = await dudu.openPanel({ selectPanel: false });
-  // A restored window can already select Claude; make the next click a real session change.
-  await page.getByRole('tree', { name: 'Sessions' }).getByText('Codex live sync fixture', { exact: true }).click();
-  await page.getByText('Codex progress after host restart', { exact: true }).waitFor();
+  // A restored window can already select Claude; select the Codex session imported by this group first.
+  await page.getByRole('tree', { name: 'Sessions' }).locator(`[data-row-key="session:${loaded.codex}"]`).click();
+  await page.getByText('Codex TUI update', { exact: true }).waitFor();
   for (const provider of ['claude', 'codex']) {
     const label = provider === 'claude' ? 'Claude' : 'Codex';
     const file = provider === 'claude' ? claudeFile : codexFile;
@@ -329,7 +330,7 @@ test('assigned Properties are locked, expose the native resume command, and dele
   const bar = page.getByRole('toolbar', { name: 'Bulk actions' });
   assert.equal(await bar.getByRole('button', { name: 'Agent', exact: true }).isDisabled(), true);
   await bar.getByRole('button', { name: 'Delete', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'This will be deleted' });
+  const dialog = page.getByRole('dialog', { name: /^Delete "/ });
   await dialog.getByText(issue.title, { exact: false }).waitFor();
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   assert.equal((await dudu.api('issues/get', { id: issue.id })).outcome, 'success');

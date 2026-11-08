@@ -88,4 +88,64 @@ final class ChatScrollPositionTests: XCTestCase {
         // A drag of 100pt away from the end is still a nudge.
         XCTAssertFalse(ChatScrollPosition.isAwayFromEnd(contentHeight: 1_000, containerHeight: 300, contentOffset: 600))
     }
+
+    // The device log of 2026-11-07 12:37: 20 rows, the estimate 14,982 against 13,955 really, a viewport of 912 at the estimated end (offset 14,070), and the only
+    // row built (1,652 tall) ending at 13,818: above the viewport. The latest (136 tall) was not built, so there was nothing to draw.
+    private let blank = (
+        rows: [HistoryRowFrame(id: "row18", minY: 12_166, maxY: 13_818)], contentOffset: CGFloat(14_070), viewport: CGFloat(912), content: CGFloat(14_982)
+    )
+
+    func testAViewportWithNoBuiltRowGoesToTheLastRowThatIsBuiltInsteadOfTheEndOfTheEstimate() {
+        let answer = BlankViewportRecovery.target(
+            latestID: "row19", rows: blank.rows, contentOffset: blank.contentOffset, viewportHeight: blank.viewport, contentHeight: blank.content, heldEstimate: nil
+        )
+        XCTAssertEqual(answer.target, "row18")
+        XCTAssertEqual(answer.held, 14_982, "the estimate that was found blank is handed back")
+    }
+
+    func testTheEstimateThatWasFoundBlankIsNotTrustedAgainWhereverTheViewportIsNow() {
+        // After the step the viewport shows the built row; "follow" is asked again (a second layout, the end of a drag): the end of the same estimate is still white.
+        let shown = BlankViewportRecovery.target(
+            latestID: "row19", rows: blank.rows, contentOffset: 12_906, viewportHeight: blank.viewport, contentHeight: blank.content, heldEstimate: 14_982
+        )
+        XCTAssertEqual(shown.target, "row18")
+        XCTAssertEqual(shown.held, 14_982)
+        // Rows were built and the estimate came back to what the rows reach: it is trusted again, and nothing is held.
+        let corrected = BlankViewportRecovery.target(
+            latestID: "row19", rows: blank.rows + [HistoryRowFrame(id: "row19", minY: 13_818, maxY: 13_955)], contentOffset: 13_043, viewportHeight: blank.viewport,
+            contentHeight: 13_955, heldEstimate: 14_982
+        )
+        XCTAssertNil(corrected.target)
+        XCTAssertNil(corrected.held)
+        // A new estimate without the latest built is judged afresh: here the viewport shows a built row, so the latest is followed as usual.
+        let changed = BlankViewportRecovery.target(
+            latestID: "row19", rows: blank.rows, contentOffset: 12_906, viewportHeight: blank.viewport, contentHeight: 14_100, heldEstimate: 14_982
+        )
+        XCTAssertNil(changed.target)
+        XCTAssertNil(changed.held)
+    }
+
+    func testAMessageThatArrivesWhileTheLastRowIsInViewIsFollowedAsUsual() {
+        // The viewport shows the last built row; the new row is not built yet and the estimate has grown by its estimated height.
+        let answer = BlankViewportRecovery.target(
+            latestID: "new", rows: [HistoryRowFrame(id: "last", minY: 12_400, maxY: 13_043)], contentOffset: 12_131, viewportHeight: 912, contentHeight: 14_043, heldEstimate: nil
+        )
+        XCTAssertNil(answer.target)
+        XCTAssertNil(answer.held)
+    }
+
+    func testNothingBuiltYetOrTheLatestBuiltIsFollowedAsUsual() {
+        XCTAssertNil(BlankViewportRecovery.target(latestID: "row19", rows: [], contentOffset: 14_070, viewportHeight: 912, contentHeight: 14_982, heldEstimate: nil).target)
+        XCTAssertNil(BlankViewportRecovery.target(
+            latestID: "row18", rows: blank.rows, contentOffset: blank.contentOffset, viewportHeight: blank.viewport, contentHeight: blank.content, heldEstimate: 14_982
+        ).target, "the latest is built: its place is real, even where an estimate was held")
+    }
+
+    func testTheLastBuiltRowIsTheOneWithTheGreatestBottomWhateverTheOrderOfTheRows() {
+        let rows = [
+            HistoryRowFrame(id: "b", minY: 5_000, maxY: 5_700), HistoryRowFrame(id: "c", minY: 5_700, maxY: 6_100), HistoryRowFrame(id: "a", minY: 4_000, maxY: 5_000),
+        ]
+        let answer = BlankViewportRecovery.target(latestID: "z", rows: rows, contentOffset: 9_000, viewportHeight: 912, contentHeight: 9_912, heldEstimate: nil)
+        XCTAssertEqual(answer.target, "c")
+    }
 }

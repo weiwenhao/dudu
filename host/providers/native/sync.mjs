@@ -1,4 +1,5 @@
 import { buildSessionEvents } from './session-events.mjs';
+import { canReadSessionHistory, readSessionHistory } from '../../dsh-session-history.mjs';
 import { userContent } from './images.mjs';
 
 const promptOf = (content) => (typeof content === 'string' ? content : (content ?? []).map((block) => block.type === 'text' ? block.text : block.type === 'image' ? '[image]' : '').join('\n')).replace(/\s+/g, ' ').trim();
@@ -111,8 +112,17 @@ export function nativeUpdates({ events, history, route, sessionId }) {
   }).events;
 }
 
+/** Whether the agent of a session that is live in DSH is working (or waiting for an answer): its session is not to be synchronized now. */
+export const busy = (live) => Boolean(live) && live.status !== 'idle';
+
+/**
+ * A synchronization that is put off says why: `unsupported` when this DSH cannot be synchronized into at all (no way to read a session's history, no way to hold the
+ * session, a reservation of another shape), which no amount of waiting changes; anything else is for the moment (`busy`), and is tried again soon.
+ */
+const putOff = (reason = 'busy') => ({ deferred: true, reason });
+
 /** Use the live Session's publication path when attached; cold sessions use an exclusively owned persistence handle. */
-export function createNativeSync({ persistence, controller = () => undefined, agents = () => undefined, refresh, pollMs = 5000 }) {
+export function createNativeSync({ persistence, controller = () => undefined, query = () => undefined, agents = () => undefined, refresh, pollMs = 5000 }) {
   const held = new Map();
   return async ({ sessionId, history, route }) => {
     let live = agents()?.get(sessionId);
@@ -121,20 +131,22 @@ export function createNativeSync({ persistence, controller = () => undefined, ag
     if (!live && history.turns.some((turn) => turn.complete === false)) {
       const resolved = await controller()?.resolveAgent?.(sessionId);
       live = resolved?.agent ?? agents()?.get(sessionId);
-      if (!live) return { deferred: true };
+      if (!live) return putOff();
     }
     if (live) {
-      if (live.status !== 'idle') return { deferred: true };
+      if (busy(live)) return putOff();
       const append = async (owner) => {
         const { signal } = owner;
-        const inspected = await controller()?.inspect(sessionId);
-        if (!inspected || signal?.aborted || live.status !== 'idle' || live.session.seq !== inspected.events.length) return { deferred: true };
+        const services = { controller: controller(), query: query() };
+        if (!canReadSessionHistory(services)) return putOff('unsupported');
+        const inspected = await readSessionHistory(services, sessionId);
+        if (!inspected || signal?.aborted || live.status !== 'idle' || live.session.seq !== inspected.events.length) return putOff();
         const updates = nativeUpdates({ events: inspected.events, history, route, sessionId });
         // DSH rc.5 keeps a separate turn counter in its maintenance reservation. Its public append path updates projections,
         // but not that counter. Refuse other driver shapes rather than let the next prompt reuse an imported turn number.
         const reservation = live.phase;
         if (reservation?.kind !== 'maintenance' || !Number.isSafeInteger(reservation.lastTurn) ||
-            Object.getOwnPropertyDescriptor(reservation, 'lastTurn')?.writable !== true) return { deferred: true };
+            Object.getOwnPropertyDescriptor(reservation, 'lastTurn')?.writable !== true) return putOff('unsupported');
         for (const event of updates) {
           const opts = event.surfaceOp ? { surfaceOp: event.surfaceOp, ...(event.sourceEventSeqs ? { sourceEventSeqs: event.sourceEventSeqs } : {}) } : undefined;
           if (opts) live.session.append(event.type, event.data, opts);
@@ -148,7 +160,8 @@ export function createNativeSync({ persistence, controller = () => undefined, ag
       };
       const owned = held.get(sessionId);
       if (owned?.live === live) return append(owned);
-      if (typeof live.runMaintenance !== 'function' || live.phase?.kind === 'maintenance') return { deferred: true };
+      if (typeof live.runMaintenance !== 'function') return putOff('unsupported');
+      if (live.phase?.kind === 'maintenance') return putOff();
       const ready = Promise.withResolvers();
       const job = live.runMaintenance(async (signal) => {
         const owner = { live, signal, release: Promise.withResolvers(), open: null };
@@ -184,7 +197,7 @@ export function createNativeSync({ persistence, controller = () => undefined, ag
     const handle = await store.open(sessionId, 'write');
     try {
       // A resume may have started while the persistence writer was being acquired.
-      if (agents()?.get(sessionId)) return { deferred: true };
+      if (agents()?.get(sessionId)) return putOff();
       const { events } = await handle.read();
       const updates = nativeUpdates({ events, history, route, sessionId });
       if (updates.length) { await handle.append(updates); await handle.flush(); }

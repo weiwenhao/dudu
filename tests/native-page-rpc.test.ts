@@ -23,6 +23,7 @@ test('publishes frozen read/write/stream inventories without anonymous execution
   assert.ok(PAGE_READ_METHODS.includes('dshMarket/registry'));
   assert.ok(PAGE_WRITE_METHODS.includes('settings/update'));
   assert.ok(PAGE_STREAM_METHODS.includes('session/follow'));
+  assert.ok(PAGE_STREAM_METHODS.includes('toolResults/watch'));
   assert.ok(PAGE_STREAM_METHODS.includes('$events'));
   assert.ok(!PAGE_READ_METHODS.includes('commands/execute'));
   assert.ok(!PAGE_READ_METHODS.includes('userQuestions/answer'));

@@ -12,13 +12,17 @@ struct DSBotEdgeBlur: UIViewRepresentable {
     let height: CGFloat
     /// Scales every layer's radius: 1 is the full effect, less is lighter.
     var strength: CGFloat = 1
+    /// Keeps all layers fully visible this far from the edge, then eases them out below it.
+    var fullStrengthHeight: CGFloat = 0
 
     func makeUIView(context: Context) -> VariableBlurView {
-        VariableBlurView(edge: edge, strength: strength)
+        VariableBlurView(edge: edge, strength: strength, fullStrengthHeight: fullStrengthHeight)
     }
 
     func updateUIView(_ view: VariableBlurView, context: Context) {
         view.edge = edge
+        view.strength = strength
+        view.fullStrengthHeight = fullStrengthHeight
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: VariableBlurView, context: Context) -> CGSize? {
@@ -48,14 +52,20 @@ final class VariableBlurView: UIView {
         didSet { if edge != oldValue { setNeedsLayout() } }
     }
 
-    private let strength: CGFloat
+    var strength: CGFloat {
+        didSet { if strength != oldValue { rebuildAnimators() } }
+    }
+    var fullStrengthHeight: CGFloat {
+        didSet { if fullStrengthHeight != oldValue { setNeedsLayout() } }
+    }
     private var effectViews: [UIVisualEffectView] = []
     private var animators: [UIViewPropertyAnimator] = []
     private var observer: NSObjectProtocol?
 
-    init(edge: VerticalEdge, strength: CGFloat = 1) {
+    init(edge: VerticalEdge, strength: CGFloat = 1, fullStrengthHeight: CGFloat = 0) {
         self.edge = edge
         self.strength = strength
+        self.fullStrengthHeight = fullStrengthHeight
         super.init(frame: .zero)
         isUserInteractionEnabled = false
         isAccessibilityElement = false
@@ -120,12 +130,18 @@ final class VariableBlurView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        let solidFraction = bounds.height > 0 ? min(1, max(0, fullStrengthHeight / bounds.height)) : 0
+        let fadeFraction = 1 - solidFraction
         for (view, layer) in zip(effectViews, Self.layers) {
             view.frame = bounds
             guard let mask = view.layer.mask as? CAGradientLayer else { continue }
             mask.frame = view.bounds
             mask.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
-            mask.locations = [0, NSNumber(value: Double(layer.solid)), NSNumber(value: Double(layer.reach))]
+            mask.locations = [
+                0,
+                NSNumber(value: Double(solidFraction + layer.solid * fadeFraction)),
+                NSNumber(value: Double(solidFraction + layer.reach * fadeFraction))
+            ]
             if edge == .top {
                 mask.startPoint = CGPoint(x: 0.5, y: 0)
                 mask.endPoint = CGPoint(x: 0.5, y: 1)

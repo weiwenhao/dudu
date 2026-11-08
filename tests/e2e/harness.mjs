@@ -33,6 +33,16 @@ export async function panelAction(page, action) {
   if (action === 'Edit layout') await page.getByRole('toolbar', { name: 'Edit layout', exact: true }).waitFor();
 }
 
+/**
+ * The way to an issue's page from a row or a card: "Open issue" in its right-click menu (the small icon that used to end the row and the card is gone,
+ * owner 2026-11-05). `scope` is the row or the card, or something that holds exactly one of them.
+ */
+export async function openIssuePage(scope) {
+  const item = scope.locator('xpath=self::*[@data-issue-row or @data-issue-card] | .//*[@data-issue-row or @data-issue-card]').first();
+  await item.click({ button: 'right', position: { x: 30, y: 12 } });
+  await item.page().getByRole('menuitem', { name: 'Open issue', exact: true }).click();
+}
+
 /** The packaged plugin of this checkout (built fresh unless DUDU_E2E_TGZ names one that already is). */
 async function packagedPlugin() {
   if (process.env.DUDU_E2E_TGZ) return process.env.DUDU_E2E_TGZ;
@@ -46,7 +56,7 @@ async function waitForUrl(child, output) {
   while (Date.now() - started < STARTUP_MS) {
     const found = /https?:\/\/127\.0\.0\.1:\d+\/?\S*/.exec(output.text);
     if (found) return new URL(found[0]);
-    if (child.exitCode !== null) throw new Error(`dsh web exited early (code ${child.exitCode}).`);
+    if (child.exitCode !== null) throw new Error(`dsh web exited early (code ${child.exitCode}).\n${output.text.replace(/https?:\/\/\S+/g, '[URL redacted]').slice(-6000)}`);
     await new Promise((done) => setTimeout(done, 100));
   }
   throw new Error('dsh web did not print its address in time.');
@@ -70,6 +80,10 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
   // A scripted model on a local port, which DSH is told to use as its default: no real model, no real credential. Its key is a made-up one.
   const mock = model ? await startMockModel(model === true ? {} : model) : null;
   if (mock) env.DUDU_MOCK_MODEL_KEY = 'mock-key';
+  if (mock && model.nativeClaude) Object.assign(env, {
+    ANTHROPIC_API_KEY: 'dudu-e2e-key', ANTHROPIC_BASE_URL: mock.url.replace(/\/v1$/, ''),
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_TELEMETRY: '1',
+  });
   if (mock && model.nativeCodex) {
     await mkdir(join(user, '.codex'), { recursive: true });
     await writeFile(join(user, '.codex', 'config.toml'), [
@@ -122,7 +136,7 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
       '- id: ui-settings-general', '  name: "@deepseek-ai/dsh-client-ui-settings-general"', '  config:', '    welcomeNoticeVersion: 2026-09-28.1', modelPatch, patch,
     ].join('\n') + '\n');
 
-    const login = await launch();
+    let login = await launch();
     const base = login.origin;
 
     state.browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -134,16 +148,30 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
 
     const pages = new Set();
     const dudu = {
-      base, context, folder, home, viewport, model: mock,
+      base, context, folder, home, viewport, model: mock, packageArchive: tgz,
       diagnostics: () => state.output.text.replace(/https?:\/\/\S+/g, '[URL redacted]'),
+      /** An isolated loopback alias for visible browser review, without exposing a token-bearing launch URL. */
+      async authorizeBrowserOrigin(origin) {
+        const target = new URL(origin);
+        if (target.protocol !== 'http:' || target.port !== new URL(base).port || !target.hostname.endsWith('.localhost')) throw new Error('Use a loopback alias of this isolated DSH.');
+        const response = await context.request.get(login.href, { headers: { host: target.host }, maxRedirects: 0 });
+        const cookie = response.headers()['set-cookie'];
+        if (response.status() !== 303 || !cookie) throw new Error('The isolated browser session could not be authorized.');
+        return cookie;
+      },
       /** Change only this test profile's package selection; restart() applies it on runtimes without profile hot reload. */
       async removePlugin(name) {
         await run(DSH, ['plugin', '--profile', 'web', 'remove', name], { env, cwd: folder, maxBuffer: 16 * 1024 * 1024 });
+      },
+      /** Install only into this test's profile; profile HMR can activate it while this DSH keeps running. */
+      async installPlugin(archive) {
+        await run(DSH, ['plugin', '--profile', 'web', 'add', `file:${archive}`], { env, cwd: folder, maxBuffer: 16 * 1024 * 1024 });
       },
       /** Restart the same isolated home, keeping its sessions, model and browser origin. */
       async restart() {
         await stopChild();
         const next = await launch(new URL(base).port);
+        login = next;
         const auth = await context.newPage();
         try { await auth.goto(next.href); await auth.waitForLoadState('domcontentloaded'); }
         finally { await auth.close(); }

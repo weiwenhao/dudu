@@ -1,5 +1,34 @@
 import Foundation
 
+/// What the phone sent, shown from the moment of sending (dimmed, like every input the host has not admitted yet) until the host's snapshot names its
+/// request id, the host cancels it, or the send fails. Display state only: never part of the persisted conversation or host Inbox.
+struct AcceptedSubmission: Equatable, Sendable, Identifiable {
+    enum Placement: Equatable, Sendable { case transcript, queued }
+
+    let requestId: String
+    let text: String
+    let time: Double
+    let placement: Placement
+    let images: [UploadAttachment]
+    let files: [UploadedFile]
+
+    var id: String { "submission:\(requestId)" }
+    var attachments: [TranscriptAttachment] {
+        images.enumerated().map { index, image in
+            TranscriptAttachment(kind: "image", name: image.name, id: "\(id):\(index)")
+        } + files.map { TranscriptAttachment(kind: "file", name: $0.name) }
+    }
+    var row: TranscriptRow {
+        .user(UserRow(
+            id: id, text: text, attachments: attachments, time: time,
+            isPending: true, requestId: requestId
+        ))
+    }
+    var queuedMessage: QueuedMessage {
+        QueuedMessage(id: id, text: text, editable: false, attachments: attachments, requestId: requestId)
+    }
+}
+
 struct ConversationQuestion: Codable, Identifiable, Equatable, Sendable {
     struct Option: Codable, Hashable, Sendable {
         var label: String
@@ -123,6 +152,7 @@ extension Transcript {
         let currentBoundary = newer.beforeSeq ?? newer.entries.compactMap(\.seq).min() ?? 0
         let prefix = entries.filter { ($0.seq ?? currentBoundary) < currentBoundary }
         combined.entries = prefix + newer.entries
+        combined.pendingInputs = newer.pendingInputs
         var references = tools ?? [:]
         for (id, next) in newer.tools ?? [:] {
             let old = references[id]

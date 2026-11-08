@@ -11,7 +11,7 @@ export function useIssueShortcuts() {
       const key = event.key.toLowerCase();
       const action = (event.metaKey || event.ctrlKey) && key === 'backspace' ? 'delete'
         : event.metaKey || event.ctrlKey || event.altKey ? null
-        : event.shiftKey ? { d: 'due', p: 'project' }[key] : { s: 'status', p: 'priority', a: 'agent' }[key];
+        : event.shiftKey ? { d: 'due', p: 'project' }[key] : { s: 'status', p: 'priority', a: 'agent', l: 'labels' }[key];
       if (action) { event.preventDefault(); hovered.current(action); }
     };
     window.addEventListener('keydown', onKey);

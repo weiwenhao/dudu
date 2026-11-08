@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { hostname } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -5,7 +6,7 @@ import { join } from 'node:path';
 import { createNativeBridge } from './native-bridge.mjs';
 import { createNavigationStore } from './native-navigation.mjs';
 import { createNativeServer, localAddress, probeNativeAddress, equalProof } from './native-server.mjs';
-import { connectionAddress, createPairingStore } from './pairing-devices.mjs';
+import { connectionAddress, connectionKind, createPairingStore } from './pairing-devices.mjs';
 import { renderPairingSvg } from './qr.mjs';
 import { createWebPageHttp } from './web-page-http.mjs';
 
@@ -20,6 +21,12 @@ export async function createDsbotControl({
   pages,
   conversationReads,
   questionBridge,
+  sessionActivity,
+  sessionSearch,
+  assistantConversation,
+  assistant,
+  board,
+  duduPages,
   dispatch: injectedDispatch,
   port = DEFAULT_PORT,
   host = '0.0.0.0',
@@ -46,14 +53,20 @@ export async function createDsbotControl({
     }
     const automatic = lanAddress();
     const addresses = [];
+    const addressKinds = {};
     for (const address of value.addresses) {
       if (typeof address !== 'string') throw new Error('连接地址格式不正确。');
       if (!address.trim()) continue;
       const normalized = connectionAddress(address);
-      if (normalized !== automatic && !addresses.includes(normalized)) addresses.push(normalized);
+      if (normalized !== automatic && !addresses.includes(normalized)) {
+        addresses.push(normalized);
+        const kind = value.addressKinds?.[address] ?? value.addressKinds?.[normalized];
+        if (kind !== undefined && !['lan', 'public'].includes(kind)) throw new Error('配置格式不正确。');
+        if (kind && kind !== connectionKind(normalized)) addressKinds[normalized] = kind;
+      }
     }
     if (addresses.length >= MAX_ADDRESSES) throw new Error(`连接地址最多添加 ${MAX_ADDRESSES} 个。`);
-    return { name, addresses };
+    return { name, addresses, ...(Object.keys(addressKinds).length ? { addressKinds } : {}) };
   };
 
   const lanAddress = () => connectionAddress(`http://${resolveLanAddress()}:${server.port}`);
@@ -70,14 +83,14 @@ export async function createDsbotControl({
   let settings = { name: hostname().slice(0, 80) || 'DSH', addresses: [] };
   let server;
   try {
-    bridge = injectedDispatch ? undefined : createNativeBridge({ rpc, pages, navigation, conversationReads, questionBridge });
+    bridge = injectedDispatch ? undefined : createNativeBridge({ rpc, pages, navigation, conversationReads, questionBridge, sessionActivity, sessionSearch, assistantConversation, assistant, board, duduPages });
     dispatch = injectedDispatch ?? bridge.dispatch;
     httpPages = typeof pages?.openHttp === 'function'
-      ? createWebPageHttp({ pages, pairingStore: devices }) : undefined;
+      ? createWebPageHttp({ pages, pairingStore: devices, duduPages }) : undefined;
     server = await nativeServerFactory({
       host,
       port,
-      computer: () => ({ id: devices.id, name: settings.name }),
+      computer: () => ({ id: devices.id, name: settings.name, addresses: connectionRoutes() }),
       pairingStore: devices,
       dispatch,
       onDisconnect: bridge?.closeConnection,
@@ -125,12 +138,21 @@ export async function createDsbotControl({
     }
   }
 
+  function connectionRoutes(config = settings) {
+    const automatic = lanAddress();
+    return [
+      { kind: 'lan', url: automatic },
+      ...config.addresses.filter((address) => address !== automatic)
+        .map((url) => ({ kind: config.addressKinds?.[url] ?? connectionKind(url), url })),
+    ];
+  }
   const state = () => {
     const automatic = lanAddress();
     return {
       ...settings,
       addresses: [automatic, ...settings.addresses.filter((address) => address !== automatic)],
       lanAddress: automatic,
+      routes: connectionRoutes(),
       port: server.port,
       devices: devices.list(),
     };
@@ -154,22 +176,25 @@ export async function createDsbotControl({
     save,
     async generate(value) {
       const next = validate(value);
-      const address = connectionAddress(value.address);
-      if (address !== lanAddress() && !next.addresses.includes(address)) throw new Error('请选择已添加的连接地址。');
-      const nonce = randomBytes(24).toString('base64url');
-      const expected = devices.proof(nonce);
-      let received;
-      try {
-        received = await probeAddress(address, nonce, { expectedProof: expected, pairingStore: devices });
-      } catch {
-        throw new Error('连接地址未连接到这台电脑，请检查地址、TLS 证书和网络配置。');
-      }
-      if (!equalProof(expected, received)) {
-        throw new Error('连接地址未连接到这台电脑，请检查地址、TLS 证书和网络配置。');
+      const address = value.address === undefined ? lanAddress() : connectionAddress(value.address);
+      if (value.address !== undefined) {
+        if (address !== lanAddress() && !next.addresses.includes(address)) throw new Error('请选择已添加的连接地址。');
+        const nonce = randomBytes(24).toString('base64url');
+        const expected = devices.proof(nonce);
+        let received;
+        try {
+          received = await probeAddress(address, nonce, { expectedProof: expected, pairingStore: devices });
+        } catch {
+          throw new Error('连接地址未连接到这台电脑，请检查地址、TLS 证书和网络配置。');
+        }
+        if (!equalProof(expected, received)) {
+          throw new Error('连接地址未连接到这台电脑，请检查地址、TLS 证书和网络配置。');
+        }
       }
       await save(next);
-      const code = await devices.issue({ address, name: next.name });
-      return { ...code, svg: renderPairingSvg(code.url), name: next.name };
+      const routes = connectionRoutes(next);
+      const code = await devices.issue({ address, addresses: routes, name: next.name });
+      return { ...code, svg: renderPairingSvg(code.url), name: next.name, addresses: routes };
     },
     async handle(action, request) {
       try {

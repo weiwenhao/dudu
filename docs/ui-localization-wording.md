@@ -1,8 +1,10 @@
 # 桌面中英文界面用词（待主人审阅）
 
-2026-10-31：按主人要求，固定界面文字随 DeepSeek Harness 的语言设置切换。以下与当前代码的 622 个键对应；其中 504 个为现行控件和诊断用词，118 个为保留的旧连接器兼容译文。本次新增译文没有算作此前已经审过的字，也未安装到正式 Desktop。
+2026-11-02 补充：本表包含历史键。主人要求清理和重新审核的副文本，以 [secondary-copy-review.md](secondary-copy-review.md) 中的逐句清单和处置为准；表中旧的 `note`、规则 `description`、`developerDescription`、`currentModel`、`detail.messageHint` 已从界面移除，不再代表当前显示效果。随后按主人要求移除整个“小组件”设置栏目，其导航、可见性开关、开发者模式和本地开发标记用词也仅作历史记录；组件添加、移除仍使用“编辑版面”中的既有用词。
 
-`{name}`、`{text}` 等是实际内容的位置；有数量变化的用词列出 1 和 3 的示例。事项标题、正文、模型回答、连接器名称、规则文件和第三方插件文案保持原文。2026-11-01 按本人明确要求，英文名统一为 Dudu；本人身份与署名统一为 boss（两种界面语言均不变）。
+2026-10-31：按主人要求，固定界面文字随 DeepSeek Harness 的语言设置切换。以下与代码的 622 个键（2026-11-03 起再加 11 个，见下面标明的）对应；其中 504 个为现行控件和诊断用词，118 个为保留的旧连接器兼容译文。本次新增译文没有算作此前已经审过的字，也未安装到正式 Desktop。
+
+`{name}`、`{text}` 等是实际内容的位置；有数量变化的用词列出 1 和 3 的示例。事项标题、正文、模型回答、连接器名称、规则文件和第三方插件文案保持原文。2026-11-01 按本人明确要求，英文名统一为 Dudu；本人身份与署名在 2026-11-01 统一为 boss；**2026-11-04 主人改定：“我在嘟嘟这个插件中的角色就是‘你’”，英文 You，中文 你**（留言署名、事项的来源、设置里的提示都用它，见下面的 `activity.you`、`source.owner`、`connectorDiagnostics`）。
 
 本轮新增包括：侧栏菜单、选择和新建项目、统一留言框及 @ 路由提示、系统活动和错误的双语显示、采集 Prompt 说明，以及 Office 的已分配事项说明。完整交接消息和项目模板改字另见 [issues-ui-wording.md](issues-ui-wording.md)。
 
@@ -43,9 +45,9 @@
 | changeStatus | Change status… | 更改状态… |
 | changeStatusOf | {status}. Change status: {title} | {status}。更改状态：{title} |
 | noProject | No project | 无项目 |
-| source.owner | boss | boss |
+| source.owner | You | 你 |
 | source.dudu | Dudu | 嘟嘟 |
-| source.connector | Connector | 连接器 |
+| source.connector | Collector | 收集器 |
 | source.session | Session | 会话 |
 | display.title | Display options | 显示选项 |
 | display.list | List | 列表 |
@@ -118,6 +120,11 @@
 | detail.noProjectSet | No project | 无项目 |
 | detail.clearDue | Clear | 清除 |
 | detail.dueDate | Due date | 截止日期 |
+| due.placeholder（2026-11-02 主人确认） | Try: 24h, 7 days, Feb 9 | 试试：24h、7天、2月9日 |
+| due.remove（2026-11-02 主人确认） | Remove due date | 移除截止日期 |
+| due.custom（2026-11-02 主人确认） | Custom… | 自定义… |
+| due.weekEnd（2026-11-02 主人确认） | End of this week | 本周结束 |
+| due.oneWeek（2026-11-02 主人确认） | In one week | 一周后 |
 | detail.setPriority | Set priority… | 设置优先级… |
 | detail.copyId | Copy ID | 复制编号 |
 | detail.openSession | Open session | 打开会话 |
@@ -135,7 +142,7 @@
 | snooze.nextWeek | Next week | 下周 |
 | snooze.clear | Clear snooze | 取消稍后提醒 |
 | snooze.until | Snoozed until {date} | 稍后提醒至 {date} |
-| activity.you | boss | boss |
+| activity.you | You | 你 |
 | activity.justNow | just now | 刚刚 |
 | activity.minutesAgo | 1m ago<br>3m ago | 1 分钟前<br>3 分钟前 |
 | activity.hoursAgo | 1h ago<br>3h ago | 1 小时前<br>3 小时前 |
@@ -308,6 +315,7 @@
 | settings.unavailable | The project folder could not be opened. | 项目文件夹没能打开。 |
 | settings.nav.general | General | 通用 |
 | settings.nav.connectors | Connectors | 连接器 |
+| settings.nav.collectors | Collectors | 收集器 |
 | settings.nav.rules | Rules | 规则 |
 | settings.nav.memory | Memory | 记忆 |
 | settings.nav.widgets | Widgets | 小组件 |
@@ -334,14 +342,41 @@
 | settings.general.lastTidy | Last tidy | 最近一次整理 |
 | settings.general.noTidy | Not tidied yet | 还没有整理过 |
 | settings.general.undoTidy | Undo tidy | 撤销整理 |
+| settings.general.deepSleep | Deep sleep | 深度睡眠 |
 | settings.general.currentModel | Uses the current DSH model | 用 DSH 当前的模型 |
+| settings.connectors.add | Add connector | 添加连接器 |
+| settings.connectors.name | Name | 名称 |
+| settings.connectors.prompt | Prompt | Prompt |
 | settings.connectors.empty | No connectors | 没有连接器 |
 | settings.connectors.remove | Remove | 删除 |
 | settings.connectors.addedByDudu | Added by Dudu | 嘟嘟添加 |
-| settings.connectors.note | Tell Dudu where and what to collect. Saved prompts are used on each collection run. | 告诉嘟嘟去哪里、收集什么。保存后，每轮采集都会照着这些提示读取。 |
 | settings.connectors.removeOf | Remove {name} | 删除：{name} |
 | settings.connectors.removed | Removed {name} | 已删除 {name} |
 | settings.connectors.undo | Undo | 撤销 |
+| settings.connectors.kind.prompt | Prompt | Prompt |
+| settings.connectors.kind.mcp | MCP | MCP |
+| settings.connectors.server | MCP server | MCP 服务 |
+| settings.connectors.authorized | Authorized | 已授权 |
+| settings.connectors.needsAuth | Needs authorization | 需要授权 |
+| settings.connectors.usedBy | Collectors: {names} | 收集器：{names} |
+| settings.connectors.inUse | Collectors still use it: {names} | 还有收集器在用它：{names} |
+| settings.collectors.add | Add collector | 添加收集器 |
+| settings.collectors.name | Name | 名称 |
+| settings.collectors.connector | Connector | 连接器 |
+| settings.collectors.prompt | What to collect | 收集什么 |
+| settings.collectors.empty | No collectors | 没有收集器 |
+| settings.collectors.needConnector | Add a connector first | 先添加一个连接器 |
+| settings.collectors.frequency | How often, such as 30m, 2h, 1d, or cron | 频率，如 30m、2h、1d，或 cron |
+| settings.collectors.common | Common frequencies | 常用频率 |
+| settings.collectors.notes | Notes | 笔记 |
+| settings.collectors.addedByDudu | Added by Dudu | 嘟嘟添加 |
+| settings.collectors.removeOf | Remove {name} | 删除：{name} |
+| settings.collectors.removed | Removed {name} | 已删除 {name} |
+| settings.collectors.undo | Undo | 撤销 |
+| settings.collectors.last.done | Last {time} · {n} new<br>Last {time} · nothing new | 上次 {time} · 新增 {n} 条<br>上次 {time} · 没有新的 |
+| settings.collectors.last.failed | Last {time} · failed | 上次 {time} · 读取失败 |
+| settings.collectors.everyMinutes / everyHours / everyDays | Every {n} minutes / Every {n} hours / Every hour / Every {n} days / Every day | 每 {n} 分钟 / 每 {n} 小时 / 每小时 / 每 {n} 天 / 每天 |
+| settings.collectors.preset.* | Every 5 minutes … Monday to Friday, every hour 9–18 | 每 5 分钟 … 周一至周五 9 至 18 点每小时 |
 | settings.rules.open | Open | 打开 |
 | settings.rules.empty | Empty | 空 |
 | settings.rules.missing | Not found | 未找到 |
@@ -405,10 +440,26 @@
 | settings.skills.back | Back to skills | 返回技能 |
 | settings.skills.note | Dudu’s own skills are separate from each agent’s skills. | 嘟嘟自己的技能，和各智能体的技能互不影响。 |
 | settings.skills.deleteOf | Delete: {name} | 删除：{name} |
-| agentState.working | Working | 工作中 |
-| agentState.needs_you | Needs you | 等你回复 |
-| agentState.stuck | Stuck | 卡住了 |
 | agentState.idle | Idle | 空闲 |
+| agentState.working | Working | 工作中 |
+| agentState.blocked | Needs you | 需要你 |
+| agentState.unassigned | Unassigned | 未分配 |
+| deepSleep | Deep sleep | 深度睡眠 |
+| fields.label | Labels | 标签 |
+| display.property.labels | Labels | 标签 |
+| labels.name | Labels | 标签 |
+| labels.add | Add label | 添加标签 |
+| labels.search | Change or add labels… | 修改或添加标签… |
+| labels.create | Create new label: "{name}" | 新建标签：“{name}” |
+| labels.pickColor | Pick a color for label | 选择标签颜色 |
+| labels.colors | Grey · Dark Grey · Purple · Teal · Green · Yellow · Orange · Pink · Red | 灰色 · 深灰 · 紫色 · 青色 · 绿色 · 黄色 · 橙色 · 粉色 · 红色 |
+| labels.loading / failed / createFailed / empty | Loading labels… · Could not load labels · Could not create the label · No labels yet | 正在读取标签… · 标签没能读取 · 标签没能创建 · 还没有标签 |
+| subIssues.add / addMore | Add sub-issue · Add sub-issues | 添加子事项 · 添加子事项 |
+| subIssues.title / placeholder | Sub-issues · Sub-issue title | 子事项 · 子事项标题 |
+| subIssues.parent / subIssueOf | Parent issue · Sub-issue of | 父事项 · 子事项，属于 |
+| subIssues.setParent / removeParent / searchParent / noMatch | Set parent issue… · Remove parent · Search issues… · No issues found | 设置父事项… · 移除父事项 · 搜索事项… · 没有找到事项 |
+| subIssues.createFailed | Could not create the sub-issue | 子事项没能创建 |
+| newIssue2.more / parent | More · Parent issue | 更多 · 父事项 |
 | pet.open | Open conversation | 展开对话 |
 | pet.close | Close | 关闭 |
 | pet.conversation | Dudu | 嘟嘟 |
@@ -418,7 +469,6 @@
 | pet.voice | Voice input | 语音输入 |
 | pet.release | Release to send · Esc to cancel | 松开发送 · Esc 取消 |
 | pet.stop | Stop | 停止 |
-| pet.working | Working | 工作中 |
 | pet.failed | Could not load the conversation | 对话没能加载 |
 | pet.voiceFailed | Voice input failed | 语音输入失败 |
 | pet.doubleSpace | Double Space to chat | 双击空格对话 |
@@ -431,6 +481,7 @@
 | pet.actions.memory_remember | Remembered | 已记录 |
 | pet.actions.memory_forget | Forgotten | 已忘记 |
 | pet.actions.connector_register | Connector added | 已添加连接器 |
+| pet.actions.collector_register | Collector added | 已添加收集器 |
 | pet.actions.dashboard_add | Widget added | 已添加小组件 |
 | pet.actions.dashboard_remove | Widget removed | 已移除小组件 |
 | pet.actions.dashboard_reset | Layout restored | 已恢复版面 |
@@ -496,6 +547,14 @@
 | diagnostics.The new folder can't be inside the current one, or the other way round. | The new folder can't be inside the current one, or the other way round. | 新旧文件夹不能互相包含。 |
 | diagnostics.That is already the folder in use. | That is already the folder in use. | 已经在使用这个文件夹。 |
 | diagnostics.The files could not be moved. Nothing was deleted. | The files could not be moved. Nothing was deleted. | 文件没能移动，没有删除任何文件。 |
+| diagnostics.Give the source a short name. | Give the connector a short name. | 请给连接器起一个简短的名称。 |
+| diagnostics.Give a prompt saying where and what to collect. | Write a prompt saying where and what to collect. | 请写下去哪里收集、收集什么。 |
+| diagnostics.A line of the prompt cannot start with # or ## (it would be read as a heading). | A line of the prompt cannot start with # or ##. | Prompt 里的行不能以 # 或 ## 开头。 |
+| diagnostics.Keep credentials in the existing tools, not in source prompts. | Keep credentials out of prompts. Use the tool that holds them. | 不要把密钥写进 Prompt，请使用保存密钥的工具。 |
+| diagnostics.The source prompts changed. Read them again before editing. | The connectors changed. Reload and try again. | 连接器刚刚有变动，请重新打开再试。 |
+| diagnostics.There are too many source prompts. | There are too many connectors. | 连接器太多了。 |
+| diagnostics.This source no longer exists. | This connector no longer exists. | 这个连接器已不存在。 |
+| diagnostics.The source prompts could not be read or saved. | The connectors could not be read or saved. | 连接器没能读取或保存。 |
 | diagnostics.Wait until the conversation and memory tidy finish. | Wait until the conversation and memory tidy finish. | 请等对话和记忆整理结束。 |
 | diagnostics.It is not a widget declaration. | It is not a widget declaration. | 这不是小组件声明。 |
 | diagnostics.It has no id. | It has no id. | 缺少编号。 |
@@ -525,20 +584,6 @@ Office 复用同一语言设置；事项状态、智能体状态等复用主表�
 
 | 代码位置 | English | 中文 |
 |---|---|---|
-| settings.connectors.test | Test | 测试 |
-| settings.connectors.allowed | Allowed operations | 允许的操作 |
-| settings.connectors.read | Read | 读 |
-| settings.connectors.write | Write | 写 |
-| settings.connectors.never | Not tested | 未测试 |
-| settings.connectors.testedOk | OK · {when} | 通过 · {when} |
-| settings.connectors.testedFailed | Failed · {when} | 失败 · {when} |
-| settings.connectors.turnOn | Turn on {name} | 开启：{name} |
-| settings.connectors.expand | Details of {name} | 详情：{name} |
-| settings.connectors.kind.cli | Command | 命令行 |
-| settings.connectors.kind.mcp | MCP | MCP |
-| settings.connectors.kind.dsh | DSH extension | DSH 扩展 |
-| settings.connectors.skipped | Skipped entries | 跳过的条目 |
-| settings.connectors.line | Line 1<br>Line 3 | 第 1 行<br>第 3 行 |
 | connectorDiagnostics.skipped.tooBig | The file is too large to read. | 文件太大，无法读取。 |
 | connectorDiagnostics.skipped.noMeta | No metadata comment (&lt;!-- id: … --&gt;) found. | 缺少元数据注释（&lt;!-- id: … --&gt;）。 |
 | connectorDiagnostics.skipped.badId | The id must be 1 to 24 lowercase letters, digits or hyphens. | id 须为 1 到 24 个小写字母、数字或连字符。 |
@@ -588,7 +633,7 @@ Office 复用同一语言设置；事项状态、智能体状态等复用主表�
 | connectorDiagnostics.config.id | id must be 1 to 24 lowercase letters, digits or hyphens. | id 须为 1 到 24 个小写字母、数字或连字符。 |
 | connectorDiagnostics.config.needId | Give the connector an id (lowercase letters, digits and hyphens). | 请填写连接器 id，使用小写字母、数字和连字符。 |
 | connectorDiagnostics.config.input | The input must be an object. | 输入须为对象。 |
-| connectorDiagnostics.config.ownerOnly | {key} is boss's to set; Dudu cannot. | {key} 由 boss 设置，嘟嘟不能修改。 |
+| connectorDiagnostics.config.ownerOnly | {key} is yours to set; Dudu cannot. | {key} 由你设置，嘟嘟不能修改。 |
 | connectorDiagnostics.template.empty | The template is empty. | 模板为空。 |
 | connectorDiagnostics.template.tooLong | The template is longer than 500 characters. | 模板超过 500 个字符。 |
 | connectorDiagnostics.template.tooMany | The template has more than 40 words. | 模板超过 40 个词。 |
@@ -597,21 +642,21 @@ Office 复用同一语言设置；事项状态、智能体状态等复用主表�
 | connectorDiagnostics.runtime.fileError | CONNECTORS.md could not be read or written ({code}). | CONNECTORS.md 无法读取或写入（{code}）。 |
 | connectorDiagnostics.runtime.unexpected | Something went wrong: {what} | 出错了：{what} |
 | connectorDiagnostics.runtime.busy | CONNECTORS.md keeps changing; try again. | CONNECTORS.md 一直在变动，请重试。 |
-| connectorDiagnostics.runtime.unclosedFence | CONNECTORS.md has a code block that is never closed (line 3); boss has to close it before a connector can be added. | CONNECTORS.md 第 3 行的代码块没有闭合，请先补齐再添加连接器。 |
+| connectorDiagnostics.runtime.unclosedFence | CONNECTORS.md has a code block that is never closed (line 3); it has to be closed before a connector can be added. | CONNECTORS.md 第 3 行的代码块没有闭合，请先补齐再添加连接器。 |
 | connectorDiagnostics.runtime.noFolder | The project folder does not exist. | 项目文件夹不存在。 |
 | connectorDiagnostics.runtime.noConnector | There is no connector "3". | 没有编号为“3”的连接器。 |
 | connectorDiagnostics.runtime.broken | The entry "3" on line 3 cannot be used: {reason} | 第 3 行的条目“3”无法使用：{reason} |
 | connectorDiagnostics.runtime.exists | There is already a connector "3". | 编号为“3”的连接器已存在。 |
-| connectorDiagnostics.runtime.notDudu | "3" is boss's entry; Dudu cannot change or remove it. | “3”由 boss 添加，嘟嘟不能修改或删除。 |
-| connectorDiagnostics.runtime.isOn | "3" is on. boss has to turn it off before its settings can change. | “3”已开启，请先关闭再修改配置。 |
+| connectorDiagnostics.runtime.notDudu | "3" is not Dudu's entry; Dudu cannot change or remove it. | “3”由你添加，嘟嘟不能修改或删除。 |
+| connectorDiagnostics.runtime.isOn | "3" is on. It has to be turned off before its settings can change. | “3”已开启，请先关闭再修改配置。 |
 | connectorDiagnostics.runtime.changedSince | "3" changed since it was shown; look at it again before turning it on. | “3”已变动，请重新查看后再开启。 |
 | connectorDiagnostics.runtime.badTicks | tools must be a list of tool names, or null for the default. | tools 须为工具名称列表；null 表示使用默认值。 |
 | connectorDiagnostics.runtime.noUndo | This undo is not available any more. | 这次操作已无法撤销。 |
 | connectorDiagnostics.runtime.undoChanged | "3" was changed after that; nothing was undone. | “3”后来有改动，没有撤销。 |
 | connectorDiagnostics.runtime.undoBack | "3" exists again; nothing was undone. | “3”已重新出现，没有撤销。 |
 | connectorDiagnostics.runtime.unknownOperation | There is no operation "{name}" in an enabled connector. | 已开启的连接器中没有操作“{name}”。 |
-| connectorDiagnostics.runtime.isOff | The connector "3" is off; boss turns it on in the connections page. | 连接器“3”已关闭，请在连接器页开启。 |
-| connectorDiagnostics.runtime.needsReview | The original configuration of "3" changed since it was turned on; boss has to look at it and turn it on again. | “3”的原始配置有变动，请查看后重新开启。 |
+| connectorDiagnostics.runtime.isOff | The connector "3" is off; it is turned on in the connections page. | 连接器“3”已关闭，请在连接器页开启。 |
+| connectorDiagnostics.runtime.needsReview | The original configuration of "3" changed since it was turned on; it has to be looked at and turned on again. | “3”的原始配置有变动，请查看后重新开启。 |
 | connectorDiagnostics.runtime.notRead | "{name}" is not a read operation, so it is not run for reading. | “{name}”不是读取操作，不会自动运行。 |
 | connectorDiagnostics.runtime.notReadable | A {kind} connector can only be used inside the conversation. | {kind} 连接器只能在对话中使用。 |
 | connectorDiagnostics.runtime.noDsh | DSH tools are not available here. | 这里无法使用 DSH 工具。 |
@@ -655,3 +700,78 @@ Office 复用同一语言设置；事项状态、智能体状态等复用主表�
 | widgets.sessions.takeover | Let Dudu manage: {title} | 交给嘟嘟管理：{标题} |
 | widgets.sessions.takeoverFailed | Could not take over this session. | 会话没能接管。 |
 | detail.messageErrors.recipient_unavailable | Mention the recipient assigned to this issue. | 只能 @ 当前事项的处理者。 |
+
+## 2026-11-04 宠物对话窗口的运行行（英文待审）
+
+取代上面已删的 `pet.working`（`Working` / `工作中`）。中文是主人指定的，英文取自 DSH 自己的 `Deep diving for 9s ···`；说明见 [issues-ui-wording.md](issues-ui-wording.md) 的同日一节。
+
+| Key | English | 中文 |
+|---|---|---|
+| pet.running | Deep diving | 深度求索中 |
+| pet.runningFor | Deep diving for {duration} ··· | 深度求索中，用时 {duration} ··· |
+| pet.duration | 9s · 1m 15s · 1h 2m 5s | 9秒 · 1分15秒 · 1小时2分5秒 |
+| copy.menu | Copy | 复制 |
+| copy.title | Copy title | 复制标题 |
+| copy.markdown | Copy issue as Markdown | 复制事项为 Markdown |
+| copy.everything | Copy everything as Markdown | 复制全部内容为 Markdown |
+| copy.branch | Copy git branch name | 复制 Git 分支名 |
+| copy.prompt | Copy as prompt | 复制为提示词 |
+| copy.duplicate | Make a copy… | 复制一份… |
+| copy.done.title | title（Copied title） | 标题（已复制 标题） |
+| copy.done.markdown | issue as Markdown | 事项 Markdown |
+| copy.done.everything | everything as Markdown | 全部内容 Markdown |
+| copy.done.branch | git branch name | Git 分支名 |
+| copy.done.prompt | prompt | 提示词 |
+| deleteIssue.title | Delete "{name}"? | 删除“{name}”？ |
+| deleteIssue.titleMany | Delete {count} issues? | 删除 {count} 条事项？ |
+| deleteIssue.scope | This issue, its activity and local links will be deleted. Source messages and session history stay. | 将删除这条事项、活动和本地关联。来源消息和会话历史会保留。 |
+| deleteIssue.scopeMany | These issues, their activity and local links will be deleted. Source messages and session history stay. | 将删除这些事项、它们的活动和本地关联。来源消息和会话历史会保留。 |
+| links.title | Links | 链接 |
+| links.add | Add link… | 添加链接… |
+| links.addPullRequest | Add pull request… | 添加拉取请求… |
+| links.addDocument | Add document… | 添加文档… |
+| links.url | URL | 网址 |
+| links.titleOptional | Title (optional) | 标题（可选） |
+| links.addButton | Add | 添加 |
+| links.dialog.link | Add link | 添加链接 |
+| links.dialog.pull_request | Add pull request | 添加拉取请求 |
+| links.dialog.document | Add document | 添加文档 |
+| links.remove | Remove {name} | 移除 {name} |
+| links.invalid | Enter a web address that starts with http:// or https:// | 请输入以 http:// 或 https:// 开头的网址。 |
+| links.duplicate | This link is on the issue already. | 这条链接已经在事项上了。 |
+| descriptionHistory.menu | Show description history | 查看描述历史 |
+| descriptionHistory.title | Description history | 描述历史 |
+| descriptionHistory.current | Current version | 当前版本 |
+| descriptionHistory.restore | Restore this version | 恢复此版本 |
+| descriptionHistory.close | Close | 关闭 |
+| descriptionHistory.none | The description has not been changed. | 描述还没有改过。 |
+| descriptionHistory.empty | The description was empty. | 当时的描述是空的。 |
+| richText.menu | Blocks | 内容块 |
+| richText.linkPlaceholder | Paste or type a link… | 粘贴或输入链接… |
+| richText.blocks.heading1 | Heading 1 | 一级标题 |
+| richText.blocks.heading2 | Heading 2 | 二级标题 |
+| richText.blocks.heading3 | Heading 3 | 三级标题 |
+| richText.blocks.bulletList | Bulleted list | 无序列表 |
+| richText.blocks.orderedList | Numbered list | 有序列表 |
+| richText.blocks.taskList | Checklist | 待办清单 |
+| richText.blocks.quote | Quote | 引用 |
+| richText.blocks.codeBlock | Code block | 代码块 |
+| richText.blocks.divider | Divider | 分隔线 |
+| richText.format.bold | Bold | 加粗 |
+| richText.format.italic | Italic | 斜体 |
+| richText.format.strike | Strikethrough | 删除线 |
+| richText.format.code | Code | 代码 |
+| richText.format.link | Link | 链接 |
+| views.add | Add new view | 添加视图 |
+| views.newTitle | New view | 新视图 |
+| views.renameTitle | Rename view | 重命名视图 |
+| views.name | View name | 视图名称 |
+| views.create | Create view | 创建视图 |
+| views.save | Save | 保存 |
+| views.rename | Rename | 重命名 |
+| views.delete | Delete view | 删除视图 |
+| views.deleteTitle | Delete view "{name}"? | 删除视图“{name}”？ |
+| views.deleteScope | The view is deleted. The issues in it stay. | 将删除这个视图，里面的事项不受影响。 |
+| widgets.sessions.unsearchable | {count} sessions cannot be searched, so results may be incomplete | 还有 {count} 个会话没法搜索内容，结果可能不全 |
+| widgets.sessions.indexing | Building the search index ({done}/{total}), so results may be incomplete | 正在建立搜索索引（{done}/{total}），结果可能不全 |
+| widgets.sessions.listPartial | Some sessions could not be read, so the list may be incomplete | 部分会话没能读取，列表可能不全 |

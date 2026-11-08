@@ -1,3 +1,5 @@
+import { readSessionHistory } from '../../dsh-session-history.mjs';
+
 const quote = (value) => /^[a-z0-9_-]+$/i.test(value) ? value : `'${value.replace(/'/g, "'\\''")}'`;
 
 /** Only a harness's own persisted assistant source establishes its native continuation identity. */
@@ -12,7 +14,7 @@ export function nativeIdentity(events = []) {
 }
 
 /** The native continuation identity is separate from DSH's own session id. */
-export async function sessionInfo({ key, links, controller }) {
+export async function sessionInfo({ key, links, controller, query }) {
   if (!key) return {};
   let [provider, ...parts] = key.split(':');
   let id = parts.join(':');
@@ -20,7 +22,7 @@ export async function sessionInfo({ key, links, controller }) {
     let native = links?.nativeKey(id);
     if (!native) {
       try {
-        const { events } = await controller?.inspect(id) ?? {};
+        const { events } = await readSessionHistory({ controller, query }, id);
         const identity = nativeIdentity(events);
         if (identity) native = `${identity.provider}:${identity.id}`;
       } catch { /* the DSH identity still shows when a native one is not available */ }

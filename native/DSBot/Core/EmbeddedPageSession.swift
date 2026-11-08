@@ -6,6 +6,8 @@ enum EmbeddedDSHPage: String, Codable, Sendable {
     /// A sidebar panel or a conversation view that a plugin added to DSH; the
     /// `target` names it.
     case panel, view
+    /// A page of the dudu plugin's own (its settings, one section to a page, named by `target`): served by the plugin itself, not by DSH's web interface.
+    case dudu
 }
 
 struct EmbeddedSettingsCategory: Decodable, Identifiable, Sendable, Equatable {
@@ -305,7 +307,9 @@ final class EmbeddedPageSession: ObservableObject {
             ReviewWebDiagnostics.record(stage: "boot.transport.injected", pageKind: page.rawValue)
 #endif
             readyTimeout = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(30))
+                // The first WKWebView visit also downloads DSH's frontend and plugin
+                // bundles. Its resource load must not consume the entire route budget.
+                try? await Task.sleep(for: .seconds(60))
                 guard !Task.isCancelled, let self, self.openID == operation, self.isLoading else { return }
                 self.fail()
             }

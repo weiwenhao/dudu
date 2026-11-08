@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { syncAgentAssets } from './sync-agent-assets.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -17,6 +18,7 @@ const configuration = option('--configuration', testing ? 'Debug' : 'Release');
 if (!['Release', 'Debug'].includes(configuration)) throw new Error('Unsupported build configuration.');
 const derived = join(root, '.local', 'native-ios');
 await mkdir(derived, { recursive: true });
+await syncAgentAssets();
 const run = (command, options) => execFileSync(command, options, { cwd: root, stdio: 'inherit' });
 run('xcodegen', ['generate', '--spec', 'native/project.yml', '--project', 'native']);
 run('xcodebuild', [

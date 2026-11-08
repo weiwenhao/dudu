@@ -30,7 +30,7 @@ function filesUnder(root: string): string[] {
 }
 const snapshot = (dir: string) => Object.fromEntries(filesUnder(dir).map((file) => [file.slice(dir.length), readFileSync(file, 'utf8')]));
 
-test('a new project folder gets the seven template files, never overwrites what is there, and a memory works in it', async (t) => {
+test('a new project folder gets the eight template files, never overwrites what is there, and a memory works in it', async (t) => {
   const base = world(t);
   assert.equal(defaultFolder('/Users/x/.dsh'), join('/Users/x/.dsh', 'dudu', 'home'));
   assert.equal(defaultFolder(undefined, { env: { DSH_HOME: '/data/dsh' } }), join('/data/dsh', 'dudu', 'home'));
@@ -38,7 +38,7 @@ test('a new project folder gets the seven template files, never overwrites what 
 
   const folder = join(base, 'home');
   assert.deepEqual(ensureFolder(folder, { env: ALLOW }), { ok: true, path: folder, created: TEMPLATE_NAMES, kept: [] });
-  assert.deepEqual(TEMPLATE_NAMES, ['AGENTS.md', 'SOUL.md', 'USER.md', 'MEMORY.md', 'CONNECTORS.md', 'TRIAGE.md', 'ASSIGN.md']);
+  assert.deepEqual(TEMPLATE_NAMES, ['AGENTS.md', 'SOUL.md', 'USER.md', 'MEMORY.md', 'CONNECTORS.md', 'COLLECTORS.md', 'TRIAGE.md', 'ASSIGN.md']);
   assert.deepEqual(readdirSync(folder).sort(), [...TEMPLATE_NAMES].sort());
 
   // The templates: complete, short, plain; the marker is the first line of AGENTS.md; nothing in them looks like a secret.
@@ -61,19 +61,22 @@ test('a new project folder gets the seven template files, never overwrites what 
     assert.deepEqual(parseCurated(TEMPLATES[name]).entries, []);
     assert.equal(serializeCurated(parseCurated(TEMPLATES[name])), TEMPLATES[name]);
   }
-  // CONNECTORS.md shows the format and registers nothing: no heading, no comment line at the start of a line, nothing enabled.
-  const connectors = TEMPLATES['CONNECTORS.md'];
-  assert.ok(!/^## /m.test(connectors) && !/^<!--/m.test(connectors) && !/^```/m.test(connectors));
-  assert.match(connectors, /Prompt/);
-  assert.doesNotMatch(connectors, /enabled: true/);
-  assert.ok(connectors.split('\n').filter((line) => /^\s*(##|<!--|```)/.test(line)).every((line) => line.startsWith('    ')), 'the example is indented');
+  // CONNECTORS.md and COLLECTORS.md show the format and register nothing: no heading, no comment line at the start of a line, nothing enabled.
+  for (const name of ['CONNECTORS.md', 'COLLECTORS.md']) {
+    const text = TEMPLATES[name];
+    assert.ok(!/^## /m.test(text) && !/^<!--/m.test(text) && !/^```/m.test(text), name);
+    assert.doesNotMatch(text, /enabled: true/);
+    assert.ok(text.split('\n').filter((line) => /^\s*(##|<!--|```)/.test(line)).every((line) => line.startsWith('    ')), `the example of ${name} is indented`);
+  }
+  assert.match(TEMPLATES['CONNECTORS.md'], /Prompt[\s\S]*MCP/);
+  assert.match(TEMPLATES['COLLECTORS.md'], /连接器[\s\S]*收集什么/);
 
   // The folder now counts as a 嘟嘟 folder; setting it up again changes nothing that is there, and only brings back what is missing.
   assert.deepEqual(checkFolder(folder, { env: ALLOW }), { ok: true, path: folder, real: checkFolder(folder, { env: ALLOW }).real, exists: true, empty: false, marked: true });
   writeFileSync(join(folder, 'SOUL.md'), '我自己写的口吻\n');
   rmSync(join(folder, 'TRIAGE.md'));
   const again = ensureFolder(folder, { env: ALLOW });
-  assert.deepEqual([again.created, again.kept.length], [['TRIAGE.md'], 6]);
+  assert.deepEqual([again.created, again.kept.length], [['TRIAGE.md'], 7]);
   assert.equal(readFileSync(join(folder, 'SOUL.md'), 'utf8'), '我自己写的口吻\n');
   assert.equal(readFileSync(join(folder, 'TRIAGE.md'), 'utf8'), TEMPLATES['TRIAGE.md']);
 

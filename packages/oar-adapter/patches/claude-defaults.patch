@@ -1,0 +1,203 @@
+--- a/dist/runtimes/claude/index.d.ts
++++ b/dist/runtimes/claude/index.d.ts
+@@ -32,6 +32,7 @@
+     readonly install: import("../../browser.js").Installer;
+     readonly accountUsage: import("../../browser.js").AccountUsageReader;
+     readonly listModels: import("../../browser.js").ModelLister;
++    readonly configuration: typeof import("./list-models.js").claudeConfiguration;
+     readonly checkUpdate: import("../../browser.js").UpdateChecker;
+     readonly upgrade: typeof claudeUpgrade;
+     readonly login: typeof claudeLogin;
+@@ -42,4 +43,4 @@
+ export { claudeAccountUsage } from "./account-usage.js";
+ export { claudeListModels, projectClaudeModels } from "./list-models.js";
+ export { claudeSession } from "./session.js";
+-//# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=index.d.ts.map
+--- a/dist/runtimes/claude/index.js
++++ b/dist/runtimes/claude/index.js
+@@ -8,7 +8,7 @@
+ import { claudeAccountUsage } from "./account-usage.js";
+ import { claudeInstallation } from "./installation.js";
+ import { claudeInstall, claudeInstallPlan } from "./install.js";
+-import { claudeListModels } from "./list-models.js";
++import { claudeConfiguration, claudeListModels } from "./list-models.js";
+ import { claudeCheckUpdate, claudeUpgrade } from "./update.js";
+ import { claudeSession } from "./session.js";
+ export const claudeRuntime = defineRuntime({
+@@ -30,6 +30,7 @@
+     install: claudeInstall,
+     accountUsage: claudeAccountUsage,
+     listModels: claudeListModels,
++    configuration: claudeConfiguration,
+     checkUpdate: claudeCheckUpdate,
+     upgrade: claudeUpgrade,
+     login: claudeLogin,
+@@ -40,4 +41,4 @@
+ export { claudeAccountUsage } from "./account-usage.js";
+ export { claudeListModels, projectClaudeModels } from "./list-models.js";
+ export { claudeSession } from "./session.js";
+-//# sourceMappingURL=index.js.map
+\ No newline at end of file
++//# sourceMappingURL=index.js.map
+--- a/dist/runtimes/claude/launch-args.d.ts
++++ b/dist/runtimes/claude/launch-args.d.ts
+@@ -1,5 +1,5 @@
+ /** Refuse, before claude starts, a `launchArgs` entry that collides with a flag OAR manages. */
+ export declare function refuseManagedLaunchArgs(launchArgs: readonly string[] | undefined): void;
+ /** Keep explicit native modes noninteractive; omission preserves OAR's default bypass. */
+-export declare function claudePermissionArgs(launchArgs: readonly string[] | undefined): readonly string[];
++export declare function claudePermissionArgs(launchArgs: readonly string[] | undefined, permissionMode?: import("../../contracts/session-options.js").SessionOptions["permissionMode"]): readonly string[];
+ //# sourceMappingURL=launch-args.d.ts.map
+\ No newline at end of file
+--- a/dist/runtimes/claude/launch-args.js
++++ b/dist/runtimes/claude/launch-args.js
+@@ -32,7 +32,7 @@
+     }
+ }
+ /** Keep explicit native modes noninteractive; omission preserves OAR's default bypass. */
+-export function claudePermissionArgs(launchArgs) {
++export function claudePermissionArgs(launchArgs, permissionMode) {
+     const args = launchArgs ?? [];
+     let hasMode = false;
+     for (const [index, arg] of args.entries()) {
+@@ -54,6 +54,15 @@
+     if (hasMode && args.some((arg) => arg.split("=", 1)[0] === "--dangerously-skip-permissions")) {
+         throw new UnsupportedOptionError("launchArgs", "claude --dangerously-skip-permissions overrides the requested --permission-mode; choose one permission policy");
+     }
++    if (permissionMode !== undefined) {
++        if (!["inherit", "auto", "default", "manual", "acceptEdits", "plan", "dontAsk", "bypassPermissions"].includes(permissionMode)) {
++            throw new UnsupportedOptionError("permissionMode", "Unsupported Claude native permission mode");
++        }
++        if (hasMode || args.some((arg) => arg.split("=", 1)[0] === "--dangerously-skip-permissions")) {
++            throw new UnsupportedOptionError("permissionMode", "Choose permissionMode or launchArgs for the permission policy, not both");
++        }
++        return [...(permissionMode === "inherit" ? [] : ["--permission-mode", permissionMode]), "--permission-prompts", "none"];
++    }
+     return hasMode ? ["--permission-prompts", "none"] : ["--dangerously-skip-permissions"];
+ }
+ //# sourceMappingURL=launch-args.js.map
+\ No newline at end of file
+--- a/dist/runtimes/claude/launch.js
++++ b/dist/runtimes/claude/launch.js
+@@ -57,7 +57,7 @@
+  */
+ export async function launchClaude(command, sessionId, options) {
+     refuseManagedLaunchArgs(options.launchArgs);
+-    const permissions = claudePermissionArgs(options.launchArgs);
++    const permissions = claudePermissionArgs(options.launchArgs, options.permissionMode);
+     refuseSessionOptions(claudeRefusedSessionOptions, options);
+     checkSessionName(options);
+     const tierSettings = claudeServiceTierSettings(options.serviceTier);
+@@ -88,4 +88,4 @@
+         throw error;
+     }
+ }
+-//# sourceMappingURL=launch.js.map
+\ No newline at end of file
++//# sourceMappingURL=launch.js.map
+--- a/dist/runtimes/claude/list-models.d.ts
++++ b/dist/runtimes/claude/list-models.d.ts
+@@ -8,4 +8,5 @@
+  */
+ export declare function projectClaudeModels(payload: unknown): ModelEntry[];
+ export declare const claudeListModels: ModelLister;
+-//# sourceMappingURL=list-models.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=list-models.d.ts.map
++export declare function claudeConfiguration(installation: import("../../contracts/installation.js").AvailableInstallation, options?: import("../../contracts/list-models.js").ListModelsOptions & { model?: string }): Promise<{ model?: string; resolvedModel?: string; effort?: string; defaultEffort?: string; modelEfforts?: Record<string, string>; permissionMode?: string }>;
+--- a/dist/runtimes/claude/list-models.js
++++ b/dist/runtimes/claude/list-models.js
+@@ -59,7 +59,7 @@
+  * and the answer is the same models, faster). User settings stay loaded —
+  * provider env and apiKeyHelper live there — so authentication is unaffected.
+  */
+-async function readListModels(command, cwd, timeoutMs, env) {
++async function readListModels(command, cwd, timeoutMs, env, method = "list_models", model) {
+     const child = spawnLineProcess(command, [
+         "-p",
+         "--input-format", "stream-json",
+@@ -68,6 +68,7 @@
+         "--settings", "{\"disableAllHooks\":true}",
+         "--strict-mcp-config",
+         "--mcp-config", "{\"mcpServers\":{}}",
++        ...(model === undefined ? [] : ["--model", model]),
+     ], { cwd, env: claudeEnv(env), killTree: true });
+     const requestId = `oar-list-models-${randomUUID()}`;
+     const { promise: answered, resolve } = Promise.withResolvers();
+@@ -92,11 +93,11 @@
+         child.write(`${JSON.stringify({
+             type: "control_request",
+             request_id: requestId,
+-            request: { subtype: "list_models" },
++            request: { subtype: method },
+         })}\n`);
+         const inner = await answered;
+         if (inner === null) {
+-            return { kind: "error", detail: "claude exited before answering list_models" };
++            return { kind: "error", detail: `claude exited before answering ${method}` };
+         }
+         if (inner.subtype === "success") {
+             return { kind: "ok", payload: inner.response };
+@@ -113,9 +114,9 @@
+         await child.exited;
+     }
+ }
+-async function readOutcome(command, cwd, timeoutMs, env) {
++async function readOutcome(command, cwd, timeoutMs, env, method, model) {
+     try {
+-        return await readListModels(command, cwd, timeoutMs, env);
++        return await readListModels(command, cwd, timeoutMs, env, method, model);
+     }
+     catch (error) {
+         throw new Error("Failed to list Claude models", { cause: error });
+@@ -127,11 +128,45 @@
+     }
+     const outcome = await readOutcome(installation.command, listingCwd(options), options.timeoutMs ?? 15_000, options.env);
+     if (outcome.kind === "ok") {
+-        return { kind: "ok", models: projectClaudeModels(outcome.payload) };
++        const models = projectClaudeModels(outcome.payload);
++        // get_settings is private: project only selected model/effort, never settings sources, env or credentials.
++        let defaults;
++        try { defaults = await claudeConfiguration(installation, options); } catch { /* older CLIs can still list models */ }
++        const selected = models.find((entry) => entry.id === defaults?.model)
++            ?? models.find((entry) => entry.id !== "default" && entry.resolvedId === defaults?.resolvedModel);
++        return { kind: "ok", models: models.map((entry) => {
++            const effort = entry === selected || entry.resolvedId === defaults?.resolvedModel
++                ? defaults?.effort
++                : defaults?.modelEfforts?.[entry.resolvedId ?? entry.id] ?? defaults?.defaultEffort;
++            return { ...entry, ...(entry === selected ? { default: true } : {}),
++                ...(entry.effortLevels?.includes(effort) ? { defaultEffort: effort } : {}) };
++        }) };
+     }
+     if (outcome.kind === "unauthenticated") {
+         return { kind: "unauthenticated", detail: outcome.detail };
+     }
+     throw new Error(`Failed to list Claude models: ${outcome.detail}`);
+ };
+-//# sourceMappingURL=list-models.js.map
+\ No newline at end of file
++/** Token-free native configuration in the launch directory. The private response never leaves OAR. */
++export async function claudeConfiguration(installation, options = {}) {
++    if (installation.via !== "executable") throw new Error("Claude configuration requires an executable installation");
++    const outcome = await readOutcome(installation.command, listingCwd(options), options.timeoutMs ?? 15_000, options.env, "get_settings", options.model);
++    if (outcome.kind !== "ok") throw new Error("Claude could not report its startup configuration");
++    const payload = asRecord(outcome.payload);
++    const applied = asRecord(payload?.applied);
++    const effective = asRecord(payload?.effective);
++    const permissions = asRecord(effective?.permissions);
++    const permissionMode = text(permissions?.defaultMode);
++    const effortLevels = new Set(["low", "medium", "high", "xhigh", "max"]);
++    const modelEfforts = Object.fromEntries(Object.entries(asRecord(effective?.modelSettings) ?? {})
++        .flatMap(([id, settings]) => effortLevels.has(asRecord(settings)?.effortLevel) ? [[id, settings.effortLevel]] : []));
++    return {
++        ...(text(effective?.model) ? { model: text(effective.model) } : {}),
++        ...(text(applied?.model) ? { resolvedModel: text(applied.model) } : {}),
++        ...(text(applied?.effort) ? { effort: text(applied.effort) } : {}),
++        ...(effortLevels.has(effective?.effortLevel) ? { defaultEffort: effective.effortLevel } : {}),
++        ...(Object.keys(modelEfforts).length ? { modelEfforts } : {}),
++        ...(["auto", "default", "manual", "acceptEdits", "plan", "dontAsk", "bypassPermissions"].includes(permissionMode) ? { permissionMode } : {}),
++    };
++}
++//# sourceMappingURL=list-models.js.map

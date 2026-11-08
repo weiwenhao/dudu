@@ -3,11 +3,11 @@ import { DATE_FIELDS } from './dates.js';
 // Which options of which fields are ticked: plain functions over { status: ['todo'], priority: ['urgent', 'high'] }.
 /**
  * Adds the value to the field's list, or takes it out when it is already there; a field with nothing left is dropped. A date
- * field takes one choice at a time: ticking another replaces it.
+ * field (`single` names them) takes one choice at a time: ticking another replaces it.
  */
-export function toggleFilter(filter, field, value) {
+export function toggleFilter(filter, field, value, single = Object.keys(DATE_FIELDS)) {
   const current = filter[field] ?? [];
-  const next = current.includes(value) ? current.filter((item) => item !== value) : DATE_FIELDS[field] ? [value] : [...current, value];
+  const next = current.includes(value) ? current.filter((item) => item !== value) : single.includes(field) ? [value] : [...current, value];
   const { [field]: _removed, ...rest } = filter;
   return next.length ? { ...rest, [field]: next } : rest;
 }

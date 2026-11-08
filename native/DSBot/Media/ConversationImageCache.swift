@@ -11,6 +11,19 @@ struct ConversationImagePayload: Decodable, Sendable {
 struct ConversationImageKey: Hashable, Sendable {
     let target: DraftTarget
     let attachmentID: String
+
+    init(target: DraftTarget, attachmentID: String) {
+        self.target = target
+        self.attachmentID = attachmentID
+    }
+
+    init?(target: DraftTarget, attachment: TranscriptAttachment) {
+        guard let id = attachment.id else { return nil }
+        self.init(
+            target: target,
+            attachmentID: attachment.kind == "markdown" ? "markdown:\(attachment.seq ?? -1):\(id)" : id
+        )
+    }
 }
 
 actor ConversationImageCache {
@@ -62,6 +75,13 @@ actor ConversationImageCache {
         }
         if !fullSize { remember(image, for: key) }
         return image
+    }
+
+    func prepareSubmission(_ attachment: UploadAttachment, fullSize: Bool) -> PreparedPhotoImage? {
+        guard ["image/png", "image/jpeg", "image/webp", "image/gif"].contains(attachment.mimeType),
+              attachment.dataBase64.utf8.count <= (maximumBytes + 2) / 3 * 4,
+              let data = Data(base64Encoded: attachment.dataBase64), data.count <= maximumBytes else { return nil }
+        return prepare(data, fullSize: fullSize)
     }
 
     func remove(for computerID: String) {

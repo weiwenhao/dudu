@@ -48,6 +48,30 @@ final class ConversationStorageTests: XCTestCase {
         XCTAssertNil(large)
     }
 
+    func testCacheEvictsOlderConversationsToKeepTheCurrentConversationWithinItsLimit() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var snapshot = snapshot(for: "computer")
+        let current = SessionDetail(
+            session: SessionSummary(id: "current", title: "current", updatedAt: 1, status: "idle"),
+            messages: [ChatMessage(id: "current", role: "user", text: "current")]
+        )
+        var recent = current
+        recent.session.id = "recent"
+        var older = current
+        older.session.id = "older"
+        older.messages[0].text = String(repeating: "x", count: 8_000)
+        snapshot.detail = current
+        snapshot.recentDetails = [recent]
+        let limit = try JSONEncoder().encode(snapshot).count + 100
+        snapshot.recentDetails = [recent, older]
+        let cache = FileConversationStorage(directory: directory, maximumBytes: limit)
+        try await cache.save(snapshot)
+        let loaded = try await cache.load(for: "computer")
+        XCTAssertEqual(loaded?.detail?.session.id, "current")
+        XCTAssertEqual(loaded?.recentDetails?.map(\.session.id), ["recent"])
+    }
+
     private func assertLoadFailure(
         _ cache: FileConversationStorage, computerID: String, failure: ConversationStorageError
     ) async {

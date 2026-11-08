@@ -12,21 +12,33 @@ struct ConversationSearchView: View {
         var computerID: String?
         var revision: Int
         var status: String
+        var retry: Int
     }
 
     var body: some View {
         VStack(spacing: 0) {
             searchBar
-                .padding(.horizontal, 12)
+                .padding(.horizontal, DSBotLayout.toolbarHorizontalPadding)
                 .padding(.bottom, 8)
 
             ScrollView {
                 LazyVStack(spacing: 0) {
                     if let error = search.error {
-                        Text(error)
-                            .font(.system(size: 13))
-                            .foregroundStyle(DSBotStyle.muted)
-                            .padding(20)
+                        HStack(spacing: 12) {
+                            Text(error)
+                                .font(.system(size: 13))
+                                .foregroundStyle(DSBotStyle.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Button { search.retry(); isFocused = false } label: {
+                                DSBotIcon(.reconnect, size: 16)
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(DSBotQuietPressStyle())
+                            .accessibilityLabel("重试")
+                            .accessibilityIdentifier("search.retry")
+                        }
+                        .padding(.horizontal, 24)
                     }
                     ForEach(search.results) { hit in
                         resultRow(hit)
@@ -65,35 +77,35 @@ struct ConversationSearchView: View {
         }
         .task(id: RequestKey(
             query: search.query, computerID: store.activeComputer?.id, revision: store.connectionRevision,
-            status: store.status.rawValue
+            status: store.status.rawValue, retry: search.retryRevision
         )) {
             await search.load(using: store)
         }
     }
 
     private var searchBar: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 8) {
             Button(action: onBack) {
                 DSBotIcon(.back, size: 22)
                     .foregroundStyle(DSBotStyle.ink)
-                    .frame(width: 36, height: 44)
-                    .contentShape(Rectangle())
+                    .frame(width: 44, height: 44)
+                    .contentShape(Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(DSBotGlassButtonStyle())
             .accessibilityLabel("返回")
             .accessibilityIdentifier("search.back")
 
-            HStack(spacing: 8) {
-                DSBotIcon(.search, size: 17)
+            HStack(spacing: 10) {
+                DSBotIcon(.search, size: 18)
                     .foregroundStyle(DSBotStyle.muted)
                 TextField("搜索对话内容…", text: $search.query)
-                    .font(.system(size: 14))
+                    .font(.system(size: 15))
                     .textFieldStyle(.plain)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .focused($isFocused)
                     .submitLabel(.search)
-                    .onSubmit { isFocused = false }
+                    .onSubmit { search.retry(); isFocused = false }
                     .accessibilityIdentifier("search.query")
                 if !search.query.isEmpty {
                     Button {
@@ -102,7 +114,7 @@ struct ConversationSearchView: View {
                     } label: {
                         DSBotIcon(.close, size: 14)
                             .foregroundStyle(DSBotStyle.muted)
-                            .frame(width: 30, height: 36)
+                            .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -110,10 +122,12 @@ struct ConversationSearchView: View {
                     .accessibilityIdentifier("search.clear")
                 }
             }
-            .padding(.leading, 12)
-            .padding(.trailing, 4)
-            .frame(height: 38)
+            .padding(.leading, 14)
+            .padding(.trailing, search.query.isEmpty ? 14 : 0)
+            .frame(height: 44)
             .background(DSBotStyle.sheet, in: Capsule())
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("search.field")
         }
         .frame(height: DSBotLayout.toolbarHeight)
     }
@@ -124,21 +138,31 @@ struct ConversationSearchView: View {
             onOpen(hit.session)
         } label: {
             HStack(alignment: .top, spacing: 12) {
-                DSBotIcon(.message, size: 16, strokeWidth: 1.5)
-                    .foregroundStyle(DSBotStyle.muted)
-                    .frame(width: 32, height: 32)
-                    .overlay(Circle().stroke(DSBotStyle.line, lineWidth: 1))
+                Group {
+                    if let agent = hit.session.agent {
+                        AgentAvatar(
+                            agent: agent, state: hit.session.agentState ?? .idle,
+                            finished: hit.session.agentFinished == true, asleep: hit.session.deepSleep == true
+                        )
+                    } else {
+                        DSBotIcon(.message, size: 18, scalesStroke: true)
+                            .foregroundStyle(DSBotStyle.muted)
+                    }
+                }
+                .frame(width: 20, height: 22)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         highlighted(hit.session.title)
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.system(size: 15))
                             .foregroundStyle(DSBotStyle.ink)
                             .lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Text(Date(timeIntervalSince1970: hit.session.updatedAt / 1000), format: .dateTime.month().day())
                             .font(.system(size: 11))
                             .foregroundStyle(DSBotStyle.muted)
+                            .fixedSize()
                     }
+                    .frame(height: 22)
                     if !hit.snippet.isEmpty {
                         highlighted(hit.snippet)
                             .font(.system(size: 12))
@@ -148,12 +172,12 @@ struct ConversationSearchView: View {
                     }
                 }
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 24)
             .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DSBotRowButtonStyle())
         .accessibilityIdentifier("search.result.\(hit.id)")
     }
 

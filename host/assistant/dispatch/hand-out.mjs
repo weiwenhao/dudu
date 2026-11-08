@@ -18,7 +18,7 @@ export function createHandOut({ dispatch, issues, assignment, firstMessage }) {
     const got = issues.get(id, { logLimit: 200 });
     if (got.outcome !== 'success') return result;
     await assignment.restore?.(); // the issue has the session now; this makes the plugin follow it
-    await assignment.onReply?.(got.issue, firstMessage({ issue: got.issue, log: [...got.log].reverse(), access: result.access, material: null }));
+    await assignment.onReply?.(got.issue, firstMessage({ issue: got.issue, issues, log: [...got.log].reverse(), access: result.access, material: null }));
     return result;
   };
 }

@@ -1,7 +1,10 @@
 // DSH sessions and native harness sessions share one list. A harness conversation already loaded into DSH is one row.
+import { betterMatch, messageMatch } from '../../conversation-search.mjs';
+import { withAbort } from '../../providers/async.mjs';
 const attached = (native, local) => ({
   ...native, title: local.title || native.title, workspaceId: local.workspaceId,
   project: local.project ?? native.project, updatedAt: Math.max(native.updatedAt, local.updatedAt),
+  ...(!native.evidence && local.evidence ? { evidence: local.evidence } : {}),
 });
 
 /**
@@ -23,28 +26,57 @@ export function createSessionCatalog({ native, dsh, issues }) {
         const session = await native.describe({ provider, id });
         if (!session?.dshSessionId) return session;
         try {
-          const local = (await dsh.catalog({ query: session.dshSessionId })).find((entry) => entry.id === session.dshSessionId);
+          const local = (await dsh.catalog()).find((entry) => entry.id === session.dshSessionId);
           return local ? attached(session, local) : session;
         } catch { return session; }
       }
       if (provider !== 'dsh') return null;
-      return (await dsh.catalog({ query: id })).find((session) => session.id === id) ?? null;
+      return (await dsh.catalog()).find((session) => session.id === id) ?? null;
     },
-    async read({ provider, id, before } = {}) {
+    async read({ provider, id, before, query = '' } = {}, { signal = AbortSignal.timeout(10_000) } = {}) {
       if (!['claude', 'codex', 'dsh'].includes(provider) || typeof id !== 'string' || !id || id.startsWith('dudu-assistant-') ||
+          typeof query !== 'string' || query.length > 1000 ||
           (before !== undefined && (!Number.isSafeInteger(before) || before < 1))) return { outcome: 'error', code: 'invalid_session' };
-      const session = await this.get({ provider, id });
-      if (!session) return { outcome: 'error', code: 'session_unreadable' };
-      if (!session.dshSessionId) return native.read({ provider, id, before });
-      const synchronized = await native.sync?.({ sessionIds: [session.dshSessionId] });
-      const replacement = synchronized?.replacements?.find((entry) => entry.previousId === session.dshSessionId);
-      return dsh.read(`dsh:${replacement?.sessionId ?? session.dshSessionId}`, { before, fresh: true });
+      // A preview reads the original conversation. Importing, repairing and syncing its DSH copy belong to Open / Import.
+      // In particular an id lookup must never run a content search of every DSH conversation before showing twenty messages.
+      const read = (cursor) => {
+        signal.throwIfAborted();
+        return provider !== 'dsh'
+          ? native.read({ provider, id, before: cursor, ...(query ? { query } : {}) }, { signal })
+          : dsh.read(`dsh:${id}`, { before: cursor, ...(query ? { query } : {}), signal });
+      };
+      let page = await read(before);
+      if (!query.trim() || before !== undefined || page.outcome !== 'success') return page;
+      const latest = page;
+      let best;
+      let bestHit;
+      const seen = new Set();
+      while (page.outcome === 'success') {
+        signal.throwIfAborted();
+        const hit = messageMatch(page.messages, query);
+        if (hit && (!bestHit || betterMatch(hit, bestHit))) {
+          best = { ...page, matchIndex: hit.index };
+          bestHit = hit;
+          if (hit.exact) return best;
+        }
+        const cursor = page.nextCursor;
+        if (!cursor || seen.has(cursor)) break;
+        seen.add(cursor);
+        page = await read(cursor);
+        if (page.outcome !== 'success') return page;
+      }
+      return best ?? latest;
     },
-    async list({ query = '', provider, limit = 200, ...options } = {}) {
+    async list({ query = '', provider, limit = 200, ...options } = {}, { signal } = {}) {
+      signal?.throwIfAborted();
+      const nativeRead = Promise.resolve().then(() => native.list({ ...options, query, provider, limit: 500 }));
+      const dshRead = Promise.resolve().then(() => dsh.catalog({ query, signal, refresh: options.refresh }));
       const results = await Promise.allSettled([
-        native.list({ ...options, query, provider, limit: 500 }),
-        dsh.catalog({ query }),
+        signal ? withAbort(nativeRead, signal) : nativeRead,
+        signal ? withAbort(dshRead, signal) : dshRead,
       ]);
+      // A read deadline can leave one source unavailable. Keep the other source's rows; explicit caller cancellation still ends the read.
+      if (signal?.aborted && signal.reason?.name !== 'TimeoutError') signal.throwIfAborted();
       if (results.every((result) => result.status === 'rejected')) throw results[0].reason;
       const harnesses = results[0].status === 'fulfilled' ? results[0].value : { sessions: [], providers: [] };
       const local = results[1].status === 'fulfilled' ? results[1].value : [];
@@ -64,7 +96,19 @@ export function createSessionCatalog({ native, dsh, issues }) {
         if (!unique.has(key)) unique.set(key, session);
       }
       const sorted = [...unique.values()].sort((a, b) => b.updatedAt - a.updatedAt);
-      return { ...harnesses, sessions: sorted.slice(0, Math.min(500, Math.max(1, Number(limit) || 200))).map(withIssue), total: sorted.length };
+      const dshIndex = dsh.searchState?.();
+      const nativeIndex = harnesses.indexing;
+      return {
+        ...harnesses, sessions: sorted.slice(0, Math.min(500, Math.max(1, Number(limit) || 200))).map(withIssue), total: sorted.length,
+        // `unsearchable`: the conversations whose text could not be read, so a search does not look inside them. That says something about a search, not about the list.
+        indexing: {
+          running: Boolean(nativeIndex?.running || dshIndex?.running),
+          done: (nativeIndex?.done ?? 0) + (dshIndex?.done ?? 0), total: (nativeIndex?.total ?? 0) + (dshIndex?.total ?? 0),
+          unsearchable: (nativeIndex?.unsearchable ?? 0) + (dshIndex?.unsearchable ?? 0),
+        },
+        // `unavailable`: a source of sessions could not be listed, so the list is not complete.
+        ...(results.some((result) => result.status === 'rejected') ? { unavailable: true } : {}),
+      };
     },
   };
 }

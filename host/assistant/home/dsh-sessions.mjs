@@ -6,10 +6,10 @@
 // Every service is looked up when it is used: a DSH that lacks one still runs the plugin, and the call that needs it says so. Both
 // runtimes have all of them (the npm `dsh web` 0.2.0-rc.2 and the Desktop's bundled CLI 0.2.1-rc.3); neither needs `connection.createPeer`.
 import { randomUUID } from 'node:crypto';
-import { conversationPage } from '../../providers/native/preview.mjs';
+import { createDshContentSearch } from './session-search.mjs';
+import { withAbort } from '../../providers/async.mjs';
+import { readSessionHistory } from '../../dsh-session-history.mjs';
 
-const SAID_TTL = 10_000;
-const SAID_KEPT = 6;
 const textOf = (content) => (typeof content === 'string' ? content : (Array.isArray(content) ? content : []).filter((block) => block?.type === 'text').map((block) => block.text).join('\n'));
 
 /** The first of the promises to be kept; rejected only when every one of them is not. */
@@ -55,8 +55,7 @@ export function approvalText(request) {
   return `${said}\n回复“允许”放开这一次，其他回复都不放开。`;
 }
 
-export function createDshSessions(ctx, { hidden = () => false } = {}) {
-  const said = new Map(); // session id -> { at, messages }: the conversation of a DSH session as it was read lately
+export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, cacheFile, diagnostics } = {}) {
   const service = (name) => {
     let found;
     try { found = ctx[name]; } catch { found = undefined; } // reading a service the plugin did not ask for throws
@@ -64,30 +63,121 @@ export function createDshSessions(ctx, { hidden = () => false } = {}) {
     return found;
   };
   const optional = (name) => { try { return ctx[name]; } catch { return undefined; } };
+  const inspectSession = (id, signal) => readSessionHistory({
+    controller: optional('sessionController'), query: optional('sessionQuery'),
+  }, id, signal);
+  let fallbackSearch = false;
+  let catalogDirty = false;
+  const contentSearch = createDshContentSearch({
+    file: cacheFile,
+    diagnostics,
+    controller: () => service('sessionController'),
+    query: () => optional('sessionQuery'),
+    watch: (receive) => ctx.on?.('session/event', (session, event) => {
+      if (!session?.id) return;
+      if (['user/message', 'assistant/message', 'session/title'].includes(event.type)) catalogDirty = true;
+      if (['user/message', 'assistant/message'].includes(event.type)) receive(session.id);
+    }, { global: true }),
+  });
+  let cachedCatalog;
+  let restoredCatalog = false;
+  let readingCatalog;
+  const catalogLifetime = new AbortController();
+  async function catalogItems(refresh, signal) {
+    await contentSearch.ready;
+    if (!restoredCatalog) {
+      cachedCatalog = await contentSearch.snapshot();
+      if (!Array.isArray(cachedCatalog?.items)) cachedCatalog = null;
+      else cachedCatalog.at = 0; // show it immediately and check for changes in the background
+      restoredCatalog = true;
+    }
+    const scan = () => (readingCatalog ??= (async () => {
+      catalogDirty = false;
+      const readSignal = AbortSignal.any([catalogLifetime.signal, AbortSignal.timeout(12_000)]);
+      const result = await withAbort(service('sessionController').list({}, readSignal), readSignal);
+      cachedCatalog = { at: Date.now(), items: result.items ?? result };
+      await contentSearch.saveSnapshot(cachedCatalog);
+      return cachedCatalog;
+    })().finally(() => { readingCatalog = undefined; }));
+    if (cachedCatalog && !refresh) {
+      if (catalogDirty || Date.now() - cachedCatalog.at >= 15_000) void scan().catch(() => {});
+      return cachedCatalog.items;
+    }
+    return (await withAbort(scan(), signal)).items;
+  }
 
   return {
+    defaults: nativeDefaults,
+    searchState: contentSearch.state,
+    async close() {
+      catalogLifetime.abort();
+      await readingCatalog?.catch(() => {});
+      await contentSearch.close();
+    },
+    /** Repair only defaults Dudu originally wrote, before any user input or later owner selection. */
+    async repairDefaults(sessionId, initial, { access = false, model = false } = {}) {
+      if (!nativeDefaults || initial?.provider !== 'claude' || optional('agents')?.get(sessionId)?.status === 'running') return;
+      const inspect = () => inspectSession(sessionId);
+      const eligible = ({ events }) => {
+        const firstInput = events.find((event) => event.type === 'user/message' && (event.data?.message?.source ?? event.data?.source)?.kind === 'user');
+        if (!firstInput) return null;
+        const permission = events.findLast((event) => event.type === 'permission/preset');
+        const selection = events.findLast((event) => event.type === 'model/selection');
+        return {
+          permission, selection,
+          access: access && initial.access === 'read-only' && permission?.seq < firstInput.seq && permission.data.preset === 'read-only',
+          model: model && initial.model === 'default' && selection?.seq < firstInput.seq && selection.data.provider === 'claude' && selection.data.model === 'default',
+        };
+      };
+      const before = eligible(await inspect());
+      if (!before?.access && !before?.model) return;
+      const agent = optional('agents')?.get(sessionId);
+      const defaults = await nativeDefaults('claude', { cwd: initial.cwd ?? agent?.session?.header?.cwd });
+      if (!defaults || optional('agents')?.get(sessionId)?.status === 'running') return;
+      const current = eligible(await inspect());
+      if (before.access && current?.access && current.permission.seq === before.permission.seq && defaults.access) await this.setAccess(sessionId, defaults.access);
+      if (before.model && current?.model && current.selection.seq === before.selection.seq && defaults.model) await this.selectModel(sessionId, {
+        provider: 'claude', model: defaults.model, ...(defaults.effort ? { reasoningEffort: defaults.effort } : {}),
+      });
+    },
     isRunning: (sessionId) => optional('agents')?.get(sessionId)?.status === 'running',
     projects: () => (optional('workspaceRegistry')?.list() ?? []).map((item) => ({ name: item.title, path: item.path, id: item.id })),
     async list() {
       const result = await service('sessionController').list();
       return result.items ?? result;
     },
+    async title(sessionId) {
+      const { events } = await inspectSession(sessionId);
+      const event = events.findLast((item) => item.type === 'session/title');
+      return event ? { title: event.data.title, seq: event.seq, at: event.time } : null;
+    },
+    renameTitle: (sessionId, title) => service('sessionController').rename({ sessionId, title }),
+    watchTitles: (receive) => ctx.on('session/event', (session, event) => {
+      if (session?.id && event?.type === 'session/title') receive(session.id, { title: event.data.title, seq: event.seq, at: event.time });
+    }),
 
-    async catalog({ query = '' } = {}) {
+    async catalog({ query = '', refresh = false, contentIndexOnly = false, signal = AbortSignal.timeout(12_000) } = {}) {
       const controller = service('sessionController');
-      const result = await controller.list();
+      await contentSearch.ready;
+      const items = await catalogItems(refresh, signal);
       const registry = optional('workspaceRegistry');
       const workspaces = registry?.list() ?? [];
       const archived = new Set(registry?.archivedSessionIds ?? []);
       const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
       let hits = new Map();
-      if (terms.length && typeof controller.search === 'function') {
+      if (terms.length && !contentIndexOnly && !contentSearch.state().searchable && !fallbackSearch && typeof controller.search === 'function') {
         try {
-          const found = await controller.search({ query: query.trim() }, new AbortController().signal);
+          const found = await controller.search({ query: query.trim() }, signal);
           hits = new Map((found.items ?? found).map((item) => [item.sessionId, item.snippet]));
-        } catch { /* Older runtimes still support metadata search. */ }
+          if (found.hasMore) fallbackSearch = true;
+        } catch (error) {
+          signal.throwIfAborted();
+          // Desktop's web profile can explicitly disable the query index. Its durable sessions are still cold-readable.
+          if (/session search is disabled|session search is unavailable/i.test(error.message)) fallbackSearch = true;
+          else throw error;
+        }
       }
-      return (result.items ?? result).filter((item) => {
+      const rows = items.filter((item) => {
         const id = item.sessionId ?? item.id;
         return id && !hidden(id) && !id.startsWith('dudu-assistant-') && !item.blank && !item.parentSessionId && item.origin !== 'subagent' && !archived.has(id);
       }).map((item) => {
@@ -101,27 +191,39 @@ export function createDshSessions(ctx, { hidden = () => false } = {}) {
           agent: ['claude', 'codex'].includes(selection?.provider) ? selection.provider : 'deepseek',
           project: workspace ? { name: workspace.title, path: workspace.path } : null,
           title, cwd: item.cwd, updatedAt: item.updatedAt ?? 0,
+          seq: item.seq,
+          previewVersion: contentSearch.messageStamp(id) ?? null,
           ...(hits.has(id) ? { evidence: { text: hits.get(id) } } : {}),
         };
-      }).filter((item) => !terms.length || hits.has(item.id) || terms.every((term) => `${item.title} ${item.cwd} ${item.id}`.toLowerCase().includes(term)));
+      });
+      // Prepare every conversation on the first list open, before the owner searches. Later opens reuse durable text and only read changed logs.
+      contentSearch.update(rows, { refresh });
+      if (terms.length) hits = new Map([...hits, ...await contentSearch.find(terms)]);
+      return rows.map((item) => hits.has(item.id) ? { ...item, evidence: typeof hits.get(item.id) === 'string' ? { text: hits.get(item.id) } : hits.get(item.id) } : item)
+        .filter((item) => !terms.length || hits.has(item.id) || terms.every((term) => `${item.title} ${item.cwd} ${item.id}`.toLowerCase().includes(term)));
     },
 
-    async read(key, { before, fresh = false } = {}) {
+    async read(key, { before, query, fresh = false, signal = AbortSignal.timeout(10_000) } = {}) {
       const id = String(key).replace(/^dsh:/, '');
-      if (!id || id.startsWith('dudu-assistant-')) return { outcome: 'needs_clarification', message: 'Name an agent session.' };
-      // inspect() hands over every event of the session, which is a lot for a long one: what was said a moment ago is not asked again.
-      const seen = said.get(id);
-      let messages = !fresh && seen && Date.now() - seen.at < SAID_TTL ? seen.messages : undefined;
-      if (!messages) {
-        const { events } = await service('sessionController').inspect(id);
-        messages = events.filter((event) => ['user/message', 'assistant/message'].includes(event.type)).map((event) => ({
-          role: event.type === 'user/message' ? 'user' : 'assistant', at: event.time, text: textOf(event.data?.message?.content ?? event.data?.content).slice(0, 4000),
-        })).filter((message) => message.text.trim());
-        said.delete(id);
-        said.set(id, { at: Date.now(), messages });
-        while (said.size > SAID_KEPT) said.delete(said.keys().next().value);
+      if (!id || hidden(id) || id.startsWith('dudu-assistant-')) return { outcome: 'needs_clarification', message: 'Name an agent session.' };
+      const began = Date.now();
+      let source = 'sqlite';
+      try {
+        signal.throwIfAborted();
+        let result = !fresh && await withAbort(Promise.resolve(contentSearch.page(id, { before, query })), signal);
+        if (!result) {
+          source = 'source';
+          // Old search-only caches are filled once. Later previews and pagination read SQLite, not DSH's entire event log.
+          const item = cachedCatalog?.items.find((item) => (item.sessionId ?? item.id) === id);
+          await withAbort(contentSearch.load(id, item ? `${item.updatedAt}:${item.seq ?? ''}` : undefined), signal);
+          result = await withAbort(Promise.resolve(contentSearch.page(id, { before, query })), signal);
+        }
+        diagnostics?.record({ event: 'session.preview.read', provider: 'dsh', id, source, outcome: 'success', elapsedMs: Date.now() - began, count: result?.messages?.length });
+        return result;
+      } catch (error) {
+        diagnostics?.record({ event: 'session.preview.read', provider: 'dsh', id, source, outcome: 'failure', elapsedMs: Date.now() - began, error });
+        throw error;
       }
-      return conversationPage(messages, before);
     },
 
     async models() {
@@ -142,13 +244,13 @@ export function createDshSessions(ctx, { hidden = () => false } = {}) {
      * DSH saves a selected model as the default of every new session, which would make the owner's next session and 嘟嘟's own run on
      * Claude; so the default is put back. A session that is on the model already is left alone.
      */
-    async selectModel(sessionId, { provider, model }) {
+    async selectModel(sessionId, { provider, model, reasoningEffort }) {
       const options = optional('agents')?.get(sessionId)?.options;
-      if (options?.provider === provider && options?.model === model) return;
+      if (options?.provider === provider && options?.model === model && (reasoningEffort === undefined || options.reasoningEffort === reasoningEffort)) return;
       const defaults = optional('agentDefaultModel');
       const previous = defaults?.currentSelection?.();
       try {
-        await service('sessionController').selectModel({ sessionId, provider, model });
+        await service('sessionController').selectModel({ sessionId, provider, model, ...(reasoningEffort ? { reasoningEffort } : {}) });
       } finally {
         if (previous) await defaults.saveSelection(previous).catch(() => {});
       }
@@ -167,8 +269,9 @@ export function createDshSessions(ctx, { hidden = () => false } = {}) {
       service('permissionPresets').set(agent.session, mode); // throws for a preset this DSH does not have: the session then does not start
     },
 
-    async prompt(sessionId, text, { steer = false } = {}) {
-      await service('sessionController').prompt({ requestId: `dudu-${randomUUID()}`, sessionId, mode: steer ? 'steer' : 'queue', content: [{ type: 'text', text }] }, new AbortController().signal);
+    async prompt(sessionId, text, { steer = false, attachments = [] } = {}) {
+      await service('sessionController').prompt({ requestId: `dudu-${randomUUID()}`, sessionId, mode: steer ? 'steer' : 'queue',
+        content: [...attachments, ...(text ? [{ type: 'text', text }] : [])] }, new AbortController().signal);
     },
 
     async cancel(sessionId) { await service('sessionController').cancel({ sessionId }); },
@@ -202,7 +305,7 @@ export function createDshSessions(ctx, { hidden = () => false } = {}) {
     /** How the last turn of a session that is not live ended, from what DSH stored: its log is read without waking the session. */
     async lastTurn(sessionId) {
       let events;
-      try { ({ events } = await service('sessionController').inspect(sessionId)); } catch { return null; } // not a session DSH knows
+      try { ({ events } = await inspectSession(sessionId)); } catch { return null; } // not a session DSH knows
       let start = -1;
       let end = -1;
       events.forEach((event, index) => { if (event.type === 'turn/start') start = index; else if (event.type === 'turn/end') end = index; });
@@ -238,9 +341,13 @@ export function createDshSessions(ctx, { hidden = () => false } = {}) {
         ctx.on('api-session/status', (sessionId, running) => { if (handlers.owns(sessionId)) safe(() => handlers.status(sessionId, running)); }),
         ctx.on('session/event', (session, event) => {
           const id = session?.id;
-          if (!id || (event?.type !== 'turn/end' && event?.type !== 'assistant/message') || !handlers.owns(id)) return;
+          if (!id || !['turn/start', 'turn/end', 'assistant/message'].includes(event?.type) || !handlers.owns(id)) return;
           safe(() => {
-            if (event.type === 'assistant/message') handlers.assistant(id, textOf(event.data?.message?.content));
+            if (event.type === 'turn/start') {
+              // Queued turns share one running loop, so there may be no second status true after the previous turn ended.
+              // Imported native boundaries are history: only an actually running DSH Agent starts work.
+              if (optional('agents')?.get(id)?.status === 'running') handlers.status(id, true);
+            } else if (event.type === 'assistant/message') handlers.assistant(id, textOf(event.data?.message?.content));
             else handlers.turnEnd(id, { kind: event.data?.reason?.kind, error: event.data?.reason?.error?.message });
           });
         }),

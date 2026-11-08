@@ -1,13 +1,21 @@
 import { randomUUID } from 'node:crypto';
+import { Buffer } from 'node:buffer';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { createNativeBoard, NATIVE_BOARD_METHODS } from './native-board.mjs';
+import { createNativeSettings, NATIVE_SETTINGS_METHODS } from './native-settings.mjs';
 import { createNativeFiles } from './native-files.mjs';
 import { createNativePages, NATIVE_PAGE_METHODS } from './native-pages.mjs';
+import { imageFromBlock, MAX_IMAGE_BYTES } from './native-images.mjs';
+import { markdownImagePath } from './native-markdown-images.mjs';
+import { mapLimit } from './providers/async.mjs';
+import { providerDefault, providerFamily, sessionProviders } from './providers/catalog.mjs';
+import { agentMarkForActivity, stateOfMark } from './assistant/sessions/work-state.mjs';
+import { createNativeAssistant, NATIVE_ASSISTANT_METHODS } from './native-assistant.mjs';
 import {
   conversationState, deliveredPath, questionsFrom, recordConversationEvent, sessionPerformance,
   performanceEvent, toolPayload, toolReference, turnPerformance, validateAnswers,
 } from './native-conversation.mjs';
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_IMAGES = 3;
 const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_ENTRIES = 400;
@@ -63,10 +71,14 @@ export const NATIVE_METHODS = Object.freeze([
   'files.read',
   'catalog.get',
   'navigation.get',
+  'assistant.open',
+  ...NATIVE_ASSISTANT_METHODS,
   'plugins.list',
   'schedule.list',
   'approval.respond',
   ...NATIVE_PAGE_METHODS,
+  ...NATIVE_BOARD_METHODS,
+  ...NATIVE_SETTINGS_METHODS,
 ]);
 
 const GATEWAY_ENDPOINTS = new Set([
@@ -77,6 +89,7 @@ const GATEWAY_ENDPOINTS = new Set([
   'session/control',
   'session/cancel',
   'session/projections',
+  'session/attachment',
   'session/prompt',
   'session/updateQueue',
   'session/page',
@@ -97,16 +110,19 @@ const GATEWAY_ENDPOINTS = new Set([
   'userQuestions/answer',
   'commands/execute',
   'fileUploads/upload',
+  'skills/list',
   'pluginManager/listPlugins',
   'schedule/catalog',
 ]);
 
 const REQUEST_ARGUMENTS = new Map([
+  ['skills/list', 'request'],
   ['session/search', 'request'],
   ['session/create', 'request'],
   ['session/follow', 'request'],
   ['session/cancel', 'request'],
   ['session/projections', 'request'],
+  ['session/attachment', 'request'],
   ['session/prompt', 'request'],
   ['session/updateQueue', 'request'],
   ['session/page', 'request'],
@@ -292,15 +308,32 @@ function projectionsFrom(value) {
 
 function summaryFrom(row) {
   const values = row?.projections?.values ?? {};
+  const title = typeof values.title === 'string' ? values.title : values.title?.title;
   const questionCount = values.userQuestions?.active?.length ?? 0;
+  const provider = (values.modelSelection?.next ?? values.modelSelection?.lastUsed)?.provider ?? row?.providerId;
+  const indexed = row?.agentActivity;
+  const agent = provider ? providerFamily(provider) : indexed?.agent ?? row?.agent ?? (indexed?.provider === 'dsh' ? 'deepseek' : indexed?.provider);
+  const pending = questionCount > 0 || row?.status === 'waiting' || row?.pendingInteraction
+    || approvalsFrom(values, row?.sessionId ?? row?.id).length > 0;
   return {
     id: text(row?.sessionId ?? row?.id, 256),
-    title: text(values.title ?? row?.title, 300) || '新对话',
+    ...(row?.isAssistant === true ? { isAssistant: true } : {}),
+    title: text(title ?? row?.title, 300) || text(indexed?.title, 300) || '新对话',
     ...(typeof row?.workspaceId === 'string' ? { workspaceId: row.workspaceId } : {}),
     ...(typeof row?.workspaceName === 'string' ? { workspaceName: row.workspaceName } : {}),
     updatedAt: Number.isFinite(row?.updatedAt) ? row.updatedAt : 0,
     status: row?.running || row?.status === 'running' ? 'running'
       : questionCount > 0 || row?.status === 'waiting' ? 'waiting' : 'idle',
+    ...(provider ? { providerId: provider } : {}),
+    ...(['claude', 'codex', 'deepseek'].includes(agent) ? (() => {
+      const live = { running: row?.running || row?.status === 'running', pendingInteraction: pending };
+      // An agent in deep sleep is told to the phone with its mark as it is (owner, 2026-11-07): the phone draws the crescent over the corner, unless the session is alive again,
+      // and it is the mark's own again when the agent wakes.
+      const asleep = indexed?.deepSleep === true && !live.running && !live.pendingInteraction;
+      const mark = agentMarkForActivity(live, values.duduAgentActivity, indexed);
+      // A finished run is the state "blocked" too (the boss's turn), told from a question or a failure by the avatar's mark: a check, not red.
+      return { agent, agentState: stateOfMark(mark), ...(mark === 'done' ? { agentFinished: true } : {}), ...(asleep ? { deepSleep: true } : {}) };
+    })() : {}),
     // DSH reuses a blank session when a new task starts in the same workspace.
     ...(row?.blank === true && values.sessionListMetadata?.blank !== false ? { blank: true } : {}),
     // The archive and pin sets are DSH's, not the phone's.
@@ -484,31 +517,23 @@ function turnOutcome(reason) {
   }
 }
 
-function imageFromBlock(block) {
-  if (!isRecord(block) || block.type !== 'image'
-    || !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(block.mediaType)
-    || typeof block.data !== 'string' || !block.data.length
-    || block.data.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4) return undefined;
-  return { mediaType: block.mediaType, data: block.data };
-}
-
 function userAttachments(content, state, messageId, seq) {
   if (!Array.isArray(content)) return [];
   const result = [];
   for (const [index, block] of content.entries()) {
     if (!isRecord(block)) continue;
     if (block.type === 'image') {
-      const attachment = { kind: 'image', name: text(block.name, 160) || '图片' };
+      const attachment = { kind: 'image', name: text(block.attachment?.name ?? block.name, 160) || '图片' };
       const image = imageFromBlock(block);
       if (image) {
         attachment.id = `${messageId}:${index}`;
         if (Number.isSafeInteger(seq)) attachment.seq = seq;
-        state.imageChars -= state.images.get(attachment.id)?.data.length ?? 0;
+        state.imageChars -= state.images.get(attachment.id)?.data?.length ?? 0;
         state.images.set(attachment.id, image);
-        state.imageChars += image.data.length;
-        while (state.imageChars > Math.ceil(MAX_TOTAL_IMAGE_BYTES / 3) * 4) {
+        state.imageChars += image.data?.length ?? 0;
+        while (state.images.size > MAX_ENTRIES || state.imageChars > Math.ceil(MAX_TOTAL_IMAGE_BYTES / 3) * 4) {
           const oldest = state.images.keys().next().value;
-          state.imageChars -= state.images.get(oldest).data.length;
+          state.imageChars -= state.images.get(oldest).data?.length ?? 0;
           state.images.delete(oldest);
         }
       }
@@ -547,6 +572,16 @@ function recordInboxClaim(state, event) {
   const pending = [...previous.pending];
   const inserted = Array.isArray(splice.inserted) ? splice.inserted : [];
   const removed = pending.splice(splice.start, splice.removedCount ?? 0, ...inserted);
+  if (splice.outcome === 'canceled') {
+    for (const message of removed) {
+      if (message.source?.kind === 'user' && typeof message.source.rpcId === 'string') {
+        state.canceledRequestIds.add(message.source.rpcId);
+      }
+    }
+    while (state.canceledRequestIds.size > 100) {
+      state.canceledRequestIds.delete(state.canceledRequestIds.values().next().value);
+    }
+  }
   const entered = removed.length > 0 && splice.outcome !== 'canceled';
   state.inboxClaims[splice.target] = {
     pending,
@@ -604,6 +639,7 @@ function recordTranscriptEvent(state, event, message, sessionId) {
     pushEntry(state, {
       type: 'command', id: `command:${commandId}`, commandId, seq, time,
       name: text(data.name, 80),
+      ...(data.source?.kind === 'dudu-harness' ? { source: 'dudu-harness' } : {}),
     });
     return;
   }
@@ -656,6 +692,7 @@ function recordTranscriptEvent(state, event, message, sessionId) {
           .map((block) => block.text).join('') : message.text;
       pushEntry(state, {
         type: 'user', id: message.id, seq, time, text: text(body, MAX_ENTRY_TEXT),
+        ...(typeof data.source.rpcId === 'string' ? { requestId: data.source.rpcId } : {}),
         ...(attachments.length ? { attachments } : {}),
       });
     } else {
@@ -947,14 +984,19 @@ function transcriptFrom(state) {
     : state.historyStart;
   return {
     entries, turns, ...(live ? { live } : {}),
+    // The host has accepted these inputs for the next step, but has not appended user/message yet.
+    // Keep them separate from durable entries, as DSH's PendingSteeringBubble does.
+    pendingInputs: queueFrom(state.values, 'next-step').filter((message) =>
+      (state.values.inbox?.['next-step'] ?? []).some((item) => item.id === message.id && item.source?.kind === 'user')
+      && !entries.some((entry) => entry.type === 'user' && entry.id === message.id)),
     tools: Object.fromEntries([...state.conversation.tools.keys()].map((id) => [id, toolReference(state.conversation, id)])),
     beforeSeq, throughSeq: state.conversation.cursor,
     hasMore: beforeSeq > 0 && (state.hasMore || state.historyTrimmed),
   };
 }
 
-function queueFrom(values) {
-  const pending = values.inbox?.['next-turn'];
+function queueFrom(values, lane = 'next-turn') {
+  const pending = values.inbox?.[lane];
   if (!Array.isArray(pending)) return [];
   return pending.flatMap((message) => {
     if (typeof message?.id !== 'string' || !Array.isArray(message.content)) return [];
@@ -971,6 +1013,8 @@ function queueFrom(values) {
     });
     return [{
       id: text(message.id, 256), text: text(body, MAX_ENTRY_TEXT),
+      ...(message.source?.kind === 'user' && typeof message.source.rpcId === 'string'
+        ? { requestId: message.source.rpcId } : {}),
       editable: body.length <= MAX_ENTRY_TEXT
         && message.content.every((block) => block?.type === 'text' && typeof block.text === 'string'),
       ...(attachments.length ? { attachments: attachments.slice(0, 12) } : {}),
@@ -1007,6 +1051,7 @@ function detailFrom(state, { transcript = false } = {}) {
     ...(goalFrom(values) ? { goal: goalFrom(values) } : {}),
     ...(todosFrom(values) ? { todos: todosFrom(values) } : {}),
     queuedMessages: queueFrom(values),
+    canceledRequestIds: [...state.canceledRequestIds],
     questions: questionsFrom(values, state.summary.id, approvablePlanReview),
     planMode: planModeFrom(values),
     ...(model?.provider && model?.model ? { modelId: `${model.provider}:${model.model}` } : {}),
@@ -1032,6 +1077,7 @@ function emptySessionState(summary) {
     turnSteps: new Map(), completedTurns: new Set(),
     entries: [], entryChars: 0, turnTimes: new Map(), callResults: new Map(),
     images: new Map(), imageChars: 0,
+    canceledRequestIds: new Set(),
     inboxClaims: {
       'next-turn': { pending: [], claimed: new Set(), seq: -1, human: false },
       'next-step': { pending: [], claimed: new Set(), seq: -1, human: false },
@@ -1450,6 +1496,8 @@ function mapModelCatalog(result) {
       models.push({
         id: modelId(group.id, model.id),
         name: text(model.name, 300) || model.id,
+        sourceID: group.id,
+        sourceName: text(group.name, 300) || group.id,
         ...mapEfforts(model),
       });
     }
@@ -1470,8 +1518,12 @@ function mapPresets(result) {
     }));
 }
 
-export function createNativeBridge({ rpc, pages, navigation, conversationReads, questionBridge }) {
+export function createNativeBridge({ rpc, pages, navigation, conversationReads, questionBridge, sessionActivity, sessionSearch, assistantConversation, assistant, board, duduPages }) {
   const remote = createRemote(rpc);
+  const assistantBridge = createNativeAssistant({
+    assistant, remote, fail, attachments: validateAttachments,
+    fileBytes: (data) => decodeBase64(data, MAX_FILE_BYTES),
+  });
   let sessionRowsCache;
   let sessionRowsCacheAt = 0;
   let sessionRowsFlight;
@@ -1480,6 +1532,67 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
   let workspaceFlight;
   // Which workspace holds each session and where, plus the archive and pin sets (all from DSH).
   let workspaceLayout = { archived: new Set(), pinned: [], placed: new Map() };
+  const presentationCache = new Map();
+  const presentationFlights = new Map();
+  let presentationListFlight;
+
+  const presentationSignature = (row) => JSON.stringify([row.updatedAt, row.running, row.status]);
+  const cachedPresentation = (row) => {
+    const cached = presentationCache.get(row.sessionId ?? row.id);
+    return cached?.signature === presentationSignature(row)
+      && (!cached.failed || Date.now() - cached.at < 30_000) ? cached : undefined;
+  };
+
+  function hasPresentation(row) {
+    const values = row.projections?.values ?? {};
+    const indexed = sessionActivity?.(row.sessionId ?? row.id);
+    const title = typeof values.title === 'string' ? values.title : values.title?.title;
+    return Boolean((title || row.title || indexed?.title)
+      && ((values.modelSelection?.next ?? values.modelSelection?.lastUsed)?.provider
+        || row.providerId || row.agent || indexed?.agent || indexed?.provider));
+  }
+
+  function presentedRow(row) {
+    return {
+      ...row,
+      ...(assistantBridge.isSession(row.sessionId ?? row.id) ? { isAssistant: true } : {}),
+      projections: { values: { ...presentationCache.get(row.sessionId ?? row.id)?.values, ...row.projections?.values } },
+      agentActivity: sessionActivity?.(row.sessionId ?? row.id),
+    };
+  }
+
+  async function presentationRow(row) {
+    const id = row.sessionId ?? row.id;
+    if (!hasPresentation(row) && !cachedPresentation(row)) {
+      let pending = presentationFlights.get(id);
+      if (!pending) {
+        const signature = presentationSignature(row);
+        pending = (async () => {
+          const abort = new AbortController();
+          let timer;
+          try {
+            const projection = await Promise.race([
+              remote.call('session/projections', { sessionId: id }, abort.signal).catch(() => undefined),
+              new Promise((done) => {
+                timer = setTimeout(() => { abort.abort(); done(undefined); }, 2_000);
+                timer.unref?.();
+              }),
+            ]);
+            presentationCache.set(id, {
+              signature, at: Date.now(), failed: !projection,
+              values: projection?.values ?? presentationCache.get(id)?.values ?? {},
+            });
+          } finally {
+            clearTimeout(timer);
+            presentationFlights.delete(id);
+          }
+        })();
+        presentationFlights.set(id, pending);
+      }
+      await pending;
+    }
+    return presentedRow(row);
+  }
 
   function requestSessionRows() {
     const pending = remote.call('session/list', {}).then((result) => {
@@ -1582,16 +1695,51 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
     },
   });
   const pageBridge = pages ?? createNativePages({ rpc, files });
+  // The board and the Collector: the plugin's own issues and inbox, asked through the commands the desktop interface sends (`board` gives the two).
+  const boardBridge = createNativeBoard({ issues: board?.issues, inbox: board?.inbox, projects: board?.projects, fail });
+  // 嘟嘟's own settings, drawn by the app: the pages the web view used to show, asked through the same list of actions (phone-pages.mjs).
+  const settingsBridge = createNativeSettings({ call: (action, body) => (duduPages?.allowed(action) ? duduPages.call(action, body) : { status: 404, body: {} }) });
 
   async function sessionRows() {
     const rows = await loadSessionRows();
-    return rows.map(enrichSessionRow);
+    const known = new Set(rows.map((row) => row.sessionId ?? row.id));
+    for (const id of presentationCache.keys()) if (!known.has(id)) presentationCache.delete(id);
+    // DSH's list carries available cached hints. Only genuinely missing titles/providers need a
+    // cold read; a missing optional duduAgentActivity must not reopen every history on every poll.
+    const missing = rows.filter((row) => !hasPresentation(row) && !cachedPresentation(row));
+    if (!presentationListFlight && missing.length) {
+      const pending = mapLimit(missing, 4, presentationRow).finally(() => {
+        if (presentationListFlight === pending) presentationListFlight = undefined;
+      });
+      presentationListFlight = pending;
+    }
+    if (presentationListFlight) {
+      let timer;
+      try {
+        await Promise.race([
+          presentationListFlight,
+          new Promise((done) => { timer = setTimeout(done, 100); }),
+        ]);
+      } finally { clearTimeout(timer); }
+    }
+    return rows.map((row) => enrichSessionRow(presentedRow(row)));
   }
 
   async function sessionSummary(sessionId) {
     const row = await findSessionRow(sessionId);
     if (!row) fail('NOT_FOUND');
-    return summaryFrom(row);
+    return summaryFrom(await presentationRow(row));
+  }
+
+  function invalidateListForState(sessionId, state) {
+    const row = sessionRowsCache?.find((item) => (item.sessionId ?? item.id) === sessionId);
+    if (!row) return;
+    const values = row.projections?.values ?? {};
+    const changed = ['title', 'modelSelection', 'sessionListMetadata', 'duduAgentActivity'].some((key) =>
+      Object.hasOwn(state.values, key) && JSON.stringify(values[key]) !== JSON.stringify(state.values[key]));
+    if (changed || state.summary.status !== (row.running || row.status === 'running' ? 'running' : row.status ?? 'idle')) {
+      sessionRowsCacheAt = 0;
+    }
   }
 
   async function readSessionDetail(sessionId, options = {}) {
@@ -1609,6 +1757,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
       const snapshot = firstSessionFrame(first.value);
       const state = emptySessionState(summary);
       installSnapshot(state, snapshot, sessionId);
+      invalidateListForState(sessionId, state);
       return detailFrom(state, options);
     } finally {
       await stream.close();
@@ -1655,6 +1804,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
       const first = await stream.next();
       if (first.done || !isActive()) fail('UPSTREAM_UNAVAILABLE');
       installSnapshot(state, firstSessionFrame(first.value), sessionId);
+      invalidateListForState(sessionId, state);
       connection.selectedSessionId = sessionId;
       connection.nativeAttachmentState = { sessionId, state, watchGeneration };
       releaseQuestionWatch = questionBridge?.watch(sessionId, (error) => {
@@ -1679,6 +1829,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
         publishTimer = undefined;
         if (isActive()) {
           try {
+            invalidateListForState(sessionId, state);
             const detail = detailFrom(state, options);
             connection.sendEvent('session.snapshot', watchId ? { ...detail, watchId } : detail);
           } catch (error) {
@@ -1794,6 +1945,37 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
     }
   }
 
+  async function selectionFor(params, sessionId) {
+    if (params.modelId !== undefined && typeof params.modelId !== 'string') fail('BAD_REQUEST');
+    if (params.reasoningEffort !== undefined
+      && (typeof params.reasoningEffort !== 'string' || !EFFORT_ID.test(params.reasoningEffort))) fail('BAD_REQUEST');
+    const catalog = await remote.call('session/modelCatalog');
+    let wanted = params.modelId;
+    let current;
+    if (wanted === undefined || assistantBridge.isSession(sessionId)) {
+      const projection = await remote.call('session/projections', { sessionId });
+      const saved = projection?.values?.modelSelection;
+      current = saved?.next ?? saved?.lastUsed;
+      if (wanted === undefined && typeof current?.provider === 'string' && typeof current?.model === 'string') {
+        wanted = modelId(current.provider, current.model);
+      }
+    }
+    for (const group of catalog?.groups ?? []) {
+      const model = (group.models ?? []).find((entry) => modelId(group.id, entry.id) === wanted);
+      if (!model) continue;
+      const levels = mapEfforts(model);
+      let effort = levels.defaultEffort;
+      if (assistantBridge.isSession(sessionId) && current?.provider === group.id && current?.model === model.id
+        && (levels.efforts ?? []).some((level) => level.id === current.reasoningEffort)) effort = current.reasoningEffort;
+      if (params.reasoningEffort !== undefined) {
+        if (!(levels.efforts ?? []).some((level) => level.id === params.reasoningEffort)) fail('BAD_REQUEST');
+        effort = params.reasoningEffort;
+      }
+      return { provider: group.id, model: model.id, ...(effort ? { reasoningEffort: effort } : {}) };
+    }
+    fail('BAD_REQUEST');
+  }
+
   return {
     async closeConnection(connection) {
       await pageBridge.closeConnection(connection);
@@ -1804,7 +1986,23 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
       if (NATIVE_PAGE_METHODS.includes(method)) {
         return pageBridge.dispatch(method, params, connection);
       }
+      if (NATIVE_BOARD_METHODS.includes(method)) return boardBridge.dispatch(method, params);
+      if (NATIVE_SETTINGS_METHODS.includes(method)) return settingsBridge.dispatch(method, params ?? {});
+      if (NATIVE_ASSISTANT_METHODS.includes(method)) return assistantBridge.dispatch(method, params ?? {});
       switch (method) {
+        case 'assistant.open': {
+          if (typeof assistantConversation !== 'function') fail('UNSUPPORTED');
+          // The plugin owns the assistant identity and setup. Never create a generic conversation
+          // here or accept a caller-supplied session id in place of its scoped, persistent session.
+          const conversation = await assistantConversation();
+          const id = text(conversation?.sessionId, 256);
+          if (!id) fail('UPSTREAM_UNAVAILABLE');
+          const found = await findSessionRow(id, { fresh: true });
+          if (!found) fail('NOT_FOUND');
+          // Resolve only: the phone may have left the drawer while this was pending. Its
+          // ordinary session/watch flow selects the session if it still intends to open it.
+          return { ...summaryFrom(await presentationRow(found)), isAssistant: true };
+        }
         case 'workspace.list':
           return workspaceList();
         case 'session.list':
@@ -1814,7 +2012,9 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
           if (typeof params.query !== 'string') fail('BAD_REQUEST');
           const query = params.query.trim();
           if (!query || query.length > 500) fail('BAD_REQUEST');
-          const result = await remote.call('session/search', { query });
+          const result = sessionSearch
+            ? await sessionSearch(query)
+            : await remote.call('session/search', { query });
           const summaries = new Map((await sessionRows()).map(summaryFrom)
             .filter((item) => item.id && !item.blank).map((item) => [item.id, item]));
           const items = [];
@@ -1826,7 +2026,10 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
             seen.add(session.id);
             items.push({ session, snippet: [...hit.snippet].slice(0, 240).join('') });
           }
-          return { items, hasMore: result?.hasMore === true || hits.length > 20 };
+          return {
+            items, hasMore: result?.hasMore === true || hits.length > 20,
+            ...(typeof result?.indexing === 'boolean' ? { indexing: result.indexing } : {}),
+          };
         }
         case 'workspace.rename': {
           const id = text(params.id, 256);
@@ -1880,6 +2083,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
             || params.reuse.length > 256)) {
             fail('BAD_REQUEST');
           }
+          const selection = params.modelId !== undefined ? await selectionFor(params) : null;
           const result = await remote.call('session/create', {
             ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
             ...(params.agentPreset ? { agentPreset: params.agentPreset } : {}),
@@ -1887,10 +2091,12 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
           });
           const id = text(result?.sessionId, 256);
           if (!id) throw new NativeBridgeError('UPSTREAM_UNAVAILABLE');
+          if (selection) await remote.call('session/selectModel', { sessionId: id, ...selection });
+          presentationCache.delete(id);
           connection.selectedSessionId = id;
           const found = await findSessionRow(id, { fresh: true });
           if (!found) fail('UPSTREAM_UNAVAILABLE');
-          return summaryFrom(found);
+          return summaryFrom(await presentationRow(found));
         }
         case 'session.open':
           connection.selectedSessionId = params.id;
@@ -2014,6 +2220,8 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
         case 'session.send': {
           const sessionId = text(params.id ?? connection.selectedSessionId, 256);
           if (!sessionId) fail('BAD_REQUEST');
+          if (params.requestId !== undefined
+            && (typeof params.requestId !== 'string' || !WATCH_ID.test(params.requestId))) fail('BAD_REQUEST');
           const attachments = validateAttachments(params.attachments);
           const message = typeof params.text === 'string' ? params.text : '';
           if (!message.trim() && attachments.length === 0) fail('BAD_REQUEST');
@@ -2021,14 +2229,17 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
           if (message) content.push({ type: 'text', text: message.slice(0, 100_000) });
           content.push(...attachments);
           const request = {
-            requestId: randomUUID(),
+            requestId: params.requestId ?? randomUUID(),
             sessionId,
             mode: 'queue',
             content,
           };
           if (Buffer.byteLength(JSON.stringify(request), 'utf8') > MAX_MESSAGE_BYTES) fail('LIMIT_EXCEEDED');
+          // Ordinary native messages share the scoped assistant too. Clear a stale desktop page
+          // unless the phone explicitly chose to attach its own page to this message.
+          if (assistantBridge.isSession(sessionId)) await assistantBridge.context(sessionId, params.assistantContext);
           await remote.call('session/prompt', request);
-          return {};
+          return { requestId: request.requestId };
         }
         case 'session.stop': {
           const sessionId = text(params.id ?? connection.selectedSessionId, 256);
@@ -2061,44 +2272,12 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
           const sessionId = text(params.id, 256);
           if (!sessionId) fail('BAD_REQUEST');
           if (params.modelId !== undefined || params.reasoningEffort !== undefined) {
-            if (params.modelId !== undefined && typeof params.modelId !== 'string') fail('BAD_REQUEST');
-            if (params.reasoningEffort !== undefined
-              && (typeof params.reasoningEffort !== 'string' || !EFFORT_ID.test(params.reasoningEffort))) {
-              fail('BAD_REQUEST');
-            }
-            const catalog = await remote.call('session/modelCatalog');
-            let wanted = params.modelId;
-            if (wanted === undefined) {
-              // Only the effort changes: keep the model the session already uses.
-              const projection = await remote.call('session/projections', { sessionId });
-              const current = projection?.values?.modelSelection;
-              const chosen = current?.next ?? current?.lastUsed;
-              if (typeof chosen?.provider === 'string' && typeof chosen?.model === 'string') {
-                wanted = modelId(chosen.provider, chosen.model);
-              }
-            }
-            let selection;
-            for (const group of catalog?.groups ?? []) {
-              const model = (group.models ?? []).find((entry) => modelId(group.id, entry.id) === wanted);
-              if (!model) continue;
-              const levels = mapEfforts(model);
-              let effort = levels.defaultEffort;
-              if (params.reasoningEffort !== undefined) {
-                if (!(levels.efforts ?? []).some((level) => level.id === params.reasoningEffort)) {
-                  fail('BAD_REQUEST');
-                }
-                effort = params.reasoningEffort;
-              }
-              selection = {
-                sessionId,
-                provider: group.id,
-                model: model.id,
-                ...(effort ? { reasoningEffort: effort } : {}),
-              };
-              break;
-            }
-            if (!selection) fail('BAD_REQUEST');
-            await remote.call('session/selectModel', selection);
+            const selection = await selectionFor(params, sessionId);
+            if (assistantBridge.isSession(sessionId)) {
+              if (typeof assistant.selectModel !== 'function') fail('UNSUPPORTED');
+              await assistant.selectModel(selection);
+            } else await remote.call('session/selectModel', { sessionId, ...selection });
+            presentationCache.delete(sessionId);
           }
           if (params.agentPreset !== undefined) {
             if (typeof params.agentPreset !== 'string' || !PRESET_ID.test(params.agentPreset)) fail('BAD_REQUEST');
@@ -2124,6 +2303,18 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
         }
         case 'session.attachment': {
           const sessionId = text(params.id, 256);
+          if (params.source !== undefined) {
+            const watched = watchedSession(connection, sessionId);
+            const [event, row] = await Promise.all([eventAt(watched, params.seq), findSessionRow(sessionId)]);
+            const path = markdownImagePath(event, params.source, row?.cwd ?? watched.state.values.workingDirectory);
+            stillWatched(connection, watched);
+            const file = await readConversation('file', { path });
+            stillWatched(connection, watched);
+            const mediaType = file.mediaType?.split(';')[0].trim().toLowerCase();
+            if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(mediaType)) fail('INVALID_ATTACHMENT');
+            decodeBase64(file.dataBase64, MAX_IMAGE_BYTES);
+            return { mediaType, data: file.dataBase64 };
+          }
           const attachmentId = text(params.attachmentId, 512);
           const watched = connection.nativeAttachmentState;
           if (!sessionId || !attachmentId || connection.closed || !watched || watched.sessionId !== sessionId
@@ -2131,7 +2322,8 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
             || watched.watchGeneration !== connection.watchGeneration) fail('NOT_FOUND');
           let image = watched.state.images.get(attachmentId);
           if (!image && attachmentId.startsWith('queue:')) {
-            for (const message of watched.state.values.inbox?.['next-turn'] ?? []) {
+            const inbox = watched.state.values.inbox;
+            for (const message of [...(inbox?.['next-turn'] ?? []), ...(inbox?.['next-step'] ?? [])]) {
               for (const [index, block] of (message.content ?? []).entries()) {
                 if (`queue:${message.id}:${index}` === attachmentId) image = imageFromBlock(block);
               }
@@ -2146,7 +2338,17 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
               if (`${id}:${index}` === attachmentId) image = imageFromBlock(block);
             }
           } else if (!image) image = await readSessionImage(sessionId, attachmentId);
-          if (!image || connection.nativeAttachmentState !== watched || connection.closed) fail('NOT_FOUND');
+          stillWatched(connection, watched);
+          if (!image) fail('NOT_FOUND');
+          if (image.attachment) {
+            const stored = await remote.call('session/attachment', {
+              sessionId, attachment: image.attachment,
+            }, AbortSignal.timeout(30_000));
+            stillWatched(connection, watched);
+            if (stored?.attachment?.attachmentId !== image.attachment.attachmentId
+              || stored.attachment.mediaType !== image.mediaType) fail('INVALID_ATTACHMENT');
+            image = { mediaType: stored.attachment.mediaType, data: stored.data };
+          }
           decodeBase64(image.data, MAX_IMAGE_BYTES);
           return image;
         }
@@ -2191,6 +2393,16 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
           ]);
           return {
             models: mapModelCatalog(modelsResult),
+            providers: sessionProviders(modelsResult).map((provider, index) => {
+              const selection = providerDefault(provider, modelsResult);
+              return {
+                id: provider.id, name: provider.name,
+                isDefault: modelsResult?.default?.provider
+                  ? providerFamily(modelsResult.default.provider) === provider.id : index === 0,
+                modelIds: provider.groups.flatMap((group) => group.models.map((model) => modelId(group.id, model.id))),
+                defaultModelId: modelId(selection.provider, selection.model),
+              };
+            }),
             permissions: (permissionsResult?.options ?? []).map((item) => ({
               id: text(item.value, 300), name: text(item.name, 300),
             })).filter((item) => item.id && item.name),

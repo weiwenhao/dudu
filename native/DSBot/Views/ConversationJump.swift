@@ -73,7 +73,7 @@ final class ConversationJump: NSObject {
             hasRecordedProgress = true
             DSBotLog.record("chat.latest.progress", elapsedMs: elapsed * 1_000, geometry: geometry())
         }
-        // Let the footer command lay out before enabling ordinary following again.
+        // Let the last message command lay out before enabling ordinary following again.
         if elapsed >= trajectory.duration { isLanding = true }
     }
 
@@ -88,22 +88,60 @@ final class ConversationJump: NSObject {
 @MainActor
 final class ScrollMetrics {
     weak var locator: UIView?
+    let diagnosticID = UUID().uuidString
+    var latestID: String?
     var jumpStartedAt: TimeInterval?
     var isReviewPositioning = false
     private var layoutRecordsRemaining = 12
+    private var commandRecordsRemaining = 32
     private var rows: [String: WeakHistoryRow] = [:]
     private var jump: ConversationJump?
+    /// The estimated height at which the viewport was found with no built row in it (`BlankViewportRecovery`).
+    private var heldEstimate: CGFloat?
+
+    /// The built row to follow instead of the latest, or nil to follow the latest as usual: the lazy stack's estimate can be higher than its rows reach, and the
+    /// end of such an estimate is white (`BlankViewportRecovery`).
+    func recoveryTarget(latestID: String) -> String? {
+        guard let scrollView else { return nil }
+        var frames: [HistoryRowFrame] = []
+        for (id, marker) in rows {
+            guard let view = marker.view, view.window === scrollView.window else { continue }
+            let frame = view.convert(view.bounds, to: scrollView)
+            guard frame.height > 0 else { continue }
+            frames.append(HistoryRowFrame(id: id, minY: frame.minY, maxY: frame.maxY))
+        }
+        let answer = BlankViewportRecovery.target(
+            latestID: latestID, rows: frames, contentOffset: scrollView.contentOffset.y, viewportHeight: scrollView.bounds.height,
+            contentHeight: scrollView.contentSize.height, heldEstimate: heldEstimate
+        )
+        heldEstimate = answer.held
+        return answer.target
+    }
 
     var geometry: [String: Double] {
         guard let scrollView else { return [:] }
         return [
             "contentOffset": Double(scrollView.contentOffset.y),
             "contentHeight": Double(scrollView.contentSize.height),
-            "viewportHeight": Double(scrollView.bounds.height)
+            "viewportHeight": Double(scrollView.bounds.height),
+            "topInset": Double(scrollView.adjustedContentInset.top),
+            "bottomInset": Double(scrollView.adjustedContentInset.bottom)
         ]
     }
 
-    func recordLayout(event: String = "chat.scroll.layout", messageCount: Int, following: Bool) {
+    func recordFollowing(reason: String, targetID: String, messageCount: Int) {
+        guard commandRecordsRemaining > 0 else { return }
+        commandRecordsRemaining -= 1
+        recordLayout(
+            event: "chat.scroll.command", messageCount: messageCount, following: true,
+            state: reason, targetID: targetID
+        )
+    }
+
+    func recordLayout(
+        event: String = "chat.scroll.layout", messageCount: Int, following: Bool,
+        state: String? = nil, targetID: String? = nil
+    ) {
         if event == "chat.scroll.layout" {
             guard layoutRecordsRemaining > 0 else { return }
             layoutRecordsRemaining -= 1
@@ -111,21 +149,36 @@ final class ScrollMetrics {
         guard let scrollView else { return }
         var realized = 0
         var visible = 0
+        var registered = 0
         var lastFrame = CGRect.zero
-        for (_, marker) in rows {
-            guard let view = marker.view, view.window === scrollView.window else { continue }
+        var latestFrame: CGRect?
+        for (id, marker) in rows {
+            guard let view = marker.view else { continue }
+            registered += 1
+            guard view.window === scrollView.window else { continue }
             let frame = view.convert(view.bounds, to: scrollView)
             guard frame.height > 0 else { continue }
             realized += 1
             if frame.intersects(scrollView.bounds) { visible += 1 }
             if frame.maxY > lastFrame.maxY { lastFrame = frame }
+            if id == (targetID ?? latestID) { latestFrame = frame }
         }
         var values = geometry
         values["bottomY"] = Double(lastFrame.maxY - scrollView.contentOffset.y)
         values["lastRowHeight"] = Double(lastFrame.height)
+        if let latestFrame {
+            values["latestTopY"] = Double(latestFrame.minY - scrollView.contentOffset.y)
+            values["latestBottomY"] = Double(latestFrame.maxY - scrollView.contentOffset.y)
+            values["latestRowHeight"] = Double(latestFrame.height)
+        }
         DSBotLog.record(
-            event, counts: ["messageCount": messageCount, "realizedCount": realized, "visibleCount": visible],
-            geometry: values, state: following ? "following" : "reading"
+            event, historyId: diagnosticID,
+            counts: [
+                "messageCount": messageCount, "registeredCount": registered,
+                "realizedCount": realized, "visibleCount": visible,
+                "latestRealizedCount": latestFrame == nil ? 0 : 1, "followingCount": following ? 1 : 0
+            ],
+            geometry: values, state: state ?? (following ? "following" : "reading")
         )
     }
 
@@ -169,7 +222,7 @@ final class ScrollMetrics {
 
     private func advance(fraction: CGFloat, itemIDs: [String], scroll: (String, CGFloat) -> Void) {
         guard fraction < 1 else {
-            scroll("history.latest", 1)
+            if let last = latestID ?? itemIDs.last { scroll(last, 1) }
             return
         }
         guard let scrollView else { return }

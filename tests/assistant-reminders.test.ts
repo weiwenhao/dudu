@@ -27,7 +27,7 @@ test('a question waiting for the owner is the first reminder, in the words of th
 test('a session that waits without a question reads as the issue title', () => {
   const { issues, add } = world({ 'dsh:a': 'waiting_owner' });
   add({ title: '重写 provider 插件', agent: 'codex', session: 'dsh:a' });
-  assert.deepEqual(reminders(issues, NOON).map(({ kind, text }) => [kind, text]), [['needs_you', '重写 provider 插件']]);
+  assert.deepEqual(reminders(issues, NOON).map(({ kind, text }) => [kind, text]), [['blocked', '重写 provider 插件']]);
   issues.close();
 });
 
@@ -35,6 +35,15 @@ test('In Review work is available for intervention even without an explicit ques
   const { issues, add } = world();
   const issue = add({ title: '中断的工作', status: 'in_review', agent: 'codex', session: 'dsh:stopped' });
   assert.deepEqual(reminders(issues, NOON).map(({ id, kind, text }) => [id, kind, text]), [[issue.id, 'needs_you', issue.title]]);
+  issues.close();
+});
+
+test('working sessions cannot produce stale review reminders while workflow catches up', () => {
+  const { issues, add } = world({ 'dsh:resumed': 'running' });
+  const issue = add({ title: '已继续工作', status: 'in_review', agent: 'codex', session: 'dsh:resumed', ask: '旧的待审核问题' });
+  assert.deepEqual(reminders(issues, NOON), []);
+  issues.update(issue.id, { dueAt: NOON - DAY });
+  assert.deepEqual(reminders(issues, NOON).map(({ kind }) => kind), ['overdue'], 'a due-date reminder remains independent of review');
   issues.close();
 });
 
@@ -50,12 +59,12 @@ test('a due date before today is overdue by whole calendar days; today and a sno
   issues.close();
 });
 
-test('a session that stopped with an error is stuck, after the other kinds', () => {
+test('blocked sessions still give reminders before workflow synchronization, after due reminders', () => {
   const { issues, add } = world({ 'dsh:bad': 'error', 'dsh:ask': 'waiting_owner' });
   add({ title: '卡住的', agent: 'codex', session: 'dsh:bad' });
   add({ title: '逾期的', dueAt: NOON - DAY });
   add({ title: '在等的', agent: 'claude', session: 'dsh:ask' });
-  assert.deepEqual(reminders(issues, NOON).map(({ kind }) => kind), ['needs_you', 'overdue', 'stuck']);
+  assert.deepEqual(reminders(issues, NOON).map(({ kind }) => kind), ['overdue', 'blocked', 'blocked']);
   issues.close();
 });
 

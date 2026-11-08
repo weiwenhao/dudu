@@ -31,14 +31,15 @@ before(async () => {
   }));
   await writeFile(join(probe, 'cordis.patch.yml'), '- insert:\n    - id: dudu-resume-probe\n      name: dudu-resume-probe\n');
   await writeFile(join(probe, 'index.mjs'), `
+import { readSessionHistory } from ${JSON.stringify(new URL('../../host/dudu-plugin/dist/dsh-session-history.mjs', import.meta.url).href)};
 export const name = 'dudu-resume-probe';
-export const inject = ['connection', 'sessionController', 'workspaceRegistry', 'agents', 'sessionProjections'];
+export const inject = ['connection', 'sessionController', 'sessionQuery', 'workspaceRegistry', 'agents', 'sessionProjections'];
 export function apply(ctx) {
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/dudu-resume-probe', methods: ['POST'], requestBody: 'buffered',
     async fetch(request) {
       const { sessionId, attach } = await request.json();
-      const inspected = await ctx.sessionController.inspect(sessionId);
+      const inspected = await readSessionHistory({ controller: ctx.sessionController, query: ctx.sessionQuery }, sessionId);
       if (attach) {
         const workspace = await ctx.workspaceRegistry.create(inspected.meta.cwd);
         await workspace.attachSession(sessionId);

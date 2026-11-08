@@ -23,6 +23,7 @@ struct DSBotApp: App {
                 .onChange(of: scenePhase, initial: true) { _, phase in
                     if phase == .active {
                         UIResponsivenessMonitor.shared.start()
+                        UserActionRecorder.shared.install()
                         store.resume()
                     } else {
                         UIResponsivenessMonitor.shared.stop()

@@ -12,8 +12,9 @@
 //   stop(key)                        ends the turn that runs; the session stays
 //   close(key, { stop? }) / resume(key)   fold the session away in DSH's sidebar and put it back (resume says where it lives: `workspaceId`);
 //                                    closing one that runs needs stop: true
-//   stateOf(key)   -> 'running' | 'waiting_owner' | 'finished' | 'idle' | 'error' | null    synchronous: createIssues' `sessionState`
-//   snapshotOf(key) -> { key, id, agent, cwd, closed, state, stateSince, lastActivityAt, pending, error, ending, excerpt } | null
+//   stateOf(key)   -> 'running' | 'waiting_owner' | 'finished' | 'idle' | 'error' | 'stopped' | null    synchronous: createIssues' `sessionState`
+//   snapshotOf(key) -> { key, id, agent, cwd, closed, state, stateSince, lastActivityAt, touchedAt, pending, error, ending, excerpt } | null
+//                                    (touchedAt: when the owner last started, spoke to or opened the session, ms, or null: it is what keeps an agent awake, deep-sleep.mjs)
 //   onChange(cb)   -> unsubscribe; cb({ key, from, to, snapshot }) for every change of a session's state ({ from: null } the first time)
 //   adopt(key, { agent?, cwd? })     follow a session that existed before this process (DSH was restarted): its state is read from what
 //                                    DSH stored of it, and nothing is announced
@@ -43,6 +44,8 @@
 //     question(sessionId, { text, kind, signal }) -> { answer: Promise<string>, close() } | null: a question of the agent (kind 'question') or its
 //     request for a wider mode (kind 'approval'); the adapter waits for `answer` (the owner's words) and calls close() once it is settled by
 //     anyone, in DSH's own window as well
+
+import { agentStateForSession } from '../sessions/work-state.mjs';
 
 export const ACCESS_MODES = Object.freeze(['read-only', 'workspace-write', 'danger-full-access']);
 // The three agents the issues name, and what each is to DSH: the harnesses are routes of their own, DeepSeek is DSH's own model.
@@ -86,7 +89,7 @@ export function modelFor(agent, catalog, wanted) {
     if (!group?.models?.length) return null;
     // The harness's own default comes first in its list; Claude also has a model that is simply called "default".
     if (wanted) return pick(group, wanted);
-    return pick(group, 'default') ?? pick(group, group.models[0].id);
+    return pick(group, group.models[0].id);
   }
   if (agent !== 'deepseek') return null;
   const own = groups.filter((group) => !harnessRoutes.includes(group.id) && group.models?.length);
@@ -101,6 +104,7 @@ export function stateFrom({ pending, running, last }) {
   if (running) return 'running';
   if (last === 'error') return 'error';
   if (last === 'answer') return 'finished';
+  if (last === 'aborted') return 'stopped'; // the owner stopped it, or it was interrupted: it needs them
   return 'idle';
 }
 
@@ -117,21 +121,24 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
 
   const newEntry = (sessionId, extra = {}) => ({
     sessionId, key: keyOf(sessionId), agent: null, cwd: null, closed: false, announced: false, seen: 0,
-    running: false, last: null, lastAt: null, error: '', ending: '', waiters: [], state: 'idle', since: now(), activityAt: now(),
+    running: false, last: null, lastAt: null, error: '', ending: '', waiters: [], state: 'idle', since: now(), activityAt: now(), touchedAt: null,
     ...extra,
   });
 
   const snapshot = (entry) => ({
     key: entry.key, id: entry.sessionId, agent: entry.agent, cwd: entry.cwd, closed: entry.closed, state: entry.state, stateSince: entry.since,
-    lastActivityAt: entry.activityAt, pending: entry.waiters[0] ? { kind: entry.waiters[0].kind, text: entry.waiters[0].text } : null,
+    agentState: agentStateForSession(entry.state),
+    lastActivityAt: entry.activityAt, touchedAt: entry.touchedAt, pending: entry.waiters[0] ? { kind: entry.waiters[0].kind, text: entry.waiters[0].text } : null,
     error: entry.error, ending: entry.ending, excerpt: oneLine(entry.ending, EXCERPT_CHARS),
   });
 
   // Every fact that changes goes through here: the state follows from the facts, and a change of it is announced once.
   function settle(entry) {
-    entry.activityAt = now();
     const state = stateFrom({ pending: entry.waiters[0], running: entry.running, last: entry.last });
-    if (entry.announced && state === entry.state) return;
+    if (entry.announced && state === entry.state) return; // DSH said the same again (a status that did not change): that is not activity
+    // Only a change of the state is the session doing something. It used to count every word DSH said of it: a session nobody had touched for days then looked as if it had just
+    // been used (it was handled "now", so it woke from deep sleep, and what it said of itself outranked what its harness wrote).
+    entry.activityAt = now();
     const from = entry.announced ? entry.state : null;
     entry.announced = true;
     entry.state = state;
@@ -160,6 +167,7 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
       const entry = entries.get(sessionId);
       if (!entry) return;
       entry.seen++;
+      entry.running = false;
       entry.last = kind === 'completed' || kind === 'max-tokens' ? 'answer' : kind === 'error' ? 'error' : 'aborted';
       entry.lastAt = now();
       entry.error = kind === 'error' ? oneLine(tidyFailure(error ?? 'The turn failed.'), 600) : '';
@@ -194,16 +202,22 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
   });
 
   // --- the operations ---------------------------------------------------------------------------------------------------
-  async function start({ issue, agent, firstMessage, cwd, access = 'read-only', model, title } = {}) {
+  async function start({ issue, agent, firstMessage, cwd, access, model, title } = {}) {
     if (!AGENTS[agent]) return clarify(`"${agent}" is not an agent. The agents are: ${Object.keys(AGENTS).join(', ')}.`);
     if (typeof firstMessage !== 'string' || !firstMessage.trim()) return clarify('firstMessage must not be empty.', 'Write what the agent is to do.');
     if (firstMessage.length > TEXT_MAX) return clarify(`firstMessage must be at most ${TEXT_MAX} characters.`);
     if (!absolute(cwd)) return clarify('cwd must be the full path of a folder.', 'Give the folder the session is to work in.');
-    if (!ACCESS_MODES.includes(access)) return clarify(`"${access}" is not an access mode. The modes are: ${ACCESS_MODES.join(', ')}.`);
+    if (access != null && !ACCESS_MODES.includes(access)) return clarify(`"${access}" is not an access mode. The modes are: ${ACCESS_MODES.join(', ')}.`);
 
     let catalog;
-    try { catalog = await dsh.models(); } catch (error) { return failure(error, 'DSH could not list its models; try again.'); }
-    const chosen = modelFor(agent, catalog, model);
+    let defaults;
+    try {
+      catalog = await dsh.models();
+      defaults = await dsh.defaults?.(agent, { cwd, model });
+    } catch (error) { return failure(error, 'DSH could not read the agent configuration; try again.'); }
+    access ??= defaults?.access ?? 'read-only';
+    const chosen = modelFor(agent, catalog, model ?? defaults?.model);
+    if (chosen && defaults?.effort) chosen.reasoningEffort = defaults.effort;
     if (!chosen) {
       return {
         outcome: 'error', message: `${AGENTS[agent]} is not available${model ? ` with the model "${model}"` : ''}.`,
@@ -213,11 +227,11 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
     const label = title || (issue?.ref ? `${issue.ref} ${issue.title ?? ''}` : AGENTS[agent]);
     let sessionId;
     try {
-      ({ sessionId } = await dsh.createSession({ cwd, title: oneLine(label, 100), ...(issue?.project?.name ? { workspaceTitle: issue.project.name } : {}) }));
+      ({ sessionId } = await dsh.createSession({ cwd, title: label, ...(issue?.project?.name ? { workspaceTitle: issue.project.name } : {}) }));
     } catch (error) { return failure(error, 'Check that the folder exists.'); }
 
     // Followed from the moment it exists, so that no event of the first turn is missed.
-    const entry = newEntry(sessionId, { agent, cwd });
+    const entry = newEntry(sessionId, { agent, cwd, touchedAt: now() });
     entries.set(sessionId, entry);
     const seen = entry.seen;
     try {
@@ -248,21 +262,24 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
     if (!id) return clarify(`"${key}" is not a DSH session key (dsh:<id>).`);
     let folded;
     try { folded = await reopen(id); } catch (error) { return failure(error); }
+    const opened = entries.get(id);
+    if (opened) opened.touchedAt = now(); // opening it is handling it: it is awake again
     // Where the session lives is what a window must be told to adopt it, so the answer always says.
     let where = {};
     try { const workspaceId = await dsh.workspaceOf?.(id); if (workspaceId) where = { workspaceId }; } catch { /* the window will say */ }
     return folded ? { outcome: 'success', key, sessionId: id, ...where } : { outcome: 'no_op', message: 'The session is open already.', key, sessionId: id, ...where };
   }
 
-  async function send(key, text, { steer = false, direct = false } = {}) {
+  async function send(key, text, { steer = false, direct = false, attachments = [] } = {}) {
     const id = idOf(key);
     if (!id) return clarify(`"${key}" is not a DSH session key (dsh:<id>).`);
-    if (typeof text !== 'string' || !text.trim()) return clarify('text must not be empty.', 'Write what to say to the session.');
+    if (typeof text !== 'string' || !text.trim() && !attachments.length) return clarify('text must not be empty.', 'Write what to say to the session.');
     if (text.length > TEXT_MAX) return clarify(`text must be at most ${TEXT_MAX} characters.`);
     const entry = entries.get(id) ?? followed(id);
+    entry.touchedAt = now();
     // The question the agent waits on is answered with these words; nothing else is sent.
     const waiter = entry.waiters[0];
-    if (waiter && !direct) {
+    if (waiter && !direct && !attachments.length) {
       waiter.resolve(text.trim());
       return { outcome: 'success', kind: 'answer', key };
     }
@@ -270,7 +287,7 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
     let resumed;
     try { resumed = await reopen(id); } catch (error) { return failure(error); }
     const seen = entry.seen;
-    try { await dsh.prompt(id, text.trim(), { steer }); } catch (error) { return failure(error); }
+    try { await dsh.prompt(id, text.trim(), { steer, ...(attachments.length ? { attachments } : {}) }); } catch (error) { return failure(error); }
     if (entry.seen === seen && !entry.running) { begins(entry); entry.running = true; }
     settle(entry);
     return { outcome: 'success', kind: 'message', key, ...(resumed ? { resumed: true } : {}) };
@@ -310,7 +327,7 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
 
   // A session that is followed without having been started here: its facts are what DSH tells from now on.
   function followed(sessionId, extra) {
-    const entry = newEntry(sessionId, extra);
+    const entry = newEntry(sessionId, { activityAt: 0, ...extra });
     entries.set(sessionId, entry);
     return entry;
   }
@@ -326,6 +343,7 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
       if (turn && !entry.running && !entry.waiters.length) {
         entry.last = turn.last ?? null;
         entry.lastAt = turn.at ?? null;
+        entry.activityAt = Math.max(entry.activityAt, turn.at ?? 0);
         entry.error = turn.last === 'error' ? oneLine(tidyFailure(turn.error ?? 'The turn failed.'), 600) : '';
         if (turn.ending && !entry.ending) entry.ending = String(turn.ending).slice(-ENDING_KEPT);
         entry.since = turn.at ?? entry.since;

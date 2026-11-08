@@ -14,14 +14,21 @@ enum DSBotLog {
         "web.stream.open", "web.stream.next", "web.stream.close",
         "session.search", "session.queue.update", "session.page", "session.tool",
         "session.changes", "session.diff", "session.file", "session.fork",
-        "session.performance", "session.attachment", "question.answer"
+        "session.performance", "session.attachment", "question.answer",
+        "board.list", "issue.get", "issue.open", "issue.pick", "issue.create",
+        "inbox.list", "inbox.get", "inbox.mark", "inbox.share"
     ]
     private static let allowedCountKeys: Set<String> = [
         "payloadBytes", "computerCount", "sessionCount", "workspaceCount",
-        "attachmentCount", "messageCount", "pendingCount", "realizedCount", "visibleCount"
+        "attachmentCount", "messageCount", "pendingCount", "realizedCount", "visibleCount",
+        "registeredCount", "latestRealizedCount", "followingCount",
+        "lanAddressCount", "publicAddressCount"
     ]
     private static let allowedGeometryKeys: Set<String> = [
-        "bottomY", "viewportHeight", "lastRowHeight", "contentHeight", "contentOffset", "topInset", "bottomInset"
+        "bottomY", "viewportHeight", "lastRowHeight", "contentHeight", "contentOffset", "topInset", "bottomInset",
+        "latestTopY", "latestBottomY", "latestRowHeight",
+        // where a tap or a hold was on the screen (points) and how big the screen is: `UserActionRecorder`
+        "tapX", "tapY", "screenWidth", "screenHeight"
     ]
 
     static func networkFailure(
@@ -55,6 +62,7 @@ enum DSBotLog {
         level: String = "info",
         method: String? = nil,
         requestId: String? = nil,
+        historyId: String? = nil,
         elapsedMs: Double? = nil,
         counts: [String: Int]? = nil,
         geometry: [String: Double]? = nil,
@@ -73,6 +81,7 @@ enum DSBotLog {
         ]
         if let method, allowedMethods.contains(method) { record["method"] = method }
         if let requestId, UUID(uuidString: requestId) != nil { record["requestId"] = requestId }
+        if let historyId, UUID(uuidString: historyId) != nil { record["historyId"] = historyId }
         if let elapsedMs, elapsedMs.isFinite, elapsedMs >= 0 {
             record["elapsedMs"] = min(elapsedMs, 86_400_000)
         }

@@ -1,7 +1,7 @@
 // The sessions of 嘟嘟 (index/sessions.db): what the Claude Code, Codex and DSH sessions on this computer are doing, and the way to
 // open, close, resume and talk to them. docs/assistant.md 3.4. It never imports DSH: what lives in DSH comes in as functions.
 //
-//   const sessions = createSessions({ readers, runners, links, now = Date.now, file, ignore, intervals, staleMs, runningFreshMs });
+//   const sessions = createSessions({ readers, runners, links, now = Date.now, file, ignore, pinned, intervals, staleMs, runningFreshMs });
 //
 //   readers   { claude, codex, dsh }, each optional (a reader that is not given is not read). claude and codex are the adapters of
 //             ./readers.mjs (re-exported here): claudeReader({ root, registry }), codexReader({ command, environment }).
@@ -21,6 +21,8 @@
 //             of host/providers/native has it. A harness session that DSH drives and the same one in a terminal are one session.
 //   file      the sqlite file of the index, or ':memory:'. It is rebuilt from the sessions when it is corrupt or newer than this code.
 //   ignore    (key) => true for a session that is never reported or read (嘟嘟's own: pass its DSH key, 'dsh:<id>')
+//   pinned    (key) => true for a session whose question, failure or stop never grows old into `idle` (an issue's agent: idle is the owner's word, not a matter of
+//             time, owner 2026-11-07); asked with its DSH key, 'dsh:<id>', and only for a session that has one. Without it every session ages (`staleMs`).
 //   intervals { live: 10_000, files: 60_000, codex: 120_000 } (docs 3.4), a number each; 0 turns one off, `false` turns all off
 //             (and no first read at the start), which leaves poll() as the way to read. The timers never keep the process alive.
 //
@@ -47,6 +49,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mapLimit } from '../../providers/async.mjs';
 import { oneLine } from '../../providers/native/text.mjs';
 import { EXCERPT_CHARS, judge, SESSION_STATES } from './states.mjs';
+import { agentStateForSession } from './work-state.mjs';
 
 export { claudeReader, codexReader } from './readers.mjs';
 export { endsInQuestion, judge, RULE_DEFAULTS, SESSION_STATES } from './states.mjs';
@@ -73,6 +76,24 @@ const MIGRATIONS = [
     title TEXT NOT NULL,
     cwd TEXT,
     state TEXT NOT NULL CHECK (state IN ('running','waiting_owner','finished','idle','error')),
+    state_since INTEGER NOT NULL,
+    last_activity_at INTEGER NOT NULL,
+    excerpt TEXT NOT NULL,
+    pending_kind TEXT,
+    pending_text TEXT
+  ) WITHOUT ROWID;
+  `,
+  // 'stopped' (2026-11-05). The file is a cache of what the sessions say (see openStore): it is read again, not converted.
+  `
+  DROP TABLE sessions;
+  CREATE TABLE sessions (
+    key TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    id TEXT NOT NULL,
+    dsh_session_id TEXT,
+    title TEXT NOT NULL,
+    cwd TEXT,
+    state TEXT NOT NULL CHECK (state IN ('running','waiting_owner','finished','idle','error','stopped')),
     state_since INTEGER NOT NULL,
     last_activity_at INTEGER NOT NULL,
     excerpt TEXT NOT NULL,
@@ -133,7 +154,8 @@ const fromRow = (r) => ({
   key: r.key, provider: r.provider, id: r.id, dshSessionId: r.dsh_session_id, title: r.title, cwd: r.cwd, state: r.state,
   stateSince: r.state_since, lastActivityAt: r.last_activity_at, excerpt: r.excerpt, pending: r.pending_kind ? { kind: r.pending_kind, text: r.pending_text ?? '' } : null,
 });
-const copy = (s) => (s ? { ...s, pending: s.pending ? { ...s.pending } : null } : s);
+// What a caller gets is a copy with the agent state the owner's rules give it (sessions/work-state.mjs).
+const copy = (s) => (s ? { ...s, agentState: agentStateForSession(s.state), pending: s.pending ? { ...s.pending } : null } : s);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 const clarify = (message, next = 'Correct the input and call again.') => ({ outcome: 'needs_clarification', message, next });
@@ -141,7 +163,7 @@ const failure = (error, next) => ({ outcome: 'error', message: error instanceof 
 const whole = (value, min, max, fallback) => (Number.isInteger(value) ? Math.min(max, Math.max(min, value)) : fallback);
 
 export function createSessions({
-  readers = {}, runners = {}, links = { get: () => undefined }, now = Date.now, file, ignore = () => false, intervals = DEFAULT_INTERVALS, staleMs, runningFreshMs,
+  readers = {}, runners = {}, links = { get: () => undefined }, now = Date.now, file, ignore = () => false, pinned = () => false, intervals = DEFAULT_INTERVALS, staleMs, runningFreshMs,
 } = {}) {
   if (typeof file !== 'string' || !file) throw new TypeError('createSessions needs the file of its index.');
   const db = openStore(file);
@@ -153,7 +175,10 @@ export function createSessions({
   if (runningFreshMs !== undefined) rules.runningFreshMs = runningFreshMs;
 
   let current = new Map(select.all().map((row) => [row.key, fromRow(row)]));
-  let aliases = new Map();                 // a DSH session id that is one session with a harness session -> that session's key
+  // A DSH session id that is one session with a harness session -> that session's key. What the index held at the last run says so already: without it, from the start until the first
+  // read is done (the transcripts' ends, seconds, longer when the computer is busy) a DSH key found no snapshot, and everything that asks about a session by its DSH key (an issue's agent
+  // state, its question) saw something else than it had before the restart, and again when the read ended.
+  let aliases = new Map([...current.values()].filter((snapshot) => snapshot.provider !== 'dsh' && snapshot.dshSessionId).map((snapshot) => [snapshot.dshSessionId, snapshot.key]));
   const tables = { claude: null, codex: null };   // the facts of the last good read of each reader; null until there was one
   let dshTable = null;                     // { entries, facts: Map<DSH session id, DSH facts>, hints: Map<native key, DSH session id> }
   const signatures = new Map();            // DSH session id -> what DSH last said of it, to read a linked harness session again when it changes
@@ -255,7 +280,9 @@ export function createSessions({
   // --- judging -------------------------------------------------------------------------------------------------------
 
   function snapshotOf(key, provider, facts, dsh, dshId, at, before) {
-    const verdict = judge(provider, { ...facts, dsh }, { now: at, ...rules });
+    // An issue's agent keeps a question, a failure or a stop however old: it is idle only by the owner's word (`pinned`).
+    const dshKey = provider === 'dsh' ? `dsh:${facts.id}` : dshId ? `dsh:${dshId}` : null;
+    const verdict = judge(provider, { ...facts, dsh }, { now: at, ...rules, ...(dshKey && pinned(dshKey) ? { staleMs: Infinity } : {}) });
     const activity = [facts.lastActivityAt, dsh?.at].filter(Number.isFinite);
     return {
       key, provider, id: facts.id, dshSessionId: provider === 'dsh' ? facts.id : dshId, title: oneLine(facts.title ?? '', TITLE_CHARS), cwd: facts.cwd ?? null,

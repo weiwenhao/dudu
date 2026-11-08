@@ -3,7 +3,7 @@
 .dudu-pet { position: absolute; inset: 0; width: 64px; height: 64px; padding: 0; border: 0; border-radius: 20px; background: none; filter: drop-shadow(0 3px 5px #2850be47); }
 .dudu-pet-body { display: block; position: relative; width: 64px; height: 64px; animation: dudu-pet-bob 5s ease-in-out infinite; }
 .dudu-pet img { display: block; width: 64px; height: 64px; }
-.dudu-pet:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
+.dudu-pet:focus-visible:where(html[data-dudu-tabbing] *) { outline: 2px solid var(--ring); outline-offset: 4px; }
 .dudu-pet-eye { position: absolute; border-radius: 50%; background: radial-gradient(120% 120% at 40% 25%, #2a3f78, #0d1733 70%); animation: dudu-pet-blink 6s infinite; transition: translate .2s; }
 .dudu-pet-eye--left { left: 19.7px; top: 32.4px; width: 5.6px; height: 9px; }
 .dudu-pet-eye--right { left: 32.1px; top: 30.9px; width: 5.7px; height: 9px; }
@@ -13,8 +13,15 @@
 .dudu-pet--reply .dudu-pet-eye { translate: -1.4px 0; }
 .dudu-pet:hover:not(.dudu-pet--open):not(.dudu-pet--reply) .dudu-pet-eye { translate: 0 -1.4px; }
 .dudu-pet--listening .dudu-pet-eye { scale: 1.18; }
+.dudu-pet-menu { background: var(--popover); box-shadow: 0 8px 24px var(--dudu-shadow), inset 0 1px 0 rgb(255 255 255 / .5); }
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dudu-pet-menu { background: color-mix(in srgb, var(--popover) 68%, transparent); -webkit-backdrop-filter: blur(14px) saturate(1.25); backdrop-filter: blur(14px) saturate(1.25); }
+}
+body[data-ds-dark-theme] .dudu .dudu-pet-menu { box-shadow: 0 8px 24px var(--dudu-shadow), inset 0 1px 0 rgb(255 255 255 / .08); }
+@media (prefers-reduced-transparency: reduce) { .dudu-pet-menu { background: var(--popover); -webkit-backdrop-filter: none; backdrop-filter: none; } }
 .dudu-pet-conversation { position: absolute; right: 0; bottom: 76px; width: min(440px, calc(100vw - 48px)); height: min(520px, calc(100dvh - 124px)); display: flex; flex-direction: column; border: 1px solid var(--input); border-radius: 20px; background: var(--card); box-shadow: 0 12px 32px var(--dudu-shadow); overflow: hidden; }
 .dudu-pet-conversation header { flex: none; display: flex; justify-content: space-between; align-items: center; height: 46px; padding: 0 10px 0 16px; color: var(--muted-foreground); font-size: 12px; }
+.dudu-pet-error { display: flex; flex: none; align-items: center; gap: 6px; margin: 0 12px 8px; padding: 6px 8px; border: 1px solid var(--input); border-radius: 12px; color: var(--muted-foreground); background: var(--card); font-size: 12px; line-height: 18px; }
 .dudu-pet-messages { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: auto; padding: 0 16px 8px; }
 .dudu-pet-thread { display: flex; flex-direction: column; flex-shrink: 0; gap: 12px; margin-top: auto; }
 .dudu-pet-day { align-self: center; color: var(--muted-foreground); font-size: 12px; }
@@ -30,8 +37,14 @@
 .dudu-pet-input textarea { min-width: 0; width: 100%; min-height: 40px; max-height: 120px; resize: none; border: 0; outline: none; box-shadow: none; padding: 3px 6px; background: transparent; font: inherit; line-height: 22px; }
 .dudu-pet-input textarea::placeholder { color: var(--muted-foreground); }
 .dudu-pet-input-tools { display: flex; align-items: center; min-width: 0; gap: 4px; }
+.dudu-pet-permission { display: flex; flex: 0 1 auto; min-width: 0; max-width: 34%; }
+.dudu-pet-permission > button { max-width: 100%; }
 .dudu-pet-line { position: relative; --token: 0px; }
-.dudu-pet-line textarea { text-indent: var(--token); }
+.dudu-pet-line textarea { text-indent: var(--token); color: transparent; caret-color: var(--foreground); }
+/* What is typed is drawn here, behind the field's own (transparent) text, so that a /skill and an @address can be blue as they are in DSH's box
+   (its own colour for them). Same box, font and wrapping as the field, or the caret would not sit on the letters. */
+.dudu-pet-mirror { position: absolute; top: 0; left: 0; right: 0; height: 40px; overflow: hidden; pointer-events: none; padding: 3px 6px; font: inherit; line-height: 22px; text-indent: var(--token); white-space: pre-wrap; overflow-wrap: break-word; }
+.dudu-pet-mark { color: var(--dsw-alias-state-business-primary, #4176e6); }
 .dudu-pet-token { position: absolute; left: 6px; top: 3px; line-height: 22px; color: var(--dudu-strong); font-weight: 500; pointer-events: none; }
 .dudu-pet-where { position: absolute; left: calc(6px + var(--token)); right: 6px; top: 3px; line-height: 22px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 .dudu-pet-attachments { display: flex; gap: 8px; overflow-x: auto; padding: 2px 5px 5px; }
@@ -40,7 +53,7 @@
 .dudu-pet-attachment button { position: absolute; right: 4px; top: 4px; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: rgb(15 17 21 / .62); color: #fff; opacity: 0; transition: opacity .12s; }
 .dudu-pet-attachment button svg { width: 12px; height: 12px; stroke-width: 2.5; }
 .dudu-pet-attachment:hover button, .dudu-pet-attachment button:focus-visible { opacity: 1; }
-.dudu-pet-attachment button:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.dudu-pet-attachment button:focus-visible:where(html[data-dudu-tabbing] *) { outline: 2px solid var(--ring); outline-offset: 1px; }
 @media (hover: none) { .dudu-pet-attachment button { opacity: 1; } }
 .dudu-pet-file { display: flex; align-items: center; gap: 10px; width: 220px; height: 64px; box-sizing: border-box; padding: 0 12px 0 10px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); }
 .dudu-pet-file-mark { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 12px; background: var(--dudu-soft); color: var(--dudu-strong); }
@@ -49,15 +62,14 @@
 .dudu-pet-file-text span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .dudu-pet-file-text small { color: var(--muted-foreground); font-size: 12px; }
 .dudu-pet-message-file { display: flex; align-items: center; gap: 8px; max-width: 100%; margin: 4px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); font-size: 13px; line-height: 18px; }
-.dudu-pet-input .dudu-pet-send { width: 30px; height: 30px; border-radius: 50%; background: var(--dudu-strong); color: var(--dudu-on); }
+.dudu-pet-input .dudu-pet-send, .dudu-pet-input .dudu-pet-stop { width: 30px; height: 30px; border-radius: 50%; }
+.dudu-pet-input .dudu-pet-send { background: var(--dudu-strong); color: var(--dudu-on); }
 .dudu-pet-bubble { position: absolute; right: 76px; bottom: 14px; width: max-content; max-width: min(330px, calc(100vw - 136px)); padding: 12px 14px; border: 1px solid var(--input); border-radius: 16px; background: var(--card); box-shadow: 0 8px 24px var(--dudu-shadow); overflow-wrap: anywhere; }
 .dudu-pet-bubble::after { content: ""; position: absolute; right: -6px; bottom: 15px; width: 10px; height: 10px; background: var(--card); border-top: 1px solid var(--input); border-right: 1px solid var(--input); transform: rotate(45deg); }
-.dudu-pet-hint { display: none; padding: 8px 12px; font-size: 12px; line-height: 19px; white-space: nowrap; }
-.dudu-pet-dock:has(.dudu-pet:hover, .dudu-pet:focus-visible) .dudu-pet-hint { display: block; }
 .dudu-pet-ring { position: absolute; inset: 0; width: 64px; height: 64px; border-radius: 50%; border: 2px solid var(--ring); opacity: .4; animation: dudu-pet-ring 1.8s ease-out infinite; pointer-events: none; }
 .dudu-pet-ring--second { animation-delay: .9s; }
 .dudu-pet-bubble small { display: block; margin-top: 8px; color: var(--muted-foreground); font-size: 11px; white-space: nowrap; }
-.dudu-pet-bubble button { margin-top: 6px; color: var(--muted-foreground); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
+.dudu-pet-bubble-open { margin-top: 6px; color: var(--muted-foreground); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
 .dudu-pet-reminder { position: absolute; right: 76px; bottom: 14px; width: 296px; max-width: calc(100vw - 136px); box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--input); border-radius: 16px; background: var(--card); box-shadow: 0 8px 24px var(--dudu-shadow); font-size: 14px; overflow-wrap: anywhere; }
 .dudu-pet-reminder::after { content: ""; position: absolute; right: -6px; bottom: 15px; width: 10px; height: 10px; background: var(--card); border-top: 1px solid var(--input); border-right: 1px solid var(--input); transform: rotate(45deg); }
 .dudu-pet-reminder-head { display: flex; align-items: center; gap: 8px; height: 24px; margin-right: -6px; font-size: 12px; line-height: 16px; }
@@ -68,3 +80,31 @@
 @keyframes dudu-pet-ring { from { transform: scale(.8); opacity: .5; } to { transform: scale(1.5); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .dudu-pet-body, .dudu-pet-eye, .dudu-pet-ring { animation: none; } }
 @media (max-width: 600px) { .dudu-pet-dock { right: 16px; bottom: 16px; } }
+
+/* The running line (DSH's "Deep diving for 9s ···"): its sizes, its colour (DSH's own token, with the value it has in the light theme for a page without
+   DSH), the whale tail's animation (an animated image used as a mask over the text colour; the still outline when motion is reduced) and the highlight
+   that sweeps over the text. All from DSH's chat view; the thread's own 12px gap is the space above it. */
+.dudu-running { display: flex; flex-direction: column; align-items: flex-start; font-size: 12px; line-height: 22px;
+  color: var(--dsw-alias-label-deep-diving, color-mix(in srgb, #4176e6 70%, #172554));
+  --dudu-shimmer: var(--dsw-alias-label-deep-diving-shimmer, color-mix(in srgb, #4176e6 30%, #172554)); }
+.dudu-running-content { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.dudu-running-icon { position: relative; display: inline-flex; flex: none; width: 14px; height: 14px; contain: strict; overflow: hidden; }
+.dudu-running-whale { position: absolute; inset: 0; display: none; }
+.dudu-running-still { display: initial; }
+@supports (mask-mode: alpha) and (mask-image: url('')) {
+  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    .dudu-running-whale { display: block; will-change: transform; background: currentColor; mask: var(--dudu-whale) 50% / 100% 100% no-repeat alpha; }
+    .dudu-running-still { display: none; }
+  }
+}
+.dudu-shimmer { position: relative; display: inline-grid; width: max-content; max-width: 100%; min-width: 0; vertical-align: top; color: inherit; font-variant-numeric: tabular-nums; }
+.dudu-shimmer-content { display: flex; align-items: center; min-width: 0; }
+.dudu-shimmer-decoration { position: absolute; inset: 0; overflow: clip; pointer-events: none; user-select: none; }
+.dudu-shimmer-sweep { position: absolute; inset: 0; overflow: hidden; color: var(--dudu-shimmer); mask-image: linear-gradient(105deg, transparent 0%, black 40% 60%, transparent 100%);
+  transform: translate(-100%); animation-name: dudu-shimmer-sweep; }
+.dudu-shimmer-sweep * { color: inherit !important; }
+.dudu-shimmer-highlight { width: 100%; height: 100%; transform: translate(100%); animation-name: dudu-shimmer-highlight; }
+.dudu-shimmer-sweep, .dudu-shimmer-highlight { animation-duration: 1.5s; animation-delay: .3s; animation-timing-function: steps(48, end); animation-iteration-count: infinite; }
+@keyframes dudu-shimmer-sweep { 0% { transform: translate(-100%); } 66.6667%, to { transform: translate(100%); } }
+@keyframes dudu-shimmer-highlight { 0% { transform: translate(100%); } 66.6667%, to { transform: translate(-100%); } }
+@media (prefers-reduced-motion: reduce) { .dudu-shimmer-decoration { display: none; } .dudu-shimmer-sweep, .dudu-shimmer-highlight { animation: none; } }

@@ -171,8 +171,8 @@ test('Claude: every state rule, over a Claude Code home on disk (registry status
     { n: 6, name: 'process alive and idle, the last message ends in a question -> waiting_owner, the question is its last paragraph', live: ['idle', { statusUpdatedAt: recent + 5000 }],
       records: [prompt(recent - MINUTE), said(recent, 'The fix is in and the tests pass.\n\nShould I also update the changelog?'), turnEnd(recent + 1000)],
       expect: ['waiting_owner', recent, { kind: 'question', text: 'Should I also update the changelog?' }] },
-    { n: 7, name: 'process alive and idle, a plain final answer -> idle (the process is still there: not finished), since the status changed', live: ['idle', { statusUpdatedAt: T0 - 20 * MINUTE }],
-      records: [prompt(recent - MINUTE), said(recent, 'Done. The build passes.'), turnEnd(recent + 1000)], expect: ['idle', T0 - 20 * MINUTE, null] },
+    { n: 7, name: 'process alive and idle, a plain final answer -> finished even while its TUI stays open, since the answer', live: ['idle', { statusUpdatedAt: T0 - 20 * MINUTE }],
+      records: [prompt(recent - MINUTE), said(recent, 'Done. The build passes.'), turnEnd(recent + 1000)], expect: ['finished', recent, null] },
     { n: 8, name: 'process gone, the final answer, then hook output, a slash command and a subagent -> finished, since the answer', records: [prompt(recent - MINUTE), said(recent, 'Done. The build passes.'), turnEnd(recent + 1000), ...noise(recent + 2000)],
       expect: ['finished', recent, null] },
     { n: 9, name: 'process gone, a question a day ago -> waiting_owner (the session can be resumed and answered)', records: [prompt(T0 - DAY - MINUTE), said(T0 - DAY, '**Want me to proceed with the migration?**'), turnEnd(T0 - DAY + 1000)],
@@ -186,8 +186,8 @@ test('Claude: every state rule, over a Claude Code home on disk (registry status
     { n: 14, name: 'process gone after a tool result, before the answer -> error', records: [prompt(T0 - HOUR), called(T0 - HOUR + 1000, 'Read', { file_path: '/x' }, 'toolu_14'), result(T0 - HOUR + 2000, 'toolu_14')],
       expect: ['error', T0 - HOUR + 2000, null] },
     { n: 15, name: 'process gone after a prompt nothing answered -> error', records: [prompt(T0 - HOUR)], expect: ['error', T0 - HOUR, null] },
-    { n: 16, name: 'the person interrupted it (Esc) -> idle, nothing went wrong', records: [prompt(T0 - HOUR), called(T0 - HOUR + 1000, 'Bash', { command: 'make' }), prompt(T0 - HOUR + 2000, '[Request interrupted by user]')],
-      expect: ['idle', T0 - HOUR + 2000, null] },
+    { n: 16, name: 'the person interrupted it (Esc) -> stopped: it needs the owner', records: [prompt(T0 - HOUR), called(T0 - HOUR + 1000, 'Bash', { command: 'make' }), prompt(T0 - HOUR + 2000, '[Request interrupted by user]')],
+      expect: ['stopped', T0 - HOUR + 2000, null] },
     { n: 17, name: 'a conversation just compacted -> idle', records: [prompt(T0 - HOUR), said(T0 - HOUR + 1000, 'Done.'), { ...prompt(T0 - HOUR + 2000, 'This session is being continued from a previous conversation.'), isCompactSummary: true, isVisibleInTranscriptOnly: true }],
       expect: ['idle', T0 - HOUR + 2000, null] },
     { n: 18, name: 'a registry file of a process that is gone is not a live session', live: ['busy', { pid: deadPid }], records: [prompt(recent - MINUTE), said(recent, 'Done.'), turnEnd(recent + 1000)], expect: ['finished', recent, null] },
@@ -228,7 +228,8 @@ test('Claude: every state rule, over a Claude Code home on disk (registry status
   }
   // The rest of the snapshot, as docs/assistant.md 3.4 shapes it.
   const done = found[id(8)];
-  assert.deepEqual(Object.keys(done), ['key', 'provider', 'id', 'dshSessionId', 'title', 'cwd', 'state', 'stateSince', 'lastActivityAt', 'excerpt', 'pending']);
+  assert.deepEqual(Object.keys(done), ['key', 'provider', 'id', 'dshSessionId', 'title', 'cwd', 'state', 'stateSince', 'lastActivityAt', 'excerpt', 'pending', 'agentState']);
+  assert.equal(done.agentState, 'blocked', 'a finished run is the boss\'s turn');
   assert.deepEqual([done.key, done.provider, done.dshSessionId, done.title, done.cwd, done.excerpt, done.lastActivityAt], [`claude:${id(8)}`, 'claude', null, 'Build repair', '/work/app', 'Done. The build passes.', recent]);
   const long = found[id(20)];
   assert.ok([...long.excerpt].length <= 300 && long.excerpt.startsWith('The cause is in the cache layer.'), 'the excerpt is the start of the last message, cut to 300');
@@ -277,7 +278,7 @@ test('Codex: the last turn of each thread through a fake app-server, and only a 
   assert.deepEqual(state('c-ask'), ['waiting_owner', sec(T0 - HOUR) * 1000, { kind: 'question', text: 'Should I restart the service?' }]);
   assert.deepEqual(state('c-questions'), ['waiting_owner', sec(T0 - HOUR) * 1000, { kind: 'question', text: 'Which region? / Which size?' }]);
   assert.deepEqual(state('c-failed')[0], 'error');
-  assert.deepEqual(state('c-stopped')[0], 'idle');
+  assert.deepEqual(state('c-stopped')[0], 'stopped');
   assert.deepEqual(state('c-live'), ['running', sec(T0 - 10 * MINUTE) * 1000, null]);
   assert.deepEqual(state('c-dead')[0], 'idle', 'a turn that says it is in progress in a thread nobody has written to for two hours is not running');
   assert.deepEqual(state('c-empty')[0], 'idle');
@@ -294,6 +295,33 @@ test('Codex: the last turn of each thread through a fake app-server, and only a 
   await sessions.poll();
   assert.equal(codex.count('thread/turns/list'), 10);
   assert.equal(byId(sessions.snapshots().snapshots)['c-done'].excerpt, 'Done again.');
+});
+
+test('an issue\'s agent keeps a question, a failure and a stop however old (pinned): idle is the owner\'s word, not a matter of time; a session nobody manages still ages into idle', async (t) => {
+  const stale = T0 - 10 * DAY;
+  const user = [{ type: 'userMessage', id: 'i0', content: [{ type: 'text', text: 'do it' }] }];
+  const age = { startedAt: sec(stale - HOUR), completedAt: sec(stale) };
+  // two of each: the first of every pair is an issue's agent (linked to a DSH session the issue holds), the second is nobody's
+  const names = ['ask', 'failed', 'stopped'];
+  const threads = names.flatMap((name) => [thread(`mine-${name}`), thread(`free-${name}`)]);
+  const turns: Record<string, any[]> = {};
+  for (const prefix of ['mine', 'free']) {
+    turns[`${prefix}-ask`] = [turn('completed', asked('I changed the config.\n\nShould I restart the service?'), age)];
+    turns[`${prefix}-failed`] = [turn('failed', user, { ...age, error: { message: 'stream disconnected', codexErrorInfo: null, additionalDetails: null, misalignment: null } })];
+    turns[`${prefix}-stopped`] = [turn('interrupted', user, age)];
+  }
+  const asked_about: string[] = [];
+  const sessions = createSessions({
+    readers: { codex: codexReader({ command: 'codex', spawnProcess: fakeCodex(threads, turns).spawnProcess }) }, file: ':memory:', now, intervals: false,
+    links: { get: (provider: string, id: string) => (provider === 'codex' && id.startsWith('mine-') ? `held-${id}` : undefined) },
+    pinned: (key: string) => { asked_about.push(key); return key.startsWith('dsh:held-'); },
+  });
+  t.after(() => sessions.dispose());
+  await sessions.poll();
+  const states = Object.fromEntries(sessions.snapshots().snapshots.map((snapshot: any) => [snapshot.id, snapshot.state]));
+  assert.deepEqual(names.map((name) => states[`mine-${name}`]), ['waiting_owner', 'error', 'stopped'], 'an issue\'s agent: still the owner\'s turn after ten days');
+  assert.deepEqual(names.map((name) => states[`free-${name}`]), ['idle', 'idle', 'idle'], 'a session nobody manages: an old, abandoned one, as before');
+  assert.ok(asked_about.length > 0 && asked_about.every((key) => key.startsWith('dsh:held-')), `only a session that has a DSH session is asked about, with its DSH key: ${asked_about.join(', ')}`);
 });
 
 test('DSH: its own rules; a Claude or Codex session that DSH drives is one session with its DSH side; 嘟嘟\'s own is never reported', async (t) => {
@@ -339,7 +367,7 @@ test('DSH: its own rules; a Claude or Codex session that DSH drives is one sessi
   assert.deepEqual([found['dsh:d-done'].excerpt, found['dsh:d-done'].dshSessionId, found['dsh:d-done'].provider, found['dsh:d-done'].title], ['The summary is ready.', 'd-done', 'dsh', 'DSH d-done']);
   assert.equal(found['dsh:d-broke'].state, 'error');
   assert.equal(found['dsh:d-old-broke'].state, 'idle', 'an error from twenty days ago');
-  assert.equal(found['dsh:d-stopped'].state, 'idle');
+  assert.equal(found['dsh:d-stopped'].state, 'stopped');
   assert.equal(found['dsh:d-blank'].state, 'idle', 'DSH knows nothing of it');
   assert.equal(found['dsh:d-listed-only'].state, 'idle');
   // The Claude session is DSH's, and DSH says its loop is running: that is what it is doing, whatever its transcript's last answer says.
@@ -407,7 +435,7 @@ test('a question arrives, a session starts and one is deleted: exact change even
   ]);
   const changed = events.find((event) => event.key === `claude:${id(1)}`);
   assert.deepEqual([changed.snapshot.state, changed.snapshot.pending, changed.snapshot.stateSince], ['waiting_owner', asked, T0 - 5 * MINUTE]);
-  assert.equal(issues.get(issue.id).issue.agentState, 'needs_you', 'the issue shows it with no help');
+  assert.equal(issues.get(issue.id).issue.agentState, 'blocked', 'the issue shows it with no help');
   events.length = 0;
   await sessions.poll();
   assert.deepEqual(events, [], 'a read that finds nothing new says nothing');
@@ -650,7 +678,7 @@ test('the cadence: the defaults are the doc\'s, the timers read without being as
   const sessions = createSessions({ readers: { claude: claudeReader({ root: home.root, registry: home.registry }) }, file: ':memory:', now, intervals: { live: 20, files: 0, codex: 0 } });
   t.after(() => sessions.dispose());
   // Reads at the start, with no one asking.
-  await waitFor(() => sessions.stateOf(`claude:${id(1)}`) === 'idle');
+  await waitFor(() => sessions.stateOf(`claude:${id(1)}`) === 'finished');
   // The cheap look picks up a registry change on its own timer.
   await home.live(1, 'busy', { statusUpdatedAt: T0 });
   await waitFor(() => sessions.stateOf(`claude:${id(1)}`) === 'running');
@@ -682,4 +710,23 @@ test('scale: two thousand sessions, read cold and read again', { skip: !process.
   console.log(`2000 sessions: cold read ${Math.round(cold)} ms, read again ${Math.round(warm)} ms, live look ${Math.round(live)} ms`);
   assert.equal(sessions.snapshots({ limit: 5000 }).total, 2000);
   assert.ok(warm < 1000, `reading again took ${warm} ms`);
+});
+
+test('a restart keeps what the index knew of a session that DSH and its harness share: asked by its DSH key it answers from the start, not after the first read (owner, 2026-11-07)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'dudu-alias-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = join(dir, 'sessions.db');
+  const ended = { last: 'answer', at: T0, turnEnded: true, ending: 'Done.', question: '', tool: '', excerpt: 'Done.' };
+  const facts = [{ id: 'abc', title: 'Shared', cwd: '/work', updatedAt: T0, lastActivityAt: T0, excerpt: 'Done.', process: null, tail: ended }];
+  const links = { get: (provider: string, one: string) => (provider === 'claude' && one === 'abc' ? 'dsh-1' : undefined) };
+  const first = createSessions({ readers: { claude: { scan: async () => facts, live: async () => facts } }, links, now, file, intervals: false });
+  await first.poll();
+  assert.equal(first.stateOf('dsh:dsh-1'), 'finished', 'one session, asked by either key');
+  await first.dispose();
+  // the next run, before anything has been read: DSH's key finds the session's snapshot all the same (it used to find nothing until the read was done, and the issue held by it
+  // read as something else for that long, and again when the read ended)
+  const second = createSessions({ readers: {}, links, now, file, intervals: false });
+  assert.equal(second.stateOf('dsh:dsh-1'), 'finished');
+  assert.deepEqual([second.snapshotOf('dsh:dsh-1')?.key, second.snapshotOf('dsh:dsh-1')?.stateSince], [`claude:abc`, T0]);
+  await second.dispose();
 });

@@ -29,6 +29,21 @@ struct DSBotToastMessage: Identifiable, Equatable {
     let id = UUID()
     let text: String
     let kind: Kind
+    /// A word the toast offers (Undo), run once.
+    var action: DSBotToastAction?
+}
+
+struct DSBotToastAction: Equatable {
+    let id = UUID()
+    let title: String
+    let run: @MainActor () -> Void
+
+    init(title: String, run: @escaping @MainActor () -> Void) {
+        self.title = title
+        self.run = run
+    }
+
+    static func == (lhs: DSBotToastAction, rhs: DSBotToastAction) -> Bool { lhs.id == rhs.id }
 }
 
 struct DSBotToastOverlay: View {
@@ -51,7 +66,9 @@ struct DSBotToastOverlay: View {
             guard let message else { return }
             UIAccessibility.post(notification: .announcement, argument: message.text)
             do {
-                try await Task.sleep(for: voiceOverEnabled ? max(message.kind.duration, .seconds(8)) : message.kind.duration)
+                // A toast with an Undo stays long enough to be reached for (the desktop's six seconds).
+                let shown = message.action == nil ? message.kind.duration : max(message.kind.duration, .seconds(6))
+                try await Task.sleep(for: voiceOverEnabled ? max(shown, .seconds(8)) : shown)
             } catch {
                 return
             }
@@ -79,6 +96,21 @@ private struct DSBotToast: View {
                 .foregroundStyle(DSBotStyle.ink)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("feedback.message")
+            if let action = message.action {
+                Button {
+                    action.run()
+                    onDismiss()
+                } label: {
+                    Text(action.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(DSBotStyle.blue)
+                        .padding(.horizontal, 6)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("feedback.action")
+            }
             Button(action: onDismiss) {
                 DSBotIcon(.close, size: 13)
                     .foregroundStyle(DSBotStyle.chatSecondary)

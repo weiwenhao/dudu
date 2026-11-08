@@ -1,4 +1,4 @@
-import { LayoutGrid, MessagesSquare, Settings } from 'lucide-react';
+import { LayoutGrid, MessageCircle, Settings } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { T } from '../strings.js';
 
@@ -10,7 +10,7 @@ export function Entry({ editing, onSettings, onEdit, onSessions }) {
       {!editing && <div role="toolbar" aria-label={D.menu} aria-orientation="horizontal" className="db-entry" data-window-drag-recall>
         <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={D.settings} title={D.settings} onClick={onSettings}><Settings aria-hidden="true" /></Button>
         <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={D.editLayout} title={D.editLayout} onClick={onEdit}><LayoutGrid aria-hidden="true" /></Button>
-        <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={T.widgets.titles.sessions} title={T.widgets.titles.sessions} onClick={onSessions}><MessagesSquare aria-hidden="true" /></Button>
+        <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={T.widgets.titles.sessions} title={T.widgets.titles.sessions} onClick={onSessions}><MessageCircle aria-hidden="true" /></Button>
       </div>}
     </header>
   );

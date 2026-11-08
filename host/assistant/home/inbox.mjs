@@ -1,6 +1,4 @@
-// A waiting session is an input too. No model, no transcript write: its question becomes an issue with a source link.
-import { issueStatusForSession } from './issue-state.mjs';
-
+// Observe only work the owner already assigned or took over. Discovery and Import never enroll a conversation in issues.
 export function createSessionInbox({ issues, adopt, observe, links }) {
   const tails = new Map();
   let closed = false;
@@ -12,28 +10,14 @@ export function createSessionInbox({ issues, adopt, observe, links }) {
   async function reflect(snapshot) {
     const key = keyOf(snapshot);
     if (!key || key.startsWith('dsh:dudu-assistant-')) return null;
-    const [provider, ...parts] = String(snapshot.key ?? key).split(':');
     if (key.startsWith('dsh:') && links?.removed?.(key.slice(4))) return null;
     let issue = issues.findBySession(key).issue;
     if (!issue && key !== snapshot.key) issue = issues.findBySession(snapshot.key).issue;
     const nativeKey = key.startsWith('dsh:') ? links?.nativeKey?.(key.slice(4)) : null;
     if (!issue && nativeKey) issue = issues.findBySession(nativeKey).issue;
-    if (issue && ['done', 'canceled'].includes(issue.status)) return issue;
-    if (issue && issue.session !== key) issue = issues.update(issue.id, { session: key }, { actor: 'dudu' }).issue ?? issue;
-    if (!issue) {
-      const native = nativeKey ? /^(claude|codex):(.+)$/s.exec(nativeKey) : null;
-      if (links?.hidden?.(provider, parts.join(':')) || (native && links?.hidden?.(native[1], native[2]))) return null;
-      if (snapshot.state !== 'waiting_owner' || !snapshot.pending?.text?.trim()) return null;
-      const result = issues.add({
-        title: (snapshot.title || snapshot.pending.text).slice(0, 300),
-        brief: (snapshot.excerpt ?? '').slice(0, 2000), source: 'session', sourceRef: snapshot.key,
-        status: issueStatusForSession(snapshot.state), ask: snapshot.pending.text.slice(0, 2000),
-        agent: snapshot.cwd ? (['claude', 'codex', 'deepseek'].includes(snapshot.agent) ? snapshot.agent : ['claude', 'codex'].includes(snapshot.provider) ? snapshot.provider : 'deepseek') : null,
-        session: key, project: snapshot.cwd ? { name: snapshot.cwd.split(/[\\/]/).filter(Boolean).at(-1) || snapshot.cwd, path: snapshot.cwd } : null,
-      }, { actor: 'dudu' });
-      issue = result.issue;
-      if (!issue) return null;
-    }
+    if (!issue) return null;
+    if (['done', 'canceled'].includes(issue.statusType ?? issue.status)) return issue;
+    if (issue.session !== key) issue = issues.update(issue.id, { session: key }, { actor: 'dudu' }).issue ?? issue;
     await adopt?.(issue);
     // DSH's question waterfall does the reflection itself after adoption.
     if (snapshot.provider !== 'dsh') await observe?.(issue, snapshot);

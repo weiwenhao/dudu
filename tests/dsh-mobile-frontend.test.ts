@@ -388,6 +388,42 @@ test('reuses compatible main assets across documents and isolates hashed asset v
   assert.doesNotMatch(csp, /unsafe-eval/u);
 });
 
+test('the expression compatibility transform survives upstream minifier renaming', async (t) => {
+  const expression = [
+    'const n7=new Function("ctx","expr",`',
+    '  with (ctx) {',
+    '    return eval(expr)',
+    '  }',
+    '`);function l2(e,t){return n7(e,t.__jsExpr)}',
+    'globalThis.evaluate=l2;',
+  ].join('\n');
+  const { frontend } = await fixture(t, {
+    html: '<!doctype html><html><head><script type="module" src="/assets/index-renamed.js"></script></head><body></body></html>',
+    files: { 'index-renamed.js': expression },
+  });
+  const document = await frontend.document({ kind: 'plugins' });
+  const path = document.html.match(/src="(\/assets\/index-renamed\.js\?dsbot=[a-f0-9]+)"/u)?.[1];
+  assert.ok(path);
+  const script = bytes((await document.resource(path)).data).toString('utf8');
+  assert.doesNotMatch(script, /new Function/u);
+  const sandbox = {};
+  runInNewContext(script, sandbox);
+  assert.throws(() => sandbox.evaluate({}, { __jsExpr: '1' }), /dynamic configuration expressions are disabled/u);
+});
+
+test('bundle reads provide the headers expected by the current DSH resource carrier', async (t) => {
+  const { frontend } = await fixture(t, {
+    fetchBundle: async (request) => {
+      assert.equal(request.method, 'GET');
+      assert.equal(request.headers.get('if-none-match'), null);
+      return new Response('window.moduleLoaded = true;', { headers: { 'content-type': 'text/javascript' } });
+    },
+  });
+  const document = await frontend.document({ kind: 'plugins' });
+  const resource = await document.resource(BOOTSTRAP_URL);
+  assert.equal(bytes(resource.data).toString('utf8'), 'window.moduleLoaded = true;');
+});
+
 test('does not retain failed static asset reads in the cache', async (t) => {
   const { frontend, assets } = await fixture(t);
   const document = await frontend.document({ kind: 'plugins' });

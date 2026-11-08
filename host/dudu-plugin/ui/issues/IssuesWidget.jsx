@@ -1,7 +1,9 @@
+import { statusLabel, statusType } from './workflow.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ListFilter, Plus, Search } from 'lucide-react';
+import { Layers, ListFilter, Plus, Search } from 'lucide-react';
 import { Tabs } from 'radix-ui';
 import { Button } from '../components/button.jsx';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '../components/context-menu.jsx';
 import { useToast } from '../components/toast.jsx';
 import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
@@ -16,11 +18,14 @@ import { IssueList } from './IssueList.jsx';
 import { AGENT_NAMES, leafIds, presetOf } from './model.js';
 import { NewIssueDialog } from './NewIssueDialog.jsx';
 import { keepVisible, selectRow } from './selection.js';
+import { labelStore } from './labels.js';
 import { useFacets } from './use-facets.js';
 import { useIssueList } from './use-issue-list.js';
 import { DEFAULT_VIEW, listRequest, useViews } from './view.js';
 import { isTyping } from '../lib/typing.js';
-import { DeleteIssuesDialog } from './DeleteIssuesDialog.jsx';
+import { DeleteConfirm, DeleteIssuesDialog } from './DeleteIssuesDialog.jsx';
+import { useSavedViews, viewKey } from './saved-views.js';
+import { ViewNameDialog } from './ViewDialogs.jsx';
 
 const TABS = ['active', 'backlog', 'all'];
 const SEARCH_DELAY_MS = 250;
@@ -28,16 +33,24 @@ const allItems = (groups) => groups.flatMap((group) => group.groups ? allItems(g
 
 export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession }) {
   const [tab, setTab] = useState('active');
-  const [creating, setCreating] = useState(null); // null, or { preset } while the New issue window is open
+  const [creating, setCreating] = useState(null); // null, or { preset, parent?, initial? } while the New issue window is open
+  const [dialogKey, setDialogKey] = useState(0); // a window that opens anew starts from its own preset and text
+  const startCreating = useCallback((next) => { setDialogKey((key) => key + 1); setCreating(next); }, []);
   const [search, setSearch] = useState('');
   const [searched, setSearched] = useState('');
   useEffect(() => { const timer = setTimeout(() => setSearched(search), SEARCH_DELAY_MS); return () => clearTimeout(timer); }, [search]);
   const { viewOf, update } = useViews();
+  const { saved, add: addView, rename: renameView, remove: removeView } = useSavedViews();
+  const [naming, setNaming] = useState(null); // null, 'new', or the saved view being renamed
+  const [removingView, setRemovingView] = useState(null);
   const toast = useToast();
+  // A saved view draws from one of the three tabs (its base) and keeps its own filter and display options under its own key.
+  const savedView = saved.find((entry) => viewKey(entry.id) === tab);
+  const base = savedView ? savedView.base : TABS.includes(tab) ? tab : 'active';
   const view = viewOf(tab);
-  const query = useMemo(() => listRequest(tab, view, Date.now(), tab === 'all' ? searched : ''), [tab, view, searched]);
+  const query = useMemo(() => listRequest(base, view, Date.now(), base === 'all' ? searched : ''), [base, view, searched]);
   const list = useIssueList(request, query);
-  const { patch, refresh } = list;
+  const { patch, move, refresh } = list;
 
   // Every change says so at the bottom, with Undo; the store keeps what it needs to put it back (an event, or a group of them).
   const undoable = useCallback((target) => ({
@@ -49,12 +62,12 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
     patch(issue.id, { status });
     try {
       const result = await request('issues/update', { id: issue.id, patch: { status } });
-      if (result?.outcome === 'success') toast({ message: status === 'done' ? T.toast.markedDone : T.toast.status(T.status[status]), action: undoable({ eventId: result.eventId }) });
+      if (result?.outcome === 'success') toast({ message: statusType(status) === 'done' ? T.toast.markedDone : T.toast.status(statusLabel(status)), action: undoable({ eventId: result.eventId }) });
     } catch { toast({ message: T.toast.failed }); } finally { refresh(); }
   }, [request, patch, refresh, toast, undoable]);
   const changeProperty = useCallback(async (issue, changes) => {
     if (changes.status) return changeStatus(issue, changes.status);
-    patch(issue.id, changes);
+    patch(issue.id, changes.labels ? { ...changes, labels: labelStore.resolve(changes.labels) } : changes); // the labels the page shows are not the ids it sends
     try {
       const result = await request('issues/update', { id: issue.id, patch: changes });
       if (result.outcome === 'success') {
@@ -64,6 +77,23 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
       } else if (result.outcome !== 'no_op') toast({ message: T.toast.failed });
     } catch { toast({ message: T.toast.failed }); } finally { refresh(); }
   }, [request, patch, refresh, toast, undoable, changeStatus]);
+  // A card dropped on a lane: it is in the lane at once, and the lane's value is its (the status, the priority, the agent state).
+  const moveCard = useCallback((issue, field, key) => {
+    if (issue[field] === key) return undefined;
+    move(issue.id, key, { [field]: key });
+    return field === 'status' ? changeStatus(issue, key) : changeProperty(issue, { [field]: key });
+  }, [move, changeStatus, changeProperty]);
+  // "Add sub-issue" opens the New issue window with the issue as its parent and, the project of it.
+  const addSub = useCallback((issue) => startCreating({ preset: { parent: issue.id, ...(issue.project ? { project: issue.project } : {}) }, parent: { id: issue.id, ref: issue.ref, title: issue.title, status: issue.status } }), [startCreating]);
+  // "Make a copy…" opens the New issue window with the issue's title, description and values (not its agent or session), and its parent.
+  const duplicate = useCallback((issue) => startCreating({
+    preset: {
+      status: issue.status, ...(issue.priority && issue.priority !== 'none' ? { priority: issue.priority } : {}), ...(issue.project ? { project: issue.project } : {}),
+      ...(issue.labels?.length ? { labels: issue.labels.map((label) => label.id) } : {}), ...(issue.dueAt != null ? { dueAt: issue.dueAt } : {}), ...(issue.parent ? { parent: issue.parent.id } : {}),
+    },
+    ...(issue.parent ? { parent: { id: issue.parent.id, ref: issue.parent.ref, title: issue.parent.title, status: issue.parent.status } } : {}),
+    initial: { title: issue.title, brief: issue.brief ?? '' },
+  }), [startCreating]);
   const assignCard = useCallback(async (issue, agent, project) => {
     try {
       const result = await request('issues/assign', { id: issue.id, agent, project });
@@ -132,26 +162,43 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   }, [openFilter]);
   const filtered = appliedFilters(view.filter, FILTER_KEYS).length > 0;
   const facets = useFacets(request, menu.open, query.tab, query.filter);
-  const addTo = useCallback((entry) => setCreating({ preset: presetOf(entry.field, entry.groupKey) }), []);
+  const addTo = useCallback((entry) => startCreating({ preset: presetOf(entry.field, entry.groupKey) }), [startCreating]);
 
   return (
     <section ref={root} aria-label={T.widgets.titles.issues} className="@container relative flex h-full min-h-0 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-2 px-4">
         <h2 className="font-semibold">{T.widgets.titles.issues}</h2>
         <span className="flex-1" />
-        <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => setCreating({ preset: {} })}><Plus />{T.newIssue.title}</Button>
+        <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => startCreating({ preset: {} })}><Plus />{T.newIssue.title}</Button>
       </header>
       <Tabs.Root value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
         <div className="flex h-11 shrink-0 items-center gap-1.5 px-3">
-          <Tabs.List className="flex items-center gap-1.5" aria-label={T.widgets.titles.issues}>
+          {/* The tabs give way to what is beside them (saved views can be many, and the smallest widget is narrow): they scroll sideways in their own row, with no bar. */}
+          <Tabs.List className="-mx-1 flex min-w-0 items-center gap-1.5 overflow-x-auto px-1 [scrollbar-width:none]" aria-label={T.widgets.titles.issues}>
             {TABS.map((id) => (
               <Tabs.Trigger key={id} value={id} asChild>
                 <Button variant={tab === id ? 'secondary' : 'outline'} size="sm" className={cn('h-7 rounded-full px-3 text-xs', tab === id && 'font-medium')}>{T.tabs[id]}</Button>
               </Tabs.Trigger>
             ))}
+            {saved.map((entry) => (
+              <ContextMenu key={entry.id}>
+                <ContextMenuTrigger asChild>
+                  <Tabs.Trigger value={viewKey(entry.id)} asChild>
+                    <Button variant={tab === viewKey(entry.id) ? 'secondary' : 'outline'} size="sm" data-saved-view={entry.id} title={entry.name}
+                      className={cn('h-7 max-w-[180px] rounded-full px-3 text-xs', tab === viewKey(entry.id) && 'font-medium')}><span className="truncate">{entry.name}</span></Button>
+                  </Tabs.Trigger>
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem onSelect={() => setNaming(entry)}>{T.views.rename}</ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem onSelect={() => setRemovingView(entry)}>{T.views.delete}</ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
+            ))}
           </Tabs.List>
+          <Button variant="ghost" size="icon-sm" className="size-7 rounded-full text-muted-foreground" aria-label={T.views.add} title={T.views.add} onClick={() => setNaming('new')}><Layers /></Button>
           <div className="ml-auto flex items-center gap-1.5">
-            {tab === 'all' && (
+            {base === 'all' && (
               <div className="relative">
                 <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                 <input
@@ -167,7 +214,7 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
               <ListFilter />
             </Button>
             <DisplayMenu
-              tab={tab} view={view} onChange={(change) => update(tab, change)}
+              tab={base} view={view} onChange={(change) => update(tab, change)}
               onReset={() => update(tab, (current) => ({ ...DEFAULT_VIEW, filter: current.filter }))}
             />
           </div>
@@ -188,17 +235,17 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
           <div className="flex flex-1 items-center justify-center text-muted-foreground">{T.empty}</div>
         ) : (
           view.layout === 'board'
-            ? <Board list={list} view={view} tab={tab} show={show} collapsed={collapsed} onToggleLane={toggleGroup} onAddToLane={addTo} onStatus={changeStatus} onOpen={onOpen}
-                request={request} onChange={changeProperty} onAssign={assignCard} onDelete={(issue) => setDeleting([issue.id])} onOpenSession={onOpenSession} onPreviewSession={onPreviewSession} />
+            ? <Board list={list} view={view} tab={base} show={show} collapsed={collapsed} onToggleLane={toggleGroup} onAddToLane={addTo} onStatus={changeStatus} onMove={moveCard} onOpen={onOpen}
+                request={request} onChange={changeProperty} onAssign={assignCard} onDelete={(issue) => setDeleting([issue.id])} onOpenSession={onOpenSession} onAddSub={addSub} onDuplicate={duplicate} onPreviewSession={onPreviewSession} />
             : (
               <IssueList
-                list={list} view={view} tab={tab} show={show} collapsed={collapsed} onToggleGroup={toggleGroup} onAddToGroup={addTo}
-                selected={selected} onSelect={select} onStatus={changeStatus} onOpen={onOpen}
-                request={request} onChange={changeProperty} onAssign={assignCard} onDelete={(issue) => setDeleting([issue.id])} onOpenSession={onOpenSession} onPreviewSession={onPreviewSession}
+                list={list} view={view} tab={base} show={show} collapsed={collapsed} onToggleGroup={toggleGroup} onAddToGroup={addTo}
+                selected={selected} onSelect={select} onStatus={changeStatus} onMove={moveCard} onOpen={onOpen}
+                request={request} onChange={changeProperty} onAssign={assignCard} onDelete={(issue) => setDeleting([issue.id])} onOpenSession={onOpenSession} onAddSub={addSub} onDuplicate={duplicate} onPreviewSession={onPreviewSession}
               />
             )
         )}
-        {tab === 'all' && list.status === 'ready' && (
+        {base === 'all' && list.status === 'ready' && (
           <footer className="flex h-9 shrink-0 items-center border-t px-4 text-xs text-muted-foreground">{T.total(list.total)}</footer>
         )}
       </Tabs.Root>
@@ -213,10 +260,23 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
           onDelete={() => setDeleting([...selected])}
         />
       )}
+      {naming && <ViewNameDialog key={naming === 'new' ? 'new' : naming.id} open title={naming === 'new' ? T.views.newTitle : T.views.renameTitle} initial={naming === 'new' ? '' : naming.name}
+        confirm={naming === 'new' ? T.views.create : T.views.save} onClose={() => setNaming(null)}
+        onSubmit={(name) => {
+          if (naming === 'new') {
+            // the new view starts as the tab it was made from looks now: the same filter and display options
+            const id = addView(name, base);
+            update(viewKey(id), viewOf(tab));
+            setTab(viewKey(id));
+          } else renameView(naming.id, name);
+          setNaming(null);
+        }} />}
+      <DeleteConfirm open={Boolean(removingView)} onClose={() => setRemovingView(null)} title={T.views.deleteTitle(removingView?.name ?? '')} description={T.views.deleteScope}
+        onDelete={() => { if (tab === viewKey(removingView.id)) setTab(removingView.base); removeView(removingView.id); setRemovingView(null); }} />
       <DeleteIssuesDialog request={request} ids={deleting} onClose={() => setDeleting(null)} onDeleted={() => { setSelected(new Set()); refresh(); }} />
       <NewIssueDialog
         request={request}
-        open={creating !== null} onOpenChange={(open) => { if (!open) setCreating(null); }} preset={creating?.preset}
+        key={dialogKey} open={creating !== null} onOpenChange={(open) => { if (!open) setCreating(null); }} preset={creating?.preset} parent={creating?.parent} initial={creating?.initial}
         onCreate={async (fields) => { const result = await request('issues/add', { fields }); if (result?.outcome === 'success') refresh(); return result; }}
       />
       <FilterMenu

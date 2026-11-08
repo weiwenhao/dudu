@@ -13,6 +13,7 @@ function fakeHost() {
     adapters,
     llm: {
       registerAdapter(routes: string[], adapter: any) {
+        if (routes.some(route => adapters.has(route))) throw new Error('DUPLICATE_ADAPTER');
         for (const route of routes) adapters.set(route, adapter);
         return () => { for (const route of routes) adapters.delete(route); };
       },
@@ -30,7 +31,10 @@ function fakeHost() {
   host.agents = { get: (id: string) => agents.get(id), list: () => [...agents.values()] };
   host.addAgent = (id: string, provider: string) => {
     const tools = new Map<string, any>();
-    const agent = { id, options: { provider }, ctx: { tools: { register(definition: any) { tools.set(definition.name, definition); return () => tools.delete(definition.name); } } }, tools };
+    const agent = {
+      id, options: { provider }, session: { header: {}, seq: 1, snapshotEvents: () => [{ type: 'turn/start', data: { turn: 1 } }] },
+      ctx: { tools: { register(definition: any) { tools.set(definition.name, definition); return () => tools.delete(definition.name); } } }, tools,
+    };
     agents.set(id, agent);
     return agent;
   };
@@ -39,7 +43,7 @@ function fakeHost() {
 
 const ready = (path = '/bin/fake-cli', version = '1.2.3') => ({ state: 'ready', path, version, installation: { command: path } });
 
-function fakeProvider(id = 'fake') {
+function fakeProvider(id = 'fake', children = false) {
   const created: any[] = [];
   return {
     id, name: `Fake ${id}`, route: id, created,
@@ -51,6 +55,7 @@ function fakeProvider(id = 'fake') {
         id, name: `Fake ${id}`, route: id, path: installation.command, refreshed: 0, tools: [{ name: 'Bash' }, { name: 'Read' }],
         refreshModels() { this.refreshed++; },
         listModels: async () => [], resolveModel: async (model: string) => ({ id: model, name: model }), start: async () => { throw new Error('not needed'); },
+        ...(children ? { normalizer: () => ({ feed: () => [] }) } : {}),
       };
       created.push(driver);
       return driver;
@@ -106,6 +111,28 @@ test('a configured path is what detection looks at, and a different path replace
   await assert.rejects(providers.save({ id: 'nope', enabled: true }), /Unknown provider/);
 });
 
+test('replacing a native provider drains its child route before registering another observation adapter', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-provider-team-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const host = fakeHost();
+  host.agents.create = host.agents.resume = async () => { throw new Error('No native work requested.'); };
+  host.flushSession = async () => {};
+  const provider = fakeProvider('fake', true);
+  const providers = await createProviders({ host, providers: [provider], folder, log: { warn() {} } });
+  t.after(() => providers.close());
+  assert.equal(host.adapters.has('dudu-fake-child'), true);
+  provider.detection = ready('/custom/next-cli', '2.0.0');
+  await providers.save({ id: 'fake', path: '/custom/next-cli' });
+  assert.equal(provider.created.length, 2);
+  assert.equal(host.adapters.size, 2);
+  await providers.save({ id: 'fake', enabled: false });
+  assert.equal(host.adapters.size, 0);
+  await providers.save({ id: 'fake', enabled: true });
+  assert.equal(host.adapters.size, 2);
+  await providers.close();
+  assert.equal(host.adapters.size, 0);
+});
+
 test('an agent gets mirror tools while its route is the harness, from creation or from a later selection', async (t) => {
   const { host } = await setup(t);
   const born = host.addAgent('s1', 'fake');
@@ -125,6 +152,49 @@ test('an agent gets mirror tools while its route is the harness, from creation o
   assert.equal(born.tools.size, 2, 'unrelated events change nothing');
 });
 
+test('only a harness agent shadows compact, and changing its provider removes the scoped command', async (t) => {
+  const { host, providers } = await setup(t);
+  const agent = host.addAgent('compact-session', 'fake');
+  const commands = new Map<string, any>();
+  const original = {
+    definitionId: 'host-compact', name: 'compact', description: 'Compact older conversation history',
+    handler: () => ({ kind: 'success', text: 'Host compact' }),
+  };
+  agent.ctx.inject = (dependencies: string[], apply: Function) => {
+    assert.deepEqual(dependencies, ['commands']);
+    apply({ commands: {
+      find: (target: unknown, name: string) => {
+        assert.equal(target, agent);
+        return commands.get(name) ?? original;
+      },
+      register: (definition: any) => {
+        assert.equal(commands.has(definition.name), false);
+        commands.set(definition.name, definition);
+        return () => { if (commands.get(definition.name) === definition) commands.delete(definition.name); };
+      },
+    } });
+    return { dispose: async () => {} };
+  };
+  host.emit('agent/created', { agent });
+  const guarded = commands.get('compact');
+  assert.equal(guarded.definitionId, original.definitionId);
+  assert.equal(guarded.description, original.description);
+  const result = await guarded.handler();
+  assert.equal(result.kind, 'error');
+  assert.match(result.text, /Manual compaction is not available for Fake fake through OAR/);
+  assert.deepEqual(original.handler(), { kind: 'success', text: 'Host compact' });
+  host.emit('session/event', { id: agent.id }, { type: 'model/selection', data: { provider: 'deepseek-official' } });
+  assert.equal(commands.size, 0);
+  host.emit('session/event', { id: agent.id }, { type: 'model/selection', data: { provider: 'fake' } });
+  assert.equal(commands.size, 1);
+  await providers.save({ id: 'fake', enabled: false });
+  assert.equal(commands.size, 0);
+  await providers.save({ id: 'fake', enabled: true });
+  assert.equal(commands.size, 1);
+  host.emit('agent/disposed', { agent });
+  assert.equal(commands.size, 0);
+});
+
 test('disposing an agent removes its tools and stops its harness run', async (t) => {
   const { host } = await setup(t);
   const agent = host.addAgent('s1', 'fake');
@@ -132,6 +202,49 @@ test('disposing an agent removes its tools and stops its harness run', async (t)
   assert.equal(agent.tools.size, 2);
   host.emit('agent/disposed', { agent });
   assert.equal(agent.tools.size, 0);
+});
+
+test('provider shutdown releases a live writer before an unfinished refresh and waits for its actual exit', { timeout: 10_000 }, async (t) => {
+  const { host, provider, providers } = await setup(t);
+  const agent = host.addAgent('s1', 'fake');
+  host.emit('agent/created', { agent });
+  const started = Promise.withResolvers<void>();
+  const closing = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  const refreshStarted = Promise.withResolvers<void>();
+  const refreshed = Promise.withResolvers<any>();
+  const driver = provider.created[0];
+  driver.start = async () => {
+    return {
+      nativeSessionId: 'native-live',
+      events: { async *[Symbol.asyncIterator]() { started.resolve(); await released.promise; } },
+      async close() { closing.resolve(); await released.promise; },
+    };
+  };
+  const stream = host.adapters.get('fake').stream({
+    sessionId: agent.id, messages: [{ id: 'u1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'work' }] }],
+  });
+  const reading = stream.next();
+  await started.promise;
+  await new Promise((resolve) => setImmediate(resolve));
+  provider.probe = () => { refreshStarted.resolve(); return refreshed.promise; };
+  const refreshing = providers.refresh();
+  await refreshStarted.promise;
+  let stopped = false;
+  const disposal = providers.close();
+  assert.equal(providers.close(), disposal, 'every caller waits for the same shutdown');
+  disposal.then(() => { stopped = true; });
+  t.after(() => { refreshed.resolve(ready()); released.resolve(); });
+  await closing.promise;
+  assert.equal(host.adapters.size, 0, 'no new work can enter while native teardown proceeds');
+  assert.equal(stopped, false);
+  refreshed.resolve(ready());
+  await refreshing;
+  assert.equal(stopped, false, 'finishing the probe is not a native exit receipt');
+  released.resolve();
+  await Promise.all([disposal, reading]);
+  assert.equal(stopped, true);
+  assert.equal(provider.created.length, 1, 'a late probe must not register a replacement during shutdown');
 });
 
 test('restored agents use the durable selected provider instead of the host default', async (t) => {

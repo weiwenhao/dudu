@@ -94,7 +94,7 @@ function ruleLines(assign) {
  * The most an agent may do for this kind of issue, as ASSIGN.md says it: the lowest mode named by the rules that name this kind, and
  * read-only when none does. A mode with a "not" in front of it is not named. The model never gets to read this differently.
  */
-export function allowedAccess(assign, issue) {
+export function allowedAccess(assign, issue, { fallback = 'read-only' } = {}) {
   const kind = issue?.kind;
   let allowed = null;
   for (const { left, right } of ruleLines(assign)) {
@@ -102,11 +102,11 @@ export function allowedAccess(assign, issue) {
     const mode = namedBy(right);
     if (mode !== null && (allowed === null || RANK[mode] < RANK[allowed])) allowed = mode;
   }
-  return allowed ?? 'read-only';
+  return allowed ?? fallback;
 }
 
 /** Literal folder/model choices from matching owner rules. Never take a working directory from model output. */
-export function sessionOptions(assign, issue, { home = '' } = {}) {
+export function sessionOptions(assign, issue, { home = '', defaultAccess = 'read-only' } = {}) {
   const folders = new Set();
   const models = new Set();
   for (const { left, right } of ruleLines(assign)) {
@@ -121,7 +121,7 @@ export function sessionOptions(assign, issue, { home = '' } = {}) {
   }
   if (folders.size > 1 || models.size > 1) return { problem: 'ASSIGN.md gives conflicting folders or models for this issue.' };
   return {
-    access: allowedAccess(assign, issue),
+    access: allowedAccess(assign, issue, { fallback: defaultAccess }),
     ...(folders.size ? { cwd: [...folders][0] } : {}),
     ...(models.size ? { model: [...models][0] } : {}),
   };

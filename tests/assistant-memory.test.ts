@@ -13,7 +13,7 @@ import { ensureFolder } from '../host/assistant/project.mjs';
 import { TEMPLATES } from '../host/assistant/templates.mjs';
 
 // These tests go through the public entry (createMemory) with real files in a real project folder (made by ensureFolder, so the
-// seven template files are there) and a real SQLite file. The only fake is the model: a function that answers from a script.
+// eight template files are there) and a real SQLite file. The only fake is the model: a function that answers from a script.
 
 // Local times, so that the calendar day a turn falls on does not depend on the machine's time zone. Day 0 is 2026-10-29.
 const local = (day: number, hour = 9, minute = 0) => new Date(2026, 9, 29 + day, hour, minute).getTime();
@@ -895,11 +895,12 @@ test('the memory writes only its own files, atomically, and notices when the own
     assert.throws(() => files.remove(rel), code('PROTECTED'), rel);
   }
   // Everything else that is not its own is refused too (the allow-list, not a list of bad names): CONNECTORS.md belongs to the connectors.
-  for (const rel of ['CONNECTORS.md', '../outside.md', '/etc/passwd', 'memory/notes.md', 'memory/2026-10-29.txt', 'skills/x.md', 'skills/a/b/SKILL.md', 'skills/../../x', 'reviews/../USER.md.bak', '', null, 'C:\\evil.md', 'memory/2026-10-29.md\0']) {
+  for (const rel of ['CONNECTORS.md', 'COLLECTORS.md', '../outside.md', '/etc/passwd', 'memory/notes.md', 'memory/2026-10-29.txt', 'skills/x.md', 'skills/a/b/SKILL.md', 'skills/../../x', 'reviews/../USER.md.bak', '', null, 'C:\\evil.md', 'memory/2026-10-29.md\0']) {
     assert.throws(() => files.write(rel as any, 'x'), code('NOT_ALLOWED'), String(rel));
   }
   assert.throws(() => files.appendDaily('../AGENTS', 'x'), code('NOT_ALLOWED'));
   assert.throws(() => files.read('CONNECTORS.md'), code('NOT_ALLOWED'));
+  assert.throws(() => files.read('COLLECTORS.md'), code('NOT_ALLOWED'));
   assert.deepEqual(w.rules(), rules);
   assert.equal(readFileSync(join(w.dir, 'CONNECTORS.md'), 'utf8'), connectors);
 

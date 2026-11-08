@@ -47,7 +47,7 @@ private struct MessageActions: ViewModifier {
                     .accessibilityIdentifier("message.fork")
                 }
             } preview: {
-                MessageMenuPreview(text: text, isUser: isUser)
+                MessageMenuPreview(text: text, isUser: isUser, seq: seq)
             }
             .accessibilityAction(named: "复制", copy)
             .sheet(item: $selection) { selection in
@@ -72,6 +72,7 @@ private struct MessageSelection: Identifiable {
 private struct MessageMenuPreview: View {
     let text: String
     let isUser: Bool
+    let seq: Double?
 
     var body: some View {
         Group {
@@ -81,7 +82,7 @@ private struct MessageMenuPreview: View {
                     .lineSpacing(3)
                     .foregroundStyle(DSBotStyle.chatInk)
             } else {
-                MessageMarkdown(text: text, allowsTextSelection: false)
+                MessageMarkdown(text: text, allowsTextSelection: false, sourceSequence: seq)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -1,9 +1,11 @@
+import { Buffer } from 'node:buffer';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { gzip } from 'node:zlib';
 
 const OPEN_PATH = '/dsbot/web/open';
 const PAGE_PREFIX = '/dsbot/ui/';
+const PLUGIN_ROUTE = 'api/dudu/';
 const TOKEN = /^[A-Za-z0-9_-]{43}$/u;
 const PAGE_PATH = /^\/dsbot\/ui\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(.*)$/u;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -122,6 +124,8 @@ function requireSameOrigin(request) {
 export function createWebPageHttp({
   pages,
   pairingStore,
+  /** 嘟嘟's own pages (phone-pages.mjs): the plugin actions they may ask for. */
+  duduPages,
   maxPages = 32,
   maxPagesPerDevice = 8,
   maxInflightPerPage = 32,
@@ -232,7 +236,7 @@ export function createWebPageHttp({
       if (closed || response.destroyed) throw new PageHttpError(503, 'UPSTREAM_UNAVAILABLE');
       const cookie = randomBytes(32).toString('base64url');
       const session = {
-        id: document.id, cookieHash: digest(cookie), connection, inflight: 0, responses: new Set(),
+        id: document.id, cookieHash: digest(cookie), connection, inflight: 0, responses: new Set(), kind: params.page,
       };
       sessions.set(session.id, session);
       published = true;
@@ -312,6 +316,16 @@ export function createWebPageHttp({
               session.responses.delete(response);
               await closeSession(session);
             }
+          } else if (resource.startsWith(PLUGIN_ROUTE)) {
+            // A page of 嘟嘟's own asks the plugin for one of the actions its settings pages use; no other kind of page may, and nothing outside the list.
+            const action = resource.slice(PLUGIN_ROUTE.length);
+            if (request.method !== 'POST' || raw !== pathname || request.headers['x-dsbot-page'] !== '1'
+              || session.kind !== 'dudu' || !duduPages?.allowed(action)) throw new PageHttpError(404, 'NOT_FOUND');
+            releaseBody = reserveBody(request, session.connection.deviceId);
+            const body = await readJSON(request, MAX_BODY_BYTES, bodyTimeoutMs);
+            if (session.connection.closed) throw new PageHttpError(410, 'NOT_FOUND');
+            const answer = await duduPages.call(action, body);
+            responseJSON(response, answer.status, answer.body);
           } else {
             if (request.method !== 'GET') throw new PageHttpError(404, 'NOT_FOUND');
             let mimeType;

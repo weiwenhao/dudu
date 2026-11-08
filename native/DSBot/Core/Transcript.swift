@@ -46,6 +46,7 @@ struct TranscriptEntry: Codable, Identifiable, Equatable, Sendable {
     var source: String?
     var items: Int?
     var tokens: Int?
+    var requestId: String? = nil
 }
 
 struct TranscriptTurn: Codable, Equatable, Sendable {
@@ -76,6 +77,8 @@ struct Transcript: Codable, Equatable, Sendable {
     var throughSeq: Double? = nil
     var hasMore: Bool? = nil
     var tools: [String: TranscriptToolReference]? = nil
+    /// Host-authoritative next-step input, kept separate from the durable transcript.
+    var pendingInputs: [QueuedMessage]? = nil
 }
 
 struct TranscriptToolReference: Codable, Equatable, Sendable {
@@ -339,12 +342,14 @@ struct TurnRow: Identifiable, Equatable, Sendable {
     var changesSeq: Double? = nil
     var notices: [TurnNotice] = []
     var performanceSeq: Double? = nil
+    /// A user message can interrupt a turn. Only its last chronological fragment owns the turn footer.
+    var isLastFragment = true
 
     var hasProcess: Bool { !segments.isEmpty }
 
     /// "已完成，用时 44 秒", "处理失败", "已停止" — nil when the turn has nothing to disclose.
     var summaryTitle: String? {
-        guard hasProcess, outcome != .running else { return nil }
+        guard isLastFragment, hasProcess, outcome != .running else { return nil }
         switch outcome {
         case .failed, .interrupted: return "处理失败"
         case .stopped: return "已停止"
@@ -364,6 +369,10 @@ struct UserRow: Identifiable, Equatable, Sendable {
     var attachments: [TranscriptAttachment]
     var time: Double?
     var seq: Double? = nil
+    var isPending = false
+    var requestId: String? = nil
+
+    var presentationID: String { requestId.map { "submission:\($0)" } ?? id }
 }
 
 struct CommandRow: Identifiable, Equatable, Sendable {
@@ -393,7 +402,7 @@ enum TranscriptRow: Identifiable, Equatable, Sendable {
 
     var id: String {
         switch self {
-        case let .user(row): return "user:\(row.id)"
+        case let .user(row): return "user:\(row.presentationID)"
         case let .turn(row): return "turn:\(row.id)"
         case let .command(row): return "command:\(row.id)"
         case let .trigger(row): return "trigger:\(row.id)"
@@ -408,30 +417,54 @@ enum TranscriptBuilder {
     /// Folds the plugin's entries into the rows the chat renders. Pure and order-preserving.
     static func rows(from transcript: Transcript, isRunning: Bool) -> [TranscriptRow] {
         var rows: [TranscriptRow] = []
-        var turnRowIndex: [Int: Int] = [:]
-        var stepsByTurn: [Int: [TranscriptEntry]] = [:]
+        var turnRowIndices: [Int: [Int]] = [:]
+        var stepsByRow: [Int: [TranscriptEntry]] = [:]
         let timing = Dictionary(uniqueKeysWithValues: transcript.turns.map { ($0.turn, $0) })
         let latestTurn = transcript.turns.map(\.turn).max()
+
+        func appendTurn(_ turn: Int) -> Int {
+            let index = rows.count
+            let base = "turn-\(turn)"
+            let boundaryTime: Double? = {
+                switch rows.last {
+                case let .user(user): return user.time
+                case let .trigger(trigger): return trigger.time
+                default: return nil
+                }
+            }()
+            // A paged-in continuation keeps its identity when an earlier part of the same turn is later loaded.
+            let beganBeforeBoundary = boundaryTime.map { time in timing[turn]?.start.map { time > $0 } ?? false } ?? false
+            let id = turnRowIndices[turn] == nil && !beganBeforeBoundary
+                ? base : "\(base):after:\(rows.last?.id ?? "start")"
+            turnRowIndices[turn, default: []].append(index)
+            rows.append(.turn(TurnRow(
+                id: id, turn: turn >= 0 ? turn : nil, outcome: .done,
+                segments: [], answerID: nil, answer: nil, answerTime: nil,
+                duration: nil, startedAt: nil, usage: nil, live: nil
+            )))
+            return index
+        }
 
         for entry in transcript.entries {
             switch entry.type {
             case "user":
                 rows.append(.user(UserRow(
                     id: entry.id, text: entry.text ?? "",
-                    attachments: entry.attachments ?? [], time: entry.time, seq: entry.seq
+                    attachments: entry.attachments ?? [], time: entry.time, seq: entry.seq, requestId: entry.requestId
                 )))
             case "assistant", "turn-marker":
                 let turn = entry.turn ?? -1
-                if entry.type == "assistant" { stepsByTurn[turn, default: []].append(entry) }
-                if turnRowIndex[turn] == nil {
-                    turnRowIndex[turn] = rows.count
-                    rows.append(.turn(TurnRow(
-                        id: "turn-\(turn)", turn: turn >= 0 ? turn : nil, outcome: .done,
-                        segments: [], answerID: nil, answer: nil, answerTime: nil,
-                        duration: nil, startedAt: nil, usage: nil, live: nil
-                    )))
-                }
+                let index: Int
+                if let previous = turnRowIndices[turn]?.last, previous == rows.count - 1 {
+                    index = previous
+                } else { index = appendTurn(turn) }
+                if entry.type == "assistant" { stepsByRow[index, default: []].append(entry) }
             case "command":
+                // Native automatic compaction is an activity boundary, with no DSH summary.
+                // Its completed marker must not remain pinned after an ever-growing turn.
+                if entry.source == "dudu-harness", entry.name == "compact", entry.outcome == "success" {
+                    continue
+                }
                 rows.append(.command(commandRow(entry)))
             case "compaction":
                 rows.append(.command(CommandRow(
@@ -457,31 +490,28 @@ enum TranscriptBuilder {
             if let latestTurn, timing[latestTurn]?.end == nil { return latestTurn }
             return nil
         }()
-        if let live = transcript.live, let runningTurn, turnRowIndex[runningTurn] == nil {
-            turnRowIndex[runningTurn] = rows.count
-            rows.append(.turn(TurnRow(
-                id: "turn-\(runningTurn)", turn: runningTurn, outcome: .running, segments: [],
-                answerID: nil, answer: nil, answerTime: nil, duration: nil, startedAt: nil, usage: nil, live: nil
-            )))
-            stepsByTurn[runningTurn] = []
+        if let runningTurn, turnRowIndices[runningTurn]?.last != rows.count - 1 {
+            _ = appendTurn(runningTurn)
         }
 
-        for (turn, index) in turnRowIndex {
+        for (turn, indices) in turnRowIndices {
+          for index in indices {
             guard case var .turn(row) = rows[index] else { continue }
             let info = timing[turn]
             let isRunningTurn = turn == runningTurn
-            let steps = (stepsByTurn[turn] ?? []).sorted { ($0.step ?? 0, $0.seq ?? 0) < ($1.step ?? 0, $1.seq ?? 0) }
-            let liveStep = isRunningTurn ? transcript.live : nil
+            row.isLastFragment = index == indices.last
+            let steps = (stepsByRow[index] ?? []).sorted { ($0.step ?? 0, $0.seq ?? 0) < ($1.step ?? 0, $1.seq ?? 0) }
+            let liveStep = isRunningTurn && row.isLastFragment ? transcript.live : nil
 
             row.startedAt = info?.start
-            row.files = info?.files ?? []
-            row.changesSeq = info?.changesSeq
+            row.files = row.isLastFragment ? info?.files ?? [] : []
+            row.changesSeq = row.isLastFragment ? info?.changesSeq : nil
             var retryChains = Set<String>()
-            row.notices = (info?.notices ?? []).reversed().filter { notice in
+            row.notices = (row.isLastFragment ? info?.notices ?? [] : []).reversed().filter { notice in
                 guard notice.kind == "retry", let retryId = notice.retryId, !retryId.isEmpty else { return true }
                 return retryChains.insert(retryId).inserted
             }.reversed()
-            row.performanceSeq = info?.lastSeq
+            row.performanceSeq = row.isLastFragment ? info?.lastSeq : nil
             row.messageSequences = Dictionary(steps.compactMap { entry in entry.seq.map { (entry.id, $0) } },
                                               uniquingKeysWith: { _, latest in latest })
             let usage = steps.compactMap(\.usage).reduce(0, +)
@@ -496,11 +526,11 @@ enum TranscriptBuilder {
                 default: row.outcome = .done
                 }
             }
-            if let start = info?.start, let end = info?.end, end >= start { row.duration = end - start }
+            if row.isLastFragment, let start = info?.start, let end = info?.end, end >= start { row.duration = end - start }
 
             // The final answer is the last step's text when it made no tool calls; the rest is process.
             var processSteps = steps
-            if !isRunningTurn, let last = steps.last, (last.calls ?? []).isEmpty,
+            if row.isLastFragment, !isRunningTurn, let last = steps.last, (last.calls ?? []).isEmpty,
                let text = last.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 row.answerID = last.id
                 row.answer = text
@@ -508,13 +538,21 @@ enum TranscriptBuilder {
                 row.answerSeq = last.seq
                 processSteps.removeLast()
             }
-            row.segments = segments(from: processSteps, live: liveStep, isRunningTurn: isRunningTurn)
-            if isRunningTurn { row.live = liveStatus(steps: steps, live: liveStep) }
+            row.segments = segments(from: processSteps, live: liveStep, isRunningTurn: isRunningTurn && row.isLastFragment)
+            if isRunningTurn && row.isLastFragment { row.live = liveStatus(steps: steps, live: liveStep) }
             rows[index] = .turn(row)
+          }
         }
 
         if isRunning, runningTurn == nil {
             rows.append(.status(startedAt: nil))
+        }
+        let admittedIDs = Set(transcript.entries.filter { $0.type == "user" }.map(\.id))
+        for input in transcript.pendingInputs ?? [] where !admittedIDs.contains(input.id) {
+            rows.append(.user(UserRow(
+                id: input.id, text: input.text, attachments: input.attachments ?? [],
+                time: nil, isPending: true, requestId: input.requestId
+            )))
         }
         return rows
     }

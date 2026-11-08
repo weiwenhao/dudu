@@ -1,9 +1,27 @@
 // Schema of issues.db. PRAGMA user_version is the number of applied migrations; migrations only move forward.
 // SQLite only uses a partial index when the query's WHERE contains the index's WHERE term literally, so queries import these.
 import { shortenProjectKeys } from './references.mjs';
+import { migrateWorkflow } from './workflow.mjs';
+import { migrateLabels } from './labels.mjs';
+import { migrateLinks } from './links.mjs';
+import { migrateInbox, migrateInboxMarks, migrateInboxOwner, migrateInboxSignals } from '../inbox/store.mjs';
 
 export const OPEN_SQL = "status NOT IN ('done','canceled')";
 export const FINISHED_SQL = "status IN ('done','canceled')";
+
+// The boss's word about an agent's state, and what the session was doing when it was given (its state and since when): the word holds
+// until that changes. Written so that running it twice (a copy of a database whose version number was put back) changes nothing.
+function addAgentState(db) {
+  const have = new Set(db.prepare('PRAGMA table_info(issues)').all().map((column) => column.name));
+  if (!have.has('agent_state')) db.exec("ALTER TABLE issues ADD COLUMN agent_state TEXT CHECK (agent_state IN ('idle','blocked','done'))");
+  if (!have.has('agent_state_basis')) db.exec('ALTER TABLE issues ADD COLUMN agent_state_basis TEXT');
+}
+
+// "Done" is not an agent state any more (2026-11-03): a finished run is the boss's turn, as a question or a failure is. What the boss had
+// said by hand follows. Running it twice changes nothing.
+function mergeDoneIntoBlocked(db) {
+  db.exec("UPDATE issues SET agent_state = 'blocked' WHERE agent_state = 'done'");
+}
 
 const MIGRATIONS = [
   `
@@ -120,6 +138,26 @@ const MIGRATIONS = [
   );
   `,
   shortenProjectKeys,
+  migrateWorkflow,
+  addAgentState,
+  mergeDoneIntoBlocked,
+  migrateInbox,
+  migrateInboxOwner,
+  migrateInboxSignals,
+  `
+  CREATE TABLE IF NOT EXISTS issue_attachments (
+    id TEXT PRIMARY KEY,
+    issue_id INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    log_id INTEGER REFERENCES issue_log(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK (type IN ('image', 'file')),
+    ref TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS issue_attachments_issue ON issue_attachments(issue_id, id);
+  `,
+  migrateLabels,
+  migrateLinks,
+  migrateInboxMarks,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

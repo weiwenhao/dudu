@@ -12,11 +12,14 @@ struct SidebarView: View {
     @State private var archivedChoice: SessionSummary?
     @State private var renamingSession: SessionSummary?
     @State private var sessionTitle = ""
+    @State private var isMoreExpanded = false
     /// The strip under the home indicator, which the list runs on into.
     @Environment(\.homeIndicatorInset) private var homeInset
 
     /// The entry of DSH's sidebar that is on screen, if the main area shows one.
     let selectedItemID: String?
+    /// A number to show at the end of an entry's row (the records waiting in the Collector), by the entry's id.
+    let itemCounts: [String: Int]
     let onChooseItem: (NavigationItem) -> Void
     let onChooseConversation: () -> Void
     let onOpenComputers: () -> Void
@@ -32,10 +35,12 @@ struct SidebarView: View {
         onOpenSettings: @escaping () -> Void,
         onSearch: @escaping () -> Void,
         onClose: @escaping () -> Void,
-        selectedItemID: String? = nil
+        selectedItemID: String? = nil,
+        itemCounts: [String: Int] = [:]
     ) {
         self.store = store
         self.selectedItemID = selectedItemID
+        self.itemCounts = itemCounts
         self.onChooseItem = onChooseItem
         self.onChooseConversation = onChooseConversation
         self.onOpenComputers = onOpenComputers
@@ -91,8 +96,13 @@ struct SidebarView: View {
         }
         .background(DSBotStyle.canvas)
         .accessibilityElement(children: .contain)
-        .task {
-            await store.refreshSessions()
+        .task(id: store.status) {
+            await store.refreshSessions(quiet: !store.sessions.isEmpty || !store.workspaces.isEmpty)
+            while !Task.isCancelled && store.status == .connected {
+                do { try await Task.sleep(for: .seconds(5)) }
+                catch { return }
+                if !Task.isCancelled { await store.refreshSessions(quiet: true) }
+            }
         }
         .onChange(of: groupingRaw) { _, grouping in
             DSBotLog.record("sidebar.grouping", state: grouping)
@@ -192,11 +202,28 @@ struct SidebarView: View {
         .accessibilityIdentifier("sidebar.search")
     }
 
-    /// DSH's own sidebar entries (插件, 自动化任务, ...), whatever plugins have added to them.
+    /// The approved primary entries stay visible. The remaining registry entries share the same
+    /// rows and columns, folded by default, with no additional indentation.
     private var libraryButtons: some View {
         VStack(spacing: 2) {
-            ForEach(store.activeNavigation.sidebar) { item in
+            ForEach(store.activeNavigation.primarySidebar) { item in
                 libraryButton(item)
+            }
+            if !store.activeNavigation.additionalSidebar.isEmpty {
+                DisclosureGroup(isExpanded: $isMoreExpanded) {
+                    VStack(spacing: 2) {
+                        ForEach(store.activeNavigation.additionalSidebar) { item in
+                            libraryButton(item)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 12) {
+                        DSBotIcon(.options, size: 20)
+                            .frame(width: 24, height: 24)
+                        Text("查看更多")
+                    }
+                }
+                .disclosureGroupStyle(SidebarNavigationDisclosureStyle())
             }
             if store.activeNavigation.sidebar.isEmpty, let hint = navigationHint {
                 Text(hint)
@@ -229,6 +256,21 @@ struct SidebarView: View {
                     .frame(width: 24, height: 24)
                 Text(item.title)
                     .lineLimit(1)
+                if item.target == .assistant, store.isOpeningAssistant {
+                    Spacer(minLength: 0)
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(DSBotStyle.muted)
+                        .frame(width: 20, height: 20)
+                } else if let count = itemCounts[item.id] {
+                    Spacer(minLength: 0)
+                    Text("\(count)")
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(DSBotStyle.muted)
+                        .monospacedDigit()
+                        .padding(.trailing, 2)
+                        .accessibilityLabel("\(count) 条")
+                }
             }
             .font(.system(size: 16, weight: .medium))
             .foregroundStyle(DSBotStyle.ink)
@@ -241,6 +283,7 @@ struct SidebarView: View {
             )
         }
         .buttonStyle(DSBotRowButtonStyle())
+        .disabled(item.target == .assistant && (store.isOpeningAssistant || store.status != .connected))
         .accessibilityLabel(item.title)
         .accessibilityIdentifier("library.\(item.id)")
     }
@@ -248,7 +291,9 @@ struct SidebarView: View {
     /// The icon DSH gave the entry; a glyph of the app's own when it gave none.
     @ViewBuilder
     private func libraryIcon(_ item: NavigationItem) -> some View {
-        if let icon = item.icon {
+        if item.target == .assistant {
+            DuduLogo(size: 28)
+        } else if let icon = item.icon {
             NavigationIconView(icon: icon, size: 20)
         } else {
             DSBotIcon(glyph(for: item), size: 20)
@@ -259,6 +304,7 @@ struct SidebarView: View {
         switch item.target {
         case .schedule: return .schedule
         case .files: return .folder
+        case .collector: return .inbox
         case .web(.plugins, _): return .plugins
         default: return .panel
         }
@@ -285,7 +331,7 @@ struct SidebarView: View {
             .padding(.leading, SidebarMetrics.textLeading)
             .padding(.trailing, SidebarMetrics.trailing)
 
-            if store.isLoadingSessions {
+            if store.isLoadingSessions && entries.isEmpty {
                 HStack(spacing: 8) {
                     ProgressView()
                         .controlSize(.small)
@@ -476,6 +522,37 @@ struct SidebarView: View {
     }
 }
 
+/// SwiftUI owns the disclosure state; its presentation follows the app's existing navigation rows.
+/// Content stays at the same leading edge as the primary entries.
+private struct SidebarNavigationDisclosureStyle: DisclosureGroupStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Button {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    configuration.isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    configuration.label
+                    Spacer(minLength: 0)
+                    DSBotIcon(.right, size: 14)
+                        .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
+                }
+                .font(.system(size: 16))
+                .foregroundStyle(DSBotStyle.muted)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .padding(.horizontal, 10)
+                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(DSBotRowButtonStyle())
+            .accessibilityIdentifier("sidebar.more")
+            if configuration.isExpanded {
+                configuration.content
+            }
+        }
+    }
+}
+
 /// A workspace's header: its name, a › while it is folded, and a menu to rename or remove it. Tapping the
 /// name folds or unfolds it; an open workspace shows no icon at all.
 /// Where the sidebar's list puts things, once, so the heading, the workspaces and the conversations share
@@ -570,15 +647,18 @@ private struct SidebarSessionRow: View, Equatable {
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 0) {
+                if let agent = session.agent {
+                    AgentAvatar(agent: agent, state: session.agentState ?? .idle, finished: session.agentFinished == true, asleep: session.deepSleep == true)
+                        .padding(.trailing, 10)
+                        .accessibilityIdentifier("session.agent.\(session.id)")
+                }
                 Text(title)
                     .font(.system(size: 15, weight: .regular))
                     .foregroundStyle(DSBotStyle.ink)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    // A running conversation's dot hangs in the margin, so every title starts at the
-                    // same edge as the headings above it instead of being pushed in by a slot for it.
                     .overlay(alignment: .leading) {
-                        if session.status == "running" {
+                        if session.agent == nil && session.status == "running" {
                             Circle()
                                 .fill(DSBotStyle.blue)
                                 .frame(width: 5, height: 5)
@@ -655,7 +735,7 @@ private struct SidebarSessionCard: View {
 }
 
 @MainActor
-private func relativeTime(_ milliseconds: Double) -> String {
+func relativeTime(_ milliseconds: Double) -> String {
     let date = Date(timeIntervalSince1970: milliseconds / 1_000)
     let seconds = max(0, Date().timeIntervalSince(date))
     if seconds < 60 { return "刚刚" }

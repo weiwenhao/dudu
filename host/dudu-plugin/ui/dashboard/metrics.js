@@ -1,27 +1,24 @@
-// Fifteen columns scale with the content width, and the rows are as many as the window's height holds, so a widget that fills the window
-// (the default Issues) is exactly one screen and nothing scrolls, and nothing is left blank under it: the columns are as wide as the width
-// makes them, and the rows are as tall as it takes to fill the height with a whole number of them. Opening the sidebar never changes the
-// saved layout.
-import { COLUMNS } from '../../../assistant/dashboard/widgets.mjs';
+// A fixed grid: fifteen columns and nine rows, whatever the window (owner, 2026-11-06, after a move from a 27" monitor to a 13.3" laptop left two blank
+// rows under widgets that had been sized there: "keep the number of cells the same over a range of screens, and think about fewer cells only for smaller
+// ones"). The cells are rectangles: as wide as the width makes them (a fifteenth of it), as tall as the height makes them (a ninth of it), so a window of any
+// shape, from a laptop up, is exactly one screen of the same cells and a widget that is 9 rows tall is as tall as the window. Only a window too small for the
+// smallest cell keeps that cell and scrolls (sideways below 768px of width, up and down below 9 rows of 40px); no cell is dropped.
+import { COLUMNS, FILL_ROWS } from '../../../assistant/dashboard/widgets.mjs';
 export const GAP = 12;
-// The narrowest a cell gets (a board then is 15 x 40 + 14 x 12 = 768px wide; a window narrower than that scrolls sideways).
+// The narrowest and the lowest a cell gets (a board then is 15 x 40 + 14 x 12 = 768px wide and 9 x 40 + 8 x 12 = 456px tall).
 export const MIN_CELL = 40;
+export const MIN_ROW = 40;
+export const ROWS = FILL_ROWS;
 
 /**
- * Columns, cell width, the rows that fit and their height, for a usable area of `width` x `height`. A row is as tall as a column is wide
- * when the height happens to hold a whole number of them, and otherwise a little more or less: the nearest whole number of rows is taken
- * and they share what is left, so that no strip stays under the board (a few percent of a cell; with fewer than ten rows, at most a tenth).
+ * Columns, rows, cell width and row height, for a usable area of `width` x `height`. The count of both is fixed; the width of a cell is a fifteenth of the
+ * width less the gaps, the height of a row a ninth of the height less the gaps (cut to the hundredth, so that a board that fits to the pixel does not tip a
+ * scrollbar in). A window too small for the smallest cell keeps it, and the page scrolls.
  */
 export function metrics({ width, height = 0 }) {
   const cell = Math.max(MIN_CELL, (width - GAP * (COLUMNS - 1)) / COLUMNS);
-  const ideal = (height + GAP) / (cell + GAP);
-  // Less than a row of room: one row of the cell's own height, which the page scrolls (as it always has).
-  if (ideal < 1) return { cols: COLUMNS, rows: 1, cell, row: cell };
-  const rows = Math.round(ideal);
-  // `rows` rows are `rows * (row + GAP) - GAP` tall; the hundredth that rounding down leaves keeps a row that fits to the pixel from tipping a
-  // scrollbar in.
-  const row = Math.floor(((height + GAP) / rows - GAP) * 100) / 100;
-  return { cols: COLUMNS, rows, cell, row };
+  const row = Math.max(MIN_ROW, Math.floor(((height + GAP) / ROWS - GAP) * 100) / 100);
+  return { cols: COLUMNS, rows: ROWS, cell, row };
 }
 
 /** The length of `count` cells of one edge with the gaps between them. */

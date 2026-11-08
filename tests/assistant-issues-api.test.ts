@@ -17,7 +17,7 @@ function setup() {
 test('every action of the page is served and nothing else', async () => {
   const { call, close } = setup();
   try {
-    assert.deepEqual([...ISSUE_ACTIONS].sort(), ['add', 'assign', 'cancel', 'complete', 'counts', 'delete', 'events', 'export', 'facets', 'forget', 'get', 'list', 'log', 'message', 'office', 'reply', 'resume', 'schema', 'search', 'session', 'snooze', 'undo', 'update']);
+    assert.deepEqual([...ISSUE_ACTIONS].sort(), ['add', 'assign', 'cancel', 'complete', 'counts', 'delete', 'events', 'export', 'facets', 'forget', 'forward', 'get', 'label-add', 'label-remove', 'label-update', 'labels', 'link-add', 'link-remove', 'list', 'log', 'message', 'office', 'recipients', 'reply', 'resume', 'schema', 'search', 'session', 'snooze', 'source', 'status-add', 'status-order', 'status-remove', 'status-update', 'statuses', 'undo', 'update']);
     assert.equal((await call('nope', {})).status, 404);
     assert.equal((await call('constructor', {})).status, 404, 'an action name is never looked up on the object prototype');
   } finally { close(); }

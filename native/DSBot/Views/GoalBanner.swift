@@ -138,7 +138,7 @@ struct GoalEditorSheet: View {
             }
             .padding(20)
             .background(DSBotStyle.canvas)
-            .navigationTitle("编辑目标")
+            .navigationTitle("编辑")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

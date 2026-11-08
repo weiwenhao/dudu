@@ -1,4 +1,8 @@
 import { basename, isAbsolute, resolve } from 'node:path';
+import { imageFromBlock } from './native-images.mjs';
+import { firstToken, isHarnessMessage, withoutHarnessTiming } from './conversation-timing.mjs';
+
+export { firstToken } from './conversation-timing.mjs';
 
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const string = (value) => typeof value === 'string' ? value : '';
@@ -72,27 +76,6 @@ function failure(error) {
   };
 }
 
-export function firstToken(stream) {
-  if (!Array.isArray(stream)) return undefined;
-  for (const item of stream) {
-    if (item?.type === 'chunk') {
-      const chunk = item.chunk;
-      if (Number.isFinite(item.time) && (['text-delta', 'reasoning-delta'].includes(chunk?.type) && string(chunk.text)
-        || chunk?.type === 'tool-call-delta' && (string(chunk.argumentsDelta) || chunk.name !== undefined))) return item.time;
-    } else if (Number.isFinite(item?.time0)) {
-      if (item.type === 'tool-call-chunks' && item.name !== undefined) return item.time0;
-      const fragments = item.type === 'tool-call-chunks' ? item.args : item.texts;
-      if (!Array.isArray(fragments)) continue;
-      let time = item.time0;
-      for (let index = 0; index < fragments.length; index += 1) {
-        if (index > 0) time += item.dt?.[index - 1] ?? 0;
-        if (string(fragments[index])) return time;
-      }
-    }
-  }
-  return undefined;
-}
-
 export function recordConversationEvent(state, event) {
   const data = event?.data ?? {};
   state.cursor = Math.max(state.cursor, Number.isSafeInteger(event?.seq) ? event.seq : -1);
@@ -116,7 +99,7 @@ export function recordConversationEvent(state, event) {
       addMetrics(turn.stats, { llmMs: Math.max(0, event.time - step.start) });
       if (first !== undefined) {
         addMetrics(turn.stats, { ttftMs: Math.max(0, first - step.start), ttftSteps: 1 });
-        if (number(data.usage?.outputTokens) !== undefined) {
+        if (number(data.usage?.outputTokens) !== undefined && !isHarnessMessage(data.message)) {
           addMetrics(turn.stats, { decodeMs: Math.max(0, event.time - first), decodeTokens: data.usage.outputTokens });
         }
       }
@@ -230,7 +213,7 @@ export function validateAnswers(call, answers) {
 }
 
 export function sessionPerformance(values) {
-  return { stats: numericUsage(values.sessionStats), usage: numericUsage(values.tokenUsage) };
+  return { stats: numericUsage(withoutHarnessTiming(values.sessionStats, values.duduHarnessTiming)), usage: numericUsage(values.tokenUsage) };
 }
 
 export function toolReference(state, id) {
@@ -259,9 +242,8 @@ export function toolPayload(call, result, params) {
   const content = Array.isArray(rawContent) ? rawContent : [rawContent];
   const images = [];
   const output = content.map((block, index) => {
-    if (block?.type === 'image' && typeof block.data === 'string'
-      && ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(block.mediaType)) {
-      images.push({ kind: 'image', name: block.name ?? '图片', id: `tool:${id}:${index}`, seq: result.seq });
+    if (imageFromBlock(block)) {
+      images.push({ kind: 'image', name: block.attachment?.name ?? block.name ?? '图片', id: `tool:${id}:${index}`, seq: result.seq });
       return { ...block, data: undefined };
     }
     return block;
@@ -307,7 +289,7 @@ export function performanceEvent(event) {
     data: {
       turn: data.turn, step: data.step, callId: data.callId, usage,
       reason: data.reason,
-      message: { source: { callId: callID(data) } },
+      message: { source: { callId: callID(data), ...(isHarnessMessage(data.message) ? { provider: data.message.source.replayState?.harness ?? data.message.source.provider } : {}) } },
       ...(first === undefined ? {} : { stream: [{ type: 'chunk', time: first, chunk: { type: 'text-delta', text: ' ' } }] }),
     },
   };

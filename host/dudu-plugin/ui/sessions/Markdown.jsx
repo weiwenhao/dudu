@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkCjkFriendly from 'remark-cjk-friendly';
 import remarkGfm from 'remark-gfm';
 import { splitByTerms } from './highlight.js';
+import { textMatch } from '../../../conversation-search.mjs';
 
 // A conversation is somebody else's words: raw HTML is shown as text (react-markdown's default), an unsafe link target is dropped, and an
 // image is not fetched (its description stands in), so previewing a session never makes the page ask the network for anything.
@@ -12,7 +13,8 @@ const PLUGINS = [remarkGfm, remarkCjkFriendly];
 /** `text` with the words of a search marked. */
 export function Highlighted({ text, terms }) {
   return splitByTerms(text, terms).map((piece, index) => piece.hit
-    ? <mark key={index} className="rounded-[3px] bg-[color-mix(in_oklab,#facc15_38%,transparent)] px-px text-inherit">{piece.text}</mark>
+    ? <mark key={index} data-session-search-match={textMatch(piece.text, terms.join(' '))?.exact || undefined}
+        className="rounded-[3px] bg-[color-mix(in_oklab,#facc15_38%,transparent)] px-px text-inherit">{piece.text}</mark>
     : piece.text);
 }
 
@@ -34,7 +36,7 @@ function componentsFor(terms) {
     hr: () => <hr className="my-3" />,
     a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer noopener" className="underline underline-offset-2">{marked(children, terms)}</a>,
     img: ({ alt }) => (alt ? <span className="text-muted-foreground">{alt}</span> : null),
-    code: ({ children }) => <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[13px]">{children}</code>,
+    code: ({ children }) => <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[13px]">{marked(children, terms)}</code>,
     pre: ({ children }) => <pre className="my-2 overflow-auto rounded-lg bg-muted p-3 font-mono text-[13px]/5 [&_code]:rounded-none [&_code]:bg-transparent [&_code]:p-0">{children}</pre>,
     table: ({ children }) => <div className="my-2 overflow-auto"><table className="w-full border-collapse text-[13px]">{children}</table></div>,
     th: ({ children }) => <th className="border px-2 py-1 text-left font-semibold">{marked(children, terms)}</th>,

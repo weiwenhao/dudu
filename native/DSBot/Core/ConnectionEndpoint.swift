@@ -1,14 +1,56 @@
 import Foundation
 import Darwin
 
+enum ConnectionAddressKind: String, Codable, Sendable {
+    case lan
+    case internet = "public"
+}
+
+struct ConnectionAddress: Codable, Sendable, Equatable, Hashable, Identifiable {
+    var kind: ConnectionAddressKind
+    var url: String
+    var id: String { url }
+
+    static func normalized(_ input: String, kind: ConnectionAddressKind? = nil) throws -> ConnectionAddress {
+        guard var parts = URLComponents(string: input.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let host = parts.host, !host.isEmpty,
+              let scheme = parts.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
+              ["", "/", "/dsbot"].contains(parts.path) else { throw DSBotFailure.invalidLink }
+        parts.scheme = scheme
+        parts.host = host.lowercased()
+        parts.path = ""
+        guard let url = parts.string else { throw DSBotFailure.invalidLink }
+        return ConnectionAddress(kind: kind ?? (ConnectionEndpoint.isLocalHost(host) ? .lan : .internet), url: url)
+    }
+
+    static func validated(_ addresses: [ConnectionAddress]) throws -> [ConnectionAddress] {
+        guard !addresses.isEmpty, addresses.count <= 32 else { throw DSBotFailure.invalidLink }
+        var result: [ConnectionAddress] = []
+        for address in addresses {
+            let route = try normalized(address.url, kind: address.kind)
+            if let previous = result.first(where: { $0.url == route.url }) {
+                guard previous.kind == route.kind else { throw DSBotFailure.invalidLink }
+            } else {
+                result.append(route)
+            }
+        }
+        return result
+    }
+}
+
 struct ConnectionEndpoint: Sendable {
-    let originalURL: String
-    let httpURL: URL
+    var originalURL: String
+    var httpURL: URL
     let token: String
-    let computerId: String?
+    var computerId: String?
     let name: String
+    var addresses: [ConnectionAddress]
+    var probeId: String?
+    var addressesEdited = false
 
     static func parse(_ input: String, name overrideName: String = "") throws -> ConnectionEndpoint {
+        guard input.utf8.count <= 128 * 1024 else { throw DSBotFailure.invalidLink }
         let unwrapped = try unwrapAppLink(input.trimmingCharacters(in: .whitespacesAndNewlines))
         guard var components = URLComponents(string: unwrapped),
               let scheme = components.scheme?.lowercased(),
@@ -33,6 +75,12 @@ struct ConnectionEndpoint: Sendable {
            (computerId.isEmpty || computerId.count > 100
             || computerId.range(of: #"^[A-Za-z0-9_-]+$"#, options: .regularExpression) == nil) {
             throw DSBotFailure.invalidLink
+        }
+        let devices = items.filter { $0.name == "device" }
+        guard devices.count <= 1 else { throw DSBotFailure.invalidLink }
+        let probeId = devices.first?.value
+        if let probeId {
+            guard computerId != nil, validIdentity(probeId) else { throw DSBotFailure.invalidLink }
         }
 
         let qrName = items.first(where: { $0.name == "name" })?.value?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -69,13 +117,65 @@ struct ConnectionEndpoint: Sendable {
         // Credentials stay in the Authorization header, never in API request URLs.
         httpComponents.query = nil
         guard let httpURL = httpComponents.url else { throw DSBotFailure.invalidLink }
+        let routeItems = items.filter { $0.name == "lan" || $0.name == "public" }
+        if !routeItems.isEmpty, probeId == nil { throw DSBotFailure.invalidLink }
+        var routes = try routeItems.map { item -> ConnectionAddress in
+            guard let value = item.value, let kind = ConnectionAddressKind(rawValue: item.name) else {
+                throw DSBotFailure.invalidLink
+            }
+            return try ConnectionAddress.normalized(value, kind: kind)
+        }
+        var origin = httpComponents
+        origin.path = ""
+        guard let originURL = origin.string else { throw DSBotFailure.invalidLink }
+        if !routes.contains(where: { $0.url == originURL }) {
+            routes.insert(try ConnectionAddress.normalized(originURL), at: 0)
+        }
+        routes = try ConnectionAddress.validated(routes)
         return ConnectionEndpoint(
             originalURL: storedURL.absoluteString,
             httpURL: httpURL,
             token: token,
             computerId: computerId,
-            name: displayName
+            name: displayName,
+            addresses: routes,
+            probeId: probeId
         )
+    }
+
+    static func saved(_ computer: Computer) throws -> ConnectionEndpoint {
+        var endpoint = try parse(computer.url, name: computer.name)
+        if let storedID = computer.computerId {
+            if let linkID = endpoint.computerId, storedID != linkID { throw DSBotFailure.identityMismatch }
+            endpoint.computerId = storedID
+        }
+        if let addresses = computer.addresses { endpoint.addresses = try ConnectionAddress.validated(addresses) }
+        endpoint.probeId = computer.probeId ?? endpoint.probeId
+        endpoint.addressesEdited = computer.addressesEdited == true
+        if let id = endpoint.probeId {
+            guard endpoint.computerId != nil, validIdentity(id) else { throw DSBotFailure.invalidLink }
+        }
+        return endpoint
+    }
+
+    func selecting(_ address: ConnectionAddress) throws -> ConnectionEndpoint {
+        let route = try ConnectionAddress.normalized(address.url, kind: address.kind)
+        guard var original = URLComponents(string: originalURL),
+              var selected = URLComponents(string: route.url) else { throw DSBotFailure.invalidLink }
+        original.scheme = selected.scheme
+        original.host = selected.host
+        original.port = selected.port
+        original.path = "/dsbot"
+        selected.path = "/dsbot"
+        guard let stored = original.string, let http = selected.url else { throw DSBotFailure.invalidLink }
+        var result = self
+        result.originalURL = stored
+        result.httpURL = http
+        return result
+    }
+
+    static func validIdentity(_ value: String) -> Bool {
+        value.range(of: #"^[A-Za-z0-9_-]{1,100}$"#, options: .regularExpression) != nil
     }
 
     private static func unwrapAppLink(_ input: String) throws -> String {
@@ -92,7 +192,7 @@ struct ConnectionEndpoint: Sendable {
         return value
     }
 
-    private static func isLocalHost(_ rawHost: String) -> Bool {
+    fileprivate static func isLocalHost(_ rawHost: String) -> Bool {
         let host = rawHost.lowercased()
             .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
             .replacingOccurrences(of: #"\.$"#, with: "", options: .regularExpression)

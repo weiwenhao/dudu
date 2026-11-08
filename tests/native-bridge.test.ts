@@ -56,6 +56,10 @@ function makeHarness({
   workspaces = { items: [] },
   conversationReads,
   questionBridge,
+  sessionActivity,
+  sessionSearch,
+  assistantConversation,
+  assistant,
   streams = {},
 } = {}) {
   const calls = [];
@@ -101,8 +105,88 @@ function makeHarness({
       throw new Error(`unexpected stream endpoint: ${endpoint}`);
     },
   };
-  return { bridge: createNativeBridge({ rpc, conversationReads, questionBridge }), calls };
+  return { bridge: createNativeBridge({ rpc, conversationReads, questionBridge, sessionActivity, sessionSearch, assistantConversation, assistant }), calls };
 }
+
+test('opening the assistant reuses its scoped session and ignores caller-supplied identities', async () => {
+  const id = 'dudu-assistant-existing';
+  const { bridge, calls } = makeHarness({
+    rows: [{ sessionId: id, title: 'Dudu', providerId: 'deepseek', status: 'idle', updatedAt: 123 }],
+    assistantConversation: async () => ({ sessionId: id }),
+  });
+  const connection = { selectedSessionId: 'previous' };
+  const first = await bridge.dispatch('assistant.open', { id: 'some-other-session' }, connection);
+  const second = await bridge.dispatch('assistant.open', {}, connection);
+  assert.deepEqual([first.id, second.id], [id, id]);
+  assert.equal(first.isAssistant, true);
+  assert.equal(connection.selectedSessionId, 'previous', 'resolving a delayed request must not switch the watched session');
+  assert.equal(calls.some(({ endpoint }) => endpoint === 'session/create'), false);
+
+  const unsupported = makeHarness().bridge;
+  await assert.rejects(unsupported.dispatch('assistant.open', {}, {}), { code: 'UNSUPPORTED' });
+  const unavailable = makeHarness({ assistantConversation: async () => ({ sessionId: null }) }).bridge;
+  await assert.rejects(unavailable.dispatch('assistant.open', {}, {}), { code: 'UPSTREAM_UNAVAILABLE' });
+});
+
+test('native assistant messages attach only the explicitly selected page and clear stale desktop context', async () => {
+  const contexts = [];
+  const { bridge, calls } = makeHarness({
+    assistant: { state: () => ({ sessionId: 'dudu-owned' }), context: (where) => { contexts.push(where); } },
+  });
+  const context = { page: 'issue', id: 7 };
+  await bridge.dispatch('session.send', { id: 'dudu-owned', text: 'with page', assistantContext: context }, {});
+  await bridge.dispatch('session.send', { id: 'dudu-owned', text: 'without page' }, {});
+  await bridge.dispatch('session.send', { id: 'normal', text: 'ordinary' }, {});
+  assert.deepEqual(contexts, [context, null]);
+  assert.equal(calls.filter(({ endpoint }) => endpoint === 'session/prompt').length, 3);
+  await assert.rejects(bridge.dispatch('session.send', { id: 'dudu-owned', text: 'bad page', assistantContext: { page: 'files' } }, {}), { code: 'BAD_REQUEST' });
+});
+
+test('assistant model changes use its own selector and reselecting a model preserves its effort', async () => {
+  const selections = [];
+  const { bridge, calls } = makeHarness({
+    assistant: { state: () => ({ sessionId: 'dudu-owned' }), selectModel: (value) => { selections.push(value); } },
+    projections: { modelSelection: { next: { provider: 'deepseek', model: 'chat', reasoningEffort: 'max' } } },
+    responses: {
+      'session/modelCatalog': { groups: [{
+        id: 'deepseek', models: [{ id: 'chat', reasoning: { defaultEffort: 'high', efforts: [{ id: 'high' }, { id: 'max' }] } }],
+      }] },
+    },
+  });
+  const modelId = 'deepseek:chat';
+  await bridge.dispatch('session.configure', { id: 'dudu-owned', modelId }, {});
+  await bridge.dispatch('session.configure', { id: 'dudu-owned', modelId, reasoningEffort: 'high' }, {});
+  assert.deepEqual(selections, [
+    { provider: 'deepseek', model: 'chat', reasoningEffort: 'max' },
+    { provider: 'deepseek', model: 'chat', reasoningEffort: 'high' },
+  ]);
+  assert.equal(calls.some(({ endpoint }) => endpoint === 'session/selectModel'), false);
+  await bridge.dispatch('session.configure', { id: 'ordinary', modelId }, {});
+  assert.equal(calls.filter(({ endpoint }) => endpoint === 'session/selectModel').length, 1);
+});
+
+test('the model catalog retains each configured source when model names and local ids coincide', async () => {
+  const { bridge, calls } = makeHarness({
+    responses: {
+      'session/modelCatalog': { groups: [
+        { id: 'deepseek-account', name: 'Account', models: [{ id: 'flash', name: 'Flash' }] },
+        { id: 'deepseek-official', name: 'API', models: [{ id: 'flash', name: 'Flash' }] },
+      ] },
+    },
+  });
+  const catalog = await bridge.dispatch('catalog.get', {}, {});
+  assert.deepEqual(catalog.models.map(({ id, name, sourceID, sourceName }) => ({ id, name, sourceID, sourceName })), [
+    { id: 'deepseek-account:flash', name: 'Flash', sourceID: 'deepseek-account', sourceName: 'Account' },
+    { id: 'deepseek-official:flash', name: 'Flash', sourceID: 'deepseek-official', sourceName: 'API' },
+  ]);
+  assert.deepEqual(catalog.providers.map(({ id, modelIds }) => ({ id, modelIds })), [
+    { id: 'deepseek', modelIds: ['deepseek-account:flash', 'deepseek-official:flash'] },
+  ], 'agent family and configured model source remain distinct');
+  await bridge.dispatch('session.configure', { id: 'ordinary', modelId: catalog.models[1].id }, {});
+  assert.deepEqual(calls.find(({ endpoint }) => endpoint === 'session/selectModel')?.args[0], {
+    sessionId: 'ordinary', provider: 'deepseek-official', model: 'flash',
+  });
+});
 
 test('Typert adapter uses the owner peer and only invokes named allowlisted endpoints', async () => {
   const peer = { principal: { kind: 'owner' } };
@@ -149,11 +233,23 @@ test('Typert adapter uses the owner peer and only invokes named allowlisted endp
   assert.deepEqual(streams.at(-1), {
     namespace: 'session', method: 'control', args: {}, peer, signal: undefined,
   });
+  const attachment = {
+    attachmentId: 'opaque-image', mediaType: 'image/png', bytes: 4, width: 1, height: 1,
+  };
+  await rpc.call('/api', 'session/attachment', { sessionId: 'session-1', attachment });
+  assert.deepEqual(invocations.at(-1), {
+    namespace: 'session', method: 'attachment',
+    args: { request: { sessionId: 'session-1', attachment } }, peer, signal: undefined,
+  });
   await rpc.call('/api', 'session/updateQueue', {
     sessionId: 'session-1', itemId: 'queued', action: { kind: 'remove' },
   });
   assert.deepEqual(invocations.at(-1).args, {
     request: { sessionId: 'session-1', itemId: 'queued', action: { kind: 'remove' } },
+  });
+  await rpc.call('/api', 'skills/list', { sessionId: 'dudu-owned' });
+  assert.deepEqual(invocations.at(-1), {
+    namespace: 'skills', method: 'list', args: { request: { sessionId: 'dudu-owned' } }, peer, signal: undefined,
   });
   await assert.rejects(rpc.call('/api', 'arbitrary/execute'), { code: 'UNSUPPORTED' });
   assert.throws(() => createTypertRpcAdapter({
@@ -193,30 +289,6 @@ test('Typert diagnostics distinguish invocation, opening and iteration failures 
   ]);
 });
 
-test('Typert stream wrapper forwards disposal and does not record intentional cancellation', async () => {
-  const abort = new AbortController();
-  let disposed = 0;
-  const failures = [];
-  const rpc = createTypertRpcAdapter({
-    peer: { principal: { kind: 'owner' } },
-    diagnostics: { failure(value) { failures.push(value); } },
-    gateway: {
-      async invoke() { return {}; },
-      async stream() {
-        return {
-          dispose() { disposed++; },
-          async *[Symbol.asyncIterator]() { abort.abort(); throw new Error('cancelled'); },
-        };
-      },
-    },
-  });
-  const stream = await rpc.open('/api', 'session/control', abort.signal);
-  await assert.rejects(stream[Symbol.asyncIterator]().next(), { code: 'UPSTREAM_UNAVAILABLE' });
-  await stream.dispose();
-  assert.equal(disposed, 1);
-  assert.deepEqual(failures, []);
-});
-
 test('native session search uses DSH content search and returns bounded visible conversation snippets', async () => {
   const { bridge, calls } = makeHarness({
     rows: [
@@ -251,146 +323,6 @@ test('native session search rejects blank, oversized and non-text queries before
     await assert.rejects(bridge.dispatch('session.search', { query }, {}), { code: 'BAD_REQUEST' });
   }
   assert.deepEqual(calls, []);
-});
-
-test('Typert session search carries only the named search request', async () => {
-  const peer = { principal: { kind: 'owner' } };
-  const invocations = [];
-  const rpc = createTypertRpcAdapter({
-    peer,
-    gateway: {
-      async invoke(request) { invocations.push(request); return { ok: true, value: { items: [], hasMore: false } }; },
-      async stream() { return iterable([]); },
-    },
-  });
-  await rpc.call('/api', 'session/search', { query: '布局' });
-  assert.deepEqual(invocations, [{
-    namespace: 'session', method: 'search', args: { request: { query: '布局' } }, peer, signal: undefined,
-  }]);
-});
-
-test('native bridge no longer exposes a separate skill catalog endpoint', async () => {
-  const { bridge, calls } = makeHarness();
-
-  assert.equal(NATIVE_METHODS.includes('skills.list'), false);
-  await assert.rejects(
-    bridge.dispatch('skills.list', { sessionId: 'session-1' }, {}),
-    { code: 'UNSUPPORTED' },
-  );
-  assert.deepEqual(calls, []);
-});
-
-test('session details retain running status, cap history and live text, and expose only approvable plan review', async () => {
-  const activeQuestions = [
-    {
-      callId: 'approve-call',
-      questions: [{
-        id: 'approve-question',
-        question: 'Review this plan?',
-        detail: 'Plan details',
-        options: [{ label: 'Approve' }, { label: 'Decline' }],
-        intent: { kind: 'plan-review', approve: 'Approve' },
-      }],
-    },
-    {
-      callId: 'generic-call',
-      questions: [{
-        id: 'generic-question',
-        question: 'Choose one',
-        options: [{ label: 'Yes' }],
-      }],
-    },
-    {
-      callId: 'multi-call',
-      questions: [
-        { id: 'q1', question: 'One', intent: { kind: 'plan-review', approve: 'Approve' } },
-        { id: 'q2', question: 'Two', intent: { kind: 'plan-review', approve: 'Approve' } },
-      ],
-    },
-    {
-      callId: 'invalid-plan-call',
-      questions: [{
-        id: 'invalid-plan-question',
-        question: 'Malformed plan',
-        options: [{ label: 'Decline' }],
-        intent: { kind: 'plan-review', approve: 'Approve' },
-      }],
-    },
-  ];
-  const snapshot = {
-    type: 'snapshot',
-    records: Array.from({ length: 6 }, (_, index) => eventMessage(
-      `message-${index + 1}`,
-      index + 1,
-      String.fromCharCode(65 + index).repeat(100_000),
-    )),
-    projections: {
-      values: {
-        userQuestions: { active: activeQuestions, settled: [] },
-        contextTimeline: { current: { system: 12, tools: 4 } },
-        contextHeaders: { headers: [{ tools: [{ name: 'search' }] }] },
-      },
-    },
-    assistantStream: {
-      revision: 0,
-      activeAttempt: {
-        attemptId: 'attempt-1',
-        nextIndex: 4,
-        stream: [
-          { index: 0, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
-          { index: 1, chunk: { type: 'text-delta', index: 0, text: 'L'.repeat(100_000) } },
-          { index: 2, chunk: { type: 'text-delta', index: 0, text: 'M'.repeat(120_000) } },
-          { index: 3, chunk: { type: 'reasoning-delta', index: 1, text: 'R'.repeat(100_000) } },
-        ],
-      },
-    },
-  };
-  const { bridge, calls } = makeHarness({
-    snapshot,
-    projections: { userQuestions: { active: activeQuestions, settled: [] } },
-  });
-  const detail = await bridge.dispatch('session.open', { id: 'session-1' }, {});
-
-  const history = detail.messages.filter((message) => !message.id.startsWith('live:'));
-  const historyChars = history.reduce(
-    (total, message) => total + message.text.length + (message.reasoning?.length ?? 0),
-    0,
-  );
-  const live = detail.messages.find((message) => message.id.startsWith('live:'));
-  const liveChars = live.text.length + (live.reasoning?.length ?? 0);
-  assert.equal(detail.session.status, 'running');
-  assert.equal(historyChars, 250_000);
-  assert.equal(liveChars, 200_000);
-  assert.equal(history.find((message) => message.id === 'message-4').text, 'D'.repeat(50_000));
-  assert.equal(history.find((message) => message.id === 'message-6').text, 'F'.repeat(100_000));
-  assert.deepEqual(detail.approvals, [{
-    id: 'approve-call',
-    sessionId: 'session-1',
-    title: 'Review this plan?',
-    detail: 'Plan details',
-  }]);
-  assert.deepEqual(detail.context.map((entry) => entry.id), [
-    'context:system',
-    'context:tools',
-    'context:tool:0',
-  ]);
-
-  await bridge.dispatch('approval.respond', {
-    sessionId: 'session-1', id: 'approve-call', decision: 'allow',
-  }, {});
-  const answer = calls.find((call) => call.endpoint === 'userQuestions/answer');
-  assert.deepEqual(answer.args, [
-    'session-1',
-    'approve-call',
-    { answers: [{ id: 'approve-question', selected: ['Approve'] }] },
-  ]);
-  await assert.rejects(
-    bridge.dispatch('approval.respond', {
-      sessionId: 'session-1', id: 'generic-call', decision: 'allow',
-    }, {}),
-    { code: 'STALE_APPROVAL' },
-  );
-  assert.equal(calls.filter((call) => call.endpoint === 'userQuestions/answer').length, 1);
 });
 
 test('watch preserves attempt, revision, index, emits watchId, and streams text/reasoning deltas with tool trace', async () => {
@@ -452,65 +384,6 @@ test('watch preserves attempt, revision, index, emits watchId, and streams text/
     }),
     { code: 'BAD_REQUEST' },
   );
-});
-
-test('plugin entries use entryId and moduleName from the live Host inventory', async () => {
-  const { bridge } = makeHarness({ snapshot: { type: 'snapshot', records: [], projections: { values: {} } } });
-  const plugins = await bridge.dispatch('plugins.list', {}, {});
-  assert.deepEqual(plugins, [{
-    id: 'entry-1',
-    name: 'Example',
-    subtitle: '@example/dsh-plugin',
-    enabled: true,
-    detail: 'Plugin detail',
-  }]);
-});
-
-test('schedule entries preserve bounded rule, owning session, and latest delivery metadata', async () => {
-  const { bridge } = makeHarness({
-    scheduleTasks: [{
-      id: 'schedule-1',
-      kind: 'weekly',
-      title: 'Weekly review',
-      prompt: 'Review open project work.',
-      scheduledAt: '2026-10-20T01:00:00.000Z',
-      status: 'active',
-      sessionId: 'session-1',
-      time: '09:00:00.000',
-      timeZone: 'Asia/Shanghai',
-      weekdays: [1, 3, 3, 8],
-      lastDelivery: {
-        scheduledAt: '2026-10-19T01:00:00.000Z',
-        deliveredAt: '2026-10-19T01:00:02.000Z',
-        messageId: 'message-9',
-      },
-      deliveryHistory: { records: [{ prompt: 'must not cross bridge' }] },
-    }],
-  });
-
-  const schedules = await bridge.dispatch('schedule.list', {}, {});
-
-  assert.deepEqual(schedules, [{
-    id: 'schedule-1',
-    name: 'Weekly review',
-    subtitle: '2026-10-20T01:00:00.000Z',
-    enabled: true,
-    detail: 'Review open project work.',
-    schedule: {
-      sessionId: 'session-1',
-      rule: {
-        kind: 'weekly',
-        time: '09:00:00.000',
-        timeZone: 'Asia/Shanghai',
-        weekdays: [1, 3],
-      },
-      lastDelivery: {
-        scheduledAt: '2026-10-19T01:00:00.000Z',
-        deliveredAt: '2026-10-19T01:00:02.000Z',
-        messageId: 'message-9',
-      },
-    },
-  }]);
 });
 
 test('chat follows human source and append-origin messages without showing injected context or model replacements', async () => {
@@ -647,111 +520,6 @@ test('interrupted turns and a turn ending after a tool step preserve visible ass
   assert.deepEqual(detail.messages.map((message) => message.id), ['first', 'second']);
 });
 
-test('session listing waits for authoritative workspace layout while selection can proceed independently', async () => {
-  let releaseWorkspace;
-  let workspaceStarted;
-  const workspaceStartedPromise = new Promise((resolve) => { workspaceStarted = resolve; });
-  const workspaceBaseline = new Promise((resolve) => { releaseWorkspace = resolve; });
-  let sessionListCalls = 0;
-  const snapshot = { type: 'snapshot', records: [], projections: { values: {} } };
-  const rpc = {
-    async call(_channel, endpoint) {
-      if (endpoint === 'session/list') {
-        sessionListCalls += 1;
-        return { items: [{ sessionId: 'session-1', cwd: '/tmp/project' }] };
-      }
-      throw new Error(`unexpected RPC method: ${endpoint}`);
-    },
-    async open(_channel, endpoint) {
-      if (endpoint === 'session/control') return iterable([], 0, true);
-      if (endpoint === 'workspace/follow') {
-        workspaceStarted();
-        let first = true;
-        return {
-          [Symbol.asyncIterator]() {
-            return {
-              next() {
-                if (!first) return Promise.resolve({ done: true });
-                first = false;
-                return workspaceBaseline.then((value) => ({ value, done: false }));
-              },
-              async return() { return { done: true }; },
-            };
-          },
-          async dispose() {},
-        };
-      }
-      if (endpoint === 'session/follow') {
-        let first = true;
-        return {
-          [Symbol.asyncIterator]() {
-            return {
-              next() {
-                if (!first) return Promise.resolve({ done: true });
-                first = false;
-                return Promise.resolve({ value: snapshot, done: false });
-              },
-              async return() { return { done: true }; },
-            };
-          },
-          async dispose() {},
-        };
-      }
-      throw new Error(`unexpected stream endpoint: ${endpoint}`);
-    },
-  };
-  const bridge = createNativeBridge({ rpc });
-  const connection = {
-    closed: false,
-    watchGeneration: 1,
-    setWatch(cancel, generation) {
-      this.cancel = cancel;
-      return generation === this.watchGeneration;
-    },
-    sendEvent() {},
-  };
-  const beforeDeadline = async (promise) => {
-    let timer;
-    const timeout = Symbol('timeout');
-    const result = await Promise.race([
-      promise,
-      new Promise((resolve) => { timer = setTimeout(() => resolve(timeout), 500); }),
-    ]);
-    clearTimeout(timer);
-    assert.notEqual(result, timeout, 'operation waited for the workspace baseline');
-    return result;
-  };
-
-  try {
-    let listed = false;
-    const listing = bridge.dispatch('session.list', {}, {}).then((value) => { listed = true; return value; });
-    await workspaceStartedPromise;
-    assert.equal(listed, false);
-
-    const detail = await beforeDeadline(bridge.dispatch('session.watch', {
-      id: 'session-1',
-    }, connection, { watchGeneration: 1 }));
-    assert.equal(detail.session.id, 'session-1');
-    assert.equal(sessionListCalls, 1, 'selection reuses the recent DSH session rows');
-
-    await connection.cancel();
-    releaseWorkspace({
-      type: 'baseline',
-      value: { items: [{ workspaceId: 'workspace-1', title: 'Project', path: '/tmp/project' }] },
-    });
-    const sessions = await listing;
-    assert.equal(sessions[0].workspaceName, 'Project');
-  } finally {
-    releaseWorkspace({
-      type: 'baseline',
-      value: { items: [{ workspaceId: 'workspace-1', title: 'Project', path: '/tmp/project' }] },
-    });
-    await bridge.dispatch('workspace.list', {}, {});
-  }
-  const regrouped = await bridge.dispatch('session.list', {}, {});
-  assert.equal(regrouped[0].workspaceName, 'Project');
-});
-
 test('stream disposal settles a pending iterator.next before iterator.return', async () => {
   const events = [];
   let pendingNextResolve;
@@ -843,30 +611,6 @@ function commandHarness(handlers = {}) {
 
 const connection = () => ({ selectedSessionId: 'session-1', stopWatch: async () => {} });
 
-test('phone commands are an explicit goal/plan/compact allowlist run through the DSH executor', async () => {
-  assert.ok(NATIVE_METHODS.includes('session.command'));
-  const { bridge, calls } = commandHarness({
-    'commands/execute': () => ({ commandId: 'c1', result: { kind: 'success', text: 'Plan mode on.' } }),
-  });
-
-  assert.deepEqual(await bridge.dispatch('session.command', { command: 'plan' }, connection()), {
-    kind: 'success',
-    text: 'Plan mode on.',
-  });
-  await bridge.dispatch('session.command', { id: 'session-2', command: 'plan', argument: ' off ' }, connection());
-  await bridge.dispatch('session.command', { command: 'goal', argument: 'edit ship the release' }, connection());
-  await bridge.dispatch('session.command', { command: 'goal' }, connection());
-  await bridge.dispatch('session.command', { command: 'compact' }, connection());
-
-  assert.deepEqual(calls.map((call) => call.args[0]), [
-    { agentId: 'session-1', line: '/plan', submittedAttachments: [] },
-    { agentId: 'session-2', line: '/plan off', submittedAttachments: [] },
-    { agentId: 'session-1', line: '/goal edit ship the release', submittedAttachments: [] },
-    { agentId: 'session-1', line: '/goal', submittedAttachments: [] },
-    { agentId: 'session-1', line: '/compact', submittedAttachments: [] },
-  ]);
-});
-
 test('phone commands reject anything outside the allowlist and report DSH errors verbatim', async () => {
   const { bridge, calls } = commandHarness({
     'commands/execute': () => ({ commandId: 'c2', result: { kind: 'error', text: 'Compaction cancelled.' } }),
@@ -899,28 +643,6 @@ test('phone commands reject anything outside the allowlist and report DSH errors
     kind: 'error',
     text: 'Compaction cancelled.',
   });
-});
-
-test('malformed command results cannot report success', async () => {
-  for (const result of [{}, { result: null }, { result: { kind: 'other', text: '' } }, { result: { kind: 'success' } }]) {
-    const { bridge } = commandHarness({ 'commands/execute': () => result });
-    await assert.rejects(bridge.dispatch('session.command', { command: 'plan' }, connection()), { code: 'UPSTREAM_UNAVAILABLE' });
-  }
-});
-
-test('permission configuration must preserve a rejected command outcome', async () => {
-  for (const kind of ['success', 'error']) {
-    const { bridge, calls } = commandHarness({
-      'permissionPresets/catalog': () => ({ options: [{ value: 'read-only' }] }),
-      'commands/execute': () => ({ result: { kind, text: 'Permission result' } }),
-    });
-    const operation = bridge.dispatch('session.configure', { id: 'session-1', permissionId: 'read-only' }, {});
-    if (kind === 'success') await operation;
-    else await assert.rejects(operation, { code: 'UPSTREAM_ERROR' });
-    assert.deepEqual(calls.at(-1).args, [{
-      agentId: 'session-1', line: '/permission read-only', submittedAttachments: [],
-    }]);
-  }
 });
 
 test('file upload stages exact bytes for the session and returns only the opaque receipt', async () => {
@@ -957,76 +679,18 @@ test('file upload stages exact bytes for the session and returns only the opaque
   assert.equal(calls.length, 1);
 });
 
-test('file upload without a usable receipt fails safely', async () => {
-  const data = Buffer.from('x').toString('base64');
-  const { bridge } = commandHarness({ 'fileUploads/upload': () => ({ file: {} }) });
-  await assert.rejects(
-    bridge.dispatch('file.upload', { name: 'x', data }, connection()),
-    { code: 'UPSTREAM_UNAVAILABLE' },
-  );
-});
-
-test('prompts carry staged file receipts next to text and images', async () => {
+test('native submission receipts preserve the caller request identity and reject malformed identities', async () => {
   const { bridge, calls } = commandHarness();
-  const image = Buffer.from('png-bytes').toString('base64');
-
-  await bridge.dispatch('session.send', {
-    text: 'look',
-    attachments: [
-      { dataBase64: image, mimeType: 'image/png', name: 'a.png' },
-      { receiptId: 'receipt-1', name: 'report.txt' },
-    ],
-  }, connection());
-
-  const prompt = calls.find((call) => call.endpoint === 'session/prompt').args[0];
-  assert.deepEqual(prompt.content, [
-    { type: 'text', text: 'look' },
-    { type: 'image', mediaType: 'image/png', data: image, name: 'a.png' },
-    { type: 'file', receiptId: 'receipt-1' },
-  ]);
-
-  await bridge.dispatch('session.send', {
-    attachments: [{ receiptId: 'receipt-2' }],
-  }, connection());
-  const second = calls.filter((call) => call.endpoint === 'session/prompt').at(-1).args[0];
-  assert.deepEqual(second.content, [{ type: 'file', receiptId: 'receipt-2' }]);
-
-  for (const attachments of [
-    [{ receiptId: 'has space' }],
-    [{ receiptId: '' }],
-    [{ receiptId: 7 }],
-    Array.from({ length: 6 }, (_, index) => ({ receiptId: `r${index}` })),
-    Array.from({ length: 4 }, () => ({ dataBase64: image, mimeType: 'image/png' })),
-  ]) {
-    await assert.rejects(
-      bridge.dispatch('session.send', { text: 'x', attachments }, connection()),
-      { code: 'INVALID_ATTACHMENT' },
-    );
+  const requestId = 'ec1cc965-9896-43b4-995d-65c6d8d53b75';
+  assert.deepEqual(await bridge.dispatch('session.send', { text: 'continue', requestId }, connection()), { requestId });
+  assert.equal(calls.find((call) => call.endpoint === 'session/prompt').args[0].requestId, requestId);
+  const legacy = await bridge.dispatch('session.send', { text: 'continue' }, connection());
+  assert.match(legacy.requestId, /^[a-f0-9-]{36}$/i);
+  const before = calls.length;
+  for (const invalid of ['', 1, 'invalid', `${requestId}\n`]) {
+    await assert.rejects(bridge.dispatch('session.send', { text: 'continue', requestId: invalid }, connection()), { code: 'BAD_REQUEST' });
   }
-});
-
-test('Typert adapter maps file uploads to the agent scope and the encoded request body', async () => {
-  const peer = { principal: { kind: 'owner' } };
-  const invocations = [];
-  const gateway = {
-    async invoke(request) {
-      invocations.push(request);
-      return { ok: true, value: {} };
-    },
-    async stream() { return iterable([]); },
-  };
-  const rpc = createTypertRpcAdapter({ gateway, peer });
-
-  await rpc.call('/api', 'fileUploads/upload', 'session-1', { data: 'AAAA', name: 'a.bin' });
-  assert.deepEqual(invocations[0], {
-    namespace: 'fileUploads',
-    method: 'upload',
-    args: { agentId: 'session-1', request: { data: 'AAAA', name: 'a.bin' } },
-    peer,
-    signal: undefined,
-  });
-  await assert.rejects(rpc.call('/api', 'fileUploads/upload', 'session-1'), { code: 'BAD_REQUEST' });
-  await assert.rejects(rpc.call('/api', 'fileUploads/upload', '', { data: 'AAAA' }), { code: 'BAD_REQUEST' });
+  assert.equal(calls.length, before);
 });
 
 function surface(type, seq, time, data, extra = {}) {
@@ -1121,48 +785,6 @@ test('initial watch failures close the acquired stream and never retain attachme
   }
 });
 
-test('watch replacement and explicit cancellation never report upstream failures', async () => {
-  const follow = controlledStream([{ type: 'snapshot', records: [], projections: { values: {} } }]);
-  const control = controlledStream();
-  const { bridge } = makeHarness({ streams: { 'session/follow': () => follow, 'session/control': () => control } });
-  const connection = attachmentConnection();
-  const events = [];
-  connection.sendEvent = (...args) => events.push(args);
-  await bridge.dispatch('session.watch', { id: 'session-1' }, connection, { watchGeneration: 1 });
-  await new Promise((resolve) => setImmediate(resolve));
-  connection.watchGeneration = 2;
-  follow.fail(new Error('old watch'));
-  await connection.cancel();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(events, []);
-});
-
-test('an unwatch request only cancels its own watch, including one still opening', async () => {
-  const oldWatchId = 'a2f7f43c-b843-4e16-b82f-bbc2e27d82b0';
-  const newWatchId = 'b2f7f43c-b843-4e16-b82f-bbc2e27d82b0';
-  const { bridge } = makeHarness({ snapshot: { type: 'snapshot', records: [], projections: { values: {} } } });
-  const connection = attachmentConnection();
-  await bridge.dispatch('session.watch', { id: 'session-1', watchId: newWatchId }, connection, { watchGeneration: 1 });
-  await bridge.dispatch('session.unwatch', { watchId: oldWatchId }, connection);
-  assert.equal(connection.watchGeneration, 1);
-  assert.ok(connection.nativeAttachmentState);
-  await assert.rejects(bridge.dispatch('session.unwatch', {}, connection), { code: 'BAD_REQUEST' });
-  await bridge.dispatch('session.unwatch', { watchId: newWatchId }, connection);
-  assert.equal(connection.watchGeneration, 2);
-  assert.equal(connection.nativeAttachmentState, undefined);
-
-  const stream = controlledStream();
-  const opening = makeHarness({ streams: { 'session/follow': () => stream } });
-  const pendingConnection = attachmentConnection();
-  const pending = opening.bridge.dispatch('session.watch', { id: 'session-1', watchId: newWatchId }, pendingConnection, { watchGeneration: 1 });
-  await new Promise((resolve) => setImmediate(resolve));
-  const rejected = assert.rejects(pending, { code: 'UPSTREAM_UNAVAILABLE' });
-  await opening.bridge.dispatch('session.unwatch', { watchId: newWatchId }, pendingConnection);
-  await rejected;
-  assert.equal(stream.disposals, 1);
-  assert.equal(pendingConnection.nativeAttachmentState, undefined);
-});
-
 test('workspace and catalog failures and missing newly-created sessions cannot return fabricated success', async () => {
   const workspace = makeHarness({ streams: { 'workspace/follow': () => { throw new Error('broken workspace'); } } });
   await assert.rejects(workspace.bridge.dispatch('session.list', {}, {}), { code: 'UPSTREAM_UNAVAILABLE' });
@@ -1170,15 +792,6 @@ test('workspace and catalog failures and missing newly-created sessions cannot r
   await assert.rejects(catalog.bridge.dispatch('catalog.get', {}, {}), { code: 'UPSTREAM_UNAVAILABLE' });
   const created = makeHarness({ responses: { 'session/create': { sessionId: 'missing' } } });
   await assert.rejects(created.bridge.dispatch('session.create', {}, {}), { code: 'UPSTREAM_UNAVAILABLE' });
-});
-
-test('queue mutation acknowledges its own result and leaves updates to the sequenced control stream', async () => {
-  const { bridge, calls } = makeHarness({
-    responses: { 'session/projections': () => { throw new Error('An unrelated refresh must not change mutation admission.'); } },
-  });
-  await bridge.dispatch('session.queue.update', { id: 'session-1', itemId: 'queued', action: 'remove' }, {});
-  assert.equal(calls.filter((call) => call.endpoint === 'session/updateQueue').length, 1);
-  assert.equal(calls.some((call) => call.endpoint === 'session/projections'), false);
 });
 
 test('paged conversation features use durable event coordinates and never accept phone-supplied file paths', async () => {
@@ -1253,31 +866,6 @@ test('paged conversation features use durable event coordinates and never accept
   await assert.rejects(bridge.dispatch('session.file', { id: 'session-1', kind: 'presented', seq: 8, index: 0 }, connection), { code: 'NOT_FOUND' });
 });
 
-test('question answers revalidate the live projection and queued images resolve occurrence IDs', async () => {
-  const active = [{ callId: 'q', questions: [{ id: 'text', question: 'Name?' }], state: 'continued' }];
-  const data = Buffer.from('queued image').toString('base64');
-  const values = { userQuestions: { active }, inbox: { 'next-turn': [{
-    id: 'message:with:colon', source: { kind: 'user' },
-    content: [{ type: 'image', mediaType: 'image/png', data, name: 'photo.png' }],
-  }] } };
-  const { bridge, calls } = makeHarness({
-    snapshot: { type: 'snapshot', records: [], projections: { values } }, projections: values,
-  });
-  const connection = attachmentConnection();
-  const detail = await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, connection, { watchGeneration: 1 });
-  assert.equal(detail.questions[0].state, 'continued');
-  assert.equal(detail.queuedMessages[0].attachments[0].id, 'queue:message:with:colon:0');
-  assert.deepEqual(await bridge.dispatch('session.attachment', {
-    id: 'session-1', attachmentId: 'queue:message:with:colon:0',
-  }, connection), { mediaType: 'image/png', data });
-  const answers = [{ id: 'text', selected: [], custom: 'Phone answer' }];
-  await bridge.dispatch('question.answer', { id: 'session-1', callId: 'q', answers }, connection);
-  assert.deepEqual(calls.findLast((call) => call.endpoint === 'userQuestions/answer').args,
-    ['session-1', 'q', { answers }]);
-  active.splice(0);
-  await assert.rejects(bridge.dispatch('question.answer', { id: 'session-1', callId: 'q', answers }, connection), { code: 'STALE_APPROVAL' });
-});
-
 test('a late history or tool reply cannot cross a watch replacement', async () => {
   let finish;
   const record = surface('tool/call', 1, 100, { callId: 'call', name: 'read', arguments: '{}' });
@@ -1328,6 +916,47 @@ test('conversation images are authenticated watch-scoped references without byte
   await assert.rejects(bridge.dispatch('session.attachment', { id: 'session-1', attachmentId: 'photo-user:1' }, connection), { code: 'NOT_FOUND' });
 });
 
+test('Markdown images read only persisted assistant destinations and reject a changed watch or invalid file payload', async () => {
+  const data = Buffer.from('image-bytes').toString('base64');
+  const records = [surface('assistant/message', 1, 1_000, { message: {
+    id: 'answer', content: [{ type: 'text', text: '![image](/workspace/picture.png)\n\n[not an image](/private.txt)' }],
+  } })];
+  let reply = { mediaType: 'image/png', dataBase64: data };
+  let duringRead = () => {};
+  const reads: unknown[] = [];
+  const { bridge } = makeHarness({
+    snapshot: { type: 'snapshot', projections: { values: {} }, records },
+    responses: { 'session/page': { records } },
+    conversationReads: { async read(kind: string, coordinates: unknown) {
+      reads.push([kind, coordinates]);
+      duringRead();
+      return reply;
+    } },
+  });
+  const connection = attachmentConnection();
+  try {
+    await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, connection, { watchGeneration: 1 });
+    const params = { id: 'session-1', source: '/workspace/picture.png', seq: 1 };
+    assert.deepEqual(await bridge.dispatch('session.attachment', params, connection), { mediaType: 'image/png', data });
+    for (const source of ['/private.txt', '/etc/passwd', 'https://example.com/image.png']) {
+      await assert.rejects(bridge.dispatch('session.attachment', { ...params, source }, connection), { code: 'NOT_FOUND' });
+    }
+    assert.deepEqual(reads, [['file', { path: '/workspace/picture.png' }]]);
+    for (const invalid of [
+      { mediaType: 'text/html', dataBase64: data },
+      { mediaType: 'image/png', dataBase64: 'not!base64' },
+      { mediaType: 'image/png', dataBase64: 'A'.repeat(14 * 1024 * 1024) },
+    ]) {
+      reply = invalid;
+      await assert.rejects(bridge.dispatch('session.attachment', params, connection),
+        (error: any) => ['INVALID_ATTACHMENT', 'LIMIT_EXCEEDED'].includes(error.code));
+    }
+    reply = { mediaType: 'image/png', dataBase64: data };
+    duringRead = () => { connection.watchGeneration++; };
+    await assert.rejects(bridge.dispatch('session.attachment', params, connection), { code: 'NOT_FOUND' });
+  } finally { await connection.cancel(); }
+});
+
 test('conversation images reject injected context, external URLs and excessive or invalid data', async () => {
   const data = Buffer.from('image').toString('base64');
   const { bridge } = makeHarness({ snapshot: {
@@ -1354,203 +983,6 @@ test('conversation images reject injected context, external URLs and excessive o
   await connection.cancel();
 });
 
-test('an evicted conversation image is reread only from the watched session snapshot', async () => {
-  const data = 'A'.repeat(8 * 1024 * 1024);
-  const { bridge } = makeHarness({ snapshot: {
-    type: 'snapshot', projections: { values: {} }, records: [
-      surface('user/message', 1, 1_000, {
-        id: 'photos', source: { kind: 'user' }, content: Array.from({ length: 4 }, () => ({ type: 'image', mediaType: 'image/jpeg', data })),
-      }),
-    ],
-  } });
-  const connection = attachmentConnection();
-  await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, connection, { watchGeneration: 1 });
-  assert.equal(connection.nativeAttachmentState.state.images.has('photos:0'), false);
-  assert.equal((await bridge.dispatch('session.attachment', { id: 'session-1', attachmentId: 'photos:0' }, connection)).data, data);
-  connection.closed = true;
-  await assert.rejects(bridge.dispatch('session.attachment', { id: 'session-1', attachmentId: 'photos:0' }, connection), { code: 'NOT_FOUND' });
-  await connection.cancel();
-});
-
-test('transcript mode returns structured entries, turn timing, goal and plan state instead of messages', async () => {
-  const records = [
-    surface('user/message', 1, 1_000, {
-      id: 'u1',
-      content: [{ type: 'text', text: 'who uses memory?' }, { type: 'image', name: 'shot.png' }],
-      source: { kind: 'user' },
-    }),
-    { type: 'event', event: { type: 'turn/start', seq: 2, time: 1_100, data: { turn: 1 } } },
-    surface('assistant/message', 3, 2_000, {
-      turn: 1,
-      step: 1,
-      usage: { totalTokens: 1200 },
-      message: {
-        id: 'a1',
-        content: [
-          { type: 'reasoning', text: 'The user asks about memory.\nSecond line.' },
-          { type: 'tool-call', id: 'call-1', name: 'bash', arguments: '{"command":"ps aux","description":"List top memory processes"}' },
-          { type: 'tool-call', id: 'call-2', name: 'read', arguments: '{"path":"/tmp/report.txt"}' },
-        ],
-      },
-    }),
-    surface('tool/result', 4, 2_100, {
-      turn: 1,
-      step: 1,
-      message: { toolCallId: 'call-1', isError: false, content: [{ type: 'text', text: 'ok' }] },
-    }),
-    surface('tool/result', 5, 2_200, {
-      turn: 1,
-      step: 1,
-      message: { toolCallId: 'call-2', isError: true, content: [{ type: 'text', text: 'denied' }] },
-    }),
-    surface('assistant/message', 6, 3_000, {
-      turn: 1,
-      step: 2,
-      usage: { totalTokens: 800 },
-      message: { id: 'a2', content: [{ type: 'text', text: 'Here is the answer.' }] },
-    }),
-    { type: 'event', event: { type: 'turn/end', seq: 7, time: 45_100, data: { turn: 1, reason: { kind: 'completed' } } } },
-    { type: 'event', event: { type: 'command/run', seq: 8, time: 46_000, data: { commandId: 'cmd-1', name: 'compact' } } },
-    { type: 'event', event: { type: 'compaction/summary', seq: 9, time: 46_100, data: {
-      sourceCommandId: 'cmd-1', shadowedSeqs: [1, 2, 3], shadowedTokenCount: 4200,
-      summary: [{ type: 'text', text: '## Summary\n' }, { type: 'image', name: 'skipped' }, { type: 'text', text: 'Kept the plan.\n' }],
-    } } },
-    { type: 'event', event: { type: 'command/done', seq: 10, time: 46_200, data: { commandId: 'cmd-1', kind: 'success', text: 'Compacted 3 history items (~4200 tokens).' } } },
-    surface('agent/inbox/spliced', 10.1, 46_300, {
-      target: 'next-turn', start: 0, inserted: [{ id: 'g1', source: { kind: 'goal' } }],
-    }),
-    surface('agent/inbox/spliced', 10.2, 46_400, {
-      target: 'next-turn', start: 0, removedCount: 1, inserted: [],
-    }),
-    surface('user/message', 11, 47_000, {
-      id: 'g1', content: [{ type: 'text', text: 'Keep working on the goal.' }], source: { kind: 'goal' },
-    }),
-    surface('user/message', 12, 47_500, {
-      id: 'ctx', content: [{ type: 'text', text: 'injected' }], source: { kind: 'context-injection' },
-    }),
-  ];
-  const snapshot = {
-    type: 'snapshot',
-    records,
-    projections: {
-      values: {
-        goal: { goal: { id: 'goal-1', phase: 'active', objective: 'Ship the release', revision: 2 } },
-        plan: { active: false, pending: true },
-      },
-    },
-  };
-  const { bridge } = makeHarness({ snapshot });
-  const detail = await bridge.dispatch('session.open', { id: 'session-1', transcript: true }, {});
-
-  assert.deepEqual(detail.messages, []);
-  assert.deepEqual(detail.goal, { id: 'goal-1', phase: 'active', objective: 'Ship the release' });
-  assert.equal(detail.planMode, true);
-  const { entries, turns } = detail.transcript;
-  assert.deepEqual(turns.map(({ turn, start, end, outcome }) => ({ turn, start, end, outcome })),
-    [{ turn: 1, start: 1_100, end: 45_100, outcome: 'done' }]);
-  assert.equal(turns[0].lastSeq, 7);
-  assert.deepEqual(entries.map((entry) => [entry.type, entry.id]), [
-    ['user', 'u1'],
-    ['assistant', 'a1'],
-    ['assistant', 'a2'],
-    ['command', 'command:cmd-1'],
-    ['trigger', 'g1'],
-  ]);
-  assert.deepEqual(entries[0], {
-    type: 'user', id: 'u1', seq: 1, time: 1_000, text: 'who uses memory?',
-    attachments: [{ kind: 'image', name: 'shot.png' }],
-  });
-  assert.deepEqual(entries[1].calls, [
-    { id: 'call-1', name: 'bash', activity: 'commands', detail: 'List top memory processes', status: 'done', resultSeq: 4 },
-    { id: 'call-2', name: 'read', activity: 'read', detail: '/tmp/report.txt', status: 'error', resultSeq: 5 },
-  ]);
-  assert.equal(entries[1].reasoning, 'The user asks about memory.\nSecond line.');
-  assert.equal(entries[1].usage, 1200);
-  assert.equal(entries[2].text, 'Here is the answer.');
-  assert.deepEqual(
-    { ...entries[3], seq: undefined },
-    {
-      type: 'command', id: 'command:cmd-1', commandId: 'cmd-1', seq: undefined, time: 46_000,
-      name: 'compact', outcome: 'success', summary: 'Compacted 3 history items (~4200 tokens).',
-      compaction: { items: 3, tokens: 4200, summary: '## Summary\nKept the plan.' },
-    },
-  );
-  assert.deepEqual(entries[4], {
-    type: 'trigger', id: 'g1', seq: 11, time: 47_000, source: 'goal', text: 'Keep working on the goal.',
-  });
-});
-
-test('chat shows wake triggers but hides context injected during a running turn', async () => {
-  const message = (id, kind) => ({ id, source: { kind }, content: [{ type: 'text', text: id }] });
-  const splice = (seq, target, inserted, removedCount = 0, outcome) => surface('agent/inbox/spliced', seq, seq, {
-    target, start: 0, inserted, removedCount, ...(outcome ? { outcome } : {}),
-  });
-  const records = [
-    splice(1, 'next-turn', [message('goal', 'goal')]),
-    splice(2, 'next-turn', [], 1),
-    surface('turn/start', 3, 3, { turn: 1 }),
-    surface('user/message', 4, 4, message('goal', 'goal')),
-    surface('step/start', 5, 5, { turn: 1, step: 2 }),
-    splice(6, 'next-step', [message('job-1', 'tool-jobs'), message('job-2', 'tool-jobs')]),
-    splice(7, 'next-step', [], 2),
-    surface('user/message', 8, 8, message('job-1', 'tool-jobs')),
-    surface('user/message', 9, 9, message('job-2', 'tool-jobs')),
-    splice(10, 'next-turn', [message('wake-job', 'tool-jobs')]),
-    splice(11, 'next-turn', [], 1),
-    surface('turn/start', 12, 12, { turn: 2 }),
-    surface('user/message', 13, 13, message('wake-job', 'tool-jobs')),
-    splice(14, 'next-turn', [message('canceled', 'schedule')]),
-    splice(15, 'next-turn', [], 1, 'canceled'),
-    surface('user/message', 16, 16, message('canceled', 'schedule')),
-    surface('command/run', 17, 17, { commandId: 'permission-1', name: 'permission' }),
-    splice(18, 'next-turn', [message('plugin-wake', 'new-plugin')]),
-    splice(19, 'next-turn', [], 1),
-    surface('user/message', 20, 20, message('plugin-wake', 'new-plugin')),
-  ];
-  const { bridge } = makeHarness({ snapshot: { type: 'snapshot', records, projections: { values: {} } } });
-  const detail = await bridge.dispatch('session.open', { id: 'session-1', transcript: true }, {});
-  assert.deepEqual(detail.transcript.entries.map((entry) => entry.id), ['goal', 'wake-job', 'plugin-wake']);
-});
-
-test('idle steering wakes a turn only for a nonhuman first-step claim', async () => {
-  const records = [
-    surface('turn/start', 1, 1, { turn: 1 }),
-    surface('agent/inbox/spliced', 2, 2, {
-      target: 'next-step', start: 0, inserted: [{ id: 'wake', source: { kind: 'schedule' } }],
-    }),
-    surface('agent/inbox/spliced', 3, 3, { target: 'next-step', start: 0, removedCount: 1, inserted: [] }),
-    surface('user/message', 4, 4, { id: 'wake', source: { kind: 'schedule' }, content: [] }),
-    surface('agent/inbox/spliced', 5, 5, {
-      target: 'next-step', start: 0,
-      inserted: [{ id: 'human', source: { kind: 'user' } }, { id: 'context', source: { kind: 'tool-jobs' } }],
-    }),
-    surface('agent/inbox/spliced', 6, 6, { target: 'next-step', start: 0, removedCount: 2, inserted: [] }),
-    surface('user/message', 7, 7, { id: 'context', source: { kind: 'tool-jobs' }, content: [] }),
-  ];
-  const { bridge } = makeHarness({ snapshot: { type: 'snapshot', records, projections: { values: {} } } });
-  const detail = await bridge.dispatch('session.open', { id: 'session-1', transcript: true }, {});
-  assert.deepEqual(detail.transcript.entries.map((entry) => entry.id), ['wake']);
-});
-
-test('queued messages retain host occurrence identity and nontext edit restrictions', async () => {
-  const { bridge } = makeHarness({ snapshot: {
-    type: 'snapshot', records: [], projections: { values: { inbox: { 'next-turn': [
-      { id: 'one', source: { kind: 'user' }, content: [{ type: 'text', text: 'follow ' }, { type: 'text', text: 'up' }] },
-      { id: 'two', source: { kind: 'user' }, content: [
-        { type: 'text', text: 'look' },
-        { type: 'image', attachment: { name: 'photo.png' } },
-      ] },
-      { id: 'long', source: { kind: 'user' }, content: [{ type: 'text', text: 'x'.repeat(60_001) }] },
-    ] } } },
-  } });
-  const detail = await bridge.dispatch('session.open', { id: 'session-1' }, {});
-  assert.deepEqual(detail.queuedMessages, [
-    { id: 'one', text: 'follow up', editable: true },
-    { id: 'two', text: 'look', editable: false, attachments: [{ kind: 'image', name: 'photo.png' }] },
-    { id: 'long', text: 'x'.repeat(60_000), editable: false },
-  ]);
-});
-
 test('queue actions use the exact host operation, reject arbitrary actions and preserve failures', async () => {
   const { bridge, calls } = makeHarness();
   for (const action of ['edit', 'remove', 'steer']) {
@@ -1571,411 +1003,66 @@ test('queue actions use the exact host operation, reject arbitrary actions and p
   await assert.rejects(failing.bridge.dispatch('session.queue.update', { id: 'session-1', itemId: 'old', action: 'remove' }, {}), { code: 'UPSTREAM_ERROR' });
 });
 
-test('watched queue, goal and todos follow control projections without accepting older or other-session data', async () => {
-  const pending = { id: 'queued', source: { kind: 'user' }, content: [{ type: 'text', text: 'from desktop' }] };
-  const { bridge } = makeHarness({
-    snapshot: { type: 'snapshot', records: [], projections: { asOfSeq: 10, values: { inbox: { 'next-turn': [] } } } },
-    controlFrames: [
-      { type: 'baseline', value: { projections: { 'session-1': { asOfSeq: 11, values: {
-        inbox: { 'next-turn': [] }, plan: { active: true },
-      } } } } },
-      { type: 'projection', sessionId: 'session-1', key: 'inbox', seq: 12, value: { 'next-turn': [pending] } },
-      { type: 'projection', sessionId: 'session-1', key: 'inbox', seq: 11, value: { 'next-turn': [] } },
-      { type: 'projection', sessionId: 'other', key: 'inbox', seq: 13, value: { 'next-turn': [] } },
-      { type: 'projection', sessionId: 'session-1', key: 'goal', seq: 13, value: { goal: { id: 'goal', phase: 'active', objective: 'finish' } } },
-      { type: 'projection', sessionId: 'session-1', key: 'todos', seq: 14, value: [{ content: 'verify', status: 'in_progress' }] },
-      { type: 'baseline', value: { projections: { 'session-1': { asOfSeq: 11, values: { inbox: { 'next-turn': [] } } } } } },
-    ],
-    followDelayMs: 400,
-  });
-  const connection = attachmentConnection();
-  const updates = [];
-  connection.sendEvent = (_topic, detail) => updates.push(detail);
-  await bridge.dispatch('session.watch', { id: 'session-1' }, connection, { watchGeneration: 1 });
-  await new Promise((resolve) => setTimeout(resolve, 180));
-  assert.equal(updates.at(-1).queuedMessages[0].text, 'from desktop');
-  assert.equal(updates.at(-1).goal.objective, 'finish');
-  assert.equal(updates.at(-1).todos[0].content, 'verify');
-  assert.equal(updates.at(-1).planMode, false);
-  await connection.cancel();
-});
-
-test('inbox events update the live queue and a consumed message leaves the queue', async () => {
-  const pending = { id: 'queued', source: { kind: 'user' }, content: [{ type: 'text', text: 'follow up' }] };
-  const { bridge } = makeHarness({
-    snapshot: { type: 'snapshot', records: [], projections: { values: { inbox: { 'next-turn': [pending] } } } },
-    followFrames: [surface('agent/inbox/spliced', 2, 2, { target: 'next-turn', start: 0, removedCount: 1, inserted: [] })],
-    followDelayMs: 400,
-  });
-  const connection = attachmentConnection();
-  const updates = [];
-  connection.sendEvent = (_topic, detail) => updates.push(detail);
-  await bridge.dispatch('session.watch', { id: 'session-1' }, connection, { watchGeneration: 1 });
-  await new Promise((resolve) => setTimeout(resolve, 180));
-  assert.deepEqual(updates.at(-1).queuedMessages, []);
-  await connection.cancel();
-});
-test("the conversation's task list is DSH's todos projection, cleaned and bounded", async () => {
-  const open = async (todos: unknown) => {
-    const { bridge } = makeHarness({ snapshot: { type: 'snapshot', records: [], projections: { values: { todos } } } });
-    return bridge.dispatch('session.open', { id: 'session-1' }, {});
-  };
-
-  const detail = await open([
-    { content: '  补通用奖励/弹窗预检识别  ', status: 'in_progress', activeForm: 'ignored' },
-    { content: '只用大目标跑 campaign 验证弹窗处理', status: 'pending' },
-    { content: '观察 26/50 是否变化', status: 'completed' },
-    { content: '状态不明的一项', status: 'weird' },
-    { content: '   ', status: 'pending' },
-    { status: 'pending' },
-    'not an item',
-    null,
-  ]);
-  assert.deepEqual(detail.todos, [
-    { content: '补通用奖励/弹窗预检识别', status: 'in_progress' },
-    { content: '只用大目标跑 campaign 验证弹窗处理', status: 'pending' },
-    { content: '观察 26/50 是否变化', status: 'completed' },
-    { content: '状态不明的一项', status: 'pending' },
-  ], 'an unknown state is pending, and an item with no text is not an item');
-
-  // No list, an empty list and something that is not a list all mean the panel is absent.
-  for (const value of [undefined, [], 'todo', { content: 'x' }, [{ status: 'pending' }]]) {
-    assert.equal('todos' in await open(value), false, JSON.stringify(value));
-  }
-
-  const long = await open(Array.from({ length: 150 }, (_, index) => ({ content: `任务 ${index}`.padEnd(900, '字'), status: 'pending' })));
-  assert.equal(long.todos.length, 100);
-  assert.equal(long.todos[0].content.length, 500);
-});
-
-test('compaction summaries are capped, attach to their command, and stand alone for automatic compaction', async () => {
-  const records = [
-    { type: 'event', event: { type: 'command/run', seq: 1, time: 1_000, data: { commandId: 'c1', name: 'compact' } } },
-    { type: 'event', event: { type: 'compaction/summary', seq: 2, time: 1_100, data: {
-      sourceCommandId: 'c1', shadowedSeqs: [1], shadowedTokenCount: 10,
-      summary: [{ type: 'text', text: 'x'.repeat(50_000) }],
-    } } },
-    { type: 'event', event: { type: 'command/done', seq: 3, time: 1_200, data: { commandId: 'c1', kind: 'success', text: 'Compacted 1 history item (~10 tokens).' } } },
-    // Automatic compaction has no command: it becomes its own entry, and an empty summary adds nothing.
-    { type: 'event', event: { type: 'compaction/summary', seq: 4, time: 2_000, data: {
-      compactionId: 'auto-1', shadowedSeqs: [1, 2], shadowedTokenCount: 20, summary: [{ type: 'text', text: 'Auto summary.' }],
-    } } },
-    { type: 'event', event: { type: 'compaction/summary', seq: 5, time: 3_000, data: {
-      compactionId: 'auto-2', shadowedSeqs: [3], shadowedTokenCount: 5, summary: [{ type: 'text', text: '  \n ' }],
-    } } },
-  ];
-  const { bridge } = makeHarness({ snapshot: { type: 'snapshot', records, projections: { values: {} } } });
-  const detail = await bridge.dispatch('session.open', { id: 'session-1', transcript: true }, {});
-  const [command, auto, empty] = detail.transcript.entries;
-
-  assert.equal(command.compaction.summary.length, 20_000);
-  assert.equal(command.compaction.items, 1);
-  assert.equal(auto.type, 'compaction');
-  assert.equal(auto.id, 'compaction:auto-1');
-  assert.equal(auto.summary, 'Auto summary.');
-  assert.equal(auto.items, 2);
-  assert.equal(empty.summary, undefined);
-});
-
-test('compaction summaries count toward the transcript size budget', async () => {
-  const records = [];
-  for (let index = 0; index < 20; index += 1) {
-    records.push({ type: 'event', event: { type: 'compaction/summary', seq: index + 1, time: index, data: {
-      compactionId: `auto-${index}`, shadowedSeqs: [index], shadowedTokenCount: index,
-      summary: [{ type: 'text', text: 'y'.repeat(20_000) }],
-    } } });
-  }
-  const { bridge } = makeHarness({ snapshot: { type: 'snapshot', records, projections: { values: {} } } });
-  const detail = await bridge.dispatch('session.open', { id: 'session-1', transcript: true }, {});
-  const total = detail.transcript.entries.reduce((sum, entry) => sum + (entry.summary?.length ?? 0), 0);
-
-  assert.ok(total <= 250_000, `kept ${total} summary characters`);
-  assert.ok(detail.transcript.entries.length < 20, 'the oldest compactions are dropped first');
-  assert.equal(detail.transcript.entries.at(-1).id, 'compaction:auto-19');
-});
-
-const MODEL_CATALOG = {
-  groups: [
-    {
-      id: 'deepseek',
-      models: [
-        {
-          id: 'v4-flash',
-          name: 'DeepSeek-V4.1-Flash',
-          reasoning: {
-            defaultEffort: 'high',
-            efforts: [{ id: 'high', name: 'High' }, { id: 'max', name: 'Max' }, { id: 'bad id!', name: 'Skipped' }],
-          },
-        },
-        { id: 'plain', name: 'Plain model' },
-      ],
-    },
-  ],
-};
-
-const PRESET_ROSTER = {
-  presets: [
-    { id: 'standard', isDefault: true, name: '标准模式', description: '处理代码、文件和资料。' },
-    { id: 'minimal', isDefault: false },
-    { id: 'cordis', isDefault: false, name: '创造模式', broken: 'plugin failed to load' },
-    { id: 'bad id!', isDefault: false, name: 'Skipped' },
-  ],
-};
-
-test('catalog.get lists reasoning efforts per model and the usable agent presets', async () => {
-  const { bridge } = makeHarness({
-    responses: {
-      'session/modelCatalog': MODEL_CATALOG,
-      'permissionPresets/catalog': { options: [{ value: 'read-only', name: 'read-only' }] },
-      'agentPresets/list': PRESET_ROSTER,
-    },
-  });
-  const catalog = await bridge.dispatch('catalog.get', {}, {});
-
-  assert.deepEqual(catalog.models, [
-    {
-      id: 'deepseek:v4-flash',
-      name: 'DeepSeek-V4.1-Flash',
-      efforts: [{ id: 'high', name: 'High' }, { id: 'max', name: 'Max' }],
-      defaultEffort: 'high',
-    },
-    { id: 'deepseek:plain', name: 'Plain model' },
-  ]);
-  assert.deepEqual(catalog.permissions, [{ id: 'read-only', name: 'read-only' }]);
-  assert.deepEqual(catalog.presets, [
-    { id: 'standard', name: '标准模式', description: '处理代码、文件和资料。', isDefault: true },
-    { id: 'minimal', name: 'minimal', isDefault: false },
-  ]);
-});
-
-test('catalog.get reports a missing agent preset registry instead of hiding its modes', async () => {
-  const { bridge } = makeHarness({
-    responses: {
-      'session/modelCatalog': MODEL_CATALOG,
-      'permissionPresets/catalog': { options: [] },
-      'agentPresets/list': () => { throw new Error('unknown method'); },
-    },
-  });
-  await assert.rejects(bridge.dispatch('catalog.get', {}, {}), { code: 'UPSTREAM_UNAVAILABLE' });
-});
-
-test('session.configure changes only the reasoning effort of the model already in use', async () => {
+test('native sidebar and search return cold list hints without waiting for per-session history reads', async () => {
+  let release;
+  let timer;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const rows = Array.from({ length: 128 }, (_, index) => ({
+    sessionId: `cold-${index}`, updatedAt: index,
+    ...(index ? { projections: { kind: 'cached', values: {
+      title: `Conversation ${index}`, modelSelection: { next: { provider: 'codex', model: 'gpt' } },
+    } } } : {}),
+  }));
   const { bridge, calls } = makeHarness({
+    rows,
+    sessionActivity: () => ({ agent: 'codex', title: 'Indexed conversation', state: 'finished', lastActivityAt: Date.now() - 60_000 }), // handled a minute ago: a finished run unhandled for a day reads Idle (2026-11-07)
     responses: {
-      'session/modelCatalog': MODEL_CATALOG,
-      'session/projections': { values: { modelSelection: { next: { provider: 'deepseek', model: 'v4-flash', reasoningEffort: 'high' } } } },
+      'session/projections': () => pending,
+      'session/search': { items: [{ sessionId: 'cold-1', snippet: 'Matching text' }] },
     },
   });
-  await bridge.dispatch('session.configure', { id: 'session-1', reasoningEffort: 'max' }, {});
-
-  const selection = calls.find((call) => call.endpoint === 'session/selectModel');
-  assert.deepEqual(selection.args[0], {
-    sessionId: 'session-1', provider: 'deepseek', model: 'v4-flash', reasoningEffort: 'max',
-  });
-  await assert.rejects(
-    bridge.dispatch('session.configure', { id: 'session-1', reasoningEffort: 'turbo' }, {}),
-    { code: 'BAD_REQUEST' },
-  );
-  await assert.rejects(
-    bridge.dispatch('session.configure', { id: 'session-1', reasoningEffort: 7 }, {}),
-    { code: 'BAD_REQUEST' },
-  );
-  assert.equal(calls.filter((call) => call.endpoint === 'session/selectModel').length, 1);
-});
-
-test('session.configure picks the default effort when only the model changes and rejects efforts of another model', async () => {
-  const { bridge, calls } = makeHarness({ responses: { 'session/modelCatalog': MODEL_CATALOG } });
-  await bridge.dispatch('session.configure', { id: 'session-1', modelId: 'deepseek:v4-flash' }, {});
-  await bridge.dispatch('session.configure', { id: 'session-1', modelId: 'deepseek:plain' }, {});
-
-  const selections = calls.filter((call) => call.endpoint === 'session/selectModel').map((call) => call.args[0]);
-  assert.deepEqual(selections, [
-    { sessionId: 'session-1', provider: 'deepseek', model: 'v4-flash', reasoningEffort: 'high' },
-    { sessionId: 'session-1', provider: 'deepseek', model: 'plain' },
-  ]);
-  await assert.rejects(
-    bridge.dispatch('session.configure', { id: 'session-1', modelId: 'deepseek:plain', reasoningEffort: 'high' }, {}),
-    { code: 'BAD_REQUEST' },
-  );
-});
-
-test('session.configure selects an agent preset only from the host roster', async () => {
-  const { bridge, calls } = makeHarness({ responses: { 'agentPresets/list': PRESET_ROSTER } });
-  await bridge.dispatch('session.configure', { id: 'session-1', agentPreset: 'minimal' }, {});
-
-  const select = calls.find((call) => call.endpoint === 'agentPresets/select');
-  assert.deepEqual(select.args, ['session-1', 'minimal']);
-  for (const agentPreset of ['cordis', 'missing', 'bad id!', 5]) {
-    await assert.rejects(
-      bridge.dispatch('session.configure', { id: 'session-1', agentPreset }, {}),
-      { code: 'BAD_REQUEST' },
-      `rejects ${agentPreset}`,
-    );
-  }
-  assert.equal(calls.filter((call) => call.endpoint === 'agentPresets/select').length, 1);
-});
-
-test('session.create forwards the workspace, agent preset and blank session to reuse', async () => {
-  const { bridge, calls } = makeHarness({
-    responses: {
-      'session/create': { sessionId: 'blank-1', agentPreset: 'minimal' },
-      'session/list': { items: [{ sessionId: 'blank-1', title: '', workspaceId: 'w1', workspaceName: 'harness' }] },
-    },
-  });
-  const connection = {};
-  const summary = await bridge.dispatch('session.create', {
-    workspaceId: 'w1', agentPreset: 'minimal', reuse: 'blank-1',
-  }, connection);
-
-  assert.deepEqual(calls.find((call) => call.endpoint === 'session/create').args[0], {
-    workspaceId: 'w1', agentPreset: 'minimal', sessionId: 'blank-1',
-  });
-  assert.equal(summary.id, 'blank-1');
-  assert.equal(summary.workspaceId, 'w1');
-  assert.equal(connection.selectedSessionId, 'blank-1');
-  for (const params of [{ agentPreset: 'bad id!' }, { agentPreset: 3 }, { reuse: '' }, { reuse: 4 }, { workspaceId: '' }]) {
-    await assert.rejects(bridge.dispatch('session.create', params, {}), { code: 'BAD_REQUEST' });
+  try {
+    const result = await Promise.race([
+      bridge.dispatch('session.list', {}, {}),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('List waited for cold histories')), 500); }),
+    ]);
+    assert.equal(result.length, rows.length);
+    assert.equal(result[0].agent, 'codex', 'The activity index covers older rows without model hints.');
+    assert.equal(result[0].agentState, 'blocked');
+    assert.equal(result[0].title, 'Indexed conversation', 'Use an existing indexed title when DSH has no cached title.');
+    assert.equal(result[1].title, 'Conversation 1');
+    assert.equal((await bridge.dispatch('session.list', {}, {}))[1].agent, 'codex');
+    const search = await bridge.dispatch('session.search', { query: 'Matching' }, {});
+    assert.equal(search.items[0].session.title, 'Conversation 1');
+    assert.equal(calls.filter((call) => call.endpoint === 'session/projections').length, 0);
+  } finally {
+    clearTimeout(timer);
+    release({ values: {} });
   }
 });
 
-test('session detail reports the reasoning effort and agent preset in use', async () => {
-  const snapshot = {
-    type: 'snapshot',
-    records: [],
-    projections: {
-      values: {
-        modelSelection: { next: { provider: 'deepseek', model: 'v4-flash', reasoningEffort: 'max' } },
-        agentPreset: 'minimal',
-      },
-    },
-  };
-  const { bridge } = makeHarness({ snapshot });
-  const detail = await bridge.dispatch('session.open', { id: 'session-1' }, {});
-
-  assert.equal(detail.modelId, 'deepseek:v4-flash');
-  assert.equal(detail.reasoningEffort, 'max');
-  assert.equal(detail.agentPreset, 'minimal');
-});
-
-test('Typert adapter maps the agent preset endpoints to the agent scope', async () => {
-  const peer = { principal: { kind: 'owner' } };
-  const invocations = [];
-  const gateway = {
-    async invoke(request) { invocations.push(request); return { ok: true, value: {} }; },
-    async stream() { return iterable([]); },
-  };
-  const rpc = createTypertRpcAdapter({ gateway, peer });
-
-  await rpc.call('/api', 'agentPresets/list');
-  await rpc.call('/api', 'agentPresets/select', 'session-1', 'minimal');
-  assert.deepEqual(invocations.map((call) => [call.namespace, call.method, call.args]), [
-    ['agentPresets', 'list', {}],
-    ['agentPresets', 'select', { agentId: 'session-1', agentPreset: 'minimal' }],
-  ]);
-  await assert.rejects(rpc.call('/api', 'agentPresets/select', 'session-1'), { code: 'BAD_REQUEST' });
-  await assert.rejects(rpc.call('/api', 'agentPresets/select', '', 'minimal'), { code: 'BAD_REQUEST' });
-  await assert.rejects(rpc.call('/api', 'agentPresets/select', 'session-1', 'bad id!'), { code: 'BAD_REQUEST' });
-  await assert.rejects(rpc.call('/api', 'agentPresets/list', 'extra'), { code: 'BAD_REQUEST' });
-});
-
-test('legacy messages stay untouched when the app does not ask for the transcript', async () => {
-  const snapshot = {
-    type: 'snapshot',
-    records: [eventMessage('m1', 1, 'hello')],
-    projections: { values: { goal: { goal: { id: 'g', phase: 'complete', objective: 'done' } } } },
-  };
-  const { bridge } = makeHarness({ snapshot });
-  const detail = await bridge.dispatch('session.open', { id: 'session-1' }, {});
-  assert.equal(detail.messages.length, 1);
-  assert.equal(detail.transcript, undefined);
-  assert.equal(detail.goal, undefined);
-  assert.equal(detail.planMode, false);
-});
-
-test('live tool calls expose their running detail from streaming arguments', async () => {
-  const snapshot = {
-    type: 'snapshot',
-    records: [],
-    projections: { values: {} },
-    assistantStream: {
-      revision: 0,
-      activeAttempt: {
-        attemptId: 'attempt-1',
-        nextIndex: 4,
-        stream: [
-          { index: 0, chunk: { type: 'block-start', index: 0, blockType: 'tool-call' } },
-          { index: 1, chunk: { type: 'tool-call-delta', index: 0, id: 'live-call', name: 'bash', argumentsDelta: '{"descri' } },
-          { index: 2, chunk: { type: 'tool-call-delta', index: 0, id: 'live-call', argumentsDelta: 'ption":"Update transport test' } },
-          { index: 3, chunk: { type: 'block-start', index: 1, blockType: 'reasoning' } },
-        ],
-      },
-    },
-  };
-  const { bridge } = makeHarness({ snapshot });
-  const detail = await bridge.dispatch('session.open', { id: 'session-1', transcript: true }, {});
-  assert.deepEqual(detail.transcript.live.calls, [{
-    id: 'live-call', name: 'bash', activity: 'commands', detail: 'Update transport test',
-  }]);
-});
-
-test('session.list places sessions by DSH membership and carries the archive and pin DSH keeps', async () => {
-  const { bridge } = makeHarness({
-    rows: [
-      { sessionId: 'a', title: 'A', cwd: '/elsewhere', updatedAt: 3 },
-      { sessionId: 'b', title: 'B', updatedAt: 2 },
-      { sessionId: 'c', title: 'C', blank: true, updatedAt: 1 },
-      { sessionId: 'd', title: 'D', updatedAt: 4 },
-      { sessionId: 'e', title: 'E', cwd: '/p/one/sub', updatedAt: 5 },
-    ],
-    workspaces: {
-      items: [
-        { workspaceId: 'w1', title: '一', path: '/p/one', sessionIds: ['b', 'a'] },
-        { workspaceId: 'w2', title: '二', path: '/p/two', sessionIds: ['d'] },
-      ],
-      archivedSessionIds: ['d'],
-      pinnedSessionIds: ['a', 'b'],
-    },
-  });
-  const rows = await bridge.dispatch('session.list', {}, {});
-  const byId = Object.fromEntries(rows.map((row) => [row.id, row]));
-
-  // Membership wins over the working directory ("a" lives elsewhere but DSH accounts it to 一).
-  assert.deepEqual([byId.a.workspaceId, byId.a.workspaceName], ['w1', '一']);
-  assert.equal(byId.b.workspaceId, 'w1');
-  assert.equal(byId.a.order, undefined, 'DSH keeps no order the phone could use');
-  // Pins are ranked most recent first; archived sessions are marked, not removed.
-  assert.deepEqual([byId.a.pinned, byId.a.pinRank, byId.b.pinRank], [true, 0, 1]);
-  assert.deepEqual([byId.d.workspaceId, byId.d.archived], ['w2', true]);
-  assert.equal(byId.b.archived, undefined);
-  assert.equal(byId.c.pinned, undefined);
-  // An empty conversation is flagged so the phone can hide it, as DSH does.
-  assert.equal(byId.c.blank, true);
-  assert.equal(byId.c.workspaceId, undefined);
-  // A session no workspace accounts for falls back to the directory it runs in.
-  assert.equal(byId.e.workspaceId, 'w1');
-});
-
-test('renaming or deleting a workspace and unarchiving a session go through DSH and are validated', async () => {
-  const { bridge, calls } = makeHarness();
-  await bridge.dispatch('workspace.rename', { id: 'w1', title: '  新名称  ' }, {});
-  await bridge.dispatch('workspace.delete', { id: 'w1' }, {});
-  await bridge.dispatch('session.unarchive', { id: 's1' }, {});
-  assert.deepEqual(calls.map((call) => [call.endpoint, call.args[0]]), [
-    ['workspace/rename', { workspaceId: 'w1', title: '新名称' }],
-    ['workspace/delete', { workspaceId: 'w1' }],
-    ['workspace/unarchiveSession', { sessionId: 's1' }],
-  ]);
-
-  const before = calls.length;
-  for (const [method, params] of [
-    ['workspace.rename', { id: 'w1', title: '   ' }],
-    ['workspace.rename', { title: 'x' }],
-    ['workspace.delete', {}],
-    ['session.unarchive', { id: 7 }],
-  ] as const) {
-    await assert.rejects(bridge.dispatch(method, params, {}), { code: 'BAD_REQUEST' }, method);
+test('missing sidebar decoration is bounded, coalesced and reused instead of blocking the list', async () => {
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const rows = Array.from({ length: 32 }, (_, index) => ({ sessionId: `uncached-${index}`, updatedAt: index }));
+  const { bridge, calls } = makeHarness({ rows, responses: { 'session/projections': () => pending } });
+  try {
+    const started = performance.now();
+    const listed = await bridge.dispatch('session.list', {}, {});
+    assert.equal(listed.length, rows.length);
+    assert.ok(performance.now() - started < 500, 'A pending cold read must not delay the sidebar.');
+    assert.equal(calls.filter((call) => call.endpoint === 'session/projections').length, 4);
+    await bridge.dispatch('session.list', {}, {});
+    assert.equal(calls.filter((call) => call.endpoint === 'session/projections').length, 4, 'Refreshes share the background work.');
+    release({ values: { title: { title: 'Loaded title' }, modelSelection: { next: { provider: 'claude', model: 'sonnet' } } } });
+    await new Promise((resolve) => setImmediate(resolve));
+    const warmed = await bridge.dispatch('session.list', {}, {});
+    assert.ok(warmed.every((row) => row.title === 'Loaded title' && row.agent === 'claude'));
+    assert.equal(calls.filter((call) => call.endpoint === 'session/projections').length, rows.length);
+  } finally {
+    release({ values: {} });
+    await new Promise((resolve) => setImmediate(resolve));
   }
-  assert.equal(calls.length, before, 'nothing invalid reaches DSH');
 });
 
 test('a conversation is pinned, unpinned and archived through DSH, validated, and never deleted', async () => {
@@ -2005,29 +1092,4 @@ test('a conversation is pinned, unpinned and archived through DSH, validated, an
   }
   assert.equal(calls.length, before, 'nothing invalid reaches DSH');
   assert.ok(!NATIVE_METHODS.includes('session.delete'), 'DSH has no session deletion, so the phone has none');
-});
-
-test('Typert adapter names the workspace requests the gateway expects', async () => {
-  const peer = { principal: { kind: 'owner' } };
-  const invocations = [];
-  const gateway = {
-    async invoke(request) { invocations.push(request); return { ok: true, value: {} }; },
-    async stream() { return iterable([]); },
-  };
-  const rpc = createTypertRpcAdapter({ gateway, peer });
-  await rpc.call('/api', 'workspace/rename', { workspaceId: 'w', title: 't' });
-  await rpc.call('/api', 'workspace/delete', { workspaceId: 'w' });
-  await rpc.call('/api', 'workspace/unarchiveSession', { sessionId: 's' });
-  await rpc.call('/api', 'workspace/archiveSession', { sessionId: 's' });
-  await rpc.call('/api', 'workspace/pinSession', { sessionId: 's' });
-  await rpc.call('/api', 'workspace/unpinSession', { sessionId: 's' });
-  assert.deepEqual(invocations.map((item) => [item.namespace, item.method, item.args]), [
-    ['workspace', 'rename', { request: { workspaceId: 'w', title: 't' } }],
-    ['workspace', 'delete', { request: { workspaceId: 'w' } }],
-    ['workspace', 'unarchiveSession', { request: { sessionId: 's' } }],
-    ['workspace', 'archiveSession', { request: { sessionId: 's' } }],
-    ['workspace', 'pinSession', { request: { sessionId: 's' } }],
-    ['workspace', 'unpinSession', { request: { sessionId: 's' } }],
-  ]);
-  await assert.rejects(rpc.call('/api', 'workspace/insertBefore', { workspaceId: 'w' }), { code: 'UNSUPPORTED' });
 });

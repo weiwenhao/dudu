@@ -1,25 +1,30 @@
+import { statusLabel, statusType } from './workflow.js';
 import { useEffect, useRef, useState } from 'react';
-import { Box, CalendarDays, ChevronDown, ChevronRight, ChevronUp, Copy, Expand, ExternalLink, LoaderCircle, MoreHorizontal } from 'lucide-react';
+import { Box, ChevronDown, ChevronRight, ChevronUp, Copy, Expand, ExternalLink, LoaderCircle, Tag } from 'lucide-react';
 import { Button } from '../components/button.jsx';
-import { Dialog, DialogClose, DialogContent, DialogTitle } from '../components/dialog.jsx';
-import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
 import { useToast } from '../components/toast.jsx';
+import { TooltipProvider } from '../components/tooltip.jsx';
 import { cn } from '../lib/cn.js';
 import { describeIssue } from '../lib/where.js';
 import { T } from '../strings.js';
 import { actorName, describe, isDiscussion, storedSystemText, when } from './activity.js';
 import { AgentMenu } from './AgentMenu.jsx';
-import { dueInfo, DUE_TONE } from './due.js';
+import { dueInfo, DUE_ICON_TONE } from './due.js';
 import { DueMenu } from './DueMenu.jsx';
-import { AgentAvatar, PriorityIcon, projectColor, StatusIcon } from './icons.jsx';
+import { AgentAvatar, DueIcon, PriorityIcon, projectColor, StatusIcon, SubIssueChip } from './icons.jsx';
 import { AGENT_NAMES } from './model.js';
 import { PriorityMenu } from './PriorityMenu.jsx';
 import { StatusMenu } from './StatusMenu.jsx';
 import { useIssue } from './use-issue.js';
+import { useIssueSession } from './use-issue-session.js';
 import { ProjectMenu } from './ProjectMenu.jsx';
+import { LabelChip, LabelMenu } from './LabelMenu.jsx';
+import { SubIssues } from './SubIssues.jsx';
 import { MessageComposer } from './MessageComposer.jsx';
 import { MentionText } from './MentionText.jsx';
-import { DeleteIssuesDialog } from './DeleteIssuesDialog.jsx';
+import { CommentAttachments } from './Attachments.jsx';
+import { AddLinkDialog, LinksSection } from './Links.jsx';
+import { RichText } from './RichText.jsx';
 
 const Section = ({ children }) => <h2 className="mb-1.5 text-sm text-muted-foreground">{children}</h2>;
 const propertyButton = 'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=open]:bg-accent';
@@ -69,15 +74,27 @@ function Clamp({ text, lines, className }) {
   );
 }
 
-// Conversation stays visible; status and assignment audit events remain in the store.
-function LogLine({ entry, logo, now }) {
+// Comments keep their author header and body; status changes use Linear's compact activity line.
+function StatusLine({ entry, now }) {
+  return <li className="flex items-start gap-3 py-1 text-sm text-muted-foreground" data-issue-status-change="">
+    <StatusIcon status={entry.data?.to} className="mt-0.5" />
+    <span className="min-w-0 break-words">
+      {actorName(entry.actor)} {describe(entry).sentence}
+      <span aria-hidden="true" className="mx-1.5">·</span>
+      <time className="whitespace-nowrap" dateTime={Number.isFinite(entry.at) ? new Date(entry.at).toISOString() : undefined}>{when(entry.at, now)}</time>
+    </span>
+  </li>;
+}
+
+function LogLine({ issueId, entry, logo, now }) {
   const { detail, comment } = describe(entry);
   const name = actorName(entry.actor);
   const glyph = entry.actor === 'dudu' ? <img src={logo} alt="" className="size-[18px] shrink-0" /> : <Actor actor={entry.actor} />;
   return (
     <li className="flex flex-col gap-1.5">
       <div className="flex items-center gap-2">{glyph}<span className="font-medium">{name}</span><span className="text-xs text-muted-foreground">{when(entry.at, now)}</span></div>
-      <Clamp text={comment ?? detail ?? ''} lines="line-clamp-6" />
+      <CommentAttachments issueId={issueId} items={entry.data?.attachments} />
+      {(comment || detail) && <Clamp text={comment ?? detail ?? ''} lines="line-clamp-6" />}
     </li>
   );
 }
@@ -85,7 +102,7 @@ function LogLine({ entry, logo, now }) {
 function AskCard({ issue, entry, logo, now }) {
   const byDudu = !issue.agent || !issue.sessions?.some((session) => session.key === issue.session && session.state === 'waiting_owner');
   const name = byDudu ? T.brand : AGENT_NAMES[issue.agent] ?? T.brand;
-  const status = T.status[issue.status];
+  const status = statusLabel(issue.status);
   return (
     <section aria-label={status}>
       <div className="flex flex-col gap-2">
@@ -103,66 +120,11 @@ function AskCard({ issue, entry, logo, now }) {
 
 const firstLink = (text) => /https?:\/\/\S+/.exec(text ?? '')?.[0] ?? null;
 
-function IssueMore({ request, issue, reload, onBack }) {
-  const [open, setOpen] = useState(false);
-  const [tidy, setTidy] = useState(null);
-  const [preview, setPreview] = useState(null);
-  const [problem, setProblem] = useState('');
-  const [deleting, setDeleting] = useState(null);
-  const toast = useToast();
-  useEffect(() => {
-    if (!open) return;
-    let active = true;
-    request('assistant/state').then((value) => { if (active) setTidy(value.lastIssueTidy); }).catch(() => {});
-    return () => { active = false; };
-  }, [open, request]);
-  const forget = async () => {
-    setProblem('');
-    try {
-      const result = await request('issues/forget', { id: issue.id, ...(preview ? { token: preview.token } : {}) });
-      if (result.outcome !== 'success') { setProblem(T.toast.failed); return; }
-      if (result.preview) { setPreview(result); setOpen(false); }
-      else { setPreview(null); onBack(); }
-    } catch { setProblem(T.toast.failed); }
-  };
-  return <>
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild><Button variant="ghost" size="icon-xs" aria-label={T.detail.more}><MoreHorizontal /></Button></PopoverTrigger>
-      <PopoverContent align="end" className="flex w-[200px] flex-col gap-1">
-        <Button variant="ghost" size="sm" onClick={() => { setOpen(false); setDeleting([issue.id]); }}>{T.settings.skills.delete}</Button>
-        {tidy?.groupId && tidy.changed?.includes(issue.id) && <Button variant="ghost" size="sm" onClick={async () => {
-          setOpen(false);
-          try {
-            const result = await request('issues/tidy-undo');
-            if (result.outcome !== 'success' && result.outcome !== 'no_op') throw new Error();
-            reload();
-          } catch { toast({ message: T.toast.failed }); }
-        }}>{T.settings.general.undoTidy}</Button>}
-        <Button variant="ghost" size="sm" onClick={forget}>{T.settings.memory.forget}</Button>
-        {problem && <p role="alert" className="text-xs text-danger-foreground">{problem}</p>}
-      </PopoverContent>
-    </Popover>
-    <Dialog open={Boolean(preview)} onOpenChange={(value) => { if (!value) { setPreview(null); setProblem(''); } }}>
-      <DialogContent aria-describedby={undefined}>
-        <DialogTitle>{T.settings.memory.willDelete}</DialogTitle>
-        <p>{issue.ref} {issue.title}</p>
-        <p className="text-sm text-muted-foreground">{T.detail.forgetScope}</p>
-        {problem && <p role="alert" className="text-danger-foreground">{problem}</p>}
-        <div className="flex justify-end gap-2">
-          <DialogClose asChild><Button variant="ghost">{T.settings.memory.cancel}</Button></DialogClose>
-          <Button onClick={forget}>{T.settings.memory.confirmForget}</Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-    <DeleteIssuesDialog request={request} ids={deleting} onClose={() => setDeleting(null)} onDeleted={onBack} />
-  </>;
-}
-
 /**
  * An issue's page, as designed: breadcrumb and previous/next on top; the title, description, Activity and a comment box on the
  * left; Properties (status, priority, agent, due date) and Project on the right. `ids` is the list the person came from.
  */
-export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSession }) {
+export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSession, previewSession }) {
   const { status, issue, log, activeQuestion, nextLogCursor, change, assign, message, undo, loadEarlier, reload } = useIssue(request, id);
   // The pet's "Context" names the page by its reference and title.
   useEffect(() => { if (issue) describeIssue(issue.id, { ref: issue.ref, title: issue.title }); }, [issue]);
@@ -175,24 +137,19 @@ export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSessio
     catch { toast({ message: T.widgets.sessions.openFailed }); }
     finally { setOpening(false); }
   };
+  const [addingLink, setAddingLink] = useState(null); // the kind of link being added (link, pull_request, document), or null
   const [askResult, setAskResult] = useState(null); // the id of an issue the owner just marked Done and may say how it went
-  const [session, setSession] = useState(null);
+  const session = useIssueSession(request, issue);
+  // Where an issue that came from a connector came from: the connector's name and the link of what it was made from.
+  const [found, setFound] = useState(null);
   useEffect(() => {
     let active = true;
-    let timer;
-    setSession(null);
-    const read = async () => {
-      let result;
-      try {
-        result = await request('issues/session', { id });
-        if (active && result.outcome === 'success') setSession(result);
-      } catch { /* Retry a failed read while this issue stays open. */ }
-      // A new harness session receives its native identity after DSH has already created the session.
-      if (active && (result?.outcome !== 'success' || (['claude', 'codex'].includes(issue?.agent) && !result.command))) timer = setTimeout(read, 5000);
-    };
-    if (issue?.session) void read();
-    return () => { active = false; clearTimeout(timer); };
-  }, [id, issue?.session, issue?.agent, request]);
+    if (issue?.source === 'connector') {
+      request('issues/source', { id }).then((result) => { if (active && result.outcome === 'success') setFound({ id, source: result.source ?? null }); }).catch(() => { /* the link in the description is still there */ });
+    }
+    return () => { active = false; };
+  }, [id, issue?.source, issue?.sourceRef, request]);
+  const origin = found?.id === id ? found.source : null;
   const now = Date.now();
   // Every change on this page says so at the bottom, with Undo for that one change.
   const done = (result, message) => {
@@ -202,14 +159,15 @@ export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSessio
   const copyId = async () => {
     try { await navigator.clipboard.writeText(issue.ref); toast({ message: T.toast.copied(issue.ref) }); } catch { toast({ message: T.toast.failed }); }
   };
-  const source = issue ? firstLink(issue.sourceRef) : null;
+  const source = origin?.url ?? (issue ? firstLink(issue.sourceRef) : null);
   const position = ids.indexOf(id);
   const due = issue ? dueInfo(issue.dueAt, now) : null;
-  const waiting = Boolean(issue?.ask && issue.agentState === 'needs_you');
+  const waiting = Boolean(issue?.ask);
   const question = waiting ? activeQuestion ?? log.find((entry) => entry.kind === 'blocked' && entry.text === issue?.ask) : null;
   const discussion = [...log, ...(question && !log.some((entry) => entry.id === question.id) ? [question] : [])]
-    .filter(isDiscussion).sort((a, b) => a.at - b.at || a.id - b.id);
+    .filter((entry) => entry.kind === 'status' || isDiscussion(entry)).sort((a, b) => a.at - b.at || a.id - b.id);
   return (
+    <TooltipProvider>
     <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground">
       <header className="flex h-11 shrink-0 items-center gap-2 border-b px-4 ps-[max(1rem,var(--dsh-frame-leading-clearance,0px))]" data-window-drag>
         <button type="button" className="shrink-0 rounded-md px-1 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50" onClick={onBack} aria-label={T.detail.back}>{T.issues}</button>
@@ -219,7 +177,6 @@ export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSessio
             <span className="min-w-0 truncate font-medium">{issue.ref} {issue.title}</span>
           </>
         )}
-        {issue && <IssueMore key={issue.id} request={request} issue={issue} reload={reload} onBack={onBack} />}
         <span className="flex-1" />
         {position >= 0 && ids.length > 1 && (
           <>
@@ -244,43 +201,55 @@ export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSessio
         {status === 'missing' || status === 'error' ? (
           <p className="p-10 text-center text-muted-foreground">{T.detail.notFound}</p>
         ) : !issue ? <p role="status" className="p-10 text-center text-muted-foreground">{T.shell.loading}</p> : (
-          <div className="mx-auto flex w-full max-w-[1008px] gap-14 px-6 pt-12 pb-16">
+          <div className="mx-auto flex w-full max-w-[1008px] flex-col gap-8 px-6 pt-12 pb-16 md:flex-row md:gap-14">
             <div className="min-w-0 flex-1">
               <EditableText value={issue.title} label={T.detail.untitled} placeholder={T.detail.untitled} className="text-2xl/8 font-semibold tracking-tight" onSave={(title) => change({ title })} />
-              <EditableText value={issue.brief} label={T.detail.description} placeholder={T.detail.description} multiline className="mt-5 text-[15px]/6" onSave={(brief) => change({ brief })} />
+              {issue.parent && <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground" data-issue-parent={issue.parent.id}>
+                {T.subIssues.subIssueOf}
+                <button type="button" onClick={() => onOpen(issue.parent.id)} className="inline-flex h-7 items-center gap-1.5 rounded-full border bg-card px-2.5 text-foreground outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50">
+                  <StatusIcon status={issue.parent.status} className="size-3.5" />
+                  {issue.parent.ref && <span className="text-muted-foreground tabular-nums">{issue.parent.ref}</span>}
+                  <span className="max-w-[320px] truncate font-medium">{issue.parent.title}</span>
+                </button>
+                {issue.parent.subIssues && <SubIssueChip progress={issue.parent.subIssues} />}
+              </div>}
+              <RichText key={issue.id} className="mt-5" value={issue.brief} label={T.detail.description} placeholder={T.detail.description} onSave={(brief) => change({ brief })} />
+              <SubIssues request={request} issue={issue} onOpen={onOpen} reload={reload} />
+              <LinksSection request={request} issue={issue} reload={reload} onAdd={setAddingLink} />
               <section className="mt-8 border-t pt-5" data-issue-discussion="">
                 <h2 className="mb-4 font-semibold">{T.detail.activity}</h2>
                 <ul className="flex flex-col gap-4">
                   {nextLogCursor && <li><Button variant="ghost" size="sm" onClick={loadEarlier}>{T.detail.loadEarlier}</Button></li>}
                   {discussion.map((entry) => entry.id === question?.id
                     ? <li key={entry.id}><AskCard issue={issue} entry={entry} logo={logo} now={now} /></li>
-                    : <LogLine key={entry.id} entry={entry} logo={logo} now={now} />)}
+                    : entry.kind === 'status' ? <StatusLine key={entry.id} entry={entry} now={now} />
+                    : <LogLine key={entry.id} issueId={issue.id} entry={entry} logo={logo} now={now} />)}
                 </ul>
-                <div className="mt-5"><MessageComposer key={issue.id} agent={issue.agent} logo={logo}
-                  outcome={askResult === issue.id && issue.status === 'done' && !issue.outcome}
+                <div className="mt-5"><MessageComposer key={issue.id} issueId={issue.id} agent={issue.agent} logo={logo}
+                  outcome={askResult === issue.id && statusType(issue.status) === 'done' && !issue.outcome}
                   onSkip={() => setAskResult(null)}
-                  onSend={async (text) => {
-                    if (askResult === issue.id && issue.status === 'done' && !issue.outcome) {
+                  onSend={async (text, options) => {
+                    if (askResult === issue.id && statusType(issue.status) === 'done' && !issue.outcome) {
                       const result = await change({ outcome: text });
                       if (result?.outcome === 'success') setAskResult(null);
                       return result;
                     }
-                    return message(text);
+                    return message(text, options);
                   }} /></div>
               </section>
             </div>
-            <aside className="flex w-[264px] shrink-0 flex-col gap-8" aria-label={T.detail.properties}>
+            <aside className="flex w-full shrink-0 flex-col gap-8 md:w-[264px]" aria-label={T.detail.properties}>
               <div>
                 <Section>{T.detail.properties}</Section>
                 <StatusMenu
                   status={issue.status}
                   onSelect={async (next) => {
                     const result = await change({ status: next });
-                    done(result, next === 'done' ? T.toast.markedDone : T.toast.status(T.status[next]));
-                    if (next === 'done' && result?.outcome === 'success') setAskResult(issue.id);
+                    done(result, statusType(next) === 'done' ? T.toast.markedDone : T.toast.status(statusLabel(next)));
+                    if (statusType(next) === 'done' && result?.outcome === 'success') setAskResult(issue.id);
                   }}
                 >
-                  <button type="button" className={propertyButton}><StatusIcon status={issue.status} />{T.status[issue.status]}</button>
+                  <button type="button" className={propertyButton}><StatusIcon status={issue.status} />{statusLabel(issue.status)}</button>
                 </StatusMenu>
                 <PriorityMenu priority={issue.priority} onSelect={async (next) => done(await change({ priority: next }), T.toast.priority(T.priority[next]))}>
                   <button type="button" className={propertyButton}><PriorityIcon priority={issue.priority} />{T.priority[issue.priority]}</button>
@@ -289,16 +258,27 @@ export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSessio
                   agent={issue.agent} project={issue.project} request={request} locked={Boolean(issue.agent)}
                   onSelect={async (next, project) => done(await assign(next, project), next ? T.toast.assigned(AGENT_NAMES[next] ?? next) : T.toast.unassigned)}
                 >
-                  <button type="button" disabled={Boolean(issue.agent)} className={propertyButton}>
-                    <AgentAvatar agent={issue.agent} state={issue.agentState} compact />
+                  <button type="button" disabled={Boolean(issue.agent) && !issue.session} className={propertyButton}
+                    aria-label={issue.agent && issue.session ? `${AGENT_NAMES[issue.agent] ?? issue.agent} · ${T.detail.openSession}` : undefined}
+                    title={issue.agent && issue.session ? T.detail.openSession : undefined}
+                    onClick={() => { if (issue.agent && issue.session) previewSession(issue); }}>
+                    <AgentAvatar agent={issue.agent} state={issue.agentState} finished={issue.agentFinished} asleep={issue.deepSleep} compact />
                     {issue.agent ? (AGENT_NAMES[issue.agent] ?? issue.agent) : T.noAgent}
                   </button>
                 </AgentMenu>
                 <DueMenu dueAt={issue.dueAt} onChange={async (dueAt) => done(await change({ dueAt }), dueAt == null ? T.toast.dueRemoved : T.toast.dueSet)}>
-                  <button type="button" className={cn(propertyButton, due && DUE_TONE[due.kind])} title={due?.hint}>
-                    <CalendarDays className="size-4" aria-hidden="true" />{due ? due.text : T.detail.noDueDate}
+                  <button type="button" data-issue-due={issue.id} className={propertyButton} title={due?.hint}>
+                    <DueIcon className={due ? DUE_ICON_TONE[due.kind] : 'text-muted-foreground'} />{due ? due.text : T.detail.noDueDate}
                   </button>
                 </DueMenu>
+              </div>
+              <div>
+                <Section>{T.labels.name}</Section>
+                <LabelMenu request={request} value={(issue.labels ?? []).map((label) => label.id)} onChange={(labels) => change({ labels })}>
+                  <button type="button" data-issue-labels={issue.id} className={cn(propertyButton, 'h-auto min-h-8 flex-wrap gap-1.5 py-1')}>
+                    {issue.labels?.length ? issue.labels.map((label) => <LabelChip key={label.id} label={label} />) : <><Tag className="size-4 text-muted-foreground" aria-hidden="true" />{T.labels.add}</>}
+                  </button>
+                </LabelMenu>
               </div>
               <div>
                 <Section>{T.detail.project}</Section>
@@ -309,6 +289,14 @@ export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSessio
                 </button>
                 </ProjectMenu>
               </div>
+              {origin && <div>
+                <Section>{T.detail.source}</Section>
+                <button type="button" className={propertyButton} title={origin.url} aria-label={`${origin.name} · ${T.detail.openSource}`}
+                  onClick={() => window.open(origin.url, '_blank', 'noopener,noreferrer')}>
+                  <span className="min-w-0 flex-1 truncate">{origin.name}</span>
+                  <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                </button>
+              </div>}
               {session?.sessionId && <div>
                 <Section>{T.source.session}</Section>
                 <button type="button" className={cn(propertyButton, 'h-auto min-h-8')} disabled={!session.command}
@@ -325,6 +313,8 @@ export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSessio
           </div>
         )}
       </div>
+      {issue && addingLink && <AddLinkDialog key={addingLink} request={request} issue={issue} kind={addingLink} onClose={() => setAddingLink(null)} onAdded={reload} />}
     </div>
+    </TooltipProvider>
   );
 }

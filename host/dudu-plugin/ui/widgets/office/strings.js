@@ -11,18 +11,17 @@ const en = {
   // The legend in the title row: the clothes of the three agents.
   agents: { claude: 'Claude', codex: 'ChatGPT', deepseek: 'DeepSeek' },
   /**
-   * The one sentence that stands for the whole picture, using the same In Review wording as the issue.
+   * The one sentence that stands for the whole picture, using the shared worker state names.
    * A state nobody is in is left out.
    */
   summary: (counts) => {
     const parts = STATE_ORDER.filter((state) => counts[state] > 0).map((state) => (
-      `${counts[state]} ${state === 'needs_you' ? T.status.in_review : state}`
+      `${counts[state]} ${T.agentState[state]}`
     ));
     return `Office: ${[count(counts.total, 'issue', 'issues'), ...parts].join(', ')}`;
   },
   // NEW: what a name tag says to a screen reader: the id and title, the status, what the agent is doing.
   tag: (ref, title, status, state) => `${ref} ${title}, ${status}, ${state}`,
-  more: (n) => `+${n}`,
 };
 
 export const O = localized(en, {

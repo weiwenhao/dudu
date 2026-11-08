@@ -63,7 +63,7 @@ export async function buildClient() {
     const { outputFiles, metafile } = await build({
       entryPoints: [join(ui, 'entry.jsx')], bundle: true, write: false, metafile: true, format: 'cjs', platform: 'browser', target: 'es2022',
       jsx: 'automatic', minify: true, legalComments: 'none', logLevel: 'warning', outfile: join(work, 'ui.cjs'),
-      loader: { '.png': 'dataurl', '.webp': 'dataurl' },
+      loader: { '.png': 'dataurl', '.webp': 'dataurl', '.svg': 'dataurl' },
       external: SHARED, define: { 'process.env.NODE_ENV': '"production"', __DUDU_CSS__: JSON.stringify(css) },
     });
     const shell = await readFile(join(plugin, 'client.js'), 'utf8');
@@ -88,6 +88,34 @@ ${shell}
   }
 }
 
+/**
+ * The settings pages the phone opens in its web view (host/phone-pages.mjs serves them): one script with React in it (these pages run outside DSH's own interface)
+ * and the same Tailwind output, scoped under `.dudu`.
+ */
+export async function buildPhonePages() {
+  const work = await mkdtemp(join(tmpdir(), 'dudu-phone-'));
+  try {
+    const css = await compileCss(work);
+    const { outputFiles } = await build({
+      entryPoints: [join(ui, 'phone', 'entry.jsx')], bundle: true, write: false, format: 'iife', platform: 'browser', target: 'es2022',
+      jsx: 'automatic', minify: true, legalComments: 'none', logLevel: 'warning', outfile: join(work, 'settings.js'),
+      loader: { '.png': 'dataurl', '.webp': 'dataurl', '.svg': 'dataurl' },
+      define: { 'process.env.NODE_ENV': '"production"', __DUDU_CSS__: JSON.stringify('') },
+    });
+    return { js: outputFiles[0].text, css };
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+}
+
+export async function writePhonePages(directory = join(plugin, 'dist', 'phone')) {
+  const { js, css } = await buildPhonePages();
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, 'settings.js'), js);
+  await writeFile(join(directory, 'settings.css'), css);
+  return { directory, bytes: js.length + css.length };
+}
+
 export async function writeClient(target = join(plugin, 'dist', 'client.js')) {
   const { text, notices, size } = await buildClient();
   await mkdir(dirname(target), { recursive: true });
@@ -98,4 +126,6 @@ export async function writeClient(target = join(plugin, 'dist', 'client.js')) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { target, size, bytes } = await writeClient();
   console.log(`client.js ${(bytes / 1024).toFixed(0)} KB (interface ${(size.js / 1024).toFixed(0)} KB, css ${(size.css / 1024).toFixed(1)} KB) -> ${target}`);
+  const phone = await writePhonePages();
+  console.log(`phone pages ${(phone.bytes / 1024).toFixed(0)} KB -> ${phone.directory}`);
 }

@@ -1,4 +1,3 @@
-// The only place the plugin imports OAR from. Packaging bundles this file, so the installed plugin carries just the
-// two runtimes it uses and none of the library's other harnesses.
-export { claudeRuntime } from '@botiverse/oar/runtimes/claude';
-export { codexRuntime } from '@botiverse/oar/runtimes/codex';
+// The plugin's only OAR import. The adapter owns the upstream version and compatibility patches.
+// Packaging bundles just these two runtime graphs into the standalone plugin.
+export { claudeRuntime, codexRuntime, initialTaskState, reduceTaskState } from '@dudu/oar-adapter';

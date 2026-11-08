@@ -11,12 +11,21 @@ import { PERSONAL_IDENTITY } from '../identity.mjs';
 const HARNESS = new Set(['claude', 'codex']);
 
 /** The route and model for a one-shot call: DSH's default when it is a plain model, else the first model of a route that is. */
-export function pickModel(catalog) {
-  const wanted = catalog?.default;
-  if (wanted?.provider && wanted?.model && !HARNESS.has(wanted.provider)) return { provider: wanted.provider, model: wanted.model };
+export function availableModel(catalog, wanted) {
+  if (!wanted?.provider || !wanted.model || HARNESS.has(wanted.provider)) return null;
+  const model = catalog?.groups?.find((group) => group.id === wanted.provider)?.models?.find((model) => model.id === wanted.model);
+  if (!model) return null;
+  const efforts = model.reasoning?.efforts ?? [];
+  const effort = efforts.some((item) => item.id === wanted.reasoningEffort) ? wanted.reasoningEffort : model.reasoning?.defaultEffort;
+  return { provider: wanted.provider, model: wanted.model, ...(effort ? { reasoningEffort: effort } : {}) };
+}
+
+export function pickModel(catalog, preferred) {
+  const wanted = availableModel(catalog, preferred) ?? availableModel(catalog, catalog?.default);
+  if (wanted) return wanted;
   for (const group of catalog?.groups ?? []) {
     const model = group?.models?.[0]?.id;
-    if (group?.id && model && !HARNESS.has(group.id)) return { provider: group.id, model };
+    if (group?.id && model && !HARNESS.has(group.id)) return availableModel(catalog, { provider: group.id, model });
   }
   return null;
 }

@@ -8,12 +8,12 @@ import { T } from '../strings.js';
 import { displayChanged, PROPERTY_ORDER } from './view.js';
 
 const D = T.display;
-const GROUP_FIELDS = ['status', 'agent', 'project', 'priority'];
+const GROUP_FIELDS = ['agentState', 'status', 'agent', 'project', 'priority'];
 const ORDER_FIELDS = ['priority', 'status', 'due', 'updated', 'created'];
 const COMPLETED = ['all', 'day', 'week', 'month', 'none'];
 const groupOptions = (without, none) => [
   ...(none ? [{ value: null, label: D.noGrouping }] : []),
-  ...GROUP_FIELDS.filter((field) => field !== without).map((field) => ({ value: field, label: D.groupBy[field] })),
+  ...GROUP_FIELDS.filter((field) => field !== without).map((field) => ({ value: field, label: field === 'agentState' ? T.fields.agentState : D.groupBy[field] })),
 ];
 
 const Separator = () => <div className="-mx-1.5 my-1.5 border-t" role="separator" />;
@@ -47,7 +47,7 @@ function ToggleLine({ label, checked, onChange }) {
  */
 export function DisplayMenu({ tab, view, onChange, onReset }) {
   const board = view.layout === 'board';
-  const group = view.group ?? (board ? 'status' : null);
+  const group = view.group ?? (board ? 'agentState' : null);
   const recency = view.recency ?? tab === 'all';
   const changed = displayChanged(view);
   return (

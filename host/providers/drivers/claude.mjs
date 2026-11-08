@@ -54,10 +54,11 @@ export function createClaudeProvider({ runtime = claudeRuntime, registry } = {})
     fallbackModels: FALLBACK_MODELS,
     // The child must not believe it runs inside another harness. OAR already drops Claude's own markers.
     scrub: { patterns: [/^(ORCA_|HERDR_)/] },
-    // OAR runs Claude without permission prompts, so a mode that is meant to keep Claude from changing anything has to
-    // take the tools away.
-    session: ({ permission }) => ({
+    // Use native permission evaluation; an explicit read-only envelope also removes writing tools.
+    session: ({ permission, signal }) => ({
+      ...(signal ? { openSignal: signal } : {}),
       env: { CLAUDE_CODE_ENTRYPOINT: ENTRYPOINT },
+      permissionMode: permission === 'danger-full-access' ? 'bypassPermissions' : permission === 'read-only' ? 'dontAsk' : permission === 'auto' ? 'auto' : 'inherit',
       disallowedTools: [...(permission === 'read-only' ? WRITING_TOOLS : []), ...UNANSWERABLE_TOOLS],
     }),
     // Claude takes a message written during its turn into a queue: it answers it with a turn of its own after this one.

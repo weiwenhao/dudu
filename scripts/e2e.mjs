@@ -1,5 +1,5 @@
 // Runs the end-to-end tests (tests/e2e). The plugin is packaged once, here: every test file starts its own DSH from that package, and
-// packaging is not something several of them can do at the same moment. Files to run can be named: `npm run test:e2e -- tests/e2e/dashboard.e2e.test.ts`.
+// packaging is not something several of them can do at the same moment. Files to run can be named: `npm run test:e2e -- tests/e2e/issues.e2e.test.ts`.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';

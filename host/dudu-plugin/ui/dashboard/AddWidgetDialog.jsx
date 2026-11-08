@@ -64,7 +64,6 @@ function WidgetPicker({ registry, onBoard, onAdd }) {
           <div className="flex flex-wrap items-baseline gap-x-2.5 text-lg/6 font-semibold">{widget.label}
             {widget.source && <span className="text-xs font-normal text-muted-foreground">{D.source(widget.source)}</span>}
           </div>
-          <div className="text-[14px]/5 text-muted-foreground">{widget.description}</div>
         </div>
         <Button variant={there ? 'outline' : 'default'} className="h-9 shrink-0 rounded-lg px-[18px]" disabled={there}
           aria-label={there ? D.added : `${D.add} ${widget.label}`} onClick={() => onAdd(widget.id)}>

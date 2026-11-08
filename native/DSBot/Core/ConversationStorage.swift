@@ -13,6 +13,9 @@ struct ConversationSnapshot: Codable, Sendable, Equatable {
     var permissions: [Choice] = []
     var presets: [Choice] = []
     var selectedPresetID: String?
+    var providers: [SessionProvider]?
+    /// Most recently opened conversations on this computer, excluding `detail`.
+    var recentDetails: [SessionDetail]?
 }
 
 protocol DSBotConversationStorage: Actor {
@@ -76,8 +79,14 @@ actor FileConversationStorage: DSBotConversationStorage {
 
     func save(_ snapshot: ConversationSnapshot) throws {
         guard snapshot.version == 1 else { throw ConversationStorageError.unsupportedVersion }
-        let data = try JSONEncoder().encode(snapshot)
-        guard data.count <= maximumBytes, data.count <= totalMaximumBytes else {
+        var bounded = snapshot
+        var data = try JSONEncoder().encode(bounded)
+        let limit = min(maximumBytes, totalMaximumBytes)
+        while data.count > limit, bounded.recentDetails?.isEmpty == false {
+            bounded.recentDetails?.removeLast()
+            data = try JSONEncoder().encode(bounded)
+        }
+        guard data.count <= limit else {
             throw ConversationStorageError.limitExceeded
         }
         let url = try fileURL(for: snapshot.computerID)

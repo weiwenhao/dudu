@@ -159,6 +159,51 @@ test('conversation reader times out uncooperative fetches and cancels late bodie
   assert.equal(cancelled, true);
 });
 
+test('conversation reader follows DSH versioned file redirects through the same owner scope', async () => {
+  const peer = { principal: { kind: 'owner' } };
+  const path = '/private/tmp/图片.png';
+  const bytes = Buffer.from('image-bytes');
+  const calls: URL[] = [];
+  const reads = createConversationReads({ peer, connection: { createSharedFetchHandler: () => ({
+    async fetch(request: Request, actualPeer: unknown) {
+      assert.equal(actualPeer, peer);
+      const url = new URL(request.url);
+      calls.push(url);
+      if (!url.searchParams.has('v')) return new Response(null, {
+        status: 302, headers: { location: `?${new URLSearchParams({ path, v: 'file-version' })}` },
+      });
+      return new Response(bytes, { headers: { 'content-type': 'image/png' } });
+    },
+  }) } });
+  assert.deepEqual(await reads.read('file', { path }), {
+    mediaType: 'image/png', dataBase64: bytes.toString('base64'),
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].searchParams.get('path'), path);
+  assert.equal(calls[1].searchParams.get('v'), 'file-version');
+});
+
+test('conversation reader rejects redirects outside the granted file and bounds redirect loops', async () => {
+  for (const location of [
+    'https://example.com/api/file?path=/tmp/a&v=1',
+    '/api/other?path=/tmp/a&v=1',
+    '?path=/tmp/other&v=1',
+    '?path=/tmp/a',
+    '?path=/tmp/a&v=1&extra=1',
+    '?path=/tmp/a&v=1',
+  ]) {
+    let calls = 0;
+    const reads = createConversationReads({
+      peer: { principal: { kind: 'owner' } },
+      connection: { createSharedFetchHandler: () => ({
+        async fetch() { calls++; return new Response(null, { status: 302, headers: { location } }); },
+      }) },
+    });
+    await assert.rejects(reads.read('file', { path: '/tmp/a' }), { code: 'UPSTREAM_UNAVAILABLE' });
+    assert.equal(calls, location === '?path=/tmp/a&v=1' ? 3 : 1);
+  }
+});
+
 test('conversation reader distinguishes missing resources from HTTP failures and malformed success bodies', async () => {
   for (const [status, code] of [[404, 'NOT_FOUND'], [413, 'LIMIT_EXCEEDED'], [401, 'UPSTREAM_UNAVAILABLE'], [502, 'UPSTREAM_UNAVAILABLE'], [500, 'UPSTREAM_UNAVAILABLE']]) {
     const reads = createConversationReads({

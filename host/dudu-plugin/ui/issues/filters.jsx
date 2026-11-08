@@ -1,8 +1,11 @@
-import { Activity, Bot, Box, CalendarDays, Plug } from 'lucide-react';
+import { Activity, Bot, Box, CalendarDays, Plug, Tag } from 'lucide-react';
 import { T } from '../strings.js';
 import { DATE_FIELDS } from './dates.js';
 import { PriorityIcon, StatusIcon } from './icons.jsx';
-import { AGENT_NAMES, AGENT_STATE_ORDER, PRIORITY_ORDER, STATUS_ORDER } from './model.js';
+import { LabelDot } from './LabelMenu.jsx';
+import { labelStore } from './labels.js';
+import { AGENT_NAMES, AGENT_STATE_ORDER, PRIORITY_ORDER } from './model.js';
+import { statusLabel, statusOrder } from './workflow.js';
 
 const SOURCE_ORDER = ['owner', 'dudu', 'connector', 'session'];
 const fixed = (order, label, counts, icon) => order.map((value) => ({ value, label: label(value), count: counts?.[value] ?? 0, icon: icon?.(value) }));
@@ -21,8 +24,8 @@ const dateField = (key) => ({
  */
 export const FILTER_FIELDS = {
   status: {
-    get name() { return T.fields.status; }, rowIcon: <StatusIcon status="backlog" />, order: STATUS_ORDER, label: (value) => T.status[value],
-    options: ({ counts }) => fixed(STATUS_ORDER, (value) => T.status[value], counts?.status, (value) => <StatusIcon status={value} />),
+    get name() { return T.fields.status; }, rowIcon: <StatusIcon status="backlog" />, get order() { return statusOrder(); }, label: statusLabel,
+    options: ({ counts }) => fixed(statusOrder(), statusLabel, counts?.status, (value) => <StatusIcon status={value} />),
   },
   agent: {
     get name() { return T.fields.agent; }, rowIcon: <Bot className="size-4 text-muted-foreground" aria-hidden="true" />,
@@ -41,6 +44,10 @@ export const FILTER_FIELDS = {
     get name() { return T.fields.project; }, rowIcon: <Box className="size-4 text-muted-foreground" aria-hidden="true" />, label: (value) => (value == null ? T.noProject : value),
     options: ({ facets }) => (facets?.project ?? []).map(({ key, count }) => ({ value: key, label: key == null ? T.noProject : key, count })),
   },
+  label: {
+    get name() { return T.fields.label; }, rowIcon: <Tag className="size-4 text-muted-foreground" aria-hidden="true" />, label: (value) => labelStore.get(value)?.name ?? `#${value}`,
+    options: ({ facets }) => (facets?.label ?? []).map(({ key, label, color, count }) => ({ value: key, label, count, icon: <LabelDot color={color} /> })),
+  },
   source: {
     get name() { return T.fields.source; }, rowIcon: <Plug className="size-4 text-muted-foreground" aria-hidden="true" />, order: SOURCE_ORDER, label: (value) => T.source[value],
     options: ({ facets }) => { const counts = found(facets?.source); return SOURCE_ORDER.map((value) => ({ value, label: T.source[value], count: counts.get(value) ?? 0 })); },
@@ -55,10 +62,10 @@ const rowOf = (key) => ({ get name() { return FILTER_FIELDS[key].name; }, rowIco
 export const FILTER_ROWS = {
   status: rowOf('status'), agent: rowOf('agent'), agentState: rowOf('agentState'), priority: rowOf('priority'),
   dates: { get name() { return T.dates.name; }, rowIcon: <CalendarDays className="size-4 text-muted-foreground" aria-hidden="true" />, fields: ['due', 'created', 'updated'] },
-  project: rowOf('project'), source: rowOf('source'),
+  project: rowOf('project'), label: rowOf('label'), source: rowOf('source'),
 };
 
 // The menu's groups, a line between each.
-export const FILTER_GROUPS = [['status', 'agent', 'agentState', 'priority', 'dates'], ['project'], ['source']];
+export const FILTER_GROUPS = [['status', 'agent', 'agentState', 'priority', 'dates'], ['project', 'label'], ['source']];
 
 export const FILTER_KEYS = Object.keys(FILTER_FIELDS);

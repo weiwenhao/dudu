@@ -11,6 +11,7 @@ struct SessionSearchHit: Codable, Identifiable, Sendable, Equatable {
 struct SessionSearchPage: Codable, Sendable, Equatable {
     var items: [SessionSearchHit]
     var hasMore: Bool
+    var indexing: Bool?
 }
 
 enum SessionSearchResults {
@@ -40,6 +41,7 @@ final class SessionSearchModel: ObservableObject {
     @Published private(set) var results: [SessionSearchHit] = []
     @Published private(set) var isLoading = false
     @Published private(set) var error: String?
+    @Published private(set) var retryRevision = 0
     private var requestID = UUID()
     private var loadedQuery: String?
     private var loadedComputerID: String?
@@ -54,6 +56,11 @@ final class SessionSearchModel: ObservableObject {
         loadedQuery = nil
         loadedComputerID = nil
         loadedRevision = nil
+    }
+
+    func retry() {
+        loadedQuery = nil
+        retryRevision &+= 1
     }
 
     func load(using store: DSBotStore) async {
@@ -80,12 +87,19 @@ final class SessionSearchModel: ObservableObject {
             try await Task.sleep(for: .milliseconds(200))
             try Task.checkCancellation()
             DSBotLog.record("session.search", counts: ["payloadBytes": phrase.utf8.count])
-            let page = try await store.searchSessions(phrase)
-            guard requestID == loadID, !Task.isCancelled else { return }
-            results = SessionSearchResults.merge(query: phrase, sessions: store.sessions, hits: page.items)
-            loadedQuery = phrase
-            loadedComputerID = computerID
-            loadedRevision = revision
+            while !Task.isCancelled {
+                let page = try await store.searchSessions(phrase)
+                guard requestID == loadID, !Task.isCancelled else { return }
+                results = SessionSearchResults.merge(query: phrase, sessions: store.sessions, hits: page.items)
+                if page.indexing != true {
+                    loadedQuery = phrase
+                    loadedComputerID = computerID
+                    loadedRevision = revision
+                    return
+                }
+                // Keep partial results readable while the shared desktop index catches up.
+                try await Task.sleep(for: .seconds(1))
+            }
         } catch is CancellationError {
             return
         } catch {

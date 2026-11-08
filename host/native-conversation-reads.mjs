@@ -33,7 +33,21 @@ export function createConversationReads({ connection, peer, timeoutMs = 20_000 }
       for (const [key, value] of Object.entries(coordinates)) url.searchParams.set(key, String(value));
       const read = async () => {
         controller.signal.throwIfAborted();
-        const response = await handler.fetch(new Request(url, { signal: controller.signal }), peer);
+        let response = await handler.fetch(new Request(url, { signal: controller.signal }), peer);
+        // DSH redirects unversioned file reads to their immutable version. Follow only
+        // that same file through the owner-scoped handler, never an arbitrary URL.
+        for (let redirects = 0; kind === 'file' && [301, 302, 303, 307, 308].includes(response.status); redirects++) {
+          void response.body?.cancel().catch(() => {});
+          if (redirects >= 2 || controller.signal.aborted) fail('UPSTREAM_UNAVAILABLE');
+          const location = response.headers.get('location');
+          let next;
+          try { next = location ? new URL(location, url) : undefined; } catch { /* rejected below */ }
+          if (!next || next.origin !== url.origin || next.pathname !== url.pathname
+            || next.username || next.password || next.hash
+            || next.searchParams.get('path') !== coordinates.path || !next.searchParams.get('v')
+            || [...next.searchParams.keys()].some((key) => !['path', 'v'].includes(key))) fail('UPSTREAM_UNAVAILABLE');
+          response = await handler.fetch(new Request(next, { signal: controller.signal }), peer);
+        }
         if (controller.signal.aborted || !response.ok || !response.body) {
           void response.body?.cancel().catch(() => {});
           controller.signal.throwIfAborted();

@@ -5,6 +5,17 @@ import expoConfig from 'eslint-config-expo/flat.js';
 export default defineConfig([
   expoConfig,
   {
-    ignores: ['dist/**', '.local/**', 'ios/**', 'android/**', 'src/generated/**'],
+    ignores: ['dist/**', '.local/**', 'ios/**', 'android/**', 'src/generated/**', 'packages/oar-adapter/.generated/**'],
+  },
+  {
+    // The MCP SDK is reached by subpaths of its `exports` map (client/auth.js, ...), which the import resolver does not read; node and esbuild do.
+    files: ['host/assistant/connectors/**/*.mjs'],
+    rules: { 'import/no-unresolved': ['error', { ignore: ['^@modelcontextprotocol/sdk/'] }] },
+  },
+  {
+    files: ['host/dudu-plugin/client.js', 'host/dudu-plugin/ui/entry.jsx'],
+    languageOptions: {
+      globals: { __DUDU_UI__: 'readonly', __DUDU_CSS__: 'readonly' },
+    },
   },
 ]);

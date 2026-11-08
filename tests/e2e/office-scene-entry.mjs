@@ -21,12 +21,14 @@ function snapshot() {
   const shadow = office.layers.effects.getChildByLabel('pingpong-shadow');
   return {
     people: [...office.people.values()].filter((person) => !person.gone).map((person) => ({
-      id: person.id, state: person.state, place: person.place, pose: person.pose, walking: Boolean(person.route || person.hop),
-      frame: person.view.sprite.texture.frame.x, until: person.until, epoch: person.epoch,
+      id: person.id, look: person.look, seat: person.seat, state: person.state, zone: person.zone, place: person.place, pose: person.pose, walking: Boolean(person.route || person.hop),
+      route: Boolean(person.route), hop: Boolean(person.hop), sleeping: person.view.zs.visible, frame: person.view.sprite.texture.frame.x, until: person.until, epoch: person.epoch,
       at: { ...person.at },
     })),
     ball: { visible: ball.visible, x: ball.x, y: ball.y },
     shadow: { visible: shadow.visible, x: shadow.x, y: shadow.y },
+    // what plays on each desk's monitor: the name of the animation's first frame, or null
+    screens: office.seats.map((seat) => seat.players.screen.container.children[0]?.textures?.[0]?.label ?? null),
   };
 }
 
@@ -54,7 +56,29 @@ window.officeTest = {
       remaining -= dt;
     } while (remaining > 1e-9);
     app.render();
+    library.release?.(app.renderer); // as the widget's scene does: the decoded copy of each picture the card has is let go of, so these tests draw what it draws
     return snapshot();
   },
   snapshot,
+  /** Waits until the people's sheets are decoded (they are, when a person of that look first appears), and draws the office with them. */
+  async loaded() {
+    await library.settled?.();
+    app.render();
+    library.release?.(app.renderer);
+    return snapshot();
+  },
+  /** The colour of the canvas at a point (in canvas pixels), as [r, g, b, a]: the scene is drawn first, in the same task, or the buffer is gone. */
+  pixel(x, y) {
+    app.render();
+    const probe = document.createElement('canvas');
+    probe.width = 1;
+    probe.height = 1;
+    const context = probe.getContext('2d');
+    context.drawImage(app.canvas, x, y, 1, 1, 0, 0, 1, 1);
+    return [...context.getImageData(0, 0, 1, 1).data];
+  },
+  /** Where a point of the plane is on the canvas. */
+  toCanvas(point) {
+    return { x: fit.x + point.x * fit.scale, y: fit.y + point.y * fit.scale };
+  },
 };

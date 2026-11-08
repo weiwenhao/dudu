@@ -138,7 +138,7 @@ test('a TUI rewind or an older native store does not overwrite or replay a newer
   assert.deepEqual(nativeUpdates({ events, history: history([turn('first', 'different'), turn('another branch', 'three')]), route: 'claude', sessionId: 'dsh-1' }), []);
 });
 
-test('live synchronization publishes through Session.append during idle maintenance and never takes a second writer', async () => {
+for (const api of ['legacy', 'query']) test(`live synchronization publishes through Session.append during idle maintenance and never takes a second writer (${api})`, async () => {
   const events = initial([turn('question', 'answer')]);
   let maintenance = 0;
   const live = {
@@ -159,7 +159,9 @@ test('live synchronization publishes through Session.append during idle maintena
   const sync = createNativeSync({
     persistence: () => ({ open: () => { throw new Error('writer must not be opened'); }, flush: async () => {} }),
     agents: () => ({ get: () => live }),
-    controller: () => ({ inspect: async () => ({ events: [...events] }) }),
+    ...(api === 'query'
+      ? { query: () => ({ readSession: async () => ({ session: { id: 'dsh-1', cwd: '/work' }, events: [...events] }) }) }
+      : { controller: () => ({ inspect: async () => ({ events: [...events] }) }) }),
   });
   const request = { sessionId: 'dsh-1', route: 'claude', history: history([turn('question', 'answer'), turn('next', 'new answer')]) };
   live.status = 'running';
@@ -194,4 +196,14 @@ test('Properties exposes the native id and its exact resume command, including s
   assert.deepEqual(await sessionInfo({ key: 'dsh:session-1', links }), { provider: 'claude', sessionId: 'abc-123', command: 'claude --resume abc-123' });
   assert.equal((await sessionInfo({ key: "codex:bad'; echo nope", links })).command, "codex resume 'bad'\\''; echo nope'");
   assert.equal((await sessionInfo({ key: 'dsh:session-2' })).command, null);
+});
+
+test('Properties recovers a native resume command through sessionQuery when the link is missing', async () => {
+  const query = { readSession: async (id: string) => {
+    assert.equal(id, 'dsh-1');
+    return { session: { id }, events: initial([turn('question', 'answer')], 'codex') };
+  } };
+  assert.deepEqual(await sessionInfo({ key: 'dsh:dsh-1', query }), {
+    provider: 'codex', sessionId: 'native-1', command: 'codex resume native-1',
+  });
 });

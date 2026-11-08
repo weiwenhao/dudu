@@ -25,6 +25,7 @@ private struct TurnChangesCard: View {
     let seq: Double
     @Environment(\.conversationAccess) private var access
     @State private var changes: ConversationChanges?
+    @State private var unavailable = false
     @State private var loading = false
     @State private var failure: String?
     @State private var showingFiles = false
@@ -32,7 +33,7 @@ private struct TurnChangesCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if changes == nil || changes?.files.isEmpty == false {
+            if !unavailable && (changes == nil || changes?.files.isEmpty == false) {
                 Button { showingFiles = true } label: {
                     HStack(spacing: 12) {
                         Image("ChangedFiles")
@@ -82,6 +83,7 @@ private struct TurnChangesCard: View {
         requestID = id
         loading = true
         failure = nil
+        unavailable = false
         defer { if requestID == id { loading = false } }
         do {
             let result: ConversationChanges = try await access.read("session.changes", ["seq": .number(seq)])
@@ -90,7 +92,13 @@ private struct TurnChangesCard: View {
             changes = result
         } catch is CancellationError {
         } catch {
-            if requestID == id, !Task.isCancelled { failure = error.localizedDescription }
+            guard requestID == id, !Task.isCancelled else { return }
+            // DSH keeps the announcement in history after its in-memory comparison expires.
+            if error as? DSBotFailure == .remote("NOT_FOUND") {
+                unavailable = true
+            } else {
+                failure = error.localizedDescription
+            }
         }
     }
 }

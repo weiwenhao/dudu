@@ -6,7 +6,9 @@ struct MessageMarkdown: View {
     /// Smaller, quieter text for secondary content such as a compaction summary.
     var compact = false
     var allowsTextSelection = true
+    var sourceSequence: Double?
     @Environment(\.conversationMarkdown) private var prepared
+    @Environment(\.conversationAccess) private var access
     @State private var parsed: (text: String, content: MarkdownContent)?
 
     var body: some View {
@@ -31,8 +33,8 @@ struct MessageMarkdown: View {
                 (parsed?.text == text ? parsed?.content : nil) {
                 Markdown(parsed)
                     .markdownTheme(compact ? .dsbotCompact : .dsbot)
-                    .markdownImageProvider(MessageImagePlaceholder())
-                    .markdownInlineImageProvider(MessageInlineImagePlaceholder())
+                    .markdownImageProvider(MessageImageProvider(sequence: sourceSequence))
+                    .markdownInlineImageProvider(MessageInlineImageProvider(sequence: sourceSequence, access: access))
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -211,19 +213,48 @@ private extension Theme {
         }
 }
 
-// Message markup must not silently create a second network transport.
-private struct MessageImagePlaceholder: ImageProvider {
+// Both image providers use the watched conversation's authenticated attachment transport.
+private struct MessageImageProvider: ImageProvider {
+    let sequence: Double?
+
     func makeImage(url: URL?) -> some View {
-        DSBotLabel("图片", icon: .camera)
-            .font(.system(size: 13))
-            .foregroundStyle(DSBotStyle.muted)
-            .padding(12)
-            .background(DSBotStyle.sheet, in: RoundedRectangle(cornerRadius: 10))
+        MessageImage(url: url, sequence: sequence)
     }
 }
 
-private struct MessageInlineImagePlaceholder: InlineImageProvider {
+private struct MessageImage: View {
+    let url: URL?
+    let sequence: Double?
+    @Environment(\.conversationAccess) private var access
+
+    var body: some View {
+        if let url, let sequence, let access {
+            ConversationImageThumbnail(
+                attachment: TranscriptAttachment(kind: "markdown", name: "图片", id: url.absoluteString, seq: sequence),
+                target: access.target, canLoadAttachment: access.connected,
+                identifier: "chat.markdown.image.\(Int(sequence))", loadImage: access.loadImage,
+                alignment: .leading
+            )
+        } else {
+            DSBotLabel("图片", icon: .camera)
+                .font(.system(size: 13))
+                .foregroundStyle(DSBotStyle.muted)
+                .padding(12)
+                .background(DSBotStyle.sheet, in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+}
+
+private struct MessageInlineImageProvider: InlineImageProvider {
+    let sequence: Double?
+    let access: ConversationAccess?
+
     func image(with url: URL, label: String) async throws -> Image {
-        Image(uiImage: UIImage())
+        guard let sequence, let access else { throw DSBotFailure.remote("NOT_FOUND") }
+        let attachment = TranscriptAttachment(kind: "markdown", name: label, id: url.absoluteString, seq: sequence)
+        guard let image = await access.loadImage(attachment, access.target, false) else {
+            throw DSBotFailure.remote("NOT_FOUND")
+        }
+        return Image(uiImage: image.image)
     }
 }

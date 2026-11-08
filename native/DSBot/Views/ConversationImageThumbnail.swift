@@ -6,6 +6,7 @@ struct ConversationImageThumbnail: View {
     let canLoadAttachment: Bool
     let identifier: String
     let loadImage: (TranscriptAttachment, DraftTarget, Bool) async -> PreparedPhotoImage?
+    var alignment: Alignment = .trailing
 
     @State private var image: PreparedPhotoImage?
     @State private var isPreviewPresented = false
@@ -24,8 +25,8 @@ struct ConversationImageThumbnail: View {
     }
 
     private var imageKey: ConversationImageKey? {
-        guard let target, let attachmentID = attachment.id else { return nil }
-        return ConversationImageKey(target: target, attachmentID: attachmentID)
+        guard let target else { return nil }
+        return ConversationImageKey(target: target, attachment: attachment)
     }
 
     var body: some View {
@@ -38,17 +39,19 @@ struct ConversationImageThumbnail: View {
                 .overlay {
                 if let image {
                     Image(uiImage: image.image).resizable().scaledToFill()
+                } else if isLoading {
+                    ProgressView()
                 } else {
                     DSBotIcon(.image, size: 28).foregroundStyle(DSBotStyle.chatTertiary)
                 }
             }
-            .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in min(width * 0.56, 260) }
+            .containerRelativeFrame(.horizontal, alignment: alignment) { width, _ in min(width * 0.56, 260) }
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(isLoading || (image == nil && !canLoadAttachment))
-        .frame(maxWidth: .infinity, alignment: .trailing)
+        .frame(maxWidth: .infinity, alignment: alignment)
         .accessibilityLabel(attachment.name)
         .accessibilityIdentifier(identifier)
         .task(id: LoadKey(image: imageKey, isReady: canLoadAttachment)) {

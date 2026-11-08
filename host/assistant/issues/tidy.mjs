@@ -109,7 +109,7 @@ export function createIssueTidy({ issues, llm, rules, file, now = Date.now }) {
     const skipped = [];
     for (const change of plan.changes) {
       const got = issues.get(change.id, { logLimit: 1 });
-      if (!got.issue || ['done', 'canceled'].includes(got.issue.status) || stampOf(got.issue) !== change.before) {
+      if (!got.issue || ['done', 'canceled'].includes(got.issue.statusType ?? got.issue.status) || stampOf(got.issue) !== change.before) {
         skipped.push(change.id);
         continue;
       }

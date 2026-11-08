@@ -17,7 +17,7 @@ const COMPAT_ASSET_CACHE_LIMIT = 48 * 1024 * 1024;
 const COMPAT_ASSET_CACHE_MAX_ENTRIES = 8;
 const INTERNAL_ROOT = '/__dsbot';
 const DYNAMIC_EXPR_UNAVAILABLE = 'DSH dynamic configuration expressions are disabled in the mobile embedded view.';
-const KNOWN_DYNAMIC_EXPR_EVALUATOR = 'const C7=new Function("ctx","expr",`\n  with (ctx) {\n    return eval(expr)\n  }\n`);function R0(';
+const KNOWN_DYNAMIC_EXPR_EVALUATOR = /const ([$A-Z_a-z][$\w]*)=new Function\("ctx","expr",`\n  with \(ctx\) \{\n    return eval\(expr\)\n  \}\n`\);/gu;
 const HTTP_BASE_PATH = /^\/dsbot\/ui\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/$/iu;
 const MIME_TYPES = Object.freeze({
   '.avif': 'image/avif',
@@ -382,11 +382,12 @@ function transformKnownDynamicExpression(assetPath, mimeType, data) {
   if (mimeType !== 'text/javascript; charset=utf-8'
     || !/^\/assets\/index-[A-Za-z0-9_-]+\.js$/u.test(assetPath)) return data;
   const source = data.toString('utf8');
-  const first = source.indexOf(KNOWN_DYNAMIC_EXPR_EVALUATOR);
-  if (first < 0 || source.indexOf(KNOWN_DYNAMIC_EXPR_EVALUATOR, first + 1) >= 0) return data;
-  const replacement = `const C7=(ctx,expr)=>{throw new Error(${JSON.stringify(DYNAMIC_EXPR_UNAVAILABLE)})};function R0(`;
+  const matches = [...source.matchAll(KNOWN_DYNAMIC_EXPR_EVALUATOR)];
+  if (matches.length !== 1) return data;
+  const [match] = matches;
+  const replacement = `const ${match[1]}=(ctx,expr)=>{throw new Error(${JSON.stringify(DYNAMIC_EXPR_UNAVAILABLE)})};`;
   return Buffer.from(
-    `${source.slice(0, first)}${replacement}${source.slice(first + KNOWN_DYNAMIC_EXPR_EVALUATOR.length)}`,
+    `${source.slice(0, match.index)}${replacement}${source.slice(match.index + match[0].length)}`,
     'utf8',
   );
 }
@@ -599,7 +600,7 @@ export function createDshMobileFrontend({
     }
     let resource = manifest.resources.get(path) ?? manifest.transformedAssets.get(path);
     if (!resource && manifest.allowBundle(path)) {
-      const response = await clientModules.fetchBundle({ method: 'GET', url: path });
+      const response = await clientModules.fetchBundle({ method: 'GET', url: path, headers: new Headers() });
       if (!response?.ok) throw new Error('Unknown DSH client module resource.');
       const data = Buffer.from(await response.arrayBuffer());
       if (data.byteLength > RESOURCE_LIMIT) throw new Error('DSH client module exceeds the resource limit.');

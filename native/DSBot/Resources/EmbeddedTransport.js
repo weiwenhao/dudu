@@ -137,6 +137,68 @@
     return result;
   };
 
+  const streamReads = new Map();
+  let pollingStreams = false;
+  let multiplexStreams = true;
+  const finishStreamRead = (id, entry) => {
+    if (streamReads.get(id) !== entry) return false;
+    streamReads.delete(id);
+    entry.signal?.removeEventListener('abort', entry.abort);
+    return true;
+  };
+  async function pollStreams() {
+    if (pollingStreams) return;
+    pollingStreams = true;
+    try {
+      while (streamReads.size) {
+        // Let readers consume the previous frames and rejoin before starting the next long poll.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const waiting = [...streamReads.entries()];
+        if (!waiting.length) break;
+        const result = await pageRPC('web.stream.next', { streamIds: waiting.map(([id]) => id) });
+        if (result?.error?.code === 'BAD_REQUEST') {
+          multiplexStreams = false;
+          for (const [id, entry] of [...streamReads.entries()]) {
+            if (!finishStreamRead(id, entry)) continue;
+            void pageRPC('web.stream.next', { streamId: id }, entry.signal).then(entry.resolve, entry.reject);
+          }
+          break;
+        }
+        // Earlier carriers and single-stream embedders return the original response shape.
+        const packets = Array.isArray(result?.streams) ? result.streams
+          : Array.isArray(result?.items) && waiting.length === 1
+            ? [{ ...result, streamId: waiting[0][0] }] : null;
+        if (!packets || result?.ok === false) throw new Error('STREAM_READ_FAILED');
+        for (const packet of packets) {
+          const entry = streamReads.get(packet.streamId);
+          if (entry && finishStreamRead(packet.streamId, entry)) entry.resolve(packet);
+        }
+      }
+    } catch (error) {
+      for (const [id, entry] of [...streamReads.entries()]) {
+        if (finishStreamRead(id, entry)) entry.reject(error);
+      }
+    } finally {
+      pollingStreams = false;
+      if (streamReads.size) void Promise.resolve().then(pollStreams);
+    }
+  }
+  function nextStream(id, signal) {
+    if (!httpTransport || !multiplexStreams) {
+      return pageRPC('web.stream.next', { streamId: id }, signal);
+    }
+    if (signal?.aborted) return Promise.reject(abortError());
+    return new Promise((resolve, reject) => {
+      const entry = { resolve, reject, signal, abort: undefined };
+      entry.abort = () => {
+        if (finishStreamRead(id, entry)) reject(abortError());
+      };
+      streamReads.set(id, entry);
+      signal?.addEventListener('abort', entry.abort, { once: true });
+      void Promise.resolve().then(pollStreams);
+    });
+  }
+
   function remoteStream(endpoint, payload, signal) {
     let streamID;
     let closed = false;
@@ -178,7 +240,7 @@
             }
           }
           while (!queued.length && !closed) {
-            const result = await pageRPC('web.stream.next', { streamId: streamID }, signal);
+            const result = await nextStream(streamID, signal);
             if (signal?.aborted) {
               close();
               return { done: true };
@@ -710,7 +772,7 @@
     const expanded = element.getAttribute('aria-expanded');
     if (expanded === 'true') return 'collapse';
     if (expanded === 'false') return 'expand';
-    if (element instanceof HTMLSummaryElement) {
+    if (element.matches('summary')) {
       return element.parentElement?.matches('details[open]') ? 'collapse' : 'expand';
     }
     if (element.matches('a,[role=link]')) return 'detail';

@@ -1,38 +1,69 @@
-import { Button } from '../components/button.jsx';
+import { useState } from 'react';
+import { Badge } from '../components/badge.jsx';
 import { T } from '../strings.js';
-import { Loading } from './Card.jsx';
+import { ActionButton, Group, Loading, Page, PrimaryButton, Problem, QuietButton, Row, TextField } from './kit.jsx';
 import { useLoaded } from './use-loaded.js';
 
 const R = T.settings.rules;
+const M = T.settings.memory;
 
-/** TRIAGE.md and ASSIGN.md as they are: only the owner changes them (in the system editor; 嘟嘟 can only propose). */
+/** One rule file: what it says, and the owner's way to change it. */
+function RuleFile({ request, name, text, projectFolder, reload }) {
+  const [draft, setDraft] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState('');
+  const edit = () => { setProblem(''); setDraft({ text: text ?? '', previous: text ?? null, projectFolder }); };
+  const save = async () => {
+    if (busy || !draft) return;
+    setBusy(true);
+    setProblem('');
+    try {
+      const result = await request('rules/update', { name, ...draft });
+      if (!['success', 'no_op'].includes(result.outcome)) throw new Error();
+      setDraft(null);
+      reload();
+    } catch { setProblem(T.toast.failed); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Group
+      label={name}
+      title={<>{R.files[name].title}<Badge>{name}</Badge></>}
+      action={draft ? (
+        <>
+          <QuietButton disabled={busy} onClick={() => { setDraft(null); setProblem(''); reload(); }}>{M.cancel}</QuietButton>
+          <PrimaryButton disabled={busy || draft.text === draft.previous} onClick={save}>{M.save}</PrimaryButton>
+        </>
+      ) : <ActionButton aria-label={M.editOf(name)} onClick={edit}>{M.edit}</ActionButton>}
+    >
+      <Row block>
+        {draft ? (
+          <TextField
+            autoFocus value={draft.text} onChange={(event) => setDraft((value) => ({ ...value, text: event.target.value }))}
+            aria-label={name} disabled={busy} spellCheck={false}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void save(); }
+            }}
+            className="h-[320px] resize-y px-3.5 py-3 font-mono text-xs/5"
+          />
+        ) : text ? <pre className="max-h-[320px] overflow-auto font-mono text-xs/5 whitespace-pre-wrap text-muted-foreground">{text}</pre>
+          : <p className="py-1 text-muted-foreground">{text === null ? R.missing : R.empty}</p>}
+        <Problem className="mt-2">{problem}</Problem>
+      </Row>
+    </Group>
+  );
+}
+
+/** The owner edits TRIAGE.md and ASSIGN.md here; Dudu can only read them. */
 export function RulesSection({ request }) {
   const state = useLoaded(request, 'rules/get');
   return (
-    <Loading state={state}>
-      {(value) => (
-        <div>
-          <p className="mx-1 mb-3 text-muted-foreground">{R.note}</p>
-          <div className="rounded-[20px] border px-5">
-            {['TRIAGE.md', 'ASSIGN.md'].map((name) => (
-              <section key={name} className="border-t border-border/50 first:border-t-0">
-                <div className="flex min-h-[60px] items-center gap-3.5 py-3">
-                  <div className="min-w-0 flex-1">
-                    <h3 className="flex flex-wrap items-center gap-2 text-[14px]/[22px] font-semibold">
-                      {R.files[name].title}<span className="inline-flex h-5 items-center rounded-md border px-1.5 text-[11px]/[18px] font-normal text-muted-foreground">{name}</span>
-                    </h3>
-                    <p className="text-[12px]/[18px] text-muted-foreground">{R.files[name].description}</p>
-                  </div>
-                  <Button variant="outline" size="sm" aria-label={`${R.open} ${name}`} onClick={() => request('assistant/open', { name })}>{R.open}</Button>
-                </div>
-                <div className="-mt-0.5 mb-4 rounded-[14px] bg-muted px-3.5 py-3">
-                  {value.rules?.[name] ? <pre className="max-h-[320px] overflow-auto text-xs/5 whitespace-pre-wrap text-muted-foreground">{value.rules[name]}</pre> : <p className="text-muted-foreground">{value.rules?.[name] === null ? R.missing : R.empty}</p>}
-                </div>
-              </section>
-            ))}
-          </div>
-        </div>
-      )}
-    </Loading>
+    <Page title={T.settings.nav.rules}>
+      <Loading state={state} rows={2}>
+        {(value) => ['TRIAGE.md', 'ASSIGN.md'].map((name) => (
+          <RuleFile key={name} request={request} name={name} text={value.rules?.[name]} projectFolder={value.projectFolder} reload={state.reload} />
+        ))}
+      </Loading>
+    </Page>
   );
 }

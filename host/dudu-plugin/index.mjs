@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,10 +7,12 @@ import { createTypertRpcAdapter } from './dist/native-bridge.mjs';
 import { createTypertPageRpc } from './dist/native-page-rpc.mjs';
 import { createDshMobileFrontend } from './dist/dsh-mobile-frontend.mjs';
 import { createNativePages } from './dist/native-pages.mjs';
+import { createDuduPages } from './dist/phone-pages.mjs';
 import { createConversationReads } from './dist/native-conversation-reads.mjs';
 import { createNativeQuestions } from './dist/native-questions.mjs';
 import { desktopPackageIdentity, writeDesktopRuntime } from './dist/desktop-runtime.mjs';
 import { createNativeDiagnostics } from './dist/native-diagnostics.mjs';
+import { createSessionDiagnostics } from './dist/session-diagnostics.mjs';
 import { migrateLegacyState } from './dist/legacy-state.mjs';
 import { createProviders } from './dist/providers/index.mjs';
 import { createLinkStore, createNativeSessions } from './dist/providers/native/index.mjs';
@@ -20,6 +23,9 @@ import { codexProvider } from './dist/providers/drivers/codex.mjs';
 import { permissionOf } from './dist/providers/permission.mjs';
 import { createIssues } from './dist/assistant/issues/index.mjs';
 import { createIssuesApi, ISSUE_ACTIONS } from './dist/assistant/issues/api.mjs';
+import { createIssueAttachmentApi } from './dist/assistant/issues/attachments.mjs';
+import { sourceOf } from './dist/assistant/issues/source.mjs';
+import { createInboxApi, INBOX_ACTIONS } from './dist/assistant/inbox/api.mjs';
 import { AGENTS, createAgentSessions, modelFor } from './dist/assistant/home/agent-sessions.mjs';
 import { approvalText, createDshSessions, questionText } from './dist/assistant/home/dsh-sessions.mjs';
 import { createAssignment } from './dist/assistant/home/assign.mjs';
@@ -27,6 +33,7 @@ import { firstMessage } from './dist/assistant/home/first-message.mjs';
 import { createDispatch } from './dist/assistant/dispatch/index.mjs';
 import { createDshLlm } from './dist/assistant/dispatch/dsh-llm.mjs';
 import { createHandOut } from './dist/assistant/dispatch/hand-out.mjs';
+import { createScheduler } from './dist/assistant/schedule/index.mjs';
 import { sessionOptions } from './dist/assistant/dispatch/rules.mjs';
 import { createDashboard } from './dist/assistant/dashboard/index.mjs';
 import { createDashboardApi, DASHBOARD_ACTIONS } from './dist/assistant/dashboard/api.mjs';
@@ -34,38 +41,76 @@ import { GridStackEngine } from './dist/assistant/dashboard/engine.mjs';
 import { openAssistant } from './dist/assistant/assistant.mjs';
 import { createConversation } from './dist/assistant/home/conversation.mjs';
 import { reminders } from './dist/assistant/home/reminders.mjs';
-import { createIssueTidy, createIssueTidyScheduler } from './dist/assistant/issues/tidy.mjs';
+import { createIssueTidy } from './dist/assistant/issues/tidy.mjs';
 import { claudeReader, codexReader, createSessions } from './dist/assistant/sessions/index.mjs';
+import { createDeepSleep, withDeepSleep } from './dist/assistant/home/deep-sleep.mjs';
 import { createSessionFolding, createSessionInbox } from './dist/assistant/home/inbox.mjs';
 import { createSessionCatalog } from './dist/assistant/home/session-catalog.mjs';
 import { createSessionTakeover } from './dist/assistant/home/session-takeover.mjs';
+import { createSessionTitles } from './dist/assistant/home/session-titles.mjs';
 import { createProjects } from './dist/assistant/home/projects.mjs';
 import { sessionInfo } from './dist/providers/native/session-info.mjs';
 import { createSourceCollector } from './dist/assistant/home/source-collector.mjs';
+import { createOAuth } from './dist/assistant/connectors/mcp.mjs';
 import { createSessionCleanup } from './dist/assistant/home/session-cleanup.mjs';
+import { agentActivityProjection } from './dist/assistant/sessions/activity-projection.mjs';
+import { harnessTimingProjection } from './dist/providers/stats.mjs';
+import { canReadSessionHistory, readSessionHistory } from './dist/dsh-session-history.mjs';
+
+// How long an agent whose turn has ended must be left alone to be in deep sleep: half an hour. A test that cannot wait that long says how long in
+// DUDU_DEEP_SLEEP_MS (milliseconds).
+const deepSleepAfter = Number(process.env.DUDU_DEEP_SLEEP_MS) > 0 ? Number(process.env.DUDU_DEEP_SLEEP_MS) : undefined;
 
 // Capture the loaded package once, so an old runtime cannot report newly installed files as its own.
 const runtimeIdentity = await desktopPackageIdentity(dirname(fileURLToPath(import.meta.url)));
 
+
+// The routes the plugin registers with DSH, by path: the plugin's own pages in the phone's web view (phone-pages.mjs) ask for a few of them through the same handlers
+// the desktop interface does, so there is one set of handlers and not two. The phone's page address, not DSH's, is what reaches them there.
+const routes = new Map();
+function registerRoute(ctx, spec) {
+  routes.set(spec.path, spec.fetch);
+  const dispose = ctx.connection.fetch.register(spec);
+  return () => { routes.delete(spec.path); return dispose?.(); };
+}
+
+/** One action of the desktop interface, run for a page of 嘟嘟's own on the phone: the handler's answer, with its status. */
+async function runRoute(action, body) {
+  const handler = routes.get(`/api/dudu/${action}`);
+  if (!handler) return { status: 404, body: { error: 'Not found' } };
+  try {
+    const response = await handler(new Request(`http://dudu.invalid/api/dudu/${action}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}),
+    }));
+    return { status: response.status, body: await response.json().catch(() => ({})) };
+  } catch {
+    return { status: 502, body: { error: 'The plugin could not answer.' } };
+  }
+}
+
 export const name = 'dudu';
-// Services every DSH has are required. The access mode a session is in is only read to scope what a harness may do,
-// so a DSH without it still runs the plugin; so does one without what the sessions of issues use (docs/dsh-session-control.md).
+// Every service named here is waited for, `false` or not (docs/dsh-session-control.md, 试错记录 7): a DSH that lacks one does not start the plugin. These are services every
+// DSH from 0.2.0 has; what only some DSHs have is read with `ctx.get` or `ctx.inject` and is not named here.
 export const inject = {
-  connection: true, typertGateway: true, clientModules: true, webServer: true, llm: true, agents: true,
+  connection: true, typertGateway: true, clientModules: true, webServer: true, llm: true, agents: true, sessions: true,
   sessionProjections: false, sessionPersistence: false, workspaceRegistry: false,
-  sessionController: false, permissionPresets: false, userQuestions: false, agentDefaultModel: false,
-  tools: false,
+  sessionController: false, sessionQuery: false, permissionPresets: false, userQuestions: false, agentDefaultModel: false,
+  tools: false, agentPresets: false, loader: false,
   // DSH's own commands: the conversation's Compact is its /compact.
-  commands: false,
+  commands: false, jobs: false,
   // DSH's attachment store: the pictures of a session loaded from Claude Code or Codex are kept there, so DSH's chat shows them.
   attachments: false,
+  fileUploads: false,
   // DSH's DeepSeek account, for the balance the Quota widget shows (its service reads the wallet; no credential reaches this plugin).
   deepseekAccount: false,
+  // DSH's credential store: where the tokens, keys and the values of environment variables of the connectors are kept (records under `dudu/<id>`). Without it they last until the plugin stops.
+  credentials: false,
 };
 
 // The two halves do not depend on each other. The phone control needs a DSH new enough to hand out peers (the
 // Desktop's); the providers work wherever DSH can route models, such as `dsh web`.
 async function startProviders(ctx, folder, assignment) {
+  const sessionDiagnostics = createSessionDiagnostics(folder);
   const links = await createLinkStore(folder);
   const providers = await createProviders({
     folder,
@@ -73,6 +118,7 @@ async function startProviders(ctx, folder, assignment) {
     host: {
       llm: ctx.llm,
       agents: ctx.agents,
+      jobs: () => ctx.jobs,
       attachments: () => ctx.attachments,
       on: (event, handler) => ctx.on(event, handler),
       permissionOf: (agent) => permissionOf(ctx.sessionProjections, agent),
@@ -83,93 +129,154 @@ async function startProviders(ctx, folder, assignment) {
         return selection?.pending?.provider ?? selection?.lastUsed?.provider
           ?? agent.session.requestHeader?.()?.config?.provider ?? agent.options?.provider;
       },
-      eventsOf: async (sessionId, signal) => (await ctx.get('sessionController')?.inspect(sessionId, signal))?.events,
+      eventsOf: async (sessionId, signal) => {
+        const services = { controller: ctx.get('sessionController'), query: ctx.get('sessionQuery') };
+        return canReadSessionHistory(services) ? (await readSessionHistory(services, sessionId, signal)).events : undefined;
+      },
+      flushSession: (session) => ctx.sessions.flush(session),
       onLink: links.record,
     },
   });
   // The sessions the harnesses already have, to browse and load into DSH. DSH's own stores are looked up when used.
   const native = createNativeSessions({
+    cacheFile: join(folder, 'session-search-native.sqlite'),
+    diagnostics: sessionDiagnostics,
     sources: providers.sources, links, persistence: () => ctx.sessionPersistence, workspaces: () => ctx.workspaceRegistry,
     attachments: () => ctx.attachments,
-    controller: () => ctx.sessionController, agents: () => ctx.agents,
+    controller: () => ctx.sessionController, query: () => ctx.sessionQuery, agents: () => ctx.agents,
     rebind: (previousId, sessionId) => assignment.rebindSession?.(previousId, sessionId),
   });
   // The issues store opens in startIssues, so it is asked for when a list is read, not now.
-  const catalog = createSessionCatalog({ native, dsh: createDshSessions(ctx, { hidden: links.removed }), issues: { findBySession: (key) => assignment.issues?.findBySession(key) } });
+  const searchDsh = createDshSessions(ctx, { hidden: links.removed, cacheFile: join(folder, 'session-search-dsh.sqlite'), diagnostics: sessionDiagnostics });
+  const catalog = createSessionCatalog({ native, dsh: searchDsh, issues: { findBySession: (key) => assignment.issues?.findBySession(key) } });
   assignment.sessionCatalog = catalog;
+  assignment.searchSessions = async (query) => {
+    const rows = await searchDsh.catalog({ query, contentIndexOnly: true });
+    return {
+      items: rows.map((row) => ({ sessionId: row.id, snippet: row.evidence?.text ?? '' })),
+      indexing: searchDsh.searchState().running,
+    };
+  };
   const projects = createProjects({ registry: () => ctx.workspaceRegistry });
+  assignment.projects = projects;
   assignment.nativeSessions = native;
   assignment.sources = providers.sources;
+  assignment.release = (sessionId) => providers.release(sessionId); // deep sleep lets go of what the harnesses hold for a session whose turn has ended
   assignment.links = links;
   const overview = createOverview({
     sources: providers.sources, links, titleOf: native.titleOf,
     balance: createAccountBalance({ account: () => { try { return ctx.deepseekAccount; } catch { return undefined; } } }), // reading a service this DSH lacks throws
   });
   const disposers = [
-    ...['state', 'refresh', 'save'].map((action) => ctx.connection.fetch.register({
+    ...['state', 'refresh', 'save'].map((action) => registerRoute(ctx, {
       path: `/api/dudu/providers/${action}`, methods: ['POST'], requestBody: 'buffered',
       fetch: (request) => providers.handle(action, request),
     })),
-    ...['list', 'load', 'read', 'sync'].map((action) => ctx.connection.fetch.register({
+    ...['list', 'load', 'read', 'sync'].map((action) => registerRoute(ctx, {
       path: `/api/dudu/sessions/${action}`, methods: ['POST'], requestBody: 'buffered',
       fetch: async (request) => {
         if (action === 'load' || action === 'sync') return native.handle(action, request);
         const body = await request.json().catch(() => null);
         if (!body || typeof body !== 'object' || Array.isArray(body)) return Response.json({ outcome: 'error', code: 'invalid_session' }, { status: 400 });
-        try { return Response.json(await catalog[action](body), { headers: { 'cache-control': 'no-store' } }); }
+        try {
+          const signal = AbortSignal.any([request.signal, AbortSignal.timeout(12_000)]);
+          return Response.json(await catalog[action](body, { signal }), { headers: { 'cache-control': 'no-store' } });
+        }
         catch { return Response.json({ error: 'Sessions are unavailable.' }, { status: 503 }); }
       },
     })),
-    ...['list', 'create'].map((action) => ctx.connection.fetch.register({
+    ...['list', 'create'].map((action) => registerRoute(ctx, {
       path: `/api/dudu/projects/${action}`, methods: ['POST'], requestBody: 'buffered',
       fetch: (request) => projects.handle(action, request),
     })),
-    ...['usage', 'running'].map((action) => ctx.connection.fetch.register({
+    ...['usage', 'running'].map((action) => registerRoute(ctx, {
       path: `/api/dudu/overview/${action}`, methods: ['POST'], requestBody: 'buffered',
       fetch: (request) => overview.handle(action, request),
     })),
   ];
-  return async () => {
-    delete assignment.nativeSessions;
-    delete assignment.sessionCatalog;
-    delete assignment.sources;
-    delete assignment.links;
-    for (const dispose of disposers) dispose();
-    await providers.close();
-    await links.flush();
+  return {
+    // Start native teardown as soon as plugin disposal begins; other services
+    // can await scans, HTTP connections or output while the writers are exiting.
+    stopHarnesses: () => providers.close(),
+    async stop() {
+      delete assignment.nativeSessions;
+      delete assignment.projects;
+      delete assignment.sessionCatalog;
+      delete assignment.searchSessions;
+      delete assignment.sources;
+      delete assignment.release;
+      delete assignment.links;
+      for (const dispose of disposers) dispose();
+      await Promise.all([providers.close(), native.close(), searchDsh.close()]);
+      await links.flush();
+      await sessionDiagnostics.flush();
+    },
   };
 }
 
 // The issues of 嘟嘟 (docs/assistant.md): one SQLite file in the plugin's state folder, served to the desktop interface.
 // `assignment` is the issues' hooks into the sessions they are given to; startAssignment fills it in once the store is open.
 async function startIssues(ctx, folder, assignment = {}) {
-  const issues = createIssues({ file: join(folder, 'assistant', 'issues.db'), sessionState: (key) => assignment.sessionState?.(key) ?? assignment.snapshots?.stateOf(key) ?? null });
+  const issues = createIssues({ file: join(folder, 'assistant', 'issues.db'), sessionState: (key) => assignment.sessionState?.(key) ?? assignment.snapshots?.stateOf(key) ?? null,
+    sessionSince: (key) => assignment.sessionSince?.(key) ?? assignment.snapshots?.snapshotOf(key)?.stateSince ?? null,
+    sessionBases: (key) => assignment.sessionBases?.(key), sessionHandledAt: (key) => assignment.sessionHandledAt?.(key) ?? null, deepSleepMs: deepSleepAfter,
+    deepSleepOn: () => assignment.assistant?.settings?.value('deepSleep') !== false }); // the settings open later (startAssistant): until then, and for a file without the key, it is on
+  const attachmentApi = createIssueAttachmentApi({ issues, attachments: () => ctx.attachments });
+  const forward = async (issue, text, _entry, attachments = []) => {
+    const current = issues.get(issue.id, { logLimit: 1 }).issue;
+    if (!current?.project?.path || current.agent !== issue.agent || current.session !== issue.session) return { outcome: 'needs_clarification' };
+    const target = await assignment.loadIssueSession?.(current) ?? current;
+    const content = typeof attachments === 'function' ? await attachments(target.session?.replace(/^dsh:/, '')) : attachments;
+    return assignment.forward?.(target, text, content) ?? { outcome: 'error' };
+  };
   const api = createIssuesApi({
     issues,
     onAssign: (issue) => assignment.onAssign?.(issue),
     onReply: async (issue, text) => assignment.onReply?.(await assignment.loadIssueSession?.(issue) ?? issue, text),
     onResume: async (issue) => assignment.onResume?.(await assignment.loadIssueSession?.(issue) ?? issue),
-    onChange: (issue) => ['done', 'canceled'].includes(issue.status) ? assignment.closeFor?.(issue) : assignment.onAssign?.(issue),
+    onChange: (issue) => ['done', 'canceled'].includes(issue.statusType ?? issue.status) ? assignment.closeFor?.(issue) : assignment.onAssign?.(issue),
     onForget: (issue) => assignment.closeFor?.(issue),
     onDelete: (issue) => assignment.deleteSessions?.(issue) ?? Promise.reject(new Error('Session cleanup is unavailable.')),
-    onSession: (issue) => sessionInfo({ key: issue.session, links: assignment.links, controller: ctx.sessionController }),
+    onSession: (issue) => sessionInfo({ key: issue.session, links: assignment.links, controller: ctx.sessionController, query: ctx.sessionQuery }),
+    onSource: (issue) => sourceOf({ issue, issues, collectors: assignment.assistant?.collectors }),
+    onForward: forward,
     onMention: async (issue, message, entry) => {
       if (message.target === 'dudu') {
         if (!assignment.conversation) return { outcome: 'error' };
-        return assignment.conversation.issueMessage(issue, message.body, entry);
+        return assignment.conversation.issueMessage(issue, message.body, entry,
+          (sessionId) => attachmentApi.promptParts(issue, entry, sessionId, ctx.fileUploads));
       }
-      const current = issues.get(issue.id, { logLimit: 1 }).issue;
-      if (!current?.project?.path) return { outcome: 'needs_clarification' };
-      if (current.agent !== message.target || !current.session) return { outcome: 'needs_clarification' };
-      return assignment.forward?.(await assignment.loadIssueSession?.(current) ?? current, message.body) ?? { outcome: 'error' };
+      return forward(issue, message.body, entry,
+        (sessionId) => attachmentApi.promptParts(issue, entry, sessionId, ctx.fileUploads));
     },
   });
   assignment.issues = issues;
-  const disposers = ISSUE_ACTIONS.map((action) => ctx.connection.fetch.register({
-    path: `/api/dudu/issues/${action}`, methods: ['POST'], requestBody: 'buffered',
-    fetch: (request) => api.handle(action, request),
-  }));
+  assignment.issuesApi = api;
+  // What the connectors collected, for the Collector widget: the connectors' names are asked for when a list is read (the project folder can move).
+  // Sharing a record to a session is the owner's message to the agent of that issue, through the same door as the one typed on the issue's page.
+  const inboxApi = createInboxApi({ issues, collectors: () => assignment.assistant?.collectors ?? null, forward: (id, text) => api.execute('forward', { id, text }) });
+  assignment.inboxApi = inboxApi;
+  const disposers = [
+    registerRoute(ctx, {
+      path: '/api/dudu/issues/attachment-upload', methods: ['POST'], requestBody: 'streaming',
+      fetch: (request) => attachmentApi.upload(request),
+    }),
+    registerRoute(ctx, {
+      path: '/api/dudu/issues/attachment', methods: ['GET'], requestBody: 'buffered',
+      fetch: (request) => attachmentApi.read(request),
+    }),
+    ...ISSUE_ACTIONS.map((action) => registerRoute(ctx, {
+      path: `/api/dudu/issues/${action}`, methods: ['POST'], requestBody: 'buffered',
+      fetch: (request) => api.handle(action, request),
+    })),
+    ...INBOX_ACTIONS.map((action) => registerRoute(ctx, {
+      path: `/api/dudu/inbox/${action}`, methods: ['POST'], requestBody: 'buffered',
+      fetch: (request) => inboxApi.handle(action, request),
+    })),
+  ];
   return async () => {
+    delete assignment.issuesApi;
+    delete assignment.inboxApi;
     for (const dispose of disposers) dispose();
     issues.close();
   };
@@ -180,28 +287,39 @@ async function startIssues(ctx, folder, assignment = {}) {
 // runtimes serve it from the services every plugin can inject: no phone peer is needed.
 async function startAssignment(ctx, folder, assignment) {
   if (!assignment.issues) throw new Error('there are no issues');
-  const dsh = createDshSessions(ctx, { hidden: (id) => assignment.links?.removed(id) });
+  await ctx.sessionProjections?.register(agentActivityProjection);
+  await ctx.sessionProjections?.register(harnessTimingProjection);
+  const dsh = createDshSessions(ctx, {
+    hidden: (id) => assignment.links?.removed(id),
+    nativeDefaults: async (agent, { cwd, model }) => {
+      if (agent !== 'claude') return null;
+      const driver = assignment.sources?.().find((source) => source.id === 'claude')?.driver;
+      if (!driver?.configuration) return null;
+      const configured = await driver.configuration({ cwd, ...(model && model !== 'default' ? { model } : {}) });
+      // The DSH workspace envelope no longer removes Bash. Claude's own saved mode evaluates the operation.
+      return { model: model ?? configured.model, effort: configured.effort, access: 'workspace-write' };
+    },
+  });
+  const titles = await createSessionTitles({ issues: assignment.issues, dsh, file: join(folder, 'assistant', 'session-titles.json') });
   // DSH lists the models of the harnesses the first time it is asked, which takes a moment; the first issue given to an agent need not wait.
   void dsh.models().catch(() => {});
   const agentSessions = createAgentSessions({ dsh });
   const hooks = createAssignment({
     issues: assignment.issues,
+    repairDefaults: async (issue) => {
+      if (issue.agent !== 'claude' || !issue.session?.startsWith('dsh:')) return;
+      const options = sessionOptions(assignment.assistant?.memory?.rules?.()?.rules?.['ASSIGN.md'], issue, { home: homedir(), defaultAccess: null });
+      if (options.problem) return;
+      const initial = assignment.issues.sessionStart(issue.id, issue.session);
+      try { await dsh.repairDefaults(issue.session.slice(4), initial, { access: options.access == null, model: !options.model }); }
+      catch (error) { console.warn(`[dudu] Legacy Claude defaults could not be restored: ${error.message}`); }
+    },
     agentSessions,
     snapshotOf: (key) => assignment.snapshots?.snapshotOf(key),
-    read: (key) => {
-      const [provider, ...parts] = key.split(':');
-      return ['claude', 'codex'].includes(provider)
-        ? assignment.nativeSessions.read({ provider, id: parts.join(':') })
-        : dsh.read(key);
-    },
-    llm: (...args) => {
-      if (!assignment.llm) throw new Error('The assistant model is unavailable.');
-      return assignment.llm(...args);
-    },
     // What ASSIGN.md allows for this kind of issue; read-only when it says nothing (3.3).
-    accessOf: (issue) => sessionOptions(assignment.assistant?.memory?.rules?.()?.rules?.['ASSIGN.md'], issue, { home: homedir() }),
+    accessOf: (issue) => sessionOptions(assignment.assistant?.memory?.rules?.()?.rules?.['ASSIGN.md'], issue, { home: homedir(), defaultAccess: issue.agent === 'claude' ? null : 'read-only' }),
   });
-  Object.assign(assignment, { sessions: agentSessions, sessionState: hooks.sessionState, onAssign: hooks.onAssign, onReply: hooks.onReply, forward: hooks.forward, onResume: hooks.onResume, start: hooks.start, setAccess: hooks.setAccess, closeFor: hooks.closeFor, restore: hooks.restore });
+  Object.assign(assignment, { sessions: agentSessions, sessionState: hooks.sessionState, sessionSince: hooks.sessionSince, sessionBases: hooks.sessionBases, sessionHandledAt: hooks.sessionHandledAt, onAssign: hooks.onAssign, onReply: hooks.onReply, forward: hooks.forward, onResume: hooks.onResume, start: hooks.start, setAccess: hooks.setAccess, closeFor: hooks.closeFor, restore: hooks.restore });
   assignment.rebindSession = async (previousId, sessionId) => {
     const previous = `dsh:${previousId}`;
     const next = `dsh:${sessionId}`;
@@ -230,8 +348,8 @@ async function startAssignment(ctx, folder, assignment) {
   });
   const takeover = createSessionTakeover({
     issues: assignment.issues, catalog: assignment.sessionCatalog, adopt: hooks.adopt,
-    stateOf: (key) => key.startsWith('dsh:') && dsh.isRunning(key.slice(4)) ? 'running' : agentSessions.stateOf(key) ?? assignment.snapshots?.stateOf(key),
-    snapshotOf: (key) => agentSessions.snapshotOf(key) ?? assignment.snapshots?.snapshotOf(key),
+    stateOf: hooks.sessionState,
+    snapshotOf: hooks.snapshotOf,
     read: (key) => {
       const [provider, ...parts] = key.split(':');
       return ['claude', 'codex'].includes(provider) ? assignment.nativeSessions.read({ provider, id: parts.join(':') }) : dsh.read(key);
@@ -241,7 +359,7 @@ async function startAssignment(ctx, folder, assignment) {
     load: (issue) => assignment.loadSessionOf(issue),
   });
   assignment.takeOverSession = takeover.takeOver;
-  const disposeTakeover = ctx.connection.fetch.register({
+  const disposeTakeover = registerRoute(ctx, {
     path: '/api/dudu/sessions/takeover', methods: ['POST'], requestBody: 'buffered',
     fetch: async (request) => {
       const body = await request.json().catch(() => null);
@@ -274,14 +392,23 @@ async function startAssignment(ctx, folder, assignment) {
   const snapshots = createSessions({
     file: join(folder, 'assistant', 'index', 'sessions.db'), readers, links: assignment.links,
     ignore: (key) => key.startsWith('dsh:dudu-assistant-'),
+    // An issue's agent keeps a question, a failure or a stop however old (owner, 2026-11-07: idle only by their own word): a lookup in the issues table, nothing else.
+    pinned: (key) => (assignment.issues?.sessionOwners(key)?.length ?? 0) > 0,
   });
   assignment.snapshots = snapshots;
-  const observe = (snapshot) => inbox.accept(snapshot).catch((error) => console.warn(`[dudu] A waiting session could not become an issue: ${error.message}`));
+  // What the sidebar and the phone know of a session: its snapshot, and `deepSleep` when its agent sleeps, whatever its mark is (owner, 2026-11-07: "进入到睡眠状态，右下角的图标应该都变成月亮才对。重新
+  // 激活后再恢复到原来的状态"): they draw the crescent in the corner for it, and the mark itself is not touched, so it is there again when the agent wakes.
+  const activityOf = (id) => withDeepSleep(hooks.snapshotOf(`dsh:${id}`), `dsh:${id}`, (key) => {
+    const issue = assignment.issues?.findBySession(key).issue;
+    return issue?.deepSleep === true;
+  });
+  assignment.sessionActivity = activityOf;
+  const observe = (snapshot) => inbox.accept(snapshot).catch((error) => console.warn(`[dudu] A managed issue could not follow its session: ${error.message}`));
   const stopSnapshots = snapshots.onChange(({ to, snapshot }) => {
     if (to != null && snapshot) void observe(snapshot);
-    assignment.sessionChanged?.();
   });
-  const startup = hooks.restore()
+  const startup = titles.restore()
+    .then(() => hooks.restore())
     .then(() => snapshots.poll())
     .then(() => hooks.restore())
     .then(() => Promise.all(snapshots.snapshots({ state: 'waiting_owner', limit: 500 }).snapshots.map(observe)))
@@ -308,7 +435,14 @@ async function startAssignment(ctx, folder, assignment) {
       if (issue) assignment.issues.log(issue.id, { actor: 'dudu', kind: 'session', text: 'closed the session' });
     },
   });
-  const disposeSnapshots = ctx.connection.fetch.register({
+  // An idle agent that nobody has handled for half an hour is in deep sleep (its issue says so): what is kept for it is let go of. Looked at every
+  // minute, or, when a test has shortened the time, every half of it.
+  const deepSleep = createDeepSleep({
+    sessions: agentSessions, asleep: (key) => assignment.issues.findBySession(key).issue?.deepSleep === true,
+    intervalMs: deepSleepAfter ? Math.min(60_000, Math.max(250, deepSleepAfter / 2)) : undefined,
+    release: (key) => assignment.release?.(key.slice('dsh:'.length)),
+  });
+  const disposeSnapshots = registerRoute(ctx, {
     path: '/api/dudu/sessions/snapshots', methods: ['POST'], requestBody: 'buffered',
     fetch: async (request) => {
       let body;
@@ -317,66 +451,112 @@ async function startAssignment(ctx, folder, assignment) {
       return Response.json(snapshots.snapshots(body), { headers: { 'cache-control': 'no-store' } });
     },
   });
+  const disposeActivity = registerRoute(ctx, {
+    path: '/api/dudu/sessions/activity', methods: ['POST'], requestBody: 'buffered',
+    fetch: async (request) => {
+      const body = await request.json().catch(() => null);
+      if (!Array.isArray(body?.sessionIds) || body.sessionIds.length > 200 ||
+          body.sessionIds.some((id) => typeof id !== 'string' || !id || id.length > 512)) {
+        return Response.json({ outcome: 'error', code: 'invalid_session' }, { status: 400 });
+      }
+      const states = Object.fromEntries(body.sessionIds.map((id) => {
+        const snapshot = activityOf(id);
+        return [id, snapshot ? { state: snapshot.state, lastActivityAt: snapshot.lastActivityAt, provider: snapshot.provider, agent: snapshot.agent, ...(snapshot.deepSleep ? { deepSleep: true } : {}) } : null];
+      }));
+      return Response.json({ states }, { headers: { 'cache-control': 'no-store' } });
+    },
+  });
   return async () => {
     await folding.close();
+    await deepSleep.close();
     for (const stop of questionStops) stop();
     stopSnapshots();
     disposeSnapshots();
+    disposeActivity();
+    delete assignment.sessionActivity;
     disposeTakeover();
     delete assignment.takeOverSession;
     await takeover.close();
     await startup;
+    await titles.close();
     await snapshots.dispose();
     await inbox.close();
     delete assignment.snapshots;
     delete assignment.loadIssueSession;
-    for (const hook of ['sessions', 'sessionState', 'onAssign', 'onReply', 'forward', 'onResume', 'start', 'closeFor', 'restore', 'deleteSessions', 'rebindSession']) delete assignment[hook];
+    for (const hook of ['sessions', 'sessionState', 'sessionBases', 'sessionHandledAt', 'onAssign', 'onReply', 'forward', 'onResume', 'start', 'closeFor', 'restore', 'deleteSessions', 'rebindSession']) delete assignment[hook];
     await hooks.dispose();
     agentSessions.dispose();
   };
 }
 
-// 嘟嘟's own state (docs/assistant.md 2, 3.5, 3.6): the project folder with its Markdown files, the settings, the memory and the
-// connectors, and the calls the settings page makes on them. A project folder that cannot be opened turns off the memory and the
-// connectors only (the settings page says why); the rest of the plugin runs.
+// 嘟嘟's own state (docs/assistant.md 2, 3.5, 3.6): the project folder with its Markdown files, the settings, the memory, the
+// connectors and the collectors, and the calls the settings page makes on them. A project folder that cannot be opened turns off the memory,
+// the connectors and the collectors only (the settings page says why); the rest of the plugin runs.
+/** A service DSH may not have: reading it from the context of a plugin that did not inject it throws, so it is null then. */
+function optionalService(ctx, name) {
+  try { return ctx[name] ?? null; } catch { return null; }
+}
+
+/**
+ * What mounts one MCP server in DSH, so that its tools are in every session of the owner: DSH's own MCP client, the plugin every DSH has, mounted under this plugin for as long as
+ * the server is connected (connectors/publish.mjs). Null when this DSH has none, and then the connectors work for the collections only.
+ */
+async function mcpMounter(ctx) {
+  try {
+    const client = await ctx.loader.import('@deepseek-ai/dsh-mcp-client');
+    if (typeof client?.apply !== 'function') return null;
+    // Not the child itself: it is awaitable, and waiting for it would wait for the server to answer.
+    return (config) => { const child = ctx.plugin(client, config); return { dispose: () => child.dispose() }; };
+  } catch (error) {
+    console.warn(`[dudu] DSH's MCP client could not be loaded, so the connectors are not in its sessions: ${error?.message ?? error}`);
+    return null;
+  }
+}
+
 async function startAssistant(ctx, dshHome, folder, assignment = {}) {
   // The memory asks the model of startDispatch once it is there (the same one DSH has as its default).
   const llm = (messages, options) => (assignment.llm ? assignment.llm(messages, options) : Promise.reject(new Error('There is no model yet.')));
   const assistant = openAssistant({
     dshHome, stateFolder: join(folder, 'assistant'), llm,
-    dsh: {
-      tools: () => assignment.conversation?.dshConnectors.tools() ?? [],
-      call: (...args) => assignment.conversation?.dshConnectors.call(...args),
-    },
+    mountMcp: await mcpMounter(ctx), // what is connected is mounted in DSH, to be in every session
+    credentials: optionalService(ctx, 'credentials'), // where the tokens, keys and values of environment variables of the connectors are kept
+    createOAuth, // the browser sign-in of the hosted MCP servers
     state: () => ({ conversation: assignment.conversation?.state() ?? null, lastIssueTidy: assignment.issueTidy?.state() ?? null, counts: assignment.issues?.counts() ?? null }),
     beforeFolderChange: () => assignment.conversation?.busy ? { outcome: 'needs_clarification', message: 'Wait until the conversation and memory tidy finish.' } : null,
   });
   assignment.assistant = assistant; // startAssignment and startDispatch read the rules and the connectors through it: the folder can move
   assignment.projectFolder = () => assistant.folder;
+
   for (const problem of assistant.problems) console.warn(`[dudu] The project folder is not available: ${problem}`);
-  const disposers = assistant.paths.map((path) => ctx.connection.fetch.register({
+  const disposers = assistant.paths.map((path) => registerRoute(ctx, {
     path: `/api/dudu/${path}`, methods: ['POST'], requestBody: 'buffered',
     fetch: (request) => assistant.handle(path, request),
   }));
   return async () => { delete assignment.assistant; delete assignment.projectFolder; for (const dispose of disposers) dispose(); await assistant.close(); };
 }
 
-// --- startDispatch: from what comes in to who does it (docs/assistant.md 1.2, 3.1 "收进来", 3.3) ---
-// Every half hour the enabled connectors are read (only read operations), what is new becomes issues, and each new issue is handed to an
-// agent by ASSIGN.md, or left in Todo with the question "交给谁处理？". The first round is a minute after start. A round that has nothing
-// to read costs no model call. The Inputs widget reads `dispatch/state`.
-const INTAKE_FIRST_MS = 60_000;
-const INTAKE_EVERY_MS = 30 * 60_000;
+// --- startDispatch: from what comes in to who does it (docs/assistant.md 1.2, 3.1, 3.3) ---
+// Each collector is run at its own pace (every 30 minutes unless it says otherwise), one at a time, the first one a minute after start: what it
+// brought is kept in the inbox, and that is all: no issue is made from it and no model is asked (owner, 2026-11-05). The owner reads the records in
+// the Collector widget. The inbox is cleared of old text once a day. The settings page reads `dispatch/state`.
+const PRUNE_EVERY_MS = 24 * 60 * 60_000;
 
 async function startDispatch(ctx, folder, assignment) {
   if (!assignment.issues) throw new Error('there are no issues');
   const dsh = createDshSessions(ctx);
   const llm = createDshLlm(ctx);
   assignment.llm = llm;
-  assignment.collectSource = createSourceCollector(ctx, { folder: () => assignment.assistant?.folder });
+  assignment.collectSource = createSourceCollector(ctx, {
+    folder: () => assignment.assistant?.folder, file: join(folder, 'assistant', 'collect-sessions.json'),
+    permission: () => assignment.assistant?.settings?.value('conversation')?.permission, // the permission the owner chose for 嘟嘟's sessions
+    connections: () => assignment.assistant?.connections ?? null, // the MCP servers 嘟嘟 has connected itself
+  });
+  // The collection sessions made before each collector kept one are folded away once, a little after start (they are in DSH's list, not in the file).
+  const tidying = setTimeout(() => { assignment.collectSource?.tidy?.().catch(() => {}); }, 30_000);
+  tidying.unref?.();
   const dispatch = createDispatch({
     issues: assignment.issues,
-    connectors: () => assignment.assistant?.connectors ?? null,
+    collectors: () => assignment.assistant?.collectors ?? null,
     collect: assignment.collectSource,
     rules: () => assignment.assistant?.memory?.rules?.() ?? { rules: {} },
     llm,
@@ -395,56 +575,51 @@ async function startDispatch(ctx, folder, assignment) {
     file: join(folder, 'assistant', 'issue-tidy.json'),
   });
   assignment.issueTidy = tidy;
-  const scheduler = createIssueTidyScheduler({ tidy, busy: () => Boolean(assignment.conversation?.busy) });
-  assignment.sessionChanged = scheduler.changed;
-  const changed = (sessionId) => { if (sessionId && !sessionId.startsWith('dudu-assistant-')) scheduler.changed(); };
-  const eventStops = [
-    ctx.on('api-session/status', (sessionId) => changed(sessionId)),
-    ctx.on('session/event', (session, event) => { if (event.type === 'turn/end') changed(session?.id); }),
-  ];
 
-  let round = null;
-  const intake = () => {
-    round ??= (async () => {
-      const run = await dispatch.intake();
-      for (const made of run.created ?? []) await handOut(made.id).catch((error) => console.warn(`[dudu] ${made.ref ?? made.id} could not be handed out: ${error.message}`));
-      scheduler.intake();
-    })().catch((error) => console.warn(`[dudu] Reading what came in failed: ${error.message}`)).finally(() => { round = null; });
-    return round;
-  };
-  const first = setTimeout(() => { void intake(); }, INTAKE_FIRST_MS);
-  const every = setInterval(() => { void intake(); }, INTAKE_EVERY_MS);
-  first.unref?.();
-  every.unref?.();
+  // One collection: the collector is read and what it brought is kept in the inbox, and nothing else (owner, 2026-11-05: 嘟嘟 makes no issue from it). The scheduler queues them.
+  const collectOne = (id) => dispatch.intake({ only: [id] });
+  const scheduler = createScheduler({
+    list: () => assignment.assistant?.collectors?.dudu.list().collectors?.map((entry) => ({ id: entry.id, frequency: entry.frequency })) ?? [],
+    lastStarted: (id) => assignment.issues.inbox.lastStarted(id),
+    run: collectOne,
+  });
+  assignment.runCollector = (id) => scheduler.runNow(id);
+  scheduler.start();
+  const prune = () => { try { assignment.issues.inbox.prune(); } catch (error) { console.warn(`[dudu] The inbox could not be cleared: ${error.message}`); } };
+  const pruning = setInterval(prune, PRUNE_EVERY_MS);
+  pruning.unref?.();
+  const prunedFirst = setTimeout(prune, 5 * 60_000);
+  prunedFirst.unref?.();
 
-  const disposeRoute = ctx.connection.fetch.register({
+  const disposeRoute = registerRoute(ctx, {
     path: '/api/dudu/dispatch/state', methods: ['POST'], requestBody: 'buffered',
     fetch: async () => Response.json(await dispatch.state(), { headers: { 'cache-control': 'no-store' } }),
   });
-  const disposeTidy = ['tidy', 'tidy-undo'].map((action) => ctx.connection.fetch.register({
+  const disposeTidy = ['tidy', 'tidy-undo'].map((action) => registerRoute(ctx, {
     path: `/api/dudu/issues/${action}`, methods: ['POST'], requestBody: 'buffered',
     fetch: async (request) => {
       const body = await request.json().catch(() => null);
       if (!body || typeof body !== 'object' || Array.isArray(body)) return Response.json({ error: 'Expected a JSON object.' }, { status: 400 });
       if (action === 'tidy' && body.trigger === 'dashboard') {
-        scheduler.opened();
+        // Older clients still send this notification. Viewing issues must not run a model or edit them.
         return Response.json({ outcome: 'success' }, { headers: { 'cache-control': 'no-store' } });
       }
       return Response.json(action === 'tidy-undo' ? tidy.undo() : await tidy.run({ token: body.token }), { headers: { 'cache-control': 'no-store' } });
     },
   }));
   return async () => {
-    clearTimeout(first);
-    clearInterval(every);
-    for (const stop of eventStops) stop();
+    clearTimeout(tidying);
+    clearTimeout(prunedFirst);
+    clearInterval(pruning);
     disposeRoute();
     for (const dispose of disposeTidy) dispose();
-    const closing = scheduler.close();
-    delete assignment.sessionChanged;
+    const closing = tidy.close();
+    const draining = scheduler.dispose(); // no new collection starts; the one running ends when dispatch is told to stop
     await dispatch.dispose();
-    await round;
+    await draining;
     await closing;
     delete assignment.llm;
+    delete assignment.runCollector;
     delete assignment.collectSource;
     delete assignment.issueTidy;
     delete assignment.handOut;
@@ -457,7 +632,7 @@ async function startDashboard(ctx, folder, assignment) {
   const dashboard = createDashboard({ file: join(folder, 'assistant', 'dashboard.json'), engine: GridStackEngine });
   assignment.dashboard = dashboard;
   const api = createDashboardApi({ dashboard });
-  const disposers = DASHBOARD_ACTIONS.map((action) => ctx.connection.fetch.register({
+  const disposers = DASHBOARD_ACTIONS.map((action) => registerRoute(ctx, {
     path: `/api/dudu/dashboard/${action}`, methods: ['POST'], requestBody: 'buffered',
     fetch: (request) => api.handle(action, request),
   }));
@@ -476,7 +651,7 @@ async function startConversation(ctx, folder, assignment) {
   // Restore our scoped owner before a remembered DSH conversation tab can promote the persisted session.
   // Keep the route available when no model is configured, so choosing one later can retry initialization.
   await conversation.ensure().catch((error) => console.warn(`[dudu] The assistant conversation could not be opened: ${error.message}`));
-  const route = (path, answer) => ctx.connection.fetch.register({
+  const route = (path, answer) => registerRoute(ctx, {
     path: `/api/dudu/assistant/${path}`, methods: ['POST'], requestBody: 'buffered',
     fetch: async (request) => {
       try {
@@ -487,6 +662,8 @@ async function startConversation(ctx, folder, assignment) {
   });
   const disposers = [
     route('conversation', async () => ({ outcome: 'success', ...await conversation.ensure() })),
+    route('conversation-settings', (body) => conversation.preferences(body)),
+    route('conversation-model', (body) => conversation.selectModel(body)),
     // Where the owner is, sent with each message when they chose to attach it; and the conversation's Compact.
     route('context', ({ where } = {}) => conversation.setContext(where)),
     route('compact', () => conversation.compact()),
@@ -496,7 +673,7 @@ async function startConversation(ctx, folder, assignment) {
   return async () => { for (const dispose of disposers) dispose(); await conversation.close(); delete assignment.conversation; };
 }
 
-async function startPhoneControl(ctx, config, dshHome, folder) {
+async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
   const diagnostics = createNativeDiagnostics(folder);
   const peer = ctx.connection.createPeer({ principal: { kind: 'owner' } });
   let control;
@@ -504,7 +681,13 @@ async function startPhoneControl(ctx, config, dshHome, folder) {
   const disposers = [];
   try {
     const rpc = createTypertRpcAdapter({ gateway: ctx.typertGateway, peer, diagnostics });
-    const frontend = createDshMobileFrontend({ clientModules: ctx.clientModules });
+    const dshFrontend = createDshMobileFrontend({ clientModules: ctx.clientModules });
+    // 嘟嘟's own pages (its settings, in the web view) are served by the plugin itself; every other page is DSH's.
+    const duduPages = createDuduPages({ assets: (name) => readFile(new URL(`./dist/phone/${name}`, import.meta.url)), call: runRoute });
+    const frontend = {
+      document: (descriptor) => (descriptor.kind === 'dudu' ? duduPages.document(descriptor) : dshFrontend.document(descriptor)),
+      resource: dshFrontend.resource?.bind(dshFrontend),
+    };
     const pageRpc = createTypertPageRpc({
       gateway: ctx.typertGateway,
       peer,
@@ -527,12 +710,31 @@ async function startPhoneControl(ctx, config, dshHome, folder) {
       pages,
       conversationReads: createConversationReads({ connection: ctx.connection, peer }),
       questionBridge,
+      sessionActivity: (id) => assignment.sessionActivity?.(id),
+      sessionSearch: assignment.searchSessions,
+      assistantConversation: () => assignment.conversation?.ensure(),
+      assistant: {
+        state: () => assignment.conversation?.state(),
+        context: (where) => assignment.conversation?.setContext(where),
+        selectModel: (selection) => assignment.conversation?.selectModel(selection),
+        issues: (action, body) => assignment.issuesApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
+      },
+      duduPages,
+      // The phone's board and Collector: the same commands the desktop interface sends, run for the owner (the issues are opened later than this: asked for when used).
+      board: {
+        issues: (action, body) => assignment.issuesApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
+        inbox: (action, body) => assignment.inboxApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
+        projects: {
+          list: () => assignment.projects?.list() ?? { outcome: 'error', code: 'unavailable' },
+          create: (body) => assignment.projects?.create(body) ?? { outcome: 'error', code: 'unavailable' },
+        },
+      },
       legacyKeyPath: join(dshHome, 'harness-mobile', 'pairing-key'),
       port: config.port ?? 3170,
       host: config.host ?? '0.0.0.0',
     });
     for (const action of ['state', 'save', 'generate', 'revoke', 'nav']) {
-      disposers.push(ctx.connection.fetch.register({
+      disposers.push(registerRoute(ctx, {
         path: `/api/dudu/${action}`, methods: ['POST'], requestBody: 'buffered',
         fetch: (request) => control.handle(action, request),
       }));
@@ -546,7 +748,7 @@ async function startPhoneControl(ctx, config, dshHome, folder) {
   }
   try { await writeDesktopRuntime(folder, runtimeIdentity, control.state().port); }
   catch { console.warn('[dudu] Could not save the local runtime receipt.'); }
-  console.info(`[dudu] Ready on port ${control.state().port}. Open Settings > 手机控制 to pair.`);
+  console.info(`[dudu] Ready on port ${control.state().port}. Open the 嘟嘟 page, then Settings > 手机控制 to pair.`);
   return async () => {
     questionBridge.close();
     for (const dispose of disposers) dispose();
@@ -563,8 +765,10 @@ export async function apply(ctx, config = {}) {
 
   const stops = [];
   const assignment = {};
+  let providerServices;
   try {
-    stops.push(await startProviders(ctx, folder, assignment));
+    providerServices = await startProviders(ctx, folder, assignment);
+    stops.push(() => providerServices.stop());
     console.info('[dudu] Providers are ready.');
   } catch (error) {
     console.warn(`[dudu] Providers are unavailable: ${error.message}`);
@@ -614,7 +818,7 @@ export async function apply(ctx, config = {}) {
   }
 
   if (typeof ctx.connection.createPeer === 'function') {
-    try { stops.push(await startPhoneControl(ctx, config, dshHome, folder)); }
+    try { stops.push(await startPhoneControl(ctx, config, dshHome, folder, assignment)); }
     catch (error) {
       // The providers keep working; DSH shows why the phone control did not start.
       if (stops.length === 0) throw error;
@@ -624,5 +828,11 @@ export async function apply(ctx, config = {}) {
     console.warn('[dudu] Phone control needs a newer DSH (this one has no connection.createPeer); providers still work.');
   }
 
-  ctx.effect(() => async () => { for (const stop of stops.reverse()) await stop(); });
+  ctx.effect(() => async () => {
+    const releasing = providerServices?.stopHarnesses();
+    // Observe a rejection immediately even if another service takes time to stop.
+    releasing?.catch(() => {});
+    try { for (const stop of [...stops].reverse()) await stop(); }
+    finally { await releasing; }
+  });
 }

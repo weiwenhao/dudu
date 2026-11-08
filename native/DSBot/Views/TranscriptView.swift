@@ -93,6 +93,7 @@ private struct UserBubbleRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+        .opacity(row.isPending ? 0.65 : 1)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.message.\(row.id)")
     }
@@ -104,7 +105,6 @@ private struct TurnRowView: View {
     let row: TurnRow
     let showsRunningStatus: Bool
     @State private var processOpen = Self.startsOpen
-    @AppStorage("conversation.performance.detailed") private var detailedPerformance = false
 
     private static var startsOpen: Bool {
         #if DEBUG && targetEnvironment(simulator)
@@ -115,7 +115,7 @@ private struct TurnRowView: View {
     }
 
     private var showsHeader: Bool { row.summaryTitle != nil }
-    private var bodyVisible: Bool { row.outcome == .running || row.staysOpen || processOpen }
+    private var bodyVisible: Bool { !row.isLastFragment || row.outcome == .running || row.staysOpen || processOpen }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -133,7 +133,7 @@ private struct TurnRowView: View {
                 }
             }
             if let answer = row.answer {
-                MessageMarkdown(text: answer, allowsTextSelection: false)
+                MessageMarkdown(text: answer, allowsTextSelection: false, sourceSequence: row.answerSeq)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .messageActions(text: answer, seq: row.answerSeq)
                     .accessibilityElement(children: .contain)
@@ -143,10 +143,7 @@ private struct TurnRowView: View {
             if row.changesSeq != nil || row.files.contains(where: { $0.kind == "presented" }) {
                 TurnFilesView(files: row.files, changesSeq: row.changesSeq)
             }
-            if detailedPerformance, row.outcome != .running, let turn = row.turn, let seq = row.performanceSeq {
-                ConversationPerformanceButton(turn: turn, seq: seq)
-            }
-            if row.outcome == .running && showsRunningStatus {
+            if row.isLastFragment && row.outcome == .running && showsRunningStatus {
                 RunningStatusView(startedAt: row.startedAt)
             }
         }
@@ -163,14 +160,14 @@ private struct TurnRowView: View {
                     ProcessGroupView(
                         group: group,
                         live: group.isRunning ? row.live : nil,
-                        startsOpen: row.outcome != .running
+                        startsOpen: row.isLastFragment && row.outcome != .running
                     )
                 case let .reply(id, text):
                     if id.hasPrefix("live:") {
                         StreamingReplyText(text: text)
                             .messageActions(text: text, seq: row.messageSequences[id])
                     } else {
-                        MessageMarkdown(text: text, allowsTextSelection: false)
+                        MessageMarkdown(text: text, allowsTextSelection: false, sourceSequence: row.messageSequences[id])
                             .messageActions(text: text, seq: row.messageSequences[id])
                     }
                 }
@@ -253,7 +250,7 @@ private struct ProcessGroupView: View {
             } label: {
                 HStack(spacing: 6) {
                     ZStack {
-                        DSBotIcon(glyph, size: 14, scalesStroke: true).opacity(open ? 0 : 1)
+                        DSBotIcon(glyph, size: glyph == .think ? 16 : 14, scalesStroke: true).opacity(open ? 0 : 1)
                         DSBotIcon(.down, size: 14, scalesStroke: true).rotationEffect(.degrees(180)).opacity(open ? 1 : 0)
                     }
                     .frame(width: 16, height: 16)
@@ -303,7 +300,7 @@ private struct ThoughtRow: View {
                 withAnimation(.easeOut(duration: 0.18)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
-                    DSBotIcon(.think, size: 14, scalesStroke: true)
+                    DSBotIcon(.think, size: 16, scalesStroke: true)
                     Text("思考")
                         .font(.system(size: 15))
                     if !expanded, !thought.summary.isEmpty {
@@ -480,6 +477,10 @@ private struct TriggerRowView: View {
     let row: TriggerRow
     @State private var open = false
 
+    private var canExpand: Bool {
+        !row.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
@@ -490,8 +491,10 @@ private struct TriggerRowView: View {
                     Text(row.title)
                         .font(.system(size: 15))
                     Spacer(minLength: 8)
-                    DSBotIcon(.down, size: 14, scalesStroke: true)
-                        .rotationEffect(.degrees(open ? 180 : 0))
+                    if canExpand {
+                        DSBotIcon(.down, size: 14, scalesStroke: true)
+                            .rotationEffect(.degrees(open ? 180 : 0))
+                    }
                 }
                 .foregroundStyle(DSBotStyle.chatTertiary)
                 .padding(.horizontal, 16)
@@ -499,23 +502,17 @@ private struct TriggerRowView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(!canExpand)
             .accessibilityIdentifier("chat.trigger.header")
-            if open {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("这条通知触发了本轮回复。")
+            if open && canExpand {
+                ScrollView {
+                    Text(row.text)
                         .font(.system(size: 12))
-                        .foregroundStyle(DSBotStyle.chatSecondary)
-                    if !row.text.isEmpty {
-                        ScrollView {
-                            Text(row.text)
-                                .font(.system(size: 12))
-                                .foregroundStyle(DSBotStyle.chatInk)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(maxHeight: 240)
-                    }
+                        .foregroundStyle(DSBotStyle.chatInk)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(maxHeight: 240)
                 .padding(.leading, 42)
                 .padding(.trailing, 16)
                 .padding(.bottom, 12)

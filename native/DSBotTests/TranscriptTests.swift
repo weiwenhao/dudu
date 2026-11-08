@@ -253,6 +253,29 @@ final class TranscriptBuilderTests: XCTestCase {
         XCTAssertEqual(TranscriptBuilder.rows(from: transcript, isRunning: false).count, 1)
     }
 
+    func testStartedTurnShowsItsRunningRowBeforeTheFirstModelOutput() throws {
+        let transcript = Transcript(
+            entries: [
+                TranscriptEntry(type: "user", id: "previous-question", seq: 1, text: "Previous question"),
+                TranscriptEntry(type: "assistant", id: "previous-answer", seq: 2, text: "Previous answer", turn: 1, step: 1),
+                TranscriptEntry(type: "user", id: "follow-up", seq: 3, text: "Continue")
+            ],
+            turns: [
+                TranscriptTurn(turn: 1, start: 1_000, end: 2_000, outcome: "done"),
+                TranscriptTurn(turn: 2, start: 3_000)
+            ], live: nil
+        )
+        let rows = TranscriptBuilder.rows(from: transcript, isRunning: true)
+        XCTAssertEqual(rows.map(\.id), ["user:previous-question", "turn:turn-1", "user:follow-up", "turn:turn-2"])
+        let running = try XCTUnwrap(turns(in: rows).last)
+        XCTAssertEqual(running.turn, 2)
+        XCTAssertEqual(running.outcome, .running)
+        XCTAssertEqual(running.startedAt, 3_000)
+        XCTAssertTrue(running.segments.isEmpty)
+        XCTAssertNil(running.answer)
+        XCTAssertFalse(rows.contains { if case .status = $0 { return true }; return false })
+    }
+
     func testCommandAndTriggerRowsReadLikeDSH() throws {
         let transcript = Transcript(
             entries: [
@@ -306,6 +329,41 @@ final class TranscriptBuilderTests: XCTestCase {
         XCTAssertEqual(trigger.time, 9)
     }
 
+    func testInterleavedUserImageStaysBeforeLaterRepliesWithinTheSameTurn() throws {
+        var transcript = Transcript(entries: [
+            TranscriptEntry(type: "user", id: "question", seq: 1, time: 1_000, text: "这是什么问题？"),
+            TranscriptEntry(type: "assistant", id: "before", seq: 3, time: 2_000, text: "先检查日志。", turn: 1, step: 1),
+            TranscriptEntry(type: "user", id: "follow-up", seq: 5, time: 3_000,
+                            text: "这个气泡是什么，也无法关闭？",
+                            attachments: [TranscriptAttachment(kind: "image", name: "bubble.png", id: "photo")]),
+            TranscriptEntry(type: "assistant", id: "after", seq: 7, time: 4_000,
+                            text: "我会修复附件传话和气泡关闭。", turn: 1, step: 2)
+        ], turns: [TranscriptTurn(turn: 1, start: 1_100)], live: TranscriptLive(id: "live:1", text: "继续检查。"))
+        var rows = TranscriptBuilder.rows(from: transcript, isRunning: true)
+        let ids = ["user:question", "turn:turn-1", "user:follow-up", "turn:turn-1:after:user:follow-up"]
+        XCTAssertEqual(rows.map(\.id), ids)
+        guard case let .user(followUp) = rows[2] else { return XCTFail("Expected the image question between replies") }
+        XCTAssertEqual(followUp.attachments.first?.id, "photo")
+        let fragments = turns(in: rows)
+        XCTAssertEqual(fragments.map(\.isLastFragment), [false, true])
+        XCTAssertNil(fragments[0].live)
+        XCTAssertNil(fragments[0].summaryTitle)
+        XCTAssertEqual(fragments[0].segments, [.reply(id: "before", text: "先检查日志。")])
+        XCTAssertEqual(fragments[1].segments.first, .reply(id: "after", text: "我会修复附件传话和气泡关闭。"))
+
+        transcript.live = nil
+        transcript.turns[0].end = 5_000
+        transcript.turns[0].outcome = "done"
+        rows = TranscriptBuilder.rows(from: transcript, isRunning: false)
+        XCTAssertEqual(rows.map(\.id), ids)
+        let completed = turns(in: rows)
+        XCTAssertNil(completed[0].answer)
+        XCTAssertNil(completed[0].duration)
+        XCTAssertEqual(completed[0].segments, fragments[0].segments)
+        XCTAssertEqual(completed[1].answerID, "after")
+        XCTAssertEqual(completed[1].answer, "我会修复附件传话和气泡关闭。")
+    }
+
     func testEntriesOfOneTurnAreOrderedByStepAndKeepTheirPosition() throws {
         let transcript = Transcript(
             entries: [
@@ -348,6 +406,42 @@ final class TranscriptBuilderTests: XCTestCase {
 
         XCTAssertNil(row.detail)
         XCTAssertEqual(row.summary, "已压缩 2 条历史记录（约 10 tokens）")
+    }
+
+    func testSuccessfulAutomaticHarnessCompactionDoesNotLeaveACompletedStatusRow() {
+        let transcript = Transcript(entries: [
+            TranscriptEntry(type: "command", id: "auto-running", name: "compact", source: "dudu-harness"),
+            TranscriptEntry(type: "command", id: "auto-done", name: "compact", outcome: "success", source: "dudu-harness"),
+            TranscriptEntry(type: "command", id: "auto-failed", name: "compact", outcome: "error", source: "dudu-harness"),
+            TranscriptEntry(type: "command", id: "manual", name: "compact", outcome: "success")
+        ], turns: [], live: nil)
+        let rows = TranscriptBuilder.rows(from: transcript, isRunning: false)
+        XCTAssertEqual(rows.map(\.id), ["command:auto-running", "command:auto-failed", "command:manual"])
+    }
+
+    func testHostPendingSteeringAppearsUntilItsDurableMessageArrivesWithoutDuplicates() throws {
+        let pending = QueuedMessage(id: "steered", text: "继续检查", editable: true)
+        let initial = Transcript(entries: [], turns: [], live: nil, pendingInputs: [pending])
+        let rows = TranscriptBuilder.rows(from: initial, isRunning: false)
+        guard case let .user(user) = try XCTUnwrap(rows.first) else { return XCTFail("Expected pending input") }
+        XCTAssertEqual(user.id, pending.id)
+        XCTAssertTrue(user.isPending)
+        XCTAssertNil(user.seq)
+
+        let admitted = Transcript(
+            entries: [TranscriptEntry(type: "user", id: pending.id, seq: 20, text: pending.text)],
+            turns: [], live: nil, pendingInputs: []
+        )
+        let merged = initial.merging(admitted)
+        let final = TranscriptBuilder.rows(from: merged, isRunning: false)
+        XCTAssertEqual(final.map(\.id), rows.map(\.id), "Host occurrence identity survives admission")
+        guard case let .user(settled) = final[0] else { return XCTFail("Expected admitted input") }
+        XCTAssertFalse(settled.isPending)
+        XCTAssertEqual(settled.seq, 20)
+        XCTAssertEqual(merged.pendingInputs, [])
+        var overlap = admitted
+        overlap.pendingInputs = [pending]
+        XCTAssertEqual(TranscriptBuilder.rows(from: overlap, isRunning: false).count, 1)
     }
 
     func testWireModelDecodesCompactionSummaries() throws {

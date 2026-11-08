@@ -94,7 +94,19 @@ protocol DSBotComputerStorage: Actor {
     func load() async throws -> ComputerLibrary
     func pairAuthenticated(endpoint: ConnectionEndpoint, readyId: String) async throws -> ComputerLibrary
     func activateAuthenticated(localId: String, readyId: String) async throws -> ComputerLibrary
+    func activateAuthenticated(localId: String, readyId: String, endpoint: ConnectionEndpoint) async throws -> ComputerLibrary
+    func updateAddresses(localId: String, endpoint: ConnectionEndpoint) async throws -> ComputerLibrary
     func remove(_ localId: String) async throws -> ComputerLibrary
+}
+
+extension DSBotComputerStorage {
+    func activateAuthenticated(localId: String, readyId: String, endpoint: ConnectionEndpoint) async throws -> ComputerLibrary {
+        try await activateAuthenticated(localId: localId, readyId: readyId)
+    }
+
+    func updateAddresses(localId: String, endpoint: ConnectionEndpoint) async throws -> ComputerLibrary {
+        throw DSBotFailure.storage
+    }
 }
 
 actor ComputerRepository: DSBotComputerStorage {
@@ -172,7 +184,8 @@ actor ComputerRepository: DSBotComputerStorage {
             name: endpoint.name,
             url: endpoint.originalURL,
             computerId: readyId,
-            lastUsedAt: Date().timeIntervalSince1970 * 1_000
+            lastUsedAt: Date().timeIntervalSince1970 * 1_000,
+            addresses: endpoint.addresses, probeId: endpoint.probeId, addressesEdited: endpoint.addressesEdited
         )
         library.computers = existing == nil
             ? library.computers + [computer]
@@ -184,6 +197,14 @@ actor ComputerRepository: DSBotComputerStorage {
     }
 
     func activateAuthenticated(localId: String, readyId: String) async throws -> ComputerLibrary {
+        try await activateAuthenticated(localId: localId, readyId: readyId, connection: nil)
+    }
+
+    func activateAuthenticated(localId: String, readyId: String, endpoint: ConnectionEndpoint) async throws -> ComputerLibrary {
+        try await activateAuthenticated(localId: localId, readyId: readyId, connection: endpoint)
+    }
+
+    private func activateAuthenticated(localId: String, readyId: String, connection: ConnectionEndpoint?) async throws -> ComputerLibrary {
         await acquireMutation()
         defer { releaseMutation() }
         var library = try await loadUnlocked()
@@ -195,9 +216,32 @@ actor ComputerRepository: DSBotComputerStorage {
             throw DSBotFailure.identityMismatch
         }
         computer.computerId = readyId
+        if let connection {
+            computer.url = connection.originalURL
+            computer.addresses = connection.addresses
+            computer.probeId = connection.probeId
+            computer.addressesEdited = connection.addressesEdited
+        }
         computer.lastUsedAt = Date().timeIntervalSince1970 * 1_000
         library.computers[index] = computer
         library.activeId = localId
+        try await persist(computer: computer, library: library)
+        cachedLibrary = library
+        return library
+    }
+
+    func updateAddresses(localId: String, endpoint: ConnectionEndpoint) async throws -> ComputerLibrary {
+        await acquireMutation()
+        defer { releaseMutation() }
+        var library = try await loadUnlocked()
+        guard let index = library.computers.firstIndex(where: { $0.id == localId }) else {
+            throw DSBotFailure.switchedComputer
+        }
+        var computer = library.computers[index]
+        guard computer.computerId == endpoint.computerId else { throw DSBotFailure.identityMismatch }
+        computer.addresses = try ConnectionAddress.validated(endpoint.addresses)
+        computer.addressesEdited = true
+        library.computers[index] = computer
         try await persist(computer: computer, library: library)
         cachedLibrary = library
         return library
@@ -284,10 +328,20 @@ actor ComputerRepository: DSBotComputerStorage {
             if $1.id == index.activeId { return false }
             return $0.lastUsedAt > $1.lastUsedAt
         }
-        var desktopIDs: Set<String> = []
-        computers = ordered.filter { computer in
-            guard let desktopID = computer.computerId else { return true }
-            return desktopIDs.insert(desktopID).inserted
+        computers = []
+        for computer in ordered {
+            if let desktopID = computer.computerId,
+               let index = computers.firstIndex(where: { $0.computerId == desktopID }) {
+                // Old builds could save this computer once per origin. Keep the selected credential
+                // and local identity, and bring the other origins into its verified route set.
+                var routes = computers[index].connectionAddresses
+                for route in computer.connectionAddresses where !routes.contains(where: { $0.url == route.url }) {
+                    if routes.count < 32 { routes.append(route) }
+                }
+                computers[index].addresses = routes
+            } else {
+                computers.append(computer)
+            }
         }
         let activeId = computers.contains(where: { $0.id == index.activeId })
             ? index.activeId

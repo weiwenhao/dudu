@@ -1,0 +1,139 @@
+{
+  "upstream": {
+    "name": "@botiverse/oar",
+    "version": "0.92.0",
+    "tarball": "https://registry.npmjs.org/@botiverse/oar/-/oar-0.92.0.tgz",
+    "integrity": "sha512-wnuL3EniE2q01RvdJQkgM7adlOMLSeYxoWVLhm/fXOGTdS+AZaq3TU93dzGv7DMuU4D8IA/TdHTISWTfiPspmQ==",
+    "treeSha256": "557922b8c1d9efcb00cd687530e1bc715b1be02bb14e5d41aa52e58193836f26"
+  },
+  "patches": [
+    {
+      "file": "patches/session-controls.patch",
+      "purpose": "Optional controls and declarations on OAR's existing session kernel.",
+      "files": {
+        "dist/contracts/session-options.d.ts": {
+          "before": "86205ef194985d80a66b034e509455525d28cd7b49bb2355cf0cd71e0e9095c8",
+          "after": "560d9f59a7a691ba62dee0d174250729de7202322a3d528247d59424fd9db10c"
+        },
+        "dist/contracts/session.d.ts": {
+          "before": "b0f361e91826bd7ddc0ff7448d3391ca4edfced0671d6c0712d4e32d9fd045b4",
+          "after": "1255b3586e94b1db1aaba4ec4a140f96a88daeb349a493f6a80d9f65ff60b8a2"
+        },
+        "dist/shared/seal-session.js": {
+          "before": "c10bd7293b1fc5b3af9f6c734aab64e508a4cfd79f6f5fdbfe2ec130a52bb770",
+          "after": "9483588d6f7ea9544427b8fe8e095fa563645e57625cafe580febd48e6a50e2d"
+        },
+        "dist/shared/stream-json/profile.d.ts": {
+          "before": "f73365008efcf3ddc57f597ae8b4ab9b932ff54592c27978def9791f9eadcee5",
+          "after": "a86a97eef8d513e6e333c8fdf593a8e8f64cdd8cf89eec174d9399a17faa8bb2"
+        },
+        "dist/shared/stream-json/session.js": {
+          "before": "0d8cb8f90927bdab5bebeaee09f7cb1e2db36ddc7e90f489c34a5ea777e6ad6d",
+          "after": "c8f11ed3e2a198da61270454ed803c261880cbdd119ca1042e949673c676df49"
+        }
+      }
+    },
+    {
+      "file": "patches/claude-defaults.patch",
+      "purpose": "Native configuration readback and explicit or inherited permission modes.",
+      "files": {
+        "dist/runtimes/claude/index.d.ts": {
+          "before": "d2c3d4851fe75f7311e813ff730a4c76f2bde64a806b18ae6afae2e33a5ab230",
+          "after": "b722efdf28c691d870570069f76b20bec60a885ce5e08aa7e1dab8061e14a8d5"
+        },
+        "dist/runtimes/claude/index.js": {
+          "before": "37e633373cd56f0c0e44b4ca6ecd357790ba6831c6f8441798b3ecd60f6094da",
+          "after": "c9fb3b6c9605245c4155b2fe9e922d50bea024392b785f5afdf4cb1adf5d8ebe"
+        },
+        "dist/runtimes/claude/launch-args.d.ts": {
+          "before": "f679d938c0af53396d390fa4d16bd3438a4371e67f1bef97be437c63e23039a1",
+          "after": "af7057e65bff4d14a7176ce9e227cfe965a44846a18c73573b44957864ef6086"
+        },
+        "dist/runtimes/claude/launch-args.js": {
+          "before": "eb406e738a1fe0f80c335390f5adffde23a4e6d4718bd84609ad4a2bfe9655c6",
+          "after": "61448cfe2f7338c5cf2670a64eefad8c5235adff19cfee9e57cec800e7c172fc"
+        },
+        "dist/runtimes/claude/launch.js": {
+          "before": "498aad86e697d2f1393ad4a2137536bfe843a57981fdfcd2922cf9355ddfd945",
+          "after": "59a137311e3f735190868651ead66899408fff272d97c649069a0b5aadad2de6"
+        },
+        "dist/runtimes/claude/list-models.d.ts": {
+          "before": "2a60a7429c30ace3f8916db3c0303f7cb56a2f66b9e754611ca12e5452b645b5",
+          "after": "3bd4004cd5ddf3578d0c294d154f7de2b3eea0b316e32e322fefb54921a82db0"
+        },
+        "dist/runtimes/claude/list-models.js": {
+          "before": "9152b79c9caa1a2c1adb884f1409a48800e9a424d70466d8d4ba500993d7193d",
+          "after": "3826e0071bd603d6a15a23a27d1d63740cff8d5c897f2c9d590e9ec09fed4aaf"
+        }
+      }
+    },
+    {
+      "file": "patches/claude-session.patch",
+      "purpose": "Opening cancellation, private task-output readback and settings changes over the native process.",
+      "files": {
+        "dist/runtimes/claude/open-settings.js": {
+          "before": "3b0901154dd70c80b76314fe526d8dd5f4f48233e95727ca22bbfec31a6a6c3a",
+          "after": "407bee520494bd832900b054139f4d33b186cc11b50d7ebf652a99cc486af76d"
+        },
+        "dist/runtimes/claude/session.js": {
+          "before": "f526730b8a89f9c97ff5f7bab983bc148ffaaa5e49b7344ccd2c3a9dd9d33094",
+          "after": "efe689ec3103f7a42258a292d0a7467e861fccaddebfadafbc780ef220c31b59"
+        },
+        "dist/runtimes/claude/task-controls.js": {
+          "before": null,
+          "after": "f54a90cd9ee7feca152b0934b0c273db46363e0aa4a4cf8e1350a911a04aa0a6"
+        },
+        "dist/runtimes/claude/tasks.js": {
+          "before": "f8a7de535648917351caac7ed9e71daa08637d91301ac3fce663a9544271f777",
+          "after": "3ed2a80ad6e27fb9c086a09da2510668e0bc09541371b9c5d84993a5328553e4"
+        }
+      }
+    },
+    {
+      "file": "patches/codex-subagents.patch",
+      "purpose": "Native v1/v2 child ownership and attribution after resume.",
+      "files": {
+        "dist/runtimes/codex/projection.d.ts": {
+          "before": "105c37ead51634afaf0158c35b821a3cee44cc58d508507164d7b77ee7d2ff49",
+          "after": "c0736bf15f6a2f8634a3b7ea76246e7f26c603e68e9a25da59f22128ab13cd1b"
+        },
+        "dist/runtimes/codex/projection.js": {
+          "before": "c1674b63fcfb65daca8a4473275bc66461c20c46519a4a4bd480d7ebb3699af8",
+          "after": "371204b8ef64f7868b8d7a6790c10f58b73457d0e09744f9011889e7134f297f"
+        },
+        "dist/runtimes/codex/tasks.d.ts": {
+          "before": "fd80bb5e0c302e5489fb747e7d63ac4c4e029b62fd8e933602cc27fddf626c32",
+          "after": "70e86113dc13fd008363264d66f101d494e64ac426417d17719c1b21dbcebbb8"
+        },
+        "dist/runtimes/codex/tasks.js": {
+          "before": "be78ac5e362cd337026cce33f8304c805b9c4d1e4aa0b44a68b190edc099102d",
+          "after": "d6df03a38c61d90197a8af101ac41377cdd3b92f240287508e3894997efc67c8"
+        }
+      }
+    },
+    {
+      "file": "patches/codex-session.patch",
+      "purpose": "Background terminal observation and settings changes, preserving official compaction and child stopping.",
+      "files": {
+        "dist/runtimes/codex/background-tasks.js": {
+          "before": null,
+          "after": "a73209591abb3629b09d409d22d510d5e9cd122862f3688bb0b1523bf7c1b238"
+        },
+        "dist/runtimes/codex/session.js": {
+          "before": "00e3c61e4891a58d64b3bd05b02492b2ec9ccba842dfe0829ac0a6e165dc5b85",
+          "after": "e860c27bafea7b99817ce4f8215a1a9fd3e3e17220b17965fdedfbd823747da1"
+        }
+      }
+    },
+    {
+      "file": "patches/process-ownership.patch",
+      "purpose": "Release owned processes on unhandled terminating signals and remove idle hooks.",
+      "files": {
+        "dist/shared/executable/ownership.js": {
+          "before": "2763978b5e0a27bec74d73c854f77f78d6a51f6dd36b7abbc742611a11c32803",
+          "after": "5b75782f869e97c7cc7e9376008b600a55edba3edc82439c997c16a70161bd61"
+        }
+      }
+    }
+  ]
+}

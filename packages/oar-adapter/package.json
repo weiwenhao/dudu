@@ -1,0 +1,42 @@
+{
+  "name": "@dudu/oar-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dudu's versioned compatibility boundary over the official OAR runtimes",
+  "type": "module",
+  "main": "./index.mjs",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs"
+    },
+    "./testing": {
+      "types": "./testing.d.ts",
+      "import": "./testing.mjs"
+    }
+  },
+  "files": [
+    "index.mjs",
+    "index.d.ts",
+    "testing.mjs",
+    "testing.d.ts",
+    "build.mjs",
+    "upstream.json",
+    "patches",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@botiverse/oar": "0.92.0",
+    "signal-exit": "4.1.0"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "license": "Apache-2.0"
+}

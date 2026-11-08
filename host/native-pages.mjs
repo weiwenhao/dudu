@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 import {
   initializePagePolicy, allowPageCall, acceptPageResult, pageStreamItem,
@@ -13,11 +14,11 @@ export const NATIVE_PAGE_METHODS = Object.freeze([
   'web.stream.close',
 ]);
 
-const PAGE_KINDS = new Set(['plugins', 'trace', 'context', 'team', 'tools', 'settings', 'panel', 'view']);
+const PAGE_KINDS = new Set(['plugins', 'trace', 'context', 'team', 'tools', 'settings', 'panel', 'view', 'dudu']);
 // Pages that belong to one conversation, and pages named by an id DSH registered (see native-navigation).
 const SESSION_PAGE_KINDS = new Set(['trace', 'context', 'team', 'tools', 'view']);
-const TARGET_REQUIRED = new Set(['panel', 'view']);
-const TARGET_ALLOWED = new Set(['panel', 'view', 'settings']);
+const TARGET_REQUIRED = new Set(['panel', 'view', 'dudu']);
+const TARGET_ALLOWED = new Set(['panel', 'view', 'settings', 'dudu']);
 const TARGET_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,255}$/u;
 const PAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_PAGES = 8;
@@ -30,6 +31,7 @@ const MAX_RESOURCE_COUNT = 256;
 const MAX_REPLY_BYTES = 6 * 1024 * 1024;
 const RESOURCE_TIMEOUT_MS = 30_000;
 const STREAM_NEXT_TIMEOUT_MS = 25_000;
+const STREAM_POLL_TIMEOUT_MS = 2_000;
 const STREAM_IDLE_TIMEOUT_MS = 10 * 60_000;
 const SAFE_ERRORS = Object.freeze({
   BAD_REQUEST: '请求参数不正确。',
@@ -71,9 +73,13 @@ export function createNativePages({
   frontend,
   pageRpc,
   resourceTimeoutMs = RESOURCE_TIMEOUT_MS,
+  streamPollTimeoutMs = STREAM_POLL_TIMEOUT_MS,
 } = {}) {
   if (!Number.isSafeInteger(resourceTimeoutMs) || resourceTimeoutMs < 1) {
     throw new TypeError('resourceTimeoutMs must be a positive safe integer.');
+  }
+  if (!Number.isSafeInteger(streamPollTimeoutMs) || streamPollTimeoutMs < 1) {
+    throw new TypeError('streamPollTimeoutMs must be a positive safe integer.');
   }
   const connections = new WeakMap();
   const disconnected = new WeakSet();
@@ -139,6 +145,8 @@ export function createNativePages({
       fail('BAD_REQUEST');
     }
     if (TARGET_REQUIRED.has(params.page) && params.target === undefined) fail('BAD_REQUEST');
+    // 嘟嘟's own pages (phone-pages.mjs) are served only over the scoped HTTP carrier.
+    if (params.page === 'dudu' && transport !== 'http') fail('BAD_REQUEST');
     const pages = stateFor(connection, true);
     if (pages.size >= MAX_PAGES) fail('LIMIT_EXCEEDED');
     if (typeof frontend?.document !== 'function' || typeof pageRpc?.invoke !== 'function'
@@ -153,7 +161,7 @@ export function createNativePages({
     initializePagePolicy(page);
     pages.set(page.id, page);
     try {
-      const descriptor = { kind: page.kind, sessionId: page.sessionId };
+      const descriptor = { kind: page.kind, sessionId: page.sessionId, ...(page.kind === 'dudu' ? { target: page.target } : {}) };
       if (httpBasePath) Object.assign(descriptor, { transport: 'http', basePath: httpBasePath });
       const document = await frontend.document(descriptor);
       if (page.closed || connection.closed || disconnected.has(connection)) fail('NOT_FOUND');
@@ -313,13 +321,20 @@ export function createNativePages({
   function pendingRead(stream) {
     if (!stream.pendingNext) {
       const pending = Promise.resolve().then(() => stream.iterator.next())
-        .then((value) => ({ value }), (error) => ({ error }));
+        .then((value) => ({ value }), (error) => ({ error }))
+        .then((outcome) => { stream.pendingOutcome = outcome; return outcome; });
       stream.pendingNext = pending;
-      void pending.finally(() => {
-        if (stream.pendingNext === pending) stream.pendingNext = undefined;
-      });
     }
     return stream.pendingNext;
+  }
+
+  function consumeOutcome(stream) {
+    const outcome = stream.pendingOutcome;
+    if (outcome) {
+      stream.pendingNext = undefined;
+      stream.pendingOutcome = undefined;
+    }
+    return outcome;
   }
 
   async function nextWithDeadline(stream) {
@@ -333,6 +348,7 @@ export function createNativePages({
       pending, deadline, stream.closedPromise.then(() => ({ closed: true })),
     ]);
     clearTimeout(timer);
+    if (result === stream.pendingOutcome) consumeOutcome(stream);
     if (result.error) throw result.error;
     return result;
   }
@@ -367,9 +383,53 @@ export function createNativePages({
     }
   }
 
+  // One HTTP poll carries all subscriptions, leaving browser connections free for assets and commands.
+  async function streamPoll(page, ids) {
+    if (!Array.isArray(ids) || !ids.length || ids.length > MAX_STREAMS_PER_PAGE
+      || new Set(ids).size !== ids.length) fail('BAD_REQUEST');
+    const streams = ids.map((id) => {
+      const stream = page.streams.get(requireID(id));
+      if (!stream || stream.closed || !stream.iterator) fail('NOT_FOUND');
+      refreshIdle(page, stream);
+      return stream;
+    });
+    let timer;
+    try {
+      await Promise.race([
+        ...streams.map(pendingRead),
+        ...streams.map((stream) => stream.closedPromise),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, streamPollTimeoutMs);
+          timer.unref?.();
+        }),
+      ]);
+    } finally { clearTimeout(timer); }
+    const packets = await Promise.all(streams.map((stream) => {
+      const read = stream.queue.then(async () => {
+        if (stream.closed || page.closed) return { streamId: stream.id, items: [], done: true };
+        const outcome = consumeOutcome(stream);
+        if (!outcome) return undefined;
+        if (outcome.error || outcome.value?.done) {
+          await closeStream(stream);
+          page.streams.delete(stream.id);
+          return { streamId: stream.id, items: [], done: true, ...(outcome.error ? { ok: false } : {}) };
+        }
+        const item = pageStreamItem(page, stream.endpoint, outcome.value.value);
+        return { streamId: stream.id, items: item === undefined ? [] : [item], done: false };
+      });
+      stream.queue = read.catch(() => {});
+      return read;
+    }));
+    return boundedReply({ streams: packets.filter(Boolean) });
+  }
+
   async function streamNext(params, connection) {
-    requireParams(params, ['id', 'streamId']);
+    requireParams(params, ['id', 'streamId', 'streamIds']);
     const page = pageFor(connection, params.id);
+    if (Object.hasOwn(params, 'streamIds')) {
+      if (Object.hasOwn(params, 'streamId')) fail('BAD_REQUEST');
+      return streamPoll(page, params.streamIds);
+    }
     const stream = page.streams.get(requireID(params.streamId));
     if (!stream || stream.closed || !stream.iterator) fail('NOT_FOUND');
     refreshIdle(page, stream);

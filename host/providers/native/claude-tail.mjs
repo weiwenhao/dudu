@@ -1,5 +1,7 @@
 import { open } from 'node:fs/promises';
+import { Buffer } from 'node:buffer';
 import { isHumanPrompt, promptText } from './claude-store.mjs';
+import { previewMessages } from '../../conversation-search.mjs';
 
 // The end of a Claude Code transcript as a conversation, read without reading the file: a transcript reaches hundreds of
 // megabytes and most of it is not conversation, while a preview wants twenty messages. The file is read backwards in chunks until
@@ -7,7 +9,6 @@ import { isHumanPrompt, promptText } from './claude-store.mjs';
 
 const CHUNK = 1024 * 1024;
 const SCAN_LIMIT = 48 * CHUNK; // one page never reads further back than this; the next page carries on from there
-const TEXT_LIMIT = 4000;
 
 function parse(line) {
   try { return JSON.parse(line); } catch { return undefined; }
@@ -37,7 +38,8 @@ function messageOf(line) {
  * The newest `count` messages that end before byte `before` (the end of the file when it is not given): { messages, nextCursor }.
  * `nextCursor` is the position to pass as `before` for the page before this one, or null when the start of the file was reached.
  */
-export async function readClaudeTail({ file, before, count = 20, chunk: size = CHUNK }) {
+export async function readClaudeTail({ file, before, query, count = 20, chunk: size = CHUNK, signal }) {
+  signal?.throwIfAborted();
   const handle = await open(file, 'r');
   try {
     const length = (await handle.stat()).size;
@@ -47,6 +49,7 @@ export async function readClaudeTail({ file, before, count = 20, chunk: size = C
     const found = []; // newest first; an assistant message that continues in earlier records is merged as they are met
     let visible = 0; // how many of them have words (an assistant step that only called tools has none, and is not a message to show)
     while (position > 0 && visible <= count && scanned < Math.max(SCAN_LIMIT, 4 * size)) {
+      signal?.throwIfAborted();
       const start = Math.max(0, position - size);
       const chunk = Buffer.alloc(position - start);
       await handle.read(chunk, 0, chunk.length, start);
@@ -90,7 +93,7 @@ export async function readClaudeTail({ file, before, count = 20, chunk: size = C
     const oldest = kept.at(-1);
     const more = enough || !reachedStart;
     return {
-      messages: [...kept].reverse().map(({ role, at: when, text }) => ({ role, ...(when === undefined ? {} : { at: when }), text: text.slice(0, TEXT_LIMIT) })),
+      ...previewMessages([...kept].reverse().map(({ role, at: when, text }) => ({ role, ...(when === undefined ? {} : { at: when }), text })), query),
       nextCursor: !more ? null : oldest ? oldest.offset : position || null,
     };
   } finally {

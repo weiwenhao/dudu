@@ -84,6 +84,7 @@ test('native API uses authenticated HTTP only and limits the public probe to a m
   assert.equal(proof.protocol, 1);
   assert.equal(proof.proof, pairingStore.proof(nonce));
   assert.equal(await probeNativeAddress(`${server.address}/dsbot`, nonce), proof.proof);
+  assert.equal(await probeNativeAddress(server.address, nonce), proof.proof);
 
   const code = await pairingStore.issue({ address: `${server.address}/dsbot`, name: 'Office Mac' });
   const token = tokenFrom(code);

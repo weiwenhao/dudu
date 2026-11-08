@@ -4,13 +4,13 @@ import { storeFilter } from './dates.js';
 const DAY = 86400000;
 const HOUR = 3600000;
 
-export const PROPERTY_ORDER = ['id', 'status', 'agent', 'priority', 'project', 'dueDate', 'source', 'created', 'updated'];
+export const PROPERTY_ORDER = ['id', 'status', 'agent', 'priority', 'project', 'labels', 'dueDate', 'source', 'created', 'updated'];
 
-// What one tab shows besides its rows. Everything here is a choice of the person using it; the defaults are Linear's.
+// What one tab shows besides its rows. Agent state is the default grouping; each tab remembers the owner's choices.
 export const DEFAULT_VIEW = {
   filter: {},
   layout: 'list', // 'list' | 'board'
-  group: null, // list: Grouping; board: Columns (null reads as Status)
+  group: 'agentState', // list: Grouping; board: Columns (null reads as Agent state)
   subGroup: null, // list: Sub-grouping; board: Rows
   reverseGroups: false,
   order: 'priority',
@@ -18,7 +18,7 @@ export const DEFAULT_VIEW = {
   recency: null, // Order completed by recency: null follows the tab (on for All issues), true/false is the person's choice
   completed: 'all', // Completed issues: 'all' | 'day' | 'week' | 'month' | 'none'
   showEmpty: false,
-  properties: { id: true, status: true, agent: true, priority: true, project: true, dueDate: true, source: false, created: false, updated: false },
+  properties: { id: true, status: true, agent: true, priority: true, project: true, labels: true, dueDate: true, source: false, created: false, updated: false },
 };
 
 const COMPLETED_DAYS = { day: 1, week: 7, month: 30 };
@@ -35,7 +35,7 @@ export function listRequest(tab, view, now = Date.now(), search = '') {
   if (view.completed === 'none') filter.completedFrom = Number.MAX_SAFE_INTEGER;
   else if (COMPLETED_DAYS[view.completed]) filter.completedFrom = Math.floor(now / HOUR) * HOUR - COMPLETED_DAYS[view.completed] * DAY;
   if (Object.keys(filter).length) request.filter = filter;
-  const group = view.layout === 'board' ? (view.group ?? 'status') : view.group;
+  const group = view.layout === 'board' ? (view.group ?? 'agentState') : view.group;
   if (group) request.group = group;
   if (view.subGroup && view.subGroup !== group) request.subGroup = view.subGroup;
   if (view.order !== DEFAULT_VIEW.order) request.order = view.order;
@@ -57,11 +57,34 @@ const STORAGE_KEY = 'dudu.issues.views.v1';
 function load() {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
-    return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+    const migrated = migrateViews(stored);
+    if (JSON.stringify(migrated) !== JSON.stringify(stored)) {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated)); } catch { /* storage may be read-only */ }
+    }
+    return migrated;
   } catch { return {}; }
 }
 
-const complete = (view) => ({ ...DEFAULT_VIEW, ...view, properties: { ...DEFAULT_VIEW.properties, ...view?.properties } });
+export function migrateViews(stored) {
+  return Object.fromEntries(Object.entries(stored).filter(([, view]) => view && typeof view === 'object' && !Array.isArray(view)).map(([tab, view]) => {
+    if (view.agentGroupingVersion) return [tab, view];
+    const group = view.group == null || view.group === 'status' ? 'agentState' : view.group;
+    return [tab, { ...view, group, ...(view.subGroup === group ? { subGroup: null } : {}), agentGroupingVersion: 1 }];
+  }));
+}
+
+const complete = (view) => ({
+  ...DEFAULT_VIEW, ...view,
+  agentGroupingVersion: 1,
+  filter: {
+    ...view?.filter,
+    ...(Array.isArray(view?.filter?.agentState) ? {
+      agentState: [...new Set(view.filter.agentState.map((state) => ['needs_you', 'stuck', 'done'].includes(state) ? 'blocked' : state))],
+    } : {}),
+  },
+  properties: { ...DEFAULT_VIEW.properties, ...view?.properties },
+});
 
 /** The view of every tab, remembered in this browser (the doc keeps it in the server's settings.json; that comes with them). */
 export function useViews() {

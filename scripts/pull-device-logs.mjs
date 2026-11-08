@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { analyzeActions, describeActions } from './lib/device-actions.mjs';
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -83,11 +84,14 @@ async function main() {
       firstRecord: entries[0]?.sourceTime ?? entries[0]?.time ?? entries[0]?.timestamp,
       lastRecord: entries.at(-1)?.sourceTime ?? entries.at(-1)?.time ?? entries.at(-1)?.timestamp,
       events: counts, recentIssues: issues.slice(-100),
+      // which taps were followed by a wait, and what the main thread did meanwhile (the app logs `user.tap`, `user.hold`, `ui.main_thread_stall`)
+      actions: (({ slow, stalls }) => ({ slowTaps: slow.slice(0, 50), mainThreadStalls: stalls.slice(-50) }))(analyzeActions(recent, { since: cutoff })),
     };
     await writeFile(path.join(destination, 'summary.json'), JSON.stringify(summary, null, 2));
     console.log(`Logs: ${destination}`);
     console.log(`${entries.length} records; ${recent.length} in the last ${minutes} minutes; ${issues.length} warnings/errors.`);
-    console.log('Read timeline.jsonl for the full timeline and summary.json for event counts and recent issues.');
+    console.log(describeActions(analyzeActions(recent, { since: cutoff })));
+    console.log('Read timeline.jsonl for the full timeline and summary.json for event counts, recent issues and the slow taps.');
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }

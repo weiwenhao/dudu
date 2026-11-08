@@ -89,6 +89,26 @@ html[data-dsbot-page-kind="plugins"] [data-plugin-panel] > header {
 html[data-dsbot-page-kind="plugins"] [data-plugin-panel] > header {
   display: none !important;
 }
+/* Newer DSH nests its main header inside the scroll body; retain only plugin tabs. */
+html[data-dsbot-page-kind="plugins"] [data-plugin-header-part="title"],
+html[data-dsbot-page-kind="plugins"] [data-plugin-header-part="intro"],
+html[data-dsbot-page-kind="plugins"] [data-plugin-header-part="toolbar"],
+html[data-dsbot-page-kind="plugins"] [data-plugin-bar][data-measuring],
+html[data-dsbot-page-kind="plugins"] [data-plugin-bar]:not(:has([data-plugin-header-part="tabs"])) {
+  display: none !important;
+}
+html[data-dsbot-page-kind="plugins"] [data-plugin-bar] > header {
+  height: auto !important;
+  padding-top: 0 !important;
+  clip-path: none !important;
+}
+html[data-dsbot-page-kind="plugins"] [data-plugin-bar]::before,
+html[data-dsbot-page-kind="plugins"] [data-plugin-bar]::after {
+  display: none !important;
+}
+html[data-dsbot-page-kind="plugins"] [data-plugin-header-part="tabs"] {
+  position: static !important;
+}
 html[data-dsbot-page-kind="plugins"] [data-plugin-panel] > header button,
 html[data-dsbot-page-kind="plugins"] [data-plugin-panel] [class*="_moreBack"] {
   min-height: 44px;
@@ -225,6 +245,9 @@ html[data-dsbot-page-kind="trace"] aside[aria-label="Event details"] {
   border: 0 !important;
   background: var(--dsw-alias-bg-layer-1, #fff) !important;
 }
+html[data-dsbot-page-kind="trace"] [data-conversation-composer-overlay] > [class*="_ledger"] {
+  --dsh-trajectory-bottom-clearance: 0px;
+}
 html[data-dsbot-page-kind="trace"] [data-conversation-composer-overlay]:has(aside[aria-label]) > :not([class*="_ledger"]) {
   display: none !important;
 }
@@ -245,6 +268,8 @@ html[data-dsbot-page-kind="trace"] aside[aria-label] [role="tab"] {
   min-width: 44px;
   min-height: 44px;
 }
+html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_navTitle"],
+html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_header"],
 html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_content"] > [class*="_header"],
 html[data-dsbot-page-kind="settings"] [data-dsbot-settings-body] > [class*="_header"] {
   display: none !important;
@@ -256,6 +281,7 @@ html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] > [class*
   display: none !important;
 }
 html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_content"] > [class*="_options"],
+html[data-dsbot-page-kind="settings"] [data-dsbot-settings-body][class*="_options"],
 html[data-dsbot-page-kind="settings"] [data-dsbot-settings-body] > [class*="_options"] {
   width: 100% !important;
   min-width: 0 !important;
@@ -314,6 +340,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
   let routeFinished = false;
   let isVisible = true;
   let requestedSession = false;
+  let selectedOverflowView = false;
   let settingsSignature = "";
   let selectedSection = typeof page.section === "string" ? page.section
     : page.kind === "settings" ? target : null;
@@ -323,7 +350,8 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
   let scheduled = false;
   let timer;
   let routeError = "";
-  let deadline = performance.now() + 28000;
+  let deadline = performance.now() + 60000;
+  let routeDeadline;
   const originalConsoleError = console.error;
 
   function reviewDiagnostic(message) {
@@ -389,12 +417,13 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     if (page.kind === "settings") {
       const dialog = document.querySelector('[data-shortcut-modal="settings"]');
       const nav = dialog?.querySelector("nav");
-      const body = dialog?.querySelector('[class*="_content"]');
+      const options = dialog?.querySelector(':scope > [class*="_options"]');
+      const body = options || dialog?.querySelector('[class*="_content"]');
       nav?.setAttribute("data-dsbot-settings-nav", "");
       body?.setAttribute("data-dsbot-settings-body", "");
       const ui = appUI();
       const section = settingsEntries(contextOf(ui)).find(item => item.id === selectedSection);
-      const heading = body?.querySelector('[class*="_options"] h1,[class*="_options"] h2');
+      const heading = (options || body?.querySelector('[class*="_options"]'))?.querySelector("h1,h2");
       if (heading) {
         const label = section ? resolveLabel(ui, contextOf(ui), section.entry) : "";
         heading.toggleAttribute("data-dsbot-duplicate-heading",
@@ -409,14 +438,18 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
 
   function pluginsReady() {
     const panel = document.querySelector("[data-plugin-panel]");
-    if (!panel || panel.getAttribute("aria-busy") === "true") return false;
-    if (panel.querySelector("[data-plugin-loading]")) return false;
-    return Boolean(
+    if (!panel) return false;
+    // Existing plugin cards remain usable while another section is loading.
+    if (
       panel.querySelector(
         "[data-plugin-package], [data-plugin-item], [data-plugin-row], " +
-        "[data-plugin-item-detail], [data-plugin-row-detail], [data-plugin-rows]"
+        "[data-plugin-item-detail], [data-plugin-row-detail]"
       ) ||
-      panel.querySelector("[data-plugin-group] li, [data-plugin-group] button") ||
+      panel.querySelector("[data-plugin-group] li, [data-plugin-group] button")
+    ) return true;
+    if (panel.getAttribute("aria-busy") === "true" || panel.querySelector("[data-plugin-loading]")) return false;
+    return Boolean(
+      panel.querySelector("[data-plugin-rows]") ||
       panel.querySelector('[class*="_empty"]') ||
       panel.querySelector('[role="alert"]') ||
       panel.querySelector('[role="status"]')
@@ -591,6 +624,28 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     return tabs.find(tab => tabLabels[page.kind]?.includes(labelOf(tab)));
   }
 
+  // A hidden desktop header has no width budget: newer DSH folds its non-Chat
+  // views into More. Use those same controls rather than making another store.
+  function selectOverflowView(ui, ctx) {
+    const id = page.kind === "view" ? target
+      : page.kind === "trace" ? "trajectory" : page.kind;
+    const entry = slotEntries(ctx, "conversation.view").find(item => item?.options?.id === id);
+    const labels = entry ? [resolveLabel(ui, ctx, entry)] : (tabLabels[page.kind] || []);
+    const strip = document.querySelector('[data-slot="conversation.header"] [data-conversation-tabs]');
+    const more = strip?.parentElement?.querySelector('button[aria-haspopup="menu"]');
+    if (!more || more.disabled || !labels.length) return false;
+    const item = [...document.querySelectorAll('[role="menuitem"]')]
+      .find(element => labels.includes(labelOf(element)));
+    if (item) {
+      if (item.getAttribute("aria-current") === "page") {
+        if (more.getAttribute("aria-expanded") === "true") more.click();
+        return true;
+      }
+      item.click();
+    } else if (more.getAttribute("aria-expanded") !== "true") more.click();
+    return false;
+  }
+
   // Panels come from plugins this adapter knows nothing about, so "ready" means the page
   // has been still for a moment after DSH showed it.
   function settled(milliseconds) {
@@ -619,6 +674,10 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
           if (tab.getAttribute("aria-selected") !== "true") tab.click();
           else if (document.querySelector("[data-conversation-content]")
             && (page.kind !== "view" || settled(500))) await finishRoute();
+        } else if (requestedSession) {
+          if (!selectedOverflowView) selectedOverflowView = selectOverflowView(ui, ctx);
+          if (selectedOverflowView && document.querySelector("[data-conversation-content]")
+            && settled(500)) await finishRoute();
         }
       } else if (page.kind === "panel" && target) {
         const layout = service(ui, "layout");
@@ -683,7 +742,8 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     const group = [...document.querySelectorAll('[data-plugin-panel] [role="group"]')]
       .find(element => /添加插件|add plugin/iu.test(element.getAttribute("aria-label") || ""));
     // While an install is running DSH swaps the add button for one that reopens its progress.
-    const toolbar = document.querySelector('[data-plugin-panel] > header [class*="_toolbar"]');
+    const toolbar = document.querySelector('[data-plugin-panel] [data-plugin-toolbar]')
+      || document.querySelector('[data-plugin-panel] > header [class*="_toolbar"]');
     const buttons = toolbar ? [...toolbar.querySelectorAll("button")] : [];
     const target = group?.querySelector("button") || buttons[buttons.length - 1];
     if (target && !target.disabled) target.click();
@@ -727,17 +787,21 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
         if (page.kind === "settings" && isVisible && routeFinished && !settingsReady(ui, contextOf(ui))) {
           routeFinished = false;
           deadline = performance.now() + 28000;
+          routeDeadline = deadline;
           clearTimeout(timer);
           timer = setTimeout(tick, 200);
         }
-        if (!routeFinished) void applyRoute(ui);
+        if (!routeFinished) {
+          if (routeDeadline === undefined) routeDeadline = Math.min(deadline, performance.now() + 28000);
+          void applyRoute(ui);
+        }
       }
     });
   }
 
   function tick() {
     if (closed || routeFinished) return;
-    if (performance.now() > deadline) {
+    if (performance.now() > (routeDeadline ?? deadline)) {
       if (page.reviewDiagnostics) {
         const ui = appUI();
         const state = {

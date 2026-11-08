@@ -13,6 +13,24 @@ const NO_STORE = { 'cache-control': 'no-store' };
 
 const meta = ({ reason, groupId }, { actor = 'owner' } = {}) => ({ reason, groupId, actor });
 
+// Only DSH prompt images and session-scoped upload receipts may accompany a forwarded message.
+// DSH remains responsible for byte validation, model image support, size limits and receipt ownership.
+function forwardAttachments(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 100) return null;
+  const items = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    if (item.type === 'file' && typeof item.receiptId === 'string' && /^[\x21-\x7e]{1,512}$/.test(item.receiptId)) {
+      items.push({ type: 'file', receiptId: item.receiptId });
+    } else if (item.type === 'image' && ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(item.mediaType)
+      && typeof item.data === 'string' && item.data.length > 0 && (item.name === undefined || typeof item.name === 'string')) {
+      items.push({ type: 'image', mediaType: item.mediaType, data: item.data, ...(item.name === undefined ? {} : { name: item.name }) });
+    } else return null;
+  }
+  return items;
+}
+
 async function hand(hook, ...args) {
   try { return await hook?.(...args); } catch (error) { console.warn(`[dudu] An issue hook failed: ${error.message}`); return undefined; }
 }
@@ -63,6 +81,17 @@ async function resume(issues, { id, session }, { onResume }) {
 }
 
 const CALLS = {
+  statuses: (issues) => issues.statuses(),
+  'status-add': (issues, { fields }, scope) => scope.actor === 'owner' ? issues.statusAdd(fields) : { outcome: 'error', code: 'owner_only' },
+  'status-update': (issues, { id, patch }, scope) => scope.actor === 'owner' ? issues.statusUpdate(id, patch) : { outcome: 'error', code: 'owner_only' },
+  'status-remove': (issues, { id, replacement }, scope) => scope.actor === 'owner' ? issues.statusRemove(id, replacement) : { outcome: 'error', code: 'owner_only' },
+  'status-order': (issues, { category, ids }, scope) => scope.actor === 'owner' ? issues.statusOrder(category, ids) : { outcome: 'error', code: 'owner_only' },
+  labels: (issues) => issues.labels(),
+  'label-add': (issues, { fields }) => issues.labelAdd(fields),
+  'label-update': (issues, { id, patch }, scope) => scope.actor === 'owner' ? issues.labelUpdate(id, patch) : { outcome: 'error', code: 'owner_only' },
+  'label-remove': (issues, { id }, scope) => scope.actor === 'owner' ? issues.labelRemove(id) : { outcome: 'error', code: 'owner_only' },
+  'link-add': (issues, { id, fields, ...rest }, scope) => issues.linkAdd(id, fields, meta(rest, scope)),
+  'link-remove': (issues, { id, linkId, ...rest }, scope) => issues.linkRemove(id, linkId, meta(rest, scope)),
   schema: () => ({ outcome: 'success', apiVersion: 1, document: issueApiDocument() }),
   office: (issues) => issues.office(),
   list: (issues, body) => issues.list(body),
@@ -80,15 +109,17 @@ const CALLS = {
     return result;
   },
   log: (issues, { id, kind, text, data, ...rest }, scope) => issues.log(id, { kind, text, data, ...meta(rest, scope) }),
-  message: async (issues, { id, text }, scope) => {
+  message: async (issues, { id, text, attachmentIds = [], requestId }, scope) => {
     const { onMention } = scope;
     const got = issues.get(id, { logLimit: 1 });
     if (!got.issue) return got;
-    const message = issueMessage(text, got.issue.agent);
+    if (!Array.isArray(attachmentIds) || attachmentIds.length > 100 || attachmentIds.some((key) => typeof key !== 'string')) return { outcome: 'needs_clarification', code: 'invalid_message' };
+    const message = issueMessage(text, got.issue.agent, { hasAttachments: attachmentIds.length > 0 });
     if (message.error) return { outcome: 'needs_clarification', code: message.error };
     if (message.target && message.target !== 'dudu' && !got.issue.project?.path) return { outcome: 'needs_clarification', code: 'choose_project' };
     if (message.target && !onMention) return { outcome: 'error', code: 'delivery_failed' };
-    const logged = issues.log(id, { kind: 'note', text: message.text, data: message.target ? { mention: message.target } : null, ...meta({}, scope) });
+    const logged = issues.log(id, { kind: 'note', text: message.text, attachmentIds, requestId,
+      data: message.target ? { mention: message.target } : null, ...meta({}, scope) });
     if (logged.outcome !== 'success' || !message.target) return logged;
     try {
       const result = await onMention(got.issue, message, logged.entry);
@@ -115,6 +146,34 @@ const CALLS = {
     return result;
   },
   search: (issues, { q, limit, tab }) => issues.search(q, { limit, tab }),
+  recipients: (issues, body) => issues.recipients(body),
+  // An explicit issue address routes the owner's body verbatim, even when it contains @names or /skills.
+  forward: async (issues, { id, session, text, attachments, retryEntry }, { onForward, ...scope }) => {
+    if (typeof text !== 'string' || !text.trim() || text.length > 20_000) return { outcome: 'needs_clarification', code: 'invalid_message' };
+    const attached = forwardAttachments(attachments);
+    if (!attached) return { outcome: 'needs_clarification', code: 'invalid_message' };
+    const got = issues.get(id, { logLimit: 1 });
+    if (!got.issue) return { ...got, code: 'recipient_unavailable' };
+    if (!got.issue.agent) return { outcome: 'needs_clarification', code: 'choose_agent' };
+    if (!got.issue.project?.path) return { outcome: 'needs_clarification', code: 'choose_project' };
+    if (!got.issue.session || session !== undefined && session !== got.issue.session) return { outcome: 'needs_clarification', code: 'recipient_unavailable' };
+    if (!onForward) return { outcome: 'error', code: 'delivery_failed' };
+    let logged;
+    if (retryEntry !== undefined) {
+      if (!Number.isSafeInteger(retryEntry) || retryEntry < 1) return { outcome: 'needs_clarification', code: 'invalid_message' };
+      const entry = issues.relayNote(id, retryEntry);
+      if (!entry || entry.actor !== scope.actor || entry.text !== text.trim() || entry.data?.mention !== got.issue.agent || entry.data?.session !== got.issue.session) {
+        return { outcome: 'needs_clarification', code: 'recipient_unavailable' };
+      }
+      logged = { outcome: 'success', entry, issue: got.issue };
+    } else logged = issues.log(id, { kind: 'note', text: text.trim(), data: { mention: got.issue.agent, session: got.issue.session }, ...meta({}, scope) });
+    if (logged.outcome !== 'success') return logged;
+    try {
+      const result = await onForward(got.issue, text.trim(), logged.entry, attached);
+      if (!result || !['success', 'no_op'].includes(result.outcome)) return { ...logged, outcome: 'error', code: 'delivery_failed', saved: true };
+      return { ...logged, issue: issues.get(id, { logLimit: 1 }).issue ?? got.issue, delivery: result };
+    } catch { return { ...logged, outcome: 'error', code: 'delivery_failed', saved: true }; }
+  },
   facets: (issues, body) => issues.facets(body),
   counts: (issues) => issues.counts(),
   reply,
@@ -123,6 +182,11 @@ const CALLS = {
     const got = issues.get(id, { logLimit: 1 });
     if (!got.issue) return got;
     return { outcome: 'success', ...(await onSession?.(got.issue) ?? {}) };
+  },
+  // Where it came from, for the page's Source group: { source: { connector, name, url, from, at, title } | null }.
+  source: async (issues, { id }, { onSource }) => {
+    const got = issues.get(id, { logLimit: 1 });
+    return got.outcome === 'success' ? { outcome: 'success', source: (await hand(onSource, got.issue)) ?? null } : got;
   },
   delete: async (issues, { id, token }, { onDelete }) => {
     if (!token) return issues.forget(id);
@@ -159,6 +223,8 @@ export function createIssueCommands({ issues, actor = 'owner', ...hooks }) {
 export function createIssuesApi({ issues, ...hooks }) {
   const commands = createIssueCommands({ ...hooks, issues, actor: 'owner' });
   return {
+    /** The same commands for code that is not a request of the page (the owner's own doing, such as sharing a collected record to a session). */
+    execute: (action, body) => commands.execute(action, body),
     async handle(action, request) {
       const call = Object.hasOwn(CALLS, action) ? CALLS[action] : null;
       if (!call) return new Response('Not found', { status: 404 });

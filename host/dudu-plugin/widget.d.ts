@@ -31,7 +31,7 @@ export interface WidgetIssue {
   status: 'backlog' | 'todo' | 'in_progress' | 'in_review' | 'done' | 'canceled';
   priority: 'none' | 'low' | 'medium' | 'high' | 'urgent';
   agent: string | null;
-  agentState: 'working' | 'needs_you' | 'stuck' | 'idle';
+  agentState: 'idle' | 'working' | 'blocked';
   ask: string;
   dueAt: number | null;
   project: { name: string; path: string | null } | null;
@@ -58,15 +58,20 @@ export interface WidgetQuota {
   }[];
 }
 
+export interface WidgetCollector {
+  id: string;
+  name: string;
+  readToday: number;
+  createdToday: number;
+  lastRead: { at: number; ok: boolean; items?: number; created?: number } | null;
+}
+
 export interface WidgetInputs {
   createdToday: number;
-  connectors: {
-    id: string;
-    name: string;
-    readToday: number;
-    createdToday: number;
-    lastRead: { at: number; ok: boolean; items?: number; created?: number } | null;
-  }[];
+  /** What each collector last brought (a collector reads through a connector; the connector itself collects nothing). */
+  collectors: WidgetCollector[];
+  /** The same rows as `collectors`, kept under the name this field had before connectors and collectors were told apart. */
+  connectors: WidgetCollector[];
 }
 
 export interface WidgetSession {
@@ -79,6 +84,7 @@ export interface WidgetSession {
   cwd?: string;
   project?: { name: string; path: string } | null;
   updatedAt: number;
+  previewVersion?: string | null;
   evidence?: { text: string } | null;
   [field: string]: unknown;
 }

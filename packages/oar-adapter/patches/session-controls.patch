@@ -1,0 +1,143 @@
+--- a/dist/contracts/session-options.d.ts
++++ b/dist/contracts/session-options.d.ts
+@@ -31,6 +31,18 @@
+  * (docs/spec/runtime-matrix.md#refused-session-options).
+  */
+ export interface SessionOptions {
++    /** Earlier observed Codex child identities: attribution only, no assertion of current activity. */
++    readonly observedSubagents?: readonly {
++        readonly sessionId: string;
++        readonly taskId: string;
++        readonly agentPath: readonly string[];
++        readonly childSessionId?: string;
++        readonly toolCallId?: string;
++        readonly description?: string;
++        readonly nativeType?: string;
++    }[];
++    /** Cancel Claude opening and await process teardown. After opening use abort()/dispose(). */
++    readonly openSignal?: AbortSignal;
+     /**
+      * Bound what this process retains for records(), the query folds and cursor
+      * replay. Past this many bytes, the oldest frames lose `native` and tool
+@@ -104,6 +116,8 @@
+      * `Session.effort()` is the runtime's report, where it gives one.
+      */
+     readonly effort?: string;
++    /** Dudu Claude extension. Omit to retain OAR's legacy bypass; inherit loads native settings. Prompts without a host are denied. */
++    readonly permissionMode?: "inherit" | "auto" | "default" | "manual" | "acceptEdits" | "plan" | "dontAsk" | "bypassPermissions";
+     /**
+      * Runtime-native service tier, one of the model's `ModelEntry.serviceTiers`,
+      * or `default` to explicitly disable a special tier. `default` is an
+@@ -154,6 +168,8 @@
+      * UnsupportedOptionError. See docs/spec/runtime-matrix.md#missing-resume-targets.
+      */
+     readonly resume?: string;
++    /** Dudu extension: this host owns per-task stop controls and retains the native process for background work. */
++    readonly backgroundTasks?: boolean;
+     /** Environment changes for the processes THIS session spawns: a string sets the variable (including an empty string); null removes it from the inherited environment. The host environment is never changed. Subprocess runtimes: the runtime process itself (tools inherit). In-process runtimes: only the agent's tool subprocesses; provider config needs the runtime's native channel there. CAVEAT for PATH-like entries: a runtime that runs tools through a login shell (codex: zsh/bash -lc) lets profile scripts reorder or rebuild PATH (probed: codex demotes injected entries on Linux and macOS path_helper/.zprofile can drop them). Injected CLIs should be invoked by ABSOLUTE path. Pi refuses removals combined with stdio mcpServers because its MCP transport re-inherits the host environment. Refused when non-empty by cursor, whose tools run in the host process with no environment of their own: `session()` rejects with `UnsupportedOptionError` (`Runtime.refusedSessionOptions`, docs/spec/runtime-matrix.md#refused-session-options).
+      *
+      * Credential-like names with non-path values of at least eight characters,
+@@ -266,4 +282,4 @@
+      */
+     readonly launchArgs?: readonly string[];
+ }
+-//# sourceMappingURL=session-options.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=session-options.d.ts.map
+--- a/dist/contracts/session.d.ts
++++ b/dist/contracts/session.d.ts
+@@ -154,6 +154,10 @@
+     withdraw?(inputId: string): Promise<ControlResult>;
+     /** Stop one native task without aborting its parent or peers. Accepted is only the native acknowledgement, never a task-ended fact. Absent without native single-task control. */
+     stopTask?(taskId: string): Promise<ControlResult>;
++    /** Dudu extensions over native query/settings controls; none submits a model prompt. */
++    backgroundTasks?(): Promise<void>;
++    taskOutput?(taskId: string): Promise<{ text: string; total: number; truncated: boolean }>;
++    configure?(options: SessionOptions): Promise<ControlResult>;
+     abort(): Promise<ControlResult>;
+     rawEvents(observer: RawEventObserver, cursor?: Cursor): Unsubscribe;
+     records(): readonly RawEvent[];
+@@ -183,6 +187,7 @@
+     /** Present only where OAR holds the queue and can remove an entry before it is sent: a host offers withdraw, edit (withdraw, then `queue`) and send now (withdraw, then `deliver`) only where it exists. */
+     withdraw?(inputId: string): Promise<ControlOutcome>;
+     stopTask?(taskId: string): Promise<ControlOutcome>;
++    configure?(options: SessionOptions): Promise<ControlOutcome>;
+     abort(): Promise<ControlOutcome>;
+     /**
+      * The consumer face of the stream: every fact oar read, flat and attributed
+@@ -264,4 +269,4 @@
+     readonly reason: string;
+     readonly result: ControlOutcome;
+ };
+-//# sourceMappingURL=session.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=session.d.ts.map
+--- a/dist/shared/seal-session.js
++++ b/dist/shared/seal-session.js
+@@ -90,6 +90,7 @@
+         queue,
+         ...(withdraw === undefined ? {} : { withdraw }),
+         ...(stopTask === undefined ? {} : { stopTask }),
++        ...(adapterSession.configure === undefined ? {} : { configure: async (options) => controlOutcomeOf(await adapterSession.configure(options)) }),
+         abort,
+         events: (observer, options = {}) => {
+             const coalesce = options.coalesceText ?? false;
+@@ -112,4 +113,4 @@
+     };
+     return sealed;
+ }
+-//# sourceMappingURL=seal-session.js.map
+\ No newline at end of file
++//# sourceMappingURL=seal-session.js.map
+--- a/dist/shared/stream-json/profile.d.ts
++++ b/dist/shared/stream-json/profile.d.ts
+@@ -3,6 +3,8 @@
+ import type { LoadedImage } from "../input-images.js";
+ import type { JsonRecord } from "../json.js";
+ import type { StreamJsonProjectionState } from "./state.js";
++import type { SessionKernel } from "../session-kernel.js";
++import type { AdapterSession } from "../../contracts/session.js";
+ export interface StreamJsonUpdate<S> {
+     readonly state: S;
+     readonly events: readonly RuntimeEventBody[];
+@@ -35,6 +37,8 @@
+ }
+ /** Process-specific startup and capabilities; line framing and process ownership use LineProcess. */
+ export interface StreamJsonSessionProfile<S extends StreamJsonProjectionState> {
++    /** Dudu extension: optional native controls sharing this process and its record kernel. */
++    readonly controls?: (kernel: SessionKernel) => Partial<AdapterSession>;
+     readonly projection: StreamJsonProjectionProfile<S>;
+     readonly initial: S;
+     readonly capabilities: SessionCapabilities;
+@@ -65,4 +69,4 @@
+     /** A native allow response, already in the runtime's own wire shape; null leaves the request unanswered. */
+     readonly permissionResponse?: (requestId: string, request: JsonRecord) => JsonRecord | null;
+ }
+-//# sourceMappingURL=profile.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=profile.d.ts.map
+--- a/dist/shared/stream-json/session.js
++++ b/dist/shared/stream-json/session.js
+@@ -11,6 +11,7 @@
+ /** Shared line protocol driver. A runtime launches its own process and supplies its own readbacks. */
+ export async function streamJsonSession(child, sessionId, credentials, profile) {
+     const kernel = credentials.kernel(sessionId);
++    const controls = profile.controls?.(kernel) ?? {};
+     const tasks = profile.stopTask === undefined ? undefined : streamJsonTaskControl(kernel, child, profile.stopTask);
+     const userMessage = profile.userMessage ?? streamJsonUserMessage;
+     const state = { child, active: null, spontaneous: false, projection: profile.initial, disposed: false };
+@@ -200,6 +201,7 @@
+     let interruptCounter = 0;
+     const capabilities = profile.capabilities;
+     const session = credentials.seal({
++        ...controls,
+         id: kernel.sessionId,
+         capabilities,
+         ...(compaction === null ? {} : { compact: compaction.compact }),
+@@ -356,4 +358,4 @@
+     });
+     return session;
+ }
+-//# sourceMappingURL=session.js.map
+\ No newline at end of file
++//# sourceMappingURL=session.js.map

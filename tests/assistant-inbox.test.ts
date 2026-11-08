@@ -8,25 +8,26 @@ const waiting = (extra = {}) => ({
   excerpt: 'Reading clause 3.', pending: { text: 'Accept clause 3?', kind: 'question' }, ...extra,
 });
 
-test('a waiting session becomes one issue, with its source, agent and project; later states follow that issue', async (t) => {
+test('a waiting session follows an explicitly managed issue without creating another one', async (t) => {
   const issues = createIssues({ file: ':memory:' });
   const observed: any[] = [];
+  const made = issues.add({ title: 'Contract', session: 'claude:one', source: 'session', sourceRef: 'claude:one', agent: 'claude', project: { name: 'app', path: '/work/app' } }).issue;
   const inbox = createSessionInbox({ issues, observe: (issue: any, snapshot: any) => observed.push([issue.id, snapshot.state]) });
   t.after(async () => { await inbox.close(); issues.close(); });
   const first = await inbox.accept(waiting());
   await inbox.accept(waiting({ state: 'finished', pending: null }));
   assert.equal(issues.counts().total, 1);
-  assert.deepEqual([first.source, first.sourceRef, first.agent, first.project, first.ask], [
-    'session', 'claude:one', 'claude', { name: 'app', path: '/work/app' }, 'Accept clause 3?',
+  assert.deepEqual([first.id, first.source, first.sourceRef, first.agent, first.project], [
+    made.id, 'session', 'claude:one', 'claude', { name: 'app', path: '/work/app' },
   ]);
   assert.deepEqual(observed, [[first.id, 'waiting_owner'], [first.id, 'finished']]);
-  assert.equal(first.status, 'in_review');
   assert.equal(issues.list({ tab: 'active' }).items[0].id, first.id, 'session lookup does not break the view parser');
 });
 
 test('native and DSH observations of a linked session share one issue even when they arrive together', async (t) => {
   const issues = createIssues({ file: ':memory:' });
-  const inbox = createSessionInbox({ issues });
+  issues.add({ title: 'Managed', session: 'claude:one' });
+  const inbox = createSessionInbox({ issues, links: { get: () => 'loaded' } });
   t.after(async () => { await inbox.close(); issues.close(); });
   const [native, dsh] = await Promise.all([
     inbox.accept(waiting({ dshSessionId: 'loaded' })),
@@ -65,12 +66,14 @@ test('a question after loading a native session through the Sessions widget rebi
   assert.equal(issues.counts().total, 1);
 });
 
-test('the assistant, nonwaiting sessions and empty questions do not create issues', async (t) => {
+test('discovered native and DSH sessions never create issues, including questions, approvals and failures', async (t) => {
   const issues = createIssues({ file: ':memory:' });
   const inbox = createSessionInbox({ issues });
   t.after(async () => { await inbox.close(); issues.close(); });
   for (const extra of [
-    { state: 'running' }, { pending: null }, { pending: { text: ' ' } },
+    {}, { state: 'running' }, { state: 'error' }, { state: 'finished' }, { pending: null }, { pending: { text: ' ' } },
+    { key: 'codex:one', provider: 'codex' }, { key: 'dsh:imported', provider: 'dsh', agent: 'claude' },
+    { pending: { text: 'Approve this tool?', kind: 'approval' } },
     { key: 'dsh:dudu-assistant-one' }, { dshSessionId: 'dudu-assistant-one' },
   ]) assert.equal(await inbox.accept(waiting(extra)), null);
   assert.equal(issues.counts().total, 0);
@@ -78,6 +81,7 @@ test('the assistant, nonwaiting sessions and empty questions do not create issue
 
 test('a failed observation does not block the next one, and closing drains queued work', async (t) => {
   const issues = createIssues({ file: ':memory:' });
+  issues.add({ title: 'Managed', session: 'dsh:one', agent: 'codex', project: { name: 'app', path: '/work/app' } });
   let calls = 0;
   const inbox = createSessionInbox({ issues, adopt: () => { if (!calls++) throw new Error('temporary'); } });
   t.after(() => issues.close());

@@ -1,10 +1,11 @@
-import { Box, CalendarDays, User } from 'lucide-react';
+import { Box, Circle, LoaderCircle, OctagonPause, User } from 'lucide-react';
 import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
-import { DUE_TONE } from './due.js';
+import { DUE_ICON_TONE } from './due.js';
 import { AGENT_LETTERS, AGENT_NAMES } from './model.js';
 import { AgentLogo } from './AgentLogo.jsx';
 import { agentLogo } from './agent-logos.js';
+import { statusDefinition } from './workflow.js';
 
 const STATUS_COLOR = {
   backlog: 'text-status-backlog',
@@ -15,28 +16,39 @@ const STATUS_COLOR = {
   canceled: 'text-status-canceled',
 };
 
-const Svg = ({ className, children }) => (
-  <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">{children}</svg>
+const Svg = ({ className, style, children }) => (
+  <svg className={className} style={style} viewBox="0 0 16 16" fill="none" aria-hidden="true">{children}</svg>
 );
 
 /** Linear's status shapes: dashed circle, empty circle, half, three quarters, check, cross. */
-export function StatusIcon({ status, className }) {
+export function StatusIcon({ status, className, color }) {
+  const definition = statusDefinition(status);
+  status = definition?.type ?? status;
+  const style = (color ?? definition?.color) ? { color: color ?? definition.color } : undefined;
   const cls = cn('size-4 shrink-0', STATUS_COLOR[status], className);
   const ring = <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.6" strokeDasharray={status === 'backlog' ? '1.6 2.4' : undefined} strokeLinecap="round" />;
   switch (status) {
     case 'in_progress':
-      return <Svg className={cls}>{ring}<path d="M8 4.2a3.8 3.8 0 0 1 0 7.6z" fill="currentColor" /></Svg>;
+      return <Svg className={cls} style={style}>{ring}<path d="M8 4.2a3.8 3.8 0 0 1 0 7.6z" fill="currentColor" /></Svg>;
     case 'in_review':
-      return <Svg className={cls}>{ring}<path d="M8 8V4.2a3.8 3.8 0 1 1-3.8 3.8z" fill="currentColor" /></Svg>;
+      return <Svg className={cls} style={style}>{ring}<path d="M8 8V4.2a3.8 3.8 0 1 1-3.8 3.8z" fill="currentColor" /></Svg>;
     case 'done':
-      return <Svg className={cls}><circle cx="8" cy="8" r="7" fill="currentColor" /><path d="M5 8.2l2 2 4-4.4" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></Svg>;
+      return <Svg className={cls} style={style}><circle cx="8" cy="8" r="7" fill="currentColor" /><path d="M5 8.2l2 2 4-4.4" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></Svg>;
     case 'canceled':
-      return <Svg className={cls}><circle cx="8" cy="8" r="7" fill="currentColor" /><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" /></Svg>;
+      return <Svg className={cls} style={style}><circle cx="8" cy="8" r="7" fill="currentColor" /><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" /></Svg>;
     default:
-      return <Svg className={cls}>{ring}</Svg>;
+      return <Svg className={cls} style={style}>{ring}</Svg>;
   }
 }
 
+/**
+ * The icon of an agent state. Working is an arc that turns only while somebody is working (`active`: its group has at least one issue; owner's choice A, 2026-11-05, after
+ * "工作中 0" turned for nothing); an empty group, and the item in a menu, hold still.
+ */
+export function AgentStateIcon({ state, className, active = false }) {
+  const Icon = { idle: Circle, working: LoaderCircle, blocked: OctagonPause, unassigned: User }[state] ?? Circle;
+  return <Icon aria-hidden="true" strokeWidth={1.7} className={cn('size-4 shrink-0', state === 'blocked' ? 'text-warning' : 'text-muted-foreground', state === 'working' && active && 'animate-spin motion-reduce:animate-none', className)} />;
+}
 const BARS = [[2, 9, 5], [6.5, 6, 8], [11, 3, 11]];
 const LEVEL = { high: 3, medium: 2, low: 1 };
 
@@ -73,35 +85,105 @@ export function projectColor(name) {
   return PROJECT_COLORS[hash % PROJECT_COLORS.length];
 }
 
-export function ProjectChip({ name }) {
+export function ProjectChip({ name, shrink = false }) {
+  // `shrink`: in a row that must stay one line (a card) a long name gives way, with an ellipsis, rather than pushing the chip to a second line.
   return (
-    <span className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2 text-xs text-foreground/80">
-      <Box className="size-3.5" style={{ color: projectColor(name) }} aria-hidden="true" />
-      {name}
+    <span className={cn('inline-flex h-6 items-center gap-1.5 rounded-full border px-2 text-xs text-foreground/80', shrink ? 'min-w-0' : 'shrink-0')}>
+      <Box className="size-3.5 shrink-0" style={{ color: projectColor(name) }} aria-hidden="true" />
+      {shrink ? <span className="truncate">{name}</span> : name}
     </span>
   );
 }
 
+/** Linear's ring for sub-issues, measured on the owner's screenshots of Linear (2026-11-08, at 2x): 14px across, a 2px stroke, an indigo arc (#5E6AD2) from the top,
+ *  clockwise, as long as the part that is done, with flat ends, on a plain light-grey track (Linear's #DEDEDE; here the input border token, which follows the theme). */
+export function ProgressRing({ done, total, className }) {
+  const radius = 6;
+  const length = 2 * Math.PI * radius;
+  const fraction = total > 0 ? Math.min(1, Math.max(0, done / total)) : 0;
+  return (
+    <svg viewBox="0 0 14 14" fill="none" aria-hidden="true" className={cn('size-3.5 shrink-0 text-[#5e6ad2]', className)}>
+      <circle cx="7" cy="7" r={radius} stroke="var(--input)" strokeWidth="2" />
+      {fraction > 0 && <circle cx="7" cy="7" r={radius} stroke="currentColor" strokeWidth="2" strokeDasharray={`${length * fraction} ${length}`} transform="rotate(-90 7 7)" />}
+    </svg>
+  );
+}
+
+/** The sub-issues of an issue as Linear shows them: a round chip with the ring and "done/total" (the board and the list). */
+export const SUB_ISSUE_CHIP = 'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2 text-xs text-foreground/80 tabular-nums';
+export function SubIssueChip({ progress }) {
+  return (
+    <span data-issue-subissues="" title={T.subIssues.title} className={SUB_ISSUE_CHIP}>
+      <ProgressRing done={progress.done} total={progress.total} />
+      {T.subIssues.progress(progress.done, progress.total)}
+    </span>
+  );
+}
+
+/** Linear's due-date mark: a rounded calendar with a solid top, without binding rings or a grid of dots. */
+export function DueIcon({ className, clear = false }) {
+  return <Svg className={cn('size-4 shrink-0', className)}>
+    <path d="M5 1.75h6A3.25 3.25 0 0 1 14.25 5v6A3.25 3.25 0 0 1 11 14.25H5A3.25 3.25 0 0 1 1.75 11V5A3.25 3.25 0 0 1 5 1.75Z" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M5 1h6a4 4 0 0 1 4 4v1H1V5a4 4 0 0 1 4-4Z" fill="currentColor" />
+    {clear && <g>
+      <circle cx="11.5" cy="11.5" r="3.75" fill="var(--popover)" stroke="var(--popover)" strokeWidth="2" />
+      <circle cx="11.5" cy="11.5" r="3" stroke="currentColor" strokeWidth="1.3" />
+      <path d="m9.4 9.4 4.2 4.2" stroke="currentColor" strokeWidth="1.3" />
+    </g>}
+  </Svg>;
+}
+
 export function DueDate({ info, className }) {
   return (
-    <span className={cn('inline-flex items-center gap-1 whitespace-nowrap', DUE_TONE[info.kind], className)} title={info.hint}>
-      <CalendarDays className="size-3 shrink-0" aria-hidden="true" />
+    <span className={cn('inline-flex items-center gap-1.5 whitespace-nowrap text-foreground', className)}>
+      <DueIcon className={DUE_ICON_TONE[info.kind]} />
       {info.text}
     </span>
   );
 }
 
-// Running and failed sessions retain their activity marks; In Review is shown by the issue status.
+// Worker marks follow the session; issue review and confirmation questions do not change them. A finished run and a question or a failure are
+// one state, "blocked" (it is your turn), but the corner still tells them apart (2026-11-04): a green disc with a check, and red.
 const BADGE = {
-  working: 'animate-spin border-[1.5px] border-muted-foreground/30 border-t-foreground bg-background motion-reduce:animate-none',
-  stuck: 'bg-destructive',
+  idle: 'border border-muted-foreground/60 bg-background',
+  working: 'animate-spin border-[1.5px] border-muted-foreground/30 border-t-muted-foreground bg-background motion-reduce:animate-none',
+  blocked: 'bg-destructive',
+  done: 'flex items-center justify-center bg-success text-white',
 };
 
-export function AgentAvatar({ agent, state, compact = false }) {
-  const frame = cn('relative flex shrink-0 select-none', compact ? 'size-4' : 'size-6');
+/** What the corner shows for a state: a blocked state that is a finished run is "done". */
+export const markOf = (state, finished = false) => (state === 'blocked' && finished ? 'done' : state);
+
+// Deep sleep (the owner picked this picture on 2026-11-05, and the colour, a moon yellow #e8b923, the same day): a crescent takes the place of the idle ring, centred where the ring is centred (the marks sit
+// 2px in from the corner; a crescent is lighter than a disc, so it is drawn 1px larger than the box on every side). The moon is a circle (radius 6.8 of a 16
+// grid) with a bite (radius 5.2) taken out toward the upper right, placed so that its full circle is concentric with the box. The thin edge round it is the
+// ring's colour (`--tw-ring-color`: the background in the sidebar, where it is transparent like the ring of every mark there, and the tag's card in the Office); Tailwind's
+// `--tw-*` properties do not inherit, so it is read on the span, where the ring class sets it, and the stroke is inherited from there.
+const CRESCENT = 'M14.999 8.256A6.8 6.8 0 1 1 7.761 1.018A5.2 5.2 0 0 0 14.999 8.256Z';
+
+export function AgentActivity({ state, finished = false, asleep = false, className }) {
+  const mark = markOf(state, finished);
+  if (asleep && mark !== 'working') {
+    return (
+      <span aria-hidden="true" data-agent-activity="sleep" style={{ stroke: 'var(--tw-ring-color)' }}
+        className={cn('absolute -right-0.5 -bottom-0.5 size-2 text-[#e8b923] ring-background', className, 'rounded-none border-0 bg-transparent ring-0')}>
+        <svg viewBox="0 0 16 16" fill="currentColor" className="absolute -inset-px size-[calc(100%+2px)] overflow-visible">
+          <path d={CRESCENT} style={{ strokeWidth: 4, strokeLinejoin: 'round', paintOrder: 'stroke' }} />
+        </svg>
+      </span>
+    );
+  }
+  return BADGE[mark] ? <span aria-hidden="true" data-agent-activity={mark}
+    className={cn('absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-1 ring-background', BADGE[mark], className)}>
+    {mark === 'done' && <svg viewBox="0 0 8 8" className="size-full" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M2 4.1l1.35 1.35L6 2.7" /></svg>}
+  </span> : null;
+}
+
+export function AgentAvatar({ agent, state = 'idle', finished = false, asleep = false, compact = false, className, logoClassName, showTitle = true }) {
+  const frame = cn('relative flex shrink-0 select-none', compact ? 'size-4' : 'size-6', className);
   if (!agent) {
     return (
-      <span className={frame} title={T.noAgent}>
+      <span className={frame} title={showTitle ? T.noAgent : undefined} role={showTitle ? undefined : 'img'} aria-label={showTitle ? undefined : T.noAgent}>
         <span className="flex size-full items-center justify-center rounded-full border border-dashed border-muted-foreground/50 text-muted-foreground">
           <User className="size-3" aria-hidden="true" />
         </span>
@@ -110,10 +192,12 @@ export function AgentAvatar({ agent, state, compact = false }) {
   }
   const name = AGENT_NAMES[agent] ?? agent;
   const letter = AGENT_LETTERS[agent] ?? name.slice(0, 1).toUpperCase();
+  const sleeping = asleep && state !== 'working'; // deep sleep (an agent nobody has handled, whatever its mark): the crescent takes the corner, and its name; awake, the mark is its own again
+  const label = `${name} · ${sleeping ? T.deepSleep : T.agentState[state] ?? T.agentState.idle}`;
   return (
-    <span className={frame} title={`${name} · ${T.agentState[state] ?? T.agentState.idle}`}>
-      <span className={cn('flex size-full items-center justify-center text-xs text-muted-foreground', !agentLogo(agent) && 'rounded-full bg-muted')}>{agentLogo(agent) ? <AgentLogo agent={agent} className={compact ? 'size-4' : 'size-5'} /> : letter}</span>
-      {BADGE[state] && <span className={cn('absolute -right-0.5 -bottom-0.5 rounded-full ring-background', compact ? 'size-1.5 ring-1' : 'size-2.5 ring-2', BADGE[state])} />}
+    <span className={frame} data-agent-state={state ?? 'idle'} title={showTitle ? label : undefined} role={showTitle ? undefined : 'img'} aria-label={showTitle ? undefined : label}>
+      <span className={cn('flex size-full items-center justify-center text-xs text-muted-foreground', !agentLogo(agent) && 'rounded-full bg-muted')}>{agentLogo(agent) ? <AgentLogo agent={agent} className={cn(compact ? 'size-4' : 'size-5', logoClassName)} /> : letter}</span>
+      <AgentActivity state={state} finished={finished} asleep={sleeping} className={!compact && 'size-2.5 ring-2'} />
     </span>
   );
 }

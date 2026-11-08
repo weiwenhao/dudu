@@ -5,6 +5,7 @@ struct QueuedMessagesPanel: View {
     let isRunning: Bool
     let isConnected: Bool
     let busyItemID: String?
+    let busyAction: String?
     let onEdit: (QueuedMessage) -> Void
     let onRemove: (QueuedMessage) -> Void
     let onSteer: (QueuedMessage) -> Void
@@ -56,7 +57,7 @@ struct QueuedMessagesPanel: View {
                 } else {
                     ScrollView {
                         VStack(spacing: 0) {
-                            ForEach(messages) { row($0) }
+                            ForEach(messages, id: \.presentationID) { row($0) }
                         }
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
                     }
@@ -76,10 +77,13 @@ struct QueuedMessagesPanel: View {
     }
 
     private func row(_ message: QueuedMessage) -> some View {
-        HStack(spacing: 4) {
-            DSBotIcon(.queue, size: 16, scalesStroke: true)
-                .foregroundStyle(DSBotStyle.chatTertiary)
-                .padding(.leading, 14)
+        HStack(spacing: 0) {
+            if messages.count == 1 {
+                DSBotIcon(.queue, size: 16, scalesStroke: true)
+                    .foregroundStyle(DSBotStyle.chatTertiary)
+                    .padding(.trailing, 8)
+                    .accessibilityHidden(true)
+            }
             if let attachments = message.attachments {
                 let images = attachments.filter { $0.kind == "image" }
                 if !images.isEmpty {
@@ -92,6 +96,7 @@ struct QueuedMessagesPanel: View {
                     }
                     .frame(width: min(102, CGFloat(images.count) * 34 - 4), height: 30)
                     .scrollBounceBehavior(.basedOnSize)
+                    .padding(.trailing, 6)
                 }
             }
             VStack(alignment: .leading, spacing: 2) {
@@ -109,37 +114,72 @@ struct QueuedMessagesPanel: View {
             .font(.system(size: 14))
             .foregroundStyle(DSBotStyle.chatInk)
             .frame(maxWidth: .infinity, alignment: .leading)
-            if busyItemID == message.id {
-                ProgressView().controlSize(.small).frame(width: 44, height: 44)
-            } else {
-                Menu {
-                    Button { onEdit(message) } label: {
-                        Label("编辑排队消息", systemImage: "square.and.pencil")
-                    }
-                    .disabled(!message.editable)
-                    .accessibilityIdentifier("queue.edit.\(message.id)")
-                    Button(role: .destructive) { onRemove(message) } label: {
-                        Label("删除排队消息", systemImage: "trash")
-                    }
-                    .accessibilityIdentifier("queue.remove.\(message.id)")
-                } label: {
-                    DSBotIcon(.options, size: 20).frame(width: 44, height: 44)
-                }
-                .accessibilityLabel("排队消息")
-                .accessibilityIdentifier("queue.menu.\(message.id)")
+            Button { onEdit(message) } label: {
+                DSBotIcon(.compose, size: 16, scalesStroke: true)
+                    .opacity(message.editable ? 1 : 0.35)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
+            .disabled(!message.editable || message.isSubmissionEcho)
+            .accessibilityLabel("编辑排队消息")
+            .accessibilityIdentifier("queue.edit.\(message.id)")
+            Button { onRemove(message) } label: {
+                QueueActionLabel(
+                    glyph: .trash, size: 16,
+                    isPending: busyItemID == message.id && busyAction == "remove"
+                )
+            }
+            .disabled(message.isSubmissionEcho)
+            .accessibilityLabel("删除排队消息")
+            .accessibilityIdentifier("queue.remove.\(message.id)")
             Button { onSteer(message) } label: {
-                DSBotIcon(.send, size: 20).frame(width: 44, height: 44)
+                QueueActionLabel(
+                    glyph: .send, size: 20,
+                    isPending: busyItemID == message.id && busyAction == "steer"
+                )
+                .opacity(isRunning ? 1 : 0.35)
             }
-            .disabled(!isRunning)
+            .disabled(!isRunning || message.isSubmissionEcho)
             .accessibilityLabel("插话发送")
             .accessibilityIdentifier("queue.steer.\(message.id)")
         }
         .foregroundStyle(DSBotStyle.chatSecondary)
-        .buttonStyle(.plain)
+        .buttonStyle(DSBotQuietPressStyle())
         .disabled(!isConnected || busyItemID != nil)
+        .opacity(isConnected ? 1 : 0.35)
+        .padding(.leading, 14)
         .frame(height: 44)
         .accessibilityElement(children: .contain)
+    }
+}
+
+private struct QueueActionLabel: View {
+    let glyph: DSBotGlyph
+    let size: CGFloat
+    let isPending: Bool
+    @State private var showsProgress = false
+
+    var body: some View {
+        DSBotIcon(glyph, size: size, scalesStroke: size < 20)
+            .opacity(showsProgress ? 0 : 1)
+            .frame(width: 44, height: 44)
+            .overlay {
+                if showsProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(DSBotStyle.chatSecondary)
+                }
+            }
+            .contentShape(Rectangle())
+            .task(id: isPending) {
+                showsProgress = false
+                guard isPending else { return }
+                // The press responds immediately; short requests need no spinner flash.
+                do { try await Task.sleep(for: .milliseconds(150)) }
+                catch { return }
+                guard !Task.isCancelled else { return }
+                showsProgress = true
+            }
     }
 }
 
@@ -157,7 +197,7 @@ private struct QueuedImageThumbnail: View {
         Button { presented = true } label: {
             Group {
                 if let image { Image(uiImage: image.image).resizable().scaledToFill() }
-                else { DSBotIcon(.image, size: 18).frame(maxWidth: .infinity, maxHeight: .infinity) }
+                else { DSBotIcon(.image, size: 16, scalesStroke: true).frame(maxWidth: .infinity, maxHeight: .infinity) }
             }
             .frame(width: 30, height: 30)
             .background(DSBotStyle.chatBubble)
@@ -188,13 +228,18 @@ private struct QueuedImageThumbnail: View {
 struct QueuedMessageEditor: View {
     let message: QueuedMessage
     let isSaving: Bool
+    let error: String?
     let onSave: (String) -> Void
     let onCancel: () -> Void
     @State private var text: String
 
-    init(message: QueuedMessage, isSaving: Bool, onSave: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
+    init(
+        message: QueuedMessage, isSaving: Bool, error: String?,
+        onSave: @escaping (String) -> Void, onCancel: @escaping () -> Void
+    ) {
         self.message = message
         self.isSaving = isSaving
+        self.error = error
         self.onSave = onSave
         self.onCancel = onCancel
         _text = State(initialValue: message.text)
@@ -202,21 +247,49 @@ struct QueuedMessageEditor: View {
 
     var body: some View {
         NavigationStack {
-            TextEditor(text: $text)
-                .padding(16)
-                .accessibilityIdentifier("queue.editor.text")
-                .navigationTitle("编辑排队消息")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("取消编辑", action: onCancel).disabled(isSaving)
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("保存排队消息") { onSave(text) }
-                            .disabled(isSaving || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            .accessibilityIdentifier("queue.editor.save")
-                    }
+            VStack(spacing: 16) {
+                TextEditor(text: $text)
+                    .font(.system(size: 16))
+                    .foregroundStyle(DSBotStyle.chatInk)
+                    .scrollContentBackground(.hidden)
+                    .padding(12)
+                    .background(DSBotStyle.sheet, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .disabled(isSaving)
+                    .accessibilityIdentifier("queue.editor.text")
+                if let error {
+                    Text(error)
+                        .font(.system(size: 13))
+                        .foregroundStyle(DSBotStyle.chatError)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("queue.editor.error")
                 }
+            }
+            .padding(20)
+            .background(DSBotStyle.canvas)
+            .navigationTitle("编辑")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消", action: onCancel)
+                        .disabled(isSaving)
+                        .accessibilityIdentifier("queue.editor.cancel")
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        onSave(text)
+                    } label: {
+                        if isSaving {
+                            ProgressView()
+                                .accessibilityIdentifier("queue.editor.saving")
+                        } else {
+                            Text("保存")
+                        }
+                    }
+                    .disabled(isSaving || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityLabel("保存")
+                    .accessibilityIdentifier("queue.editor.save")
+                }
+            }
         }
         .interactiveDismissDisabled(isSaving)
     }

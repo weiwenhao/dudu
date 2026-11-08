@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { markdownImagePath } from '../host/native-markdown-images.mjs';
+
+function message(text: string) {
+  return { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'text', text }] } } };
+}
+
+test('Markdown images resolve only image destinations, including references, escaped parentheses and encoded paths', () => {
+  const event = message([
+    '![before](/workspace/.local/before.png)',
+    '![after](<pictures/设置 after (2).png>)',
+    '![reference][details]',
+    '![escaped](pictures/a\\(b\\).png)',
+    '[details]: file:///workspace/reference%20image.png',
+    '[download](/workspace/report.png)',
+    '`![code](/private/inline.png)`',
+    '```md\n![example](/private/code.png)\n```',
+  ].join('\n\n'));
+  assert.equal(markdownImagePath(event, '/workspace/.local/before.png'), '/workspace/.local/before.png');
+  assert.equal(markdownImagePath(event, 'pictures/%E8%AE%BE%E7%BD%AE%20after%20(2).png', '/workspace'), '/workspace/pictures/设置 after (2).png');
+  const mixed = message('![image](/workspace/设置%20after.png)');
+  assert.equal(markdownImagePath(mixed, '/workspace/%E8%AE%BE%E7%BD%AE%2520after.png'), '/workspace/设置 after.png');
+  assert.equal(markdownImagePath(event, 'file:///workspace/reference%20image.png'), '/workspace/reference image.png');
+  assert.equal(markdownImagePath(event, 'pictures/a(b).png', '/workspace'), '/workspace/pictures/a(b).png');
+  for (const source of ['/etc/passwd', '/workspace/report.png', '/private/inline.png', '/private/code.png']) {
+    assert.throws(() => markdownImagePath(event, source, '/workspace'), { code: 'NOT_FOUND' });
+  }
+});
+
+test('Markdown image selectors reject other events, remote transports, missing working directories and null bytes', () => {
+  for (const source of [
+    'https://example.com/image.png', '//example.com/image.png', 'file://example.com/image.png',
+    'data:image/png;base64,AAAA', '/workspace/picture%00.png',
+  ]) {
+    assert.throws(() => markdownImagePath(message(`![image](${source})`), source, '/workspace'), { code: 'NOT_FOUND' });
+  }
+  const event = message('![image](relative.png)');
+  assert.throws(() => markdownImagePath(event, 'relative.png'), { code: 'NOT_FOUND' });
+  for (const altered of [
+    { ...event, type: 'tool/result' }, { ...event, type: 'user/message' },
+    { ...event, surfaceOp: 'replace' },
+  ]) {
+    assert.throws(() => markdownImagePath(altered, 'relative.png', '/workspace'), { code: 'NOT_FOUND' });
+  }
+  assert.throws(() => markdownImagePath(event, 'relative.png'.repeat(1000), '/workspace'), { code: 'NOT_FOUND' });
+  const duplicateDefinition = message('![image][one]\n\n[one]: /workspace/first.png\n\n[one]: /workspace/last.png');
+  assert.equal(markdownImagePath(duplicateDefinition, '/workspace/first.png'), '/workspace/first.png');
+  assert.throws(() => markdownImagePath(duplicateDefinition, '/workspace/last.png'), { code: 'NOT_FOUND' });
+});

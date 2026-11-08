@@ -7,6 +7,8 @@ import { T } from '../strings.js';
 import { FILTER_FIELDS, FILTER_GROUPS, FILTER_ROWS } from './filters.jsx';
 import { Triangle } from './icons.jsx';
 
+const ISSUES = { fields: FILTER_FIELDS, rows: FILTER_ROWS, groups: FILTER_GROUPS, first: 'status' };
+
 const Kbd = ({ children }) => <kbd className="ml-auto rounded border bg-muted px-1.5 text-xs text-muted-foreground">{children}</kbd>;
 
 function CheckBox({ on }) {
@@ -33,7 +35,7 @@ function Options({ fieldKey, options, filter, onToggle }) {
  * The second list: the options of the highlighted row, each with a checkbox and a count; ticking filters the list at once. A row
  * that holds several fields (Dates) lists each under its own heading.
  */
-function FilterOptions({ row, sections, filter, onToggle, inputRef, onBack }) {
+function FilterOptions({ row, sections, fields, filter, onToggle, inputRef, onBack }) {
   return (
     <Command onKeyDown={(event) => { if (event.key === 'ArrowLeft' && !event.target.value) { event.preventDefault(); onBack(); } }}>
       <CommandInput ref={inputRef} placeholder={T.filterOptions} aria-label={row.name} />
@@ -42,7 +44,7 @@ function FilterOptions({ row, sections, filter, onToggle, inputRef, onBack }) {
         {sections.length === 1
           ? <Options fieldKey={sections[0].key} options={sections[0].options} filter={filter} onToggle={onToggle} />
           : sections.map((section) => (
-            <CommandGroup key={section.key} heading={FILTER_FIELDS[section.key].name}>
+            <CommandGroup key={section.key} heading={fields[section.key].name}>
               <Options fieldKey={section.key} options={section.options} filter={filter} onToggle={onToggle} />
             </CommandGroup>
           ))}
@@ -54,16 +56,22 @@ function FilterOptions({ row, sections, filter, onToggle, inputRef, onBack }) {
 /**
  * Linear's filter menu, as designed: a box to find a field, the fields (each opens its options in a second menu beside it),
  * and the options with checkboxes and counts. The field that is highlighted, by pointer or by the arrow keys, is the one whose
- * options are showing. `anchor` is the button that opened it ({ element, align }).
+ * options are showing. `anchor` is the button that opened it ({ element, align }). `schema` is what the filter holds ({ fields, rows, groups, first });
+ * the Collector widget brings its own.
  */
-export function FilterMenu({ open, anchor, onOpenChange, filter, counts, facets, onToggle }) {
-  const [hot, setHot] = useState('status');
+export function FilterMenu({ open, anchor, onOpenChange, filter, counts, facets, onToggle, schema = ISSUES }) {
+  const [hot, setHot] = useState(schema.first);
   const rows = useRef({});
-  const row = FILTER_ROWS[hot];
+  const row = schema.rows[hot];
   // The second menu is placed beside the highlighted row, which only exists once the first menu has mounted: render once more
-  // after that, so the anchor is read from the row and not from nothing.
+  // after that, so the anchor is read from the row and not from nothing. One frame later, because the content of a popover is
+  // put in the page after the render that opens it (an effect right after that render can still find no row).
   const [, remeasure] = useState(0);
-  useEffect(() => { if (open) remeasure((count) => count + 1); }, [open]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const frame = requestAnimationFrame(() => remeasure((count) => count + 1));
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
   const optionsAnchor = useRef(null);
   optionsAnchor.current = rows.current[hot] ?? null;
   const buttonAnchor = useRef(null);
@@ -82,13 +90,13 @@ export function FilterMenu({ open, anchor, onOpenChange, filter, counts, facets,
         <Command value={hot} onValueChange={setHot} onKeyDown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); optionsInput.current?.focus(); } }}>
           <CommandInput ref={fieldInput} placeholder={T.addFilter} aria-label={T.addFilter}><Kbd>F</Kbd></CommandInput>
           <CommandList>
-            {FILTER_GROUPS.map((group, index) => (
+            {schema.groups.map((group, index) => (
               <Fragment key={index}>
                 <CommandSeparator />
                 {group.map((key) => (
-                  <CommandItem key={key} value={key} keywords={[FILTER_ROWS[key].name]} ref={(element) => { rows.current[key] = element; }}>
-                    {FILTER_ROWS[key].rowIcon}
-                    <span>{FILTER_ROWS[key].name}</span>
+                  <CommandItem key={key} value={key} keywords={[schema.rows[key].name]} ref={(element) => { rows.current[key] = element; }}>
+                    {schema.rows[key].rowIcon}
+                    <span>{schema.rows[key].name}</span>
                     <Triangle direction="right" className={cn('ml-auto size-2 text-muted-foreground')} />
                   </CommandItem>
                 ))}
@@ -106,8 +114,8 @@ export function FilterMenu({ open, anchor, onOpenChange, filter, counts, facets,
               onPointerDownOutside={(event) => { if (menu.current?.contains(event.target)) event.preventDefault(); }}
             >
               <FilterOptions
-                row={row} filter={filter} inputRef={optionsInput} onToggle={onToggle} onBack={() => fieldInput.current?.focus()}
-                sections={row.fields.map((key) => ({ key, options: FILTER_FIELDS[key].options({ counts, facets }) }))}
+                row={row} fields={schema.fields} filter={filter} inputRef={optionsInput} onToggle={onToggle} onBack={() => fieldInput.current?.focus()}
+                sections={row.fields.map((key) => ({ key, options: schema.fields[key].options({ counts, facets }) }))}
               />
             </PopoverContent>
           </Popover>

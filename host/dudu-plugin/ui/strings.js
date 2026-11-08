@@ -14,7 +14,7 @@ const en = {
   addFilter: 'Add Filter…',
   filterOptions: 'Filter…',
   filterButton: 'Filter',
-  fields: { status: 'Status', agent: 'Agent', agentState: 'Agent state', priority: 'Priority', project: 'Project', source: 'Source' },
+  fields: { status: 'Status', agent: 'Agent', agentState: 'Agent state', priority: 'Priority', project: 'Project', source: 'Source', label: 'Labels' },
   isAnyOf: 'is any of',
   is: 'is',
   removeFilter: 'Remove filter',
@@ -24,7 +24,9 @@ const en = {
   changeStatus: 'Change status…',
   changeStatusOf: (status, title) => `${status}. Change status: ${title}`,
   noProject: 'No project', // NEW
-  source: { owner: 'boss', dudu: 'Dudu', connector: 'Connector', session: 'Session' }, // NEW: the Source property of a row
+  source: { owner: 'You', dudu: 'Dudu', connector: 'Collector', session: 'Session' }, // NEW: the Source property of a row; the owner's role is "you" (2026-11-04); an issue made from collected records says Collector (2026-11-05)
+  // Linear due-date menu wording approved by the owner (2026-11-02).
+  due: { placeholder: 'Try: 24h, 7 days, Feb 9', remove: 'Remove due date', custom: 'Custom…', weekEnd: 'End of this week', oneWeek: 'In one week' },
   display: {
     title: 'Display options',
     list: 'List', board: 'Board',
@@ -40,14 +42,13 @@ const en = {
     listOptions: 'List options', showEmptyGroups: 'Show empty groups',
     boardOptions: 'Board options', showEmptyColumns: 'Show empty columns',
     properties: 'Display properties',
-    property: { id: 'ID', status: 'Status', agent: 'Agent', priority: 'Priority', project: 'Project', dueDate: 'Due date', source: 'Source', created: 'Created', updated: 'Updated' },
+    property: { id: 'ID', status: 'Status', agent: 'Agent', priority: 'Priority', project: 'Project', labels: 'Labels', dueDate: 'Due date', source: 'Source', created: 'Created', updated: 'Updated' },
     reset: 'Reset',
   },
   collapse: (name) => `Collapse ${name}`, // NEW: aria-label of the triangle that folds a group
   expand: (name) => `Expand ${name}`, // NEW
   // NEW: the Activity of an issue and its page (the doc fixes the sections; the words are mine).
   detail: {
-    messageHint: (recipient) => `Mention @${recipient} to send a message. Otherwise, leave a comment.`, // NEW
     duduMention: 'Dudu', // Name supplied by the owner.
     mention: 'Mention',
     messageErrors: {
@@ -58,8 +59,8 @@ const en = {
       delivery_failed: 'Your comment was saved, but the request could not be delivered.',
     }, // NEW
     // NEW: issue-level forgetting names the exact local scope before deletion.
-    more: 'More', forgetScope: 'This issue, its activity and local links will be deleted. Source messages and session history stay.',
-    properties: 'Properties', project: 'Project', activity: 'Activity', leaveComment: 'Leave a comment…', send: 'Send',
+    more: 'More',
+    properties: 'Properties', project: 'Project', source: 'Source', activity: 'Activity', leaveComment: 'Leave a comment…', send: 'Send',
     untitled: 'Untitled', description: 'Add description…', loadEarlier: 'Load earlier', showMore: 'Show more', showLess: 'Show less', notFound: 'This issue does not exist.', back: 'Back to Issues', // NEW: showMore, showLess
     previous: 'Previous issue', next: 'Next issue', position: (index, total) => `${index} / ${total}`, noDueDate: 'No due date', noProjectSet: 'No project',
     clearDue: 'Clear', dueDate: 'Due date', setPriority: 'Set priority…',
@@ -71,7 +72,7 @@ const en = {
   // NEW: Snooze hides what an agent asked, until the time chosen; the status does not change.
   snooze: { laterToday: 'Later today', tomorrow: 'Tomorrow', nextWeek: 'Next week', clear: 'Clear snooze', until: (date) => `Snoozed until ${date}` },
   activity: {
-    you: 'boss', unknownTime: '—', justNow: 'just now', minutesAgo: (n) => `${n}m ago`, hoursAgo: (n) => `${n}h ago`, yesterday: 'Yesterday', // 2h ago, as the design writes it
+    you: 'You', unknownTime: '—', justNow: 'just now', minutesAgo: (n) => `${n}m ago`, hoursAgo: (n) => `${n}h ago`, yesterday: 'Yesterday', // 2h ago, as the design writes it
     created: 'created the issue', createdFromMessage: 'created the issue from a message', createdFromSession: 'created the issue from a session',
     status: (from, to) => `changed status from ${from} to ${to}`, priority: (to) => `changed priority to ${to}`,
     due: (date) => `set the due date to ${date}`, dueRemoved: 'removed the due date',
@@ -92,7 +93,7 @@ const en = {
     cancel: 'Cancel', create: 'Create issue', failed: 'Could not create the issue',
   },
   // NEW: ticking rows for a bulk change, and the bar that appears.
-  bulk: { toolbar: 'Bulk actions', selected: (count) => `${count} selected`, clear: 'Clear selection', select: (label) => `Select ${label}` },
+  bulk: { toolbar: 'Bulk actions', selected: (count) => `${count} selected`, clear: 'Clear selection', select: (label) => `Select ${label}`, selectAll: 'Select all' },
   // NEW: what the bar at the bottom says after a change, with its Undo.
   toast: {
     undo: 'Undo', markedDone: 'Marked as Done', status: (name) => `Status set to ${name}`, priority: (name) => `Priority set to ${name}`,
@@ -109,6 +110,16 @@ const en = {
   // NEW: the search box and the footer of All issues.
   search: { label: 'Search issues', placeholder: 'Search issues…' },
   total: (count) => (count === 1 ? '1 issue' : `${count.toLocaleString('en-US')} issues`),
+  // NEW: the Collector widget. The owner approved its design and these words on 2026-11-05 ("没问题，就按你的推荐实现吧"); the rest is Issues' own (Filter, Clear, Dates, New issue, Open source, Open issue, Search issues…, Undo).
+  collector: {
+    tabs: { todo: 'To handle', done: 'Handled', ignored: 'Ignored' },
+    empty: 'Nothing here', loadFailed: 'Could not load the information',
+    share: 'Share to issue', shareSession: 'Share to session', ignore: 'Ignore', restore: 'Restore', // NEW: Share to session (the owner's words, 2026-11-05)
+    markDone: 'Handled', remove: 'Delete', // NEW (2026-11-07): the owner's buttons 已处理 and 删除 ("collected information is often wrong"); the English names are mine
+    toast: { ignored: 'Ignored', restored: 'Restored', done: 'Handled', deleted: 'Deleted', shared: (ref) => `Shared to ${ref}`, sharedSession: (ref) => `Shared to the session of ${ref}` }, // NEW: sharedSession, done, deleted
+    // The line of the dialog about which issue the record went to: "Dudu made [DUD-12]" (an issue it made before it stopped making them), and what the owner did ("Shared to [DUD-12]", then the issue's status icon and number)
+    verdict: { made: 'made', shared: 'Shared to', created: 'Created' },
+  },
   // NEW: the + of a group bar or board column, and the menu of a board column.
   addTo: (name) => `New issue in ${name}`, // the design's label for the + of a group or column
   lane: { options: 'Column options', collapse: 'Collapse column', expand: 'Expand column' },
@@ -127,15 +138,60 @@ const en = {
     actionMoved: (name) => `Moved「${name}」`, actionResized: (name, w, h) => w === 'fill' || h === 'fill' ? `「${name}」resized to ${w === 'fill' ? 'full width' : w} × ${h === 'fill' ? 'full height' : h}` : `「${name}」resized to ${w}×${h}`, restored: 'Restored default', changed: 'Changed layout',
   },
   projects: { choose: 'Choose a project', create: 'Create project', name: 'Project name', path: 'Project folder', createFolder: 'Create the folder if it does not exist', empty: 'No projects yet', loading: 'Loading projects…', failed: 'Could not load projects', createFailed: 'Could not open the project folder. Check its path or create it.', }, // NEW
+  // NEW (2026-11-05): labels and sub-issues, after Linear (the owner's screenshots). The words are Linear's where the screenshots show them and mine elsewhere; they await the owner's review.
+  labels: {
+    name: 'Labels', add: 'Add label', search: 'Change or add labels…', create: (name) => `Create new label: "${name}"`, pickColor: 'Pick a color for label',
+    colors: { grey: 'Grey', darkGrey: 'Dark Grey', purple: 'Purple', teal: 'Teal', green: 'Green', yellow: 'Yellow', orange: 'Orange', pink: 'Pink', red: 'Red' },
+    loading: 'Loading labels…', failed: 'Could not load labels', createFailed: 'Could not create the label', empty: 'No labels yet',
+  },
+  subIssues: {
+    add: 'Add sub-issue', addMore: 'Add sub-issues', title: 'Sub-issues', placeholder: 'Sub-issue title', parent: 'Parent issue', subIssueOf: 'Sub-issue of',
+    setParent: 'Set parent issue…', removeParent: 'Remove parent', searchParent: 'Search issues…', progress: (done, total) => `${done}/${total}`, noMatch: 'No issues found',
+    createFailed: 'Could not create the sub-issue',
+  },
+  newIssue2: { more: 'More', parent: 'Parent issue' },
+  // NEW: Linear's Copy submenu (2026-11-05): the words are Linear's; what each puts on the clipboard is in issues/copy.js.
+  copy: {
+    menu: 'Copy', title: 'Copy title', markdown: 'Copy issue as Markdown', everything: 'Copy everything as Markdown', branch: 'Copy git branch name', prompt: 'Copy as prompt', duplicate: 'Make a copy…',
+    done: { title: 'title', markdown: 'issue as Markdown', everything: 'everything as Markdown', branch: 'git branch name', prompt: 'prompt' },
+  },
+  // NEW: the links of an issue (2026-11-05); the menu words are Linear's, the window's are mine.
+  // NEW: the description's rich text (2026-11-05): the "/" menu, the bar over selected text; Linear's words where it has them.
+  // NEW: the description history (2026-11-05): "Show description history" is Linear's word, the window's are mine.
+  descriptionHistory: { menu: 'Show description history', title: 'Description history', current: 'Current version', restore: 'Restore this version', close: 'Close', none: 'The description has not been changed.', empty: 'The description was empty.' },
+  // NEW: saved views (2026-11-05): "Add new view" and "Create view" are Linear's words, the rest are mine.
+  views: {
+    add: 'Add new view', newTitle: 'New view', renameTitle: 'Rename view', name: 'View name', create: 'Create view', save: 'Save', rename: 'Rename', delete: 'Delete view',
+    deleteTitle: (name) => `Delete view "${name}"?`, deleteScope: 'The view is deleted. The issues in it stay.',
+  },
+  richText: {
+    menu: 'Blocks', linkPlaceholder: 'Paste or type a link…',
+    blocks: { heading1: 'Heading 1', heading2: 'Heading 2', heading3: 'Heading 3', bulletList: 'Bulleted list', orderedList: 'Numbered list', taskList: 'Checklist', quote: 'Quote', codeBlock: 'Code block', divider: 'Divider' },
+    format: { bold: 'Bold', italic: 'Italic', strike: 'Strikethrough', code: 'Code', link: 'Link' },
+  },
+  links: {
+    title: 'Links', add: 'Add link…', addPullRequest: 'Add pull request…', addDocument: 'Add document…', url: 'URL', titleOptional: 'Title (optional)', addButton: 'Add',
+    dialog: { link: 'Add link', pull_request: 'Add pull request', document: 'Add document' }, remove: (name) => `Remove ${name}`,
+    invalid: 'Enter a web address that starts with http:// or https://', duplicate: 'This link is on the issue already.',
+  },
+  // NEW: the delete confirmation, in Linear's shape (2026-11-05). Linear says deleted issues stay 30 days in "Recently deleted"; here a deleted issue is gone, so the sentence says what is deleted and what stays.
+  deleteIssue: {
+    title: (name) => `Delete "${name}"?`, titleMany: (count) => `Delete ${count} issues?`,
+    scope: 'This issue, its activity and local links will be deleted. Source messages and session history stay.',
+    scopeMany: 'These issues, their activity and local links will be deleted. Source messages and session history stay.',
+  },
   // NEW: the words of the small widgets (the design names the widgets and what they show, not their wording).
   widgets: {
-    titles: { issues: 'Issues', quota: 'Quota', sessions: 'Sessions', office: 'Office' },
+    titles: { issues: 'Issues', quota: 'Quota', sessions: 'Sessions', office: 'Office', collector: 'Collector' },
     descriptions: {
       issues: 'Every issue, as a list or a board', quota: 'Subscription usage, one line per agent',
       office: 'Assigned active issues as people at desks',
+      collector: 'What the collectors collected, to share to an issue, make an issue of, or ignore', // NEW
     },
     needs: { issues: 'issues', quota: 'quota', inputs: 'inputs', sessions: 'sessions', network: 'network' },
     quota: {
+      // NEW (Quota as a table of what is left): the corner of the table, what a cell says to a screen reader, and a line of the hover.
+      left: 'Left', leftOf: (name, window, percent) => `${name} ${window}: ${percent}% left`, leftLine: (window, percent) => `${window} ${percent}% left`,
       empty: 'No usage to show', unknown: '—', fiveHour: '5-hour', weekly: 'Weekly', days: (n) => `${n}-day`, used: (label, percent) => `${label} ${percent}% used`,
       resets: (when) => `resets ${when}`, resetsAt: (when) => `Resets ${when}`, limitReached: (when) => `Limit reached, resets ${when}`, label: (name, percent) => `${name} ${percent}% used`,
       login: 'Sign in to see usage',
@@ -143,38 +199,89 @@ const en = {
     },
     sessions: {
       search: 'Search sessions', empty: 'No sessions', failed: 'Could not read sessions',
+      // NEW (2026-11-05): what a search cannot see, in grey under the results once something is searched for; and a list that is not complete.
+      unsearchable: (count) => (count === 1 ? '1 session cannot be searched, so results may be incomplete' : `${count} sessions cannot be searched, so results may be incomplete`),
+      indexing: (done, total) => `Building the search index (${done}/${total}), so results may be incomplete`,
+      listPartial: 'Some sessions could not be read, so the list may be incomplete',
       history: 'Conversation history', importLabel: 'Import', takeOverLabel: 'Take over', noMessages: 'No messages', // NEW; Chinese action labels supplied by the owner
       clear: 'Clear search', more: 'More sessions', openFailed: 'Could not open this session.', takeoverLabel: 'Let Dudu manage this task', // NEW
       takeoverFailed: 'Could not take over this session.', openIssue: 'Open issue', // NEW
+      takeoverSuccess: 'Session taken over', // NEW: Chinese supplied by the owner, English awaits review (2026-11-05).
       agents: { claude: 'Claude', codex: 'ChatGPT', dsh: 'DeepSeek Harness' },
     },
   },
   // The approved settings layout and Chinese copy; English translations and NEW states await review.
   settings: {
     title: 'Dudu settings', openFolder: 'Open project folder', failed: 'Could not load this page', retry: 'Retry', unavailable: 'The project folder could not be opened.',
-    nav: { general: 'General', connectors: 'Connectors', rules: 'Rules', memory: 'Memory', widgets: 'Widgets', skills: 'Skills', providers: 'Providers', phone: 'Phone control' }, // NEW: the two existing DSH sections embedded here
+    nav: { general: 'General', statuses: 'Status', connectors: 'Connectors', collectors: 'Collectors', rules: 'Rules', memory: 'Memory', skills: 'Skills', providers: 'Providers', phone: 'Phone control' }, // NEW: the two existing DSH sections embedded here
+    // NEW: Linear-style workflow settings; exact wording awaits owner review.
+    statuses: {
+      title: 'Status', name: 'Name', description: 'Description', color: 'Color', create: 'Create', add: (category) => `Add status to ${category}`,
+      options: 'Status options', reorder: 'Reorder', moveUp: 'Move up', moveDown: 'Move down', makeDefault: 'Set as default', moveIssues: 'Move issues to',
+      categories: { backlog: 'Backlog', unstarted: 'Unstarted', started: 'Started', completed: 'Completed', canceled: 'Canceled' },
+      errors: {
+        unknown_status: 'This status no longer exists.', invalid_status: 'Check the status name and color.',
+        duplicate_status: 'A status with this name already exists.', last_status: 'Keep at least one status in each category.',
+        status_in_use: 'Choose a status for the existing issues.',
+      },
+    },
     general: {
       folder: 'Project folder', isDefault: 'Default', change: 'Change…', path: 'Folder path', moveFiles: 'Move the files into it', save: 'Save', cancel: 'Cancel',
       issues: 'Issues', exportIssues: 'Export issues', export: 'Export', exportFailed: 'Could not export the issues',
       // NEW: General controls for the conversation and the existing pet settings.
       pet: 'Pet', showPet: 'Show pet', doubleSpace: 'Double Space to open conversation', holdSpace: 'Hold Space for voice input',
       model: 'Model', changeModel: 'Change in DSH', lastTidy: 'Last tidy', noTidy: 'Not tidied yet', undoTidy: 'Undo tidy',
-      currentModel: 'Uses the current DSH model',
+      deepSleep: 'Deep sleep', // NEW (2026-11-05): the owner's word 深度睡眠, a switch in the Issues card; the English name awaits review
     },
+    // NEW (2026-11-05): a connector is how to reach a service (a Prompt, or an MCP server); what to collect and how often are the collector's.
+    // What is left of the first connectors page is what the redrawn page (connectorsPage, below) and other pages still use.
     connectors: {
-      empty: 'No connectors', test: 'Test', remove: 'Remove', allowed: 'Allowed operations', read: 'Read', write: 'Write', never: 'Not tested',
-      testedOk: (when) => `OK · ${when}`, testedFailed: (when) => `Failed · ${when}`, turnOn: (name) => `Turn on ${name}`, expand: (name) => `Details of ${name}`,
-      addedByDudu: 'Added by Dudu', kind: { cli: 'Command', mcp: 'MCP', dsh: 'DSH extension' }, skipped: 'Skipped entries', line: (n) => `Line ${n}`,
-      note: 'Tell Dudu where and what to collect. Saved prompts are used on each collection run.', // NEW
-      removeOf: (name) => `Remove ${name}`, // NEW
-      removed: (name) => `Removed ${name}`, undo: 'Undo',
+      name: 'Name', kind: { prompt: 'Prompt', mcp: 'MCP' }, needsAuth: 'Needs authorization',
+      inUse: (names) => `Collectors still use it: ${names.join(', ')}`,
+      empty: 'No connectors', remove: 'Remove', removeOf: (name) => `Remove ${name}`, removed: (name) => `Removed ${name}`, undo: 'Undo',
+    },
+    // NEW (2026-11-06): the connectors page redrawn after Claude's and Muse's. The words are the owner's table in docs/issues-ui-wording.md ("2026-11-06 连接器页重画"); English awaits review.
+    connectorsPage: {
+      addCustom: 'Add custom connector', search: 'Search', back: 'Back',
+      views: { available: 'Available', connected: 'Connected' },
+      groups: { here: 'This computer', work: 'Work', projects: 'Projects', dev: 'Development', web: 'Web' }, // NEW: Projects and Web (the owner's list of 2026-11-06)
+      connect: 'Connect', authorize: 'Authorize', disconnect: 'Disconnect',
+      address: 'Address', tools: 'Tools', toolsValue: (n) => String(n),
+      // the grey line under a connected connector's name
+      about: { tools: (n) => (n === 1 ? '1 tool' : `${n} tools`), commandLine: (command) => `Command line · ${command}`, thisComputer: (command) => `This computer · ${command}` },
+      // what a connector says of itself while it connects, and the line that tells what to do about it
+      state: {
+        waiting: 'Waiting for the browser…', timedOut: 'Connection timed out', needsLogin: 'Needs sign-in', missing: 'Not installed',
+        login: (command) => `Run ${command} in a terminal, then retry`,
+        notFound: (command, install) => (install ? `Not found: ${command}. Install: ${install}` : `Not found: ${command}`),
+      },
+      // the page of one box
+      custom: {
+        placeholder: 'Paste an address or command, or write a sentence on how to read it', checking: 'Checking…',
+        kind: { remote: 'Remote', local: 'Local', sentence: 'Command line' },
+        how: { oauth: 'Sign in in the browser', none: 'No sign-in', token: 'Needs a token', command: 'One command', sentence: 'This sentence' },
+        token: 'Token', addEnv: 'Add environment variable',
+        several: (n) => `${n} connectors`, // NEW: what a pasted file with several servers says it was taken for
+        envName: 'Variable name', envValue: 'Value', // NEW: the two boxes of an environment variable
+      },
+    },
+    // NEW (2026-11-05): a collector reads through one connector. The frequency and the line of the last collection were the connector's before.
+    collectors: {
+      add: 'Add collector', name: 'Name', connector: 'Connector', prompt: 'What to collect', empty: 'No collectors', needConnector: 'Add a connector first',
+      frequency: 'How often, such as 30m, 2h, 1d, or cron', common: 'Common frequencies',
+      everyMinutes: (n) => `Every ${n} minutes`, everyHours: (n) => (n === 1 ? 'Every hour' : `Every ${n} hours`), everyDays: (n) => (n === 1 ? 'Every day' : `Every ${n} days`),
+      preset: {
+        '5m': 'Every 5 minutes', '15m': 'Every 15 minutes', '30m': 'Every 30 minutes', '1h': 'Every hour', '6h': 'Every 6 hours',
+        '0 9 * * *': 'Every day at 09:00', '0 9 * * 1-5': 'Monday to Friday at 09:00', '0 9-18 * * 1-5': 'Monday to Friday, every hour 9–18',
+      },
+      last: { done: (when, added) => (added > 0 ? `Last ${when} · ${added} new` : `Last ${when} · nothing new`), failed: (when) => `Last ${when} · failed` },
+      addedByDudu: 'Added by Dudu', removeOf: (name) => `Remove ${name}`, removed: (name) => `Removed ${name}`, undo: 'Undo',
     },
     rules: {
       open: 'Open', empty: 'Empty', missing: 'Not found',
-      note: 'Dudu follows these two Markdown files. Edit them directly, or tell Dudu.',
       files: {
-        'TRIAGE.md': { title: 'Impact, effort and due dates', description: 'How important a new issue is, how much work it takes and when it is due' },
-        'ASSIGN.md': { title: 'Issue assignment', description: 'Which agent gets each issue; leave uncertain ones unassigned' },
+        'TRIAGE.md': { title: 'Impact, effort and due dates' },
+        'ASSIGN.md': { title: 'Issue assignment' },
       },
     },
     memory: {
@@ -192,31 +299,32 @@ const en = {
       counts: { turns: 'conversation turns', entries: 'entries', logLines: 'lines of the daily notes', skills: 'skills', reviews: 'tidy notes', staged: 'staged notes' },
     },
     widgets: {
-      onDashboard: 'On the dashboard', builtIn: 'Built in', reads: (what) => `Reads ${what}`, switchOn: (name) => `Put ${name} on the dashboard`,
-      note: 'Widgets come from Dudu and your installed DSH plugins. Install plugins on DSH’s Plugins page.',
-      developerDescription: 'In layout editing, local widgets get an inspector for sizes, themes, example data and checks',
       // NEW: widget development controls and checks.
-      developer: 'Developer mode', local: 'Local widgets', developing: 'In development', inspect: 'Inspect widget',
+      inspect: 'Inspect widget',
       minimum: 'Minimum size', recommended: 'Recommended size', light: 'Light', dark: 'Dark', theme: 'Theme',
       sample: 'Example data', mine: 'My data', data: 'Data', checks: 'Checks',
       metadata: 'Name, description and preview', fits: 'Content fits', accessible: 'Icon buttons have labels', healthy: 'No errors',
       pass: 'Pass', fail: 'Check',
       idMismatch: 'The widget id does not match its slot registration.',
     },
-    skills: { empty: 'No skills yet', delete: 'Delete', back: 'Back to skills', note: 'Dudu’s own skills are separate from each agent’s skills.', deleteOf: (name) => `Delete: ${name}` },
+    skills: { empty: 'No skills yet', delete: 'Delete', back: 'Back to skills', deleteOf: (name) => `Delete: ${name}` },
   },
-  agentState: { working: 'Working', needs_you: 'In Review', stuck: 'Stuck', idle: 'Idle' },
+  agentState: { idle: 'Idle', working: 'Working', blocked: 'Needs you', unassigned: 'Unassigned' }, // the owner's wording (2026-11-04), for a question, a failure, a stop and a finished run alike; NEW: "Unassigned" (the owner asked for the state 2026-11-05, the word is mine)
+  deepSleep: 'Deep sleep', // NEW (2026-11-05): the owner's word 深度睡眠, the name of the crescent that takes the place of the idle ring (hover title, screen readers); the English awaits review
   // NEW: the Pet frame's English controls and its unavailable states.
   pet: {
     open: 'Open conversation', close: 'Close', conversation: 'Dudu', message: 'Message', send: 'Send',
+    hide: 'Hide Dudu',
     earlier: 'Earlier', voice: 'Voice input', release: 'Release to send · Esc to cancel',
-    stop: 'Stop', working: 'Working', failed: 'Could not load the conversation', voiceFailed: 'Voice input failed',
-    doubleSpace: 'Double Space to chat', holdSpace: 'Hold Space to speak',
+    stop: 'Stop', failed: 'Could not load the conversation', voiceFailed: 'Voice input failed',
+    // The line while Dudu works: DSH's own (chat.deepDiving, chat.deepDivingFor and its duration units). The owner showed the Chinese and asked for it (2026-11-04); the English is DSH's.
+    running: 'Deep diving', runningFor: (duration) => `Deep diving for ${duration} ···`, duration: { hour: 'h ', minute: 'm ', second: 's' },
     // NEW: the "+" menu of the conversation window, the model box, and what Compact answers (docs/issues-ui-wording.md, 2026-11-01 evening).
     file: 'File', context: 'Context', contextHint: 'Attach the current page automatically', compact: 'Compact', compactHint: 'Compact the conversation above',
     model: 'Model', effort: 'Reasoning effort', compacted: 'Compacted', nothingToCompact: 'Nothing to compact yet', compactFailed: 'Could not compact',
-    actions: { issues_add: 'Issue added', issues_update: 'Issue updated', issues_assign: 'Issue assigned', issues_complete: 'Issue completed', issues_cancel: 'Issue canceled', memory_remember: 'Remembered', memory_forget: 'Forgotten', connector_register: 'Connector added', dashboard_add: 'Widget added', dashboard_remove: 'Widget removed', dashboard_reset: 'Layout restored' },
+    actions: { issues_add: 'Issue added', issues_update: 'Issue updated', issues_assign: 'Issue assigned', issues_complete: 'Issue completed', issues_cancel: 'Issue canceled', memory_remember: 'Remembered', memory_forget: 'Forgotten', connector_register: 'Connector added', collector_register: 'Collector added', dashboard_add: 'Widget added', dashboard_remove: 'Widget removed', dashboard_reset: 'Layout restored' },
   },
+  attachments: { download: 'Download', copyImage: 'Copy image', copyLink: 'Copy link' }, // NEW: issue attachment controls, pending wording review
   noAgent: 'No agent',
   today: 'Today',
   // NEW: the hint shown when the mouse rests on a due date (the doc asks for date and days left or overdue).
@@ -229,6 +337,7 @@ const en = {
   shell: {
     unavailable: 'Connection unavailable.', reading: 'Loading connection settings…', loading: 'Loading…', busy: 'Working…',
     phone: 'Phone control', computerName: 'Computer name', addresses: 'Connection addresses', lan: 'LAN address',
+    publicAddress: 'Public address', lanLabel: 'LAN', publicLabel: 'Public', editPublicAddress: 'Edit public address', edit: 'Edit', removeRoute: 'Remove address', // approved remote connection design, 2026-11-04
     lanCode: 'Generate a QR code for the LAN address', generate: 'Generate QR code', address: (n) => `Connection address ${n}`,
     removeAddress: (n) => `Delete connection address ${n}`, remove: 'Delete', addAddress: 'Add address', save: 'Save', saved: 'Saved',
     devices: 'Paired devices', paired: (date) => `Paired on ${date}`, revoke: 'Revoke', noDevices: 'No paired devices',
@@ -248,11 +357,14 @@ const zh = {
   priority: { none: '无优先级', urgent: '紧急', high: '高', medium: '中', low: '低' },
   priorityOf: (name) => `优先级：${name}`,
   addFilter: '添加筛选…', filterOptions: '筛选…', filterButton: '筛选',
-  fields: { status: '状态', agent: '智能体', agentState: '智能体状态', priority: '优先级', project: '项目', source: '来源' },
+  fields: { status: '状态', agent: '智能体', agentState: '智能体状态', priority: '优先级', project: '项目', source: '来源', label: '标签' },
   command: { suggestions: '候选项' }, // NEW
+  attachments: { download: '下载', copyImage: '复制图片', copyLink: '复制链接' }, // NEW: 事项附件按钮文案待主人审核
   isAnyOf: '是其中之一', is: '是', removeFilter: '移除筛选', clear: '清除', addFilterChip: '筛选', changeStatus: '更改状态…',
   changeStatusOf: (status, title) => `${status}。更改状态：${title}`, noProject: '无项目',
-  source: { owner: 'boss', dudu: '嘟嘟', connector: '连接器', session: '会话' },
+  source: { owner: '你', dudu: '嘟嘟', connector: '收集器', session: '会话' },
+  // 截止日期菜单的中英文已由主人确认（2026-11-02）。
+  due: { placeholder: '试试：24h、7天、2月9日', remove: '移除截止日期', custom: '自定义…', weekEnd: '本周结束', oneWeek: '一周后' },
   display: {
     title: '显示选项', list: '列表', board: '看板', grouping: '分组', subGrouping: '子分组', ordering: '排序', columns: '列', rows: '行',
     noGrouping: '不分组', groupBy: { status: '状态', agent: '智能体', project: '项目', priority: '优先级' },
@@ -260,12 +372,11 @@ const zh = {
     reverse: (what) => `反转${what}`, recency: '已完成事项按最近更新排序', completedIssues: '已完成事项',
     completed: { all: '全部', day: '过去一天', week: '过去一周', month: '过去一个月', none: '不显示' },
     listOptions: '列表选项', showEmptyGroups: '显示空分组', boardOptions: '看板选项', showEmptyColumns: '显示空列',
-    properties: '显示属性', property: { id: '编号', status: '状态', agent: '智能体', priority: '优先级', project: '项目', dueDate: '截止日期', source: '来源', created: '创建时间', updated: '更新时间' }, reset: '重置',
+    properties: '显示属性', property: { id: '编号', status: '状态', agent: '智能体', priority: '优先级', project: '项目', labels: '标签', dueDate: '截止日期', source: '来源', created: '创建时间', updated: '更新时间' }, reset: '重置',
   },
   collapse: (name) => `折叠${name}`, expand: (name) => `展开${name}`,
   detail: {
     duduMention: 'Dudu',
-    messageHint: (recipient) => `用 @${recipient} 发送消息，不 @ 就是留言。`, // NEW
     mention: '提及',
     messageErrors: {
       invalid_message: '先写点内容。', multiple_targets: '一次只 @ 一个。',
@@ -274,8 +385,8 @@ const zh = {
       choose_project: '先选项目，再把工作交给智能体。',
       delivery_failed: '留言已保存，请求没能送达。',
     }, // NEW
-    more: '更多', forgetScope: '将删除这条事项、活动和本地关联。来源消息和会话历史会保留。',
-    properties: '属性', project: '项目', activity: '活动', leaveComment: '添加评论…', send: '发送',
+    more: '更多',
+    properties: '属性', project: '项目', source: '来源', activity: '活动', leaveComment: '添加评论…', send: '发送',
     untitled: '未命名', description: '添加描述…', loadEarlier: '加载更早的记录', showMore: '展开', showLess: '收起', notFound: '这条事项不存在。', back: '返回看板',
     previous: '上一条事项', next: '下一条事项', position: (index, total) => `${index} / ${total}`, noDueDate: '无截止日期', noProjectSet: '无项目', clearDue: '清除', dueDate: '截止日期',
     setPriority: '设置优先级…', copyId: '复制编号', openSession: '打开会话', openSource: '打开来源', snooze: '稍后提醒', setAgent: '选择智能体…',
@@ -283,7 +394,7 @@ const zh = {
   },
   snooze: { laterToday: '今天晚些时候', tomorrow: '明天', nextWeek: '下周', clear: '取消稍后提醒', until: (date) => `稍后提醒至 ${date}` },
   activity: {
-    you: 'boss', unknownTime: '—', justNow: '刚刚', minutesAgo: (n) => `${n} 分钟前`, hoursAgo: (n) => `${n} 小时前`, yesterday: '昨天',
+    you: '你', unknownTime: '—', justNow: '刚刚', minutesAgo: (n) => `${n} 分钟前`, hoursAgo: (n) => `${n} 小时前`, yesterday: '昨天',
     created: '创建了事项', createdFromMessage: '从消息创建了事项', createdFromSession: '从会话创建了事项',
     status: (from, to) => `将状态从${from}改为${to}`, priority: (to) => `将优先级改为${to}`, due: (date) => `将截止日期设为 ${date}`,
     dueRemoved: '移除了截止日期', assigned: (agent) => `交给了 ${agent}`, unassigned: '移除了智能体', asked: '提问', session: '更换了会话', commented: '评论',
@@ -297,7 +408,7 @@ const zh = {
     urgentNeedsRule: 'TRIAGE.md 没有紧急规则，优先级按影响和工作量判断。', // NEW
   },
   newIssue: { title: '新建事项', description: '填写标题，可补充描述。', titlePlaceholder: '事项标题', briefPlaceholder: '添加描述…', cancel: '取消', create: '创建事项', failed: '事项没能创建' },
-  bulk: { toolbar: '批量操作', selected: (n) => `已选 ${n} 条`, clear: '取消选择', select: (label) => `选择 ${label}` },
+  bulk: { toolbar: '批量操作', selected: (n) => `已选 ${n} 条`, clear: '取消选择', select: (label) => `选择 ${label}`, selectAll: '全选' },
   toast: {
     undo: '撤销', markedDone: '已标记为完成', status: (name) => `状态已改为${name}`, priority: (name) => `优先级已改为${name}`,
     dueSet: '已设置截止日期', dueRemoved: '已移除截止日期', assigned: (name) => `已交给 ${name}`, unassigned: '已移除智能体',
@@ -306,6 +417,16 @@ const zh = {
   },
   dates: { name: '日期', due: '截止日期', created: '创建时间', updated: '更新时间', overdue: '已逾期', today: '今天', next7: '未来 7 天', next30: '未来 30 天', day: '过去一天', week: '过去一周', month: '过去一个月' },
   search: { label: '搜索事项', placeholder: '搜索事项…' }, total: (n) => `${n.toLocaleString('zh-CN')} 条事项`,
+  // 信息收集器：设计和这些字主人 2026-11-05 看过（“没问题，就按你的推荐实现吧”）；别的字是事项自己的（筛选、清除、日期、新建事项、打开来源、打开事项、搜索事项…、撤销）。
+  collector: {
+    tabs: { todo: '待处理', done: '已处理', ignored: '已忽略' },
+    empty: '没有信息', loadFailed: '信息没能加载',
+    share: '分享到事项', shareSession: '分享到会话', ignore: '忽略', restore: '恢复', // 分享到会话：主人的原话（2026-11-05）
+    markDone: '已处理', remove: '删除', // 主人的原话（2026-11-07）：“收集器增加删除和已处理按钮”
+    toast: { ignored: '已忽略', restored: '已恢复', done: '已处理', deleted: '已删除', shared: (ref) => `已分享到 ${ref}`, sharedSession: (ref) => `已分享到 ${ref} 的会话` }, // sharedSession：新写的；done 用主人的“已处理”，deleted：新写的
+    // 详情里说这条信息去了哪个事项的一行：“嘟嘟 建了 [DUD-12]”（嘟嘟不再建事项之前建的），和主人自己做的（“已分享到 [DUD-12]”，后面跟事项的状态图标和编号）
+    verdict: { made: '建了', shared: '已分享到', created: '已新建' },
+  },
   addTo: (name) => `在${name}中新建事项`, lane: { options: '列选项', collapse: '折叠列', expand: '展开列' },
   dashboard: {
     menu: '嘟嘟菜单', // NEW
@@ -320,36 +441,127 @@ const zh = {
     actionResized: (name, w, h) => w === 'fill' || h === 'fill' ? `已将「${name}」调整为${w === 'fill' ? '全宽' : w} × ${h === 'fill' ? '全高' : h}` : `已将「${name}」调整为 ${w}×${h}`, restored: '已恢复默认', changed: '已更改版面',
   },
   projects: { choose: '选择项目', create: '新建项目', name: '项目名称', path: '项目文件夹', createFolder: '文件夹不存在时创建', empty: '还没有项目', loading: '正在读取项目…', failed: '项目没能读取', createFailed: '项目文件夹没能打开，请检查路径，或勾选创建文件夹。' }, // NEW
+  // NEW (2026-11-05): 标签和子事项，参照 Linear（主人的截图）。主人审过之前的字都是暂定。
+  labels: {
+    name: '标签', add: '添加标签', search: '修改或添加标签…', create: (name) => `新建标签：“${name}”`, pickColor: '选择标签颜色',
+    colors: { grey: '灰色', darkGrey: '深灰', purple: '紫色', teal: '青色', green: '绿色', yellow: '黄色', orange: '橙色', pink: '粉色', red: '红色' },
+    loading: '正在读取标签…', failed: '标签没能读取', createFailed: '标签没能创建', empty: '还没有标签',
+  },
+  subIssues: {
+    add: '添加子事项', addMore: '添加子事项', title: '子事项', placeholder: '子事项标题', parent: '父事项', subIssueOf: '子事项，属于',
+    setParent: '设置父事项…', removeParent: '移除父事项', searchParent: '搜索事项…', progress: (done, total) => `${done}/${total}`, noMatch: '没有找到事项',
+    createFailed: '子事项没能创建',
+  },
+  newIssue2: { more: '更多', parent: '父事项' },
+  // NEW: 复制菜单（2026-11-05，参照 Linear），待主人审核。
+  copy: {
+    menu: '复制', title: '复制标题', markdown: '复制事项为 Markdown', everything: '复制全部内容为 Markdown', branch: '复制 Git 分支名', prompt: '复制为提示词', duplicate: '复制一份…',
+    done: { title: '标题', markdown: '事项 Markdown', everything: '全部内容 Markdown', branch: 'Git 分支名', prompt: '提示词' },
+  },
+  // NEW: 事项上的链接（2026-11-05），菜单词参照 Linear，窗口里的词待主人审核。
+  // NEW: 描述的富文本（2026-11-05）：「/」菜单和选中文字上方的工具条，待主人审核。
+  // NEW: 描述历史（2026-11-05），待主人审核。
+  descriptionHistory: { menu: '查看描述历史', title: '描述历史', current: '当前版本', restore: '恢复此版本', close: '关闭', none: '描述还没有改过。', empty: '当时的描述是空的。' },
+  // NEW: 保存的视图（2026-11-05），待主人审核。
+  views: {
+    add: '添加视图', newTitle: '新视图', renameTitle: '重命名视图', name: '视图名称', create: '创建视图', save: '保存', rename: '重命名', delete: '删除视图',
+    deleteTitle: (name) => `删除视图“${name}”？`, deleteScope: '将删除这个视图，里面的事项不受影响。',
+  },
+  richText: {
+    menu: '内容块', linkPlaceholder: '粘贴或输入链接…',
+    blocks: { heading1: '一级标题', heading2: '二级标题', heading3: '三级标题', bulletList: '无序列表', orderedList: '有序列表', taskList: '待办清单', quote: '引用', codeBlock: '代码块', divider: '分隔线' },
+    format: { bold: '加粗', italic: '斜体', strike: '删除线', code: '代码', link: '链接' },
+  },
+  links: {
+    title: '链接', add: '添加链接…', addPullRequest: '添加拉取请求…', addDocument: '添加文档…', url: '网址', titleOptional: '标题（可选）', addButton: '添加',
+    dialog: { link: '添加链接', pull_request: '添加拉取请求', document: '添加文档' }, remove: (name) => `移除 ${name}`,
+    invalid: '请输入以 http:// 或 https:// 开头的网址。', duplicate: '这条链接已经在事项上了。',
+  },
+  // NEW: 删除确认，照 Linear 的样子（2026-11-05），待主人审核。Linear 说删除的事项会在“最近删除”里留 30 天；这里删了就没有了，所以这句话说清楚删什么、留什么。
+  deleteIssue: {
+    title: (name) => `删除“${name}”？`, titleMany: (count) => `删除 ${count} 条事项？`,
+    scope: '将删除这条事项、活动和本地关联。来源消息和会话历史会保留。',
+    scopeMany: '将删除这些事项、它们的活动和本地关联。来源消息和会话历史会保留。',
+  },
   widgets: {
-    titles: { issues: '看板', quota: '额度', sessions: '会话', office: '办公室' },
-    descriptions: { issues: '所有事项，可按列表或看板查看', quota: '各智能体的订阅用量', office: '已分配智能体的进行中事项，各有一位员工' },
+    titles: { issues: '看板', quota: '额度', sessions: '会话', office: '办公室', collector: '信息' },
+    descriptions: { issues: '所有事项，可按列表或看板查看', quota: '各智能体的订阅用量', office: '已分配智能体的进行中事项，各有一位员工', collector: '收集器收集回来的信息，可分享到事项、新建事项或忽略' }, // collector: 新写的
     needs: { issues: '事项', quota: '额度', inputs: '输入', sessions: '会话', network: '网络' },
-    quota: { empty: '暂无用量', unknown: '—', fiveHour: '5 小时', weekly: '每周', days: (n) => `${n} 天`, used: (label, percent) => `${label} 已用 ${percent}%`,
+    quota: { left: '剩余', leftOf: (name, window, percent) => `${name} ${window}：剩余 ${percent}%`, leftLine: (window, percent) => `${window} 剩余 ${percent}%`, empty: '暂无用量', unknown: '—', fiveHour: '5 小时', weekly: '每周', days: (n) => `${n} 天`, used: (label, percent) => `${label} 已用 ${percent}%`,
       resets: (when) => `${when} 重置`, resetsAt: (when) => `${when} 重置`, limitReached: (when) => `已达上限，${when} 重置`, label: (name, percent) => `${name} 已用 ${percent}%`, login: '登录后查看用量', balance: '余额' },
     sessions: {
       search: '搜索会话', empty: '暂无会话', failed: '会话没能读取',
+      // NEW（2026-11-05）：搜索看不到什么，搜了之后在结果下面用灰字说；以及列表不全。待主人审核。
+      unsearchable: (count) => `还有 ${count} 个会话没法搜索内容，结果可能不全`,
+      indexing: (done, total) => `正在建立搜索索引（${done}/${total}），结果可能不全`,
+      listPartial: '部分会话没能读取，列表可能不全',
       history: '会话记录', importLabel: '导入', takeOverLabel: '接管', noMessages: '暂无消息', // NEW; action labels supplied by the owner
       clear: '清空搜索', more: '更多会话', openFailed: '会话没能打开。', takeoverLabel: '交给嘟嘟管理',
       takeoverFailed: '会话没能接管。', openIssue: '打开事项', // NEW
+      takeoverSuccess: '接管成功', // Owner wording (2026-11-05).
       agents: { claude: 'Claude', codex: 'ChatGPT', dsh: 'DeepSeek Harness' },
     },
   },
   settings: {
     title: '嘟嘟设置', openFolder: '打开项目文件夹', failed: '这一页没能加载', retry: '重试', unavailable: '项目文件夹没能打开。',
-    nav: { general: '通用', connectors: '连接器', rules: '规则', memory: '记忆', skills: '技能', widgets: '小组件', phone: '手机控制', providers: '供应商' },
+    nav: { general: '通用', statuses: '状态', connectors: '连接器', collectors: '收集器', rules: '规则', memory: '记忆', skills: '技能', phone: '手机控制', providers: '供应商' },
+    // NEW: reviewed together with the English workflow settings above.
+    statuses: {
+      title: '状态', name: '名称', description: '描述', color: '颜色', create: '创建', add: (category) => `在${category}中添加状态`,
+      options: '状态选项', reorder: '调整顺序', moveUp: '上移', moveDown: '下移', makeDefault: '设为默认', moveIssues: '将事项移至',
+      categories: { backlog: '待规划', unstarted: '未开始', started: '已开始', completed: '已完成', canceled: '已取消' },
+      errors: {
+        unknown_status: '这个状态已不存在。', invalid_status: '请检查状态名称和颜色。',
+        duplicate_status: '已有同名状态。', last_status: '每个分类至少保留一个状态。',
+        status_in_use: '请选择现有事项要移入的状态。',
+      },
+    },
     general: { folder: '项目文件夹', isDefault: '默认', change: '更改', path: '文件夹路径', moveFiles: '把文件移过去', save: '保存', cancel: '取消',
       issues: '事项', exportIssues: '导出事项', export: '导出', exportFailed: '事项没能导出', pet: '宠物', showPet: '显示宠物', doubleSpace: '双击空格打开对话', holdSpace: '长按空格语音输入',
-      model: '模型', changeModel: '在 DSH 里更换', currentModel: '用 DSH 当前的模型', lastTidy: '最近一次整理', noTidy: '还没有整理过', undoTidy: '撤销整理' },
-    connectors: { empty: '没有连接器', test: '测试', remove: '删除', allowed: '允许的操作', read: '读', write: '写', never: '未测试',
-      testedOk: (when) => `通过 · ${when}`, testedFailed: (when) => `失败 · ${when}`, turnOn: (name) => `开启：${name}`, expand: (name) => `详情：${name}`,
-      addedByDudu: '嘟嘟添加', kind: { cli: '命令行', mcp: 'MCP', dsh: 'DSH 扩展' }, skipped: '跳过的条目', line: (n) => `第 ${n} 行`, removed: (name) => `已删除 ${name}`, undo: '撤销',
-      note: '告诉嘟嘟去哪里、收集什么。保存后，每轮采集都会照着这些提示读取。', removeOf: (name) => `删除：${name}` }, // NEW
+      model: '模型', changeModel: '在 DSH 里更换', lastTidy: '最近一次整理', noTidy: '还没有整理过', undoTidy: '撤销整理', deepSleep: '深度睡眠' },
+    // NEW (2026-11-05，主人看过图): 连接器只管怎么连上一个服务（Prompt 或 MCP）；收集什么、多久一次是收集器的。
+    // 第一版连接器页剩下的字，是重画的页（下面的 connectorsPage）和别的页还在用的。
+    connectors: { name: '名称', empty: '没有连接器', remove: '删除',
+      kind: { prompt: 'Prompt', mcp: 'MCP' }, needsAuth: '需要授权',
+      inUse: (names) => `还有收集器在用它：${names.join('、')}`,
+      removed: (name) => `已删除 ${name}`, undo: '撤销', removeOf: (name) => `删除：${name}` },
+    // NEW (2026-11-06)：连接器页照 Claude 和 Muse 重画。字是 docs/issues-ui-wording.md “2026-11-06 连接器页重画”里主人的表；没列在表里的标了 NEW。
+    connectorsPage: {
+      addCustom: '添加自定义连接器', search: '搜索', back: '返回',
+      views: { available: '可用', connected: '已连接' },
+      groups: { here: '这台电脑', work: '办公', projects: '项目', dev: '开发', web: '网页' }, // NEW: 项目、网页（主人 2026-11-06 点头的那份清单里的组名）
+      connect: '连接', authorize: '授权', disconnect: '断开',
+      address: '地址', tools: '工具', toolsValue: (n) => `${n} 个`,
+      about: { tools: (n) => `${n} 个工具`, commandLine: (command) => `命令行 · ${command}`, thisComputer: (command) => `本机 · ${command}` },
+      state: {
+        waiting: '等待浏览器…', timedOut: '连接超时', needsLogin: '需要登录', missing: '没装',
+        login: (command) => `在终端运行 ${command}，再点重试`,
+        notFound: (command, install) => (install ? `没找到 ${command}：${install}` : `没找到 ${command}`),
+      },
+      custom: {
+        placeholder: '粘贴地址或命令，或者写一句话说怎么读', checking: '正在查看…',
+        kind: { remote: '远程', local: '本地', sentence: '命令行' },
+        how: { oauth: '在浏览器里授权', none: '不用登录', token: '需要令牌', command: '一条命令', sentence: '就是这句话' },
+        token: '令牌', addEnv: '添加环境变量',
+        several: (n) => `${n} 个连接器`, // NEW
+        envName: '变量名', envValue: '值', // NEW
+      },
+    },
+    // NEW (2026-11-05): 收集器通过一个连接器去读。频率、笔记和“上次采集”一行原来属于连接器。
+    collectors: { add: '添加收集器', name: '名称', connector: '连接器', prompt: '收集什么', empty: '没有收集器', needConnector: '先添加一个连接器',
+      frequency: '频率，如 30m、2h、1d，或 cron', common: '常用频率',
+      everyMinutes: (n) => `每 ${n} 分钟`, everyHours: (n) => (n === 1 ? '每小时' : `每 ${n} 小时`), everyDays: (n) => (n === 1 ? '每天' : `每 ${n} 天`),
+      preset: {
+        '5m': '每 5 分钟', '15m': '每 15 分钟', '30m': '每 30 分钟', '1h': '每小时', '6h': '每 6 小时',
+        '0 9 * * *': '每天 09:00', '0 9 * * 1-5': '周一至周五 09:00', '0 9-18 * * 1-5': '周一至周五 9 至 18 点每小时',
+      },
+      last: { done: (when, added) => (added > 0 ? `上次 ${when} · 新增 ${added} 条` : `上次 ${when} · 没有新的`), failed: (when) => `上次 ${when} · 读取失败` },
+      addedByDudu: '嘟嘟添加', removed: (name) => `已删除 ${name}`, undo: '撤销', removeOf: (name) => `删除：${name}` },
     rules: {
       open: '打开', empty: '空', missing: '未找到',
-      note: '两份 Markdown 文件，嘟嘟照着它们判断。直接改文件，或者对嘟嘟说。',
       files: {
-        'TRIAGE.md': { title: '影响、工作量和截止', description: '新来的事有多重要、要花多少功夫、什么时候要' },
-        'ASSIGN.md': { title: '任务分配', description: '什么事交给哪个智能体；拿不准的留着' },
+        'TRIAGE.md': { title: '影响、工作量和截止' },
+        'ASSIGN.md': { title: '任务分配' },
       },
     },
     memory: { search: '搜索记录', count: (n) => `${n} 条`, editOf: (text) => `编辑：${text}`, forgetOf: (text) => `忘记：${text}`, empty: '还没有记住的事', edit: '编辑', save: '保存', cancel: '取消',
@@ -360,27 +572,30 @@ const zh = {
         return [updated && `更新 ${updated} 条`, counts.new && `新增 ${counts.new} 条`, counts.skill && `新增 ${counts.skill} 项技能`].filter(Boolean).join('，') || '没有变更';
       },
       counts: { turns: '轮对话', entries: '条记忆', logLines: '行每日记录', skills: '项技能', reviews: '条整理记录', staged: '条待整理记录' } },
-    widgets: { onDashboard: '在仪表盘上', builtIn: '内置', reads: (what) => `读取${what}`, switchOn: (name) => `将${name}放到仪表盘上`,
-      note: '小组件来自嘟嘟自带的，和你在 DSH 里装的插件。装插件在 DSH 的插件页。',
-      developerDescription: '编辑版面时，本地小组件上多一个检查器：最小和推荐大小、浅色深色、示例数据、检查结果',
-      developer: '开发者模式', local: '本地小组件', developing: '开发中', inspect: '检查小组件', minimum: '最小尺寸', recommended: '推荐尺寸', light: '浅色', dark: '深色', theme: '主题',
+    widgets: {
+      inspect: '检查小组件', minimum: '最小尺寸', recommended: '推荐尺寸', light: '浅色', dark: '深色', theme: '主题',
       sample: '示例数据', mine: '我的数据', data: '数据', checks: '检查', metadata: '名称、描述和预览', fits: '内容完整显示', accessible: '图标按钮有名称', healthy: '没有错误',
       pass: '通过', fail: '待检查', idMismatch: '小组件编号与插槽注册不一致。' },
-    skills: { empty: '还没有技能', delete: '删除', back: '返回技能', note: '嘟嘟自己的技能，和各智能体的技能互不影响。', deleteOf: (name) => `删除：${name}` },
+    skills: { empty: '还没有技能', delete: '删除', back: '返回技能', deleteOf: (name) => `删除：${name}` },
   },
-  agentState: { working: '工作中', needs_you: '待审核', stuck: '卡住了', idle: '空闲' },
+  agentState: { idle: '空闲', working: '工作中', blocked: '需要你', unassigned: '未分配' }, // 主人 2026-11-04 定的词，提问、出错、停止和正常结束都是「需要你」；「未分配」是主人 2026-11-05 要求的状态，这个词待审
+  deepSleep: '深度睡眠', // 主人 2026-11-05 的原话：代替空闲圈的月牙的名字（悬停提示、读屏）
   pet: {
     open: '展开对话', close: '关闭', conversation: '嘟嘟', message: '发消息', send: '发送', earlier: '更早的对话', voice: '语音输入', release: '松开发送 · Esc 取消',
-    stop: '停止', working: '工作中', failed: '对话没能加载', voiceFailed: '语音输入失败', doubleSpace: '双击空格对话', holdSpace: '长按空格说话',
+    hide: '隐藏 Dudu',
+    stop: '停止', failed: '对话没能加载', voiceFailed: '语音输入失败',
+    // 嘟嘟工作时的那一行：和 DSH 自己的一样（chat.deepDiving、chat.deepDivingFor 和时长单位），主人 2026-11-04 给了截图并要求加上
+    running: '深度求索中', runningFor: (duration) => `深度求索中，用时 ${duration} ···`, duration: { hour: '小时', minute: '分', second: '秒' },
     file: '文件', context: '上下文', contextHint: '自动附加当前页面位置', compact: '压缩', compactHint: '压缩以上对话内容',
     model: '模型', effort: '推理等级', compacted: '已压缩', nothingToCompact: '还没有可压缩的内容', compactFailed: '压缩没能完成',
     actions: { issues_add: '已添加事项', issues_update: '已更新事项', issues_assign: '已分配事项', issues_complete: '已完成事项', issues_cancel: '已取消事项',
-      memory_remember: '已记录', memory_forget: '已忘记', connector_register: '已添加连接器', dashboard_add: '已添加小组件', dashboard_remove: '已移除小组件', dashboard_reset: '已恢复版面' },
+      memory_remember: '已记录', memory_forget: '已忘记', connector_register: '已添加连接器', collector_register: '已添加收集器', dashboard_add: '已添加小组件', dashboard_remove: '已移除小组件', dashboard_reset: '已恢复版面' },
   },
   noAgent: '未分配', today: '今天', dueIn: (n) => `${n} 天后`, overdue: (n) => `逾期 ${n} 天`, empty: '没有事项', loadFailed: '事项没能加载', retry: '重试',
   shell: {
     unavailable: '连接暂时不可用。', reading: '正在读取连接配置…', loading: '正在读取…', busy: '处理中…', phone: '手机控制',
     computerName: '电脑名称', addresses: '连接地址', lan: '内网地址', lanCode: '为内网地址生成二维码', generate: '生成二维码', address: (n) => `连接地址 ${n}`,
+    publicAddress: '公网地址', lanLabel: '内网', publicLabel: '公网', editPublicAddress: '编辑公网地址', edit: '编辑', removeRoute: '移除地址', // 2026-11-04 已审核连接设计
     removeAddress: (n) => `删除连接地址 ${n}`, remove: '删除', addAddress: '添加地址', save: '保存', saved: '已保存', devices: '已配对设备',
     paired: (date) => `配对于 ${date}`, revoke: '撤销', noDevices: '暂无配对设备', scan: '打开嘟嘟扫码', close: '关闭', copied: '已复制', copyPairing: '复制配对链接',
     copyFailed: '复制失败，请扫码连接', expiry: '二维码 10 分钟内有效', pair: '配对手机', revokeQuestion: (name) => `撤销 ${name} 的连接？`, cancel: '取消', revokePairing: '撤销配对',
@@ -421,6 +636,32 @@ const diagnostics = [
   ['This widget declares an unknown data source.', 'This widget declares an unknown data source.', '小组件声明了未知的数据来源。'],
   ['The development flag must be true or false.', 'The development flag must be true or false.', '开发标记须为 true 或 false。'],
   ['The widget id does not match its slot registration.', 'The widget id does not match its slot registration.', '小组件编号与插槽注册不一致。'],
+  // NEW: why a connector prompt typed into the settings page was not saved (docs/issues-ui-wording.md, 2026-11-03); and, from 2026-11-05, a collector.
+  ['Give the source a short name.', 'Give the connector a short name.', '请给连接器起一个简短的名称。'],
+  ['Give the collector a short name.', 'Give the collector a short name.', '请给收集器起一个简短的名称。'],
+  ['A connector is a Prompt or an MCP server.', 'A connector is a Prompt or an MCP server.', '连接器的形式是 Prompt 或 MCP。'],
+  ['Give a prompt saying how to reach the service.', 'Write a prompt saying how to reach the service.', '请写下怎么连上这个服务。'],
+  ['Choose an MCP server.', 'Choose an MCP server.', '请选一个 MCP 服务。'],
+  ['Use the name of an MCP server in DSH.', 'Use the name of an MCP server in DSH.', '请填 DSH 里的 MCP 服务名称。'],
+  ['Choose a connector.', 'Choose a connector.', '请选一个连接器。'],
+  ['Choose an existing connector.', 'Choose an existing connector.', '这个连接器已不存在，请另选一个。'],
+  ['Give a prompt saying what to collect.', 'Write what to collect.', '请写下要收集什么。'],
+  ['The prompt is too long.', 'This is too long.', '内容太长了。'],
+  ['A line of the prompt cannot start with # or ## (it would be read as a heading).', 'A line of the prompt cannot start with # or ##.', 'Prompt 里的行不能以 # 或 ## 开头。'],
+  ['A line of the text cannot start with # or ## (it would be read as a heading).', 'A line cannot start with # or ##.', '这里的行不能以 # 或 ## 开头。'],
+  ['Keep credentials in the existing tools, not in source prompts.', 'Keep credentials out of prompts. Use the tool that holds them.', '不要把密钥写进 Prompt，请使用保存密钥的工具。'],
+  ['Keep credentials in the existing tools, not in the collector.', 'Keep credentials out of the collector. Use the tool that holds them.', '不要把密钥写进收集器，请使用保存密钥的工具。'],
+  ['The connectors changed. Read them again before editing.', 'The connectors changed. Reload and try again.', '连接器刚刚有变动，请重新打开再试。'],
+  ['The collectors changed. Read them again before editing.', 'The collectors changed. Reload and try again.', '收集器刚刚有变动，请重新打开再试。'],
+  ['There are too many connectors.', 'There are too many connectors.', '连接器太多了。'],
+  ['There are too many collectors.', 'There are too many collectors.', '收集器太多了。'],
+  ['This connector no longer exists.', 'This connector no longer exists.', '这个连接器已不存在。'],
+  ['This collector no longer exists.', 'This collector no longer exists.', '这个收集器已不存在。'],
+  ['The connectors could not be read or saved.', 'The connectors could not be read or saved.', '连接器没能读取或保存。'],
+  ['The collectors could not be read or saved.', 'The collectors could not be read or saved.', '收集器没能读取或保存。'],
+  // NEW (2026-11-05): why a frequency was not saved.
+  ['Give how often, such as 30m, 2h or 1d, or a cron expression such as 0 9 * * 1-5.', 'Write how often, such as 30m, 2h, 1d, or a cron expression such as 0 9 * * 1-5.', '请写多久采集一次，如 30m、2h、1d，或 cron 表达式，如 0 9 * * 1-5。'],
+  ['The shortest time between collections is 5 minutes.', 'The shortest time between collections is 5 minutes.', '最短每 5 分钟采集一次。'],
 ];
 en.diagnostics = Object.fromEntries(diagnostics.map(([key, value]) => [key, value]));
 zh.diagnostics = Object.fromEntries(diagnostics.map(([key, , value]) => [key, value]));
@@ -490,7 +731,7 @@ zh.connectorDiagnostics = {
     id: 'id 须为 1 到 24 个小写字母、数字或连字符。',
     needId: '请填写连接器 id，使用小写字母、数字和连字符。',
     input: '输入须为对象。',
-    ownerOnly: (key) => `${key} 由 boss 设置，嘟嘟不能修改。`,
+    ownerOnly: (key) => `${key} 由你设置，嘟嘟不能修改。`,
   },
   template: {
     empty: '模板为空。',
@@ -508,7 +749,7 @@ zh.connectorDiagnostics = {
     noConnector: (id) => `没有编号为“${id}”的连接器。`,
     broken: (id, line, reason) => `第 ${line} 行的条目“${id}”无法使用：${reason}`,
     exists: (id) => `编号为“${id}”的连接器已存在。`,
-    notDudu: (id) => `“${id}”由 boss 添加，嘟嘟不能修改或删除。`,
+    notDudu: (id) => `“${id}”由你添加，嘟嘟不能修改或删除。`,
     isOn: (id) => `“${id}”已开启，请先关闭再修改配置。`,
     changedSince: (id) => `“${id}”已变动，请重新查看后再开启。`,
     badTicks: 'tools 须为工具名称列表；null 表示使用默认值。',

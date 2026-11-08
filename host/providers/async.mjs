@@ -25,6 +25,16 @@ export function abortReason(signal) {
   return signal?.reason instanceof Error ? signal.reason : Object.assign(new Error('The request was aborted.'), { name: 'AbortError' });
 }
 
+/** Settle a cancelled caller even when an older host service ignores its signal. */
+export function withAbort(promise, signal) {
+  return new Promise((resolve, reject) => {
+    const aborted = () => reject(abortReason(signal));
+    if (signal.aborted) { Promise.resolve(promise).catch(() => {}); aborted(); return; }
+    signal.addEventListener('abort', aborted, { once: true });
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener('abort', aborted));
+  });
+}
+
 /** Unbounded FIFO with one awaiting consumer at a time; `close()` ends it after the queued items drain. */
 export class AsyncQueue {
   #items = [];

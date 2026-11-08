@@ -34,6 +34,7 @@ export const BUILT_IN_WIDGETS = Object.freeze([
   declare('issues', 'Issues', 'Every issue, as a list or a board', [6, 3], [FILL, FILL], ['issues']), // NEW description
   declare('quota', 'Quota', 'Subscription usage, one line per agent', [3, 2], [3, 2], ['quota']), // NEW description
   declare('office', 'Office', 'Each active issue as someone at a desk', [5, 3], [5, 3], ['issues']), // NEW description
+  declare('collector', 'Collector', 'What the connectors collected, to share, make issues of or ignore', [4, 3], [6, 5], ['inputs']), // NEW description (2026-11-05: 6 columns, 5 rows is the owner's size)
 ]);
 
 const refuse = (reason) => ({ ok: false, reason });

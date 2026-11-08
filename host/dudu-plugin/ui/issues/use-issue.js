@@ -47,7 +47,7 @@ export function useIssue(request, id) {
   const snooze = useCallback((until) => send('issues/snooze', { until }), [send]);
   const addNote = useCallback((text) => send('issues/log', { kind: 'note', text }), [send]);
   const reply = useCallback((text) => send('issues/reply', { text }), [send]);
-  const message = useCallback((text) => send('issues/message', { text }), [send]);
+  const message = useCallback((text, options) => send('issues/message', { text, ...options }), [send]);
   const undo = useCallback((target) => send('issues/undo', { target }), [send]);
   const loadEarlier = useCallback(() => { if (state.nextLogCursor) load(state.nextLogCursor); }, [load, state.nextLogCursor]);
   return { ...state, change, assign, snooze, addNote, reply, message, undo, loadEarlier, reload: load };

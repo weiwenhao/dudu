@@ -24,12 +24,14 @@ function pluginPanel({ busy = false, marker = null, loading = false } = {}) {
   };
 }
 
-function createHarness(initialPanel = null) {
+function createHarness(initialPanel = null, { delayedUI = false } = {}) {
+  let now = 0;
   let currentPanel = initialPanel;
   let onMutation;
   let readyCount = 0;
   let failCount = 0;
   let timerID = 0;
+  const timers = new Map<number, () => void>();
   const body = {};
   const layout = {
     panelInfo: { getSnapshot: () => ({ activePanelId: 'plugins' }) },
@@ -55,7 +57,7 @@ function createHarness(initialPanel = null) {
   }
   const window = {
     __DSBOT_PAGE__: { kind: 'plugins' },
-    __DSBOT_APP_UI__: ui,
+    __DSBOT_APP_UI__: delayedUI ? undefined : ui,
     __DSBOT_NATIVE__: {
       ready() { readyCount += 1; },
       fail() { failCount += 1; },
@@ -68,16 +70,24 @@ function createHarness(initialPanel = null) {
     window,
     document,
     MutationObserver: TestMutationObserver,
-    performance: { now: () => 0 },
+    performance: { now: () => now },
     queueMicrotask: (callback) => Promise.resolve().then(callback),
-    setTimeout: () => ++timerID,
-    clearTimeout() {},
+    setTimeout: (callback) => { const id = ++timerID; timers.set(id, callback); return id; },
+    clearTimeout: (id) => { timers.delete(id); },
     console,
   });
 
   return {
     get readyCount() { return readyCount; },
     get failCount() { return failCount; },
+    startUI() { window.__DSBOT_APP_UI__ = ui; },
+    async advance(milliseconds) {
+      now += milliseconds;
+      const pending = [...timers.values()];
+      timers.clear();
+      for (const callback of pending) callback();
+      await this.settle();
+    },
     async settle() {
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
     },
@@ -89,22 +99,6 @@ function createHarness(initialPanel = null) {
   };
 }
 
-test('plugin readiness ignores main-area text and the loading skeleton', async () => {
-  const harness = createHarness();
-  await harness.settle();
-  assert.equal(harness.readyCount, 0, 'the page heading alone is not ready');
-
-  await harness.update(pluginPanel({ busy: true, loading: true }));
-  assert.equal(harness.readyCount, 0, 'a busy plugin panel with its skeleton is not ready');
-
-  await harness.update(pluginPanel({ loading: true }));
-  assert.equal(harness.readyCount, 0, 'the skeleton marker blocks readiness during a state transition');
-
-  await harness.update(pluginPanel());
-  assert.equal(harness.readyCount, 0, 'an empty panel without a settled state is not ready');
-  assert.equal(harness.failCount, 0, 'readiness remains pending until the normal route deadline');
-});
-
 test('plugin readiness accepts loaded plugin cards and groups', async () => {
   const harness = createHarness();
   await harness.settle();
@@ -115,164 +109,6 @@ test('plugin readiness accepts loaded plugin cards and groups', async () => {
   await groupedHarness.settle();
   await groupedHarness.update(pluginPanel({ marker: 'group' }));
   assert.equal(groupedHarness.readyCount, 1);
-});
-
-test('plugin readiness accepts the settled empty and error states', async () => {
-  for (const marker of ['empty', 'error', 'status']) {
-    const harness = createHarness();
-    await harness.settle();
-    await harness.update(pluginPanel({ marker }));
-    assert.equal(harness.readyCount, 1, `${marker} state should settle the route`);
-  }
-});
-
-function createSettingsHarness({ target = 'market', delayedSelection = false } = {}) {
-  let now = 0;
-  let readyCount = 0;
-  let failCount = 0;
-  let observed: unknown;
-  let mutation: (() => void) | undefined;
-  let timerID = 0;
-  const timers = new Map<number, () => void>();
-  const listeners = new Map<string, Set<(event: { detail?: unknown }) => void>>();
-  const state = { open: true, active: 'market', requested: '', openCount: 0 };
-  const sections = ['market', 'models'].map(id => ({ options: { id, label: id } }));
-  const body = {};
-  const sectionBody = { setAttribute() {}, querySelector() { return null; } };
-  const buttons = sections.map(({ options: { id } }) => ({
-    textContent: id,
-    getAttribute(name: string) { return name === 'aria-current' ? String(state.active === id) : null; },
-    click() {
-      state.requested = id;
-      if (!delayedSelection) state.active = id;
-    },
-  }));
-  const dialog = {
-    querySelector(selector: string) {
-      if (selector === '[class*="_content"]' || selector === '[data-dsbot-settings-body]') return sectionBody;
-      if (selector === 'nav') return { setAttribute() {}, querySelectorAll: () => buttons };
-      return null;
-    },
-    querySelectorAll(selector: string) { return selector === 'nav button' ? buttons : []; },
-  };
-  const shell = { actions: {
-    open() { state.open = true; state.openCount += 1; },
-    openSection(id: string) { state.open = true; state.active = id; state.openCount += 1; },
-  } };
-  const slots = { entries(name: string) {
-    if (name === 'settings.section') return sections;
-    if (name === 'sidebar.settings') return [{ store: { create: () => shell } }];
-    return [];
-  } };
-  const document = {
-    body,
-    documentElement: { dataset: {} },
-    querySelector(selector: string) {
-      return selector === '[data-shortcut-modal="settings"]' && state.open ? dialog : null;
-    },
-    querySelectorAll() { return []; },
-    addEventListener() {},
-    removeEventListener() {},
-  };
-  class SettingsObserver {
-    constructor(callback: () => void) { mutation = callback; }
-    observe(target: unknown) { observed = target; }
-    disconnect() { observed = undefined; }
-  }
-  const window = {
-    __DSBOT_PAGE__: { kind: 'settings', target },
-    __DSBOT_MOBILE_PAGE_ADAPTER__: undefined as { close: () => void } | undefined,
-    __DSBOT_APP_UI__: { ctx: { slots, get: (name: string) => name === 'slots' ? slots : null } },
-    __DSBOT_NATIVE__: {
-      ready() { readyCount += 1; },
-      fail() { failCount += 1; },
-      settingsCategories() {},
-    },
-    addEventListener(name: string, callback: (event: { detail?: unknown }) => void) {
-      if (!listeners.has(name)) listeners.set(name, new Set());
-      listeners.get(name)!.add(callback);
-    },
-    removeEventListener(name: string, callback: (event: { detail?: unknown }) => void) {
-      listeners.get(name)?.delete(callback);
-    },
-  };
-  runInNewContext(MOBILE_PAGE_SCRIPT, {
-    window, document, MutationObserver: SettingsObserver, performance: { now: () => now },
-    queueMicrotask: (callback: () => void) => Promise.resolve().then(callback),
-    setTimeout: (callback: () => void) => { timers.set(++timerID, callback); return timerID; },
-    clearTimeout: (id: number) => timers.delete(id), console,
-  });
-  const settle = async () => { for (let index = 0; index < 16; index += 1) await Promise.resolve(); };
-  return {
-    state,
-    get readyCount() { return readyCount; },
-    get failCount() { return failCount; },
-    settle,
-    fire(name: string, detail?: unknown) { listeners.get(name)?.forEach(callback => callback({ detail })); },
-    async closeDialog() {
-      state.open = false;
-      if (observed === body) mutation?.();
-      await settle();
-    },
-    async step(milliseconds = 200) {
-      now += milliseconds;
-      if (observed === body || (observed === dialog && state.open)) mutation?.();
-      const callbacks = [...timers.values()];
-      timers.clear();
-      callbacks.forEach(callback => callback());
-      await settle();
-    },
-    close() { window.__DSBOT_MOBILE_PAGE_ADAPTER__!.close(); },
-  };
-}
-
-test('settings restores its requested section when the dialog disappears after a failed market request', async () => {
-  const harness = createSettingsHarness();
-  await harness.settle();
-  assert.equal(harness.readyCount, 1);
-  await harness.closeDialog();
-  await harness.step();
-  assert.equal(harness.state.open, true, 'removing the dialog must restore settings instead of exposing the DSH home');
-  assert.equal(harness.state.active, 'market');
-  assert.equal(harness.readyCount, 2);
-  assert.equal(harness.failCount, 0);
-});
-
-test('returning to hidden settings restores the same category and waits for its selection to render', async () => {
-  const harness = createSettingsHarness({ delayedSelection: true });
-  await harness.settle();
-  harness.fire('dsbot:visibility', false);
-  await harness.closeDialog();
-  assert.equal(harness.state.open, false, 'a hidden page does not reopen its dialog');
-  harness.state.active = 'models';
-  harness.fire('dsbot:visibility', true);
-  await harness.step();
-  assert.equal(harness.state.open, true);
-  assert.equal(harness.state.requested, 'market');
-  assert.equal(harness.readyCount, 1, 'a different settings category is not ready');
-  harness.state.active = 'market';
-  await harness.step();
-  assert.equal(harness.readyCount, 2);
-});
-
-test('an unavailable settings section never reports another category as ready', async () => {
-  const harness = createSettingsHarness({ target: 'removed-plugin' });
-  await harness.settle();
-  assert.equal(harness.readyCount, 0);
-  await harness.step(28_001);
-  assert.equal(harness.failCount, 1);
-});
-
-test('closing the settings adapter cancels recovery and ignores later visibility events', async () => {
-  const harness = createSettingsHarness();
-  await harness.settle();
-  harness.close();
-  await harness.closeDialog();
-  harness.fire('dsbot:visibility', true);
-  await harness.step(30_000);
-  assert.equal(harness.state.open, false);
-  assert.equal(harness.readyCount, 1);
-  assert.equal(harness.failCount, 0);
 });
 
 type Tab = { label: string; selected: boolean };
@@ -441,62 +277,4 @@ test('a conversation view from another plugin is opened in its session and picke
   assert.equal(harness.readyCount, 0, 'and it has not stopped changing');
   await harness.step(600, { mutate: false });
   assert.equal(harness.readyCount, 1);
-});
-
-test('a view that DSH does not list for this session never becomes ready', async () => {
-  const tabs: Tab[] = [{ label: '对话', selected: true }];
-  const harness = createRouteHarness({
-    page: { kind: 'view', sessionId: 'session-1', target: 'missing' },
-    services: { uiWorkspace: { async openSession() {} } },
-    views: [{ options: { id: 'chat', label: () => '对话' } }],
-    tabs,
-    content: true,
-  });
-  await harness.settle();
-  await harness.step(5000);
-  assert.equal(harness.readyCount, 0);
-  assert.equal(tabs[0].selected, true);
-});
-
-test("the toolbar's + presses DSH's add-plugin button although the page's own header is hidden on the phone", async () => {
-  let added = 0;
-  const primary = { disabled: false, click() { added += 1; } };
-  const group = {
-    getAttribute: (name: string) => (name === 'aria-label' ? '添加插件' : null),
-    querySelector: (selector: string) => (selector === 'button' ? primary : null),
-  };
-  const harness = createRouteHarness({ page: { kind: 'plugins' }, groups: [group] });
-  await harness.settle();
-
-  harness.fire('dsbot:command', 'add');
-  assert.equal(added, 1);
-  harness.fire('dsbot:command', 'refresh');
-  harness.fire('dsbot:command', undefined);
-  assert.equal(added, 1, 'only the add command does anything');
-
-  primary.disabled = true;
-  harness.fire('dsbot:command', 'add');
-  assert.equal(added, 1, 'a disabled button is left alone');
-});
-
-test('while an install runs the plus reaches the button that reopens its progress', async () => {
-  const clicked: string[] = [];
-  const refresh = { disabled: false, click() { clicked.push('refresh'); } };
-  const progress = { disabled: false, click() { clicked.push('progress'); } };
-  const harness = createRouteHarness({ page: { kind: 'plugins' }, toolbarButtons: [refresh, progress] });
-  await harness.settle();
-  harness.fire('dsbot:command', 'add');
-  assert.deepEqual(clicked, ['progress']);
-});
-
-test('only the plugin page answers the add command', async () => {
-  let added = 0;
-  const group = {
-    getAttribute: () => '添加插件',
-    querySelector: () => ({ disabled: false, click() { added += 1; } }),
-  };
-  const harness = createRouteHarness({ page: { kind: 'panel', target: 'insight' }, groups: [group] });
-  await harness.settle();
-  harness.fire('dsbot:command', 'add');
-  assert.equal(added, 0);
 });

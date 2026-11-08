@@ -4,6 +4,282 @@ import XCTest
 
 @MainActor
 final class CoreStoreTests: XCTestCase {
+    func testAssistantCompletionCanResumeAfterTemporaryEditingChanges() {
+        let store = DSBotStore(repository: StoreComputerFixture(), client: StoreTransportFixture())
+        store.selectedSession = SessionSummary(
+            id: "assistant", title: "Dudu", updatedAt: 0, status: "idle", isAssistant: true
+        )
+        let completion = AssistantCompletions()
+        let edit = ComposerEditingState(text: "@", selection: NSRange(location: 1, length: 0))
+        completion.inspect(edit, store: store, enabled: false)
+        completion.inspect(edit, store: store, enabled: true)
+        XCTAssertEqual(completion.query?.kind, .issue)
+
+        completion.inspect(.init(text: "@记", selection: NSRange(location: 2, length: 0), isComposing: true),
+                           store: store, enabled: true)
+        XCTAssertNil(completion.query)
+        completion.inspect(edit, store: store, enabled: true)
+        XCTAssertEqual(completion.query?.kind, .issue, "Ending marked input must not dismiss the unchanged address.")
+
+        completion.close()
+        completion.inspect(edit, store: store, enabled: true)
+        XCTAssertNil(completion.query, "An explicit dismissal stays dismissed until the editor is reopened.")
+        completion.reopen()
+        completion.inspect(edit, store: store, enabled: true)
+        XCTAssertEqual(completion.query?.kind, .issue)
+        completion.reset()
+    }
+
+    func testComposerHandoffKeepsRecoveryUntilTheSendSucceeds() async throws {
+        let transport = StoreTransportFixture()
+        let cache = MemoryConversationStorage()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport, conversationStorage: cache)
+        await store.start()
+        let target = DraftTarget(computerID: "local-fixture", sessionID: "a")
+        store.messageDrafts[target] = "first request"
+        await transport.holdNextRequest("session.send")
+        let sending = Task {
+            try await store.send(text: "first request", draftText: "first request") {
+                store.messageDrafts[target] = nil
+            }
+        }
+        await transport.waitForRequest("session.send")
+        XCTAssertNil(store.messageDrafts[target], "The submitted text no longer belongs to the composer.")
+        XCTAssertEqual(store.displayedTranscriptRows.count, 1)
+        store.messageDrafts[target] = "new draft"
+        await store.flushConversationCache()
+        let pending = await cache.load(for: target.computerID)
+        XCTAssertEqual(pending?.drafts[target.sessionID], "first request\nnew draft")
+        await transport.finishRequest("session.send")
+        try await sending.value
+        XCTAssertEqual(store.messageDrafts[target], "new draft")
+        await store.flushConversationCache()
+        let delivered = await cache.load(for: target.computerID)
+        XCTAssertEqual(delivered?.drafts[target.sessionID], "new draft")
+    }
+
+    func testFailedSendRestoresItsOwnDraftWithoutOverwritingTheSelectedConversation() async throws {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        let target = DraftTarget(computerID: "local-fixture", sessionID: "a")
+        store.messageDrafts[target] = "first request"
+        await transport.failNextRequest("session.send", with: .remote("UPSTREAM_ERROR"))
+        await transport.holdNextRequest("session.send")
+        let sending = Task {
+            try await store.send(text: "first request", draftText: "first request") {
+                store.messageDrafts[target] = nil
+            }
+        }
+        await transport.waitForRequest("session.send")
+        store.messageDrafts[target] = "next request"
+        await store.selectSession(session("b"))
+        let other = DraftTarget(computerID: target.computerID, sessionID: "b")
+        store.messageDrafts[other] = "another conversation"
+        await transport.finishRequest("session.send")
+        do {
+            try await sending.value
+            XCTFail("Expected a failed send")
+        } catch {}
+        XCTAssertEqual(store.messageDrafts[target], "first request\nnext request")
+        XCTAssertEqual(store.messageDrafts[other], "another conversation")
+        XCTAssertEqual(store.selectedSession?.id, "b")
+    }
+
+    func testAnObservedQueueItemIsNotRestoredWhenItsSendReceiptIsLost() async throws {
+        let transport = StoreTransportFixture()
+        let cache = MemoryConversationStorage()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport, conversationStorage: cache)
+        await store.start()
+        await transport.emitSubmissionSnapshot("a", running: true)
+        let target = DraftTarget(computerID: "local-fixture", sessionID: "a")
+        store.messageDrafts[target] = "next"
+        await transport.failNextRequest("session.send", with: .resultUnknown)
+        await transport.holdNextRequest("session.send")
+        let sending = Task {
+            try await store.send(text: "next", draftText: "next") {
+                store.messageDrafts[target] = nil
+            }
+        }
+        await transport.waitForRequest("session.send")
+        let params = await transport.sendParams()
+        let requestID = try XCTUnwrap(params.last?["requestId"]?.stringValue)
+        await transport.emitSubmissionSnapshot("a", running: true, queued: [(requestID, "next")])
+        await store.flushConversationCache()
+        let confirmed = await cache.load(for: target.computerID)
+        XCTAssertNil(confirmed?.drafts[target.sessionID], "The watch has already confirmed delivery.")
+        await transport.finishRequest("session.send")
+        try await sending.value
+        XCTAssertNil(store.messageDrafts[target])
+        XCTAssertEqual(store.displayedQueuedMessages.count, 1)
+        XCTAssertTrue(store.acceptedSubmissions.isEmpty)
+        XCTAssertNil(store.error)
+    }
+
+    func testSentMessageDisplaysAtOnceAndKeepsItsIdentityOnAdmission() async throws {
+        let transport = StoreTransportFixture()
+        let cache = MemoryConversationStorage()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport, conversationStorage: cache)
+        await store.start()
+        await transport.holdNextRequest("session.send")
+        let sending = Task { try await store.send(text: "continue") }
+        await transport.waitForRequest("session.send")
+        XCTAssertTrue(store.isSending)
+        // The computer may take seconds to answer (owner, 2026-11-07): the message is in the conversation from the moment it is sent, dimmed like any input not yet admitted.
+        guard case let .user(pendingRow) = try XCTUnwrap(store.displayedTranscriptRows.last) else { return XCTFail("Missing the pending message") }
+        XCTAssertEqual(pendingRow.text, "continue")
+        XCTAssertTrue(pendingRow.isPending)
+        XCTAssertEqual(store.acceptedSubmissions.count, 1)
+        let params = await transport.sendParams()
+        let requestId = try XCTUnwrap(params.last?["requestId"]?.stringValue)
+        let shown = try XCTUnwrap(store.displayedTranscriptRows.last)
+        await transport.finishRequest("session.send")
+        try await sending.value
+        XCTAssertFalse(store.isSending)
+        let echo = try XCTUnwrap(store.displayedTranscriptRows.last)
+        XCTAssertEqual(echo.id, shown.id, "The receipt changes nothing about what is shown.")
+        XCTAssertEqual(store.displayedTranscriptRows.count, 1, "and does not show it twice.")
+        XCTAssertTrue(store.transcriptRows.isEmpty, "A receipt must not be written into durable history.")
+        await store.flushConversationCache()
+        let snapshot = await cache.load(for: "local-fixture")
+        XCTAssertTrue(snapshot?.detail?.transcript?.entries.isEmpty ?? true)
+        XCTAssertTrue(snapshot?.detail?.queuedMessages.isEmpty ?? true)
+
+        await transport.emitSubmissionSnapshot("a", admitted: [(requestId, "continue")])
+        XCTAssertTrue(store.acceptedSubmissions.isEmpty)
+        XCTAssertEqual(store.displayedTranscriptRows.count, 1)
+        XCTAssertEqual(store.displayedTranscriptRows.last?.id, echo.id)
+        guard case let .user(row) = store.displayedTranscriptRows.last else { return XCTFail("Missing admitted user") }
+        XCTAssertEqual(row.id, "host-0")
+        XCTAssertEqual(row.seq, 1)
+        XCTAssertFalse(row.isPending)
+    }
+
+    func testSubmissionReconciliationAllowsRepeatedIdenticalMessages() async throws {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        try await store.send(text: "continue")
+        try await store.send(text: "continue")
+        let params = await transport.sendParams()
+        let first = try XCTUnwrap(params.first?["requestId"]?.stringValue)
+        let second = try XCTUnwrap(params.last?["requestId"]?.stringValue)
+        XCTAssertNotEqual(first, second)
+        await transport.emitSubmissionSnapshot("a", admitted: [("unrelated", "continue"), (first, "continue")])
+        XCTAssertEqual(store.acceptedSubmissions.map(\.requestId), [second])
+        XCTAssertEqual(store.displayedTranscriptRows.count, 3)
+        await transport.emitSubmissionSnapshot(
+            "a", admitted: [("unrelated", "continue"), (first, "continue"), (second, "continue")]
+        )
+        XCTAssertTrue(store.acceptedSubmissions.isEmpty)
+        XCTAssertEqual(store.displayedTranscriptRows.count, 3)
+    }
+
+    func testHistoryOrCancellationBeforeTheSendReceiptCannotResurrectAnEcho() async throws {
+        for canceled in [false, true] {
+            let transport = StoreTransportFixture()
+            let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+            await store.start()
+            await transport.holdNextRequest("session.send")
+            let sending = Task { try await store.send(text: "continue") }
+            await transport.waitForRequest("session.send")
+            let params = await transport.sendParams()
+            let requestId = try XCTUnwrap(params.last?["requestId"]?.stringValue)
+            await transport.emitSubmissionSnapshot(
+                "a", admitted: canceled ? [] : [(requestId, "continue")],
+                canceled: canceled ? [requestId] : []
+            )
+            await transport.finishRequest("session.send")
+            try await sending.value
+            XCTAssertTrue(store.acceptedSubmissions.isEmpty)
+            XCTAssertEqual(store.displayedTranscriptRows.count, canceled ? 0 : 1)
+        }
+    }
+
+    func testAcceptedRunningSendStaysInQueueAndRetiresWhenCanceled() async throws {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await transport.emitSubmissionSnapshot("a", running: true)
+        try await store.send(text: "next", attachments: [
+            UploadAttachment(id: "photo", name: "photo.png", mimeType: "image/png", dataBase64: "AAAA")
+        ], files: [UploadedFile(receiptId: "receipt", name: "report.txt", bytes: 3)])
+        let echo = try XCTUnwrap(store.displayedQueuedMessages.last)
+        let requestId = try XCTUnwrap(echo.requestId)
+        XCTAssertTrue(echo.isSubmissionEcho)
+        XCTAssertFalse(echo.editable)
+        XCTAssertEqual(echo.attachments?.map(\.kind), ["image", "file"])
+        XCTAssertFalse(store.displayedTranscriptRows.contains { if case .user = $0 { return true }; return false })
+        await transport.emitSubmissionSnapshot("a", running: true, queued: [(requestId, "next")])
+        XCTAssertTrue(store.acceptedSubmissions.isEmpty)
+        XCTAssertEqual(store.displayedQueuedMessages.count, 1)
+        XCTAssertEqual(store.displayedQueuedMessages.first?.presentationID, echo.presentationID)
+        XCTAssertFalse(store.displayedQueuedMessages.first?.isSubmissionEcho ?? true)
+
+        try await store.send(text: "cancel this")
+        let pending = try XCTUnwrap(store.acceptedSubmissions.first)
+        await transport.emitSubmissionSnapshot("a", running: true, canceled: [pending.requestId])
+        XCTAssertTrue(store.displayedQueuedMessages.isEmpty)
+    }
+
+    func testFailedOrSwitchedSendsDoNotCreateSubmissionEchoes() async throws {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await transport.failNextRequest("session.send", with: .remote("UPSTREAM_ERROR"))
+        await transport.holdNextRequest("session.send")
+        let failing = Task { try await store.send(text: "failed") }
+        await transport.waitForRequest("session.send")
+        XCTAssertEqual(store.acceptedSubmissions.count, 1, "It is shown while the request is outstanding.")
+        await transport.finishRequest("session.send")
+        do {
+            try await failing.value
+            XCTFail("Expected a failed send")
+        } catch {}
+        XCTAssertTrue(store.acceptedSubmissions.isEmpty, "A failed send is proof that the computer has not got it: it is gone from the conversation.")
+        XCTAssertFalse(store.displayedTranscriptRows.contains { if case .user = $0 { return true }; return false })
+        await transport.holdNextRequest("session.send")
+        let sending = Task { try await store.send(text: "old session") }
+        await transport.waitForRequest("session.send")
+        await store.selectSession(session("b"))
+        await transport.finishRequest("session.send")
+        try await sending.value
+        XCTAssertTrue(store.acceptedSubmissions.isEmpty)
+        try await store.send(text: "new session")
+        XCTAssertEqual(store.acceptedSubmissions.count, 1)
+        await store.selectSession(session("a"))
+        XCTAssertTrue(store.acceptedSubmissions.isEmpty)
+    }
+
+    func testAnOlderPluginsReceiptHasNoIdentityToRetireTheEchoBy() async throws {
+        let transport = StoreTransportFixture()
+        await transport.useReceiptsWithoutIdentity()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await transport.holdNextRequest("session.send")
+        let sending = Task { try await store.send(text: "continue") }
+        await transport.waitForRequest("session.send")
+        XCTAssertEqual(store.acceptedSubmissions.count, 1, "It is shown while the request is outstanding.")
+        await transport.finishRequest("session.send")
+        try await sending.value
+        XCTAssertTrue(store.acceptedSubmissions.isEmpty, "Nothing would ever name it again: that plugin's watch is the conversation.")
+    }
+
+    func testCachedConversationDetailsWaitForTheNewWatch() async throws {
+        let cache = MemoryConversationStorage()
+        await cache.save(cachedConversation())
+        let transport = StoreTransportFixture()
+        await transport.holdNextRequest("session.watch")
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport, conversationStorage: cache)
+        let start = Task { await store.start() }
+        await transport.waitForRequest("session.watch")
+        XCTAssertEqual(store.messages.first?.text, "cached history")
+        XCTAssertFalse(store.canReadConversation, "A restored row cannot read files before its watch is installed.")
+        await transport.finishRequest("session.watch")
+        await start.value
+        XCTAssertTrue(store.canReadConversation)
+    }
+
     func testForkRequiresAnAuthoritativeBranchAndPreservesTheSourceOnFailure() async throws {
         let transport = StoreTransportFixture()
         let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
@@ -58,6 +334,31 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertEqual(store.status, .disconnected)
         XCTAssertEqual(store.connectionFailure, .protocolError)
         XCTAssertEqual(store.messages.first?.text, "a")
+    }
+
+    func testEditorCommandFailuresStayInTheEditorAndDiscardRepliesAfterSessionSwitch() async {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await transport.setCommandReply(.object([:]))
+        var editorFailure: String?
+        let outcome = await store.runCommand(.goal, argument: "edit revised goal") { editorFailure = $0 }
+        XCTAssertNil(outcome)
+        XCTAssertEqual(editorFailure, DSBotFailure.protocolError.localizedDescription)
+        XCTAssertNil(store.error, "An inline editor failure must not also become a conversation toast.")
+
+        editorFailure = nil
+        await transport.holdNextRequest("session.command")
+        let pending = Task {
+            await store.runCommand(.goal, argument: "edit previous session") { editorFailure = $0 }
+        }
+        await transport.waitForRequest("session.command")
+        await store.selectSession(session("b"))
+        await transport.finishRequest("session.command")
+        let lateOutcome = await pending.value
+        XCTAssertNil(lateOutcome)
+        XCTAssertNil(editorFailure)
+        XCTAssertNil(store.error)
     }
 
     func testFailedLiveWatchDisconnectsPreservesHistoryAndRejectsLateReplies() async throws {
@@ -356,6 +657,127 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertEqual(store.connectionFailure, .remote("AUTH_FAILED"))
     }
 
+    func testUnknownSendResultSurvivesDisconnectWithoutLeakingToAnotherSession() async throws {
+        for switchSession in [false, true] {
+            let transport = StoreTransportFixture()
+            let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+            await store.start()
+            let target = DraftTarget(computerID: "local-fixture", sessionID: "a")
+            store.messageDrafts[target] = "keep this draft"
+            await transport.failNextRequest("session.send", with: .resultUnknown, disconnecting: true)
+            await transport.holdNextRequest("session.send")
+            let sending = Task { () -> DSBotFailure? in
+                do {
+                    try await store.send(text: "keep this draft")
+                    return nil
+                } catch {
+                    return error as? DSBotFailure
+                }
+            }
+            await transport.waitForRequest("session.send")
+            if switchSession { await store.selectSession(session("b")) }
+            await transport.finishRequest("session.send")
+            let failure = await sending.value
+
+            XCTAssertEqual(failure, .resultUnknown)
+            XCTAssertTrue(store.acceptedSubmissions.isEmpty, "A message whose fate is unknown is not shown as sent; its text is kept in the draft.")
+            XCTAssertEqual(store.status, .disconnected)
+            XCTAssertEqual(store.messageDrafts[target], "keep this draft")
+            XCTAssertEqual(store.error, switchSession ? nil : DSBotFailure.resultUnknown.localizedDescription)
+            let sends = await transport.requestCount("session.send")
+            XCTAssertEqual(sends, 1)
+            store.suspend()
+        }
+    }
+
+    func testNetworkCallbackDuringReconnectCannotCancelTheConnection() async throws {
+        let transport = StoreTransportFixture()
+        let network = StoreNetworkFixture()
+        let store = DSBotStore(
+            repository: StoreComputerFixture(), client: transport, networkMonitor: network
+        )
+        await store.start()
+        await store.selectSession(session("b"))
+        let originalMessages = store.messages
+        let target = DraftTarget(computerID: "local-fixture", sessionID: "b")
+        store.messageDrafts[target] = "keep this draft"
+        var failures: [String] = []
+        let feedback = store.$error.compactMap { $0 }.sink { failures.append($0) }
+        let connected = expectation(description: "The network reconnect finishes without cancellation.")
+        let observation = store.$status.dropFirst().filter { $0 == .connected }.prefix(1)
+            .sink { _ in connected.fulfill() }
+
+        await transport.holdNextConnection()
+        network.emitChange()
+        await transport.waitForConnection()
+        network.emitChange()
+        try await Task.sleep(for: .milliseconds(400))
+        await transport.finishConnection()
+        await fulfillment(of: [connected], timeout: 2)
+        let count = await transport.connectionCount()
+        let cancelled = await transport.cancelledConnectionCount()
+        XCTAssertEqual(count, 2)
+        XCTAssertEqual(cancelled, 0)
+        XCTAssertTrue(failures.isEmpty)
+        XCTAssertEqual(store.selectedSession?.id, "b")
+        XCTAssertEqual(store.messages, originalMessages)
+        XCTAssertEqual(store.messageDrafts[target], "keep this draft")
+        store.suspend()
+        withExtendedLifetime((feedback, observation)) {}
+    }
+
+    func testAutomaticRetriesStaySilentAndManualReconnectStillReportsFailure() async throws {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        let originalMessages = store.messages
+        var failures: [String] = []
+        let feedback = store.$error.compactMap { $0 }.sink { failures.append($0) }
+        await transport.failConnections(with: .connectionFailed)
+        await transport.holdNextConnection()
+        await transport.emitDisconnect()
+        XCTAssertNil(store.error)
+        XCTAssertEqual(store.connectionFailure, .disconnected)
+
+        for _ in 0..<2 {
+            await transport.waitForConnection()
+            let failed = expectation(description: "The automatic retry records its connection failure.")
+            let observation = store.$status.dropFirst().filter { $0 == .disconnected }.prefix(1)
+                .sink { _ in failed.fulfill() }
+            await transport.holdNextConnection()
+            await transport.finishConnection()
+            await fulfillment(of: [failed], timeout: 2)
+            XCTAssertEqual(store.connectionFailure, .connectionFailed)
+            XCTAssertNil(store.error)
+            XCTAssertEqual(store.messages, originalMessages)
+            XCTAssertFalse(store.showsConnectionGuide)
+            withExtendedLifetime(observation) {}
+        }
+        XCTAssertTrue(failures.isEmpty)
+        await transport.finishConnection()
+        await transport.stopHoldingConnections()
+        await store.reconnect()
+        XCTAssertEqual(store.error, DSBotFailure.connectionFailed.localizedDescription)
+        XCTAssertEqual(failures, [DSBotFailure.connectionFailed.localizedDescription])
+        store.suspend()
+        withExtendedLifetime(feedback) {}
+    }
+
+    func testCancelledConnectionDoesNotBecomeAConnectionFailureToast() async {
+        let transport = StoreTransportFixture()
+        await transport.holdNextConnection()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        let startup = Task { await store.start() }
+        await transport.waitForConnection()
+        startup.cancel()
+        await transport.finishConnection()
+        await startup.value
+        XCTAssertNil(store.error)
+        XCTAssertNil(store.connectionFailure)
+        XCTAssertEqual(store.status, .disconnected)
+        store.suspend()
+    }
+
     func testColdLaunchRestoresLastConversationAndDraftFromDiskBeforeNetwork() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -394,6 +816,70 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertEqual(restored.selectedSession?.id, "b")
         XCTAssertEqual(restored.messages.last?.text, "fresh history")
         await restored.flushConversationCache()
+    }
+
+    func testRecentConversationsKeepPagedHistoryAcrossSwitchesAndColdLaunch() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let tail = Transcript(entries: [
+            TranscriptEntry(type: "user", id: "recent", seq: 100, text: "recent")
+        ], turns: [], beforeSeq: 100, throughSeq: 110, hasMore: true)
+        let earlier = ConversationPage(transcript: Transcript(entries: [
+            TranscriptEntry(type: "user", id: "earlier", seq: 1, text: "earlier")
+        ], turns: [], beforeSeq: 0, throughSeq: 110, hasMore: false))
+        let transport = StoreTransportFixture()
+        try await transport.setHistory("a", transcript: tail, page: earlier)
+        let first = DSBotStore(
+            repository: StoreComputerFixture(), client: transport,
+            conversationStorage: FileConversationStorage(directory: directory)
+        )
+        await first.start()
+        let target = DraftTarget(computerID: "local-fixture", sessionID: "a")
+        await transport.holdNextRequest("session.page")
+        let page = Task { try await first.loadEarlierHistory(target: target) }
+        await transport.waitForRequest("session.page")
+        XCTAssertEqual(first.historyLoadTarget, target)
+        try await first.loadEarlierHistory(target: target)
+        let requestCount = await transport.requestCount("session.page")
+        XCTAssertEqual(requestCount, 1)
+        await transport.finishRequest("session.page")
+        try await page.value
+        XCTAssertEqual(first.transcript?.entries.map(\.id), ["earlier", "recent"])
+        await first.selectSession(session("b"))
+        await transport.holdWatch("a")
+        let selection = Task { await first.selectSession(self.session("a")) }
+        await transport.waitForWatch("a")
+        XCTAssertTrue(first.isLoadingSession)
+        XCTAssertEqual(first.transcript?.entries.map(\.id), ["earlier", "recent"])
+        await transport.finishWatch("a", text: "refreshed")
+        await selection.value
+        XCTAssertEqual(first.transcript?.beforeSeq, 0)
+        XCTAssertEqual(first.transcript?.hasMore, false)
+        await first.flushConversationCache()
+
+        let refresh = StoreTransportFixture()
+        try await refresh.setHistory("a", transcript: tail)
+        await refresh.holdNextConnection()
+        let restored = DSBotStore(
+            repository: StoreComputerFixture(), client: refresh,
+            conversationStorage: FileConversationStorage(directory: directory)
+        )
+        let startup = Task { await restored.start() }
+        await refresh.waitForConnection()
+        XCTAssertEqual(restored.transcript?.entries.map(\.id), ["earlier", "recent"])
+        await refresh.finishConnection()
+        await startup.value
+        XCTAssertEqual(restored.transcript?.entries.map(\.id), ["earlier", "recent"])
+        try await restored.loadEarlierHistory(target: target)
+        let repeatedPages = await refresh.requestCount("session.page")
+        XCTAssertEqual(repeatedPages, 0)
+        await refresh.holdWatch("b")
+        let cachedSelection = Task { await restored.selectSession(self.session("b")) }
+        await refresh.waitForWatch("b")
+        XCTAssertEqual(restored.messages.first?.text, "b")
+        await refresh.finishWatch("b", text: "new b")
+        await cachedSelection.value
+        XCTAssertEqual(restored.messages.first?.text, "new b")
     }
 
     func testWatchFailureKeepsPersistedContent() async throws {
@@ -682,6 +1168,35 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertEqual(after, before + 1)
         XCTAssertEqual(store.status, .connected)
         XCTAssertFalse(store.showsConnectionGuide)
+    }
+
+    func testReconnectResumesLiveMessagesBeforeTheSessionListReturns() async throws {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await store.selectSession(session("b"))
+        store.suspend()
+        await transport.holdNextRequest("session.list")
+        await transport.holdWatch("b")
+        let resume = Task { await store.start() }
+        let watching = expectation(description: "The selected session resumes while the sidebar list is pending.")
+        let observedWatch = Task {
+            await transport.waitForWatch("b")
+            watching.fulfill()
+        }
+        await transport.waitForRequest("session.list")
+        await fulfillment(of: [watching], timeout: 2)
+        XCTAssertEqual(store.selectedSession?.id, "b")
+        XCTAssertTrue(store.isLoadingSessions)
+
+        await transport.emitSnapshot("b", text: "message received during reconnect")
+        XCTAssertEqual(store.messages.first?.text, "message received during reconnect")
+        await transport.finishRequest("session.list")
+        await transport.finishWatch("b", text: "older watch response")
+        await resume.value
+        await observedWatch.value
+        XCTAssertEqual(store.messages.first?.text, "message received during reconnect")
+        XCTAssertEqual(store.status, .connected)
     }
 
     func testLateApprovalReplyCannotClearNewSessionApproval() async throws {
@@ -983,6 +1498,58 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertEqual(store.currentPreset?.id, "standard", "The host default shows until the session names a mode.")
     }
 
+    func testProviderDraftSurvivesWorkspaceChoiceAndModelsStayWithinProvider() async {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        store.beginNewTask()
+        XCTAssertEqual(store.currentProvider?.id, "deepseek")
+        XCTAssertTrue(store.usesAgentPresets)
+        store.chooseDraftPreset("minimal")
+        await store.chooseProvider("claude")
+        XCTAssertFalse(store.usesAgentPresets)
+        store.chooseDraftPreset("standard")
+        XCTAssertEqual(store.selectedPresetId, "minimal", "A harness has no mode picker and cannot change the DeepSeek draft mode.")
+        XCTAssertEqual(store.selectedModelId, "claude:sonnet")
+        XCTAssertEqual(store.currentProviderModels.map(\.id), ["claude:sonnet"])
+        XCTAssertNil(store.selectedEffort)
+
+        await store.startTask(in: "w2")
+        let requests = await transport.createParams()
+        XCTAssertEqual(requests.last?["modelId"]?.stringValue, "claude:sonnet")
+        XCTAssertEqual(requests.last?["workspaceId"]?.stringValue, "w2")
+        XCTAssertNil(requests.last?["agentPreset"], "DeepSeek's draft mode must not be applied to a harness.")
+        let configs = await transport.configureParams()
+        XCTAssertTrue(configs.isEmpty, "Provider selection is applied before session.create returns, not afterward.")
+    }
+
+    func testProviderCannotChangeAfterFirstMessageAndLateSelectionStaysScoped() async {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await store.chooseProvider("claude")
+        let initial = await transport.configureParams()
+        XCTAssertTrue(initial.isEmpty)
+
+        await transport.emitEmptySnapshot("a")
+        await transport.holdNextRequest("session.configure")
+        let choice = Task { await store.chooseProvider("claude") }
+        await transport.waitForRequest("session.configure")
+        XCTAssertTrue(store.isChoosingProvider)
+        do {
+            try await store.send(text: "must wait")
+            XCTFail("Sending must wait for the provider switch.")
+        } catch {}
+        await store.selectSession(session("b"))
+        XCTAssertFalse(store.isChoosingProvider)
+        await transport.finishRequest("session.configure")
+        await choice.value
+        XCTAssertEqual(store.selectedSession?.id, "b")
+        XCTAssertNotEqual(store.selectedModelId, "claude:sonnet")
+        let sent = await transport.sendParams()
+        XCTAssertTrue(sent.isEmpty)
+    }
+
     func testReasoningLevelAndModeAreSentWithTheOpenSession() async throws {
         let transport = StoreTransportFixture()
         let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
@@ -1212,6 +1779,20 @@ final class CoreStoreTests: XCTestCase {
     }
 }
 
+private final class StoreNetworkFixture: ConnectionNetworkMonitoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var onChange: (@Sendable () -> Void)?
+
+    func start(onChange: @escaping @Sendable () -> Void) {
+        lock.withLock { self.onChange = onChange }
+    }
+
+    func emitChange() {
+        let callback = lock.withLock { onChange }
+        callback?()
+    }
+}
+
 private actor StoreComputerFixture: DSBotComputerStorage {
     private let paired: Bool
     private var shouldHoldLoad = false
@@ -1281,9 +1862,10 @@ private actor StoreTransportFixture: DSBotTransport {
     private var connectionContinuation: CheckedContinuation<Void, Never>?
     private var connectionObserver: CheckedContinuation<Void, Never>?
     private var connections = 0
+    private var cancelledConnections = 0
     private var connectionFailure: DSBotFailure?
     private var unwatchDelay: UInt64 = 0
-    private var nextRequestFailures: [String: DSBotFailure] = [:]
+    private var nextRequestFailures: [String: (error: DSBotFailure, disconnects: Bool)] = [:]
     private var heldRequests: Set<String> = []
     private var pendingRequests: [String: CheckedContinuation<Void, Never>] = [:]
     private var requestObservers: [String: CheckedContinuation<Void, Never>] = [:]
@@ -1291,6 +1873,7 @@ private actor StoreTransportFixture: DSBotTransport {
     private var commandRequests: [[String: JSONValue]] = []
     private var uploadRequests: [[String: JSONValue]] = []
     private var sendRequests: [[String: JSONValue]] = []
+    private var receiptsHaveIdentity = true
     private var changeRequests: [(method: String, params: [String: JSONValue])] = []
     private var commandReply: JSONValue = .object(["kind": .string("success"), "text": .string("Plan mode off.")])
     private var planModes: [String: Bool] = [:]
@@ -1301,6 +1884,8 @@ private actor StoreTransportFixture: DSBotTransport {
     private var navigationReply: JSONValue?
     private var forkReply: JSONValue = .object([:])
     private var queues: [String: [JSONValue]] = [:]
+    private var historyReplies: [String: JSONValue] = [:]
+    private var historyPage: JSONValue?
 
     func connect(
         endpoint: ConnectionEndpoint,
@@ -1318,6 +1903,10 @@ private actor StoreTransportFixture: DSBotTransport {
                 connectionObserver = nil
             }
         }
+        if Task.isCancelled {
+            cancelledConnections += 1
+            throw CancellationError()
+        }
         if let connectionFailure { throw connectionFailure }
         event = onEvent
         self.onDisconnect = onDisconnect
@@ -1326,18 +1915,21 @@ private actor StoreTransportFixture: DSBotTransport {
 
     func request(_ method: String, params: [String: JSONValue], timeoutSeconds: UInt64) async throws -> JSONValue {
         requestCounts[method, default: 0] += 1
+        if method == "session.send" { sendRequests.append(params) }
         let listedSessions = method == "session.list" ? ["a", "b", "c"].map { summary($0) } + extraListedRows : []
         if ["session.rename", "session.pin", "session.archive"].contains(method) {
             changeRequests.append((method, params))
         }
-        if let failure = nextRequestFailures.removeValue(forKey: method) {
-            throw failure
-        }
+        let failure = nextRequestFailures.removeValue(forKey: method)
         if heldRequests.remove(method) != nil {
             await withCheckedContinuation { continuation in
                 pendingRequests[method] = continuation
                 requestObservers.removeValue(forKey: method)?.resume()
             }
+        }
+        if let failure {
+            if failure.disconnects { await onDisconnect?() }
+            throw failure.error
         }
         switch method {
         case "session.list":
@@ -1362,6 +1954,8 @@ private actor StoreTransportFixture: DSBotTransport {
                 }
             }
             return detail(id, text: id)
+        case "session.page":
+            return historyPage ?? .object([:])
         case "workspace.list":
             return .array([])
         case "catalog.get":
@@ -1373,7 +1967,19 @@ private actor StoreTransportFixture: DSBotTransport {
                         .object(["id": .string("max"), "name": .string("Max")])
                     ]),
                     "defaultEffort": .string("high")
+                ]), .object([
+                    "id": .string("claude:sonnet"), "name": .string("Claude Sonnet")
                 ])]),
+                "providers": .array([
+                    .object([
+                        "id": .string("deepseek"), "name": .string("DeepSeek"),
+                        "modelIds": .array([.string("deepseek:v4")]), "defaultModelId": .string("deepseek:v4"), "isDefault": .bool(true)
+                    ]),
+                    .object([
+                        "id": .string("claude"), "name": .string("Claude"),
+                        "modelIds": .array([.string("claude:sonnet")]), "defaultModelId": .string("claude:sonnet")
+                    ])
+                ]),
                 "permissions": .array([
                     .object(["id": .string("read-only"), "name": .string("read-only")]),
                     .object(["id": .string("danger-full-access"), "name": .string("danger-full-access")])
@@ -1413,8 +2019,7 @@ private actor StoreTransportFixture: DSBotTransport {
                 "receiptId": .string("receipt-1"), "name": params["name"] ?? .string("file"), "bytes": .number(3)
             ])
         case "session.send":
-            sendRequests.append(params)
-            return .bool(true)
+            return receiptsHaveIdentity ? .object(["requestId": params["requestId"] ?? .null]) : .object([:])
         case "session.queue.update":
             let id = params["id"]!.stringValue!
             let itemID = params["itemId"]?.stringValue
@@ -1441,6 +2046,7 @@ private actor StoreTransportFixture: DSBotTransport {
     func watchID(_ id: String) -> String? { watchIDs[id] }
     func approvalResponseCount() -> Int { approvalCount }
     func connectionCount() -> Int { connections }
+    func cancelledConnectionCount() -> Int { cancelledConnections }
     func requestCount(_ method: String) -> Int { requestCounts[method, default: 0] }
     func conversationChanges() -> [(method: String, params: [String: JSONValue])] { changeRequests }
     func failConnections(with failure: DSBotFailure?) { connectionFailure = failure }
@@ -1449,10 +2055,13 @@ private actor StoreTransportFixture: DSBotTransport {
         await event?(.object(["type": .string("event"), "topic": .string(topic), "params": params]))
     }
     func holdNextConnection() { shouldHoldConnection = true }
-    func failNextRequest(_ method: String, with failure: DSBotFailure) {
-        nextRequestFailures[method] = failure
+    func stopHoldingConnections() { shouldHoldConnection = false }
+    func failNextRequest(_ method: String, with failure: DSBotFailure, disconnecting: Bool = false) {
+        nextRequestFailures[method] = (failure, disconnecting)
     }
     func holdNextRequest(_ method: String) { heldRequests.insert(method) }
+    /// A plugin from before the request identity: its `session.send` answers with nothing to tell the message by.
+    func useReceiptsWithoutIdentity() { receiptsHaveIdentity = false }
     func delayUnwatch() { unwatchDelay = 2_000_000_000 }
     func commandParams() -> [[String: JSONValue]] { commandRequests }
     func createParams() -> [[String: JSONValue]] { createRequests }
@@ -1462,6 +2071,12 @@ private actor StoreTransportFixture: DSBotTransport {
     func setQueue(_ id: String, texts: [String]) {
         queues[id] = texts.enumerated().map { index, text in
             .object(["id": .string("\(id)-\(index)"), "text": .string(text), "editable": .bool(true)])
+        }
+    }
+    func setHistory(_ id: String, transcript: Transcript, page: ConversationPage? = nil) throws {
+        historyReplies[id] = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(transcript))
+        if let page {
+            historyPage = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(page))
         }
     }
     func setCommandReply(_ reply: JSONValue) { commandReply = reply }
@@ -1527,6 +2142,36 @@ private actor StoreTransportFixture: DSBotTransport {
         ]))
     }
 
+    func emitSubmissionSnapshot(
+        _ id: String, running: Bool = false, admitted: [(String, String)] = [],
+        queued: [(String, String)] = [], canceled: [String] = []
+    ) async {
+        var params = detail(id, text: id).objectValue!
+        var session = summary(id).objectValue!
+        session["status"] = .string(running ? "running" : "idle")
+        params["session"] = .object(session)
+        params["messages"] = .array([])
+        params["transcript"] = .object([
+            "entries": .array(admitted.enumerated().map { index, message in
+                .object([
+                    "type": .string("user"), "id": .string("host-\(index)"),
+                    "seq": .number(Double(index + 1)), "text": .string(message.1), "requestId": .string(message.0)
+                ])
+            }), "turns": .array([])
+        ])
+        params["queuedMessages"] = .array(queued.enumerated().map { index, message in
+            .object([
+                "id": .string("queue-\(index)"), "text": .string(message.1),
+                "editable": .bool(true), "requestId": .string(message.0)
+            ])
+        })
+        params["canceledRequestIds"] = .array(canceled.map(JSONValue.string))
+        params["watchId"] = .string(watchIDs[id] ?? "")
+        await event?(.object([
+            "type": .string("event"), "topic": .string("session.snapshot"), "params": .object(params)
+        ]))
+    }
+
     func emitQuestionSnapshot(_ id: String) async {
         var params = detail(id, text: id).objectValue!
         params["questions"] = .array([.object([
@@ -1587,7 +2232,7 @@ private actor StoreTransportFixture: DSBotTransport {
     }
 
     private func detail(_ id: String, text: String, approvalID: String? = nil) -> JSONValue {
-        .object([
+        var result: [String: JSONValue] = [
             "session": summary(id),
             "planMode": .bool(planModes[id] ?? false),
             "queuedMessages": .array(queues[id] ?? []),
@@ -1600,6 +2245,8 @@ private actor StoreTransportFixture: DSBotTransport {
                     "id": .string(approvalID), "sessionId": .string(id), "title": .string("Review")
                 ])]
             } ?? [])
-        ])
+        ]
+        if let transcript = historyReplies[id] { result["transcript"] = transcript }
+        return .object(result)
     }
 }

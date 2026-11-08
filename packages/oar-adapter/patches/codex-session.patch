@@ -1,0 +1,136 @@
+--- /dev/null
++++ b/dist/runtimes/codex/background-tasks.js
+@@ -0,0 +1,67 @@
++import { rpcControl } from "./rpc-control.js";
++
++/** Dudu extension: observe and stop the app-server's own background terminals, without launching another shell. */
++export function codexBackgroundTasks(client, kernel, threadId) {
++    let current = new Map();
++    const ended = new Map();
++    const stopping = new Map();
++    let refreshing;
++    return {
++        owns: (taskId) => current.has(taskId),
++        note(method, params) {
++            const item = params.item;
++            if (method === "item/completed" && item?.type === "commandExecution" && item.exitCode !== null && item.exitCode !== undefined
++                && [...current.values()].some(row => row.itemId === item.id)) {
++                ended.set(item.id, { status: item.status === "completed" && item.exitCode === 0 ? "completed" : "failed" });
++            }
++        },
++        refresh() {
++            return refreshing ??= (async () => {
++                let cursor;
++                const rows = [];
++                do {
++                    const reply = await client.request("thread/backgroundTerminals/list", { threadId, ...(cursor ? { cursor } : {}) });
++                    rows.push(...reply.data ?? []);
++                    cursor = reply.nextCursor;
++                } while (cursor);
++                const next = new Map(rows.map(row => [row.processId, row]));
++                const events = [];
++                for (const [id, row] of next) if (!current.has(id)) events.push({
++                    kind: "task_started", taskId: id, taskType: "shell", nativeType: "commandExecution",
++                    description: row.command, toolCallId: row.itemId, background: true,
++                });
++                for (const [id, row] of current) if (!next.has(id)) {
++                    const stop = stopping.get(id);
++                    // Termination can publish item/completed before its RPC reply. Wait for both facts.
++                    if (stop?.pending) { next.set(id, row); continue; }
++                    events.push({
++                        kind: "task_ended", taskId: id, status: stop?.accepted ? "stopped" : ended.get(row.itemId)?.status ?? "stopped",
++                    });
++                    stopping.delete(id);
++                    ended.delete(row.itemId);
++                }
++                current = next;
++                if (events.length) kernel.frame({ type: "thread/backgroundTerminals/list", native: { data: rows }, events });
++            })().finally(() => { refreshing = undefined; });
++        },
++        stopTask(taskId) {
++            const stop = { pending: true, accepted: false };
++            stopping.set(taskId, stop);
++            return rpcControl(kernel, client, {
++                body: { kind: "native", type: "thread/backgroundTerminals/terminate", native: { threadId, processId: taskId } },
++                gate: () => null,
++                method: "thread/backgroundTerminals/terminate",
++                params: () => ({ threadId, processId: taskId }),
++                onReply: reply => {
++                    stop.pending = false;
++                    stop.accepted = true;
++                    return { kind: "accepted", native: reply };
++                },
++                onError: reason => {
++                    stopping.delete(taskId);
++                    return { kind: "rejected", code: "runtime_refused", reason };
++                },
++            });
++        },
++    };
++}
+--- a/dist/runtimes/codex/session.js
++++ b/dist/runtimes/codex/session.js
+@@ -1,4 +1,5 @@
+ import { codexTaskControl } from "./task-control.js";
++import { codexBackgroundTasks } from "./background-tasks.js";
+ import { manualCompaction } from "../../shared/manual-compaction.js";
+ import { codexCompaction, codexCompactionBusy } from "./compaction.js";
+ import { appendCleanupFailure } from "../../shared/executable/process-cleanup.js";
+@@ -73,13 +74,14 @@
+             throw new Error(readback.refusal);
+         }
+         const kernel = credentials.kernel(threadId);
++        const backgroundTasks = codexBackgroundTasks(client, kernel, threadId);
+         const state = {
+             active: null,
+             spontaneous: false,
+             codexTurnId: null,
+             // A resume awaits codex's re-report of the thread's total so far: the
+             // baseline this Session's token totals count from (projection.ts, #169).
+-            projection: initialCodexProjection(threadId, openMethod),
++            projection: initialCodexProjection(threadId, openMethod, options.observedSubagents),
+         };
+         const tasks = codexTaskControl(kernel, client, () => state.projection.subagents);
+         const nativeBusy = () => state.active !== null || state.spontaneous;
+@@ -97,6 +99,7 @@
+         // transport-only turn id and the control decisions (busy, spontaneous).
+         const onNotification = (method, params) => {
+             tasks.observe(method, params);
++            if (params.threadId === threadId) backgroundTasks.note(method, params);
+             const isRoot = typeof params.threadId !== "string" || params.threadId === threadId;
+             if (isRoot && method === "turn/started") {
+                 const startedTurn = asRecord(params.turn)?.id;
+@@ -256,13 +259,32 @@
+             id: kernel.sessionId,
+             ...(options.goals === true ? { goal: codexGoalControl(kernel, client, threadId) } : {}),
+             capabilities,
++            ...(options.backgroundTasks ? {
++                backgroundTasks: () => backgroundTasks.refresh(),
++                configure: via(next => {
++                    const sandbox = /sandbox_mode="([^"]+)"/.exec((next.launchArgs ?? []).join(" "))?.[1];
++                    const sandboxPolicy = sandbox === "danger-full-access" ? { type: "dangerFullAccess" }
++                        : sandbox === "read-only" ? { type: "readOnly" } : { type: "workspaceWrite", writableRoots: [next.cwd] };
++                    return {
++                        body: { kind: "native", type: "thread/settings/update", native: { threadId } },
++                        gate: () => busy() ? { kind: "rejected", code: "busy", reason: "busy" } : null,
++                        method: "thread/settings/update",
++                        params: () => ({ threadId, model: next.model ?? readback.events.find(event => event.kind === "model")?.model,
++                            effort: next.effort ?? readback.events.find(event => event.kind === "effort")?.effort,
++                            cwd: next.cwd, approvalPolicy: "never", sandboxPolicy }),
++                        onReply: reply => ({ kind: "accepted", native: reply }),
++                        onError: reason => ({ kind: "rejected", code: "runtime_refused", reason }),
++                    };
++                }),
++            } : {}),
+             compact: compaction.compact,
+             prompt: via(turnProcesses.prompting(promptPlan)),
+             steer: via(steerPlan),
+             queue: via(queuePlan),
+             // No withdraw: the queue is codex's own, and thread/queue/delete is experimental and not live-verified (docs/runtimes/input-cancellation.md).
+             abort: via(turnProcesses.aborting(abortPlan)),
+-            stopTask: tasks.stop,
++            stopTask: (taskId) => options.backgroundTasks && backgroundTasks.owns(taskId)
++                ? backgroundTasks.stopTask(taskId) : tasks.stop(taskId),
+             rawEvents: (observer, cursor) => kernel.rawEvents(observer, cursor),
+             records: () => kernel.records(),
+             graph: () => kernel.graph(),

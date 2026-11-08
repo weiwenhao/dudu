@@ -1,6 +1,5 @@
 import { basename, isAbsolute } from 'node:path';
 import { redact } from '../memory/secrets.mjs';
-import { issueStatusForSession } from './issue-state.mjs';
 
 const PROMPT = `You are dudu taking over an existing work conversation for its owner: you make an issue for it and keep track of it.
 Describe the task itself, what the owner wants done, in one to three short sentences and at most 300 characters. Do not report progress and do not list what was done.
@@ -47,7 +46,7 @@ export function createSessionTakeover({ issues, catalog, read, llm, adopt, state
     const state = stateOf?.(key) ?? snapshot?.state;
     const made = issues.add({
       title: (session.title || messages.find((message) => message.role === 'user')?.text || session.id).slice(0, 300),
-      brief: redact(result.brief).trim(), status: issueStatusForSession(state) ?? 'in_review',
+      brief: redact(result.brief).trim(),
       ask: state === 'waiting_owner' ? redact(String(snapshot?.pending?.text ?? '')).trim().slice(0, 2000) : '',
       agent, project: { name: session.project?.name || basename(path), path }, session: key,
       source: 'session', sourceRef: session.key,

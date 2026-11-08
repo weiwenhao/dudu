@@ -31,17 +31,20 @@ actor ConversationProjector {
             if let combined, let previousTranscript,
                isRunning, previousRunning,
                combined.entries == previousTranscript.entries, combined.turns == previousTranscript.turns,
+               combined.pendingInputs == previousTranscript.pendingInputs,
                let running = combined.turns.max(by: { $0.turn < $1.turn }), running.end == nil,
-               let index = previousRows.firstIndex(where: {
+               let index = previousRows.lastIndex(where: {
                    if case let .turn(row) = $0 { return row.turn == running.turn }
                    return false
-               }) {
+               }), case let .turn(previous) = previousRows[index] {
+                let ids = Set(previous.messageSequences.keys)
                 let tail = Transcript(
-                    entries: combined.entries.filter { $0.turn == running.turn },
+                    entries: combined.entries.filter { ids.contains($0.id) },
                     turns: [running], live: combined.live
                 )
-                if let row = TranscriptBuilder.rows(from: tail, isRunning: true).first(where: { $0.id == previousRows[index].id }) {
-                    previousRows[index] = row
+                if case var .turn(row)? = TranscriptBuilder.rows(from: tail, isRunning: true).last {
+                    row.id = previous.id
+                    previousRows[index] = .turn(row)
                 } else {
                     previousRows = TranscriptBuilder.rows(from: combined, isRunning: isRunning)
                     previousSeparators = TranscriptTimeGrouping.separators(for: previousRows)

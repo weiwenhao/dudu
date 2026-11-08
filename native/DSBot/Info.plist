@@ -32,6 +32,8 @@
     <string>将语音识别为文字，发送到当前会话。</string>
     <key>NSPhotoLibraryUsageDescription</key>
     <string>选择照片作为对话附件。</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>将会话图片保存到照片图库。</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>

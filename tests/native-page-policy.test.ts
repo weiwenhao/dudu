@@ -27,6 +27,50 @@ const pageFor = (kind, sessionId = parentSession) => {
 const invoke = (page, endpoint, args) => allowPageCall(page, endpoint, args, false);
 const stream = (page, endpoint, args) => allowPageCall(page, endpoint, args, true);
 
+test('live tool results are read only in the requested conversation view', () => {
+  const request = { sessionId: parentSession, seq: 12 };
+  for (const kind of ['trace', 'view']) {
+    const page = pageFor(kind);
+    assert.equal(stream(page, 'toolResults/watch', { request }), true);
+    assert.equal(invoke(page, 'toolResults/watch', { request }), false);
+    for (const invalid of [
+      { ...request, sessionId: 'another-session' },
+      { ...request, seq: -1 },
+      { ...request, seq: 1.2 },
+      { ...request, seq: Number.MAX_SAFE_INTEGER + 1 },
+      { sessionId: parentSession },
+      { ...request, path: '/tmp' },
+    ]) assert.equal(stream(page, 'toolResults/watch', { request: invalid }), false);
+  }
+  for (const kind of ['plugins', 'settings', 'panel', 'tools', 'context', 'team']) {
+    assert.equal(stream(pageFor(kind), 'toolResults/watch', { request }), false);
+  }
+});
+
+test('background job subscriptions stay on the page session and cannot control jobs', () => {
+  const page = pageFor('trace');
+  assert.equal(stream(page, 'job/list', { request: { sessionId: parentSession } }), true);
+  assert.equal(stream(page, 'job/list', { request: { sessionId: 'another-session' } }), false);
+  assert.equal(stream(page, 'job/list', { request: { sessionId: parentSession, jobId: 'job-1' } }), false);
+  assert.equal(stream(pageFor('settings'), 'job/list', { request: { sessionId: parentSession } }), false);
+  assert.equal(invoke(page, 'job/kill', { request: { sessionId: parentSession, jobId: 'job-1' } }), false);
+});
+
+test('current command and skill catalogs stay scoped and do not admit execution', () => {
+  const page = pageFor('trace');
+  for (const key of ['agent', 'agentId']) {
+    assert.equal(invoke(page, 'commands/list', { [key]: parentSession }), true);
+    assert.equal(invoke(page, 'commands/list', { [key]: 'another-session' }), false);
+  }
+  assert.equal(invoke(page, 'commands/list', { agent: parentSession, agentId: parentSession }), false);
+  assert.equal(invoke(page, 'skills/list', { request: { sessionId: parentSession } }), true);
+  assert.equal(invoke(page, 'skills/list', { request: { sessionId: 'another-session' } }), false);
+  assert.equal(invoke(page, 'skills/list', { request: { sessionId: parentSession, path: '/tmp' } }), false);
+  assert.equal(invoke(pageFor('settings'), 'skills/list', { request: { sessionId: parentSession } }), false);
+  assert.equal(stream(page, 'skills/list', { request: { sessionId: parentSession } }), false);
+  assert.equal(invoke(page, 'commands/execute', { agentId: parentSession, line: 'read' }), false);
+});
+
 test('embedded pages reject the retired resource terminal calls and streams', () => {
   for (const kind of ['plugins', 'trace', 'context', 'team', 'tools', 'settings', 'panel', 'view', 'dock']) {
     const page = pageFor(kind);
@@ -70,6 +114,14 @@ test('session read and follow calls require named, identity-scoped request objec
       turnWindow: { minMessages: 10, minTurns: 1 },
     },
   }), true);
+  for (const activate of [true, false]) {
+    assert.equal(stream(page, 'session/follow', {
+      request: { address: sessionAddress(), activate, assistantStream: true },
+    }), true);
+  }
+  assert.equal(stream(page, 'session/follow', {
+    request: { address: sessionAddress(), activate: 'true' },
+  }), false);
 
   for (const request of [
     { address: sessionAddress('session-other'), throughSeq: 12 },

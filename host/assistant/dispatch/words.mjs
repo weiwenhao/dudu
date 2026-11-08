@@ -12,8 +12,7 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 export const WORDS = Object.freeze({
   // --- the log of an issue
   whoShouldTake: '交给谁处理？',
-  source: (connector, operation, ref) => `${connector} · ${operation} · ${ref}`,
-  urgentNeedsRule: 'Urgent needs a rule in TRIAGE.md; the priority comes from impact and effort.',
+  sourceLine: (connector, url) => `来源：${connector} · ${url}`,
   notAssigned: (why) => `No agent chosen: ${why}`,
   sessionDropped: 'the session it named was not offered, so a new one starts',
   access: (access, requested, allowed) => (requested && requested !== access ? `access: ${access} (asked for ${requested}; ASSIGN.md allows ${allowed})` : `access: ${access}`),
@@ -22,31 +21,29 @@ export const WORDS = Object.freeze({
   disposed: 'The dispatch was shut down.',
   needsModel: (what) => `${what} needs a model, and none was given.`,
   giveModel: 'Create the dispatch with an llm function.',
-  noConnectors: 'There are no connectors to read.',
-  cannotList: 'The connectors could not be listed.',
-  noneEnabled: 'No connector is turned on, so there is nothing to read. The owner turns them on in the connections page.',
-  noSuchConnector: (ids) => `No connector that is turned on is called ${ids.join(', ')}.`,
+  noCollectors: 'There are no collectors to read.',
+  cannotList: 'The collectors could not be listed.',
+  noSuchCollector: (ids) => `There is no collector called ${ids.join(', ')}.`,
+  noConnector: 'The connector of this collector no longer exists. Choose another one for it.',
   busy: 'An intake run is already in progress.',
   nothingToRead: 'Nothing was read: the operations that can be read all need a value the code cannot give.',
   needsValue: (name) => `It needs a value for "${name}", which the code cannot give.`,
   readFailed: 'The read failed.',
-  callLimit: (n) => `At most ${n} model calls are made in one run; this output waits for the next run.`,
+  callLimit: (n) => `At most ${n} collectors are run at once; this one waits for the next run.`,
   modelTimeout: (seconds) => `The model did not answer in ${seconds} seconds.`,
+  collectTimeout: (minutes) => `The collection did not finish in ${minutes} minutes.`,
   modelFailed: (why) => `The model call failed: ${why}`,
   unusable: (why) => `The model's answer could not be used: ${why}`,
-  someUnusable: (n) => `${plural(n, 'item', 'items')} of the model's answer could not be used.`,
-  notOpen: (id) => `DUDU-${id} is not open any more.`,
   failed: (why) => `Intake failed: ${why}`,
   tryAgain: 'Look at what was written, then run it again.',
   untouched: 'Nothing was changed.',
-  summary: ({ created, noted, unchanged, failed, deferred, skipped, waiting }) => {
-    const parts = [plural(created, 'issue', 'issues') + ' created'];
-    if (noted) parts.push(`${plural(noted, 'note', 'notes')} added`);
-    if (unchanged) parts.push(`${plural(unchanged, 'output', 'outputs')} unchanged`);
-    if (failed) parts.push(`${plural(failed, 'output', 'outputs')} failed`);
-    if (skipped) parts.push(`${plural(skipped, 'operation', 'operations')} skipped`);
-    if (waiting) parts.push(`${plural(waiting.outputs, 'output', 'outputs')} and ${plural(waiting.items, 'issue', 'issues')} wait for the next run`);
-    else if (deferred) parts.push(`${plural(deferred, 'output', 'outputs')} wait for the next run`);
+  summary: ({ added, unchanged, failed, deferred, skipped, waiting }) => {
+    const parts = [`${plural(added ?? 0, 'record', 'records')} collected`];
+    if (unchanged) parts.push(`${plural(unchanged, 'collector', 'collectors')} with nothing new`);
+    if (failed) parts.push(`${plural(failed, 'collector', 'collectors')} failed`);
+    if (skipped) parts.push(`${plural(skipped, 'collector', 'collectors')} skipped`);
+    if (waiting) parts.push(`${plural(waiting.outputs, 'collector', 'collectors')} wait for the next run`);
+    else if (deferred) parts.push(`${plural(deferred, 'collector', 'collectors')} wait for the next run`);
     return `${parts.join(', ')}.`;
   },
 
@@ -54,7 +51,7 @@ export const WORDS = Object.freeze({
   noAgentOn: 'No agent is turned on.',
   unavailable: (agent, why) => `The model chose "${agent}", which cannot take issues now. ${why}`,
   changedMeanwhile: (ref) => `${ref} changed while the model was choosing, so it was left as it is.`,
-  assigned: (ref, agent, session, access) => `${ref} was given to ${agent}${session ? ` (continuing ${session})` : ''}, ${access}.`,
+  assigned: (ref, agent, session, access) => `${ref} was given to ${agent}${session ? ` (continuing ${session})` : ''}${access ? `, ${access}` : ''}.`,
   notAssignedMessage: (ref, why) => `${ref} was not given to anyone: ${why} It stays in Todo and asks the owner.`,
   ownerDecides: 'The owner gives the issue to an agent, or tells 嘟嘟 which one.',
   finished: (ref, status) => `${ref} is ${status}; nothing to hand out.`,

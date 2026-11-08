@@ -1,0 +1,192 @@
+--- a/dist/runtimes/claude/open-settings.js
++++ b/dist/runtimes/claude/open-settings.js
+@@ -69,7 +69,9 @@
+                 resolve(exitError(method));
+             }
+             else {
+-                child.write(method === "get_settings" ? claudeSettingsRequest(id) : `${JSON.stringify({ type: "control_request", request_id: id, request: { subtype: method } })}\n`);
++                child.write(method === "get_settings" ? claudeSettingsRequest(id) : `${JSON.stringify({ type: "control_request", request_id: id, request: {
++                    subtype: method, ...(method === "initialize" && options.backgroundTasks ? { perTaskStopAffordance: true } : {}),
++                } })}\n`);
+             }
+             const answer = await promise;
+             const refusal = refusalFor(answer, option, requested, options);
+@@ -159,4 +161,4 @@
+         },
+     };
+ }
+-//# sourceMappingURL=open-settings.js.map
+\ No newline at end of file
++//# sourceMappingURL=open-settings.js.map
+--- a/dist/runtimes/claude/session.js
++++ b/dist/runtimes/claude/session.js
+@@ -5,36 +5,58 @@
+ import { claudeOpenSettings } from "./open-settings.js";
+ import { claudeContextBreakdownReader } from "./context-breakdown.js";
+ import { launchClaude } from "./launch.js";
++import { claudeTaskControls } from "./task-controls.js";
+ import { claudeProjectionProfile, claudeUsageBaselined, initialClaudeProjection, resumedClaudeProjection } from "./projection.js";
+ /** Claude owns launch flags, private account/settings readbacks and usage baselines. */
+ export const claudeSession = withSessionCredentials(async (installation, options, credentials) => {
+     if (installation.via !== "executable") {
+         throw new Error("The claude session adapter needs an executable installation");
+     }
++    options.openSignal?.throwIfAborted();
+     const sessionId = options.resume ?? randomUUID();
+     const child = await launchClaude(installation.command, sessionId, options);
++    // Before the Session exists, cancellation still belongs to this OAR process owner.
++    const cancelOpening = () => { child.kill(); };
++    options.openSignal?.addEventListener("abort", cancelOpening, { once: true });
++    if (options.openSignal?.aborted) cancelOpening();
+     const readback = claudeOpenSettings(child);
+     const contextBreakdown = claudeContextBreakdownReader(child);
+     const compaction = claudeCompaction(child);
+-    return streamJsonSession(child, sessionId, credentials, {
+-        projection: claudeProjectionProfile,
+-        initial: options.resume === undefined ? initialClaudeProjection : resumedClaudeProjection,
+-        capabilities: { queue: { durable: false }, attribution: "attributed", images: true },
+-        steer: true,
+-        stopTask: (taskId) => ({ subtype: "stop_task", task_id: taskId }),
+-        compaction: { busyReason: CLAUDE_COMPACTION_BUSY, create: compaction.create },
+-        cancelQueuedCapability: "interrupt_cancel_queued_v1",
+-        consume: (message) => readback.consume(message) || contextBreakdown.consume(message) || compaction.consume(message),
+-        open: async (projection) => {
+-            await readback.confirm(options);
+-            if (options.resume !== undefined) {
+-                projection.replace(claudeUsageBaselined(projection.current(), await readback.usageBaseline()));
+-            }
+-        },
+-        exited: (code) => { readback.exited(code); contextBreakdown.exited(); compaction.close(); },
+-        disposing: () => { contextBreakdown.exited(); compaction.close(); },
+-        contextBreakdown: contextBreakdown.read,
+-        // Preserve Claude's existing behavior: permissions are recorded, not answered.
+-    });
++    const tasks = claudeTaskControls(child, options);
++    try {
++        const session = await streamJsonSession(child, sessionId, credentials, {
++            projection: claudeProjectionProfile,
++            initial: options.resume === undefined ? initialClaudeProjection : resumedClaudeProjection,
++            capabilities: { queue: { durable: false }, attribution: "attributed", images: true },
++            steer: true,
++            stopTask: (taskId) => ({ subtype: "stop_task", task_id: taskId }),
++            compaction: { busyReason: CLAUDE_COMPACTION_BUSY, create: compaction.create },
++            cancelQueuedCapability: "interrupt_cancel_queued_v1",
++            controls: (kernel) => tasks.attach(kernel),
++            consume: (message) => tasks.consume(message) || readback.consume(message) || contextBreakdown.consume(message) || compaction.consume(message),
++            open: async (projection) => {
++                await readback.confirm(options);
++                await tasks.initialize();
++                if (options.resume !== undefined) {
++                    projection.replace(claudeUsageBaselined(projection.current(), await readback.usageBaseline()));
++                }
++            },
++            exited: (code) => { tasks.exited(); readback.exited(code); contextBreakdown.exited(); compaction.close(); },
++            disposing: () => { contextBreakdown.exited(); compaction.close(); },
++            contextBreakdown: contextBreakdown.read,
++            // Preserve Claude's existing behavior: permissions are recorded, not answered.
++        });
++        options.openSignal?.throwIfAborted();
++        return session;
++    }
++    catch (error) {
++        child.kill();
++        await child.exited;
++        options.openSignal?.throwIfAborted();
++        throw error;
++    }
++    finally {
++        options.openSignal?.removeEventListener("abort", cancelOpening);
++    }
+ });
+ //# sourceMappingURL=session.js.map
+\ No newline at end of file
+--- /dev/null
++++ b/dist/runtimes/claude/task-controls.js
+@@ -0,0 +1,69 @@
++import { randomUUID } from "node:crypto";
++import { claudeEffortRefusal } from "./effort.js";
++
++/** Dudu extension: native task controls over the existing stream-json process. Never starts a model turn. */
++export function claudeTaskControls(child, options) {
++    const pending = new Map();
++    let kernel;
++    const request = async (subtype, fields = {}, record = true) => {
++        const id = `oar-task-${randomUUID()}`;
++        const blocked = kernel?.unreachable();
++        const sent = record ? kernel.request("toRuntime", { kind: "native", type: subtype, native: fields }, { id }) : null;
++        const finish = (body) => sent === null ? body : { request: sent, response: kernel.respond(id, body) };
++        if (blocked) return finish(blocked);
++        const { promise, resolve } = Promise.withResolvers();
++        const timer = setTimeout(() => resolve({ subtype: "error", error: `${subtype} timed out` }), 30_000);
++        pending.set(id, resolve);
++        try {
++            child.write(`${JSON.stringify({ type: "control_request", request_id: id, request: { subtype, ...fields } })}\n`);
++            const answer = await promise;
++            return finish(answer.subtype === "success" ? { kind: "accepted", native: answer.response }
++                : { kind: "rejected", code: "runtime_refused", reason: answer.error ?? subtype });
++        }
++        finally { clearTimeout(timer); pending.delete(id); }
++    };
++    return {
++        consume(message) {
++            const id = message.type === "control_response" ? message.response?.request_id : null;
++            const resolve = pending.get(id);
++            if (!resolve) return false;
++            resolve(message.response);
++            return true;
++        },
++        exited() { for (const resolve of pending.values()) resolve({ subtype: "error", error: "runtime exited" }); },
++        async initialize() {
++            if (!options.backgroundTasks) return;
++            const answer = await request("initialize", { perTaskStopAffordance: true }, false);
++            if (answer.kind === "rejected") throw new Error(answer.reason);
++        },
++        attach(value) {
++            kernel = value;
++            if (!options.backgroundTasks) return {};
++            return {
++                async taskOutput(taskId) {
++                    // Like context/account readback, output snapshots are private reads, not a growing record of every poll.
++                    const answer = await request("get_task_output", { task_id: taskId }, false);
++                    if (answer.kind === "rejected") throw new Error(answer.reason);
++                    return { text: answer.native?.output ?? "", total: answer.native?.total_bytes ?? 0, truncated: answer.native?.truncated === true };
++                },
++                configure: async (next) => {
++                    // Launch-time tool exclusions cannot be undone by a settings merge. Do not claim a new permission envelope.
++                    if (next.cwd !== options.cwd || next.permissionMode !== options.permissionMode
++                        || JSON.stringify(next.disallowedTools ?? []) !== JSON.stringify(options.disallowedTools ?? [])) throw new Error("busy");
++                    const settings = {
++                        model: next.model ?? null, effortLevel: next.effort ?? null,
++                    };
++                    const answer = await request("apply_flag_settings", { settings });
++                    if (answer.response.body.kind === "rejected") return answer;
++                    if (next.effort !== undefined) {
++                        const answer = await request("get_settings", {}, false);
++                        const refusal = claudeEffortRefusal(next.effort, { response: { subtype: answer.kind === "accepted" ? "success" : "error",
++                            response: answer.native, error: answer.reason } });
++                        if (refusal) throw new Error(refusal);
++                    }
++                    return answer;
++                },
++            };
++        },
++    };
++}
+--- a/dist/runtimes/claude/tasks.js
++++ b/dist/runtimes/claude/tasks.js
+@@ -13,6 +13,8 @@
+  */
+ const TASK_TYPES = {
+     local_bash: "shell",
++    local_monitor: "shell",
++    monitor: "shell",
+     local_agent: "agent",
+     remote_agent: "agent",
+     in_process_teammate: "agent",
+@@ -111,4 +113,4 @@
+     }
+     return { events, descriptions };
+ }
+-//# sourceMappingURL=tasks.js.map
+\ No newline at end of file
++//# sourceMappingURL=tasks.js.map

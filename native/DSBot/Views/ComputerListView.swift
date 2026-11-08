@@ -8,6 +8,8 @@ struct ComputerListView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var isPairingPresented = false
     @State private var revealedDeleteID: String?
+    @State private var detailComputerID: String?
+    @State private var showsConnectionDetails = false
     private let deleteActionWidth: CGFloat = 82
 
     var body: some View {
@@ -104,6 +106,9 @@ struct ComputerListView: View {
         .navigationDestination(isPresented: $isPairingPresented) {
             PairingView(store: store, embeddedInSettings: true, showsCancelButton: false)
         }
+        .navigationDestination(isPresented: $showsConnectionDetails) {
+            if let detailComputerID { ComputerConnectionView(store: store, computerID: detailComputerID) }
+        }
     }
 
     private func swipeableComputerRow(_ computer: Computer) -> some View {
@@ -190,7 +195,7 @@ struct ComputerListView: View {
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(DSBotStyle.ink)
                         .lineLimit(1)
-                    Text(computer.displayAddress)
+                    Text(subtitle(for: computer))
                         .font(.system(size: 11))
                         .foregroundStyle(DSBotStyle.muted)
                         .lineLimit(1)
@@ -200,9 +205,8 @@ struct ComputerListView: View {
                 if computer.id == store.activeComputer?.id {
                     DSBotIcon(.check, size: 20)
                         .foregroundStyle(DSBotStyle.ink)
-                } else if store.status == .connecting {
-                    ProgressView().tint(DSBotStyle.muted)
                 }
+                Color.clear.frame(width: 32)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
@@ -232,9 +236,10 @@ struct ComputerListView: View {
         )
         .frame(maxWidth: .infinity)
         .overlay {
-            ComputerRowInteraction(
+            HStack(spacing: 0) {
+              ComputerRowInteraction(
                 identifier: "computer.row.\(computer.id)",
-                label: "\(computer.name), \(computer.displayAddress)",
+                label: "\(computer.name), \(subtitle(for: computer))",
                 isSelected: computer.id == store.activeComputer?.id,
                 onTap: {
                     if computer.id != store.activeComputer?.id {
@@ -247,8 +252,27 @@ struct ComputerListView: View {
                     revealDeleteAction(for: computer, translationX: translationX)
                 },
                 onDelete: { remove(computer) }
-            )
+              )
+              Button {
+                  detailComputerID = computer.id
+                  showsConnectionDetails = true
+              } label: {
+                  DSBotIcon(.info, size: 20)
+                      .foregroundStyle(DSBotStyle.ink)
+                      .frame(width: 44, height: 44)
+                      .contentShape(Rectangle())
+              }
+              .buttonStyle(.plain)
+              .accessibilityLabel("\(computer.name) 的连接详情")
+              .accessibilityIdentifier("computer.info.\(computer.id)")
+              .padding(.trailing, 8)
+            }
         }
+    }
+
+    private func subtitle(for computer: Computer) -> String {
+        computer.id == store.activeComputer?.id && store.status == .connected
+            ? "已连接 · \(computer.shortAddress)" : computer.shortAddress
     }
 
     private func remove(_ computer: Computer) {

@@ -1,18 +1,33 @@
 import { useState } from 'react';
-import { Button } from '../components/button.jsx';
+import { ChevronLeft, Trash2 } from 'lucide-react';
 import { T } from '../strings.js';
-import { Loading } from './Card.jsx';
+import { ActionButton, Empty, Group, IconAction, Loading, Page, Problem, Row } from './kit.jsx';
 import { useLoaded } from './use-loaded.js';
-import { Trash } from './icons.jsx';
 
 const S = T.settings.skills;
+
+/** One skill, read: its text as it is on disk, and the owner's way to delete it. */
+function SkillDetail({ request, name, onBack, onDelete, problem }) {
+  const one = useLoaded(request, 'skills/read', { name });
+  return (
+    <Page
+      title={name}
+      back={<IconAction label={S.back} onClick={onBack}><ChevronLeft aria-hidden="true" /></IconAction>}
+      action={<ActionButton className="text-danger-foreground" onClick={() => onDelete(name)}>{S.delete}</ActionButton>}
+    >
+      <Problem>{problem}</Problem>
+      <Loading state={one} rows={2}>
+        {(value) => <Group label={name}><Row block><pre className="font-mono text-xs/5 whitespace-pre-wrap [overflow-wrap:anywhere]">{value.text ?? value.skill?.text ?? ''}</pre></Row></Group>}
+      </Loading>
+    </Page>
+  );
+}
 
 /** 嘟嘟's own skills (text only, made by its tidy): read one, delete one. The agents' skills are theirs, not here. */
 export function SkillsSection({ request }) {
   const list = useLoaded(request, 'skills/list');
   const [name, setName] = useState(null);
   const [problem, setProblem] = useState('');
-  const one = useLoaded(request, 'skills/read', { name: name ?? '' });
   const remove = async (skill) => {
     setProblem('');
     try {
@@ -22,38 +37,27 @@ export function SkillsSection({ request }) {
       list.reload();
     } catch { setProblem(T.toast.failed); }
   };
-  if (name) {
-    return (
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => setName(null)}>{S.back}</Button>
-          <span className="flex-1" />
-          <Button variant="outline" size="sm" className="text-danger-foreground" onClick={() => remove(name)}>{S.delete}</Button>
-        </div>
-        {problem && <p role="alert" className="text-danger-foreground">{problem}</p>}
-        <h3 className="font-medium">{name}</h3>
-        <pre className="text-xs/5 whitespace-pre-wrap">{one.value?.text ?? one.value?.skill?.text ?? ''}</pre>
-      </div>
-    );
-  }
+  if (name) return <SkillDetail request={request} name={name} problem={problem} onBack={() => { setName(null); setProblem(''); }} onDelete={remove} />;
   return (
-    <Loading state={list}>
-      {(value) => <div>
-        <p className="mx-1 mb-3 text-muted-foreground">{S.note}</p>
-        {problem && <p role="alert" className="mb-3 text-danger-foreground">{problem}</p>}
-        {(value.skills ?? []).length === 0 ? <p className="py-10 text-center text-muted-foreground">{S.empty}</p> : (
-        <ul className="rounded-[20px] border px-5">
-          {value.skills.map((skill) => (
-            <li key={skill.name} className="flex min-h-[60px] items-center gap-3.5 border-t border-border/50 first:border-t-0">
-              <button type="button" aria-label={skill.name} onClick={() => setName(skill.name)} className="flex min-w-0 flex-1 flex-col justify-center py-3 text-left outline-none hover:bg-accent/60 focus-visible:ring-[3px] focus-visible:ring-ring/50">
-                <span className="text-[14px]/[22px] font-semibold">{skill.name}</span>
-                <span className="text-[12px]/[18px] text-muted-foreground">{skill.description}</span>
-              </button>
-              <Button variant="ghost" size="icon-sm" className="size-7 text-muted-foreground" aria-label={S.deleteOf(skill.name)} onClick={() => remove(skill.name)}><Trash /></Button>
-            </li>
-          ))}
-        </ul>
-      )}</div>}
-    </Loading>
+    <Page title={T.settings.nav.skills}>
+      <Problem>{problem}</Problem>
+      <Loading state={list} rows={2}>
+        {(value) => ((value.skills ?? []).length === 0 ? <Group><Empty>{S.empty}</Empty></Group> : (
+          <Group label={T.settings.nav.skills}>
+            <ul>
+              {value.skills.map((skill) => (
+                <Row as="li" key={skill.name} block className="flex items-center gap-3">
+                  <button type="button" aria-label={skill.name} onClick={() => setName(skill.name)} className="-my-1 flex min-w-0 flex-1 flex-col rounded-lg py-1 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+                    <span className="text-sm font-medium [overflow-wrap:anywhere]">{skill.name}</span>
+                    {skill.description && <span className="text-xs/[18px] text-muted-foreground [overflow-wrap:anywhere]">{skill.description}</span>}
+                  </button>
+                  <IconAction label={S.deleteOf(skill.name)} onClick={() => remove(skill.name)}><Trash2 aria-hidden="true" /></IconAction>
+                </Row>
+              ))}
+            </ul>
+          </Group>
+        ))}
+      </Loading>
+    </Page>
   );
 }

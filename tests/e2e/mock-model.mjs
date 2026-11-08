@@ -53,8 +53,8 @@ const matches = (rule, context) => {
   return context.prompt.includes(String(when));
 };
 
-export async function startMockModel({ replies = [], responseReplies = [] } = {}) {
-  const state = { replies, responseReplies, requests: [], sockets: new Set() };
+export async function startMockModel({ replies = [], responseReplies = [], anthropicReplies = [] } = {}) {
+  const state = { replies, responseReplies, anthropicReplies, requests: [], sockets: new Set() };
   let counter = 0;
 
   const chunk = (id, model, delta, finish = null, extra = {}) => `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model, choices: [{ index: 0, delta, finish_reason: finish }], ...extra })}\n\n`;
@@ -122,10 +122,20 @@ export async function startMockModel({ replies = [], responseReplies = [] } = {}
     const images = input.flatMap((item) => (item.content ?? []).filter((part) => part.type === 'input_image').map((part) => part.image_url));
     const prompt = input.filter((item) => item.role === 'user').map((item) => textOf(item.content)).join('\n');
     const lastUser = input.findLastIndex((item) => item.role === 'user' && !NOTE.test(textOf(item.content)));
-    const toolResults = input.slice(lastUser + 1).filter((item) => ['function_call_output', 'custom_tool_call_output'].includes(item.type)).map((item) => textOf(item.output));
+    const toolResults = input.slice(lastUser + 1).filter((item) => ['function_call_output', 'custom_tool_call_output', 'tool_search_output'].includes(item.type))
+      .map((item) => item.type === 'tool_search_output' ? JSON.stringify(item.tools) : textOf(item.output));
     const context = { prompt: textOf(input[lastUser]?.content), toolResults, hasToolResult: toolResults.length > 0, tools: (body.tools ?? []).map((tool) => tool.name) };
-    state.requests.push({ at: Date.now(), api: 'responses', model: body.model, prompt, images, tools: context.tools, toolResults });
+    state.requests.push({
+      at: Date.now(), api: 'responses', model: body.model, reasoningEffort: body.reasoning?.effort, prompt, images, tools: context.tools, toolSchemas: body.tools ?? [], toolResults,
+      messages: input.map((item) => ({ role: item.role, text: textOf(item.content) })),
+    });
     const rule = state.responseReplies.find((candidate) => matches(candidate, context)) ?? {};
+    if (rule.fail) {
+      response.writeHead(rule.fail.status ?? 400, { 'content-type': 'application/json' }).end(JSON.stringify({
+        error: { message: rule.fail.message ?? 'The model refused.', type: 'invalid_request_error', code: 'mock_failure' },
+      }));
+      return;
+    }
     if (rule.waitFor) {
       await new Promise((resolve) => {
         const finish = () => { response.removeListener('close', finish); resolve(); };
@@ -145,8 +155,11 @@ export async function startMockModel({ replies = [], responseReplies = [] } = {}
     const call = rule.calls?.[toolResults.length];
     const text = typeof rule.say === 'function' ? rule.say(context) : rule.say ?? (images.length ? 'MODEL_RECEIVED_IMAGE' : 'MODEL_READY');
     const id = `resp_mock_${++counter}`;
-    const message = call
+    const message = call?.type === 'tool_search_call'
+      ? { id: `tsc_${counter}`, type: 'tool_search_call', call_id: `call_mock_${counter}`, status: 'completed', execution: 'client', arguments: call.arguments }
+      : call
       ? { id: `fc_${counter}`, call_id: `call_mock_${counter}`, name: call.name, status: 'completed',
+        ...(call.namespace ? { namespace: call.namespace } : {}),
         ...(call.input === undefined ? { type: 'function_call', arguments: JSON.stringify(call.arguments) } : { type: 'custom_tool_call', input: call.input }) }
       : { id: `msg_${counter}`, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [] }] };
     const result = {
@@ -158,6 +171,13 @@ export async function startMockModel({ replies = [], responseReplies = [] } = {}
     const event = (type, extra) => response.write(`event: ${type}\ndata: ${JSON.stringify({ type, sequence_number: sequence++, ...extra })}\n\n`);
     event('response.created', { response: { ...result, status: 'in_progress', output: [] } });
     if (call) {
+      if (call.type === 'tool_search_call') {
+        event('response.output_item.added', { output_index: 0, item: message });
+        event('response.output_item.done', { output_index: 0, item: message });
+        event('response.completed', { response: result });
+        response.end();
+        return;
+      }
       const field = call.input === undefined ? 'arguments' : 'input';
       const events = call.input === undefined ? 'function_call_arguments' : 'custom_tool_call_input';
       event('response.output_item.added', { output_index: 0, item: { ...message, [field]: '', status: 'in_progress' } });
@@ -178,6 +198,63 @@ export async function startMockModel({ replies = [], responseReplies = [] } = {}
     response.end();
   }
 
+  async function anthropic(request, response) {
+    const chunks = [];
+    for await (const part of request) chunks.push(part);
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    const messages = body.messages ?? [];
+    const prompt = textOf(messages.findLast((message) => message.role === 'user')?.content);
+    const system = textOf(body.system);
+    const context = { prompt, system, messages, tools: body.tools ?? [] };
+    state.requests.push({
+      at: Date.now(), api: 'anthropic', model: body.model, prompt, system,
+      reasoningEffort: body.output_config?.effort, tools: (body.tools ?? []).map((tool) => tool.name), toolSchemas: body.tools ?? [],
+      toolResults: messages.flatMap((message) => (Array.isArray(message.content) ? message.content : [])
+        .filter((block) => block.type === 'tool_result').map((block) => textOf(block.content))),
+      messages: messages.map((message) => ({ role: message.role, text: textOf(message.content) })),
+    });
+    const rule = state.anthropicReplies.find((candidate) => matches(candidate, context)) ?? {};
+    if (rule.fail) {
+      response.writeHead(rule.fail.status ?? 400, { 'content-type': 'application/json' }).end(JSON.stringify({
+        type: 'error', error: { type: 'invalid_request_error', message: rule.fail.message ?? 'The model refused.' },
+      }));
+      return;
+    }
+    if (rule.waitFor || rule.delay) {
+      await new Promise((resolve) => {
+        const timer = rule.delay ? setTimeout(finish, rule.delay) : undefined;
+        function finish() { clearTimeout(timer); response.removeListener('close', finish); resolve(); }
+        response.once('close', finish);
+        if (rule.waitFor) Promise.resolve(rule.waitFor).then(finish, finish);
+      });
+      if (response.destroyed) return;
+    }
+    const text = typeof rule.say === 'function' ? rule.say(context) : rule.say ?? 'MODEL_READY';
+    const lastUser = messages.findLast((entry) => entry.role === 'user');
+    const hasToolResult = Array.isArray(lastUser?.content) && lastUser.content.some((block) => block.type === 'tool_result');
+    const nextCall = hasToolResult ? rule.afterToolCall : rule.calls?.[0];
+    const call = typeof nextCall === 'function' ? nextCall(context) : nextCall;
+    const message = {
+      id: `msg_mock_${++counter}`, type: 'message', role: 'assistant', model: body.model,
+      content: call ? [{ type: 'tool_use', id: `toolu_mock_${counter}`, name: call.name, input: call.arguments }] : [{ type: 'text', text }],
+      stop_reason: call ? 'tool_use' : 'end_turn', stop_sequence: null,
+      usage: { input_tokens: 100, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+    };
+    if (!body.stream) {
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(message));
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+    const event = (type, extra) => response.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...extra })}\n\n`);
+    event('message_start', { message: { ...message, content: [], stop_reason: null, usage: { ...message.usage, output_tokens: 0 } } });
+    event('content_block_start', { index: 0, content_block: call ? { ...message.content[0], input: {} } : { type: 'text', text: '' } });
+    event('content_block_delta', { index: 0, delta: call ? { type: 'input_json_delta', partial_json: JSON.stringify(call.arguments) } : { type: 'text_delta', text } });
+    event('content_block_stop', { index: 0 });
+    event('message_delta', { delta: { stop_reason: message.stop_reason, stop_sequence: null }, usage: { output_tokens: 10 } });
+    event('message_stop', {});
+    response.end();
+  }
+
   const askArguments = ({ question, options }) => ({ questions: [{ id: 'q1', question, ...(options ? { options: options.map((label) => ({ label })) } : {}) }] });
 
   const server = createServer((request, response) => {
@@ -185,6 +262,11 @@ export async function startMockModel({ replies = [], responseReplies = [] } = {}
       answer(request, response).catch((error) => { if (!response.headersSent) response.writeHead(500, { 'content-type': 'application/json' }); response.end(JSON.stringify({ error: { message: String(error?.message ?? error) } })); });
     } else if (request.method === 'POST' && /\/responses$/.test(request.url ?? '')) {
       responses(request, response).catch((error) => { if (!response.headersSent) response.writeHead(500); response.end(String(error)); });
+    } else if (request.method === 'POST' && /\/messages(?:\?.*)?$/.test(request.url ?? '')) {
+      anthropic(request, response).catch((error) => { if (!response.headersSent) response.writeHead(500); response.end(String(error)); });
+    } else if (request.method === 'POST' && /\/messages\/count_tokens(?:\?.*)?$/.test(request.url ?? '')) {
+      request.resume();
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ input_tokens: 2000 }));
     } else if (request.method === 'GET' && /\/models$/.test(request.url ?? '')) {
       response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ object: 'list', data: [{ id: 'mock-1', object: 'model' }] }));
     } else {
@@ -202,6 +284,8 @@ export async function startMockModel({ replies = [], responseReplies = [] } = {}
     set replies(next) { state.replies = next; },
     get responseReplies() { return state.responseReplies; },
     set responseReplies(next) { state.responseReplies = next; },
+    get anthropicReplies() { return state.anthropicReplies; },
+    set anthropicReplies(next) { state.anthropicReplies = next; },
     async stop() {
       for (const socket of state.sockets) socket.destroy();
       await new Promise((done) => server.close(done));

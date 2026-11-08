@@ -8,9 +8,15 @@
 
 2026-11-01 后续要求：@ 对应 Agent 只转发用户消息，通过 `prompt(..., mode: 'queue')` 进入已有会话，不解析问题答案或授权。下面的 `answerOf` / `outcomeOf` 是兼容的显式 `issues/reply` API 和 DSH 原生问题流程，不是 @ 的路由行为。来源为 `session` 的已有对话不由嘟嘟自动审阅、评论或请求确认。
 
+2026-11-06 接口更新：Desktop 随附 DSH `0.2.2-rc.1` 已移除 `sessionController.inspect()`。
+统一通过 `host/dsh-session-history.mjs` 调用 `sessionQuery.readSession(id)`，返回 `{ session, inheritedEventCount, events }`，
+优先读活跃会话，否则读持久历史，不激活会话；全文搜索索引关闭时仍可精确读取。共享层把 `session` 归一到原有的
+`meta` / `header` 字段，并仅在新方法缺失时回退到旧 `inspect()`，读取错误不触发回退。新 API 不接收信号，取消由调用侧
+停止等待，底层只读请求可能继续。下文更早的自动进度处理是历史记录，当前事项工作流以主人手动修改为准，不随 Agent 状态变化。
+
 ## 用到的接口
 
-插件的 `inject` 里都写成可选（`sessionController`、`permissionPresets`、`userQuestions`、`agentDefaultModel`，`workspaceRegistry`、`sessionProjections` 原来就有），缺哪个，用到它的那一步报"This DSH has no … service"，别的功能照常。
+插件的 `inject` 里都写成可选（`sessionController`、`sessionQuery`、`permissionPresets`、`userQuestions`、`agentDefaultModel`，`workspaceRegistry`、`sessionProjections` 原来就有），缺哪个，用到它的那一步报"This DSH has no … service"，别的功能照常。历史读取兼容两个接口，均不存在时报 `UNSUPPORTED`。
 
 | 做什么 | 怎么做 |
 |---|---|
@@ -22,16 +28,18 @@
 | 第一条、后续的消息 | `ctx.sessionController.prompt({ requestId, sessionId, mode: 'queue' \| 'steer', content: [{ type: 'text', text }] }, signal)` → `{ accepted: true }`。`queue` 是下一轮。重启后的冷会话它自己恢复 |
 | 停 | `ctx.sessionController.cancel({ sessionId })`，这一轮以 `aborted` 结束 |
 | 收起、放回 | `ctx.workspaceRegistry.archiveSession(id, { stopActivity? })`、`unarchiveSession(id)`、`archivedSessionIds` |
-| 读存着的会话 | `ctx.sessionController.inspect(id)` → `{ meta, events }`，不唤醒会话 |
+| 读存着的会话 | `ctx.sessionQuery.readSession(id)` → `{ session, inheritedEventCount, events }`，不唤醒会话；旧宿主兼容 `sessionController.inspect(id)` |
 
 ## 状态怎么读
 
 事件（`ctx.on`，只听，不改）：
 
-- `api-session/status (sessionId, running)`：DSH 的循环开始、结束一轮。
-- `session/event (session, event)`：`turn/end`，`data.reason.kind` 是 `completed`、`max-tokens`、`aborted`、`blocked`、`error`、`interrupted`、`forked`（`error` 带 `{ message, code }`）；`assistant/message`，`data.message.content` 里的文本块是智能体说的话。
-- **`turn/end` 先于 `status false`**，所以在 `status false` 时定状态：最后一轮 `completed`/`max-tokens` 是 `finished`，`error` 是 `error`，别的结束是 `idle`；在跑是 `running`；有没答的问题或审批是 `waiting_owner`。规则和 `host/assistant/sessions/states.mjs` 对 DSH 会话的一样。
-- 一轮的次序：`agent/inbox/spliced` → `status true` → `turn/start` → … → `turn/end` → `status false`。没有模型凭据时整轮 80 毫秒，以 `MISSING_CREDENTIAL` 结束。提供方回 HTTP 400，`turn/end` 的错误是 `400: {"message":…}`，插件取出 message。
+- `api-session/status (sessionId, running)`：DSH 的 Agent 循环开始或停止运行；连续处理排队消息时，循环一直运行，不会每轮都重新发 `true`。
+- `session/event (session, event)`：`turn/start` 开始一轮；`turn/end` 的 `data.reason.kind` 是 `completed`、`max-tokens`、`aborted`、`blocked`、`error`、`interrupted`、`forked`（`error` 带 `{ message, code }`）；`assistant/message` 的 `data.message.content` 文本块是智能体说的话。
+- **`turn/end` 先于 `status false`**，结束事件即定下本轮结果：`completed`/`max-tokens` 是 `finished`，`error` 是 `error`，其余结束是 `stopped`；在跑是 `running`；有没答的问题或审批是 `waiting_owner`。下一次 `turn/start` 若 `ctx.agents.get(id).status` 确认仍是 `running`，立即恢复工作中；导入、同步的历史边界没有实际运行的 Agent，不据此开始工作。规则和 `host/assistant/sessions/states.mjs` 对 DSH 会话的一样。
+- 一轮的次序通常是 `agent/inbox/spliced` → `status true` → `turn/start` → … → `turn/end` → `status false`；有排队消息时是一次 `status true` 后接多个 `turn/start … turn/end`，最后才 `status false`。没有模型凭据时整轮 80 毫秒，以 `MISSING_CREDENTIAL` 结束。提供方回 HTTP 400，`turn/end` 的错误是 `400: {"message":…}`，插件取出 message。
+
+2026-11-08 DUD-4 误分组：只读核对原会话记录，18:16:25.222（北京时间）上一轮正常结束，18:16:25.232 立即开始下一轮，后续仍有工具执行；原适配只处理 `turn/end` 和循环状态，忽略了排队下一轮的 `turn/start`，因此停在“需要你”。新增的定向单元回归先复现 `finished` 未恢复成 `running`，修复只补真实运行的开始边界，不改变事项 workflow、排队发送或历史导入。
 
 等主人的两种（都是**瀑布事件**，监听器要写 `ctx.on(事件, 处理, { global: true, prepend: true })`，不归自己的请求原样 `return next()`）：
 
@@ -51,7 +59,7 @@
 
 ## 重启 DSH
 
-会话在磁盘上，重启后 `ctx.agents.list()` 是空的，`list` 里 `agentAvailable: false`。`inspect(id)` 能读出上一轮怎么结束（`completed`；被打断的那一轮 DSH 补一个 `interrupted`），插件启动时对打开的 issue 的会话这样读一遍（`restore`），之后照常跟着事件走。实测（两个运行时一样）：
+会话在磁盘上，重启后 `ctx.agents.list()` 是空的，`list` 里 `agentAvailable: false`。共享历史读取能读出上一轮怎么结束（`completed`；被打断的那一轮 DSH 补一个 `interrupted`），插件启动时对打开的 issue 的会话这样读一遍（`restore`），之后照常跟着事件走。实测（两个运行时一样）：
 
 - 重启前已经由嘟嘟判断完成的：保持 In Review 和确认问题；尚未审阅的 `finished` 或 `idle` 会话重新安排嘟嘟审阅，不能仅凭结束状态转入 In Review。显式 @ Agent 回复时，DSH 自己把冷会话恢复。
 - 重启时在等回答的、在跑的：这一轮没了（`interrupted`），旧的阻塞问题被放弃；嘟嘟读中断前的最近对话判断进展。主人在唯一留言框显式 @ 对应 Agent 后，才把消息传到会话继续做；普通留言只记日志。
@@ -64,6 +72,9 @@
 4. 没登录的 Claude 路由：回合"成功"结束，智能体说的是 `Not logged in · Please run /login`，DSH 没报错误。旧接线曾因此把 issue 推到 In Review；现在必须由嘟嘟读这句话判断未完成。没登录的 Codex 路由：`ChatGPT is not logged in. Run \`codex login\` in a terminal.`，要等 20 秒到 80 秒以上才报。
 5. 页面里 `ctx.sessions.create({ sessionId })` 不带工作区：见上。
 6. 两个运行时的差别：Desktop 的请求里多一条 `time-context` 的用户消息，`ctx.connection.createPeer` 只有 Desktop 有，这里用不到；其余一样。
+7. **`inject` 里写的每个服务都要等**，值写 `false` 也一样（对象形式的值是拦截配置，不是“可选”）：在没有 `mcpManager` 的 DSH 里，写了 `mcpManager: false` 的插件停在 `pending (waiting for service: mcpManager)`，路由全是 404。可能没有的服务不要写进 `inject`：`ctx.get('名字')` 读（没有返回 `undefined`），或 `ctx.inject(['名字'], (ctx) => …)` 开一个有它才跑的子插件（服务变了重跑）。`inject` 里现有的 `false` 项都是 0.2.0 起每个 DSH 都有的服务，所以没出过事。
+8. **`ctx.tools` 的 `restrict`**（源码 `packages/core/tools/src/index.ts`）：只能点全局工具的名字；点自己（会话）登记的名字、没有的名字、空过滤器都会抛错；`allow: []` 合法，把全局工具全藏起来；会话自己登记的工具不受限制、同名时盖过全局的。注册表变化时发 `tools/change`（`restrict` 自己也会发，所以只在表真的变了才重设）。`ctx.tools.schemas()` 不带参数是全局视角。
+9. **MCP 客户端的版本差**：`ctx.plugin(await ctx.loader.import('@deepseek-ai/dsh-mcp-client'), { transport, serverName, url, headers, … })` 每个版本都能用，插件停了它也跟着停，返回的 fiber 是可等待的（等它会等到服务器应答，所以挂的时候别等）。`expandTemplates`（配置里写 `${credential:名字}`）和 `ctx.mcpManager` 只在主分支，0.2.2-rc.1 和 0.2.0-rc.2 没有：令牌变了只能重挂。
 
 ## 测试用的模型
 

@@ -1,3 +1,4 @@
+import { statusLabel } from './workflow.js';
 import { T } from '../strings.js';
 import { AGENT_NAMES } from './model.js';
 import { intlLocale } from '../lib/locale.mjs';
@@ -22,7 +23,7 @@ export function when(ms, now = Date.now()) {
 }
 
 export const actorName = (actor) => (actor === 'owner' ? T.activity.you : actor === 'dudu' ? T.brand : (AGENT_NAMES[actor] ?? actor));
-export const isDiscussion = (entry) => ['note', 'progress', 'decision', 'result', 'blocked'].includes(entry.kind) && Boolean(entry.text?.trim());
+export const isDiscussion = (entry) => ['note', 'progress', 'decision', 'result', 'blocked'].includes(entry.kind) && Boolean(entry.text?.trim() || entry.data?.attachments?.length);
 const agentName = (agent) => AGENT_NAMES[agent] ?? agent;
 const dueText = (ms) => dayYear.format(ms);
 
@@ -62,7 +63,7 @@ export function describe(entry) {
   if (data?.deliveryError) return { sentence: A.commented, comment: T.detail.messageErrors.delivery_failed };
   switch (kind) {
     case 'source': return { sentence: data?.source === 'owner' ? A.created : (data?.source === 'session' ? A.createdFromSession : A.createdFromMessage), detail: text };
-    case 'status': return { sentence: A.status(T.status[data?.from] ?? data?.from, T.status[data?.to] ?? data?.to), detail: text };
+    case 'status': return { sentence: A.status(statusLabel(data?.from), statusLabel(data?.to)), detail: text };
     case 'priority': return { sentence: A.priority(T.priority[data?.to] ?? data?.to), detail: text };
     case 'due': return { sentence: data?.to == null ? A.dueRemoved : A.due(dueText(data.to)), detail: text };
     case 'assign': return { sentence: data?.agent ? A.assigned(agentName(data.agent)) : A.unassigned, detail: text };

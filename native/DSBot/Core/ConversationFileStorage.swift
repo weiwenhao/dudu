@@ -45,7 +45,7 @@ actor ConversationFileStorage {
 }
 
 extension ConversationDiff.Hunk {
-    struct Line: Identifiable {
+    struct Line: Identifiable, Sendable {
         let id: Int
         let old: Int?
         let new: Int?

@@ -12,6 +12,9 @@ struct Computer: Codable, Identifiable, Sendable, Equatable {
     var url: String
     var computerId: String?
     var lastUsedAt: Double
+    var addresses: [ConnectionAddress]? = nil
+    var probeId: String? = nil
+    var addressesEdited: Bool? = nil
 
     var displayAddress: String {
         guard var components = URLComponents(string: url) else { return "" }
@@ -19,7 +22,16 @@ struct Computer: Codable, Identifiable, Sendable, Equatable {
         components.password = nil
         components.query = nil
         components.fragment = nil
+        if components.path == "/dsbot" { components.path = "" }
         return components.string ?? ""
+    }
+
+    var shortAddress: String {
+        displayAddress.replacingOccurrences(of: #"^https?://"#, with: "", options: .regularExpression)
+    }
+
+    var connectionAddresses: [ConnectionAddress] {
+        (try? ConnectionEndpoint.saved(self).addresses) ?? []
     }
 }
 
@@ -30,12 +42,65 @@ struct SessionSummary: Codable, Identifiable, Sendable, Equatable {
     var workspaceName: String?
     var updatedAt: Double
     var status: String
+    /// The plugin's fixed assistant, identified by the plugin rather than inferred from a title.
+    var isAssistant: Bool? = nil
     /// The host has not seen a message in this conversation yet; it can be reused for a new task.
     var blank: Bool?
     /// DSH's archive and pin sets; the pin rank is the place in the pin set, most recently pinned first.
     var archived: Bool?
     var pinned: Bool?
     var pinRank: Int?
+    var providerId: String?
+    var agent: SessionAgent?
+    var agentState: AgentWorkState?
+    /// `agentState` is `blocked` because the run finished (the Desktop draws a green check, not red). Absent from a plugin that does not say.
+    var agentFinished: Bool?
+    /// The agent is in deep sleep: idle, and nobody has handled it for half an hour (the plugin says so; absent from one that does not, and when it is awake). The avatar's grey crescent takes the place of the idle ring.
+    var deepSleep: Bool?
+}
+
+enum SessionAgent: String, Codable, Sendable {
+    case claude, codex, deepseek
+
+    var name: String {
+        switch self {
+        case .claude: return "Claude"
+        case .codex: return "ChatGPT"
+        case .deepseek: return "DeepSeek"
+        }
+    }
+}
+
+/// A question, a failure and a finished run are all `blocked`: it needs you (the owner merged "done" into it on 2026-11-03, and named it "需要你" on 2026-11-04).
+enum AgentWorkState: String, Codable, Sendable {
+    case idle, working, blocked
+
+    /// A Desktop plugin that has not been updated yet still says "done" for a finished run.
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        guard let state = raw == "done" ? Self.blocked : Self(rawValue: raw) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown agent state \(raw)"))
+        }
+        self = state
+    }
+
+    var name: String {
+        switch self {
+        case .idle: return "空闲"
+        case .working: return "工作中"
+        case .blocked: return "需要你"
+        }
+    }
+}
+
+struct SessionProvider: Codable, Identifiable, Sendable, Equatable {
+    var id: String
+    var name: String
+    var modelIds: [String]
+    var defaultModelId: String
+    var isDefault: Bool?
+
+    var agent: SessionAgent? { SessionAgent(rawValue: id) }
 }
 
 struct WorkspaceSummary: Codable, Identifiable, Sendable, Equatable {
@@ -100,6 +165,36 @@ struct Choice: Codable, Identifiable, Sendable, Equatable {
     var defaultEffort: String? = nil
     /// The host's default agent preset.
     var isDefault: Bool? = nil
+    /// The configured model source, distinct from its agent family. Optional for older catalogs and caches.
+    var sourceID: String? = nil
+    var sourceName: String? = nil
+
+    var modelSourceID: String { sourceID ?? id.components(separatedBy: ":").first ?? id }
+    var modelSourceName: String { sourceName ?? modelSourceID }
+}
+
+struct ModelSourceGroup: Identifiable {
+    var id: String
+    var name: String
+    var models: [Choice]
+
+    static func groups(_ models: [Choice]) -> [ModelSourceGroup] {
+        var result: [ModelSourceGroup] = []
+        var indexes: [String: Int] = [:]
+        for model in models {
+            if let index = indexes[model.modelSourceID] {
+                result[index].models.append(model)
+            } else {
+                indexes[model.modelSourceID] = result.count
+                result.append(ModelSourceGroup(id: model.modelSourceID, name: model.modelSourceName, models: [model]))
+            }
+        }
+        let counts = Dictionary(grouping: result, by: \.name).mapValues(\.count)
+        for index in result.indices where (counts[result[index].name] ?? 0) > 1 {
+            result[index].name += " · \(result[index].id)"
+        }
+        return result
+    }
 }
 
 struct UploadAttachment: Codable, Identifiable, Sendable, Equatable {
@@ -137,6 +232,10 @@ struct QueuedMessage: Codable, Identifiable, Sendable, Equatable {
     var text: String
     var editable: Bool
     var attachments: [TranscriptAttachment]?
+    var requestId: String? = nil
+
+    var presentationID: String { requestId.map { "submission:\($0)" } ?? id }
+    var isSubmissionEcho: Bool { requestId.map { id == "submission:\($0)" } ?? false }
 }
 
 struct SessionDetail: Codable, Sendable, Equatable {
@@ -159,10 +258,12 @@ struct SessionDetail: Codable, Sendable, Equatable {
     /// Reasoning level in use and the agent preset ("mode") the session started with.
     var reasoningEffort: String?
     var agentPreset: String?
+    var canceledRequestIds: [String]
 
     private enum CodingKeys: String, CodingKey {
         case session, messages, modelId, permissionId, context, trace, team, approvals
         case transcript, goal, todos, queuedMessages, questions, planMode, reasoningEffort, agentPreset
+        case canceledRequestIds
     }
 
     init(
@@ -181,7 +282,8 @@ struct SessionDetail: Codable, Sendable, Equatable {
         questions: [ConversationQuestions] = [],
         planMode: Bool = false,
         reasoningEffort: String? = nil,
-        agentPreset: String? = nil
+        agentPreset: String? = nil,
+        canceledRequestIds: [String] = []
     ) {
         self.session = session
         self.messages = messages
@@ -199,6 +301,7 @@ struct SessionDetail: Codable, Sendable, Equatable {
         self.planMode = planMode
         self.reasoningEffort = reasoningEffort
         self.agentPreset = agentPreset
+        self.canceledRequestIds = canceledRequestIds
     }
 
     init(from decoder: Decoder) throws {
@@ -219,6 +322,7 @@ struct SessionDetail: Codable, Sendable, Equatable {
         planMode = try container.decodeIfPresent(Bool.self, forKey: .planMode) ?? false
         reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
         agentPreset = try container.decodeIfPresent(String.self, forKey: .agentPreset)
+        canceledRequestIds = try container.decodeIfPresent([String].self, forKey: .canceledRequestIds) ?? []
     }
 }
 
@@ -304,6 +408,7 @@ enum DSBotFailure: Error, LocalizedError, Sendable, Equatable {
     case missingCredential
     case identityMismatch
     case connectionFailed
+    case routesUnavailable(onlyLAN: Bool)
     case timedOut
     case resultUnknown
     case disconnected
@@ -342,6 +447,7 @@ enum DSBotFailure: Error, LocalizedError, Sendable, Equatable {
         case .missingCredential: return "MISSING_CREDENTIAL"
         case .identityMismatch: return "IDENTITY_MISMATCH"
         case .connectionFailed: return "CONNECTION_FAILED"
+        case .routesUnavailable: return "ROUTES_UNAVAILABLE"
         case .timedOut: return "TIMEOUT"
         case .resultUnknown: return "RESULT_UNKNOWN"
         case .disconnected: return "DISCONNECTED"
@@ -365,6 +471,7 @@ enum DSBotFailure: Error, LocalizedError, Sendable, Equatable {
         case .missingCredential: return "请粘贴电脑生成的完整配对链接"
         case .identityMismatch: return "配对信息与电脑不匹配，请重新配对"
         case .connectionFailed: return "无法连接，请检查电脑和网络"
+        case .routesUnavailable(let onlyLAN): return onlyLAN ? "无法连接内网地址" : "内网和公网都无法连接"
         case .timedOut: return "连接超时"
         case .resultUnknown: return "请求可能已在电脑执行，请查看会话状态后再操作。"
         case .disconnected: return "连接已断开"

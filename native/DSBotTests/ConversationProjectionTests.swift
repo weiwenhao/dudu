@@ -2,6 +2,85 @@ import XCTest
 @testable import dsbot
 
 final class ConversationProjectionTests: XCTestCase {
+    func testInterleavedTurnKeepsTheImageQuestionInPlaceDuringLiveUpdatesAndPagination() async throws {
+        let projector = ConversationProjector()
+        let question = TranscriptEntry(type: "user", id: "follow-up", seq: 5, time: 3_000,
+                                       text: "这个气泡是什么，也无法关闭？",
+                                       attachments: [TranscriptAttachment(kind: "image", name: "bubble.png", id: "photo")])
+        var transcript = Transcript(entries: [
+            question,
+            TranscriptEntry(type: "assistant", id: "after", seq: 7, time: 4_000,
+                            text: "我会修复附件传话和气泡关闭。", turn: 1, step: 2)
+        ], turns: [TranscriptTurn(turn: 1, start: 1_100)], live: TranscriptLive(id: "live:1", text: "继续检查。"),
+           beforeSeq: 5, throughSeq: 10, hasMore: true)
+        var projection = await projector.project(current: nil, incoming: transcript, currentRows: [], isRunning: true)
+        let tailIDs = projection.rows.map(\.id)
+        XCTAssertEqual(tailIDs, ["user:follow-up", "turn:turn-1:after:user:follow-up"])
+        let earlier = Transcript(entries: [
+            TranscriptEntry(type: "user", id: "question", seq: 1, time: 1_000, text: "这是什么问题？"),
+            TranscriptEntry(type: "assistant", id: "before", seq: 3, time: 2_000,
+                            text: "先检查日志。", turn: 1, step: 1)
+        ], turns: transcript.turns, live: transcript.live, beforeSeq: 1, throughSeq: 10, hasMore: false)
+        projection = await projector.project(
+            current: projection.transcript, incoming: earlier, currentRows: projection.rows, isRunning: true, prepending: true
+        )
+        XCTAssertEqual(Array(projection.rows.suffix(2)).map(\.id), tailIDs)
+        let historicalRows = Array(projection.rows.dropLast())
+        let separators = projection.timeSeparators
+        for count in 1...20 {
+            transcript.live?.text = String(repeating: "继续检查。", count: count)
+            projection = await projector.project(
+                current: projection.transcript, incoming: transcript, currentRows: projection.rows, isRunning: true
+            )
+            XCTAssertEqual(Array(projection.rows.dropLast()), historicalRows)
+            XCTAssertEqual(projection.timeSeparators, separators)
+            XCTAssertEqual(projection.rows, TranscriptBuilder.rows(from: try XCTUnwrap(projection.transcript), isRunning: true))
+        }
+        transcript.live = nil
+        transcript.turns[0].end = 5_000
+        transcript.turns[0].outcome = "done"
+        projection = await projector.project(
+            current: projection.transcript, incoming: transcript, currentRows: projection.rows, isRunning: false
+        )
+        XCTAssertEqual(Array(projection.rows.suffix(2)).map(\.id), tailIDs)
+        XCTAssertEqual(projection.rows, TranscriptBuilder.rows(from: try XCTUnwrap(projection.transcript), isRunning: false))
+    }
+
+    func testWaitingForFirstOutputKeepsTheSameTurnThroughStreamingAndCompletion() async throws {
+        let projector = ConversationProjector()
+        var transcript = Transcript(entries: [
+            TranscriptEntry(type: "user", id: "question", seq: 1, text: "Continue")
+        ], turns: [TranscriptTurn(turn: 1, start: 1_000)], live: nil)
+        var projection = await projector.project(current: nil, incoming: transcript, currentRows: [], isRunning: true)
+        XCTAssertEqual(projection.rows.map(\.id), ["user:question", "turn:turn-1"])
+        guard case let .turn(waiting) = try XCTUnwrap(projection.rows.last) else {
+            return XCTFail("A started turn must show feedback before its first output")
+        }
+        XCTAssertEqual(waiting.outcome, .running)
+        let rowIDs = projection.rows.map(\.id)
+        transcript.live = TranscriptLive(id: "live:1", text: "First output")
+        projection = await projector.project(
+            current: projection.transcript, incoming: transcript, currentRows: projection.rows, isRunning: true
+        )
+        XCTAssertEqual(projection.rows.map(\.id), rowIDs)
+        XCTAssertEqual(projection.rows, TranscriptBuilder.rows(from: transcript, isRunning: true))
+        transcript.entries.append(TranscriptEntry(
+            type: "assistant", id: "answer", seq: 2, text: "First output", turn: 1, step: 1
+        ))
+        transcript.live = nil
+        transcript.turns[0].end = 2_000
+        transcript.turns[0].outcome = "done"
+        projection = await projector.project(
+            current: projection.transcript, incoming: transcript, currentRows: projection.rows, isRunning: false
+        )
+        XCTAssertEqual(projection.rows.map(\.id), rowIDs)
+        guard case let .turn(completed) = try XCTUnwrap(projection.rows.last) else {
+            return XCTFail("Expected the completed turn")
+        }
+        XCTAssertEqual(completed.outcome, .done)
+        XCTAssertEqual(completed.answer, "First output")
+    }
+
     func testLiveUpdatesPreserveHistoricalRowsAndFinishAsTheSameTurn() async throws {
         let projector = ConversationProjector()
         var transcript = Transcript(entries: [

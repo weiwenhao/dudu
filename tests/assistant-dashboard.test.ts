@@ -101,7 +101,7 @@ function assertSound(layout: { v: number; widgets: Item[] }, rows = FILL_ROWS) {
 
 test('the built-in widgets are the table of the design doc, and a declaration that breaks the rules is refused with a reason', () => {
   assert.deepEqual(BUILT_IN_WIDGETS.map((widget) => [widget.id, widget.label, `${widget.min.w}x${widget.min.h}`, `${widget.size.w}x${widget.size.h}`]), [
-    ['issues', 'Issues', '6x3', 'fillxfill'], ['quota', 'Quota', '3x2', '3x2'], ['office', 'Office', '5x3', '5x3'],
+    ['issues', 'Issues', '6x3', 'fillxfill'], ['quota', 'Quota', '3x2', '3x2'], ['office', 'Office', '5x3', '5x3'], ['collector', 'Collector', '4x3', '6x5'],
   ]);
   for (const widget of BUILT_IN_WIDGETS) {
     assert.deepEqual(validateDeclaration(widget), { ok: true }, widget.id);
@@ -137,7 +137,7 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
   const first = await s.ok('get');
   assert.deepEqual(first.layout, { v: 3, widgets: [{ id: 'issues', type: 'issues', x: 0, y: 0, w: 'fill', h: 'fill' }] });
   assert.deepEqual(first.layout, defaultLayout());
-  assert.equal(first.widgets.length, 8);
+  assert.equal(first.widgets.length, 9);
   assert.equal(first.undo, null);
   assert.equal(first.recovered, null);
   assert.equal(existsSync(s.file), false, 'nothing is written before the first change');
@@ -389,7 +389,7 @@ test('old extra built-ins disappear from saved layouts, cannot be re-added, and 
   writeFileSync(s.file, text);
   const view = await s.ok('get');
   assert.deepEqual(view.layout.widgets, retained, 'designed widgets and third-party widgets keep their cells');
-  assert.deepEqual(view.widgets.map((widget: any) => widget.id), ['issues', 'quota', 'office']);
+  assert.deepEqual(view.widgets.map((widget: any) => widget.id), ['issues', 'quota', 'office', 'collector']);
   assert.equal(readFileSync(s.file, 'utf8'), text, 'reading does not rewrite the file');
   for (const type of retired) {
     assert.equal((await s.call('add', { type, w: 6, h: 6 })).body.outcome, 'needs_clarification', type);

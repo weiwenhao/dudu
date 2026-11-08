@@ -4,7 +4,7 @@ import { Command, CommandInput, CommandItem, CommandList, CommandSeparator } fro
 import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
 import { T } from '../strings.js';
 import { StatusIcon } from './icons.jsx';
-import { STATUS_ORDER } from './model.js';
+import { statusLabel, statusOrder } from './workflow.js';
 
 /**
  * Linear's "Change status" menu: a filter box (shortcut S), the six statuses with their icons, the current one ticked.
@@ -26,9 +26,10 @@ export function StatusMenu({ status, open, onOpenChange, onSelect, children }) {
 }
 
 export function StatusChoices({ status, onSelect, shortcut = true }) {
-  return <Command defaultValue={T.status[status]} onKeyDown={(event) => {
-    if (!event.nativeEvent.isComposing && !event.target.value && /^[1-6]$/.test(event.key)) {
-      event.preventDefault(); onSelect(STATUS_ORDER[Number(event.key) - 1]);
+  const order = statusOrder();
+  return <Command defaultValue={statusLabel(status)} onKeyDown={(event) => {
+    if (!event.nativeEvent.isComposing && !event.target.value && /^[1-9]$/.test(event.key) && order[Number(event.key) - 1]) {
+      event.preventDefault(); onSelect(order[Number(event.key) - 1]);
     }
   }}>
           <CommandInput placeholder={T.changeStatus} aria-label={T.changeStatus}>
@@ -36,13 +37,13 @@ export function StatusChoices({ status, onSelect, shortcut = true }) {
           </CommandInput>
           <CommandSeparator />
           <CommandList>
-            {STATUS_ORDER.map((id, index) => (
-              <CommandItem key={id} value={T.status[id]} onSelect={() => onSelect(id)}>
+            {order.map((id, index) => (
+              <CommandItem key={id} value={statusLabel(id)} onSelect={() => onSelect(id)}>
                 <StatusIcon status={id} />
-                <span>{T.status[id]}</span>
+                <span>{statusLabel(id)}</span>
                 <span className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
                   {id === status && <Check aria-hidden="true" />}
-                  <kbd>{index + 1}</kbd>
+                  {index < 9 && <kbd>{index + 1}</kbd>}
                 </span>
               </CommandItem>
             ))}

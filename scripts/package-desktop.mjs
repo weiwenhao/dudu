@@ -2,12 +2,15 @@ import { execFileSync } from 'node:child_process';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
-import { writeClient } from './build-client.mjs';
+import { writeClient, writePhonePages } from './build-client.mjs';
 import { collectNotices } from './licenses.mjs';
+import { prepareOar } from '../packages/oar-adapter/build.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// Recheck the official source and every patch before bundling, even after a source edit or --ignore-scripts install.
+await prepareOar();
 const plugin = join(root, 'host', 'dudu-plugin');
 const { version } = JSON.parse(await readFile(join(plugin, 'package.json'), 'utf8'));
 const output = join(root, '.local', 'release');
@@ -16,10 +19,9 @@ const runtime = join(plugin, 'dist');
 await rm(runtime, { recursive: true, force: true });
 await mkdir(runtime);
 const copied = new Set();
-// The installed plugin has no node_modules of its own to resolve OAR from, so the one file that imports it is bundled,
-// with only the two runtimes the plugin uses. The licenses of what ends up inside travel with it.
-// The grid library's engine and the MCP client are bundled for the same reason (its relative imports carry no file extension, so Node cannot load it as it is).
-const bundled = new Set(['providers/oar-runtimes.mjs', 'assistant/dashboard/engine.mjs', 'assistant/connectors/mcp.mjs']);
+// Bundle runtime dependencies that Desktop cannot resolve from the source repository's node_modules.
+// The licenses of everything inside the bundles travel with the plugin.
+const bundled = new Set(['providers/oar-runtimes.mjs', 'providers/stats.mjs', 'assistant/dashboard/engine.mjs', 'assistant/connectors/mcp.mjs', 'assistant/sessions/activity-projection.mjs', 'native-markdown-images.mjs', 'assistant/schedule/cron.mjs']);
 const noticeBlocks = [];
 async function bundleRuntime(file) {
   const target = join(runtime, file);
@@ -54,7 +56,14 @@ if (!roots.length) throw new Error('The desktop plugin has no runtime entrypoint
 for (const file of roots) await copyRuntime(file);
 // The interface (React, Radix, Tailwind output) is built into dist/client.js, around the hand-written client.js.
 noticeBlocks.push(...(await writeClient(join(runtime, 'client.js'))).notices);
+// The settings pages the phone opens in its web view: a script and a stylesheet next to the client, served by host/phone-pages.mjs.
+await writePhonePages(join(runtime, 'phone'));
 noticeBlocks.push(`Lobe Icons - Claude, OpenAI and DeepSeek brand marks\n\n${await readFile(join(root, 'licenses', 'lobe-icons.txt'), 'utf8')}`);
+noticeBlocks.push(`Connector icons - the logos of the connectors page\n\n${await readFile(join(plugin, 'ui', 'connectors', 'icons', 'NOTICE.md'), 'utf8')}`);
+for (const [title, file] of [['Cline - the sign-in of hosted MCP servers', 'cline.txt'], ['OpenClaw - the loopback callback of that sign-in', 'openclaw.txt'], ['opencode - the token handling of that sign-in', 'opencode.txt']]) {
+  noticeBlocks.push(`${title}\n\n${await readFile(join(root, 'licenses', file), 'utf8')}`);
+}
+noticeBlocks.push(`Hermes Agent - the paste-anything MCP parser of the connectors page\n\n${await readFile(join(root, 'licenses', 'hermes-agent.txt'), 'utf8')}`);
 if (noticeBlocks.length) {
   await writeFile(join(runtime, 'THIRD_PARTY_NOTICES.txt'), `This plugin bundles the following packages.\n\n${[...new Set(noticeBlocks)].join('\n----------------------------------------\n\n')}`);
 }
@@ -69,6 +78,17 @@ try {
     cwd: plugin, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'],
   }));
   if (packed.length !== 1) throw new Error('Expected one desktop plugin package.');
+  // Loading in the repository masks missing runtime dependencies such as croner. Check the actual archive outside it.
+  const check = join(staging, 'load-check');
+  await mkdir(check);
+  execFileSync('npm', ['install', '--ignore-scripts', '--omit=dev', '--no-audit', '--no-fund', '--no-package-lock',
+    '--prefer-offline', join(folder, packed[0].filename),
+  ], { cwd: check, timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] });
+  execFileSync(process.execPath, ['--input-type=module', '--eval',
+    'const plugin = await import(process.argv[1]); if (plugin.name !== "dudu" || typeof plugin.apply !== "function") throw new Error("Invalid desktop plugin entry.");',
+    pathToFileURL(join(check, 'node_modules', 'dudu', 'index.mjs')).href,
+  ], { cwd: check, env: { ...process.env, NODE_PATH: '' }, timeout: 20_000, stdio: ['ignore', 'pipe', 'pipe'] });
+  console.log('Packaged desktop plugin imports successfully outside the source repository.');
   await copyFile(join(root, 'desktop', 'README.md'), join(folder, 'README.md'));
   const archive = join(output, `dudu-desktop-${version}.zip`);
   // zip appends to an existing archive; create each artifact from an empty file.

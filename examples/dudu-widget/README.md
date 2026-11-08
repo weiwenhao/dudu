@@ -11,7 +11,7 @@ DSH_HOME=/absolute/path/development-home dsh plugin --profile web add /absolute/
 DSH_HOME=/absolute/path/development-home dsh web --host 127.0.0.1 --no-open --port 0
 ```
 
-Use a dedicated DSH home for development. Open the address printed by DSH privately; it contains a login token. In Settings → Widgets, enable Developer mode and add Example widget. During Edit layout, Inspect widget offers minimum/recommended sizes, theme and fixed example data. Rebuilding `dist/client.js` triggers DSH's own HMR; the saved layout remains.
+Use a dedicated DSH home for development. Open the address printed by DSH privately; it contains a login token. Use Edit layout → Add widget to add Example widget. To enable the development inspector, send `{ "patch": { "widgets": { "developer": true } } }` to the authenticated `POST /api/dudu/assistant/settings` endpoint in that development profile, then reopen the dashboard. During Edit layout, Inspect widget offers minimum/recommended sizes, theme and fixed example data. Set `developer` to `false` to turn it off. Rebuilding `dist/client.js` triggers DSH's own HMR; the saved layout remains.
 
 `npm run build` removes the development flag before publishing. Change the package name, module-loader id, bundle row and widget id together. Widget ids use `<package>.<widget>`. Keep `dudu` as a peer dependency and bundle `dudu/widget` and `dudu/widget-ui`; React stays external and comes from the DSH loader. `build.mjs` provides the wrapper.
 

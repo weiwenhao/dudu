@@ -38,7 +38,7 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
   const styles: string[] = [];
   const sandbox: Record<string, unknown> = {
     window: { __ModuleLoader__: { load: (module: never) => loaded.push(module) } },
-    document: { createElement: () => ({ remove() {} }), head: { appendChild: (style: { textContent: string }) => styles.push(style.textContent) } },
+    document: { documentElement: { style: {} }, createElement: () => ({ remove() {} }), head: { appendChild: (style: { textContent: string }) => styles.push(style.textContent) }, addEventListener() {}, removeEventListener() {} },
     console, clearTimeout, clearInterval,
     // The grid library reads the browser's identity when it loads.
     navigator: { userAgent: 'node', platform: 'node' },

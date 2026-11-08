@@ -39,7 +39,7 @@ test('takeover preserves the original conversation, title, project and agent, an
     [original.title, original.project, 'claude', original.key, 'APP-1'],
   );
   assert.equal(result.issue.brief, decision.brief);
-  assert.equal(result.issue.status, 'in_review');
+  assert.equal(result.issue.status, 'todo');
   assert.equal(result.issue.sourceRef, original.key);
   assert.equal(w.adopted.length, 1);
   assert.equal(w.issues.events({ issueId: result.issue.id }).events[0].actor, 'dudu');
@@ -67,13 +67,16 @@ test('a native conversation already loaded into DSH and its DSH alias resolve to
   assert.equal(w.calls.length, 1);
 });
 
-test('takeover follows the real session state and ignores the model workflow and acceptance request', async (t) => {
+test('takeover uses the configured new-issue status regardless of session activity or model workflow', async (t) => {
   for (const state of ['running', 'finished', 'idle', 'error', null]) {
     const w = world(t, { state, decide: () => ({ brief: '修复导出。', status: 'in_review', ask: '确认完成吗？' }) });
     const result = await w.take();
-    assert.equal(result.issue.status, state === 'running' ? 'in_progress' : 'in_review', state ?? 'unknown');
+    assert.equal(result.issue.status, 'todo', state ?? 'unknown');
     assert.equal(result.issue.ask, '');
   }
+  const w = world(t, { state: 'running' });
+  w.issues.statusUpdate('backlog', { isDefault: true });
+  assert.equal((await w.take()).issue.status, 'backlog');
 });
 
 test('unfinished work waiting on an owner decision keeps the actual question', async (t) => {
@@ -82,7 +85,7 @@ test('unfinished work waiting on an owner decision keeps the actual question', a
     decide: () => ({ brief: '修复导出。', ask: '确认完成吗？' }),
   });
   const result = await w.take();
-  assert.equal(result.issue.status, 'in_review');
+  assert.equal(result.issue.status, 'todo');
   assert.equal(result.issue.ask, '导出 CSV 还是 JSON？');
 });
 

@@ -62,6 +62,8 @@ const ARGUMENTS = Object.freeze({
   'session/projections': ['request'],
   'session/page': ['request'],
   'session/follow': ['request'],
+  'toolResults/watch': ['request'],
+  'job/list': ['request'],
   'dshContext/detail': ['sessionId'],
   'dshContext/fleet': ['sessionId', 'full'],
   'dshContext/skills': ['sessionId'],
@@ -81,7 +83,8 @@ const ARGUMENTS = Object.freeze({
   'pluginManager/inspect': ['spec', 'options'],
   'pluginMarket/search': ['url', 'query'],
   'credentials/describe': ['refs'],
-  'commands/list': ['agent'],
+  'commands/list': ['agent', 'agentId'],
+  'skills/list': ['request'],
   'settings/mutate': ['ns', 'ops', 'expectedRevision'],
   'settings/update': ['ns', 'patch', 'expectedRevision'],
   'settings/replace': ['ns', 'section', 'expectedRevision'],
@@ -160,11 +163,12 @@ function sessionRequest(page, endpoint, request) {
     return ownKeys(request, ['sessionId']) && page.sessionIds.has(request.sessionId);
   }
   const keys = ['address', 'maxMessages', 'turnWindow'];
-  if (endpoint === 'session/follow') keys.push('assistantStream');
+  if (endpoint === 'session/follow') keys.push('assistantStream', 'activate');
   else keys.push('throughSeq', 'beforeSeq');
   if (!ownKeys(request, keys) || !scopedAddress(page, request.address)) return false;
   if (request.maxMessages !== undefined && !boundedInteger(request.maxMessages, 1, 500)) return false;
   if (request.assistantStream !== undefined && request.assistantStream !== true) return false;
+  if (request.activate !== undefined && typeof request.activate !== 'boolean') return false;
   if (request.turnWindow !== undefined) {
     if (!ownKeys(request.turnWindow, ['minMessages', 'minTurns'])
       || !boundedInteger(request.turnWindow.minMessages, 0, request.maxMessages ?? 500)
@@ -202,10 +206,26 @@ export function allowPageCall(page, endpoint, args, stream = false) {
   if (WRITES.has(endpoint) && !CONFIG_PAGES.has(page.kind)) return false;
 
   if (THIRD_PARTY_MARKET_READS.has(endpoint)) return CONFIG_PAGES.has(page.kind);
+  if (endpoint === 'job/list') {
+    return SESSION_PAGES.has(page.kind)
+      && ownKeys(args.request, ['sessionId']) && args.request.sessionId === page.sessionId;
+  }
+  if (endpoint === 'toolResults/watch') {
+    return ['trace', 'view'].includes(page.kind)
+      && ownKeys(args.request, ['sessionId', 'seq'])
+      && args.request.sessionId === page.sessionId
+      && boundedInteger(args.request.seq, 0, Number.MAX_SAFE_INTEGER);
+  }
   if (['session/projections', 'session/follow', 'session/page'].includes(endpoint)) {
     return sessionRequest(page, endpoint, args.request);
   }
-  if (endpoint === 'commands/list') return page.sessionIds.has(args.agent);
+  if (endpoint === 'commands/list') {
+    return Object.keys(args).length === 1 && page.sessionIds.has(args.agentId ?? args.agent);
+  }
+  if (endpoint === 'skills/list') {
+    return SESSION_PAGES.has(page.kind) && ownKeys(args.request, ['sessionId'])
+      && args.request.sessionId === page.sessionId;
+  }
   if (['dshContext/detail', 'dshContext/skills'].includes(endpoint)) {
     return ['context', 'team'].includes(page.kind)
       && page.sessionIds.has(args.sessionId);

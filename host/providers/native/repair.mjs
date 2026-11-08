@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { buildSessionEvents } from './session-events.mjs';
+import { canReadSessionHistory, readSessionHistory } from '../../dsh-session-history.mjs';
 
 const importedTypes = new Set([
   'permission/preset', 'sandbox/mode', 'approval/policy', 'model/selection', 'session/title',
@@ -54,12 +55,13 @@ export function hasMissingImportedHead(events, route, nativeSessionId) {
  * Append-only DSH logs cannot be truncated. Rebuild an idle, import-only copy from completed native turns and retain the old
  * copy in DSH's archive. Real DSH requests, inbox work, unknown events and running sessions are never replaced.
  */
-export function createImportRepair({ persistence, controller, agents, workspaces, links, rebind = async () => undefined }) {
+export function createImportRepair({ persistence, controller = () => undefined, query = () => undefined, agents, workspaces, links, rebind = async () => undefined }) {
+  const services = () => ({ controller: controller(), query: query() });
   return async ({ sessionId: previousId, history, route }) => {
     const registry = workspaces();
-    if (!controller()?.inspect || !registry?.archiveSession || !registry?.unarchiveSession || !history.turns.length) return null;
+    if (!canReadSessionHistory(services()) || !registry?.archiveSession || !registry?.unarchiveSession || !history.turns.length) return null;
     if ((agents()?.get(previousId)?.status ?? 'idle') !== 'idle') return null;
-    const original = await controller().inspect(previousId);
+    const original = await readSessionHistory(services(), previousId);
     if (!original || !(hasImportedContinuations(original.events, route, history.id) ||
         hasMissingImportedHead(original.events, route, history.id))) return null;
     const selection = original.events.findLast((event) => event.type === 'model/selection')?.data;
@@ -84,7 +86,7 @@ export function createImportRepair({ persistence, controller, agents, workspaces
       finally { await handle.close(); }
       await workspace.attachSession(sessionId);
       // Refuse if work began or any event changed while the replacement was being stored.
-      const current = await controller().inspect(previousId);
+      const current = await readSessionHistory(services(), previousId);
       if (current.events.length !== original.events.length || (agents()?.get(previousId)?.status ?? 'idle') !== 'idle') {
         await registry.archiveSession(sessionId);
         return null;

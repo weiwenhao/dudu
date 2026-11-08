@@ -103,7 +103,7 @@ export async function readCodexThread(options, id) {
  * Several threads, each handed to `onThread` as it is read. A thread that fails is skipped, and one that does not answer
  * in time (a very long thread) ends that app-server, which may still be busy with it, so the rest are read by a new one.
  */
-export async function readCodexThreads(options, ids, onThread, { timeoutMs = 25_000 } = {}) {
+export async function readCodexThreads(options, ids, onThread, { timeoutMs = 25_000, onFailure } = {}) {
   const remaining = [...ids];
   while (remaining.length) {
     let restart = false;
@@ -114,6 +114,7 @@ export async function readCodexThreads(options, ids, onThread, { timeoutMs = 25_
           let thread;
           try { thread = (await request('thread/read', { threadId: id, includeTurns: true })).thread; }
           catch (error) {
+            onFailure?.(id, error); // the caller says which conversation could not be read, and why
             if (/did not answer/.test(error.message)) { restart = true; return; }
             continue;
           }

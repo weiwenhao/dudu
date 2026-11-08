@@ -58,6 +58,15 @@ struct TurnNoticeView: View {
         }
     }
 
+    private var failureCode: String? {
+        guard let code = notice.code, !code.isEmpty, code != "INTERRUPTED" else { return nil }
+        func normalized(_ text: String) -> String {
+            text.replacingOccurrences(of: "_", with: " ")
+                .split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
+        }
+        return normalized(code) == normalized(failure) ? nil : code
+    }
+
     var body: some View {
         Group {
             if notice.kind == "retry" {
@@ -65,7 +74,7 @@ struct TurnNoticeView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("重试延迟：\(Int(notice.delayMs ?? 0)) ms")
                         Text("失败原因：\(failure)").textSelection(.enabled)
-                        if let code = notice.code { Text(code).font(.system(.caption, design: .monospaced)) }
+                        if let code = failureCode { Text(code).font(.system(.caption, design: .monospaced)) }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 } label: {
@@ -87,7 +96,7 @@ struct TurnNoticeView: View {
                     Text(["INTERRUPTED", "ACCOUNT_SIGNED_OUT"].contains(notice.code ?? "") ? "任务已停止" : "本轮运行失败")
                         .foregroundStyle(DSBotStyle.chatError)
                     Text(failure).textSelection(.enabled)
-                    if let code = notice.code, code != "INTERRUPTED" {
+                    if let code = failureCode {
                         Text(code).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                     }
                 }
@@ -105,10 +114,11 @@ struct TurnNoticeView: View {
         case "started": title = "已重试模型请求"
         default: title = "正在重试模型请求"
         }
+        let attempt = "\(title)（\(notice.retry ?? 1)/\(notice.maximum.map(String.init) ?? "∞")）"
+        guard notice.state == "scheduled" else { return attempt }
         let delay = notice.delayMs ?? 0
-        let remaining = notice.state == "scheduled"
-            ? (notice.time ?? date.timeIntervalSince1970 * 1000) + delay - date.timeIntervalSince1970 * 1000 : delay
-        return "\(title)（\(notice.retry ?? 1)/\(notice.maximum.map(String.init) ?? "∞")） · \(max(1, Int(ceil(remaining / 1000))))s"
+        let remaining = (notice.time ?? date.timeIntervalSince1970 * 1000) + delay - date.timeIntervalSince1970 * 1000
+        return "\(attempt) · \(max(0, Int(ceil(remaining / 1000))))s"
     }
 }
 
@@ -257,6 +267,7 @@ struct ConversationDiffContent: View {
     @Environment(\.conversationAccess) private var access
     @Environment(\.dismiss) private var dismiss
     @State private var diff: ConversationDiff?
+    @State private var layout: ConversationDiffLayout?
     @State private var failure: String?
     @State private var loading = false
 
@@ -264,10 +275,12 @@ struct ConversationDiffContent: View {
         GeometryReader { viewport in
             ScrollView([.vertical, .horizontal]) {
                 diffContent
-                    .frame(minWidth: max(0, viewport.size.width - 32), alignment: .leading)
+                    .frame(width: max(layout?.width ?? 0, viewport.size.width - 32), alignment: .leading)
+                    .frame(minHeight: max(0, viewport.size.height - 32), alignment: .topLeading)
                     .padding(16)
             }
-            .defaultScrollAnchor(.topLeading)
+            .defaultScrollAnchor(.topLeading, for: .initialOffset)
+            .defaultScrollAnchor(.topLeading, for: .alignment)
             .accessibilityIdentifier("changes.diff")
         }
         .navigationTitle(name)
@@ -295,23 +308,9 @@ struct ConversationDiffContent: View {
                     if diff.coarse == true { Text("逐行对比超时，按整个文件替换显示").padding() }
                     if diff.before == false { Text("本轮新建的文件").padding() }
                     if diff.after == false { Text("本轮删除的文件").padding() }
-                    ForEach(Array((diff.hunks ?? []).enumerated()), id: \.offset) { hunkIndex, hunk in
-                        Text("@@ −\(hunk.oldStart),\(hunk.oldLines) +\(hunk.newStart),\(hunk.newLines) @@")
-                            .foregroundStyle(DSBotStyle.chatSecondary).padding(.vertical, 10)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .accessibilityIdentifier("changes.diff.hunk.\(hunkIndex)")
-                        ForEach(hunk.numberedLines) { line in
-                            HStack(alignment: .top, spacing: 8) {
-                                Text(line.old.map(String.init) ?? "").frame(width: lineNumberWidth, alignment: .trailing)
-                                Text(line.new.map(String.init) ?? "").frame(width: lineNumberWidth, alignment: .trailing)
-                                Text(line.text).fixedSize(horizontal: true, vertical: false)
-                                    .accessibilityIdentifier("changes.diff.line.\(hunkIndex).\(line.id)")
-                            }
-                            .foregroundStyle(line.text.hasPrefix("-") ? DSBotStyle.chatError : DSBotStyle.chatInk)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 2)
-                            .background(line.text.hasPrefix("+") ? Color.green.opacity(0.10)
-                                        : line.text.hasPrefix("-") ? Color.red.opacity(0.08) : Color.clear)
+                    if let layout {
+                        ForEach(layout.rows) { row in
+                            diffRow(row, layout: layout)
                         }
                     }
                     if diff.hunks?.isEmpty == true { Text("两侧内容相同").padding() }
@@ -324,84 +323,28 @@ struct ConversationDiffContent: View {
         .textSelection(.enabled)
     }
 
-    private var lineNumberWidth: CGFloat {
-        let largest = diff?.hunks?.map { max($0.oldStart + $0.oldLines, $0.newStart + $0.newLines) }.max() ?? 0
-        return max(24, CGFloat(String(largest).count) * 7.25 + 6)
-    }
-
-    @MainActor private func load() async {
-        guard let access, !loading else { return }
-        loading = true
-        failure = nil
-        defer { loading = false }
-        do { diff = try await access.read("session.diff", ["seq": .number(seq), "index": .number(Double(index))]) }
-        catch { failure = error.localizedDescription }
-    }
-}
-
-struct ConversationPerformanceButton: View {
-    var turn: Int?
-    var seq: Double?
-    @State private var presented = false
-
-    var body: some View {
-        Button { presented = true } label: {
-            Text(turn == nil ? "性能与用量" : "本轮用量")
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-        }
-            .font(.system(size: 12))
-            .foregroundStyle(DSBotStyle.chatTertiary)
-            .accessibilityIdentifier(turn == nil ? "chat.performance" : "chat.performance.turn")
-            .sheet(isPresented: $presented) { ConversationPerformanceSheet(turn: turn, seq: seq) }
-    }
-}
-
-private struct ConversationPerformanceSheet: View {
-    let turn: Int?
-    let seq: Double?
-    @Environment(\.conversationAccess) private var access
-    @Environment(\.dismiss) private var dismiss
-    @AppStorage("conversation.performance.detailed") private var detailed = false
-    @State private var performance: ConversationPerformance?
-    @State private var failure: String?
-    @State private var loading = false
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                if turn == nil {
-                    Section("性能与用量") {
-                        Picker("性能与用量", selection: $detailed) {
-                            Text("简洁").tag(false)
-                            Text("详细").tag(true)
-                        }.pickerStyle(.segmented)
-                    }
-                }
-                if let performance {
-                    if !performance.metrics.isEmpty {
-                        Section(turn == nil ? "会话统计" : "本轮用量") {
-                            ForEach(performance.metrics, id: \.label) { metric in
-                                LabeledContent(metric.label, value: metric.value)
-                            }
-                        }
-                    }
-                    if !performance.tokenMetrics.isEmpty {
-                        Section("Token 用量") {
-                            ForEach(performance.tokenMetrics, id: \.label) { metric in
-                                LabeledContent(metric.label, value: metric.value)
-                            }
-                        }
-                    }
-                }
-                if loading { ProgressView() }
-                if let failure { ConversationFailureView(message: failure) { Task { await load() } } }
+    @ViewBuilder
+    private func diffRow(_ row: ConversationDiffLayout.Row, layout: ConversationDiffLayout) -> some View {
+        if let line = row.line {
+            HStack(alignment: .top, spacing: 8) {
+                Text(line.old.map(String.init) ?? "").frame(width: layout.lineNumberWidth, alignment: .trailing)
+                Text(line.new.map(String.init) ?? "").frame(width: layout.lineNumberWidth, alignment: .trailing)
+                Text(verbatim: row.text)
+                    .fixedSize()
+                    .accessibilityIdentifier("changes.diff.\(row.id)")
             }
-            .navigationTitle(turn == nil ? "性能与用量" : "本轮用量")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+            .foregroundStyle(row.text.hasPrefix("-") ? DSBotStyle.chatError : DSBotStyle.chatInk)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: layout.lineHeight + 4, alignment: .center)
+            .background(row.text.hasPrefix("+") ? Color.green.opacity(0.10)
+                        : row.text.hasPrefix("-") ? Color.red.opacity(0.08) : Color.clear)
+        } else {
+            Text(verbatim: row.text)
+                .foregroundStyle(DSBotStyle.chatSecondary)
+                .fixedSize()
+                .frame(height: layout.lineHeight + 20, alignment: .center)
+                .accessibilityIdentifier("changes.diff.\(row.id)")
         }
-        .task { await load() }
     }
 
     @MainActor private func load() async {
@@ -409,9 +352,15 @@ private struct ConversationPerformanceSheet: View {
         loading = true
         failure = nil
         defer { loading = false }
-        var params: [String: JSONValue] = [:]
-        if let turn, let seq { params = ["turn": .number(Double(turn)), "seq": .number(seq)] }
-        do { performance = try await access.read("session.performance", params) }
-        catch { failure = error.localizedDescription }
+        do {
+            let result: ConversationDiff = try await access.read("session.diff", ["seq": .number(seq), "index": .number(Double(index))])
+            let prepared = await Task.detached(priority: .userInitiated) { ConversationDiffLayout(result) }.value
+            try Task.checkCancellation()
+            diff = result
+            layout = prepared
+        } catch is CancellationError {
+        } catch {
+            if !Task.isCancelled { failure = error.localizedDescription }
+        }
     }
 }

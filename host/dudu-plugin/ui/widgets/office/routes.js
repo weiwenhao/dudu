@@ -2,48 +2,54 @@
 // feet) and what they must not do is walk over the furniture, or in front of a chair so close that the chair is drawn over their head. The
 // furniture is a list of rectangles of floor; a route goes round them, on a grid that is searched once and then straightened. Pure logic, with
 // no PixiJS: the office (marvis/office.js) walks people along what this returns, and tests/office-routes.test.ts checks it.
-import { DESKS, DOOR, deskAt } from './layout.js';
+import { ADDED_X, BED, BEDS, DESKS, DOOR, MODULES, ORIGINAL_X, PING_PONG, SCENE, TOILET, TREADMILLS, WATER_BAR_Y, chairBottom, deskAt } from './layout.js';
 
 const CELL = 10;
-const MIN_X = -400;
+const MIN_X = Math.floor(SCENE.x / CELL) * CELL;
 const MIN_Y = 0;
-const COLUMNS = 198; // to x 1580
-const ROWS = 90; // to y 900
+const COLUMNS = Math.ceil((SCENE.x + SCENE.width - MIN_X) / CELL);
+const ROWS = Math.ceil(SCENE.height / CELL);
 const PAD = { x: 8, y: 4 }; // a person is not a point: how far from a rectangle their feet stay
 
+const WALL = 12; // half the thickness of the sleeping room's wall, as it is drawn
+const ps5 = MODULES.find((module) => module.name === 'ps5');
+const balcony = MODULES.find((module) => module.name === 'balcony');
+
 /**
- * The floor nobody's feet go on, measured off the pictures: the rest area's furniture (the modules are 398 wide, the original column from
- * x 0, the new one to its left), the walls and what is behind them, and each desk with the chair, whose picture is drawn over whoever stands
- * in front of it (down to where a head clears it). The original column has a wall along its west side (x 62 to 72) with a door in it beside
- * the treadmill, and the leaf of the door stands open into the new column's side; the new column's own west wall has nothing but its shadow
- * outside it. Each is [x0, y0, x1, y1] on the plane.
+ * The floor nobody's feet go on, measured off the pictures: the wall of the sleeping room (the partition wall, which has the door in it) and
+ * its beds, the rest area's furniture (the modules are 398 wide: marvis-office's column from `ORIGINAL_X`, the added one from `ADDED_X`, to
+ * its left), the toilet's walls, and each desk with its chair. The leaf of the door stands open into the sleeping room, hinged at the north
+ * side of the opening. Each is [x0, y0, x1, y1] on the plane.
  */
 const FIXED = [
-  ['top', -400, 0, 1580, 96], // nobody's head is to be above the plane
-  ['bottom', -400, 884, 1580, 900],
-  ['west wall of the new column, and outside it', -400, 0, -330, 900],
-  ['water bar and the wall behind it', 62, 30, 398, 192],
-  ['water bar cabinet', 68, 190, 128, 240],
-  ['treadmill', 130, 335, 305, 482],
-  ['balcony railing, bench and plants', 70, 606, 400, 712],
-  ['ashtray', 208, 712, 238, 782],
-  ['toilet wall', -334, 584, 0, 705],
-  ['toilet', -260, 690, -152, 826],
-  ['ping-pong table', -306, 96, -12, 270],
-  ['TV cabinet', -256, 296, -70, 412],
-  ['coffee table', -226, 418, -100, 486],
-  ['PS5 sofa', -268, 480, -62, 582],
-  ['wall north of the door', 62, 30, 72, DOOR.y0],
-  ['wall south of the door', 62, DOOR.y1, 72, 898],
-  ['open door', -10, DOOR.y0 - 1, 70, DOOR.y0 + 26], // the leaf, hinged at the north side of the opening, standing open to the west
+  ['top', SCENE.x - 40, 0, SCENE.x + SCENE.width + 40, 96], // nobody's head is to be above the plane
+  ['bottom', SCENE.x - 40, SCENE.height - 16, SCENE.x + SCENE.width + 40, SCENE.height],
+  ['wall north of the door', DOOR.x - WALL, 0, DOOR.x + WALL, DOOR.y0],
+  ['wall south of the door', DOOR.x - WALL, DOOR.y1, DOOR.x + WALL, SCENE.height],
+  ['open door', DOOR.x - 76, DOOR.y0 - 1, DOOR.x + 4, DOOR.y0 + 26], // the leaf, standing open to the west
+  ...BEDS.map((bed) => [`bed ${bed.seat}`, bed.x - BED.width / 2, bed.top, bed.x + BED.width / 2, bed.top + BED.height]),
+  ['water bar and the wall behind it', ORIGINAL_X + 62, WATER_BAR_Y, ORIGINAL_X + 398, WATER_BAR_Y + 162],
+  ['water bar cabinet', ORIGINAL_X + 68, WATER_BAR_Y + 160, ORIGINAL_X + 128, WATER_BAR_Y + 210],
+  ...TREADMILLS.map((treadmill, index) => [['treadmill', 'second treadmill', 'third treadmill'][index] ?? `treadmill ${index + 1}`, ORIGINAL_X + 130, treadmill.footprint.y0, ORIGINAL_X + 305, treadmill.footprint.y1]),
+  ['balcony railing, bench and plants', ORIGINAL_X + 70, balcony.y + 22, ORIGINAL_X + 400, balcony.y + 128],
+  ['ashtray', ORIGINAL_X + 208, balcony.y + 128, ORIGINAL_X + 238, balcony.y + 198],
+  ['west wall of the toilet', ADDED_X - 2, TOILET.y, ADDED_X + 68, TOILET.y + TOILET.height],
+  ['toilet wall', TOILET.x + 64, TOILET.y, 0, TOILET.y + 121],
+  ['toilet', TOILET.x + 138, TOILET.y + 106, TOILET.x + 246, TOILET.y + 242],
+  ['ping-pong table', PING_PONG.left - 4, PING_PONG.top, PING_PONG.right + 6, PING_PONG.bottom + 5],
+  ['TV cabinet', ADDED_X + 142, ps5.y + 6, ADDED_X + 328, ps5.y + 122],
+  ['coffee table', ADDED_X + 172, ps5.y + 128, ADDED_X + 298, ps5.y + 196],
+  ['PS5 sofa', ADDED_X + 130, ps5.y + 190, ADDED_X + 336, ps5.y + 292],
 ];
 
 function deskBlocks(seat) {
   const desk = deskAt(seat);
   return [
-    [`desk ${seat}`, desk.x - 6, desk.y - 6, desk.x + 190, desk.y + (desk.boss ? 130 : 108)],
-    // the chair's picture reaches down to desk.y + 148 (170 for the boss's), and its drawing covers a head up to the height of a person above that
-    [`chair ${seat}`, desk.x + 34, desk.y + 56, desk.x + 146, desk.y + (desk.boss ? 280 : 262)],
+    // the desk, from the top of its monitor (behind it nobody stands: the desk's picture is under the people) to the front of the desk
+    [`desk ${seat}`, desk.x - 6, desk.y - 30, desk.x + 190, desk.y + (desk.boss ? 130 : 108)],
+    // the chair, down to its foot: it is drawn over whoever sits in it and under whoever walks past in front of it (marvis/office.js), so the
+    // floor below it is open (the rows of desks are close: that is the way between them)
+    [`chair ${seat}`, desk.x + 34, desk.y + 56, desk.x + 146, chairBottom(seat)],
   ];
 }
 

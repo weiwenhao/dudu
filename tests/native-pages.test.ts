@@ -29,7 +29,7 @@ function createFrontend(assets = new Map()) {
   };
 }
 
-function createHarness({ frontend = createFrontend(), pageRpc = {}, resourceTimeoutMs } = {}) {
+function createHarness({ frontend = createFrontend(), pageRpc = {}, resourceTimeoutMs, streamPollTimeoutMs } = {}) {
   const rpc = {
     async invoke() { return { ok: true, value: {} }; },
     async open() {
@@ -40,7 +40,7 @@ function createHarness({ frontend = createFrontend(), pageRpc = {}, resourceTime
   return {
     frontend,
     pageRpc: rpc,
-    pages: createNativePages({ frontend, pageRpc: rpc, resourceTimeoutMs }),
+    pages: createNativePages({ frontend, pageRpc: rpc, resourceTimeoutMs, streamPollTimeoutMs }),
     connection: { closed: false },
   };
 }
@@ -447,6 +447,64 @@ test('trace follow uses named session-scoped arguments and preserves detailed bo
     endpoint: 'session/follow',
     args: [{ address: sessionAddress(), assistantStream: true }],
   }, connection), { code: 'BAD_REQUEST' });
+});
+
+test('multiplexes seven scoped streams without dropping a result delivered between polls', async () => {
+  const sources = [];
+  const { pages, connection } = createHarness({
+    streamPollTimeoutMs: 5,
+    pageRpc: {
+      async open() {
+        const pending = deferred();
+        const source = { pending, reads: 0 };
+        sources.push(source);
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              next() { source.reads += 1; return pending.promise; },
+              async return() { return { done: true }; },
+            };
+          },
+        };
+      },
+    },
+  });
+  const page = await openPage(pages, connection, 'trace', SESSION_ID);
+  const ids = [];
+  for (let index = 0; index < 7; index += 1) {
+    ids.push((await pages.dispatch('web.stream.open', {
+      id: page.id, endpoint: 'session/follow', args: followArgs(),
+    }, connection)).streamId);
+  }
+  const poll = () => pages.dispatch('web.stream.next', { id: page.id, streamIds: ids }, connection);
+  const waiting = poll();
+  // The production timer is unreferenced; keep the test alive until its short timeout.
+  const keepAlive = setTimeout(() => {}, 1000);
+  try {
+    assert.deepEqual(await waiting, { streams: [] });
+    const event = { type: 'event', seq: 42 };
+    sources[6].pending.resolve({ done: false, value: event });
+    await Promise.resolve();
+    await Promise.resolve();
+    const packet = await poll();
+    assert.deepEqual(packet, { streams: [{ streamId: ids[6], items: [event], done: false }] });
+    assert.deepEqual(sources.map((source) => source.reads), Array(7).fill(1));
+    const other = await openPage(pages, connection, 'trace', SESSION_ID);
+    await assert.rejects(pages.dispatch('web.stream.next', {
+      id: other.id, streamIds: ids,
+    }, connection), { code: 'NOT_FOUND' });
+    for (const streamIds of [[], [ids[0], ids[0]], Array(13).fill(ids[0]), ['invalid']]) {
+      await assert.rejects(pages.dispatch('web.stream.next', {
+        id: page.id, streamIds,
+      }, connection), { code: 'BAD_REQUEST' });
+    }
+    await assert.rejects(pages.dispatch('web.stream.next', {
+      id: page.id, streamIds: ids, streamId: ids[0],
+    }, connection), { code: 'BAD_REQUEST' });
+  } finally {
+    clearTimeout(keepAlive);
+    await pages.closeConnection(connection);
+  }
 });
 
 test('serializes concurrent stream next calls and closes unopened streams without polling', async () => {

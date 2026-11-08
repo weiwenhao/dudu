@@ -1,4 +1,4 @@
-// What the scene draws with: marvis-office's furniture atlas and monitor animations (SOURCE.md), the rest area's new column and the 16 people
+// What the scene draws with: marvis-office's furniture atlas and monitor animations (SOURCE.md), the pictures drawn for the rest area and the sleeping room, and the 16 people
 // of the owner's sheet, whole. The esbuild of the client turns each image into a data URL (scripts/build-client.mjs), so the plugin stays one file.
 import workstationImage from './assets/workstation@2x.webp';
 import workstationSheet from './assets/workstation@2x.webp.json';
@@ -9,6 +9,8 @@ import ps5Module from './assets/modules/ps5.webp';
 import ps5Sofa from './assets/modules/ps5-sofa.webp';
 import balconyModule from './assets/modules/balcony.webp';
 import doorImage from './assets/modules/door.webp';
+import sleepModule from './assets/modules/sleep.webp';
+import sleepFrontImage from './assets/modules/sleep-front.webp';
 import peopleMeta from './assets/people/people.json';
 import mainScreenImage from './assets/screens/fc_screen_working_main.webp';
 import mainScreenSheet from './assets/screens/fc_screen_working_main.webp.json';
@@ -37,8 +39,11 @@ import person13 from './assets/people/person-13.webp';
 import person14 from './assets/people/person-14.webp';
 import person15 from './assets/people/person-15.webp';
 
-/** What was drawn for this widget in the atlas's manner (marvis/SOURCE.md): the new column's modules, the sofa's back and arms, the balcony, and the door. */
-export const MODULE_IMAGES = { pingpong: pingpongModule, ps5: ps5Module, ps5Sofa, balcony: balconyModule, door: doorImage };
+/**
+ * What was drawn for this widget in the atlas's manner (marvis/SOURCE.md): the added column's modules, the sofa's back and arms, the balcony,
+ * the door, and the sleeping room (its floor and beds, and, apart, the blankets, which are drawn over whoever sleeps).
+ */
+export const MODULE_IMAGES = { pingpong: pingpongModule, ps5: ps5Module, ps5Sofa, balcony: balconyModule, door: doorImage, sleep: sleepModule, sleepFront: sleepFrontImage };
 
 export const ATLAS = { image: workstationImage, sheet: workstationSheet };
 export const TICKET = { image: ticketImage, sheet: ticketSheet };

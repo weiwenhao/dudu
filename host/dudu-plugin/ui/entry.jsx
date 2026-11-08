@@ -10,41 +10,62 @@ import { SettingsDialog } from './settings/SettingsDialog.jsx';
 import { SessionsDialog } from './sessions/SessionsDialog.jsx';
 import { ServicesProvider } from './services.jsx';
 import { DIRECT_REGISTRY, REGISTRY } from './widgets/index.js';
+import { warmSessions } from './widgets/data.jsx';
 import { Pet } from './pet/Pet.jsx';
+import { beginPetInteraction, petOwnsOverlay } from './pet/overlays.js';
 import { createWidgetSource, useWidgetCatalog } from './widgets/catalog.jsx';
 import { Button } from './components/button.jsx';
 import { T } from './strings.js';
 import { getLocale, subscribeLocale } from './lib/locale.mjs';
+import { requestDashboard, usePageHistory } from './lib/use-page-history.js';
+import { receiveStatuses, subscribeWorkflow, workflowRevision } from './issues/workflow.js';
 
 export { REGISTRY, createWidgetSource };
 export { connectLocale, getLocale, intlLocale, subscribeLocale } from './lib/locale.mjs';
 export { T } from './strings.js';
-export { Button } from './components/button.jsx';
-export { Input } from './components/input.jsx';
-export { Switch } from './components/switch.jsx';
 export { AgentLogo } from './issues/AgentLogo.jsx';
+export { SidebarAgent } from './sessions/SidebarAgent.jsx';
+export { createSidebarActivity } from './sessions/sidebar-state.js';
+export { installChatAutoHistory } from './lib/auto-chat-history.js';
+export { installSessionHistoryCache } from './lib/session-history-cache.js';
+export { installHarnessStats } from './lib/harness-stats.js';
+export { installIssueHeader, ISSUE_HEADER_SLOT } from './lib/session-header.jsx';
+export function openDashboard() { takeIssueRequest(); requestDashboard(); }
 
 // Replaced by scripts/build-client.mjs with the compiled, `.dudu`-scoped Tailwind output.
 export const css = __DUDU_CSS__;
+
+const notifySettingsChanged = () => window.dispatchEvent(new Event('dudu:settings-changed'));
 
 /**
  * The 嘟嘟 panel: the dashboard (widgets on a grid; Issues fills it until it is pulled smaller), and one issue's page in its place
  * when an issue is opened. `request` is the shell's POST helper; `logo` is the 嘟嘟 mark the shell already carries;
  * `actions.openSession({ sessionId, workspaceId })` opens a session in DSH (the shell knows how).
  */
-export function Page({ request, logo, actions = {}, renderConversation, petInShell = false, registry = DIRECT_REGISTRY, widgetProblems = [], extraSections = {} }) {
+export function Page({ request, logo, actions = {}, renderConversation, renderSessionHeader, renderPermission, petInShell = false, registry = DIRECT_REGISTRY }) {
   useSyncExternalStore(subscribeLocale, getLocale);
-  const [route, setRoute] = useState({ name: 'dashboard' });
+  useSyncExternalStore(subscribeWorkflow, workflowRevision);
+  useEffect(() => {
+    let active = true;
+    request('issues/statuses').then((value) => { if (active) receiveStatuses(value.statuses); }).catch(() => {});
+    return () => { active = false; };
+  }, [request]);
+  // The sessions list is read once, a little after the page is up, so that the session window does not open on a "loading" (it brings it up to date when it opens).
+  useEffect(() => {
+    let stop = () => {};
+    const timer = setTimeout(() => { stop = warmSessions(request); }, 3000);
+    return () => { clearTimeout(timer); stop(); };
+  }, [request]);
+  const { route, openIssue, backToDashboard } = usePageHistory();
   const [settings, setSettings] = useState(false);
   const [sessions, setSessions] = useState(false);
   const [previewIssue, setPreviewIssue] = useState(null);
-  const [version, setVersion] = useState(0); // a change made in the settings (a widget switched on or off) reloads the dashboard
-  const changed = useCallback(() => {
-    setVersion((n) => n + 1);
-    window.dispatchEvent(new Event('dudu:settings-changed'));
+  const [version, setVersion] = useState(0); // settings changes refresh the dashboard and pet
+  useEffect(() => {
+    const changed = () => setVersion((n) => n + 1);
+    window.addEventListener('dudu:settings-changed', changed);
+    return () => window.removeEventListener('dudu:settings-changed', changed);
   }, []);
-  // `ids` is the list the person came from; stepping to the next issue passes none and keeps the one already held.
-  const openIssue = useCallback((id, ids) => setRoute((current) => ({ name: 'issue', id, ids: ids ?? current.ids ?? [] })), []);
   // The pet beside every DSH page asks what is on this one (for "Context") and for an issue to open (from a reminder).
   useEffect(() => { setWhere(route.name === 'issue' ? { page: 'issue', id: route.id } : { page: 'dashboard' }); }, [route.name, route.id]);
   useEffect(() => () => setWhere(null), []);
@@ -53,16 +74,6 @@ export function Page({ request, logo, actions = {}, renderConversation, petInShe
     take();
     return subscribeOpenIssue(take);
   }, [openIssue]);
-  // The sidebar's row for this page, clicked while the page is showing, is the way back to the dashboard from an issue: DSH selects the
-  // panel that is selected already, which changes nothing by itself. (A row is a button named as the page and marked as the current one.)
-  useEffect(() => {
-    const home = (event) => {
-      const row = event.target instanceof Element ? event.target.closest('button[aria-current="page"]') : null;
-      if (row?.getAttribute('aria-label') === T.brand) setRoute({ name: 'dashboard' });
-    };
-    document.addEventListener('click', home);
-    return () => document.removeEventListener('click', home);
-  }, []);
   // A session the harness has on this computer is loaded into DSH first (unless it already lives there), then opened.
   const openNativeSession = useCallback(async (session) => {
     const target = ['claude', 'codex'].includes(session.provider)
@@ -71,15 +82,17 @@ export function Page({ request, logo, actions = {}, renderConversation, petInShe
     await actions.openSession?.(target);
   }, [request, actions]);
   // An issue names its session as `claude:<id>`, `codex:<id>` or `dsh:<id>`.
-  const resolveIssueSession = useCallback(async (issue) => {
+  const resolveIssueSession = useCallback(async (issue, { signal } = {}) => {
     const [provider, ...rest] = String(issue.session ?? '').split(':');
     const id = rest.join(':');
     if (!id) throw new Error('The issue has no session.');
-    const target = await request('issues/resume', { id: issue.id });
+    const prepared = provider === 'dsh' && actions.preparedSession?.(id);
+    if (prepared) return { sessionId: prepared };
+    const target = await request('issues/resume', { id: issue.id }, { signal });
     if (target.sessionId && ['success', 'no_op'].includes(target.outcome)) return target;
     if (provider === 'dsh') return { sessionId: id };
-    return request('sessions/load', { provider, id });
-  }, [request]);
+    return request('sessions/load', { provider, id }, { signal });
+  }, [request, actions]);
   const openIssueSession = useCallback(async (issue) => {
     await actions.openSession?.(await resolveIssueSession(issue));
   }, [actions, resolveIssueSession]);
@@ -93,16 +106,16 @@ export function Page({ request, logo, actions = {}, renderConversation, petInShe
       <ToastProvider>
         <ServicesProvider value={services}>
           {route.name === 'issue' ? (
-            <IssueDetail request={request} id={route.id} ids={route.ids} logo={logo} onBack={() => setRoute({ name: 'dashboard' })} onOpen={openIssue} openSession={openIssueSession} />
+            <IssueDetail request={request} id={route.id} ids={route.ids} logo={logo} onBack={backToDashboard} onOpen={openIssue} openSession={openIssueSession} previewSession={setPreviewIssue} />
           ) : (
             <Dashboard key={version} request={request} registry={registry} onSettings={() => setSettings(true)} onSessions={() => setSessions(true)} />
           )}
           <SessionsDialog open={sessions} onOpenChange={setSessions} />
           {previewIssue && <IssueSessionDialog key={previewIssue.id} issue={previewIssue} resolveSession={resolveIssueSession}
-            actions={actions} renderConversation={renderConversation} onClose={() => setPreviewIssue(null)} />}
+            actions={actions} renderConversation={renderConversation} renderSessionHeader={renderSessionHeader} onClose={() => setPreviewIssue(null)} />}
         </ServicesProvider>
-        <SettingsDialog open={settings} onOpenChange={setSettings} request={request} actions={actions} registry={registry} widgetProblems={widgetProblems} extraSections={extraSections} onChanged={changed} />
-        {!petInShell && <Pet request={request} actions={actions} version={version} suppressed={settings || sessions || Boolean(previewIssue)} />}
+        <SettingsDialog open={settings} onOpenChange={setSettings} request={request} actions={actions} onChanged={notifySettingsChanged} />
+        {!petInShell && <Pet request={request} actions={actions} renderPermission={renderPermission} version={version} suppressed={settings || sessions || Boolean(previewIssue)} onSettings={() => setSettings(true)} />}
       </ToastProvider>
     </Scope>
   );
@@ -125,21 +138,36 @@ export function SlotPage({ widgetSource, renderSlot, request, ...props }) {
     <span>{T.dashboard.loadFailed}</span>
     <Button onClick={() => setAttempt((value) => value + 1)}>{T.retry}</Button>
   </div></Scope>;
-  return synced === 'ready' ? <Page {...props} request={request} registry={catalog.widgets} widgetProblems={catalog.problems} /> : null;
+  return synced === 'ready' ? <Page {...props} request={request} registry={catalog.widgets} /> : null;
 }
 
-export function AssistantOverlay({ request, actions }) {
+export function AssistantOverlay({ request, actions, renderPermission }) {
   useSyncExternalStore(subscribeLocale, getLocale);
+  const [settings, setSettings] = useState(false);
   const [version, setVersion] = useState(0);
   const [suppressed, setSuppressed] = useState(false);
   useEffect(() => {
     const changed = () => setVersion((n) => n + 1);
-    const modal = () => setSuppressed(Boolean(document.querySelector('[aria-modal="true"], [data-dudu-conversation-dialog]')));
+    const modal = () => {
+      for (const menu of document.querySelectorAll('[role="menu"]')) petOwnsOverlay(menu);
+      // A dialog that is kept in the page but not shown (display: none) takes nothing from the pet: it has no boxes to draw, so it is not an open dialog.
+      setSuppressed([...document.querySelectorAll('[aria-modal="true"], [data-dudu-conversation-dialog]')].some((element) => !petOwnsOverlay(element) && element.getClientRects().length > 0));
+    };
+    document.addEventListener('pointerdown', beginPetInteraction, true);
+    document.addEventListener('keydown', beginPetInteraction, true);
     window.addEventListener('dudu:settings-changed', changed);
     const observer = new MutationObserver(modal);
     observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-modal'] });
     modal();
-    return () => { observer.disconnect(); window.removeEventListener('dudu:settings-changed', changed); };
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('pointerdown', beginPetInteraction, true);
+      document.removeEventListener('keydown', beginPetInteraction, true);
+      window.removeEventListener('dudu:settings-changed', changed);
+    };
   }, []);
-  return <Scope floating><Pet request={request} actions={actions} version={version} suppressed={suppressed} /></Scope>;
+  return <Scope floating>
+    <Pet request={request} actions={actions} renderPermission={renderPermission} version={version} suppressed={settings || suppressed} onSettings={() => setSettings(true)} />
+    <SettingsDialog open={settings} onOpenChange={setSettings} request={request} actions={actions} onChanged={notifySettingsChanged} />
+  </Scope>;
 }

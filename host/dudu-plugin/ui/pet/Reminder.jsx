@@ -1,11 +1,12 @@
 import { CalendarDays, User, X } from 'lucide-react';
+import { useEffect } from 'react';
 import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
 import { AgentLogo } from '../issues/AgentLogo.jsx';
 import { agentLogo } from '../issues/agent-logos.js';
 import { AGENT_NAMES } from '../issues/model.js';
 
-// In Review uses the issue's status word; only failures retain a separate red activity mark.
+// In Review uses the issue's status word; a worker that is stuck or failed keeps a separate amber activity mark (the colour of Blocked).
 function Mark({ reminder }) {
   if (reminder.kind === 'overdue') return <span className="inline-flex size-5 shrink-0 items-center justify-center text-danger-foreground" aria-hidden="true"><CalendarDays className="size-3.5" /></span>;
   const { agent, kind } = reminder;
@@ -13,15 +14,19 @@ function Mark({ reminder }) {
   return (
     <span className="relative inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground" aria-hidden="true" data-agent={agent ?? ''}>
       {!agent ? <User className="size-3" /> : agentLogo(agent) ? <AgentLogo agent={agent} className="size-3" /> : <span className="text-[10px] leading-none">{name.slice(0, 1).toUpperCase()}</span>}
-      {kind === 'stuck' && <span className="absolute -right-0.5 -bottom-0.5 size-[9px] rounded-full bg-destructive ring-2 ring-card" />}
+      {['blocked', 'stuck'].includes(kind) && <span className="absolute -right-0.5 -bottom-0.5 size-[9px] rounded-full bg-warning ring-2 ring-card" />}
     </span>
   );
 }
 
 /** What the pet says by itself: why now, which issue, the words themselves, the way in. One at a time; `more` counts those waiting. */
 export function Reminder({ reminder, more, onClose, onOpen }) {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 10_000);
+    return () => clearTimeout(timer);
+  }, [reminder.key, onClose]);
   const overdue = reminder.kind === 'overdue';
-  const word = overdue ? T.overdue(reminder.daysLate ?? 1) : T.agentState[reminder.kind];
+  const word = overdue ? T.overdue(reminder.daysLate ?? 1) : reminder.kind === 'needs_you' ? T.status.in_review : T.agentState[reminder.kind === 'stuck' ? 'blocked' : reminder.kind];
   return (
     <div className="dudu-pet-reminder" role="status" data-reminder-kind={reminder.kind}>
       <div className="dudu-pet-reminder-head">

@@ -240,7 +240,8 @@ test('comments preserve an agent question; Done asks how it went; a saved agent 
   assert.equal(assigned.agent, 'codex');
   assert.equal(assigned.ref, 'ISS-1');
   const properties = page.getByRole('complementary', { name: 'Properties' });
-  assert.equal(await properties.getByRole('button', { name: 'ChatGPT', exact: true }).isDisabled(), true);
+  const assignedAgent = properties.getByRole('button', { name: /^ChatGPT(?: · Open session)?$/ });
+  assert.equal(await assignedAgent.isDisabled(), !assigned.session, 'a saved assignment opens its session when available and never reopens the agent picker');
   assert.equal(await properties.getByRole('button', { name: 'Issue checks', exact: true }).isDisabled(), true);
   await page.getByRole('button', { name: 'Copy ID' }).click();
   await toast(page, `Copied ${assigned.ref}`).waitFor();
@@ -304,8 +305,12 @@ test('a draft agent can change before the issue is created', async () => {
   const page = await dudu.openPanel();
   await issues(page).getByRole('button', { name: 'New issue', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New issue', exact: true });
-  await dialog.getByRole('button', { name: 'No agent', exact: true }).click();
+  // The project comes first and the agent only once there is one: no box that chooses both (owner, 2026-11-06)
+  assert.equal(await dialog.getByRole('button', { name: 'No agent', exact: true }).count(), 0, 'no agent to choose until there is a project');
+  await dialog.getByRole('button', { name: 'Choose a project', exact: true }).click();
   await page.getByRole('option', { name: /Draft selection/ }).click();
+  await dialog.getByRole('button', { name: 'No agent', exact: true }).click();
+  assert.equal(await page.locator('[data-slot="popover-content"]').getByText('Draft selection').count(), 0, 'and its list holds agents only, no project to switch to');
   await page.getByRole('option', { name: 'Claude', exact: true }).click();
   await dialog.getByRole('button', { name: 'Claude', exact: true }).click();
   await page.getByRole('option', { name: 'ChatGPT', exact: true }).click();

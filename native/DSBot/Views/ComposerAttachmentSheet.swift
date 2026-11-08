@@ -31,14 +31,15 @@ struct ComposerAttachmentSheet: View {
         static let maximumHeight: CGFloat = 600
 
         /// Height of the model chip's page: the model list and, when it has levels, the level list.
-        static func height(modelRows: Int, effortRows: Int) -> CGFloat {
+        static func height(modelRows: Int, effortRows: Int, modelGroups: Int = 1) -> CGFloat {
             let levels = effortRows > 0 ? sectionGap + sectionHeader + CGFloat(effortRows) * rowHeight : 0
-            return min(titleBlock + CGFloat(max(1, modelRows)) * rowHeight + levels + bottomInset + 16, maximumHeight)
+            let sources = modelGroups > 1 ? CGFloat(modelGroups) * sectionHeader + CGFloat(modelGroups - 1) * sectionGap : 0
+            return min(titleBlock + sources + CGFloat(max(1, modelRows)) * rowHeight + levels + bottomInset + 16, maximumHeight)
         }
 
         /// Content height of the root page; the sheet adds the bottom safe area itself.
-        static func height(commandRows: Int) -> CGFloat {
-            let content = titleBlock + tileSize + tileGap + 2 * rowHeight + sectionGap
+        static func height(commandRows: Int, primaryRows: Int = 2) -> CGFloat {
+            let content = titleBlock + tileSize + tileGap + CGFloat(primaryRows) * rowHeight + sectionGap
                 + sectionHeader + CGFloat(commandRows) * rowHeight + bottomInset
             return min(content, maximumHeight)
         }
@@ -55,6 +56,9 @@ struct ComposerAttachmentSheet: View {
     let onGoal: () -> Void
     let onPlan: () -> Void
     let onCompact: () -> Void
+    let contextOn: Bool
+    let contextAvailable: Bool
+    let onContext: (() -> Void)?
     let onStopTask: () -> Void
     let onClose: () -> Void
 
@@ -72,6 +76,9 @@ struct ComposerAttachmentSheet: View {
         onGoal: @escaping () -> Void,
         onPlan: @escaping () -> Void,
         onCompact: @escaping () -> Void,
+        contextOn: Bool = false,
+        contextAvailable: Bool = false,
+        onContext: (() -> Void)? = nil,
         onStopTask: @escaping () -> Void,
         onClose: @escaping () -> Void
     ) {
@@ -83,6 +90,9 @@ struct ComposerAttachmentSheet: View {
         self.onGoal = onGoal
         self.onPlan = onPlan
         self.onCompact = onCompact
+        self.contextOn = contextOn
+        self.contextAvailable = contextAvailable
+        self.onContext = onContext
         self.onStopTask = onStopTask
         self.onClose = onClose
         _page = State(initialValue: initialPage)
@@ -106,6 +116,7 @@ struct ComposerAttachmentSheet: View {
             }
             .scrollIndicators(.hidden)
             .scrollBounceBehavior(.basedOnSize)
+            .accessibilityIdentifier("composer.sheet.content")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Self.background)
@@ -188,32 +199,25 @@ struct ComposerAttachmentSheet: View {
         case .root:
             VStack(alignment: .leading, spacing: 0) {
                 tileRow
-                goalAndPlanCard.padding(.top, Layout.tileGap)
+                if store.isAssistantConversation {
+                    VStack(spacing: 0) {
+                        commandRow(icon: .context, title: "上下文", value: store.assistantPageContext?.label,
+                                   showsChevron: false, isSelected: contextOn, identifier: "composer.assistant.context",
+                                   isEnabled: contextOn || contextAvailable) { onContext?() }
+                    }
+                    .background(Self.card, in: RoundedRectangle(cornerRadius: Layout.cardRadius, style: .continuous))
+                    .padding(.top, Layout.tileGap)
+                } else {
+                    goalAndPlanCard.padding(.top, Layout.tileGap)
+                }
                 sectionTitle("指令")
                 commandCard
             }
         case .models:
-            choiceList(
-                store.models.map { ($0.id, $0.name) },
-                selected: store.selectedModelId,
-                empty: "暂无可选模型",
-                identifierPrefix: "composer.model."
-            ) { id in
-                DSBotLog.record("model.select")
-                onClose()
-                Task { await store.configure(modelId: id) }
-            }
+            modelList(closesOnSelection: true)
         case .modelSettings:
             VStack(alignment: .leading, spacing: 0) {
-                choiceList(
-                    store.models.map { ($0.id, $0.name) },
-                    selected: store.selectedModelId,
-                    empty: "暂无可选模型",
-                    identifierPrefix: "composer.model."
-                ) { id in
-                    DSBotLog.record("model.select")
-                    Task { await store.configure(modelId: id) }
-                }
+                modelList(closesOnSelection: false)
                 if !store.currentEfforts.isEmpty {
                     sectionTitle("推理等级")
                     choiceList(
@@ -289,13 +293,11 @@ struct ComposerAttachmentSheet: View {
         VStack(spacing: 0) {
             commandRow(
                 icon: .goal, title: "目标",
-                subtitle: store.goal == nil ? "设置或查看长期任务目标" : "编辑进行中的目标",
                 showsChevron: false, identifier: "composer.goal", isEnabled: true
             ) { onGoal() }
             separator
             commandRow(
                 icon: .plan, title: store.planMode ? "退出计划模式" : "计划",
-                subtitle: store.planMode ? "计划模式已开启" : "进入或退出计划模式",
                 showsChevron: false, isSelected: store.planMode,
                 identifier: "composer.plan", isEnabled: !store.isChangingPlanMode
             ) { onPlan() }
@@ -306,25 +308,25 @@ struct ComposerAttachmentSheet: View {
     private var commandCard: some View {
         VStack(spacing: 0) {
             commandRow(
-                icon: .compact, title: "压缩", subtitle: "压缩以上对话内容",
+                icon: .compact, title: "压缩",
                 showsChevron: false, identifier: "composer.compact", isEnabled: !isTaskRunning
             ) { onCompact() }
             separator
             commandRow(
-                icon: .permission, title: "权限", subtitle: "切换权限预设",
+                icon: .permission, title: "权限",
                 value: selectedName(store.permissions.map { ($0.id, $0.name) }, store.selectedPermissionId),
                 identifier: "composer.menu.permission", isEnabled: !store.permissions.isEmpty
             ) { page = .permissions }
             separator
             commandRow(
-                icon: .model, title: "模型", subtitle: "选择本会话使用的模型",
-                value: selectedName(store.models.map { ($0.id, $0.name) }, store.selectedModelId),
+                icon: .model, title: "模型",
+                value: store.currentModelName,
                 identifier: "composer.menu.model", isEnabled: !store.models.isEmpty
             ) { page = .models }
             if !store.currentEfforts.isEmpty {
                 separator
                 commandRow(
-                    icon: .think, title: "推理等级", subtitle: "调整思考的深度",
+                    icon: .think, title: "推理等级",
                     value: store.effortName,
                     identifier: "composer.menu.effort", isEnabled: true
                 ) { page = .efforts }
@@ -332,7 +334,7 @@ struct ComposerAttachmentSheet: View {
             if isTaskRunning {
                 separator
                 commandRow(
-                    icon: .stop, title: "停止任务", subtitle: nil, showsChevron: false,
+                    icon: .stop, title: "停止任务", showsChevron: false,
                     identifier: "composer.stop", isEnabled: true
                 ) {
                     DSBotLog.record("session.stop")
@@ -344,13 +346,13 @@ struct ComposerAttachmentSheet: View {
         .background(Self.card, in: RoundedRectangle(cornerRadius: Layout.cardRadius, style: .continuous))
     }
 
-    private func sectionTitle(_ title: String) -> some View {
+    private func sectionTitle(_ title: String, isFirst: Bool = false) -> some View {
         Text(title)
             .font(.system(size: 14, weight: .medium))
             .foregroundStyle(DSBotStyle.muted)
             .padding(.leading, 24)
-            .padding(.top, Layout.sectionGap)
-            .frame(height: Layout.sectionHeader + Layout.sectionGap, alignment: .bottomLeading)
+            .padding(.top, isFirst ? 0 : Layout.sectionGap)
+            .frame(height: Layout.sectionHeader + (isFirst ? 0 : Layout.sectionGap), alignment: .bottomLeading)
             .accessibilityAddTraits(.isHeader)
     }
 
@@ -365,7 +367,6 @@ struct ComposerAttachmentSheet: View {
     private func commandRow(
         icon: DSBotGlyph,
         title: String,
-        subtitle: String?,
         value: String? = nil,
         showsChevron: Bool = true,
         isSelected: Bool = false,
@@ -378,17 +379,9 @@ struct ComposerAttachmentSheet: View {
                 DSBotIcon(icon, size: 24)
                     .frame(width: 24, height: 24)
                     .padding(.leading, 15)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 17))
-                    if let subtitle {
-                        Text(subtitle)
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(DSBotStyle.muted)
-                            .lineLimit(1)
-                    }
-                }
-                .padding(.leading, 13)
+                Text(title)
+                    .font(.system(size: 17))
+                    .padding(.leading, 13)
                 Spacer(minLength: 12)
                 if let value {
                     Text(value)
@@ -415,7 +408,7 @@ struct ComposerAttachmentSheet: View {
         .buttonStyle(ComposerSheetPressStyle())
         .disabled(!isEnabled)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(subtitle.map { "\(title)，\($0)" } ?? title)
+        .accessibilityLabel(title)
         .accessibilityValue(value ?? "")
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -423,6 +416,33 @@ struct ComposerAttachmentSheet: View {
     }
 
     // MARK: Choice pages
+
+    private func modelList(closesOnSelection: Bool) -> some View {
+        let groups = store.currentModelGroups
+        return VStack(alignment: .leading, spacing: 0) {
+            if groups.isEmpty {
+                modelChoices([], closesOnSelection: closesOnSelection)
+            } else {
+                ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
+                    if groups.count > 1 { sectionTitle(group.name, isFirst: index == 0) }
+                    modelChoices(group.models, closesOnSelection: closesOnSelection)
+                }
+            }
+        }
+    }
+
+    private func modelChoices(_ models: [Choice], closesOnSelection: Bool) -> some View {
+        choiceList(
+            models.map { ($0.id, $0.name) },
+            selected: store.selectedModelId,
+            empty: "暂无可选模型",
+            identifierPrefix: "composer.model."
+        ) { id in
+            DSBotLog.record("model.select")
+            if closesOnSelection { onClose() }
+            Task { await store.configure(modelId: id) }
+        }
+    }
 
     private func choiceList(
         _ choices: [(id: String, name: String)],

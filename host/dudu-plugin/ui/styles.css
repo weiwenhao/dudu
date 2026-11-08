@@ -13,6 +13,12 @@
 /* DSH marks dark mode on <body>; the `dark:` classes of shadcn follow it. */
 @custom-variant dark (&:is(body[data-ds-dark-theme] *));
 
+/* DSH's focus.css hides the ring after pointer input, but a key press (Esc or Enter closing a menu, which hands the focus back to its button) brings the ring back on a
+ * button the person never tabbed to (owner, 2026-11-08: a blue frame round the sessions icon, "很多地方都有"). Ours: a ring on a button only while the person is moving with
+ * the Tab key (`lib/tab-focus.js` marks the root `data-dudu-tabbing` from a Tab until the next click or Esc); editable fields keep their focus feedback always.
+ * Rules written in plain CSS use the same condition: `:where(html[data-dudu-tabbing] *)` on the element itself (the build puts `.dudu` in front of the whole selector). */
+@custom-variant focus-visible (&:focus-visible:where(:read-write, html[data-dudu-tabbing] *));
+
 /* shadcn's variables, filled from DSH's own tokens (--dsw-*) so colours and theme follow DSH. The literals are the light
  * values, used only if a token is missing. Selectors here are written bare: the build puts `.dudu` in front of each, and
  * turns `:root` into `.dudu` itself (the one rule that is already scoped by hand is the dark-mode one). */
@@ -54,6 +60,15 @@
   --dudu-success: #177a3c;
   --dudu-shadow: #0f111514;
   --dudu-chatgpt-color: #030303;
+  --scrollbar-thumb: #00000047;
+  /* The seven tones of a letter avatar (background, letter): one for each name, the same on the phone (ConnectorAvatar.swift). */
+  --tone-0-bg: #e8f0fe; --tone-0-fg: #2f5fd0;
+  --tone-1-bg: #e6f4ea; --tone-1-fg: #177a3c;
+  --tone-2-bg: #fdf1d6; --tone-2-fg: #8a5300;
+  --tone-3-bg: #fce8ec; --tone-3-fg: #b3294a;
+  --tone-4-bg: #eee9fd; --tone-4-fg: #5b3fc4;
+  --tone-5-bg: #e0f4f3; --tone-5-fg: #0f766e;
+  --tone-6-bg: #eceef1; --tone-6-fg: #4b5563;
   font-family: var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Arial, sans-serif);
   font-size: 13px;
   line-height: 20px;
@@ -69,6 +84,14 @@ body[data-ds-dark-theme] .dudu {
   --dudu-success: #22c55e;
   --dudu-shadow: #00000066;
   --dudu-chatgpt-color: var(--foreground);
+  --scrollbar-thumb: #ffffff52;
+  --tone-0-bg: #26324d; --tone-0-fg: #8fb0ff;
+  --tone-1-bg: #1f3a2b; --tone-1-fg: #6fd18c;
+  --tone-2-bg: #413319; --tone-2-fg: #f5b94a;
+  --tone-3-bg: #4a2530; --tone-3-fg: #f08aa4;
+  --tone-4-bg: #342f52; --tone-4-fg: #b7a6ff;
+  --tone-5-bg: #1d3b3a; --tone-5-fg: #5fd6cc;
+  --tone-6-bg: #30343b; --tone-6-fg: #aeb5c0;
 }
 
 @theme inline {
@@ -130,29 +153,38 @@ button:disabled:not(:where(.dudu-host-conversation *)) { cursor: default; }
 a:not(:where(.dudu-host-conversation *)) { color: inherit; text-decoration: inherit; }
 svg:not(:where(.dudu-host-conversation *)) { display: block; }
 
+/* A scroll bar is for scrolling: not drawn while the content rests, shown while it is being scrolled (lib/quiet-scrollbars.js marks the
+ * element that is, with data-scrolling). The first rule is as weak as the reset above, so a utility can still say otherwise. */
+*:not(:where(.dudu-host-conversation, .dudu-host-conversation *)) { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+[data-scrolling]:not(:where(.dudu-host-conversation *)) { scrollbar-color: var(--scrollbar-thumb) transparent; }
+
 /* The settings design uses the larger switch, with the same Radix keyboard and focus behavior. */
-.dudu-settings input, .dudu-settings textarea { background: var(--card); }
 .dudu-settings [data-slot="switch"] { width: 40px; height: 24px; padding: 2px; border: 0; }
 .dudu-settings [data-slot="switch-thumb"] { width: 20px; height: 20px; translate: 0; transform: none; background: var(--background); }
 .dudu-settings [data-slot="switch"][data-state="checked"] [data-slot="switch-thumb"] { translate: 16px 0; }
-.dudu-settings [data-slot="button"].border { height: 30px; padding-right: 14px; padding-left: 14px; border-radius: 10px; box-shadow: none; }
-.dudu-settings .dudu-connector-actions [data-slot="button"] { height: 26px; padding: 0 10px; border-radius: 8px; font-size: 12px; }
 
-/* The existing phone/provider forms also sit inside the settings design, using the same shadcn controls. */
-.dsbot-settings--embedded { padding: 0; font-size: 13px; line-height: 20px; }
-.dsbot-settings--embedded > h2 { display: none; }
-.dsbot-settings--embedded h3 { margin: 22px 4px 8px; font-size: 13px; line-height: 20px; font-weight: 600; }
-.dsbot-settings--embedded .dudu-provider-section:first-of-type h3 { margin-top: 0; }
-.dsbot-settings--embedded .dsbot-settings-row { display: flex; min-height: 60px; gap: 14px; padding: 16px 20px; border: 1px solid var(--border); border-radius: 20px; }
-.dsbot-settings--embedded .dsbot-field-title { flex-shrink: 0; min-width: 90px; font-size: 14px; font-weight: 600; }
-.dsbot-settings--embedded .dsbot-settings-row > :last-child { min-width: 0; flex: 1; }
-.dsbot-settings--embedded .dsbot-settings-row > [data-slot="switch"] { flex: none; margin-left: auto; }
-.dsbot-settings--embedded .dsbot-address-field { flex: 1; min-width: 0; gap: 8px; }
-.dsbot-settings--embedded .dsbot-input { min-width: 0; height: 32px; border-radius: 10px; padding: 5px 10px; font-size: 13px; }
-.dsbot-settings--embedded .dsbot-button { height: 30px; border-radius: 10px; box-shadow: none; }
-.dsbot-settings--embedded [data-slot="button"].bg-primary { background: var(--dudu-strong); color: var(--dudu-on); }
-.dsbot-settings--embedded .dsbot-addresses, .dsbot-settings--embedded .dudu-provider-card { overflow: hidden; border: 1px solid var(--border); border-radius: 20px; }
-.dsbot-settings--embedded .dsbot-addresses .dsbot-settings-row, .dsbot-settings--embedded .dudu-provider-card .dsbot-settings-row { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
-.dsbot-settings--embedded .dsbot-addresses .dsbot-settings-row:first-child, .dsbot-settings--embedded .dudu-provider-card .dsbot-settings-row:first-child { border-top: 0; }
-.dsbot-settings--embedded .dsbot-device { min-height: 76px; padding: 16px 20px; border: 1px solid var(--border); border-radius: 20px; }
-.dsbot-settings--embedded .dsbot-actions { margin-top: 12px; }
+/* The description editor (issues/RichText.jsx): Tiptap's document in the page's own type, 15px on 24px, with the headings, lists, quote and code of the Markdown it keeps. */
+.dudu-rich { outline: none; min-width: 0; max-width: 100%; min-height: 24px; font-size: 15px; line-height: 24px; overflow-wrap: anywhere; }
+.dudu-rich > * + * { margin-top: 8px; }
+.dudu-rich p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: var(--muted-foreground); float: left; height: 0; pointer-events: none; }
+.dudu-rich h1 { margin-top: 16px; font-size: 20px; line-height: 28px; font-weight: 600; }
+.dudu-rich h2 { margin-top: 14px; font-size: 17px; line-height: 24px; font-weight: 600; }
+.dudu-rich h3 { margin-top: 12px; font-size: 15px; line-height: 22px; font-weight: 600; }
+.dudu-rich ul:not([data-type="taskList"]) { list-style: disc; padding-left: 20px; }
+.dudu-rich ol { list-style: decimal; padding-left: 20px; }
+.dudu-rich li::marker { color: var(--muted-foreground); }
+.dudu-rich li > p { margin: 0; }
+.dudu-rich li > * + * { margin-top: 4px; }
+.dudu-rich ul[data-type="taskList"] { list-style: none; padding-left: 0; }
+.dudu-rich ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 8px; }
+.dudu-rich ul[data-type="taskList"] li > label { flex: none; margin-top: 4px; user-select: none; }
+.dudu-rich ul[data-type="taskList"] li > label input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); cursor: pointer; }
+.dudu-rich ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
+.dudu-rich ul[data-type="taskList"] li[data-checked="true"] > div { color: var(--muted-foreground); text-decoration: line-through; }
+.dudu-rich blockquote { border-left: 2px solid var(--border); padding-left: 14px; color: var(--muted-foreground); }
+.dudu-rich code { border-radius: 4px; background: var(--muted); padding: 1px 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.dudu-rich pre { overflow: auto; border-radius: 8px; background: var(--muted); padding: 10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 20px; }
+.dudu-rich pre code { border-radius: 0; background: transparent; padding: 0; }
+.dudu-rich hr { margin: 16px 0; border: 0; border-top: 1px solid var(--border); }
+.dudu-rich a { overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.dudu-rich ::selection { background: color-mix(in oklab, var(--primary) 18%, transparent); }

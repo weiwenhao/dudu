@@ -1,25 +1,38 @@
+import { ISSUE_AGENT_STATES } from '../sessions/work-state.mjs';
+import { LABEL_COLORS } from './labels.mjs';
+
 const text = { type: 'string' };
 const time = { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
 const nullable = (schema) => ({ anyOf: [schema, { type: 'null' }] });
 const object = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const list = (items) => ({ type: 'array', items, maxItems: 100 });
 const choice = (values) => ({ type: 'string', enum: values });
-const statuses = ['backlog', 'todo', 'in_progress', 'in_review', 'done', 'canceled'];
+const statusId = { ...text, minLength: 1, maxLength: 100, description: 'Stable workflow status id from issues/statuses, including custom statuses.' };
+const statusCategory = choice(['backlog', 'unstarted', 'started', 'completed', 'canceled']);
+const statusFields = {
+  name: { ...text, minLength: 1, maxLength: 80 }, color: nullable({ ...text, pattern: '^#[0-9a-fA-F]{6}$' }),
+  description: { ...text, maxLength: 500 },
+};
 const groups = ['status', 'priority', 'agent', 'agentState', 'project'];
 export const ISSUE_ID = { anyOf: [{ type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER }, { type: 'string', pattern: '^#?(?:[1-9][0-9]{0,14}|[A-Za-z]{1,3}-[1-9][0-9]{0,14})$' }] };
 export const ISSUE_PROJECT = nullable(object({ name: { ...text, minLength: 1, maxLength: 200 }, path: nullable({ ...text, maxLength: 1000 }) }, ['name']));
 export const ISSUE_FIELDS = object({
   title: { ...text, minLength: 1, maxLength: 300 }, brief: { ...text, maxLength: 20000 },
-  status: choice(statuses), ask: { ...text, maxLength: 2000 }, priority: choice(['none', 'urgent', 'high', 'medium', 'low']),
+  status: statusId, ask: { ...text, maxLength: 2000 }, priority: choice(['none', 'urgent', 'high', 'medium', 'low']),
   impact: nullable({ type: 'integer', minimum: 1, maximum: 3 }), effort: nullable(choice(['s', 'm', 'l'])),
   kind: { ...text, maxLength: 100 }, project: ISSUE_PROJECT, dueAt: nullable(time), snoozeUntil: nullable(time),
   agent: nullable({ ...text, maxLength: 100 }), session: nullable({ ...text, maxLength: 300 }), outcome: nullable({ ...text, maxLength: 4000 }),
   source: choice(['owner', 'dudu', 'connector', 'session']), sourceRef: { ...text, maxLength: 2000 },
+  agentState: nullable(choice(['idle', 'blocked'])),
+  labels: list({ type: 'integer', minimum: 1 }), // ids of labels (issues/labels), each once
+  parent: nullable({ type: 'integer', minimum: 1 }), // the issue this one is a sub-issue of
 });
 const filter = {
+  label: list({ type: 'integer', minimum: 1 }),
   status: list(ISSUE_FIELDS.properties.status), priority: list(ISSUE_FIELDS.properties.priority),
-  project: list(nullable(text)), agent: list(nullable(text)), agentState: list(choice(['working', 'needs_you', 'stuck', 'idle'])),
+  project: list(nullable(text)), agent: list(nullable(text)), agentState: list(choice(ISSUE_AGENT_STATES)),
   source: list(ISSUE_FIELDS.properties.source), q: text,
+  hasQuestion: { type: 'boolean' },
   ...Object.fromEntries(['dueFrom', 'dueTo', 'createdFrom', 'createdTo', 'updatedFrom', 'updatedTo', 'completedFrom'].map((name) => [name, time])),
 };
 const view = object({
@@ -29,7 +42,22 @@ const view = object({
 });
 const meta = { reason: { ...text, maxLength: 2000 }, groupId: nullable(text) };
 const target = { anyOf: [{ type: 'integer', minimum: 1 }, object({ eventId: { type: 'integer', minimum: 1 }, groupId: text })] };
+const promptAttachment = { anyOf: [
+  object({ type: { const: 'image' }, mediaType: choice(['image/png', 'image/jpeg', 'image/webp', 'image/gif']), data: { ...text, minLength: 1 }, name: text }, ['type', 'mediaType', 'data']),
+  object({ type: { const: 'file' }, receiptId: { ...text, pattern: '^[\\x21-\\x7e]{1,512}$' } }, ['type', 'receiptId']),
+] };
 export const ISSUE_REQUESTS = {
+  statuses: object({}),
+  labels: object({}),
+  'label-add': object({ fields: object({ name: { ...text, minLength: 1, maxLength: 50 }, color: choice(LABEL_COLORS) }, ['name']) }, ['fields']),
+  'label-update': object({ id: { type: 'integer', minimum: 1 }, patch: object({ name: { ...text, minLength: 1, maxLength: 50 }, color: choice(LABEL_COLORS) }) }, ['id', 'patch']),
+  'label-remove': object({ id: { type: 'integer', minimum: 1 } }, ['id']),
+  'link-add': object({ id: ISSUE_ID, fields: object({ url: { ...text, minLength: 1, maxLength: 2000 }, title: { ...text, maxLength: 200 }, kind: choice(['link', 'pull_request', 'document']) }, ['url']), ...meta }, ['id', 'fields']),
+  'link-remove': object({ id: ISSUE_ID, linkId: { type: 'integer', minimum: 1 }, ...meta }, ['id', 'linkId']),
+  'status-add': object({ fields: object({ ...statusFields, category: statusCategory }, ['name', 'category']) }, ['fields']),
+  'status-update': object({ id: statusId, patch: object({ ...statusFields, isDefault: { const: true } }) }, ['id', 'patch']),
+  'status-remove': object({ id: statusId, replacement: statusId }, ['id']),
+  'status-order': object({ category: statusCategory, ids: list(statusId) }, ['category', 'ids']),
   schema: object({}),
   office: object({}), list: view, facets: view, counts: object({}), export: object({}),
   get: object({ id: ISSUE_ID, logLimit: { type: 'integer', minimum: 1, maximum: 200 }, logCursor: { type: 'integer', minimum: 1 } }, ['id']),
@@ -37,7 +65,10 @@ export const ISSUE_REQUESTS = {
   update: object({ id: ISSUE_ID, patch: ISSUE_FIELDS, ...meta }, ['id', 'patch']),
   assign: object({ id: ISSUE_ID, agent: ISSUE_FIELDS.properties.agent, session: ISSUE_FIELDS.properties.session, project: ISSUE_PROJECT, ...meta }, ['id', 'agent']),
   log: object({ id: ISSUE_ID, kind: choice(['source', 'priority', 'due', 'assign', 'status', 'progress', 'decision', 'blocked', 'session', 'result', 'note']), text, data: {}, ...meta }, ['id', 'kind', 'text']),
-  message: object({ id: ISSUE_ID, text: { ...text, minLength: 1, maxLength: 20000 } }, ['id', 'text']),
+  message: object({ id: ISSUE_ID, text: { ...text, maxLength: 20000 },
+    attachmentIds: list({ ...text, minLength: 1, maxLength: 100 }), requestId: { ...text, minLength: 1, maxLength: 100 } }, ['id', 'text']),
+  forward: object({ id: ISSUE_ID, session: text, text: { ...text, minLength: 1, maxLength: 20000 }, attachments: list(promptAttachment), retryEntry: { type: 'integer', minimum: 1 } }, ['id', 'text']),
+  recipients: object({ q: { ...text, maxLength: 300 }, limit: { type: 'integer', minimum: 1, maximum: 200 } }),
   reply: object({ id: ISSUE_ID, text, ...meta }, ['id', 'text']),
   complete: object({ id: ISSUE_ID, outcome: text, ...meta }, ['id']),
   cancel: object({ id: ISSUE_ID, ...meta }, ['id']),
@@ -46,6 +77,7 @@ export const ISSUE_REQUESTS = {
   forget: object({ id: ISSUE_ID, token: text }, ['id']),
   delete: object({ id: ISSUE_ID, token: text }, ['id']),
   session: object({ id: ISSUE_ID }, ['id']),
+  source: object({ id: ISSUE_ID }, ['id']),
   search: object({ q: text, limit: { type: 'integer', minimum: 1, maximum: 200 }, tab: choice(['active', 'backlog', 'all']) }, ['q']),
   events: object({ issueId: ISSUE_ID, limit: { type: 'integer', minimum: 1, maximum: 500 }, cursor: { type: 'integer', minimum: 1 } }),
 };
@@ -68,7 +100,15 @@ export function issueApiDocument() {
       Issue: { ...ISSUE_FIELDS, properties: {
         ...ISSUE_FIELDS.properties, id: { type: 'integer', minimum: 1 }, ref: nullable({ ...text, pattern: '^[A-Z]{1,3}-[1-9][0-9]{0,14}$' }),
         createdAt: time, updatedAt: time, resolvedAt: nullable(time),
-        agentState: choice(['working', 'needs_you', 'stuck', 'idle']),
+        statusType: choice(['backlog', 'todo', 'in_progress', 'in_review', 'done', 'canceled']),
+        progressSummary: { ...text, maxLength: 20000, readOnly: true },
+        agentState: choice(ISSUE_AGENT_STATES),
+        labels: { type: 'array', readOnly: true, items: object({ id: { type: 'integer' }, name: text, color: choice(LABEL_COLORS) }) }, // `labels` as written are ids; as read, these
+        parent: nullable(object({ id: { type: 'integer' }, ref: nullable(text), title: text, status: text, statusType: text })),
+        subIssues: object({ total: { type: 'integer' }, done: { type: 'integer' } }), // only on an issue that has sub-issues
+        children: { type: 'array', readOnly: true, items: { type: 'object' } }, // `get` only: the sub-issues
+        agentFinished: { type: 'boolean', readOnly: true }, // true when `agentState` is blocked because the run finished (an avatar shows a check, not red)
+        deepSleep: { type: 'boolean', readOnly: true }, // true when the agent's turn has ended, nobody has handled it for 30 minutes and it is idle or a finished run waiting for a look: never one that asks, fails or was stopped (absent: awake)
         sessions: { type: 'array', items: object({
           key: text, agent: text, openedAt: time, closedAt: nullable(time),
           closeReason: nullable(choice(['auto', 'switch', 'done'])), open: { type: 'boolean' }, state: nullable(text),

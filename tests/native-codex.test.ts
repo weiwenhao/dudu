@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { listCodexThreads, readCodexThread, readCodexThreads, threadSummary } from '../host/providers/native/codex-store.mjs';
 import { codexHistory, codexTurns } from '../host/providers/native/codex-history.mjs';
+import { codexSearchText } from '../host/providers/native/content-index.mjs';
 
 // `codex app-server` answers over JSON lines on its standard streams. This stands in for it: each request is answered by
 // a handler of the test, or never (a very long thread), and every start of the program is counted.
@@ -88,6 +89,24 @@ test('reading many threads skips one that fails and goes on with a new app-serve
   assert.equal(server.starts.length, 2, 'the app-server that never answered is replaced');
 });
 
+test('a thread that could not be read is reported with its reason, so that nobody has to guess why a conversation is missing from the search', async () => {
+  const server = fakeAppServer({
+    'thread/read': (params) => {
+      if (params.threadId === 'huge') return 'hang';
+      if (params.threadId === 'broken') return new Error('corrupt rollout');
+      return { thread: thread(params.threadId) };
+    },
+  });
+  const failures: Array<[string, string]> = [];
+  await readCodexThreads({ command: 'codex', spawnProcess: server.spawnProcess }, ['a', 'broken', 'huge', 'b'], () => {}, {
+    timeoutMs: 60, onFailure: (id: string, error: Error) => failures.push([id, error.message]),
+  });
+  assert.equal(failures.length, 2);
+  assert.deepEqual(failures[0], ['broken', 'corrupt rollout']);
+  assert.equal(failures[1][0], 'huge');
+  assert.match(failures[1][1], /did not answer/, 'one that never answers says so');
+});
+
 test('a Codex thread becomes turns: what was typed, then steps that each end at a tool call', () => {
   const read = {
     ...thread('t1'),
@@ -165,4 +184,22 @@ test('Codex preserves mid-turn user messages and waits for a running tool result
   assert.deepEqual(history.turns[0].steps.map((step: any) => step.input?.prompt), [undefined, 'additional instruction']);
   assert.equal(history.turns[0].results.size, 0);
   assert.equal(history.turns[0].steps.flatMap((step: any) => step.blocks).some((block: any) => block.type === 'tool-call'), false);
+});
+
+test('Codex content search includes all message text and mid-turn input without indexing tool output or reasoning', () => {
+  const thread = { turns: [{ items: [
+    { type: 'userMessage', content: [{ type: 'text', text: 'Initial prompt' }] },
+    { type: 'agentMessage', text: 'x'.repeat(270000) + '本轮巡检（北京时间 12:47）正常' },
+    { type: 'userMessage', content: [{ type: 'text', text: '补充检查 runner' }, { type: 'image', url: 'not-text' }] },
+    { type: 'reasoning', summary: ['not searchable'] },
+    { type: 'commandExecution', aggregatedOutput: 'not searchable' },
+  ] }] };
+  const text = codexSearchText(thread);
+  assert.match(text.user, /补充检查 runner/);
+  assert.match(text.assistant, /12:47/);
+  assert.doesNotMatch(JSON.stringify(text), /not searchable|not-text/);
+  const preview = codexSearchText(thread, { includeMessages: true });
+  assert.deepEqual(preview.messages.map((message: any) => message.role), ['user', 'assistant', 'user']);
+  assert.equal(preview.messages[2].text, '补充检查 runner\n[image]');
+  assert.doesNotMatch(JSON.stringify(preview), /not searchable|not-text/);
 });

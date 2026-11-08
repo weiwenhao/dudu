@@ -1,0 +1,227 @@
+// What a collection session hands back, checked in code before anything is stored (docs/assistant.md 3.1, "记录").
+//
+//   normalizeRecords(raw, { now }) -> { records, rejected: [{ index, id, message }], dropped, duplicates, truncated }
+//     raw      the "records" list of the session's answer: [{ id, version, url, kind, title, from, at, thread, text, context: [{ from, at, text, mine }], more, to_me, handled }]
+//     records  [{ sourceId, version, kind, title, author, url, thread, at (ms | null), text, context: [{ from, at, text, mine }], more, truncated, toMe, handled }]
+//     `to_me` says the item is meant for the owner (it names them, is sent to them, gives them something to do); false: it is for someone else, or a
+//     notification, a digest, talk between other people; absent: the session could not tell. `handled`: the owner already answered it, or it says it is done.
+//     Both come out as true, false or null. `mine` marks a message of the context that the owner wrote.
+//   identityOf(raw) -> { name, id } | null     who the owner is on the source (the account the session read as), as the session says it
+//
+// A conversation is one record, however many messages it has (owner, 2026-11-06: sixteen messages of one private chat were sixteen rows): the
+// messages of a chat or a comment thread that one collection brings are put together under the thread's id, oldest first, one message to a
+// line that starts with its time; `conversation: true` tells the inbox to add the messages that come later to the row that is still waiting.
+//
+// The session is a model that has read other people's messages, so nothing it wrote is taken as it is: text is cleaned of control and
+// bidirectional characters, secrets are blanked, lengths are cut (and a cut is counted, not silent), a link must be http or https. One bad record
+// is rejected with its reason and the others stay good. At most 100 records are taken; the rest is counted in `dropped`.
+import { createHash } from 'node:crypto';
+import { findSecret, redact } from '../memory/secrets.mjs';
+
+export const RECORD_LIMITS = Object.freeze({ records: 100, id: 300, version: 100, title: 300, from: 200, url: 2000, thread: 300, text: 8000, context: 8, contextText: 1000, more: 500 });
+export const KINDS = Object.freeze(['mail', 'message', 'issue', 'comment', 'page', 'task', 'other']);
+/** The kinds whose items are messages of a conversation: a mail has its own subject, a message or a comment is only a line of the talk. */
+export const CONVERSATION_KINDS = Object.freeze(['message', 'comment']);
+const inConversation = (record) => Boolean(record.thread) && CONVERSATION_KINDS.includes(record.kind);
+
+const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+/** true, false, or null for "not said": only a real boolean (or the words) counts. */
+const flag = (value) => (value === true || value === 'true' ? true : value === false || value === 'false' ? false : null);
+// Control characters (not tab, line feed, carriage return) and the controls that make text read in another order than it is written.
+const CONTROL = new RegExp(`[${[[0, 8], [0x0b, 0x0c], [0x0e, 0x1f], [0x7f, 0x7f], [0x85, 0x85], [0x2028, 0x2029], [0x202a, 0x202e], [0x2066, 0x2069]].map(([from, to]) => String.fromCharCode(from) + (to > from ? `-${String.fromCharCode(to)}` : '')).join('')}]`, 'g');
+const digest = (text) => createHash('sha256').update(text).digest('hex');
+
+/** Text without control characters and without secrets; `multiline` keeps the line breaks. Returns { text, cut }. */
+export function cleanText(value, max, { multiline = false } = {}) {
+  if (typeof value !== 'string') return { text: '', cut: false };
+  const head = value.length > max * 4 ? value.slice(0, max * 4) : value;
+  const plain = head.replace(CONTROL, '');
+  const shaped = multiline ? plain.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim() : plain.replace(/\s+/g, ' ').trim();
+  const blanked = redact(shaped);
+  const chars = [...blanked];
+  return chars.length > max ? { text: chars.slice(0, max).join(''), cut: true } : { text: blanked, cut: head.length < value.length };
+}
+
+function timeOf(value) {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value < 1e11 ? Math.round(value * 1000) : Math.round(value);
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const ms = Date.parse(value.trim());
+  return Number.isFinite(ms) ? ms : null;
+}
+
+const linkOf = (value) => {
+  if (typeof value !== 'string') return '';
+  const text = value.trim();
+  if (!text || text.length > RECORD_LIMITS.url || /[\u0000-\u001f\u007f\s]/.test(text) || findSecret(text)) return '';
+  try {
+    const url = new URL(text);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? text : '';
+  } catch {
+    return '';
+  }
+};
+
+function one(raw, state) {
+  if (!isObject(raw)) return { problem: 'A record must be an object.' };
+  // The id is the service's own: it is how a record is told from another and from itself later. A secret inside it (a link with a token)
+  // becomes a stand-in that is the same every time.
+  const idText = typeof raw.id === 'number' && Number.isSafeInteger(raw.id) ? String(raw.id) : raw.id;
+  if (typeof idText !== 'string' || !idText.trim()) return { problem: 'A record needs the id the service gives it.' };
+  const rawId = idText.replace(CONTROL, '').trim();
+  if (!rawId || rawId.length > RECORD_LIMITS.id) return { problem: `The id must be 1 to ${RECORD_LIMITS.id} characters.` };
+  const sourceId = findSecret(rawId) ? `ref-${digest(rawId).slice(0, 16)}` : rawId;
+
+  const title = cleanText(raw.title, RECORD_LIMITS.title);
+  const text = cleanText(raw.text, RECORD_LIMITS.text, { multiline: true });
+  if (!title.text && !text.text) return { id: sourceId, problem: 'A record needs a title or a text.' };
+  const author = cleanText(raw.from, RECORD_LIMITS.from);
+  const thread = cleanText(raw.thread, RECORD_LIMITS.thread);
+  const more = cleanText(raw.more, RECORD_LIMITS.more);
+  let cut = title.cut || text.cut || author.cut || thread.cut || more.cut;
+
+  const context = [];
+  for (const item of Array.isArray(raw.context) ? raw.context : []) {
+    if (!isObject(item) || context.length >= RECORD_LIMITS.context) {
+      if (isObject(item)) cut = true;
+      continue;
+    }
+    const said = cleanText(item.text, RECORD_LIMITS.contextText, { multiline: true });
+    if (!said.text) continue;
+    cut ||= said.cut;
+    context.push({ from: cleanText(item.from, RECORD_LIMITS.from).text, at: timeOf(item.at), text: said.text, mine: flag(item.mine ?? item.from_me) === true });
+  }
+
+  const given = cleanText(raw.version, RECORD_LIMITS.version).text;
+  // With no version the text is the version: an edit is a new version, the same text again is not.
+  const version = given || `v-${digest(`${title.text}\n${text.text}`).slice(0, 16)}`;
+  const kind = typeof raw.kind === 'string' && KINDS.includes(raw.kind.trim().toLowerCase()) ? raw.kind.trim().toLowerCase() : 'other';
+  return {
+    record: {
+      sourceId, version, kind, title: title.text, author: author.text, url: linkOf(raw.url), thread: thread.text,
+      at: timeOf(raw.at), text: text.text, context, more: more.text, truncated: cut,
+      toMe: flag(raw.to_me ?? raw.toMe), handled: flag(raw.handled),
+    },
+  };
+}
+
+/** Who the owner is on the source: the name and the service's own id of the account the session read as; null when it did not say. */
+export function identityOf(raw) {
+  if (!isObject(raw)) return null;
+  const name = cleanText(raw.name, 100).text;
+  const id = cleanText(raw.id, 200).text;
+  return name || id ? { name, id } : null;
+}
+
+// ---------------------------------------------------------------- a conversation: its messages in one text
+
+const two = (n) => String(n).padStart(2, '0');
+/** `11-06 14:43`: when a message was written, on the owner's clock. */
+const stamp = (at) => {
+  const date = new Date(at);
+  return `${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`;
+};
+const HEADER = /^\d{2}-\d{2} \d{2}:\d{2} /;
+const lineOf = (record) => `${record.at == null ? '' : `${stamp(record.at)} `}${record.author ? `${record.author}：` : ''}${record.text || record.title}`;
+
+/** The messages of a conversation's text: one starts at a line that begins with its time, and the lines under it are still that message. */
+export function messagesOf(text) {
+  const messages = [];
+  for (const line of typeof text === 'string' && text ? text.split('\n') : []) {
+    if (HEADER.test(line) || !messages.length) messages.push(line);
+    else messages[messages.length - 1] += `\n${line}`;
+  }
+  return messages;
+}
+
+/** Messages as one text of at most `max` characters: when there are too many the oldest go first. */
+function fit(messages, max) {
+  const kept = [...messages];
+  let cut = false;
+  let text = kept.join('\n');
+  while (text.length > max && kept.length > 1) {
+    kept.shift();
+    cut = true;
+    text = kept.join('\n');
+  }
+  if ([...text].length > max) {
+    text = [...text].slice(-max).join('');
+    cut = true;
+  }
+  return { text, cut };
+}
+
+/** What a conversation's text becomes when messages come that it may not have yet: the ones it has are not added again. -> { text, added, cut } */
+export function addMessages(old, incoming, max = RECORD_LIMITS.text) {
+  const had = messagesOf(old);
+  const have = new Set(had);
+  const fresh = messagesOf(incoming).filter((message) => !have.has(message));
+  if (!fresh.length) return { text: old, added: 0, cut: false };
+  return { ...fit([...had, ...fresh], max), added: fresh.length };
+}
+
+/** The messages one collection brought of one conversation, as one record. */
+function together(members) {
+  const timed = members.every((member) => member.at != null);
+  // The session lists the newest first; with the times it does not matter how it listed them.
+  const ordered = timed
+    ? members.map((member, index) => [member, index]).sort((a, b) => a[0].at - b[0].at || b[1] - a[1]).map(([member]) => member)
+    : [...members].reverse();
+  const newest = ordered.at(-1);
+  const names = [...new Set(ordered.map((member) => member.author).filter(Boolean))];
+  const { text, cut } = fit(ordered.map(lineOf), RECORD_LIMITS.text);
+  const said = (name) => ordered.map((member) => member[name]);
+  return {
+    sourceId: `thread:${newest.thread}`, version: newest.version, kind: newest.kind,
+    title: [...said('title')].reverse().find(Boolean) ?? '', author: names.join('、').slice(0, RECORD_LIMITS.from),
+    url: [...said('url')].reverse().find(Boolean) ?? '', thread: newest.thread, at: newest.at, text, context: [],
+    more: [...said('more')].reverse().find(Boolean) ?? '', truncated: cut || ordered.some((member) => member.truncated),
+    toMe: ordered.some((member) => member.toMe === true) ? true : ordered.some((member) => member.toMe === false) ? false : null,
+    handled: newest.handled, conversation: true,
+  };
+}
+
+/** Every message of a conversation in the list becomes one record, at the place of the first of them. */
+function gather(records) {
+  const groups = new Map();
+  for (const record of records) if (inConversation(record)) groups.set(record.thread, [...(groups.get(record.thread) ?? []), record]);
+  const placed = new Set();
+  const out = [];
+  for (const record of records) {
+    if (!inConversation(record)) {
+      out.push(record);
+      continue;
+    }
+    if (placed.has(record.thread)) continue;
+    placed.add(record.thread);
+    out.push(together(groups.get(record.thread)));
+  }
+  return out;
+}
+
+export function normalizeRecords(raw, { now = Date.now } = {}) {
+  void now;
+  const out = { records: [], rejected: [], dropped: 0, duplicates: 0, truncated: 0 };
+  if (!Array.isArray(raw)) return out;
+  const seen = new Set();
+  raw.forEach((item, index) => {
+    if (out.records.length >= RECORD_LIMITS.records) {
+      out.dropped++;
+      return;
+    }
+    const result = one(item, out);
+    if (result.problem) {
+      out.rejected.push({ index, id: result.id ?? (typeof item?.id === 'string' ? cleanText(item.id, 40).text : ''), message: result.problem });
+      return;
+    }
+    const key = `${result.record.sourceId}\u0000${result.record.version}`;
+    if (seen.has(key)) {
+      out.duplicates++;
+      return;
+    }
+    seen.add(key);
+    if (result.record.truncated) out.truncated++;
+    out.records.push(result.record);
+  });
+  out.records = gather(out.records);
+  return out;
+}

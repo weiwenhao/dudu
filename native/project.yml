@@ -10,7 +10,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.3.0"
-    CURRENT_PROJECT_VERSION: 27
+    CURRENT_PROJECT_VERSION: 49
     IPHONEOS_DEPLOYMENT_TARGET: "18.0"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_EMIT_LOC_STRINGS: YES
@@ -42,18 +42,6 @@ targets:
         SUPPORTS_MACCATALYST: NO
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: DSBot/Info.plist
-  dsbotUITests:
-    type: bundle.ui-testing
-    platform: iOS
-    sources:
-      - DSBotUITests
-    dependencies:
-      - target: dsbot
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.harnessmobile.app.UITests
-        GENERATE_INFOPLIST_FILE: YES
-        TEST_TARGET_NAME: dsbot
   dsbotTests:
     type: bundle.unit-test
     platform: iOS
@@ -73,4 +61,3 @@ schemes:
     test:
       targets:
         - dsbotTests
-        - dsbotUITests

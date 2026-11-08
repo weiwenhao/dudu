@@ -71,6 +71,25 @@ enum ConversationParityFixture {
     )
 
     static func fileDiff(_ params: [String: JSONValue]) -> ConversationDiff {
+        if ProcessInfo.processInfo.arguments.contains("-dsbot-review-multi-hunk-diff") {
+            return ConversationDiff(
+                kind: "text", path: "/workspace/host/mobile-page-adapter.mjs", display: "host/mobile-page-adapter.mjs",
+                before: true, after: true,
+                hunks: [
+                    .init(oldStart: 245, oldLines: 3, newStart: 245, newLines: 4, lines: [
+                        "     min-width: 44px;", "     min-height: 44px;", " }",
+                        "+html[data-dsbot-page-kind=\"settings\"] " + String(repeating: "[data-native-settings] ", count: 10) + "{ display: none; }"
+                    ]),
+                    .init(oldStart: 256, oldLines: 3, newStart: 257, newLines: 4, lines: [
+                        " .settings {", "+    padding: 16px;", "     color: inherit;", " }"
+                    ]),
+                    .init(oldStart: 389, oldLines: 3, newStart: 391, newLines: 3, lines: [
+                        " const ui = appUI();", "-const heading = body.querySelector('h2');",
+                        "+const heading = (options || body).querySelector('h2');", " return heading;"
+                    ])
+                ]
+            )
+        }
         guard manyFiles, let index = params["index"]?.numberValue.map(Int.init),
               changes.files.indices.contains(index) else { return diff }
         let file = changes.files[index]

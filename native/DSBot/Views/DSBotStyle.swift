@@ -5,12 +5,16 @@ enum DSBotLayout {
     static let toolbarButtonSize: CGFloat = 44
     static let toolbarHorizontalPadding: CGFloat = 20
     static let toolbarHeight: CGFloat = toolbarButtonSize
+    static let issuePagerButtonWidth: CGFloat = 46
+    static let issuePagerDividerWidth: CGFloat = 0.5
+    static let issuePagerWidth: CGFloat = issuePagerButtonWidth * 2 + issuePagerDividerWidth
     static let sidebarPadding: CGFloat = 16
     static let actionColumnWidth: CGFloat = 44
     static let drawerCornerRadius: CGFloat = 45
     static let edgeSwipeWidth: CGFloat = 24
 
     static let composerHeight: CGFloat = 44
+    static let composerCornerRadius: CGFloat = 28
     static let composerSideMargin: CGFloat = 32
     /// Distance from the composer to the bottom edge of the screen (the conversation runs to that edge, under
     /// the home indicator), the same as its side margin.

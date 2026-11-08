@@ -1,0 +1,10 @@
+OAR
+https://github.com/botiverse/oar
+Upstream package: @botiverse/oar 0.92.0, Apache-2.0.
+
+Dudu builds a modified copy from the official npm dependency and the patches in
+@dudu/oar-adapter 0.1.0. Changes cover Claude opening
+cancellation and configuration/permission readback, Codex child attribution,
+native background task controls, and process ownership on terminating signals.
+The original OAR license and upstream attribution are retained.
+See @dudu/oar-adapter/README.md and upstream.json for provenance and maintenance.

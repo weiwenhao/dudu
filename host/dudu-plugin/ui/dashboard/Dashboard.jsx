@@ -271,7 +271,6 @@ export function Dashboard({ request, registry, onSettings, onSessions }) {
     timer = setTimeout(refresh, 2000);
     return () => { active = false; clearTimeout(timer); };
   }, [status, read, show, undoable]);
-  useEffect(() => { void request('issues/tidy', { trigger: 'dashboard' }).catch(() => {}); }, [request]);
 
   // The label beside the pointer while a widget is resized, with "Minimum size" or "Maximum size" when the pull went past a limit
   // (gridstack stops at the limit and sends nothing more, so the pointer is what tells).

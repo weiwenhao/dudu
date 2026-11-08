@@ -1,6 +1,6 @@
 // The real DSH loop, scoped tools, durable session and built Pet interface. Only the model is scripted.
 import assert from 'node:assert/strict';
-import { access, readFile, realpath } from 'node:fs/promises';
+import { access, mkdir, readFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { after, afterEach, before, test } from 'node:test';
 import type { Page } from 'playwright-core';
@@ -9,10 +9,10 @@ import { panelAction, startDudu } from './harness.mjs';
 let dudu: Awaited<ReturnType<typeof startDudu>>;
 let createSystem = '';
 before(async () => {
-  dudu = await startDudu({ patch: '- id: tools\n  config:\n    mode: ptc', model: {
+  dudu = await startDudu({ patch: '- id: agent-preset-registry\n  config:\n    default: ptc', model: {
     models: [
       { id: 'mock-1', name: 'Mock', contextWindow: 100000, input: ['text', 'image'] },
-      { id: 'mock-2', name: 'Mock Vision', contextWindow: 100000, input: ['text', 'image'], reasoningEfforts: { low: 'low', high: 'high' }, compat: { supportsReasoningEffort: true } },
+      { id: 'mock-2', name: 'Mock Vision', contextWindow: 100000, input: ['text', 'image'], reasoningEfforts: { low: 'low', high: 'high', max: 'max' }, compat: { supportsReasoningEffort: true } },
     ],
     replies: [
     { when: (context: any) => !context.prompt.includes('CHAT-VISION') && Array.isArray(context.current?.content) && context.current.content.some((part: any) => part.type === 'image_url'), say: '收到图片。' },
@@ -29,10 +29,11 @@ before(async () => {
     { when: 'CHAT-MEMORY', calls: [{ name: 'memory_remember', arguments: { text: '合同先抄送法务' } }], then: () => '记下了。' },
     { when: 'CHAT-DASH', calls: [{ name: 'dashboard_add', arguments: { type: 'quota' } }], then: () => '已加 Quota。' },
     { when: 'CHAT-RECALL', calls: [{ name: 'memory_recall', arguments: { query: '合同先抄送法务' } }], then: (results: string[]) => `找到了：${results.at(-1)}` },
-    { when: 'CHAT-FORBIDDEN', calls: [{ name: 'bash', arguments: { command: 'touch forbidden.txt' }, force: true }], then: () => '没有执行。' },
+    { when: 'CHAT-FORBIDDEN', calls: [{ name: 'terminal_open', arguments: { command: 'touch forbidden.txt' }, force: true }], then: () => '没有执行。' },
     { when: 'CHAT-SLOW', say: '这个回复应该被停止。', delay: 8000 },
     { when: 'CHAT-AFTER-STOP', say: '可以继续。' },
     { when: 'CHAT-OUTSIDE', say: '收起后仍会收到。', delay: 1500 },
+    { when: 'CHAT-BUBBLE-DISMISS', say: '可以关闭这条回复气泡。', delay: 1500 },
     { when: 'CHAT-PRIVATE', calls: [{ name: 'memory_remember', arguments: { text: '海棠专用代码是 AX8129' } }], then: () => '已记下这条。' },
     { when: 'CHAT-FORGOTTEN', calls: [{ name: 'memory_recall', arguments: { query: 'AX8129' } }], then: (results: string[]) => `召回结果：${results.at(-1)}` },
     { when: (context: any) => context.system.includes('assignment step'), say: '{"agent":null,"reason":"没有匹配的规则"}' },
@@ -79,6 +80,51 @@ test('pet composer sends images through DSH, selects model and effort in place, 
   await dialog.getByRole('button', { name: /^Mock$/ }).waitFor();
   await page.close();
 });
+
+test('pet Max effort survives closing, reload and host restart and reaches the actual model request', async context => {
+  let page = await dudu.openPanel();
+  context.after(async () => { if (!page.isClosed()) await page.close(); });
+  const open = async () => {
+    await page.getByRole('button', { name: 'Open conversation', exact: true }).click();
+    return page.getByRole('dialog', { name: 'Dudu', exact: true });
+  };
+  let dialog = await open();
+  await dialog.getByRole('button', { name: /^Mock$/ }).click();
+  await page.getByRole('menuitem', { name: /^Model/ }).click();
+  await page.getByRole('menuitemradio', { name: 'Mock Vision', exact: true }).click();
+  await dialog.getByRole('button', { name: /^Mock Vision/ }).click();
+  await page.getByRole('menuitem', { name: /^Reasoning effort/ }).click();
+  await page.getByRole('menuitemradio', { name: 'Max', exact: true }).click();
+  const selected = () => dialog.getByRole('button', { name: /^Mock Vision\s*Max$/ });
+  await selected().waitFor();
+  // Reselecting the current model must retain the explicit effort, rather than applying its default again.
+  await selected().click();
+  await page.getByRole('menuitem', { name: /^Model/ }).click();
+  await page.getByRole('menuitemradio', { name: 'Mock Vision', exact: true }).click();
+  await selected().waitFor();
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  dialog = await open();
+  await selected().waitFor();
+  await page.reload();
+  dialog = await open();
+  await selected().waitFor();
+  await page.close();
+  await dudu.restart();
+  page = await dudu.openPanel();
+  dialog = await open();
+  await selected().waitFor();
+  await dialog.getByRole('textbox', { name: 'Message', exact: true }).fill('CHAT-MAX-PERSISTENCE');
+  await dialog.getByRole('button', { name: 'Send', exact: true }).click();
+  await dialog.getByText('ok', { exact: true }).waitFor();
+  const received = dudu.model.requests.find((request: any) => request.prompt === 'CHAT-MAX-PERSISTENCE' && request.tools.length);
+  assert.ok(received);
+  assert.equal(received.model, 'mock-2');
+  assert.equal(received.reasoningEffort, 'max');
+  await selected().waitFor();
+  await page.reload();
+  dialog = await open();
+  await selected().waitFor();
+});
 after(async () => { await dudu?.stop(); });
 afterEach(async (context) => { await dudu.settle(context.name, context.passed === false); });
 
@@ -88,6 +134,22 @@ async function chat(page: Page, text: string, answer: string | RegExp) {
   await dialog.getByRole('button', { name: 'Send', exact: true }).click();
   await dialog.getByText(answer, { exact: true }).waitFor({ timeout: 30_000 });
 }
+
+test('scoped tools use native execution under a PTC preset and their conversation survives host restart', async () => {
+  const page = await dudu.openPanel();
+  await page.getByRole('button', { name: 'Open conversation', exact: true }).click();
+  await chat(page, 'CHAT-MEMORY：记住合同先抄送法务', '记下了。');
+  const requested = dudu.model.requests.find((request: any) => request.prompt.startsWith('CHAT-MEMORY'));
+  assert.ok(requested.tools.includes('memory_remember'));
+  assert.ok(!requested.tools.includes('run_code'), 'Dudu uses the host native executor in its own scope');
+  const sessionId = (await dudu.api('assistant/state')).conversation.sessionId;
+  assert.ok((await dudu.api('memory/records')).records.some((record: any) => record.text === '合同先抄送法务'));
+  await dudu.restart();
+  await page.reload();
+  await page.getByRole('button', { name: 'Open conversation', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Dudu', exact: true }).getByText('记下了。', { exact: true }).waitFor();
+  assert.equal((await dudu.api('assistant/state')).conversation.sessionId, sessionId);
+});
 
 test('the header opens the same complete DSH conversation without another prompt, and keeps the floating draft', async () => {
   const page = await dudu.openPanel();
@@ -165,7 +227,7 @@ test('DSH opens on the dashboard; chat changes issues, memory and layout through
   const requested = dudu.model.requests.find((request: any) => request.prompt.includes('CHAT-CREATE') && request.tools.includes('issues_add'));
   assert.ok(requested);
   assert.match(createSystem, /Your English name is Dudu/);
-  assert.match(createSystem, /named boss, always lowercase/);
+  assert.match(createSystem, /call them 你 when you write Chinese and "you" when you write English/);
   assert.ok(!requested.tools.some((name: string) => ['bash', 'write', 'read', 'connector_enable'].includes(name)));
   const hidden = await page.getByRole('tree', { name: 'Sessions' }).innerText();
   assert.ok(!hidden.includes(state.conversation.sessionId) && !hidden.includes('合同续费'));
@@ -180,7 +242,7 @@ test('DSH opens on the dashboard; chat changes issues, memory and layout through
   await page.close();
 });
 
-test('a model cannot execute a global shell tool, even when it fabricates an unoffered tool call', async () => {
+test('a model cannot bypass Dudu’s scoped tools by fabricating an unoffered terminal call', async () => {
   const page = await dudu.openPanel();
   await page.getByRole('button', { name: 'Open conversation', exact: true }).click();
   await chat(page, 'CHAT-FORBIDDEN：试图运行 shell', '没有执行。');
@@ -199,8 +261,17 @@ test('Stop cancels the working turn and the same conversation accepts another me
   const dialog = page.getByRole('dialog', { name: 'Dudu', exact: true });
   await dialog.getByRole('textbox', { name: 'Message', exact: true }).fill('CHAT-SLOW');
   await dialog.getByRole('button', { name: 'Send', exact: true }).click();
+  // While it works the window shows DSH's own running line, counted from the message just sent (the host's own times).
+  const running = dialog.locator('[data-pet-running] .dudu-shimmer-content').first();
+  await running.waitFor({ timeout: 10_000 });
+  await page.waitForTimeout(2500);
+  const seconds = Number((await running.innerText()).match(/^Deep diving for (\d+)s ···$/)?.[1]);
+  assert.ok(seconds >= 2 && seconds <= 12, `the clock counts from the message just sent: ${await running.innerText()}`);
+  await mkdir('.local/pet-running-nov04', { recursive: true });
+  await dialog.screenshot({ path: '.local/pet-running-nov04/real-dsh.png' });
   await dialog.getByRole('button', { name: 'Stop', exact: true }).click({ timeout: 5000 });
   await dialog.getByRole('button', { name: 'Send', exact: true }).waitFor({ timeout: 5000 });
+  await dialog.locator('[data-pet-running]').waitFor({ state: 'detached', timeout: 5000 });
   await chat(page, 'CHAT-AFTER-STOP', '可以继续。');
   assert.equal(await dialog.getByText('这个回复应该被停止。', { exact: true }).count(), 0);
   assert.equal((await dudu.api('assistant/state')).conversation.running, false);
@@ -260,6 +331,37 @@ test('clicking outside the pet conversation closes it, keeps the draft and lets 
   assert.equal((await dudu.api('assistant/state')).conversation.running, false);
   await open.click();
   await dialog.getByText('收起后仍会收到。', { exact: true }).waitFor();
+  await page.close();
+});
+
+test('reply bubbles close with the existing reminder cross, Escape and an outside click without losing the reply', async () => {
+  await mkdir('.local/pet-completions-nov03', { recursive: true });
+  const page = await dudu.openPanel();
+  const pet = page.locator('button.dudu-pet');
+  const dialog = page.getByRole('dialog', { name: 'Dudu', exact: true });
+  const bubble = page.locator('.dudu-pet-bubble');
+  for (const dismiss of ['cross', 'escape', 'outside']) {
+    await pet.click();
+    await dialog.getByRole('textbox', { name: 'Message', exact: true }).fill(`CHAT-BUBBLE-DISMISS ${dismiss}`);
+    await dialog.getByRole('button', { name: 'Send', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Stop', exact: true }).waitFor();
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await bubble.getByText('可以关闭这条回复气泡。', { exact: true }).waitFor({ timeout: 15_000 });
+    if (dismiss === 'cross') {
+      const close = bubble.getByRole('button', { name: 'Close', exact: true });
+      assert.deepEqual(await close.evaluate((node) => {
+        const rect = node.getBoundingClientRect();
+        return [rect.width, rect.height, getComputedStyle(node).borderRadius];
+      }), [20, 20, '5px'], 'reuse the current reminder close control');
+      await page.screenshot({ path: '.local/pet-completions-nov03/reply-bubble-close.png' });
+      await close.click();
+    } else if (dismiss === 'escape') await page.keyboard.press('Escape');
+    else await page.getByRole('button', { name: 'Dudu', exact: true }).click();
+    await bubble.waitFor({ state: 'hidden' });
+    assert.equal(await dialog.isVisible(), false);
+  }
+  await pet.click();
+  assert.equal(await dialog.getByText('可以关闭这条回复气泡。', { exact: true }).count(), 3);
   await page.close();
 });
 

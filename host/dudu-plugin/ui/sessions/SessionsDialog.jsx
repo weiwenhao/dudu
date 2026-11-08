@@ -1,10 +1,26 @@
 import { useRef } from 'react';
-import { X } from 'lucide-react';
+import { LoaderCircle, X } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '../components/dialog.jsx';
 import { T } from '../strings.js';
 import { useWidgetData } from '../widgets/data.jsx';
-import { Sessions } from './Sessions.jsx';
+import { formatDateTime } from '../lib/locale.mjs';
+import { ALL, Sessions } from './Sessions.jsx';
+
+/** Share the dialog's existing catalog read; mounting this status never adds another request or a closed-dialog poll. */
+function SessionUpdate({ useSessions }) {
+  const { status, value, refreshing, updatedAt } = useSessions({ query: '', limit: ALL });
+  const loading = status === 'loading' || refreshing || value?.indexing?.running;
+  return <span role="status" className="mr-3 ml-auto flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
+    {loading ? <LoaderCircle className="size-3.5 shrink-0 animate-spin" aria-label={T.shell.loading} />
+      : updatedAt && <>
+        <span className="shrink-0">{T.display.property.updated}</span>
+        <time className="truncate" dateTime={new Date(updatedAt).toISOString()} title={formatDateTime(updatedAt)}>
+          {formatDateTime(updatedAt, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })}
+        </time>
+      </>}
+  </span>;
+}
 
 /** The session manager the sessions icon of the entry opens: the list on the left, the session chosen on the right (docs/assistant.md 4.1). */
 export function SessionsDialog({ open, onOpenChange }) {
@@ -22,7 +38,8 @@ export function SessionsDialog({ open, onOpenChange }) {
       }}>
       <div className="flex h-14 shrink-0 items-center border-b pr-3.5 pl-5">
         <DialogTitle className="text-[16px] font-semibold">{T.widgets.titles.sessions}</DialogTitle>
-        <DialogClose asChild><Button variant="ghost" size="icon-sm" className="ml-auto size-7 rounded-md text-muted-foreground" aria-label={T.pet.close}><X /></Button></DialogClose>
+        <SessionUpdate useSessions={data.useSessions} />
+        <DialogClose asChild><Button variant="ghost" size="icon-sm" className="size-7 rounded-md text-muted-foreground" aria-label={T.pet.close}><X /></Button></DialogClose>
       </div>
       <Sessions {...data}
         openIssue={(...args) => { onOpenChange(false); data.openIssue(...args); }}

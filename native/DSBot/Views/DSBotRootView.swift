@@ -14,13 +14,25 @@ struct MainDestination: Equatable {
     var title: String
 
     static let conversation = MainDestination(id: "chat", area: .view, target: .chat, title: "对话")
+    /// The page the app opens on (owner, 2026-11-07): the board. The conversation is one level down from it.
+    static let board = MainDestination(id: "dudu.board", area: .sidebar, target: .board, title: "看板")
 
     var showsChat: Bool { target == .chat }
+    /// The conversation, the board and the Collector are drawn by the app itself, on the canvas; every other page is white.
+    var onCanvas: Bool {
+        if target.settingsSection != nil { return true }
+        return [.chat, .board, .collector].contains(target)
+    }
 
     /// A short, log-safe name for the target.
     var logState: String {
         switch target {
         case .chat: return "conversation"
+        case .assistant: return "assistant"
+        case .board: return "board"
+        case .collector: return "collector"
+        case .dshSettings: return "dshSettings"
+        case .duduSettings: return "duduSettings"
         case .files: return "files"
         case .schedule: return "schedule"
         case let .web(page, _): return page.rawValue
@@ -33,9 +45,23 @@ struct MainDestination: Equatable {
 struct DSBotRootView: View {
     @ObservedObject private var store: DSBotStore
     @State private var isSidebarOpen = false
+    @State private var sidebarNavigationRevision = 0
     @State private var presentedSheet: RootSheet?
     @State private var pendingPairingLink: String?
-    @State private var destination = MainDestination.conversation
+    @State private var destination = MainDestination.board
+    /// The open conversation was chosen on the board: it has the way back to the board and the arrows between issues, and no views menu. A conversation chosen anywhere else
+    /// (the sidebar, the Collector) is the app's own as it was: the sidebar button on the left, the views menu on the right (owner, 2026-11-07: the board is one page, it changes nothing else).
+    @State private var conversationFromBoard = false
+    @State private var showsConversationTitle = false
+    /// The board and the Collector, kept while the app runs: going back to them shows what was there at once.
+    @StateObject private var board = BoardModel()
+    @StateObject private var collector = CollectorModel()
+    /// 嘟嘟's own settings, drawn by the app: the pages of the one that is open.
+    @StateObject private var settingsNav = SettingsNavigator()
+    @State private var isMakingIssue = false
+    @State private var issueDetail: BoardIssue?
+    /// The result of an action on a page of the app's own (a mark on records, with its Undo), under the toolbar.
+    @State private var pageToast: DSBotToastMessage?
     @State private var isSearchActive = false
     @State private var conversationSearch = SessionSearchModel()
     /// The home indicator's inset, read once the window exists. UIKit is never asked while SwiftUI lays out:
@@ -85,6 +111,12 @@ struct DSBotRootView: View {
                     drawerStack(in: geometry, position: drawerPosition)
                 }
                 .accessibilityHidden(presentedSheet != nil)
+                .sheet(isPresented: $isMakingIssue) {
+                    NewIssueSheet(board: board, store: store)
+                }
+                .sheet(item: $issueDetail) { issue in
+                    IssueDetailSheet(issue: issue, board: board, store: store)
+                }
             }
         }
         // No primary colour: system controls (menu icons, buttons, alerts) follow the same ink as every icon.
@@ -201,12 +233,18 @@ struct DSBotRootView: View {
         }
         .onChange(of: store.activeComputer?.id) { _, _ in
             isSidebarOpen = false
-            destination = .conversation
+            conversationFromBoard = false
+            destination = .board
+            board.reset()
+            collector.reset()
             isSearchActive = false
             conversationSearch.reset()
         }
         .onChange(of: pageConnectionKey, initial: true) { _, key in
             pagePool.connectionChanged(to: key)
+        }
+        .onAppear {
+            collector.report = { toast in pageToast = toast }
         }
         .onChange(of: store.isBlankSession) { _, isBlank in
             // DSH shows no conversation views for a conversation that has not started.
@@ -214,7 +252,10 @@ struct DSBotRootView: View {
         }
         .onChange(of: isSidebarOpen) { _, isOpen in
             // Pick up what plugins added to DSH since the app last asked.
-            if isOpen { Task { await store.refreshNavigation() } }
+            if isOpen {
+                Task { await store.refreshNavigation() }
+                Task { await collector.refreshCount(using: store) }
+            }
         }
         .onChange(of: store.showsConnectionGuide) { _, showsGuide in
             if showsGuide {
@@ -226,6 +267,7 @@ struct DSBotRootView: View {
         }
         .onChange(of: destination) { _, next in
             DSBotLog.record("conversation.mode", state: next.logState)
+            if let section = next.target.settingsSection { settingsNav.reset(section: section) }
         }
         .onChange(of: store.isRestoring) { _, isRestoring in
             if !isRestoring,
@@ -340,7 +382,8 @@ struct DSBotRootView: View {
                     DSBotLog.record("sidebar.search.open")
                 },
                 onClose: closeSidebar,
-                selectedItemID: destination.area == .sidebar ? destination.id : nil
+                selectedItemID: destination.area == .sidebar ? destination.id : nil,
+                itemCounts: collector.waiting > 0 ? ["dudu.collector": collector.waiting] : [:]
             )
             .frame(width: metrics.width)
             .frame(maxHeight: .infinity)
@@ -360,6 +403,14 @@ struct DSBotRootView: View {
                 .frame(width: geometry.size.width, height: DSBotLayout.toolbarHeight)
                 .opacity(Double(1 - 0.4 * metrics.progress))
                 .zIndex(2)
+            // The result of an action on the board or the Collector, under the toolbar; the conversation has its own.
+            DSBotToastOverlay(message: destination.showsChat ? nil : pageToast) { dismissed in
+                if pageToast?.id == dismissed.id { pageToast = nil }
+            }
+            .padding(.top, safeTop + DSBotLayout.toolbarHeight + 8)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .zIndex(3)
         }
         .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
         .mask {
@@ -381,7 +432,7 @@ struct DSBotRootView: View {
     /// it must be too, or a band of the canvas shows above and below, where the status bar and the back
     /// button sit. Only the conversation is canvas.
     private var cardBackground: Color {
-        destination.showsChat ? DSBotStyle.canvas : .white
+        destination.onCanvas ? DSBotStyle.canvas : .white
     }
 
     private func cardContent(in geometry: GeometryProxy, _ metrics: DrawerMetrics) -> some View {
@@ -405,7 +456,7 @@ struct DSBotRootView: View {
             if !destination.showsChat {
                 pageContent(safeAreaTop: safeTop)
                     .frame(width: geometry.size.width, height: geometry.size.height)
-                    .background(Color.white)
+                    .background(destination.onCanvas ? DSBotStyle.canvas : Color.white)
             }
         }
         .overlay {
@@ -451,37 +502,231 @@ struct DSBotRootView: View {
     @ViewBuilder
     private func edgeStripLayer(_ metrics: DrawerMetrics) -> some View {
         if !metrics.isOpen && presentedSheet == nil {
-            Color.clear
-                .frame(width: DSBotLayout.edgeSwipeWidth)
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .gesture(edgeOpenGesture(width: metrics.width))
-                .accessibilityHidden(true)
+            // The edge pulls the drawer out on the board and on a conversation of the sidebar's; on every page, and on a conversation opened from the board, it is the way back.
+            if destination.target == .board || (destination.showsChat && !conversationFromBoard) {
+                Color.clear
+                    .frame(width: DSBotLayout.edgeSwipeWidth)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .gesture(edgeOpenGesture(width: metrics.width))
+                    .accessibilityHidden(true)
+            } else {
+                Color.clear
+                    .frame(width: DSBotLayout.edgeSwipeWidth)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .gesture(edgeBackGesture())
+                    .accessibilityHidden(true)
+            }
         }
     }
 
-
-    /// The conversation is home: the sidebar on the left, its views on the right.
-    /// Every other page (DSH's web pages, files, automations) is one level down, so it gets a way back
-    /// and nothing that belongs to the conversation; a page's own action (the plugin page's "+") stays.
-    private var toolbar: some View {
-        HStack {
-            if destination.showsChat {
-                sidebarButton
-            } else {
-                backButton
+    private func edgeBackGesture() -> some Gesture {
+        DragGesture(minimumDistance: 16)
+            .onEnded { value in
+                guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                if value.translation.width > 70 || value.predictedEndTranslation.width > 140 {
+                    DSBotLog.record("page.back.edge")
+                    goBack()
+                }
             }
+    }
 
-            Spacer(minLength: 0)
 
-            if destination.showsChat {
-                conversationMenu
-            } else if isPluginPage {
-                addPluginButton
+    /// The app opens on the board (owner, 2026-11-07), a page like the Collector that the sidebar's list leads to: the sidebar on the left, a new issue on the right.
+    /// Nothing else is the board's. The conversation has the sidebar button and the views menu as it always had, and every other page (DSH's web pages, files, automations,
+    /// the Collector) has its way back and its own action (the Collector's choosing, the plugin page's "+"). Only a conversation chosen on the board has the way back to
+    /// the board and the arrows to the issue before and after, in place of the views menu.
+    private var toolbar: some View {
+        ZStack {
+            HStack(spacing: boardConversationTitle == nil ? 8 : 12) {
+                toolbarLeading
+                if let title = boardConversationTitle {
+                    conversationTitle(title)
+                } else {
+                    Spacer(minLength: 0)
+                }
+                toolbarTrailing
+            }
+            if destination.target == .board {
+                BoardScopeMenu(board: board)
+            } else if boardConversationTitle == nil, let title = toolbarTitle {
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(DSBotStyle.ink)
+                    .lineLimit(1)
+                    .padding(.horizontal, DSBotLayout.toolbarButtonSize * 2 + 24)
+                    .allowsHitTesting(false)
+                    .accessibilityAddTraits(.isHeader)
             }
         }
         .padding(.horizontal, DSBotLayout.toolbarHorizontalPadding)
         .frame(height: DSBotLayout.toolbarHeight, alignment: .top)
+    }
+
+    /// The owner's reference (2026-11-08): a compact title after the back button, without the issue ID.
+    /// Let the actual controls bound its width so long titles have all the remaining room.
+    private func conversationTitle(_ title: String) -> some View {
+        Button {
+            showsConversationTitle = true
+        } label: {
+            Text(title)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(DSBotStyle.ink)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: DSBotLayout.toolbarHeight)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(DSBotQuietPressStyle())
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityIdentifier("issue.title")
+        .popover(isPresented: $showsConversationTitle, arrowEdge: .top) {
+            Text(title)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(DSBotStyle.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(16)
+                .frame(idealWidth: 280, maxWidth: 320)
+                .presentationCompactAdaptation(.popover)
+        }
+        .onChange(of: title) { _, _ in showsConversationTitle = false }
+        .onDisappear { showsConversationTitle = false }
+    }
+
+    private var boardConversationTitle: String? {
+        guard destination.showsChat, conversationFromBoard else { return nil }
+        return board.openedIssue(for: store.selectedSession)?.title ?? store.selectedSession?.title
+    }
+
+    private var toolbarTitle: String? {
+        switch destination.target {
+        case .collector: return collector.isSelecting ? "已选 \(collector.selection.count) 条" : destination.title
+        case .duduSettings: return settingsNav.title
+        default: return nil
+        }
+    }
+
+    @ViewBuilder
+    private var toolbarLeading: some View {
+        switch destination.target {
+        case .board:
+            sidebarButton
+        case .chat where !conversationFromBoard:
+            sidebarButton
+        case .collector where collector.isSelecting:
+            Button {
+                collector.stopSelecting()
+            } label: {
+                DSBotIcon(.close, size: 20)
+                    .foregroundStyle(DSBotStyle.ink)
+                    .frame(width: DSBotLayout.toolbarButtonSize, height: DSBotLayout.toolbarButtonSize)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(DSBotGlassButtonStyle())
+            .accessibilityLabel("取消选择")
+            .accessibilityIdentifier("collector.selection.cancel")
+        default:
+            backButton
+        }
+    }
+
+    @ViewBuilder
+    private var toolbarTrailing: some View {
+        switch destination.target {
+        case .board:
+            newIssueButton
+        case .chat:
+            // An issue's conversation has the arrows to the issue before and after where the views menu would be (owner, 2026-11-07:
+            // "只有在看板进入会话界面右上角三个点才删掉，现在是上一个下一个。其他页面的三个点不用删"); any other conversation keeps the menu.
+            if conversationFromBoard && hasIssuePager {
+                issuePager
+            } else {
+                conversationMenu
+            }
+        case .collector:
+            if collector.isSelecting {
+                if !collector.allSelected {
+                    Button {
+                        collector.selectAll()
+                    } label: {
+                        Text("全选")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(DSBotStyle.ink)
+                            .padding(.horizontal, 18)
+                            .frame(height: DSBotLayout.toolbarButtonSize)
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(DSBotGlassCapsuleButtonStyle())
+                    .accessibilityIdentifier("collector.selectAll")
+                }
+            } else if !collector.items.isEmpty {
+                Button {
+                    collector.startSelecting()
+                } label: {
+                    DSBotIcon(.selectRows, size: 22)
+                        .foregroundStyle(DSBotStyle.ink)
+                        .frame(width: DSBotLayout.toolbarButtonSize, height: DSBotLayout.toolbarButtonSize)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(DSBotGlassButtonStyle())
+                .accessibilityLabel("选择")
+                .accessibilityIdentifier("collector.select")
+            }
+        case .duduSettings:
+            NativeSettingsSaveButton(navigator: settingsNav, store: store) { pageToast = $0 }
+                .buttonStyle(DSBotGlassCapsuleButtonStyle())
+        default:
+            if isPluginPage { addPluginButton }
+        }
+    }
+
+    private var newIssueButton: some View {
+        Button {
+            dismissKeyboard()
+            isMakingIssue = true
+        } label: {
+            DSBotIcon(.plus, size: 22)
+                .foregroundStyle(DSBotStyle.ink)
+                .frame(width: DSBotLayout.toolbarButtonSize, height: DSBotLayout.toolbarButtonSize)
+                .contentShape(Circle())
+        }
+        .buttonStyle(DSBotGlassButtonStyle())
+        .accessibilityLabel("新建事项")
+        .accessibilityIdentifier("board.new")
+    }
+
+    /// The open conversation is an issue's, one of the board's rows.
+    private var hasIssuePager: Bool { board.openedIssue(for: store.selectedSession) != nil }
+
+    /// The arrows to the issue before and after the one whose conversation is open, in the order of the board (the desktop's "上一条事项" and "下一条事项").
+    private var issuePager: some View {
+        HStack(spacing: 0) {
+            pagerButton(.up, offset: -1, label: "上一条事项")
+            Rectangle().fill(DSBotStyle.ink.opacity(0.12)).frame(width: DSBotLayout.issuePagerDividerWidth, height: 20)
+            pagerButton(.down, offset: 1, label: "下一条事项")
+        }
+        .frame(height: DSBotLayout.toolbarButtonSize)
+        .dsbotGlass(in: Capsule())
+    }
+
+    private func pagerButton(_ glyph: DSBotGlyph, offset: Int, label: String) -> some View {
+        let target = board.neighbor(of: store.selectedSession, offset: offset)
+        return Button {
+            guard let target else { return }
+            DSBotLog.record("issue.pager")
+            Task { await openIssue(target) }
+        } label: {
+            DSBotIcon(glyph, size: 20)
+                .foregroundStyle(DSBotStyle.ink.opacity(target == nil ? 0.3 : 1))
+                .frame(width: DSBotLayout.issuePagerButtonWidth, height: DSBotLayout.toolbarButtonSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(DSBotIconButtonStyle())
+        .disabled(target == nil)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier("issue.pager.\(offset < 0 ? "previous" : "next")")
     }
 
     private var sidebarButton: some View {
@@ -504,11 +749,11 @@ struct DSBotRootView: View {
         .accessibilityIdentifier("sidebar.toggle")
     }
 
-    /// Back to the conversation the page was opened from.
+    /// Back to where the page was opened from: the board, or the conversation for a page of that conversation.
     private var backButton: some View {
         Button {
             DSBotLog.record("page.back")
-            showConversation()
+            goBack()
         } label: {
             DSBotIcon(.back)
                 .foregroundStyle(DSBotStyle.ink)
@@ -593,18 +838,37 @@ struct DSBotRootView: View {
     }
 
     private func statusBarFrost(safeAreaTop: CGFloat) -> some View {
-        DSBotEdgeBlur(edge: .top, height: safeAreaTop + DSBotLayout.toolbarHeight + 20, strength: 0.8)
-            .offset(y: -safeAreaTop)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+        let toolbarBottom = safeAreaTop + DSBotLayout.toolbarHeight
+        let hasTitle = destination.showsChat && conversationFromBoard
+        // The 16pt title's line box ends about 10pt below the toolbar's centre.
+        let titleBottom = safeAreaTop + DSBotLayout.toolbarHeight / 2 + 10
+        // Keep the title backed by full blur, then fade to clear at the buttons' bottom edge.
+        return DSBotEdgeBlur(
+            edge: .top,
+            height: toolbarBottom,
+            strength: hasTitle ? 1 : 0.8,
+            fullStrengthHeight: hasTitle ? titleBottom : 0
+        )
+        .offset(y: -safeAreaTop)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     /// What covers the conversation while a page of DSH or of the app's own is open.
     @ViewBuilder
     private func pageContent(safeAreaTop: CGFloat) -> some View {
         switch destination.target {
-        case .chat, .unsupported:
+        case .chat, .assistant, .unsupported, .dshSettings:
             EmptyView()
+        case .board:
+            // The page starts below the status bar, where the toolbar does: the toolbar is the only thing above it.
+            BoardView(board: board, store: store, topInset: DSBotLayout.toolbarHeight) { issue in
+                Task { await openIssue(issue) }
+            }
+        case .collector:
+            CollectorView(model: collector, board: board, store: store, topInset: DSBotLayout.toolbarHeight) { id in
+                Task { await openIssue(id: id) }
+            }
         case .files:
             WorkPanelView(store: store)
                 .padding(.top, safeAreaTop)
@@ -615,6 +879,8 @@ struct DSBotRootView: View {
                 Task { await store.selectSession(session) }
             }
             .padding(.top, safeAreaTop)
+        case .duduSettings:
+            NativeSettingsView(navigator: settingsNav, store: store, topInset: DSBotLayout.toolbarHeight) { pageToast = $0 }
         case let .web(page, target):
             let sessionID = page.needsSession ? store.selectedSession?.id : nil
             EmbeddedPageView(
@@ -631,14 +897,36 @@ struct DSBotRootView: View {
 
     /// Show an entry of DSH's sidebar or conversation views, the way the plugin says to open it.
     private func open(_ item: NavigationItem, in area: NavigationArea) {
-        DSBotLog.record("navigation.open", state: "page")
         let target = item.target
+        if target == .assistant && store.isOpeningAssistant { return }
+        DSBotLog.record("navigation.open", state: "page")
+        sidebarNavigationRevision &+= 1
         guard target != .unsupported else {
             store.notice = "手机端暂不支持「\(item.title)」"
             return
         }
         if case let .web(page, _) = target, page.needsSession, store.selectedSession == nil {
             store.notice = "先打开一个会话"
+            return
+        }
+        if target == .assistant {
+            let revision = sidebarNavigationRevision
+            let issue = destination.showsChat ? board.openedIssue(for: store.selectedSession) : nil
+            let pageContext: AssistantPageContext? = issue.map {
+                AssistantPageContext(issueID: $0.id, label: [$0.ref ?? "#\($0.id)", $0.title].joined(separator: " · "))
+            } ?? (destination.target == .board ? AssistantPageContext(issueID: nil, label: "Dudu")
+                  : destination.showsChat && store.isAssistantConversation ? store.assistantPageContext : nil)
+            Task {
+                guard let session = await store.assistantSession(),
+                      revision == sidebarNavigationRevision,
+                      isSidebarOpen, !isSearchActive, presentedSheet == nil else { return }
+                closeSidebar()
+                dismissKeyboard()
+                conversationFromBoard = false
+                store.assistantPageContext = pageContext
+                destination = MainDestination(id: item.id, area: area, target: .chat, title: item.title)
+                await store.selectSession(session)
+            }
             return
         }
         closeSidebar()
@@ -649,8 +937,56 @@ struct DSBotRootView: View {
     }
 
     private func showConversation() {
+        conversationFromBoard = false
         destination = .conversation
         closeSidebar()
+    }
+
+    /// One level up: a page goes back to the conversation, as it always did; a conversation opened from the board goes back to the board.
+    private func goBack() {
+        collector.stopSelecting()
+        // A page of 嘟嘟's settings opened from another one (a status, a collector) goes back to that one first.
+        if destination.target.settingsSection != nil, settingsNav.canPop {
+            settingsNav.pop()
+            return
+        }
+        if destination.showsChat {
+            conversationFromBoard = false
+            destination = .board
+        } else {
+            destination = .conversation
+        }
+        closeSidebar()
+    }
+
+    /// The conversation of an issue, over the board. A session the phone already lists opens at once; one that DSH folded away is put back first.
+    /// An issue nobody has yet has no conversation: what it says is shown instead.
+    private func openIssue(_ issue: BoardIssue) async {
+        dismissKeyboard()
+        if let id = issue.sessionId, let session = store.sessions.first(where: { $0.id == id }) {
+            showConversation()
+            conversationFromBoard = true
+            await store.selectSession(session)
+            return
+        }
+        if issue.sessionId == nil {
+            issueDetail = issue
+            return
+        }
+        guard let session = await board.session(of: issue, using: store) else {
+            issueDetail = issue
+            return
+        }
+        showConversation()
+        conversationFromBoard = true
+        await store.selectSession(session)
+    }
+
+    /// The same for an issue known by its number (a record that went to it).
+    private func openIssue(id: Int) async {
+        guard let session = await board.session(ofIssue: id, using: store) else { return }
+        showConversation()
+        await store.selectSession(session)
     }
 
 #if DEBUG && targetEnvironment(simulator)
@@ -683,6 +1019,7 @@ struct DSBotRootView: View {
 #endif
 
     private func closeSidebar() {
+        sidebarNavigationRevision &+= 1
         dismissKeyboard()
         if isSidebarOpen { DSBotLog.record("sidebar.close") }
         isSidebarOpen = false

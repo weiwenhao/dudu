@@ -1,16 +1,17 @@
-import { useEffect, useState } from 'react';
-import { Button } from '../components/button.jsx';
+import { useState } from 'react';
+import { LoaderCircle } from 'lucide-react';
+import { Badge } from '../components/badge.jsx';
 import { Checkbox } from '../components/checkbox.jsx';
 import { Switch } from '../components/switch.jsx';
-import { diagnostic, T } from '../strings.js';
 import { formatDateTime } from '../lib/locale.mjs';
-import { Card, Loading } from './Card.jsx';
+import { diagnostic, T } from '../strings.js';
+import { ActionButton, Choice, Field, Group, Loading, Page, PrimaryButton, Problem, QuietButton, Row } from './kit.jsx';
 import { useLoaded } from './use-loaded.js';
 
 const G = T.settings.general;
 
 /** The folder 嘟嘟 keeps its Markdown files in: where it is, and a way to change it (the plugin says why a folder is refused). */
-function FolderCard({ request, state, reload }) {
+function FolderRows({ request, state, reload, readOnly = false }) {
   const [editing, setEditing] = useState(false);
   const [path, setPath] = useState('');
   const [move, setMove] = useState(false);
@@ -23,35 +24,136 @@ function FolderCard({ request, state, reload }) {
     } catch { setProblem(T.settings.failed); }
   };
   return (
-    <Card title={G.folder} action={!editing && <Button variant="outline" size="sm" onClick={() => { setPath(state.projectFolder ?? ''); setMove(false); setProblem(''); setEditing(true); }}>{G.change}</Button>}>
-      <div className={editing ? 'py-3' : undefined}>
-      {state.projectFolder ? (
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <div className="flex items-center gap-2 text-[14px]/[22px] font-semibold">{G.folder}{state.isDefault && <span className="rounded-md border px-1.5 text-[11px]/[18px] font-normal text-muted-foreground">{G.isDefault}</span>}</div>
-          <code className="truncate text-xs/5" title={state.projectFolder}>{state.projectFolder}</code>
-        </div>
-      ) : <p className="text-danger-foreground">{diagnostic(state.problems?.[0]) ?? T.settings.unavailable}</p>}
+    <>
+      <Row
+        title={G.folder}
+        meta={state.projectFolder ? (
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <code className="min-w-0 font-mono [overflow-wrap:anywhere]">{state.projectFolder}</code>
+            {state.isDefault && <Badge>{G.isDefault}</Badge>}
+          </span>
+        ) : <span className="text-danger-foreground">{diagnostic(state.problems?.[0]) ?? T.settings.unavailable}</span>}
+      >
+        {!editing && !readOnly && <ActionButton onClick={() => { setPath(state.projectFolder ?? ''); setMove(false); setProblem(''); setEditing(true); }}>{G.change}</ActionButton>}
+      </Row>
       {editing && (
-        <div className="mt-3 flex flex-col gap-3">
-          <input
-            value={path} onChange={(event) => setPath(event.target.value)} aria-label={G.path} spellCheck={false}
-            className="h-9 w-full rounded-md border bg-background px-3 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          />
-          <label className="flex items-center gap-2 text-sm"><Checkbox checked={move} onCheckedChange={(value) => setMove(value === true)} aria-label={G.moveFiles} />{G.moveFiles}</label>
-          {problem && <p className="text-xs text-danger-foreground" role="alert">{diagnostic(problem)}</p>}
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>{G.cancel}</Button>
-            <Button size="sm" disabled={!path.trim()} onClick={save}>{G.save}</Button>
+        <Row block>
+          <div className="flex flex-col gap-3">
+            <Field value={path} onChange={(event) => setPath(event.target.value)} aria-label={G.path} spellCheck={false} autoFocus className="font-mono text-xs" />
+            <label className="flex w-fit items-center gap-2"><Checkbox checked={move} onCheckedChange={(value) => setMove(value === true)} aria-label={G.moveFiles} />{G.moveFiles}</label>
+            <Problem>{diagnostic(problem)}</Problem>
+            <div className="flex justify-end gap-2">
+              <QuietButton onClick={() => setEditing(false)}>{G.cancel}</QuietButton>
+              <PrimaryButton disabled={!path.trim()} onClick={save}>{G.save}</PrimaryButton>
+            </div>
           </div>
-        </div>
+        </Row>
       )}
-      </div>
-    </Card>
+    </>
   );
 }
 
-/** What the page's Export gives: every issue, its log, sessions and changes as one file (the store's own export). */
-function IssuesCard({ request, state, reload }) {
+/** `assistant/settings` and one way to change it: saves a patch, reads the settings again, and says so when it could not (the pet's switches, deep sleep). */
+function useSettings(request, onChanged) {
+  const value = useLoaded(request, 'assistant/settings');
+  const [problem, setProblem] = useState('');
+  const [saving, setSaving] = useState(false);
+  const change = async (patch) => {
+    setSaving(true);
+    setProblem('');
+    try {
+      const result = await request('assistant/settings', { patch });
+      if (result.outcome !== 'success') throw new Error();
+      value.reload();
+      onChanged?.();
+    } catch { setProblem(T.toast.failed); }
+    finally { setSaving(false); }
+  };
+  return { value, problem, saving, change };
+}
+
+/** The pet: whether it is there, and the two keys that talk to it. */
+function PetGroup({ request, onChanged }) {
+  const { value, problem, saving, change } = useSettings(request, onChanged);
+  return (
+    <Loading state={value} rows={3}>{(data) => (
+      <Group title={G.pet}>
+        {[['enabled', G.showPet], ['doubleSpace', G.doubleSpace], ['voice', G.holdSpace]].map(([key, title]) => (
+          <Row key={key} as="label" title={title} className="cursor-pointer">
+            <Switch checked={data.settings.pet[key]} onCheckedChange={(checked) => change({ pet: { [key]: checked } })} disabled={saving} aria-label={title} />
+          </Row>
+        ))}
+        {problem && <Row block><Problem>{problem}</Problem></Row>}
+      </Group>
+    )}</Loading>
+  );
+}
+
+/** Deep sleep: whether an idle agent that nobody has handled for half an hour is put to sleep. It is on until the owner turns it off. */
+function DeepSleepRow({ request }) {
+  const { value, problem, saving, change } = useSettings(request);
+  if (!value.value) return null;
+  return (
+    <>
+      <Row as="label" title={G.deepSleep} className="cursor-pointer">
+        <Switch checked={value.value.settings.deepSleep !== false} onCheckedChange={(checked) => change({ deepSleep: checked })} disabled={saving} aria-label={G.deepSleep} />
+      </Row>
+      {problem && <Row block><Problem>{problem}</Problem></Row>}
+    </>
+  );
+}
+
+/** Dudu's durable defaults use the live model and permission catalogs, in the same fields as the other settings. */
+function ConversationGroup({ request, actions, onChanged }) {
+  const value = useLoaded(request, 'assistant/conversation-settings');
+  const [problem, setProblem] = useState('');
+  const [saving, setSaving] = useState(false);
+  const change = async (patch) => {
+    setSaving(true);
+    setProblem('');
+    try {
+      const result = await request('assistant/conversation-settings', { patch });
+      if (result.outcome !== 'success') throw new Error();
+      value.reload();
+      onChanged?.();
+    } catch { setProblem(T.toast.failed); }
+    finally { setSaving(false); }
+  };
+  return (
+    <Loading state={value} rows={3}>{(data) => {
+      const selected = data.model;
+      const models = data.groups.flatMap((group) => group.models.map((model) => ({ ...model, provider: group.id, group: group.name })));
+      const current = models.find((model) => model.provider === selected?.provider && model.id === selected?.model);
+      const efforts = current?.reasoning?.efforts ?? [];
+      const field = (label, choice, options, select) => <Row title={label} aria-busy={saving}>
+        {saving && <LoaderCircle className="size-3.5 animate-spin text-muted-foreground" aria-hidden="true" />}
+        <div className="w-[240px] max-w-[calc(100vw-144px)]">
+          <Choice label={label} showLabel={false} value={choice} options={options} onChange={select} disabled={saving || !options.length} />
+        </div>
+      </Row>;
+      return <Group title={`${T.brand} · ${G.isDefault}`}>
+        {field(G.model, current ? JSON.stringify([current.provider, current.id]) : '', models.map((model) => ({
+          value: JSON.stringify([model.provider, model.id]), label: model.name, ...(data.groups.length > 1 ? { hint: model.group } : {}),
+        })), (key) => {
+          const [provider, model] = JSON.parse(key);
+          const target = models.find((item) => item.provider === provider && item.id === model);
+          void change({ model: { provider, model, ...(target.reasoning?.defaultEffort ? { reasoningEffort: target.reasoning.defaultEffort } : {}) } });
+        })}
+        {efforts.length > 0 && field(T.pet.effort, selected.reasoningEffort ?? current.reasoning.defaultEffort ?? '', [
+          ...(!current.reasoning.defaultEffort ? [{ value: '', label: G.isDefault }] : []),
+          ...efforts.map((item) => ({ value: item.id, label: item.name })),
+        ], (reasoningEffort) => void change({ model: { provider: selected.provider, model: selected.model, ...(reasoningEffort ? { reasoningEffort } : {}) } }))}
+        {field(actions.conversationPermissionTitle?.() ?? T.activity.access, data.settings.permission, data.permissions.map((option) => ({
+          value: option.value, label: actions.conversationPermissionLabel?.(option) ?? option.name,
+        })), (permission) => void change({ permission }))}
+        {problem && <Row block><Problem>{problem}</Problem></Row>}
+      </Group>;
+    }}</Loading>
+  );
+}
+
+/** What the page's Export gives: every issue, its log, sessions and changes as one file (the store's own export); and the last tidy. */
+function IssuesGroup({ request, state, reload, phone = false }) {
   const [problem, setProblem] = useState('');
   const download = async () => {
     setProblem('');
@@ -65,81 +167,45 @@ function IssuesCard({ request, state, reload }) {
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch { setProblem(G.exportFailed); }
   };
+  const tidy = state?.lastIssueTidy;
   return (
-    <Card title={G.issues}>
-      <div className="flex min-h-[60px] items-center gap-3 border-b border-border/50 py-3">
-        <span className="text-muted-foreground">{G.lastTidy}</span>
-        <span className="min-w-0 flex-1">{state?.lastIssueTidy ? formatDateTime(state.lastIssueTidy.at) : G.noTidy}</span>
-        {state?.lastIssueTidy?.groupId && <Button variant="outline" size="sm" onClick={async () => {
+    <Group title={G.issues}>
+      <Row title={G.lastTidy} meta={tidy ? formatDateTime(tidy.at) : G.noTidy}>
+        {tidy?.groupId && <ActionButton onClick={async () => {
+          setProblem('');
           try {
             const result = await request('issues/tidy-undo');
             if (!['success', 'no_op'].includes(result.outcome)) throw new Error();
             reload?.();
           } catch { setProblem(T.toast.failed); }
-        }}>{G.undoTidy}</Button>}
-      </div>
-      <div className="flex min-h-[60px] items-center justify-between gap-3 py-3">
-        <span className="text-[14px] font-semibold">{G.exportIssues}</span>
-        <Button variant="outline" size="sm" aria-label={G.exportIssues} onClick={download}>{G.export}</Button>
-        {problem && <span className="text-xs text-danger-foreground" role="alert">{problem}</span>}
-      </div>
-    </Card>
+        }}>{G.undoTidy}</ActionButton>}
+      </Row>
+      {!phone && (
+        <Row title={G.exportIssues}>
+          <ActionButton aria-label={G.exportIssues} onClick={download}>{G.export}</ActionButton>
+        </Row>
+      )}
+      {problem && <Row block><Problem>{problem}</Problem></Row>}
+      <DeepSleepRow request={request} />
+    </Group>
   );
 }
 
-function PetCard({ request, onChanged }) {
-  const value = useLoaded(request, 'assistant/settings');
-  const [problem, setProblem] = useState('');
-  const [saving, setSaving] = useState(false);
-  const change = async (key, checked) => {
-    setSaving(true);
-    setProblem('');
-    try {
-      const result = await request('assistant/settings', { patch: { pet: { [key]: checked } } });
-      if (result.outcome !== 'success') throw new Error();
-      value.reload();
-      onChanged?.();
-    } catch { setProblem(T.toast.failed); }
-    finally { setSaving(false); }
-  };
-  return <Loading state={value}>{(data) => (
-    <Card title={G.pet}>
-      <div className="flex flex-col">
-        {[['enabled', G.showPet], ['doubleSpace', G.doubleSpace], ['voice', G.holdSpace]].map(([key, title]) => (
-          <label key={key} className="flex min-h-[60px] items-center justify-between gap-3.5 border-t border-border/50 py-3 first:border-t-0">
-            <span className="text-[14px]/[22px] font-semibold">{title}</span>
-            <Switch checked={data.settings.pet[key]} onCheckedChange={(checked) => change(key, checked)} disabled={saving} aria-label={title} />
-          </label>
-        ))}
-        {problem && <p className="text-danger-foreground" role="alert">{problem}</p>}
-      </div>
-    </Card>
-  )}</Loading>;
-}
-
-export function GeneralSection({ request, actions = {}, onChanged, onClose }) {
+// `actions.phone` is the phone's page (ui/phone): the project folder is shown and not changed there ("手机上只显示路径，不选文件夹"), and what belongs to the
+// desktop (the pet, the file an export saves) is not offered.
+export function GeneralSection({ request, actions = {}, onChanged }) {
   const state = useLoaded(request, 'assistant/state');
-  const reload = state.reload;
-  useEffect(() => {
-    let active = true;
-    request('assistant/conversation').then((value) => { if (active && value.outcome === 'success') reload(); }).catch(() => {});
-    return () => { active = false; };
-  }, [request, reload]);
-  const [problem, setProblem] = useState('');
+  const phone = actions.phone === true;
   return (
-    <div className="flex flex-col gap-[22px]">
-      <Loading state={state}>{(value) => <FolderCard request={request} state={value} reload={state.reload} />}</Loading>
-      <PetCard request={request} onChanged={onChanged} />
-      <Card title={G.model}>
-        <div className="flex min-h-[60px] items-center justify-between gap-3 py-3">
-          <span className="min-w-0"><b className="block truncate text-[14px]/[22px] font-semibold">{state.value?.conversation?.model?.model ?? T.widgets.quota.unknown}</b><span className="text-[12px]/[18px] text-muted-foreground">{G.currentModel}</span></span>
-          <Button variant="outline" size="sm" onClick={async () => {
-            try { await actions.openAssistantModel?.(); onClose?.(); } catch { setProblem(T.pet.failed); }
-          }}>{G.changeModel}</Button>
-        </div>
-        {problem && <p className="text-danger-foreground" role="alert">{problem}</p>}
-      </Card>
-      <IssuesCard request={request} state={state.value} reload={state.reload} />
-    </div>
+    <Page title={T.settings.nav.general}>
+      <Loading state={state} rows={2}>{(value) => (
+        <Group label={G.folder}>
+          <FolderRows request={request} state={value} reload={state.reload} readOnly={phone} />
+        </Group>
+      )}</Loading>
+      <ConversationGroup request={request} actions={actions} onChanged={onChanged} />
+      {!phone && <PetGroup request={request} onChanged={onChanged} />}
+      <IssuesGroup request={request} state={state.value} reload={state.reload} phone={phone} />
+    </Page>
   );
 }

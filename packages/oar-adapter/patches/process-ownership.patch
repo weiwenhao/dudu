@@ -1,0 +1,69 @@
+--- a/dist/shared/executable/ownership.js
++++ b/dist/shared/executable/ownership.js
+@@ -1,14 +1,16 @@
+ import { execFileSync } from "node:child_process";
+ import { writeSync } from "node:fs";
++import { onExit } from "signal-exit";
+ import { descendantsOf, killEntries, observeProcessTable } from "./process-tree.js";
+ import { cleanupFailureReason } from "./process-cleanup-diagnostics.js";
+ const ownedChildren = new Set();
+-let exitHookInstalled = false;
++let removeExitHook;
+ const pendingCleanups = new Set();
+ /** Keep captured identities owned after the root and its pipes have closed. */
+ export function trackPendingCleanup(finish) {
+     pendingCleanups.add(finish);
+-    return () => { pendingCleanups.delete(finish); };
++    installExitHook();
++    return () => { pendingCleanups.delete(finish); releaseExitHook(); };
+ }
+ function warn(reason) {
+     if (reason === undefined) {
+@@ -59,12 +61,16 @@
+  * covers sessions, probes, updaters, logins and ACP terminals when a host
+  * calls process.exit without disposing them; on POSIX it also SIGKILLs the
+  * descendants of a child still running that left its group, and their groups
+- * (process-tree.ts). Node does not emit `exit` for an unhandled terminating
+- * signal or SIGKILL; hosts own graceful handling.
++ * (process-tree.ts). signal-exit also covers unhandled terminating signals,
++ * preserving the host's signal handlers and exit status. SIGKILL cannot run
++ * an in-process cleanup hook; hosts still own graceful disposal.
+  */
+ export function trackOwnedProcess(child) {
+     ownedChildren.add(child);
+-    const forget = () => { ownedChildren.delete(child); };
++    const forget = () => {
++        ownedChildren.delete(child);
++        releaseExitHook();
++    };
+     child.once("close", forget);
+     child.once("error", () => {
+         // Other errors (e.g. a failed kill) do not prove the process is gone.
+@@ -72,9 +78,17 @@
+             forget();
+         }
+     });
+-    if (!exitHookInstalled) {
+-        exitHookInstalled = true;
+-        process.once("exit", () => {
++    installExitHook();
++}
++function releaseExitHook() {
++    if (ownedChildren.size === 0 && pendingCleanups.size === 0) {
++        removeExitHook?.();
++        removeExitHook = undefined;
++    }
++}
++function installExitHook() {
++    if (removeExitHook === undefined) {
++        removeExitHook = onExit(() => {
+             // One read of the process table serves every child.
+             let observation = null;
+             const observe = () => {
+@@ -105,4 +119,4 @@
+         });
+     }
+ }
+-//# sourceMappingURL=ownership.js.map
+\ No newline at end of file
++//# sourceMappingURL=ownership.js.map

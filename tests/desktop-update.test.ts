@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { desktopPackageIdentity, matchesDesktopRuntime, waitForDesktopRuntime, writeDesktopRuntime } from '../host/desktop-runtime.mjs';
-import { activateDesktopUpdate } from '../scripts/update-desktop.mjs';
+import { acquireUpdateLock, activateDesktopUpdate, parseUpdateArguments, requestDesktopReload, runsInsideDesktop } from '../scripts/update-desktop.mjs';
 
 async function temporary(t: any) {
   const folder = await mkdtemp(join(tmpdir(), 'dsbot-update-test-'));
@@ -67,21 +67,95 @@ test('successful plugin hot reload leaves the desktop application running', asyn
   const runtime = { version: '0.3.21' };
   const result = await activateDesktopUpdate({
     running: true, restartRequired: false,
-    touchProfile: async () => { actions.push('touch'); },
+    requestReload: async () => { actions.push('reload'); },
     waitForRuntime: async () => { actions.push('ready'); return runtime; },
     restart: async () => { throw new Error('Must not restart an already updated runtime.'); },
   });
   assert.deepEqual(result, { mode: 'hot', runtime });
-  assert.deepEqual(actions, ['touch', 'ready']);
+  assert.deepEqual(actions, ['reload', 'ready']);
 });
 
-test('an unsuccessful hot reload restarts once and never reports an unready build as installed', async () => {
+test('an unsuccessful hot reload leaves Desktop open and never reports an unready build as installed', async () => {
   const actions: string[] = [];
   await assert.rejects(activateDesktopUpdate({
     running: true, restartRequired: false,
-    touchProfile: async () => { actions.push('touch'); },
+    requestReload: async () => { actions.push('reload'); },
     waitForRuntime: async () => { actions.push('wait'); return undefined; },
     restart: async () => { actions.push('restart'); },
   }), /did not become ready/);
-  assert.deepEqual(actions, ['touch', 'wait', 'restart', 'wait']);
+  assert.deepEqual(actions, ['reload', 'wait']);
+});
+
+test('only an explicit restart bypasses hot reload; an unopened Desktop can be started', async () => {
+  for (const options of [{ running: true, restartRequired: true }, { running: false, restartRequired: false }]) {
+    const actions: string[] = [];
+    const result = await activateDesktopUpdate({
+      ...options,
+      requestReload: async () => { assert.fail('No running profile should be reloaded.'); },
+      waitForRuntime: async () => { actions.push('ready'); return { pid: 123 }; },
+      restart: async () => { actions.push('start'); },
+    });
+    assert.equal(result.mode, 'restart');
+    assert.deepEqual(actions, ['start', 'ready']);
+  }
+});
+
+test('reload changes patch contents on every request, preserving configuration, comments and file permissions', async (t) => {
+  const folder = await temporary(t);
+  const patch = join(folder, 'cordis.patch.yml');
+  const original = '# owner comment\r\n- id: dudu\r\n  config:\r\n    port: 3170\r\n';
+  await writeFile(patch, original, { mode: 0o600 });
+  for (const fingerprint of ['a'.repeat(64), 'a'.repeat(64), 'b'.repeat(64)]) {
+    const before = await readFile(patch, 'utf8');
+    await requestDesktopReload(folder, fingerprint);
+    const changed = await readFile(patch, 'utf8');
+    assert.notEqual(changed, before, 'DSH ignores unchanged patch contents, including a same-build retry');
+    assert.equal(changed.split('\r\n').slice(1).join('\r\n'), original);
+    assert.equal((changed.match(/# dudu desktop update:/g) ?? []).length, 1);
+    assert.equal((await stat(patch)).mode & 0o777, 0o600);
+  }
+  assert.deepEqual(await readdir(folder), ['cordis.patch.yml']);
+  await assert.rejects(requestDesktopReload(folder, 'not-a-fingerprint'), /fingerprint/);
+});
+
+test('desktop updates recognize their own harness workers through shell and npm ancestors', () => {
+  const executable = '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness';
+  const processes = [
+    { pid: 20, parent: 1, command: executable },
+    { pid: 30, parent: 20, command: 'codex' },
+    { pid: 40, parent: 30, command: '/bin/zsh' },
+    { pid: 50, parent: 40, command: 'npm' },
+    { pid: 60, parent: 50, command: 'node' },
+    { pid: 70, parent: 1, command: '/bin/zsh' },
+    { pid: 80, parent: 70, command: 'node' },
+  ];
+  assert.equal(runsInsideDesktop(60, processes, executable), true);
+  assert.equal(runsInsideDesktop(80, processes, executable), false);
+  assert.equal(runsInsideDesktop(90, processes, executable), false);
+  assert.equal(runsInsideDesktop(60, processes, '/Applications/Other.app/Contents/MacOS/DeepSeek Harness'), false);
+  assert.equal(runsInsideDesktop(60, [{ pid: 60, parent: 60, command: 'node' }], executable), false);
+});
+
+test('--force reloads even from a task inside DSH; nothing else changes, and an unknown option is still refused', () => {
+  assert.deepEqual(parseUpdateArguments([]), { app: '/Applications/DeepSeek Harness.app', restartRequired: false, force: false });
+  assert.deepEqual(parseUpdateArguments(['--force']), { app: '/Applications/DeepSeek Harness.app', restartRequired: false, force: true });
+  assert.deepEqual(parseUpdateArguments(['--restart', '--app', '/x/DSH.app']), { app: '/x/DSH.app', restartRequired: true, force: false });
+  assert.deepEqual(parseUpdateArguments(['--force', '--restart']).force && parseUpdateArguments(['--force', '--restart']).restartRequired, true);
+  assert.throws(() => parseUpdateArguments(['--forced']), /Unknown or incomplete option: --forced/);
+  assert.throws(() => parseUpdateArguments(['--app']), /Unknown or incomplete option: --app/);
+});
+
+test('the update lock is held by a live update, and taken over from one that was killed', async (t) => {
+  const folder = await temporary(t);
+  const lockPath = join(folder, 'update.lock');
+  const first = await acquireUpdateLock(lockPath);
+  await first.writeFile(JSON.stringify({ pid: 4242 }) + '\n');
+  await first.close();
+  await assert.rejects(acquireUpdateLock(lockPath, (pid: number) => pid === 4242), /Another desktop update holds/);
+  const second = await acquireUpdateLock(lockPath, () => false); // its holder is gone: a forced reload ended the task that ran it
+  await second.close();
+  await writeFile(lockPath, 'not json');
+  const third = await acquireUpdateLock(lockPath, () => true); // an unreadable lock has no live holder
+  await third.close();
+  await rm(lockPath, { force: true });
 });

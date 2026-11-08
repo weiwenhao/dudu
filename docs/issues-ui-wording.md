@@ -4,6 +4,14 @@
 
 所有界面上的固定字在 `host/dudu-plugin/ui/strings.js`（带 `NEW` 注释的是设计稿里没有的）。
 
+## 2026-11-04 双地址连接设计
+
+主人审核双地址预览、提出删去“内网优先”和“备用”等调整后，要求直接完成开发。此轮按批准稿使用：
+`公网地址` / `Public address`、二维码地址类型 `内网` / `LAN` 与 `公网` / `Public`，
+以及读屏 `编辑公网地址` / `Edit public address`、`移除地址` / `Remove address`；编辑动作复用 `编辑` / `Edit`。
+“生成二维码”改为整台电脑的单个操作，原有“为内网地址生成二维码”不再出现在这页。
+手机端本轮原样文案和批准范围见 [remote-connection-design.md](remote-connection-design.md)。
+
 ## 照设计稿改正的
 
 我原来写得和设计稿不一样的，现在都改回设计稿的写法：
@@ -60,6 +68,10 @@
 - 交给会话的第一条消息：现为原任务标题和描述，见本文末尾 2026-11-01 的更新。
 - 给模型的指令（`dispatch/prompts.mjs`）不是界面，但你写的 `TRIAGE.md`、`ASSIGN.md` 就是读给它们的。
 - Office：名牌、图例、读屏句子在 `host/dudu-plugin/ui/widgets/office/strings.js`。
+- 设置“通用”页“事项”一栏里的开关 `深度睡眠` / `Deep sleep`（`strings.js` 的 `settings.general.deepSleep`，主人 2026-11-05 要的：“嘟嘟设置页面增加一条可以深度睡眠的配置，默认开启可以选择关闭”）：中文是主人的原话；英文是我照译的，请主人看一下英文。行上没有说明文字（主人定的规矩：不默认加副标题），读屏名和行名一样，没存成时用宠物开关已在用的那句 `Could not save the change` / `更改没能保存`（`T.toast.failed`），不是新词。
+- 深度睡眠的月牙（主人 2026-11-05 选定的标记）的名字 `深度睡眠` / `Deep sleep`（`strings.js` 的顶层 `deepSleep`）：头像的悬停提示和读屏名（`Claude · 深度睡眠` / `Claude · Deep sleep`，是已有的 `{智能体} · {状态}` 里状态那一格换成这个词）、Office 名牌的读屏名和悬停卡里的状态字、iPhone 头像的读屏名（`深度睡眠`）。中文是主人的原话；英文是我照译的，请主人看一下英文（和设置里那一行是同一个词）。
+- **标签、子事项、新建事项窗口（2026-11-05，参照 Linear；主人没有逐字审，下面都是暂定，请主人看）**。Linear 截图里有的字原样用：`Labels`、`Change or add labels…`、`Create new label: "x"`、`Pick a color for label`、九种颜色名（`Grey`、`Dark Grey`、`Purple`、`Teal`、`Green`、`Yellow`、`Orange`、`Pink`、`Red`）、`Add label`、`Sub-issue of`、`Add sub-issues`、`Set due date`（这里用已有的 `Due date`）；我加的：`Add sub-issue`（右键菜单）、`Sub-issues`（小标题）、`Sub-issue title`（输入框）、`Parent issue`、`Set parent issue…`、`Remove parent`、`Search issues…`、`No issues found`、`Loading labels…`、`No labels yet`、`Could not load labels`、`Could not create the label`、`Could not create the sub-issue`、`More`（新建窗口 “…” 的名字）；显示属性里多了 `Labels`，筛选里多了 `Labels`。中文：标签、修改或添加标签…、新建标签：“x”、选择标签颜色、灰色/深灰/紫色/青色/绿色/黄色/橙色/粉色/红色、添加标签、子事项，属于、添加子事项、连续创建、子事项标题、父事项、设置父事项…、移除父事项、搜索事项…、没有找到事项、正在读取标签…、还没有标签、标签没能读取、标签没能创建、子事项没能创建、更多。完成数/总数写成 `0/1`（不用字）。新建窗口的芯片没有新字：状态、优先级、智能体（没选时写 `Agent`，读屏名仍是 `No agent`）、项目（读屏名仍是 `Choose a project`）。
+- Office 的深度睡眠标签 `ZZZ`：2026-11-07 主人说“zzz 就不需要了”，已经去掉（`strings.js` 的 `zzz` 也删了）；没有为它留下新词。
 
 ## 对话、宠物和整理：本次新增，等你看
 
@@ -72,7 +84,7 @@
 | 通用：宠物和快捷键 | `Pet` · `Show pet` · `Double Space to open conversation` · `Hold Space for voice input` |
 | 通用：模型 | `Model` · `Change in DSH` |
 | 通用和详情：整理 | `Last tidy` · `Not tidied yet` · `Undo tidy` |
-| 宠物按钮和对话控件（含读屏） | `Open conversation` · `Close` · `嘟嘟` · `Message` · `Send` · `Earlier` · `Voice input` · `Stop` · `Working` |
+| 宠物按钮和对话控件（含读屏） | `Open conversation` · `Close` · `嘟嘟` · `Message` · `Send` · `Earlier` · `Voice input` · `Stop` |
 | 语音气泡 | `Release to send · Esc to cancel` |
 | 对话和语音失败 | `Could not load the conversation` · `Voice input failed` |
 | 记忆忘记的实际范围 | `This removes local memory and its references. DSH source messages and model history stay.` |
@@ -117,7 +129,7 @@
 
 - New issue 的窗口：设计稿只画了按钮，窗口是最小版（标题、描述、两个按钮；从分组条或 Board 列的"＋"打开时带那一组的值）。
 - 详情页右上"···"、宠物和嘟嘟自己的对话、设置里宠物和快捷键、模型、最近一次整理已接上；新增的字见本节。
-- `dudu.widget` 已用插件自己声明的 DSH 插槽接通；供应商和手机控制已嵌入嘟嘟设置，保留原来的 DSH 设置入口。
+- `dudu.widget` 已用插件自己声明的 DSH 插槽接通；供应商和手机控制是嘟嘟设置里的两页，DSH 自己的设置里不再有这两项（主人 2026-11-03）。
 - 本地记忆删除不会复活到索引，但 DSH 的源消息和模型正常历史仍保留；当前宿主没有删改日志或过滤模型历史的接口。不能把它标成“完全忘记”。
 - 宠物和设置本次按存档 v38 的现有稿对齐；其他小组件内容和检查器没有高保真稿，沿用文字要求和 DSH 样式。
 - 手机端没有设计，没做。
@@ -130,7 +142,7 @@
 - UI 对照使用存档的浅色、深色页面；DSH 的全局 `corner-shape: superellipse(1.5)` 会把设计里的圆形和胶囊改成超椭圆，已在 `.dudu` 内重置为 `round`。控件仍是 shadcn/ui、Radix 和 Tailwind。
 - 设置导航、记忆编辑和删除图标使用存档稿的原始 SVG 路径；已安装的 Lucide 版本中，部分同名图标的路径不同。规则的标题、说明和代码区、技能的行内删除入口也已补回。连接器按主人后补要求只显示名称、Prompt 和删除，旧的标签、读写、展开区和开关全部撤下。
 - 系统活动和已知运行错误随界面语言显示；事项内容、模型问题和外部程序的原始输出不翻译。旧连接器配置诊断译文只作为兼容字典保留，在完整对照表中单独标出。
-- 详情稿里的附件图标尚无对应的 issue 附件存储、回复传递约定；当前没有添加仅作展示的附件按钮。其余详情操作按稿对齐。
+- 此前未启用的详情附件入口已在 2026-11-05 按主人提供的 Linear 截图实现；新增的三个操作用词见文末，等待逐字审阅。
 
 ## 最新补充后的用词（待审）
 
@@ -191,7 +203,7 @@ Office 这轮撤去头部人数、Agent 图例和左下角未分配角标，白�
 `host/assistant/templates.mjs` 的 `AGENTS.md` 本轮新增或替换三条，原样如下；只用于新建文件夹，不覆盖主人已有的规则：
 
 ```text
-- 嘟嘟管理事项，具体工作交给智能体；智能体停下来后，嘟嘟读最近几段对话，判断进展、更新状态
+- 嘟嘟管理事项，具体工作交给智能体
 - 连接器记你指定的信息来源和收集要求，嘟嘟用已有的工具和技能去读；发消息、改来源里的东西要你明确要求
 - 先选项目，再分配智能体；智能体只在所选项目里工作
 ```
@@ -265,4 +277,399 @@ Office 这轮撤去头部人数、Agent 图例和左下角未分配角标，白�
 
 ### 2026-11-01 停止工作统一进入 In Review（主人明确指定）
 
-工作完成、暂停、中断、报错、等待回复或授权，都使用已有的 `In Review` / `待审核`，不再单独显示 `Needs you` / `等你回复` 或头像上的琥珀点。详情问题的状态标记、Agent 状态筛选、Office 和宠物提醒复用同一词。未新增界面用词；内部 `needs_you` 键为兼容保留。
+工作完成、暂停、中断、报错、等待回复或授权，都使用已有的 `In Review` / `待审核`，不再单独显示 `Needs you` / `等你回复` 或头像上的琥珀点。详情问题的状态标记和宠物的待处理提醒复用同一词。Agent 独立生命周期按主人 2026-11-02 的补充执行，见下一条。
+
+### 2026-11-02 智能体独立状态（主人明确指定）
+
+主人指定 `idle / working / blocked / done`，英文显示 `Idle / Working / Blocked / Done`；中文沿用已有的 `空闲 / 工作中 / 待介入 / 已完成`，没有新增词。2026-11-03 主人把 done 合并进 blocked：只剩 `Idle / Working / Blocked` 和 `空闲 / 工作中 / 待介入`，删去了 `Done / 已完成` 这个状态名，没有新增词。事项列表、看板、详情、Office 和侧栏共用 Logo 右下角的状态标记及同一组悬停说明。In Review / 待审核仍是事项状态，与 Agent 状态独立；等回复或出错的员工也可以休息。
+
+### 2026-11-02 原生会话手动压缩提示（待审，尚未安装到 Desktop）
+
+`Manual compaction is not available for {name} through OAR; native automatic compaction remains enabled.`
+
+`{name}` 为 `Claude` 或 `ChatGPT`。Claude 与 Codex 的正常 `/compact` 现已调用原生压缩，这句只保留作旧宿主缺少 maintenance / runtime 缺少能力，以及适配器辅助摘要路径的明确拒绝，不再是当前两个 harness 的正常命令结果。
+
+新增失败原因（收到成功回合结束却没有真实压缩回执，不得显示成功）：
+
+`{name} ended without reporting native compaction.`
+
+如果 harness 在该 result 中提供了错误文字，直接显示其原始诊断，不用这一后备句。
+
+本次沿用 DSH 命令结果的原文也列出待审，未另写中文覆盖宿主：
+
+- `Usage: /compact (no arguments)`
+- `No compactable history yet.`
+- `Compaction is unavailable because this process has an active compaction, or the agent is not idle.`
+- `Compaction cancelled.`
+
+### 2026-11-02 宠物右键隐藏（待审，尚未安装到 Desktop）
+
+新增菜单项：`Hide pet` / `隐藏宠物`。主人要求在嘟嘟设置中以及宠物右键菜单中隐藏宠物；设置沿用现有的 `Show pet` / `显示宠物` 开关，保存失败沿用 `Could not save the change` / `更改没能保存`，没有新增提示文案。
+
+### 2026-11-02 副文本清理和规则页内编辑
+
+主人要求截图中的说明性副文本撤下，已有副文本重新审字；完整原句、移除范围、仍显示的说明及手机原生发现项见 [secondary-copy-review.md](secondary-copy-review.md)。本轮不以自检代替主人审核。
+
+规则页复用既有 `Edit` / `编辑`、`Save` / `保存`、`Cancel` / `取消`，读屏名字沿用记忆页的 `Edit: {text}` / `编辑：{text}`，此处 `{text}` 是规则文件名；失败复用 `Could not save the change` / `更改没能保存`。开发者模式曾合并进小组件列表，随后按主人要求随整个“小组件”设置栏目一并移除。组件仍由“编辑版面”管理，开发检查器保留现有开发接口。本轮没有新增固定文案。
+
+### 2026-11-02 Linear 形式的截止日期（主人已确认）
+
+主人授权查看已登录的 Linear，参考实际日期标签、快捷菜单和自定义日历。以下五组中英文原文已在 2026-11-02 展示给主人，主人回复“可以”，允许随本次日期控件更新发布：
+
+| 键 | English | 中文 |
+| --- | --- | --- |
+| due.placeholder | Try: 24h, 7 days, Feb 9 | 试试：24h、7天、2月9日 |
+| due.remove | Remove due date | 移除截止日期 |
+| due.custom | Custom… | 自定义… |
+| due.weekEnd | End of this week | 本周结束 |
+| due.oneWeek | In one week | 一周后 |
+
+“本周结束”对应最近一个周五，周五当天可选当天，周末则为下个周五；“一周后”为七个本地日历日后。相对日和周跨夏令时仍按本地日历计算。
+
+复用已有 `Tomorrow` / `明天`、`Due date` / `截止日期`、`Cancel` / `取消`、`Save` / `保存`，以及日期变更和撤销的现有文字。没有复制 Linear 的解释段落，也没有增加帮助副文本。日期和星期通过语言设置格式化，不翻译事项内容。
+
+### 2026-11-03 自定义事项状态（待审，尚未安装到 Desktop）
+
+主人授权参考 Linear 在嘟嘟设置中自定义状态。以下是本次新增或新增位置使用的中英文原文，尚待主人逐字确认；没有新增说明性副文本。状态名称、描述和事项数量为实际内容。
+
+| 位置 | English | 中文 |
+| --- | --- | --- |
+| 设置入口和标题 | Status | 状态 |
+| 名称输入 | Name | 名称 |
+| 描述输入 | Description | 描述 |
+| 颜色按钮和输入 | Color | 颜色 |
+| 新增表单按钮 | Create | 创建 |
+| 菜单按钮读屏名 | Status options: {name} | 状态选项: {name} |
+| 分类加号的读屏名 | Add status to {category} | 在{category}中添加状态 |
+| 拖动柄读屏名 | Reorder: {name} | 调整顺序: {name} |
+| 菜单排序 | Move up / Move down | 上移 / 下移 |
+| 菜单默认值 | Set as default | 设为默认 |
+| 删除时选择替代状态 | Move issues to | 将事项移至 |
+| 分类条 | Backlog / Unstarted / Started / Completed / Canceled | 待规划 / 未开始 / 已开始 / 已完成 / 已取消 |
+| 无效或已删除的状态 | This status no longer exists. | 这个状态已不存在。 |
+| 名称或颜色不合法 | Check the status name and color. | 请检查状态名称和颜色。 |
+| 名称重复 | A status with this name already exists. | 已有同名状态。 |
+| 删除分类的最后一个状态 | Keep at least one status in each category. | 每个分类至少保留一个状态。 |
+| 有事项但未选替代状态 | Choose a status for the existing issues. | 请选择现有事项要移入的状态。 |
+
+继续复用已有的 Edit / 编辑、Cancel / 取消、Save / 保存、Delete / 删除、Default / 默认及删除确认标题。编辑按钮的读屏名沿用 `Edit: {name}` / `编辑：{name}`。
+
+默认分组和次级分组复用已批准的 `Agent state` / `智能体状态`；名称为 `Idle / Working / Blocked` 与 `空闲 / 工作中 / 待介入`（2026-11-03 起不再有 `Done / 已完成` 这个智能体状态；事项状态 Done 不受影响）。进度生成规则变化只影响内容，不新增固定提示。
+
+### 2026-11-03 设置重写：连接器手动添加（待审，尚未安装到 Desktop）
+
+主人要求设置整体重写（八页同一套积木），并让连接器可以手动添加 Prompt。重写没有新增说明性副文本，也没有换已有的字；新增的字只有下面这些，尚待主人逐字确认：
+
+| 位置 | English | 中文 |
+| --- | --- | --- |
+| 连接器页右上的按钮，也是添加表单的组标题 | Add connector | 添加连接器 |
+| 添加和修改表单的两个输入（读屏名和占位） | Name · Prompt | 名称 · Prompt |
+| Prompt 里有以 `#` 或 `##` 开头的行 | A line of the prompt cannot start with # or ##. | Prompt 里的行不能以 # 或 ## 开头。 |
+| 名称空、太长或含 `<` `>` | Give the connector a short name. | 请给连接器起一个简短的名称。 |
+| Prompt 空或太长 | Write a prompt saying where and what to collect. | 请写下去哪里收集、收集什么。 |
+| Prompt 或名称含密钥 | Keep credentials out of prompts. Use the tool that holds them. | 不要把密钥写进 Prompt，请使用保存密钥的工具。 |
+| 文件在页面不知道时被改过 | The connectors changed. Reload and try again. | 连接器刚刚有变动，请重新打开再试。 |
+| 连接器超过 100 个 | There are too many connectors. | 连接器太多了。 |
+| 修改时它已被删掉 | This connector no longer exists. | 这个连接器已不存在。 |
+| 文件读不了或写不了 | The connectors could not be read or saved. | 连接器没能读取或保存。 |
+
+这些错误来自后端的固定句子，页面按界面语言显示，原句见 `host/assistant/connectors/index.mjs`，译文在 `ui/strings.js` 的 `diagnostics`。其余沿用已有的字：`Save` / `保存`、`Cancel` / `取消`、`Edit: {name}` / `编辑：{name}`、`Remove {name}` / `删除：{name}`、`Undo` / `撤销`、`Added by Dudu` / `嘟嘟添加`（后者原来写在字典里、界面没有用，现在用来标出嘟嘟添加的条目）。
+
+手机控制和供应商两页的字没有变（`ui/strings.js` 的 `shell`），只是从 DSH 的设置搬进了嘟嘟设置；`Providers` / `供应商` 页的状态点没有文字。
+
+### 2026-11-03 智能体 Blocked 方案 B（主人已确认）
+
+主人查看当前图标与两个候选方案的对比截图后，指定使用方案 B。`agentState.blocked` 的中文由「卡住了」改为「待介入」，英文仍为 `Blocked`；列表和看板的分组图标使用八边形暂停 `OctagonPause`，保留现有尺寸、线宽和颜色。该确认取代前文的旧中文译名。
+
+状态名称同步用于筛选、头像悬停说明、Office 和手机原生侧栏。状态键仍为 `blocked`，含义仍包括等待实际答复或授权及执行出错；本次不调整状态判断、事项流程或头像角标。
+
+### 2026-11-03 宠物右键菜单与悬停提示（主人已确认）
+
+主人提供 Codex 宠物菜单截图，要求参考其样式，并增加快速打开嘟嘟设置的入口。菜单按顺序使用 `Settings` / `设置`、`Hide Dudu` / `隐藏 Dudu`，分别使用齿轮和隐藏图标；没有新增解释文字。主人随后明确指定“我们就叫隐藏 Dudu”，该命名取代前文的 `Hide pet` / `隐藏宠物`。设置打开既有的 `Dudu settings` / `嘟嘟设置` 窗口，不打开 DSH 自己的设置。
+
+按主人要求移除悬停气泡中的 `Double Space to chat` / `双击空格对话`、`Hold Space to speak` / `长按空格说话`。通用设置里的两个快捷键开关和真实的录音、回复、事项提醒不变；这次撤下的副文本也记录于 [secondary-copy-review.md](secondary-copy-review.md)。
+
+### 2026-11-04 状态名「需要你」和本人的称呼「你」（主人明确指定）
+
+主人的原话：“待介入这个英文应该是 needs you”“待介入这个词不够好，换成需要你”“issue 详情页留言应该是 boss 吧，也换成 你，英文版是 You”“我在嘟嘟这个插件中的角色就是 ‘你’”。所以：
+
+- 智能体状态 `blocked` 的显示名：英文 `Needs you`，中文 `需要你`，取代 `Blocked` / `待介入`（筛选、分组标题、右键菜单、头像悬停说明、Office 的读屏句和名牌、提醒、手机侧栏同用）。状态键、含义不变；提问、授权、出错和本轮正常结束都是它。
+- 本人在界面里的称呼：英文 `You`，中文 `你`，取代 `boss`：issue 详情页留言和活动的署名、事项的来源（Source）、设置里“由你设置 / 由你添加”的两句提示。连接器页里显示的几句英文不再点名（`it has to be turned off…`、`it is turned on in the connections page`、`is not Dudu's entry`），中文本来就没有名字。
+- 嘟嘟写给本人看的文字（回复、事项标题和描述、进展句、记忆）改称“你”（英文 you），不再写 boss；这条规则在 `host/assistant/identity.mjs`，只管以后新写的文字，已经存下的旧进展句不会改。给模型看的内部提示和工具返回里仍把这个人叫 boss / owner。
+- 头像右下角的角标不是新词：红点（提问、授权、出错）和绿底白勾（本轮正常结束）没有文字；悬停说明两种都是 `Needs you` / `需要你`。
+
+### 2026-11-04 宠物对话窗口的运行行（中文是主人指定的，英文待审，尚未安装到 Desktop）
+
+嘟嘟回答时，宠物窗口原来只有一个“…”。主人问“回答过程中什么效果都没有么，可以加一个深度求索中之类的东西吧，现在的会话都是有的”，又贴了 DSH 对话里蓝色的“深度求索中，用时 9 秒 ···”，说“我们的对话都是这样的”。窗口里这一行照 DSH 做，取代原来的 `Working` / `工作中`（那个“…”的读屏名，已删）：
+
+| 位置 | English | 中文 |
+|---|---|---|
+| 运行行（看得见） | `Deep diving for {duration} ···` | `深度求索中，用时 {duration} ···` |
+| 运行行（读屏，只读一次、不报时间） | `Deep diving` | `深度求索中` |
+| 时间 `{duration}` | `9s` · `1m 15s` · `1h 2m 5s` | `9秒` · `1分15秒` · `1小时2分5秒` |
+
+- 中文是主人给的原文；英文和时间的写法取自 DSH 自己的 `Deep diving for 9s ···`，没有改字，请主人看一下英文。
+- 时间的写法同 DSH：秒总有，满一分钟才写分，满一小时才写小时。
+- 没有新增别的字：DSH 在这行上面那一行步骤（“正在分析请求”）宠物窗口没有做。
+
+### 2026-11-05 采集器：频率、笔记、来源（主人授权我按下表定稿）
+
+主人 2026-11-05 看了图，选定：列表用“频率靠右 + 上次采集一行”，表单用一个频率文字框加常用下拉，笔记折叠，事项页属性栏加“来源”一组（“来源”两个字是主人指定的）。新增的字如下。主人看了图后说“你直接定吧”，所以下表就是定稿；英文那一栏他没有逐条看，如要改再说：
+
+| 位置 | English | 中文 | 谁的字 |
+| --- | --- | --- | --- |
+| 事项页属性栏的组名 | Source | 来源 | 主人指定 |
+| 频率文字框的占位和读屏名 | How often, such as 30m, 2h, 1d, or cron | 频率，如 30m、2h、1d，或 cron | 我（图里主人选了 F2） |
+| 频率框尾箭头的读屏名 | Common frequencies | 常用频率 | 我 |
+| 下拉里的八项和列表里的说法 | Every 5 minutes · Every 15 minutes · Every 30 minutes · Every hour · Every 6 hours · Every day at 09:00 · Monday to Friday at 09:00 · Monday to Friday, every hour 9–18 | 每 5 分钟 · 每 15 分钟 · 每 30 分钟 · 每小时 · 每 6 小时 · 每天 09:00 · 周一至周五 09:00 · 周一至周五 9 至 18 点每小时 | 句式取自 DSH 自己的定时任务（“每 N 分钟”“每天”“周一至周五”），数字和后两项是我的 |
+| 列表里别的频率 | Every {n} minutes · Every {n} hours · Every hour · Every {n} days · Every day | 每 {n} 分钟 · 每 {n} 小时 · 每小时 · 每 {n} 天 · 每天 | 同上 |
+| 修改表单里折叠的一行（2026-11-05 拿掉了：收集器不再有笔记，主人：“我希望两句话就能说清楚”） | ~~Notes~~ | ~~笔记~~ | 我（图里主人选了 N2） |
+| 列表里 Prompt 下面一行 | Last {time} · {n} new · Last {time} · nothing new · Last {time} · failed | 上次 {time} · 新增 {n} 条 · 上次 {time} · 没有新的 · 上次 {time} · 读取失败 | 我（图里主人选了 C；“读取失败”是新的） |
+| 频率写不对 | Write how often, such as 30m, 2h, 1d, or a cron expression such as 0 9 * * 1-5. | 请写多久采集一次，如 30m、2h、1d，或 cron 表达式，如 0 9 * * 1-5。 | 我 |
+| 频率低于 5 分钟 | The shortest time between collections is 5 minutes. | 最短每 5 分钟采集一次。 | 我 |
+| 笔记含密钥（已删，没有笔记了） | ~~Keep credentials out of the notes. Use the tool that holds them.~~ | ~~不要把密钥写进笔记，请使用保存密钥的工具。~~ | 我 |
+| 笔记超过 4000 字（已删） | ~~The notes are longer than 4000 characters.~~ | ~~笔记超过 4000 字了。~~ | 我 |
+
+沿用已有的字：`Open source` / `打开来源`（顶栏的按钮和“来源”组里按钮的读屏名）、`Name` / `名称`、`Prompt`、`Save` / `保存`、`Cancel` / `取消`。事项说明末尾由代码写的一行 `来源：飞书 · 链接` 是事项内容，不是界面文字；给智能体看的采集和整理提示词（英文）在 `host/assistant/home/source-collector.mjs` 和 `host/assistant/dispatch/prompts.mjs`，仍待主人看。
+
+### 2026-11-05 信息收集器小组件（主人看过设计稿和下面的字，说“没问题，就按你的推荐实现吧”）
+
+| 位置 | English | 中文 | 谁的字 |
+| --- | --- | --- | --- |
+| 小组件名 | Collector | 信息收集器 | 主人 |
+| 三个页签 | To handle · Handled · Ignored | 待处理 · 已处理 · 已忽略 | 我，主人看过 |
+| 右键和弹窗里的动作 | Share to issue · Ignore · Restore | 分享到事项 · 忽略 · 恢复 | 我，主人看过（“分享”“忽略”是主人的词） |
+| 没有信息时 | Nothing here | 没有信息 | 我，主人看过 |
+| 提示 | Ignored · Restored · Shared to {ref} | 已忽略 · 已恢复 · 已分享到 {ref} | 前一个和后一个主人看过；“已恢复”是照“已忽略”补的，没单独给主人看 |
+| 加载失败 | Could not load the information | 信息没能加载 | 我（新，没单独给主人看） |
+| 弹窗里的一行（只有挂了事项的记录才有） | Dudu made [DUD-12] · Shared to [DUD-12] · Created [DUD-12] | 嘟嘟 建了 [DUD-12] · 已分享到 [DUD-12] · 已新建 [DUD-12] | “嘟嘟 没有转成事项”那一句 2026-11-05 删了（主人：“这个东西也不需要。只要收集好信息就好了，不需要嘟嘟处理任何东西”）；“嘟嘟 建了”只留给这次改动之前嘟嘟自己建过事项的记录，以后不会有新的；后两句是主人自己做了之后的说法（分享到事项或会话都是“已分享到”），照“已分享到 {ref}”补的 |
+| 添加小组件列表里的说明 | What the connectors collected, to share to an issue, make an issue of, or ignore | 连接器收集回来的信息，可分享到事项、新建事项或忽略 | 我（新，没单独给主人看；已被下面“连接器和收集器分开”一节里的说法取代） |
+
+### 2026-11-05 收集器里的“分享到会话”和多选（待主人审）
+
+主人要的：“现在有分享到事项，再增加一个分享到会话”“一个一个忽略太慢了，增加一个 checkout 窗口，可以多选操作”，还有“这个移动到上面”（筛选按钮放进标题那一行）。新增的字：
+
+| 位置 | English | 中文 | 谁的字 |
+| --- | --- | --- | --- |
+| 右键菜单、弹窗和批量栏里的动作 | Share to session | 分享到会话 | 主人（原话） |
+| 提示 | Shared to the session of {ref} | 已分享到 {ref} 的会话 | 我（照“已分享到 {ref}”补的，没单独给主人看） |
+| 批量栏：读屏名、计数、取消 | Bulk actions · {n} selected · Clear selection | 批量操作 · 已选 {n} 条 · 取消选择 | 事项列表批量栏里已有的字，原样用 |
+| 发给会话的那条消息里的固定标签（写在事项的活动和智能体的会话里，主人会看到） | — | 收集到的信息：{标题} · 发送人：{谁} · 时间：{年-月-日 时:分} · 来源：{收集器名} · {链接} · 上下文： | “时间”“来源”“上下文”是主人的原话（“时间来源上下文都要有”）；“收集到的信息”“发送人”是我加的，等主人看 |
+
+多选用事项列表已有的复选框和批量栏，没有别的新字；筛选按钮的位置变了，字没变。小组件窄的时候批量栏仍是一行，三个动作换成右键菜单里同一个动作的图标，按钮的名字和悬停提示还是上面这几个字，没有新字（主人：“放一行里面吧”）。分享到会话时，会话里收到的整条消息的样子（例）：`收集到的信息：合同第三条` / `发送人：Alice` / `时间：2026-11-05 14:02` / `来源：飞书 @我 · https://…` / 空一行 / 原文 / 空一行 / `上下文：` 和 `- Bob（2026-11-05 13:02）：法务看过了。`；没有的项不写，几条一起发时中间一行 `---`。
+
+沿用事项已有的字：筛选、添加筛选…、来源（筛选字段）、日期、过去一天、过去一周、过去一个月、是 / 是其中之一、清除、移除筛选、新建事项、打开事项、打开来源、搜索事项…、上下文、撤销、关闭；时间照事项活动的写法（刚刚、12 分钟前、3 小时前、昨天 17:40、11月3日 09:05）。主人 2026-11-05 说过属性组不叫“连接器”，直接叫“来源”，筛选字段也叫“来源”。
+
+### 2026-11-05 事项留言附件（新增操作用词待审）
+
+主人要求按提供的 Linear 截图实现，并优先复用 UI 组件库。附件入口、删除、展开、关闭、重试和错误提示沿用已有用词，没有增加解释文案。以下三个新增操作同时用于悬停提示和读屏名，尚待主人审阅后发布：
+
+| 位置 | English | 中文 |
+| --- | --- | --- |
+| 图片悬停工具栏和预览窗口 | Download | 下载 |
+| 同上 | Copy image | 复制图片 |
+| 同上 | Copy link | 复制链接 |
+
+文件名、文件类型、文件大小和留言原文为用户内容及实际数据。实现使用已有 shadcn/Radix Button、Tooltip、Dialog 和 Lucide 图标，未引入自绘弹窗或新的控件库。
+
+### 2026-11-05 会话接管成功
+
+（2026-11-08 更新：主人说“接管之后直接打开 issue 详情”，所以接管成功后除了下面的提示，还会关掉弹窗、打开事项详情；提示的词没变。）
+
+主人明确要求“提示接管成功就行了，不需要再跳转到 issue 详情”。中文原样用“接管成功”，不需要再审；英文翻译待审：
+
+| 位置 | English | 中文 |
+| --- | --- | --- |
+| 接管完成后的提示条 | Session taken over | 接管成功（主人提供） |
+
+成功后保留会话弹窗、选中项、预览和搜索，立即显示事项编号，按钮变为已有的“打开会话”和“打开事项”；只有主人点击“打开事项”才进入详情。搜索加载、失败和重试沿用已有用词，没有新增解释段落。
+
+### 2026-11-05 连接器和收集器分开（主人看过设计稿，说“按你的设计重构”；字没有逐条审，待审，尚未安装到 Desktop）
+
+连接器只管怎么连上一个服务（Prompt 或 MCP），收集器管收集什么、多久一次。设置里多一页“收集器”，下面是新增和改动的字（图里主人看到的字；“没有逐条审”的意思是主人没有一个一个确认）：
+
+| 位置 | English | 中文 | 谁的字 |
+| --- | --- | --- | --- |
+| 设置左边新的一页 | Collectors | 收集器 | 主人（“收集器”是主人的词） |
+| 连接器：两种形式（胶囊和行里的小标签） | Prompt · MCP | Prompt · MCP | 主人（“连接器以后也会有 mcp 授权的形式。prompt 只是形式之一”） |
+| 连接器表单里的选择框（标签和读屏名） | MCP server | MCP 服务 | 我 |
+| MCP 服务的状态（选择框的行右边、列表行里“服务名 · 状态”） | Authorized · Needs authorization | 已授权 · 需要授权 | 我。**DSH 没有授权这一步**：有这个服务的工具就写“已授权”，没有就写“需要授权”（没授权、没启动都会这样）；所以设计稿里的“授权”按钮没有做 |
+| 连接器行最下一行 | Collectors: {names} | 收集器：{names} | 我 |
+| 删不掉一个还在用的连接器 | Collectors still use it: {names} | 还有收集器在用它：{names} | 我 |
+| 收集器页：添加 | Add collector | 添加收集器 | 我（照“添加连接器”） |
+| 收集器表单里的选择框（标签和读屏名） | Connector | 连接器 | 我 |
+| 收集器表单里的多行框（占位和读屏名） | What to collect | 收集什么 | 我（“收集什么”是主人解释笔记时用的话，也是主人说“去哪里、收集什么”的原话） |
+| 收集器页的两种空 | No collectors · Add a connector first | 没有收集器 · 先添加一个连接器 | 我（后一句时“添加收集器”是灰的） |
+| 连接器页的空、删除、撤销、嘟嘟添加的标 | No connectors · Remove {name} · Removed {name} · Undo · Added by Dudu | 没有连接器 · 删除：{name} · 已删除 {name} · 撤销 · 嘟嘟添加 | 已有的字，原样 |
+| 频率、常用频率、“上次”一行 | （见 2026-11-05 采集器一节） | 同上 | 已有的字，从连接器搬到收集器（笔记已删） |
+
+不能保存时表单里写的原因（新增）：
+
+| English | 中文 |
+| --- | --- |
+| Give the collector a short name. | 请给收集器起一个简短的名称。 |
+| A connector is a Prompt or an MCP server. | 连接器的形式是 Prompt 或 MCP。 |
+| Write a prompt saying how to reach the service. | 请写下怎么连上这个服务。 |
+| Choose an MCP server. | 请选一个 MCP 服务。 |
+| Use the name of an MCP server in DSH. | 请填 DSH 里的 MCP 服务名称。 |
+| Choose a connector. | 请选一个连接器。 |
+| Choose an existing connector. | 这个连接器已不存在，请另选一个。 |
+| Write what to collect. | 请写下要收集什么。 |
+| This is too long. | 内容太长了。 |
+| A line cannot start with # or ##. | 这里的行不能以 # 或 ## 开头。 |
+| Keep credentials out of the collector. Use the tool that holds them. | 不要把密钥写进收集器，请使用保存密钥的工具。 |
+| The collectors changed. Reload and try again. · There are too many collectors. · This collector no longer exists. · The collectors could not be read or saved. | 收集器刚刚有变动，请重新打开再试。 · 收集器太多了。 · 这个收集器已不存在。 · 收集器没能读取或保存。 |
+| （连接器的四句换了说法：The connectors changed… / There are too many connectors. / This connector no longer exists. / The connectors could not be read or saved.） | 连接器刚刚有变动，请重新打开再试。 · 连接器太多了。 · 这个连接器已不存在。 · 连接器没能读取或保存。 |
+
+别处跟着改的字：
+
+| 位置 | English | 中文 | 说明 |
+| --- | --- | --- | --- |
+| 事项属性栏“来源”里，来源类型是收集器时写的值 | Collector | 收集器 | 原来写“连接器”；属性组名“来源”不变 |
+| 添加小组件列表里信息收集器的说明 | What the collectors collected, to share to an issue, make an issue of, or ignore | 收集器收集回来的信息，可分享到事项、新建事项或忽略 | 原来是“连接器…” |
+| 嘟嘟对话里添加收集器的一行 | Collector added | 已添加收集器 | 照“已添加连接器” |
+| 项目文件夹里两个文件开头的话（新建文件夹和拆旧登记册时写） | — | CONNECTORS.md：“连接器告诉嘟嘟怎么连上一个服务：写一段 Prompt，或者指定一个 DSH 里已连接的 MCP 服务。要收集什么、多久收集一次，写在收集器里。”COLLECTORS.md：“收集器是一份定时的收集：通过哪个连接器读，收集什么，多久一次。每个收集器写一个二级标题，下面直接写要收集什么。”AGENTS.md 里那一条改成“连接器记怎么连上你的服务，收集器记收集什么、多久一次；……” | 这些在文件里，不在界面上；主人自己的文件不会被改（旧登记册拆分时，没动过的老开头换成新的） |
+
+给嘟嘟看的英文提示词：采集会话（`host/assistant/home/source-collector.mjs`，写了连接器的写法；同一天稍后不再问 `to_me`、`handled`、`me`，只说“读、交回记录”）仍待主人看（同一天又改了：去掉了笔记，问法只剩收集器的名字、连接器的话、收集器的话和上次时间，系统提示里加了“只给提示词点名的，拿不准就不给，‘尤其是’不是放宽”一条，这是给模型看的英文，不是界面字，也待主人看）。整理收集来的信息的提示词和代码一起去掉了（主人：“只要收集好信息就好了，不需要嘟嘟处理任何东西”），`host/assistant/dispatch/prompts.mjs` 里只剩分配用的。
+
+没有做的设计：设计稿里 MCP 行的“授权”按钮（DSH 没有从这里发起授权的办法，授权在 DSH 里做）；没有 MCP 服务时，MCP 的选择框是灰的、不另写说明。
+
+## 智能体状态“未分配”（2026-11-05，待主人审）
+
+主人要求智能体状态新增一个“未分配”，没有分配智能体的事项就是它。这是**唯一新增的界面文字**，词是我定的，等主人看：
+
+| 位置 | English | 中文 | 说明 |
+| --- | --- | --- | --- |
+| 智能体状态：分组标题、看板列名、筛选项、右键菜单和悬停里的状态名（`agentState.unassigned`） | Unassigned | 未分配 | 沿用 Linear 里没有负责人的叫法；图标是原来就有的“没有智能体”的人形，没有新图 |
+
+同一天规则变了但**没有新词**：会话停止或被终端中断算“需要你”（`Needs you / 需要你`）；正常结束后 12 小时没人处理算“空闲”，并进入深度睡眠（`Idle`、月牙都是已有的）。
+
+2026-11-07 主人把这两处又改了，仍**没有新词**：①去掉“12 小时变空闲”，空闲只由主人自己放（“去掉自动进入空闲的机制吧，只有我手动放到空闲区域”）；②正常结束的绿勾也能深度睡眠，仍留在“需要你”，Office 里休息区的人也带 `ZZZ`（“在需要我的阶段，只要不是红点，都可以进入深度睡眠。办公室小人在活动区域也会有 zzz 的表情”）；头像上月牙只给空闲的，睡着的绿勾仍是绿勾，没有为它起新名字。
+
+## 2026-11-05 照 Linear 补的功能里的新界面词（待主人审）
+
+主人逐条点头的七件事（复制菜单、父子事项展示、链接/PR/文档、描述历史、富文本描述、保存的视图、删除确认）带来的新词。**Linear 自己用的词原样用**：Copy、Copy title、Copy as prompt、Make a copy…、Add link…、Add pull request…、Add document…、Show description history、Add new view、Create view、Delete "…"?、Heading 1/2/3、Bulleted list、Numbered list、Checklist、Quote、Code block、Divider；**其余是我写的**（窗口里的字段名、提示和错误句、中文），逐条列在 `docs/ui-localization-wording.md` 末尾（键 `copy.*`、`deleteIssue.*`、`links.*`、`descriptionHistory.*`、`richText.*`、`views.*`）。
+
+要主人特别看一眼的：
+- 删除确认的第二句不能照抄 Linear（它说“在 Recently deleted 里留 30 天”，嘟嘟删了就没有了），写的是真实的：“This issue, its activity and local links will be deleted. Source messages and session history stay.”（沿用事项页“Forget”窗口里本来就有的那句）。
+- 列表里子事项写成“父事项标题#子事项标题”，是主人的格式（分隔符 2026-11-05 定为 #），不是新词。
+- 复制出去的文字不是界面词，但内容里有固定的英文标签：复制为提示词写 `Project folder:`、`Labels:`、`Due:`、`Links:`；复制全部内容的 Markdown 里的属性名跟界面语言走。
+
+2026-11-05 主人说“连续创建”没用：窗口里的 `Create more` / `连续创建` 开关删掉了（上面那一条里的它不再有）。
+
+## 会话列表的三句灰字（2026-11-05，待主人审）
+
+主人选了方案 A（见 `docs/assistant.md` 4.1）。三句都是我写的新词，中文照主人看过的图：`还有 N 个会话没法搜索内容，结果可能不全`、`正在建立搜索索引（已读/总数），结果可能不全`、`部分会话没能读取，列表可能不全`；英文 `N sessions cannot be searched, so results may be incomplete`、`Building the search index (done/total), so results may be incomplete`、`Some sessions could not be read, so the list may be incomplete`。原来的红字“会话没能读取”只留给“一个会话都读不出来”。
+
+2026-11-08 主人要求换方式或不显示第一句：撤下中英文“无法搜索正文”的常驻提示，不添加替代文案，不转移到 tooltip 或弹窗；读取失败仍进诊断日志。后两种实际进行中或列表来源失败的状态保持原有展示。
+
+同日主人随后要求 header 显示最后更新时间、加载时显示 loading：索引进度那句也撤下；顶栏复用已有 `更新时间` / `Updated` 和时间值，读取或索引进行中时显示中灰转圈，沿用原有 loading 的读屏名称，没有新文字。
+
+子事项在列表里的写法是 `父标题#子标题`（分隔符主人定了 `#`）。子事项开始提示词里加的几行（`所属的父事项：…`、`同一个父事项下的其他子事项：…`，英文 `Parent issue:`、`Other sub-issues of the same parent:`）是给智能体看的，不是界面词。
+
+
+## 列表和看板的日期（2026-11-05，没有新词）
+
+主人给了 Linear 的列表和看板截图要照着优化时间：列表里的截止日期是圆角胶囊，下一天写成 `Tomorrow` / `明天`（Due date 菜单里已有的这个词，`T.snooze.tomorrow`），今天仍是 `Today` / `今天`，其余是日期；鼠标停在上面的提示仍写日期和还有几天（`Nov 6 · in 1 day`）。看板卡片底部的 `Created Nov 5` 是已有的写法，没有改。行尾和卡片右下角的“打开事项”图标去掉了（主人：现在可以右键打开），“打开事项”这个词只剩右键菜单里的那一项，是已有的词。
+
+## 信息收集器的全选（2026-11-05，英文待主人审）
+
+主人说“增加一个全选吧”，又选了把它放进勾选后出现的底部栏（`已选 N 条 ×` 之后）：按钮的字、窄时图标的提示和读屏名都是 `全选`（主人自己的词）；英文写 `Select all`（我写的，待审）。页签行上没有方框，也没有别的新字。
+
+## 2026-11-06 连接器页重画：界面稿里的字（页面已做好，字待主人审）
+
+主人给了 Claude 和 Muse 的连接器页，要照着做：目录自带、每项有图标、点“连接”就连上（`docs/assistant.md` 3.1，图在 `.local/connector-ui-nov06/out4/`）。前两版的字作废。沿用的已审的字：搜索、名称、保存、取消、撤销、重试、需要授权、还有收集器在用它。新增的如下，中文照图；词出自 Claude 或 Muse 的在备注里写明，其余是我写的。英文先只写按钮和状态，一句话说明的英文等中文定了再写。
+
+| 在哪里 | English | 中文 | 备注 |
+| --- | --- | --- | --- |
+| 页头右边的按钮 | Add custom connector | 添加自定义连接器 | Claude 的词 |
+| 两个视图 | Available · Connected | 可用 · 已连接 | Muse 的词；已连接后面跟个数 |
+| 目录里每行的按钮 | Connect | 连接 | Claude 的词 |
+| 打开一个以后的红字 | Disconnect | 断开 | Muse、Claude 都是这个词 |
+| 授权掉了或要重新授权的按钮 | Authorize | 授权 | |
+| 打开一个以后的两行名 | Address · Tools | 地址 · 工具 | |
+| 分组标题 | This computer · Work · Projects · Development · Web | 这台电脑 · 办公 · 项目 · 开发 · 网页 | “项目”“网页”是主人 2026-11-06 点头的那份清单里的组名；“这台电脑”对应 Muse 的“你的设备” |
+| 灰字里的数量和命令 | {n} tools · Command line · {command} | {n} 个工具 · 命令行 · {命令} | |
+| 一行的状态 | Waiting for the browser… · Connection timed out · Needs sign-in · Not installed | 等待浏览器… · 连接超时 · 需要登录 · 没装 | 别的出错原因照服务或系统说的话显示，不翻译 |
+| 命令行出问题时灰字换成 | Run {command} in a terminal, then retry · Not found: {command}. Install: {line} | 在终端运行 {命令}，再点重试 · 没找到 {命令}：{安装命令} | |
+| 授权完成时浏览器里那一页 | {name} connected. You can go back to Dudu. | 已连接 {名称}。可以回到嘟嘟了。 | |
+| 授权没成时浏览器里那一页 | Could not connect {name}. Go back to Dudu and select Authorize again. | 没有连上 {名称}。回到嘟嘟，再点一次“授权”。 | |
+| 添加自定义连接器那一页：框里的灰字 | Paste an address or command, or write a sentence on how to read it | 粘贴地址或命令，或者写一句话说怎么读 | |
+| 框下一行小字（认成了什么） | Remote · Sign in in the browser · Remote · No sign-in · Remote · Needs a token · Local · One command · Command line · This sentence | 远程 · 在浏览器里授权 · 远程 · 不用登录 · 远程 · 需要令牌 · 本地 · 一条命令 · 命令行 · 就是这句话 | 先去问服务时写“正在查看…”（Checking…） |
+| 按服务说的多出来的栏和链接 | Token · Add environment variable | 令牌 · 添加环境变量 | 主人看过图并说“就这样”，字仍请逐条确认 |
+| 打开一个：标题前返回箭头的读屏名 | Back | 返回 | 任务单里给的词，表里原来没有 |
+| 灰字里的本机命令 | This computer · {command} | 本机 · {命令} | 草图里 Pencil 那一行就是这么写的；英文是我写的 |
+| 灰字里只有一个工具时（只有英文不同） | 1 tool | （中文不变，仍是 {n} 个工具） | 英文是我写的 |
+| 打开一个：“工具”那一行的值 | {n} | {n} 个 | 草图里是“14 个”；英文只写数字，是我写的 |
+| 空的时候：可用里一个也没有、还没连上、搜索没找到 | No connectors | 没有连接器 | 沿用已有的字，没有新写 |
+| 添加自定义连接器：框里认出好几个服务时，写在小字里代替“一条命令” | {n} connectors | {n} 个连接器 | NEW（我写的，待审）：粘贴的文件里有几个服务，名称那一栏就不要，保存一次全加上 |
+| 添加环境变量后出来的两个框（读屏名和灰字） | Variable name · Value | 变量名 · 值 | NEW（我写的，待审）；删掉这一行的叉用已有的“删除”（Remove） |
+
+目录里每项的一句话（中文，我写的，英文待定）：飞书：消息、日程和文档；Google 日历：日程；Google 云端硬盘：文件、文档和表格；Notion：页面、数据库和评论；Airtable：表格和数据库；Canva：设计；Linear：事项和项目；Atlassian：Jira 和 Confluence；GitHub：仓库、议题和拉取请求；GitLab：仓库、议题和合并请求；Sentry：报错和告警；Supabase：数据库和项目；Vercel：项目和部署；浏览器：用你已经登录好的浏览器打开网页。服务的名字用它们自己的写法，不翻译。
+
+## 新建事项里粘贴图片（2026-11-06，没有新词，有一处待主人定）
+
+粘贴的图片用评论框已有的缩略图和移除按钮（读屏名 `Remove 文件名` / `移除 文件名`）。事项建好后上传图片失败时，右下角提示借用了已有的 `Could not save the change` / `更改没能保存`；对“图片没传上”来说不太准，要不要单独写一句（比如“图片没能附上”），请主人定。
+
+## 额度小组件改成一张表（2026-11-06，三处新词待主人审）
+
+主人选了 C3：列是智能体，行是 5 小时 / 每周（已有的词），DeepSeek 余额是合并的一列（`余额` / `Balance` 已有）。新词只有三处：表左上角 `剩余` / `Left`；读屏对每个格子说的 `Claude 5 小时：剩余 26%` / `Claude 5-hour: 26% left`；悬停里每个窗口一行的 `5 小时 剩余 26%` / `5-hour 26% left`（原来是“已用”）。条下面的 `13:00 重置`、用完时的 `Limit reached, resets 13:00` 沿用已有的写法。原来的“已用 N%”在这个小组件里不再出现。
+
+## 2026-11-07 手机：看板首页、信息收集器、设置里的嘟嘟设置；收集器的“已处理”“删除”和来源小图（主人说“这一版整体设计我觉得很不错，就按这版实现吧”）
+
+手机页面里的字全是桌面端已有的（看板、进行中 / 待规划 / 全部事项、需要你 / 工作中 / 空闲 / 未分配、信息收集器、待处理 / 已处理 / 已忽略、已选 N 条、全选、取消选择、分享到事项、分享到会话、新建事项、创建事项、事项标题、添加描述…、取消、打开来源、打开事项、忽略、恢复、撤销、上下文、更多、搜索事项…、没有事项、事项没能加载、没有信息、信息没能加载、重试、更改没能保存、事项没能创建、上一条事项 / 下一条事项、设置里嘟嘟七页的名字）。新的只有下面几处：
+
+| 地方 | 字 | 说明 |
+|---|---|---|
+| 收集器的按钮、右键菜单、批量栏（桌面和手机） | `已处理`、`删除` | 主人的原话（“收集器增加删除和已处理按钮”）。英文 `Handled`、`Delete` 是我写的，待审 |
+| 删除后的提示（桌面和手机） | `已删除` / `Deleted` | 新写的，照“已忽略”；已处理后的提示用主人的“已处理” / `Handled` |
+| 手机设置里嘟嘟那张卡的最后一行 | `DSH 设置` | 主人的原话（“嘟嘟的设置增加一个条目叫 DSH 设置”）；进去是 DSH 原来的那张列表，不加小标题 |
+| 手机信息收集器右上角那个只有图标的按钮的读屏名字 | `选择` | 新写的 |
+| 手机侧栏“信息收集器”后面那个数字的读屏名字 | `N 条` | 新写的（数字是待处理的条数） |
+| 手机记录详情里挂了事项的一行 | `已分享到 REF` / `已新建 REF` | 桌面详情里同一行的写法（`已分享到`、`已新建`） |
+
+收集器每一行最左边多了来源的小图（桌面和手机；服务的 logo，没有 logo 的是收集器名字的第一个字母）：没有字。
+
+## 2026-11-08 手机页面名称：信息（主人指定）
+
+主人说“app 信息收集器改名叫信息吧”。手机侧栏入口及其页面标题统一使用 `信息`，
+由 `host/native-navigation.mjs` 的同一个名称提供。设置中的 `收集器` 仍指收集规则。
+同日主人对桌面截图指定“信息收集器改成信息”：桌面小组件、添加列表和读屏名称共享的中文标题也改为 `信息`。本次没有新增英文翻译。多选交互预览中的 `选择` 仍只在设计稿，待主人选择方案后才进入 App。
+主人选择图标方案 C：手机“信息”入口使用 Lucide `Rss`，手机“看板”入口使用
+Lucide `ListTodo`。复用原有导航图标的尺寸、颜色、线宽和圆角笔触，由插件提供几何数据。
+
+## 2026-11-08 手机侧栏：对齐版 A（主人批准）
+
+主人先要求“名字就叫嘟嘟”“信息看板嘟嘟这三个”“默认隐藏的查看更多”，
+看过 A 的对齐稿后说“那就用对齐版，另外信息和嘟嘟的位置换一个”。
+固定入口依次为 `嘟嘟`、`看板`、`信息`，折叠入口用 `查看更多`。
+这些文字均为主人指定或批准，入口读屏名字复用相同文字；没有新增说明或副标题。
+
+## 2026-11-08 手机嘟嘟输入行为
+
+复用桌面已有的 `上下文`、`没有事项`、`还没有技能`、`连接暂时不可用。`；
+传话错误沿用 `@ 后面还要写要说的话。`、`先选择智能体。`、
+`先选项目，再把工作交给智能体。`、`只能 @ 当前事项的处理者。`、
+`留言已保存，请求没能送达。`、`先写点内容。`，
+其他失败沿用桌面的组合句 `回复没能发给会话：连接暂时不可用。`。
+成功回执同桌面是 `✓ @编号 · 标题`，编号、标题和候选里的项目名、技能描述均是内容。
+没有新增说明或副标题；文件错误复用手机原来的提示。
+
+## 2026-11-08 手机嘟嘟设置改为原生、模型按来源分组
+
+七个栏目名称、字段、菜单选项、连接器识别结果、确认框和错误均沿用原设置的原文；
+顶栏使用已有的 `取消`、`保存`、`创建`，删除、断开和授权各显示一个动作。
+自定义连接器的粘贴框、名称、令牌、环境变量及识别状态复用原连接器网页的相同文字，
+不另加说明。模型的来源名称和同名来源的 ID 是实际配置数据，不编造账号或 API 的别名。
+设置首页不新增 WebView 加载提示。
+
+## 2026-11-08 手机新建事项的参数
+
+字段、选项、选择页标题、失败提示与读屏名称复用桌面和 App 现有文字：
+状态、优先级、项目、智能体、标签、未分配、无项目、五种优先级、六种默认状态、
+新建项目、项目名称、项目文件夹、文件夹不存在时创建、选择项目、
+修改或添加标签…、新建标签：“x”、选择标签颜色及九种颜色名、
+截止日期、明天、本周结束、一周后、移除截止日期、父事项、设置父事项…、移除父事项、
+搜索事项…、没有找到事项、更多、保存、取消、重试，以及原有创建和读取失败提示。
+不增加副标题或帮助段落。自定义状态、项目、标签、事项标题和目录是实际数据。
+这里没有新增措辞，也不改变上述桌面文案原有的待审记录。

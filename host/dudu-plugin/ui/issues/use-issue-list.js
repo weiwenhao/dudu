@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { receiveStatuses } from './workflow.js';
 
 export const PAGE_SIZE = 50;
 const MAX_LIMIT = 200;
@@ -40,6 +41,7 @@ export function useIssueList(request, view) {
       // The store answers a view it cannot read with an outcome and a message, not with an HTTP error.
       if (page.outcome !== 'success') throw new Error(page.message || 'The issues could not be listed.');
       if (token !== sequence.current) return;
+      receiveStatuses(page.statuses);
       setState((previous) => ({
         key, status: 'ready', error: null,
         items: mode === 'more' && previous.key === key ? [...previous.items, ...page.items] : page.items,
@@ -112,10 +114,28 @@ export function useIssueList(request, view) {
       groups: previous.groups && mapLeaves(previous.groups, (leaf) => ({ ...leaf, items: leaf.items.map(change) })),
     };
   }), []);
+  // A card dropped on another lane is in it at once; the store's answer, a moment later, confirms that or puts the card back.
+  const move = useCallback((id, toKey, changes) => setState((previous) => {
+    const patched = (item) => (item.id === id ? { ...item, ...changes } : item);
+    const lanes = previous.groups;
+    const from = lanes?.find((lane) => lane.items?.some((item) => item.id === id));
+    const to = lanes?.find((lane) => lane.key === toKey && lane.items);
+    if (!from || !to || from === to) {
+      return { ...previous, items: previous.items.map(patched), groups: lanes && mapLeaves(lanes, (leaf) => ({ ...leaf, items: leaf.items.map(patched) })) };
+    }
+    const card = patched(from.items.find((item) => item.id === id));
+    return {
+      ...previous, items: previous.items.map(patched),
+      groups: lanes.map((lane) => {
+        if (lane === from) return { ...lane, count: lane.count - 1, items: lane.items.filter((item) => item.id !== id) };
+        return lane === to ? { ...lane, count: lane.count + 1, items: [card, ...lane.items] } : lane;
+      }),
+    };
+  }), []);
   const stale = state.key !== key; // the one render between a view change and the effect above
   const hasRows = state.items.length > 0 || Boolean(state.groups?.length);
   return {
     status: stale && !hasRows ? 'loading' : state.status, items: state.items, groups: state.groups, total: state.total, counts: state.counts,
-    hasMore: !stale && Boolean(state.cursor), error: state.error, loadMore, loadMoreIn, retry, refresh, patch,
+    hasMore: !stale && Boolean(state.cursor), error: state.error, loadMore, loadMoreIn, retry, refresh, patch, move,
   };
 }

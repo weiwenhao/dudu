@@ -1,9 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createLinkStore, createNativeSessions, metadataWeight, termsOf } from '../host/providers/native/index.mjs';
+import { createSessionCatalog } from '../host/assistant/home/session-catalog.mjs';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 let clock = Date.parse('2026-10-01T10:00:00.000Z');
@@ -19,7 +22,7 @@ const reply = (uuid: string, parentUuid: string, messageId: string, text: string
 const lines = (records: unknown[]) => records.map((record) => `${JSON.stringify(record)}\n`).join('');
 
 // Three Claude sessions on disk, a DSH store that remembers what is written to it, and a workspace registry.
-async function setup(t: { after: (cleanup: () => Promise<void>) => void }, { persistence = true, now }: { persistence?: boolean; now?: () => number } = {}) {
+async function setup(t: { after: (cleanup: () => Promise<void>) => void }, { persistence = true, now, cached = false, codex }: { persistence?: boolean; now?: () => number; cached?: boolean; codex?: any } = {}) {
   const base = await mkdtemp(join(tmpdir(), 'dudu-native-'));
   const root = join(base, 'projects');
   await mkdir(join(root, 'app'), { recursive: true });
@@ -55,8 +58,10 @@ async function setup(t: { after: (cleanup: () => Promise<void>) => void }, { per
   };
   const source = { id: 'claude', name: 'Claude', route: 'claude', driver };
   const service = createNativeSessions({
-    sources: () => [source], links, claude: { root }, persistence: () => (persistence ? store : undefined), workspaces: () => registry, ...(now ? { now } : {}),
+    sources: () => (codex ? [source, codex] : [source]), links, claude: { root }, persistence: () => (persistence ? store : undefined), workspaces: () => registry, ...(now ? { now } : {}),
+    ...(cached ? { cacheFile: join(base, 'state', 'search.sqlite') } : {}),
   });
+  t.after(async () => { await service.close(); });
   return { service, stored, attached, links, base, root, put, source, store, registry };
 }
 
@@ -143,6 +148,79 @@ test('a search also looks inside the conversations, shows where, and says while 
   assert.deepEqual((await service.list({ query: 'nothing-like-this' })).sessions, []);
 });
 
+test('body search finds the owners exact phrase deep in a long message and refresh reindexes newly written conversation text', async (t) => {
+  const { service, put } = await setup(t);
+  const phrase = '本轮巡检（北京时间 12:47）正常';
+  await put(4, [
+    user('u', null, 'hs 跳板机只读查询'),
+    reply('a', 'u', 'm', `${'x'.repeat(270_000)}\n智能体：${phrase}，没有发群。`),
+    { type: 'progress', payload: 'y'.repeat(3_000_000) },
+  ]);
+  await service.list();
+  await service.settled();
+  let result = await service.list({ query: phrase });
+  assert.deepEqual(result.sessions.map((session: any) => session.id), [id(4)]);
+  assert.match(result.sessions[0].evidence.text, /本轮巡检/);
+  await put(4, [user('u', null, 'hs 跳板机只读查询'), reply('a', 'u', 'm', `${phrase}。补充：已核对 runner 状态。`)]);
+  await service.list({ query: '已核对 runner', refresh: true });
+  await service.settled();
+  result = await service.list({ query: '已核对 runner' });
+  assert.deepEqual(result.sessions.map((session: any) => session.id), [id(4)]);
+});
+
+test('cached search and paginated Claude preview locate the owners exact phrase instead of redshift', async (t) => {
+  const { service, put, stored } = await setup(t, { cached: true });
+  const query = 'Hi Shreyas, the read-only MySQL';
+  const records: unknown[] = [
+    user('u0', null, 'Use redshift.'),
+    reply('a0', 'u0', 'm0', `${'x'.repeat(7000)}\n${query} access is set up.`),
+  ];
+  for (let n = 1; n <= 15; n++) records.push(user(`u${n}`, `a${n - 1}`, `Later question ${n}`), reply(`a${n}`, `u${n}`, `m${n}`, `Later answer ${n}`));
+  await put(4, records);
+  await service.list();
+  await service.settled();
+  const found = await service.list({ query });
+  assert.deepEqual(found.sessions.map((session: any) => session.id), [id(4)]);
+  assert.equal(found.sessions[0].evidence.role, 'assistant');
+  assert.ok(found.sessions[0].evidence.text.includes(query));
+  assert.equal((await service.read({ provider: 'claude', id: id(4) })).messages.some((message: any) => message.text.includes(query)), false);
+  const catalog = createSessionCatalog({ native: service, dsh: {} });
+  const preview = await catalog.read({ provider: 'claude', id: id(4), query });
+  assert.ok(preview.messages[preview.matchIndex].text.includes(query));
+  assert.ok(preview.messages.every((message: any) => message.text.length <= 4000));
+  assert.equal(stored.size, 0, 'searching and reading never import or start the conversation');
+});
+
+test('native session list and full conversation search survive restart from disk and changed files update incrementally', async t => {
+  const { service, base, links, root, source, store, registry, put } = await setup(t, { cached: true });
+  await service.list();
+  await service.settled();
+  await service.close();
+  let forbidSources = false;
+  const restored = createNativeSessions({
+    sources: () => { assert.equal(forbidSources, false, 'a cached preview must not consult the harness'); return [source]; }, links, claude: { root }, persistence: () => store, workspaces: () => registry,
+    cacheFile: join(base, 'state', 'search.sqlite'),
+  });
+  t.after(() => restored.close());
+  const found = await restored.list({ query: 'zebra' });
+  assert.equal(found.indexing.running, false, 'the first search after restart uses the complete disk index');
+  assert.equal(found.sessions[0].id, id(1));
+  assert.match(found.sessions[0].evidence.text, /zebra/);
+  await restored.settled();
+  forbidSources = true;
+  const preview = await restored.read({ provider: 'claude', id: id(1) });
+  assert.deepEqual(preview.messages.map((m: any) => [m.role, m.text]), [
+    ['user', 'fix the failing build'], ['assistant', 'The zebra in the config was wrong.'],
+  ]);
+  forbidSources = false;
+  await put(2, [user('a', null, 'explain quokkas to me'), reply('b', 'a', 'm1', 'The new cached phrase is capybara.')]);
+  await restored.list({ refresh: true });
+  await restored.settled();
+  assert.equal((await restored.list({ query: 'capybara' })).sessions[0].id, id(2));
+  assert.match(JSON.stringify(await restored.read({ provider: 'claude', id: id(2) })), /capybara/);
+  assert.equal((await restored.list({ query: 'zebra' })).sessions[0].id, id(1), 'unchanged cached text stays searchable');
+});
+
 test('loading writes a session DSH can open, in the session\'s own folder, and remembers where it went', async (t) => {
   const { service, stored, attached, links } = await setup(t);
   const result = await service.load({ provider: 'claude', id: id(1) });
@@ -187,7 +265,7 @@ test('loading again reads TUI changes immediately into the same DSH session, wit
   assert.ok(entry.events.every((event: any, index: number) => event.seq === index));
 });
 
-test('opening restores a missing native link from durable identity and synchronizes the same DSH session', async (t) => {
+for (const api of ['legacy', 'query']) test(`opening restores a missing native link from durable identity and synchronizes the same DSH session (${api})`, async (t) => {
   const { service, stored, links, root, put, source, store, registry } = await setup(t);
   const original = [user('u1', null, 'first'), reply('a1', 'u1', 'm1', 'first answer')];
   await put(5, original);
@@ -196,7 +274,9 @@ test('opening restores a missing native link from durable identity and synchroni
   await put(5, [...original, user('u2', 'a1', 'second'), reply('a2', 'u2', 'm2', 'external answer')]);
   const restored = createNativeSessions({
     sources: () => [source], links, claude: { root }, persistence: () => store, workspaces: () => registry,
-    controller: () => ({ inspect: async (target: string) => stored.get(target) }),
+    ...(api === 'query'
+      ? { query: () => ({ readSession: async (target: string) => ({ session: stored.get(target)?.header, events: stored.get(target)?.events }) }) }
+      : { controller: () => ({ inspect: async (target: string) => stored.get(target) }) }),
   });
   assert.deepEqual(await restored.sync({ sessionIds: [sessionId] }), { updated: [] });
   assert.deepEqual(await restored.sync({ sessionIds: [sessionId], recover: true }), { updated: [sessionId] });
@@ -337,4 +417,168 @@ test('a loaded session starts on the model the conversation really used, found b
   await put(2, [user('a', null, 'explain quokkas to me'), record('claude-sonnet-5-5')]);
   const sonnet = stored.get((await service.load({ provider: 'claude', id: id(2) })).sessionId)!;
   assert.equal(sonnet.events.find((event: any) => event.type === 'model/selection').data.model, 'sonnet', 'the alias that is a choice, not default');
+});
+
+// Failed reads cannot restart on a clock or a list poll. Compressed rollouts are valid, and failed refreshes keep searchable text.
+test('a failed Codex index stays stopped across rescans until an explicit refresh', async (t) => {
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough } = await import('node:stream');
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (line: string) => { warnings.push(String(line)); };
+  t.after(() => { console.warn = warn; });
+  let answers = false;
+  let starts = 0;
+  let missingFile: string;
+  let compressedFile: string;
+  let missingReads = 0;
+  let compressedReads = 0;
+  let revision = 0;
+  const thread = (threadId: string) => ({ id: threadId, preview: `preview ${threadId}`, name: null, cwd: '/work/app', ephemeral: false, parentThreadId: null, source: 'vscode', createdAt: 1_790_000_000, updatedAt: 1_790_000_100 + revision, model: 'gpt-x', gitInfo: null, path: threadId === 'missing' ? missingFile : threadId === 'compressed' ? compressedFile : null });
+  const spawnProcess = () => {
+    starts++;
+    const child: any = new EventEmitter();
+    child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+    child.kill = () => { queueMicrotask(() => child.emit('exit', 0)); };
+    let buffer = '';
+    child.stdin.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString();
+      let at;
+      while ((at = buffer.indexOf('\n')) >= 0) {
+        const message = JSON.parse(buffer.slice(0, at));
+        buffer = buffer.slice(at + 1);
+        if (message.id === undefined) continue;
+        if (message.method === 'thread/read' && message.params.threadId === 'missing') missingReads++;
+        if (message.method === 'thread/read' && message.params.threadId === 'compressed') compressedReads++;
+        const result = message.method === 'thread/list' ? { data: [thread('big'), thread('missing'), thread('compressed')], nextCursor: null }
+          : message.method === 'thread/read' ? (answers || message.params.threadId === 'compressed' ? { thread: { ...thread(message.params.threadId), turns: [{ id: 'turn', items: [{ type: 'agentMessage', text: 'retained searchable words' }] }] } } : new Error('rollout is too large'))
+            : {};
+        child.stdout.write(`${JSON.stringify(result instanceof Error ? { id: message.id, error: { message: result.message } } : { id: message.id, result })}\n`);
+      }
+    });
+    return child;
+  };
+  let clock = Date.now();
+  const { service, base } = await setup(t, { now: () => clock, codex: { id: 'codex', name: 'Codex', command: 'codex', spawnProcess } });
+  missingFile = join(base, 'missing-rollout.jsonl');
+  compressedFile = join(base, 'compressed-rollout.jsonl');
+  const { zstdCompressSync } = await import('node:zlib');
+  await writeFile(compressedFile + '.zst', zstdCompressSync('compressed transcript'));
+  const reads = () => starts;
+  await service.list();
+  await service.settled();
+  let list = await service.list();
+  assert.deepEqual([list.indexing.running, list.indexing.unsearchable], [false, 2], 'both failed transcripts are counted');
+  assert.equal(missingReads, 0, 'a missing rollout is rejected before any app-server read');
+  assert.equal(compressedReads, 1, 'a .jsonl.zst sibling is read by the official app-server');
+  assert.equal((await service.read({ provider: 'codex', id: 'compressed' })).messages[0].text, 'retained searchable words');
+  assert.equal(compressedReads, 1, 'the ordered preview reuses its indexed text');
+  assert.equal(list.unavailable, undefined, 'and that does not make the list "unavailable"');
+  assert.equal(warnings.filter((line) => /codex:big/.test(line) && /rollout is too large/.test(line)).length, 1, 'the reason is logged, once');
+  const after = reads();
+  // listed again and again (every 15 seconds): no process is started for it
+  for (let step = 0; step < 4; step++) { clock += 20_000; await service.list(); await service.settled(); }
+  const listsOnly = reads() - after;
+  assert.ok(listsOnly <= 4, 'only the listings start a process');
+  assert.equal(warnings.filter((line) => /codex:big/.test(line)).length, 1, 'not tried, so not reported again');
+  assert.equal((await service.list()).indexing.running, false);
+  for (const elapsed of [11 * 60_000, 2 * 60 * 60_000, 24 * 60 * 60_000]) {
+    clock += elapsed;
+    await service.list();
+    await service.settled();
+  }
+  assert.equal(warnings.filter((line) => /codex:big/.test(line)).length, 1, 'elapsed time cannot restart a failed read');
+  answers = true;
+  await writeFile(missingFile, 'restored');
+  await service.list({ refresh: true });
+  await service.settled();
+  list = await service.list();
+  assert.equal(list.indexing.unsearchable, 0, 'a refresh tried it at once, and it could be read');
+  assert.equal(missingReads, 1, 'an explicit refresh can read a restored transcript');
+  assert.equal((await service.list({ query: 'preview big' })).sessions.length, 1);
+  answers = false;
+  revision++;
+  clock += 6 * 60_000;
+  await service.list({ refresh: true });
+  await service.settled();
+  assert.equal((await service.list()).indexing.unsearchable, 0, 'a failed refresh does not make cached searchable text unavailable');
+  assert.equal((await service.list({ query: 'retained searchable words', provider: 'codex' })).sessions.length, 3);
+  void reads;
+});
+
+// The panel asks every five seconds, for the conversation that is open, whether the terminal has written anything new (`sessions/sync`). Reading the transcript is what
+// costs: a conversation of 659 MB took five seconds of DSH's main thread a time, again and again for the whole of a turn, so that a message from the phone waited
+// 3.9 seconds for DSH (owner, 2026-11-07: "why does it keep spinning"). A working agent is not even asked, and a put-off transcript is not read again for a minute.
+test('the synchronization does not read the transcript of a session whose agent works, nor try a put-off one again for a minute', async (t) => {
+  let time = Date.parse('2026-11-07T06:00:00.000Z');
+  const { service, links, root, source, store, registry } = await setup(t, { now: () => time });
+  const loaded = await service.load({ provider: 'claude', id: id(1) });
+  const file = join(root, 'app', `${id(1)}.jsonl`);
+  // The agent of the session as DSH has it: `status` is looked at once by the question whether it works and once more when the synchronization is really tried
+  // (this stand-in cannot hold the session, so that the update is put off).
+  let state = 'running';
+  let looked = 0;
+  const agent: Record<string, unknown> = { get status() { looked += 1; return state; } };
+  const synchronizer = createNativeSessions({
+    sources: () => [source], links, claude: { root }, persistence: () => store, workspaces: () => registry, now: () => time, agents: () => new Map([[loaded.sessionId, agent]]),
+  });
+  t.after(async () => { await synchronizer.close(); });
+  await synchronizer.list();
+  await synchronizer.settled(); // its own listing and its search index are read before anything is counted
+  const reads: string[] = [];
+  const original = fs.createReadStream;
+  fs.createReadStream = ((path: unknown, ...rest: unknown[]) => { reads.push(String(path)); return (original as (...args: unknown[]) => unknown)(path, ...rest); }) as typeof fs.createReadStream;
+  syncBuiltinESMExports();
+  t.after(() => { fs.createReadStream = original; syncBuiltinESMExports(); });
+  const transcriptReads = () => reads.filter((path) => path.endsWith(`${id(1)}.jsonl`)).length;
+  let turns = 2;
+  const picture = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' } };
+  const grow = async () => {
+    turns += 1;
+    // (the conversation of the owner has pictures in hundreds of turns: read once for its words and once more for them)
+    const asked = { ...user(`u${turns}`, 'b', `question ${turns}`), message: { role: 'user', content: [{ type: 'text', text: `question ${turns}` }, picture] } };
+    await writeFile(file, (await readFile(file, 'utf8')) + lines([asked, reply(`r${turns}`, `u${turns}`, `m${turns}`, `answer ${turns}`)]));
+    await utimes(file, new Date(time), new Date(time)); // (the stamp moves with the size and the time)
+  };
+  const ask = async (extra: Record<string, unknown> = {}) => synchronizer.sync({ sessionIds: [loaded.sessionId], ...extra });
+  const lookedAtBy = async (extra: Record<string, unknown> = {}) => { const before = looked; await ask(extra); return looked - before; };
+
+  // The agent works and the transcript grows: it is asked about again and again, and nothing is read.
+  for (let step = 0; step < 4; step++) { await grow(); time += 1000; assert.deepEqual(await ask(), { updated: [] }); }
+  assert.equal(transcriptReads(), 0, 'a working agent: the transcript was not read');
+  assert.deepEqual(await ask({ fresh: true }), { updated: [] });
+  assert.equal(transcriptReads(), 0, 'not even when it is asked for at once: the answer would be the same');
+
+  // The agent is idle, but this DSH cannot be synchronized into (the stand-in cannot hold the session): the transcript is read (once for its words, once for its
+  // pictures) and the synchronization is tried once, and waiting does not change it, so it is not tried again for ten minutes.
+  state = 'idle';
+  await grow(); time += 1000;
+  assert.equal(await lookedAtBy(), 2, 'tried: the agent was asked about twice (is it working, then the synchronization itself)');
+  const first = transcriptReads();
+  assert.ok(first >= 2, `the transcript was read, for its words and for its pictures (${first})`);
+  for (let step = 0; step < 5; step++) { time += 5000; assert.equal(await lookedAtBy(), 1, 'put off: only asked whether it works'); }
+  time += 40_000;
+  assert.equal(await lookedAtBy(), 1, 'a minute on it is still not tried: this DSH cannot be synchronized into');
+  assert.equal(transcriptReads(), first, 'and not read again');
+  // Somebody asks for it at once, or the transcript grew: read.
+  await ask({ fresh: true });
+  assert.ok(transcriptReads() > first, 'asked for at once, it is read');
+  const second = transcriptReads();
+  await grow(); time += 1000;
+  assert.equal(await lookedAtBy(), 2, 'a transcript that grew is tried at once, not held back');
+  assert.ok(transcriptReads() > second, 'and read');
+  // Ten minutes on, an unchanged transcript is tried again, and read again (what was read has been kept for two).
+  const third = transcriptReads();
+  time += 601_000;
+  assert.equal(await lookedAtBy(), 2, 'ten minutes later it is tried again');
+  assert.ok(transcriptReads() > third, 'and what was read is gone: the unchanged transcript is read again');
+
+  // A put-off that is only for the moment (the session is being held by something else) is tried again after a minute.
+  Object.assign(agent, { runMaintenance: () => undefined, phase: { kind: 'maintenance' } });
+  await grow(); time += 1000;
+  assert.equal(await lookedAtBy(), 2, 'a changed transcript is tried once');
+  time += 30_000;
+  assert.equal(await lookedAtBy(), 1, 'not within the minute');
+  time += 31_000;
+  assert.equal(await lookedAtBy(), 2, 'and a minute later it is');
 });

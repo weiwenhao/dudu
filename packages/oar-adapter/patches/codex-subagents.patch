@@ -1,0 +1,154 @@
+--- a/dist/runtimes/codex/projection.d.ts
++++ b/dist/runtimes/codex/projection.d.ts
+@@ -4,6 +4,7 @@
+ import { type JsonRecord } from "../../shared/json.js";
+ import { type CodexOpenMethod } from "./open.js";
+ import { type SubagentThreads } from "./tasks.js";
++import type { SessionOptions } from "../../contracts/session-options.js";
+ import { type CodexTokenBaseline } from "./token-usage.js";
+ export type ProjectionCommand = {
+     readonly kind: "frame";
+@@ -42,10 +43,10 @@
+     readonly tokenBaseline: CodexTokenBaseline;
+ }
+ /** The projection of a Session opened by `opened`: a resume awaits codex's re-reported token total. */
+-export declare function initialCodexProjection(rootThreadId: string, opened?: CodexOpenMethod): CodexProjectionState;
++export declare function initialCodexProjection(rootThreadId: string, opened?: CodexOpenMethod, observedSubagents?: SessionOptions["observedSubagents"]): CodexProjectionState;
+ /** Fold one codex notification into the next state plus commands. */
+ export declare function foldCodexNotification(previous: CodexProjectionState, method: string, params: JsonRecord): {
+     readonly state: CodexProjectionState;
+     readonly commands: readonly ProjectionCommand[];
+ };
+-//# sourceMappingURL=projection.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=projection.d.ts.map
+--- a/dist/runtimes/codex/projection.js
++++ b/dist/runtimes/codex/projection.js
+@@ -8,7 +8,7 @@
+ import { codexItemExitCode, codexItemInput, codexToolContent } from "./item-detail.js";
+ import { codexServiceTierEvents } from "./open.js";
+ import { codexReasoningContent } from "./reasoning.js";
+-import { aboutOwnChild, codexTaskViews, withStartedChild } from "./tasks.js";
++import { aboutOwnChild, codexLegacyTaskViews, codexTaskViews, withStartedChild } from "./tasks.js";
+ import { baselineTokens, codexUsageViews, initialTokenBaseline, nextTokenBaseline } from "./token-usage.js";
+ /**
+  * The codex notification → record projection as a PURE FOLD (see
+@@ -26,8 +26,15 @@
+ const TOOL_ITEM_TYPES = new Set(["commandExecution", "fileChange", "mcpToolCall", "webSearch", "sleep"]);
+ const COLLAB_ITEM_TYPES = new Set(["collabAgentToolCall", "collabToolCall", "subAgentActivity"]);
+ /** The projection of a Session opened by `opened`: a resume awaits codex's re-reported token total. */
+-export function initialCodexProjection(rootThreadId, opened = "thread/start") {
+-    return { inputs: new Map(), messages: new Map(), rootThreadId, lastErrorDetail: null, retries: new Map(), compacting: false, subagents: new Map(), tokenBaseline: initialTokenBaseline(opened === "thread/resume") };
++export function initialCodexProjection(rootThreadId, opened = "thread/start", observedSubagents = []) {
++    const subagents = new Map();
++    for (const task of observedSubagents) {
++        if (typeof task.childSessionId === "string" && task.childSessionId !== rootThreadId
++            && (task.sessionId === rootThreadId || subagents.has(task.sessionId))) {
++            subagents.set(task.childSessionId, { parent: task.sessionId });
++        }
++    }
++    return { inputs: new Map(), messages: new Map(), rootThreadId, lastErrorDetail: null, retries: new Map(), compacting: false, subagents, tokenBaseline: initialTokenBaseline(opened === "thread/resume") };
+ }
+ const COMPACTION_ITEM_TYPE = "contextCompaction";
+ function isCompactionItem(params) {
+@@ -176,6 +183,10 @@
+             if (item?.type === "subAgentActivity") {
+                 return aboutOwnChild(state.subagents, state.rootThreadId, reporter, item) ? codexTaskViews(item) : [];
+             }
++            if (item?.type === "collabAgentToolCall") {
++                return codexLegacyTaskViews(item, id => (item.tool === "spawnAgent" && item.status === "completed" && id !== reporter)
++                    || state.subagents.get(id)?.parent === reporter);
++            }
+             return toolViews(method, item);
+         }
+         case "turn/completed":
+@@ -197,9 +208,16 @@
+     const observed = foldCodexMessages(previous.messages, threadId, method, params);
+     const state = { ...previous, tokenBaseline, inputs: input.inputs, messages: observed.messages };
+     const spanId = spanIdOf(params);
++    const childTaskEvents = threadId !== state.rootThreadId && state.subagents.has(threadId)
++        ? method === "turn/started" ? [{ kind: "task_updated", taskId: threadId, status: "running" }]
++            : method === "turn/completed" ? [{
++                kind: "task_ended", taskId: threadId,
++                status: params.turn?.status === "completed" ? "completed" : params.turn?.status === "interrupted" ? "stopped" : "failed",
++            }] : []
++        : [];
+     const event = {
+         kind: "frame",
+-        body: { type: method, native: params, events: [...input.events, ...observed.events, ...viewsFor(state, threadId, method, params)] },
++        body: { type: method, native: params, events: [...input.events, ...observed.events, ...viewsFor(state, threadId, method, params), ...childTaskEvents] },
+         ...(spanId === undefined ? {} : { spanId }),
+         ...(threadId === state.rootThreadId ? {} : { sessionId: threadId }),
+     };
+@@ -233,4 +251,4 @@
+     }
+     return { state: next, commands: [event, ...links] };
+ }
+-//# sourceMappingURL=projection.js.map
+\ No newline at end of file
++//# sourceMappingURL=projection.js.map
+--- a/dist/runtimes/codex/tasks.d.ts
++++ b/dist/runtimes/codex/tasks.d.ts
+@@ -11,6 +11,8 @@
+  * root or a sibling reports `interacted` too, and that changes no task.
+  */
+ export declare function codexTaskViews(item: JsonRecord): TaskEventBody[];
++/** Native v1 collaboration state, limited to threads the reporter owns. */
++export declare function codexLegacyTaskViews(item: JsonRecord, owns: (id: string) => boolean): TaskEventBody[];
+ /** A subagent thread as its `started` item reported it: the thread that started it, and its canonical path. */
+ export interface SubagentThread {
+     readonly parent: string;
+@@ -31,4 +33,4 @@
+  * taken to be the reporter's.
+  */
+ export declare function aboutOwnChild(threads: SubagentThreads, rootThreadId: string, reporter: string, item: JsonRecord): boolean;
+-//# sourceMappingURL=tasks.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=tasks.d.ts.map
+--- a/dist/runtimes/codex/tasks.js
++++ b/dist/runtimes/codex/tasks.js
+@@ -35,10 +35,37 @@
+             return [];
+     }
+ }
++/** Native v1 collaboration snapshots (Codex 0.162.1); tool completion alone is not child completion. */
++export function codexLegacyTaskViews(item, owns) {
++    if (item?.type !== "collabAgentToolCall" || item.status === "inProgress") return [];
++    const ids = Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds.filter(id => typeof id === "string" && owns(id)) : [];
++    const events = [];
++    for (const id of ids) {
++        if (item.tool === "spawnAgent" && item.status === "completed") {
++            events.push({ kind: "task_started", taskId: id, taskType: "agent", nativeType: "collabAgentToolCall",
++                childSessionId: id, background: true, toolCallId: item.id,
++                ...(typeof item.prompt === "string" && item.prompt ? { description: item.prompt } : {}) });
++        } else if (["sendInput", "followupTask"].includes(item.tool) && item.status === "completed") {
++            events.push({ kind: "task_updated", taskId: id, status: "running" });
++        }
++        const state = item.agentsStates?.[id];
++        const status = { completed: "completed", errored: "failed", interrupted: "stopped", shutdown: "stopped", notFound: "failed" }[state?.status];
++        if (status) events.push({ kind: "task_ended", taskId: id, status,
++            ...(typeof state.message === "string" && state.message ? { summary: state.message } : {}) });
++    }
++    return events;
++}
+ /** The root thread's canonical path (0.158.0: gamma's `interacted` naming the root says `/root`). */
+ const ROOT_PATH = "/root";
+ /** `threads` plus the child a `started` item reported on `reporter`'s thread names. */
+ export function withStartedChild(threads, reporter, item) {
++    if (item?.type === "collabAgentToolCall" && item.tool === "spawnAgent" && item.status === "completed") {
++        const next = new Map(threads);
++        for (const id of item.receiverThreadIds ?? []) {
++            if (typeof id === "string" && id !== reporter && !next.has(id)) next.set(id, { parent: reporter });
++        }
++        return next;
++    }
+     const child = item?.type === "subAgentActivity" && item.kind === "started" ? item.agentThreadId : undefined;
+     if (typeof child !== "string" || child.length === 0 || threads.has(child)) {
+         return threads;
+@@ -83,4 +110,4 @@
+     }
+     return (typeof item.agentPath === "string" ? childByPath(threads, rootThreadId, reporter, item.agentPath) : null) ?? true;
+ }
+-//# sourceMappingURL=tasks.js.map
+\ No newline at end of file
++//# sourceMappingURL=tasks.js.map

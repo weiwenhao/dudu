@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, afterEach, before, test } from 'node:test';
 import type { Page } from 'playwright-core';
-import { startDudu } from './harness.mjs';
+import { startDudu, openIssuePage } from './harness.mjs';
 
 let dudu: Awaited<ReturnType<typeof startDudu>>;
 let project: { name: string; path: string };
@@ -18,13 +18,8 @@ before(async () => {
   dudu = await startDudu({
     model: {
       replies: [
-        { when: (context: any) => context.system.includes('You are dudu, managing an issue'), say: (context: any) => {
-          const { evidence } = JSON.parse(context.prompt);
-          const last = evidence.messages.filter((message: any) => message.role === 'assistant').at(-1)?.text ?? '';
-          const partial = /只完成一半/.test(last);
-          return JSON.stringify({ summary: last || '本轮未完成。', ask: partial ? '' : evidence.state === 'error' ? '是否重试？' : '确认完成吗？' });
-        } },
         { when: 'PARTIALME', say: '只完成一半，还没有检查剩下的文件。' },
+        { when: 'WORKFLOW-RESUME', say: '本轮工作结束。', delay: 12_000 },
         { when: 'FINISHME', say: '剩下的文件已处理，检查通过。', delay: 4000 },
         { when: 'SLOWME', say: '第 3 条建议接受。', delay: 4000 },
         { when: 'ASKME', ask: { question: 'Accept clause 3 or reject it?', options: ['Accept', 'Reject'] } },
@@ -37,7 +32,11 @@ before(async () => {
   project = { name: 'Contract checks', path };
   assert.equal((await dudu.api('projects/create', project)).outcome, 'success');
 });
-after(async () => { await dudu?.stop(); });
+after(async () => {
+  try {
+    if (dudu) assert.equal(dudu.model.requests.some((request: any) => request.system.includes('You are dudu, managing an issue')), false, 'worker activity never requests an automatic progress summary');
+  } finally { await dudu?.stop(); }
+});
 afterEach(async (context) => { await dudu.settle(context.name, context.passed === false); });
 
 type Issue = { id: number; ref: string | null; title: string; status: string; ask: string; agent: string | null; session: string | null; agentState: string; sessions?: { key: string; state: string }[] };
@@ -47,19 +46,21 @@ const get = async (id: number) => (await dudu.api('issues/get', { id })).issue a
 const logOf = async (id: number) => (await dudu.api('issues/get', { id, logLimit: 200 })).log as Array<{ kind: string; actor: string; text: string }>;
 
 /** Waits until the issue is as the test says; the sessions work on their own time. */
-async function until(id: number, what: string, check: (issue: Issue) => boolean, timeout = 45_000) {
+async function until(id: number, what: string, check: (issue: Issue) => boolean | Promise<boolean>, timeout = 45_000) {
   const started = Date.now();
   let issue = await get(id);
-  while (!check(issue)) {
+  while (!await check(issue)) {
     if (Date.now() - started > timeout) assert.fail(`Issue ${id} did not ${what} in ${timeout} ms; it is ${JSON.stringify(issue)}`);
     await new Promise((done) => setTimeout(done, 250));
     issue = await get(id);
   }
   return issue;
 }
-const inReview = (issue: Issue) => issue.status === 'in_review' && issue.ask === '确认完成吗？';
+// A finished run is Blocked (the boss's turn), as a question or a failure is: what says that it finished is the session's own state.
+const turnDone = (issue: Issue) => Boolean(issue.session) && issue.agentState === 'blocked' && issue.ask === '' && Boolean(issue.sessions?.some((one) => one.key === issue.session && one.state === 'finished'));
 
-const openIssue = (page: Page, title: string) => page.getByRole('region', { name: 'Issues' }).getByRole('listitem').filter({ hasText: title }).getByRole('button', { name: title, exact: true }).click();
+// The right-click menu of a row is the way to the issue's page (the row and its title open its conversation).
+const openIssue = (page: Page, title: string) => openIssuePage(page.getByRole('region', { name: 'Issues' }).getByRole('listitem').filter({ hasText: title }));
 const sidebarOf = (page: Page) => page.getByRole('tree', { name: 'Sessions' });
 /** DSH's sidebar keeps a workspace folded until it is opened (and remembers it, so a folder may be open already); the session of an issue is in the folder it works in. */
 async function sidebarRow(page: Page, id: number, title: string) {
@@ -80,7 +81,7 @@ async function firstMessageOf(id: number) {
   return '';
 }
 
-test('an issue given to DeepSeek from its agent menu gets a session in DSH that works, and ends In Review asking to be confirmed', async () => {
+test('an issue given to DeepSeek keeps its workflow status without generated progress after stops or dashboard visits', async () => {
   const issue = await add({ title: '回复供应商合同的修改意见', brief: 'SLOWME：只回答一句话，不要用任何工具。', priority: 'high', project: null });
   const page = await dudu.openPanel();
   await openIssue(page, '回复供应商合同的修改意见');
@@ -101,10 +102,12 @@ test('an issue given to DeepSeek from its agent menu gets a session in DSH that 
   assert.equal(await page.getByRole('listbox', { name: 'Mention', exact: true }).getByRole('option').count(), 2);
   await composer.fill('');
 
-  // The turn is on: In Progress, the Working mark on the agent, a session that is DSH's, and the first message written from the issue.
+  // The turn is on: the workflow stays Todo while the Agent state and its Working mark follow the session.
   await page.getByTitle('DeepSeek · Working').first().waitFor({ timeout: 20_000 });
+  const spinner = page.getByTitle('DeepSeek · Working').first().locator('[data-agent-activity="working"]');
+  assert.equal(await spinner.evaluate((node) => getComputedStyle(node).animationName), 'spin');
   const working = await get(issue.id);
-  assert.equal(working.status, 'in_progress');
+  assert.equal(working.status, 'todo');
   assert.equal(working.agentState, 'working');
   assert.match(working.session ?? '', /^dsh:session-/);
   const message = await firstMessageOf(issue.id);
@@ -115,18 +118,33 @@ test('an issue given to DeepSeek from its agent menu gets a session in DSH that 
   // The session is in DSH's sidebar, named for the issue, in the folder it works in.
   await (await sidebarRow(page, issue.id, '回复供应商合同的修改意见')).waitFor();
 
-  // The turn ends with an answer: In Review, the question to confirm, and what the agent said as its own comment.
-  const done = await until(issue.id, 'be In Review', inReview);
-  assert.equal(done.agentState, 'needs_you');
-  await page.getByRole('region', { name: 'In Review', exact: true }).getByText('确认完成吗？').waitFor();
-  await page.getByText('第 3 条建议接受。', { exact: true }).waitFor();
+  // Stopping changes Agent state only, without a generated activity comment.
+  const done = await until(issue.id, 'finish without moving Todo', turnDone);
+  assert.equal(done.status, 'todo');
+  assert.equal(done.agentState, 'blocked');
+  assert.equal((await get(issue.id)).ask, '', 'no confirmation question is invented');
   const log = await logOf(issue.id);
-  assert.ok(log.some((entry) => entry.kind === 'progress' && entry.actor === 'dudu' && entry.text === '第 3 条建议接受。'));
+  assert.equal(log.some((entry) => entry.kind === 'progress'), false);
+  assert.equal(await page.locator('[data-issue-discussion]').getByText('第 3 条建议接受。', { exact: true }).count(), 0);
   assert.ok(log.some((entry) => entry.kind === 'session' && entry.actor === 'dudu' && entry.text === 'started a session with DeepSeek'));
 
+  const progressRequests = () => dudu.model.requests.filter((request: any) => request.system.includes('You are dudu, managing an issue')).length;
+  const tidies = () => dudu.model.requests.filter((request: any) => request.system.includes('Review these open issues')).length;
+  assert.equal(progressRequests(), 0, 'a real stop no longer calls a summary model');
+  assert.equal(tidies(), 0, 'dashboard visits and worker events do not automatically tidy issues');
+  const before = await dudu.api('issues/events', { issueId: issue.id });
+  assert.equal((await dudu.api('issues/tidy', { trigger: 'dashboard' })).outcome, 'success', 'legacy dashboard requests are harmless');
+  await page.reload();
+  await page.getByRole('complementary', { name: 'Properties' }).getByRole('button', { name: 'Todo', exact: true }).waitFor();
+  assert.equal((await logOf(issue.id)).some((entry) => entry.kind === 'progress'), false);
+  assert.equal(progressRequests(), 0);
+  assert.equal(tidies(), 0);
+  assert.deepEqual(await dudu.api('issues/events', { issueId: issue.id }), before, 'viewing the dashboard cannot rewrite the issue');
+
   // Open session shows that very session in DSH: the first message, the read-only mode it runs in.
-  await page.getByRole('button', { name: 'Open session' }).click();
+  await page.locator('.dudu header').getByRole('button', { name: 'Open session', exact: true }).click();
   await page.getByText(message, { exact: true }).first().waitFor();
+  await page.getByText('第 3 条建议接受。', { exact: true }).first().waitFor();
   await page.getByText('Read Only').first().waitFor();
   await page.close();
 });
@@ -141,7 +159,7 @@ test('ASSIGN.md chooses the session folder and model as well as its access mode'
     await writeFile(rule, `- 规则验收 → DeepSeek，在 "${target}" 里，模型：mock-1，只读\n`);
     const issue = await add({ title: '规则选目录', kind: '规则验收', project: { name: 'rule-project', path: target } });
     await dudu.api('issues/assign', { id: issue.id, agent: 'deepseek' });
-    await until(issue.id, 'finish in the rule folder', inReview);
+    await until(issue.id, 'finish in the rule folder', turnDone);
     const detail = await dudu.api('issues/get', { id: issue.id });
     const started = detail.log.find((entry: any) => entry.kind === 'session' && entry.data?.cwd);
     assert.equal(started.data.cwd, target);
@@ -150,29 +168,61 @@ test('ASSIGN.md chooses the session folder and model as well as its access mode'
   } finally { await writeFile(rule, original); }
 });
 
-test('unfinished stopped work enters In Review immediately, comments leave it there, and @ resumes real work', async () => {
+test('unfinished stopped work keeps Todo through comments and resumed execution', async () => {
   const issue = await add({ title: '分段完成的工作', brief: 'PARTIALME' });
   await dudu.api('issues/assign', { id: issue.id, agent: 'deepseek' });
-  const stopped = await until(issue.id, 'stop In Review before a model summary', (now) => now.status === 'in_review');
-  assert.equal(stopped.ask, '', 'In Review does not require a confirmation question');
-  const deadline = Date.now() + 45_000;
-  while (!(await logOf(issue.id)).some((entry) => entry.kind === 'progress')) {
-    assert.ok(Date.now() < deadline, 'dudu reviews a stopped worker after debounce');
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  assert.equal((await get(issue.id)).status, 'in_review');
+  const stopped = await until(issue.id, 'stop without generating progress', turnDone);
+  assert.equal(stopped.status, 'todo');
+  assert.equal(stopped.ask, '', 'stopping does not generate a confirmation question');
+  assert.equal((await logOf(issue.id)).some((entry) => entry.kind === 'progress'), false);
+  assert.equal((await get(issue.id)).status, 'todo');
   const page = await dudu.openPanel();
   await openIssue(page, issue.title);
   const composer = page.getByRole('textbox', { name: 'Leave a comment…' });
   await composer.fill('这是一条普通留言');
   await page.keyboard.press('Control+Enter');
   await page.getByRole('listitem').getByText('这是一条普通留言', { exact: true }).waitFor();
-  assert.equal((await get(issue.id)).status, 'in_review');
+  assert.equal((await get(issue.id)).status, 'todo');
   await composer.fill('@deepseek SLOWME FINISHME');
   await page.keyboard.press('Control+Enter');
-  await until(issue.id, 'resume actual work In Progress', (now) => now.status === 'in_progress' && now.agentState === 'working', 10_000);
-  await until(issue.id, 'be reviewed after the remaining work', inReview);
-  assert.ok((await logOf(issue.id)).filter((entry) => entry.kind === 'progress').every((entry) => entry.actor === 'dudu'));
+  await until(issue.id, 'resume actual work without moving Todo', (now) => now.status === 'todo' && now.agentState === 'working', 10_000);
+  await until(issue.id, 'finish the remaining work', turnDone);
+  assert.equal((await logOf(issue.id)).some((entry) => entry.kind === 'progress'), false);
+  await page.close();
+});
+
+test('Backlog exploration preserves manual status changes through assignment, resume, stop and reload', async () => {
+  const reviewsBefore = dudu.model.requests.filter((request: any) => request.system.includes('You are dudu, managing an issue')).length;
+  const issue = await add({ title: 'Backlog exploration', brief: 'PARTIALME', status: 'backlog' });
+  await dudu.api('issues/assign', { id: issue.id, agent: 'deepseek' });
+  await until(issue.id, 'finish the first exploration', turnDone);
+  assert.equal((await get(issue.id)).status, 'backlog');
+  const page = await dudu.openPanel();
+  await page.getByRole('tab', { name: 'Backlog', exact: true }).click();
+  await openIssue(page, issue.title);
+  let properties = page.getByRole('complementary', { name: 'Properties' });
+  await properties.getByRole('button', { name: 'Backlog', exact: true }).waitFor();
+  await page.getByRole('textbox', { name: 'Leave a comment…' }).fill('@deepseek WORKFLOW-RESUME');
+  await page.keyboard.press('Control+Enter');
+  await until(issue.id, 'resume exploration inside Backlog', (now) => now.status === 'backlog' && now.agentState === 'working', 10_000);
+  const workerRequests = () => dudu.model.requests.filter((request: any) => request.prompt === 'WORKFLOW-RESUME' && request.tools.length).length;
+  await until(issue.id, 'reach the worker model', () => workerRequests() === 1, 10_000);
+  await properties.getByRole('button', { name: 'Backlog', exact: true }).click();
+  await page.getByRole('option', { name: /^In Review/ }).click();
+  const working = await get(issue.id);
+  assert.equal(working.status, 'in_review', 'a manual workflow choice is retained while the worker is active');
+  assert.equal(working.agentState, 'working');
+  assert.equal(workerRequests(), 1, 'a manual status change sends no further work');
+  await page.reload();
+  properties = page.getByRole('complementary', { name: 'Properties' });
+  await properties.getByRole('button', { name: 'In Review', exact: true }).waitFor();
+  await until(issue.id, 'finish with the chosen status', turnDone);
+  assert.equal((await get(issue.id)).status, 'in_review');
+  await properties.getByRole('button', { name: 'In Review', exact: true }).waitFor();
+  const changes = (await logOf(issue.id)).filter((entry) => entry.kind === 'status');
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].actor, 'owner', 'assignment and worker transitions write no automatic workflow history');
+  assert.equal(dudu.model.requests.filter((request: any) => request.system.includes('You are dudu, managing an issue')).length, reviewsBefore, 'workflow changes never request a model review');
   await page.close();
 });
 
@@ -198,33 +248,33 @@ test('@dudu uses the durable assistant conversation and replies on the issue wit
   } finally { dudu.model.replies = before; }
 });
 
-test('a question stays In Review after an @ message; the explicit reply API answers the tool and the queued message follows it', async () => {
+test('a question preserves Todo after an @ message; the explicit reply API answers the tool and the queued message follows it', async () => {
   const issue = await add({ title: '合同第 3 条', brief: 'ASKME：先问我，再回答。' });
   await dudu.api('issues/assign', { id: issue.id, agent: 'deepseek' });
   const asking = await until(issue.id, 'ask its question', (now) => now.ask.startsWith('Accept clause 3'));
-  assert.equal(asking.agentState, 'needs_you');
-  assert.equal(asking.status, 'in_review');
+  assert.equal(asking.agentState, 'blocked');
+  assert.equal(asking.status, 'todo');
   assert.equal(asking.ask, 'Accept clause 3 or reject it? (Accept / Reject)', 'the question with the choices it offers');
 
   const page = await dudu.openPanel();
   await openIssue(page, '合同第 3 条');
-  const card = page.getByRole('region', { name: 'In Review', exact: true });
+  const card = page.getByRole('region', { name: 'Todo', exact: true });
   await card.getByText('Accept clause 3 or reject it? (Accept / Reject)').waitFor();
   await card.getByText('DeepSeek', { exact: true }).waitFor();
-  const avatar = page.getByTitle('DeepSeek · In Review').first();
+  const avatar = page.getByTitle('DeepSeek · Needs you').first();
   await avatar.waitFor();
-  assert.equal(await avatar.locator(':scope > span').count(), 1, 'no separate Needs you dot');
+  assert.equal(await avatar.locator(':scope > span[data-agent-activity="blocked"].bg-destructive').count(), 1, 'a worker that asked keeps its activity mark: red');
   assert.equal(await page.locator('.dudu textarea').count(), 1);
   await page.getByRole('textbox', { name: 'Leave a comment…' }).fill('@deepseek A separate follow-up.');
   await page.keyboard.press('Control+Enter');
   await page.getByRole('listitem').getByText('@deepseek A separate follow-up.', { exact: true }).waitFor();
   assert.equal((await get(issue.id)).ask, asking.ask, '@ only queues the message; it does not interpret a tool answer');
-  assert.equal((await get(issue.id)).status, 'in_review', 'queued messages do not pretend the blocked worker resumed');
+  assert.equal((await get(issue.id)).status, 'todo', 'queued messages do not move the workflow');
   await dudu.api('issues/reply', { id: issue.id, text: 'Accept' });
 
   // A dedicated answer still reaches DSH's question tool; the @ message stays a separate user turn.
-  const finished = await until(issue.id, 'finish after the answer', inReview);
-  assert.equal(finished.agentState, 'needs_you');
+  const finished = await until(issue.id, 'finish after the answer', turnDone);
+  assert.equal(finished.agentState, 'blocked');
   const answered = dudu.model.requests.filter((request: { toolResults: string[] }) => request.toolResults.length > 0).at(-1);
   assert.ok(answered, 'the model saw a tool result');
   assert.deepEqual(JSON.parse(answered.toolResults.at(-1)), { answers: [{ id: 'q1', selected: ['Accept'] }] }, 'the choice that was named');
@@ -235,66 +285,49 @@ test('a question stays In Review after an @ message; the explicit reply API answ
   await page.close();
 });
 
-test('a session the owner opens becomes one issue when it asks; an explicit reply resumes it without dudu reviewing imported work', async () => {
+test('a session opened directly in DSH never becomes an issue merely because its worker asks a question', async () => {
+  const before = (await dudu.api('issues/counts')).total;
   const page = await dudu.openPanel();
   await page.getByRole('button', { name: 'New session', exact: true }).first().click();
   const composer = page.locator('[contenteditable="true"]').last();
   await composer.waitFor();
   await composer.fill('ASKME UNBOUND：合同第 3 条');
   await page.keyboard.press('Enter');
-  let issue: Issue | undefined;
-  const started = Date.now();
-  while (!issue) {
-    const result = await dudu.api('issues/list', { tab: 'active', filter: { source: ['session'] } });
-    issue = result.items.find((item: any) => item.ask.startsWith('Accept clause 3'));
-    if (Date.now() - started > 30_000) assert.fail('The unassigned DSH question did not become an issue.');
-    if (!issue) await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  assert.equal(issue.agentState, 'needs_you');
-  assert.equal(issue.status, 'in_review');
-  assert.equal(issue.agent, 'deepseek');
-  const linked = issue.session;
-  await page.getByRole('button', { name: 'Dudu', exact: true }).first().click();
-  await openIssue(page, 'Accept clause 3 or reject it? (Accept / Reject)');
-  await dudu.api('issues/reply', { id: issue.id, text: 'Accept' });
-  await until(issue.id, 'finish after the owner answered', (now) =>
-    now.status === 'in_review' && now.ask === '' && now.sessions?.some((session) => session.key === now.session && session.state === 'finished') === true);
-  assert.ok(!(await logOf(issue.id)).some((entry) => entry.kind === 'progress'), 'dudu does not review a conversation the owner already had');
+  await page.getByText('Accept clause 3 or reject it?', { exact: true }).first().waitFor({ timeout: 30_000 });
+  assert.equal((await dudu.api('issues/counts')).total, before, 'the question waterfall does not enroll unowned work');
   const all = await dudu.api('issues/list', { tab: 'all', filter: { source: ['session'] } });
-  assert.equal(all.items.filter((item: any) => item.session === linked).length, 1);
-  await dudu.api('issues/complete', { id: issue.id, outcome: 'Checked' });
-  const entries = await logOf(issue.id);
-  assert.ok(entries.some((entry) => entry.kind === 'session' && entry.text === 'closed the session'));
+  assert.equal(all.items.some((item: any) => item.title.includes('UNBOUND') || item.ask.startsWith('Accept clause 3')), false);
   await page.close();
 });
 
-test('a turn that fails asks what to do; the reply is a message to the session, and it works again', async () => {
+test('a failed turn preserves Todo without generated progress; an @ message resumes work', async () => {
   const issue = await add({ title: '会失败的事', brief: 'FAILME' });
   await dudu.api('issues/assign', { id: issue.id, agent: 'deepseek' });
-  const failed = await until(issue.id, 'fail', (now) => now.ask.startsWith('出错了'));
-  assert.equal(failed.ask, '出错了：400: bad request from the mock。怎么办？');
-  assert.equal(failed.status, 'in_review');
-  assert.equal(failed.agentState, 'needs_you');
+  const failed = await until(issue.id, 'fail', (now) => now.agentState === 'blocked');
+  assert.equal(failed.ask, '');
+  assert.equal(failed.status, 'todo');
+  assert.equal(failed.agentState, 'blocked');
 
   const page = await dudu.openPanel();
   await openIssue(page, '会失败的事');
-  const card = page.getByRole('region', { name: 'In Review', exact: true });
-  await card.getByText('Something went wrong: 400: bad request from the mock. What should we do?').waitFor();
+  assert.equal((await logOf(issue.id)).some((entry) => entry.kind === 'progress'), false);
   await page.getByRole('textbox', { name: 'Leave a comment…' }).fill('@deepseek 再试一次');
   await page.keyboard.press('Control+Enter');
 
-  const done = await until(issue.id, 'finish the second turn', inReview);
-  assert.equal(done.agentState, 'needs_you');
+  const done = await until(issue.id, 'finish the second turn', turnDone);
+  assert.equal(done.agentState, 'blocked');
   const last = dudu.model.requests.filter((request: { tools: string[] }) => request.tools.length > 0).at(-1);
   assert.equal(last.prompt, '再试一次', 'the words arrived as a message of the owner');
-  await page.getByText('好了，这次做完了。', { exact: true }).waitFor();
+  assert.equal((await logOf(issue.id)).some((entry) => entry.kind === 'progress'), false);
+  await page.getByRole('complementary', { name: 'Properties' }).getByRole('button', { name: 'DeepSeek · Open session', exact: true }).click();
+  await page.getByRole('dialog').getByText('好了，这次做完了。', { exact: true }).waitFor({ timeout: 30_000 });
   await page.close();
 });
 
-test('a session folded away in DSH\'s sidebar is put back by Open session, and what is said in DSH moves the issue too', async () => {
+test('a session folded away in DSH\'s sidebar is put back by Open session and activity follows later messages', async () => {
   const issue = await add({ title: '收起再打开', brief: '只回答 ok，不要用任何工具。' });
   await dudu.api('issues/assign', { id: issue.id, agent: 'deepseek' });
-  await until(issue.id, 'be In Review', inReview);
+  await until(issue.id, 'finish the turn', turnDone);
   const title = '收起再打开';
 
   const page = await dudu.openPanel();
@@ -317,9 +350,9 @@ test('a session folded away in DSH\'s sidebar is put back by Open session, and w
   await composer.click();
   await composer.fill('SLOWME 再核对一遍');
   await page.keyboard.press('Enter');
-  const again = await until(issue.id, 'work again', (now) => now.agentState === 'working' && now.status === 'in_progress');
-  assert.equal(again.ask, '', 'the question to confirm goes while the agent works');
-  await until(issue.id, 'be In Review again', inReview);
+  const again = await until(issue.id, 'work again', (now) => now.agentState === 'working' && now.status === 'todo');
+  assert.equal(again.ask, '', 'resumed work has no pending question');
+  await until(issue.id, 'finish another turn', turnDone);
   await page.close();
 });
 
@@ -330,7 +363,7 @@ async function writer(word: string, file: string) {
   const before = dudu.model.replies;
   dudu.model.replies = [
     {
-      when: (context: any) => context.prompt.includes(word) && !context.system.includes('You are dudu, managing an issue'),
+      when: (context: any) => context.prompt.includes(word),
       calls: [
         { name: 'write', arguments: { file_path: path, content: 'hello' } },
         { name: 'write', arguments: { file_path: path, content: 'hello', sandbox_permissions: 'workspace-write', justification: '需要写出文件。' } },
@@ -346,25 +379,26 @@ async function writer(word: string, file: string) {
   return { issue, path, exists, cleanup };
 }
 
-test('a session is read-only; a write approval waits In Review, and an explicit approval reply permits one write', async () => {
+test('a session is read-only; a write approval preserves Todo, and an explicit approval reply permits one write', async () => {
   const work = await writer('ESCALATE-ALLOW', 'allowed.txt');
   try {
     const asking = await until(work.issue.id, 'ask to write', (now) => now.ask.includes('回复“允许”'));
-    assert.equal(asking.agentState, 'needs_you');
-    assert.equal(asking.status, 'in_review');
+    assert.equal(asking.agentState, 'blocked');
+    assert.equal(asking.status, 'todo');
     assert.match(asking.ask, /^允许本次操作使用 workspace-write 权限：需要写出文件。\n回复“允许”放开这一次，其他回复都不放开。$/, "DSH's own sentence for it, and how to answer");
     assert.equal(await work.exists(), false, 'the first, plain write was refused by the read-only mode, and nothing is written while the owner has not said');
 
     const page = await dudu.openPanel();
     await openIssue(page, '写文件 allowed.txt');
-    const card = page.getByRole('region', { name: 'In Review', exact: true });
+    const card = page.getByRole('region', { name: 'Todo', exact: true });
     await card.getByText('回复“允许”放开这一次，其他回复都不放开。').waitFor();
     await dudu.api('issues/reply', { id: work.issue.id, text: '允许' });
 
-    await until(work.issue.id, 'finish after the approval', inReview);
+    await until(work.issue.id, 'finish after the approval', turnDone);
     assert.equal(await readFile(work.path, 'utf8'), 'hello', 'the one operation that was asked about was done');
-    const log = await logOf(work.issue.id);
-    assert.ok(log.some((entry) => entry.kind === 'progress' && entry.actor === 'dudu' && /^second write said:/.test(entry.text)));
+    assert.equal((await logOf(work.issue.id)).some((entry) => entry.kind === 'progress'), false);
+    await page.getByRole('complementary', { name: 'Properties' }).getByRole('button', { name: 'DeepSeek · Open session', exact: true }).click();
+    await page.getByRole('dialog').getByText(/^second write said:/).waitFor();
     await page.close();
   } finally { await work.cleanup(); }
 });
@@ -377,10 +411,11 @@ test('an explicit reply other than yes refuses the write, and the agent is told 
     await openIssue(page, '写文件 refused.txt');
     await dudu.api('issues/reply', { id: work.issue.id, text: '先别写，先给我看看方案' });
 
-    await until(work.issue.id, 'finish after the refusal', inReview);
+    await until(work.issue.id, 'finish after the refusal', turnDone);
     assert.equal(await work.exists(), false, 'nothing was written');
-    const told = (await logOf(work.issue.id)).find((entry) => entry.kind === 'progress' && entry.actor === 'dudu');
-    assert.match(told?.text ?? '', /^second write said: .*(reject|denied|refus)/i, 'the agent saw that the operation was refused');
+    assert.equal((await logOf(work.issue.id)).some((entry) => entry.kind === 'progress'), false);
+    await page.getByRole('complementary', { name: 'Properties' }).getByRole('button', { name: 'DeepSeek · Open session', exact: true }).click();
+    await page.getByRole('dialog').getByText(/^second write said: .*(reject|denied|refus)/i).waitFor();
     await page.close();
   } finally { await work.cleanup(); }
 });

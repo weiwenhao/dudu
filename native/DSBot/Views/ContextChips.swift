@@ -7,29 +7,19 @@ struct ContextChip: View {
     let showsChevron: Bool
     let identifier: String
     var maxTextWidth: CGFloat = 170
+    var agent: SessionAgent? = nil
+    var iconOnly = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                DSBotIcon(glyph, size: 15)
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: maxTextWidth)
-                    .fixedSize(horizontal: true, vertical: false)
-                if showsChevron {
-                    DSBotIcon(.down, size: 12)
-                        .opacity(0.7)
+            ContextChipLabel(title: title, showsChevron: showsChevron, maxTextWidth: maxTextWidth, iconOnly: iconOnly) {
+                if let agent {
+                    AgentLogo(agent: agent, size: 16)
+                } else {
+                    DSBotIcon(glyph, size: 16, scalesStroke: true)
                 }
             }
-            .foregroundStyle(DSBotStyle.chatSecondary)
-            .padding(.horizontal, 11)
-            .frame(height: 32)
-            .background(DSBotStyle.chatPanel, in: Capsule())
-            .overlay(Capsule().stroke(DSBotStyle.chatBorder, lineWidth: 0.5))
-            .contentShape(Capsule())
         }
         .buttonStyle(DSBotQuietPressStyle())
         .accessibilityLabel(title)
@@ -38,9 +28,45 @@ struct ContextChip: View {
     }
 }
 
+/// The existing context pill, shared by composer buttons and issue property selectors.
+struct ContextChipLabel<Icon: View>: View {
+    let title: String
+    var showsChevron = false
+    var maxTextWidth: CGFloat? = nil
+    var iconOnly = false
+    @ViewBuilder var icon: () -> Icon
+
+    var body: some View {
+        HStack(spacing: 6) {
+            icon()
+            if !iconOnly {
+                Text(title)
+                    .font(.system(size: 14, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: maxTextWidth)
+            }
+            if showsChevron && !iconOnly {
+                Image("ContextChevron")
+                    .resizable()
+                    .renderingMode(.template)
+                    .frame(width: 12, height: 12)
+                    .opacity(0.7)
+                    .accessibilityHidden(true)
+            }
+        }
+        .foregroundStyle(DSBotStyle.chatSecondary)
+        .padding(.horizontal, iconOnly ? 8 : 11)
+        .frame(height: 32)
+        .background(DSBotStyle.chatPanel, in: Capsule())
+        .overlay(Capsule().stroke(DSBotStyle.chatBorder, lineWidth: 0.5))
+        .contentShape(Capsule())
+    }
+}
+
 /// Which list the context sheet shows.
 enum ContextPicker: String, Identifiable {
-    case project, mode
+    case project, mode, provider
     var id: String { rawValue }
 }
 
@@ -51,17 +77,17 @@ struct ContextPickerSheet: View {
         let title: String
         var subtitle: String?
         var isSelected: Bool
+        var agent: SessionAgent? = nil
     }
 
     let title: String
-    let footnote: String?
     let rows: [Row]
     let emptyText: String
     let identifierPrefix: String
     let onSelect: (String) -> Void
 
-    static func height(rows: Int, hasFootnote: Bool) -> CGFloat {
-        let body = CGFloat(max(1, rows)) * 62 + (hasFootnote ? 44 : 0)
+    static func height(rows: Int) -> CGFloat {
+        let body = CGFloat(max(1, rows)) * 62
         return min(64 + body + 24, 560)
     }
 
@@ -94,6 +120,7 @@ struct ContextPickerSheet: View {
                             onSelect(row.id)
                         } label: {
                             HStack(spacing: 12) {
+                                if let agent = row.agent { AgentLogo(agent: agent, size: 20) }
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(row.title)
                                         .font(.system(size: 17))
@@ -125,14 +152,6 @@ struct ContextPickerSheet: View {
                 }
                 .background(ComposerAttachmentSheet.card, in: RoundedRectangle(cornerRadius: 27, style: .continuous))
                 .padding(.horizontal, 16)
-                if let footnote {
-                    Text(footnote)
-                        .font(.system(size: 13))
-                        .foregroundStyle(DSBotStyle.muted)
-                        .padding(.horizontal, 28)
-                        .padding(.top, 12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
             }
             .scrollIndicators(.hidden)
             .scrollBounceBehavior(.basedOnSize)

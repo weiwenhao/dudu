@@ -2,12 +2,12 @@
 export function exampleData(at = new Date(2026, 9, 31, 12).getTime()) {
   const items = [
     { id: 1, ref: null, title: '准备续费资料', brief: '确认本次续费的范围。', status: 'todo', priority: 'high', agent: null, ask: '', agentState: 'idle', dueAt: at + 86400000, createdAt: at, updatedAt: at, source: 'owner', project: null },
-    { id: 2, ref: 'CON-1', title: '补齐合同附件', brief: '还缺一份附件。', status: 'in_progress', priority: 'medium', agent: 'claude', ask: '附件放在哪里？', agentState: 'needs_you', dueAt: at - 86400000, createdAt: at, updatedAt: at, source: 'connector', project: { name: 'Contract', path: '/work/contract' } },
+    { id: 2, ref: 'CON-1', title: '补齐合同附件', brief: '还缺一份附件。', status: 'in_progress', priority: 'medium', agent: 'claude', ask: '附件放在哪里？', agentState: 'blocked', dueAt: at - 86400000, createdAt: at, updatedAt: at, source: 'connector', project: { name: 'Contract', path: '/work/contract' } },
   ];
   return {
     issues: { outcome: 'success', items, total: items.length, nextCursor: null, groups: [], counts: { active: 2, backlog: 0, all: 2 }, facets: {} },
-    quota: { providers: [{ id: 'claude', name: 'Claude', plan: 'Max', state: 'ok', windows: [{ key: 'five', label: '5-hour', used: 0.74, resetsAt: at + 7200000 }] }] },
-    inputs: { outcome: 'success', createdToday: 2, connectors: [{ id: 'example', name: 'Example', readToday: 12, createdToday: 2, lastRead: { at, ok: true, items: 12, created: 2 } }] },
+    quota: { providers: [{ id: 'claude', name: 'Claude', plan: 'Max', state: 'ok', windows: [{ key: 'five_hour', label: '5 小时', used: 0.74, resetsAt: at + 7200000, core: true }, { key: 'seven_day', label: '每周', used: 0.31, resetsAt: at + 3 * 86400000, core: true }] }] },
+    inputs: { outcome: 'success', createdToday: 2, collectors: [{ id: 'example', name: 'Example', readToday: 12, createdToday: 2, lastRead: { at, ok: true, items: 12, created: 2 } }], connectors: [{ id: 'example', name: 'Example', readToday: 12, createdToday: 2, lastRead: { at, ok: true, items: 12, created: 2 } }] },
     sessions: { outcome: 'success', sessions: [{ key: 'claude:example', id: 'example', provider: 'claude', title: '准备续费资料', updatedAt: at, evidence: { text: '正在检查附件。' } }], indexing: { running: false } },
   };
 }

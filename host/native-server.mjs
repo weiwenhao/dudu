@@ -125,7 +125,7 @@ export async function probeNativeAddress(address, nonce = randomBytes(24).toStri
     url = new URL(address);
     if (url.protocol === 'ws:') url.protocol = 'http:';
     else if (url.protocol === 'wss:') url.protocol = 'https:';
-    if (!['http:', 'https:'].includes(url.protocol) || url.pathname !== PATH
+    if (!['http:', 'https:'].includes(url.protocol) || !['/', PATH].includes(url.pathname)
       || url.username || url.password || url.search || url.hash || !NONCE.test(nonce)) {
       throw new Error('Invalid dsbot address');
     }
@@ -335,7 +335,16 @@ export async function createNativeServer({
       if (!isRecord(body) || typeof body.nonce !== 'string' || !NONCE.test(body.nonce)) {
         throw new HTTPError(400, 'BAD_REQUEST');
       }
-      reply(response, 200, { protocol: 1, proof: pairingStore.proof(body.nonce) });
+      if (body.deviceId !== undefined) {
+        if (typeof body.deviceId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/u.test(body.deviceId)) {
+          throw new HTTPError(400, 'BAD_REQUEST');
+        }
+        const identity = pairingStore.routeProof?.(body.deviceId, body.nonce);
+        if (!identity) throw new HTTPError(401, 'AUTH_FAILED');
+        reply(response, 200, { protocol: 1, ...identity });
+      } else {
+        reply(response, 200, { protocol: 1, proof: pairingStore.proof(body.nonce) });
+      }
       return;
     }
 
@@ -354,7 +363,7 @@ export async function createNativeServer({
       connections.set(deviceId, connection);
       const readyComputer = typeof computer === 'function' ? computer() : computer;
       reply(response, 200, {
-        type: 'ready', protocol: 1, computer: readyComputer,
+        type: 'ready', protocol: 1, computer: readyComputer, deviceId,
         capabilities: ['session.watch', 'attachment.image', ...capabilities],
       });
       return;

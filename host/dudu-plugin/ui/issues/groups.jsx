@@ -2,11 +2,13 @@ import { Box, Plus } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
-import { AgentAvatar, PriorityIcon, projectColor, StatusIcon, Triangle } from './icons.jsx';
+import { AgentAvatar, AgentStateIcon, PriorityIcon, projectColor, StatusIcon, Triangle } from './icons.jsx';
 import { groupLabel } from './flatten.js';
 
-export function GroupIcon({ field, groupKey, className = 'size-4' }) {
+/** `count`: how many issues the group has; a Working group turns its icon only when it is not empty. */
+export function GroupIcon({ field, groupKey, className = 'size-4', count = 0 }) {
   if (field === 'status') return <StatusIcon status={groupKey} className={className} />;
+  if (field === 'agentState') return <AgentStateIcon state={groupKey} className={className} active={count > 0} />;
   if (field === 'priority') return <PriorityIcon priority={groupKey} className={className} />;
   if (field === 'agent') return <AgentAvatar agent={groupKey} state="idle" />;
   if (groupKey == null) return <Box className={cn(className, 'text-muted-foreground')} aria-hidden="true" />;
@@ -25,7 +27,7 @@ export function GroupBar({ entry, onToggle, onAdd }) {
           <Triangle direction={entry.folded ? 'right' : 'down'} />
         </button>
         <span className="flex items-center gap-2">
-          <GroupIcon field={entry.field} groupKey={entry.groupKey} />
+          <GroupIcon field={entry.field} groupKey={entry.groupKey} count={entry.count} />
           <h2 className="font-medium">{entry.label}</h2>
           <span className="text-muted-foreground">{entry.count}</span>
         </span>
@@ -47,7 +49,7 @@ export function SubGroupBar({ entry, onToggle }) {
           <Triangle direction={entry.folded ? 'right' : 'down'} />
         </button>
         <span className="flex items-center gap-2">
-          <GroupIcon field={entry.field} groupKey={entry.groupKey} />
+          <GroupIcon field={entry.field} groupKey={entry.groupKey} count={entry.count} />
           <h3 className="font-medium">{entry.label}</h3>
           <span className="text-muted-foreground">{entry.count}</span>
         </span>

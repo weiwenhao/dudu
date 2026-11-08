@@ -4,7 +4,7 @@ enum ConversationHistoryItem: Identifiable, Equatable {
     case transcript(TranscriptRow, Double?)
     case running(turnID: String, startedAt: Double?)
     case message(ChatMessage)
-    case controls(hasEarlier: Bool, isLoading: Bool, failure: String?)
+    case controls(isLoading: Bool, failure: String?)
     case approval(Approval, isResponding: Bool)
     case questions(ConversationQuestions)
 
@@ -18,10 +18,33 @@ enum ConversationHistoryItem: Identifiable, Equatable {
         case let .questions(questions): return "questions:\(questions.id)"
         }
     }
+
+    static func transcriptItems(
+        _ rows: [TranscriptRow], timeSeparators: [String: Double] = [:],
+        trailing: [ConversationHistoryItem] = []
+    ) -> [ConversationHistoryItem] {
+        var items: [ConversationHistoryItem] = []
+        var running: ConversationHistoryItem?
+        for row in rows {
+            if case let .status(startedAt) = row {
+                running = .running(turnID: "status", startedAt: startedAt)
+                continue
+            }
+            items.append(.transcript(row, timeSeparators[row.id]))
+            if case let .turn(turn) = row, turn.outcome == .running {
+                running = .running(turnID: turn.id, startedAt: turn.startedAt)
+            }
+        }
+        items += trailing
+        // DSH's ChatFlow puts its single running indicator after messages and pending input.
+        if let running { items.append(running) }
+        return items
+    }
 }
 
 struct ConversationHistoryView<Content: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     let items: [ConversationHistoryItem]
     let target: DraftTarget?
     let topInset: CGFloat
@@ -32,41 +55,43 @@ struct ConversationHistoryView<Content: View>: View {
     @Binding var followsLatest: Bool
     /// Whether the reader is far enough above the end for the jump-to-latest button to show.
     @Binding var awayFromLatest: Bool
-    /// Bumped by the jump-to-latest button; each change traverses the history to its footer.
+    /// Bumped by the jump-to-latest button; each change traverses to the last occurrence.
     let jumpToken: Int
+    let onReachedStart: () -> Void
     @ViewBuilder let content: (ConversationHistoryItem) -> Content
 
     @State private var phase = ScrollPhase.idle
     @State private var preservesLatestDuringKeyboardDrag = false
-    @State private var hasInitialContent = false
     @State private var metrics = ScrollMetrics()
 
     var body: some View {
-        ScrollViewReader { proxy in
-            history(proxy)
+        Group {
+            if items.isEmpty {
+                Color.clear
+            } else {
+                // Apply the initial anchor to real history, rather than an empty stack's footer.
+                ScrollViewReader { proxy in
+                    history(proxy)
+                }
+            }
         }
     }
 
     private func history(_ proxy: ScrollViewProxy) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                Color.clear
-                    .frame(height: topInset)
-                    .accessibilityHidden(true)
-                    .id("history.first")
                 ForEach(items) { item in
                     ConversationHistoryRow(
                         item: item, target: target, canLoadAttachments: canLoadAttachments,
                         isCovered: isCovered, content: content
                     )
                     .equatable()
+                    // Materialize the message and its reserved space together when scrolling to the end.
+                    .padding(.top, item.id == items.first?.id ? topInset : 0)
+                    .padding(.bottom, item.id == items.last?.id ? bottomInset : 0)
                     .background(HistoryRowLocator(id: item.id, metrics: metrics).allowsHitTesting(false))
                     .id(item.id)
                 }
-                Color.clear
-                    .frame(height: bottomInset)
-                    .accessibilityHidden(true)
-                    .id("history.latest")
             }
         }
         .background(ScrollViewLocator(metrics: metrics).allowsHitTesting(false))
@@ -74,6 +99,13 @@ struct ConversationHistoryView<Content: View>: View {
         .defaultScrollAnchor(.top, for: .alignment)
         .scrollDismissesKeyboard(.interactively)
         .accessibilityIdentifier("chat.history")
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            isAtStart(geometry)
+        } action: { _, atStart in
+            if atStart, !isCovered, phase == .interacting || phase == .decelerating {
+                onReachedStart()
+            }
+        }
         .onScrollGeometryChange(for: Bool.self) { geometry in
             isAtEnd(geometry)
         } action: { _, atEnd in
@@ -101,9 +133,13 @@ struct ConversationHistoryView<Content: View>: View {
             )
         } action: { _, _ in
             metrics.recordLayout(messageCount: items.count, following: followsLatest)
-            if followsLatest, phase == .idle, metrics.jumpStartedAt == nil, !metrics.isReviewPositioning {
-                proxy.scrollTo("history.latest", anchor: .bottom)
+            if followsLatest, !isCovered, phase == .idle,
+               metrics.jumpStartedAt == nil, !metrics.isReviewPositioning {
+                scrollToLatest(proxy, reason: "layout")
             }
+        }
+        .onChange(of: items.last?.id, initial: true) { _, id in
+            metrics.latestID = id
         }
         .onChange(of: jumpToken) { _, _ in jumpToLatest(proxy) }
         .onScrollPhaseChange { oldPhase, newPhase, context in
@@ -122,12 +158,13 @@ struct ConversationHistoryView<Content: View>: View {
             if newPhase == .idle, metrics.jumpStartedAt == nil, oldPhase == .interacting || oldPhase == .decelerating {
                 followsLatest = preservesLatestDuringKeyboardDrag || isAtEnd(context.geometry)
                 preservesLatestDuringKeyboardDrag = false
-                if followsLatest { proxy.scrollTo("history.latest", anchor: .bottom) }
+                if followsLatest { scrollToLatest(proxy, reason: "drag.end") }
                 record("chat.scroll.end", geometry: context.geometry)
+                if !isCovered, isAtStart(context.geometry) { onReachedStart() }
             }
         }
         .onChange(of: followsLatest) { _, following in
-            if following, metrics.jumpStartedAt == nil { proxy.scrollTo("history.latest", anchor: .bottom) }
+            if following, metrics.jumpStartedAt == nil { scrollToLatest(proxy, reason: "following") }
         }
         .onChange(of: isCovered) { wasCovered, covered in
             if covered {
@@ -137,13 +174,27 @@ struct ConversationHistoryView<Content: View>: View {
             if wasCovered && !covered {
                 DSBotLog.record("chat.resume", counts: ["messageCount": items.count],
                                 state: followsLatest ? "following" : "reading")
+                metrics.recordLayout(event: "chat.resume.rows", messageCount: items.count, following: followsLatest)
+                if followsLatest { scrollToLatest(proxy, reason: "resume") }
             }
         }
-        .task(id: items.isEmpty) {
-            guard !items.isEmpty, !hasInitialContent else { return }
-            hasInitialContent = true
-            proxy.scrollTo("history.latest", anchor: .bottom)
-            DSBotLog.record("chat.startup", counts: ["messageCount": items.count], state: "following")
+        .onChange(of: scenePhase) { _, next in
+            if next == .active, !isCovered {
+                DSBotLog.record(
+                    "chat.foreground", counts: ["messageCount": items.count],
+                    geometry: metrics.geometry, state: followsLatest ? "following" : "reading"
+                )
+                metrics.recordLayout(event: "chat.foreground.rows", messageCount: items.count, following: followsLatest)
+                if followsLatest, phase == .idle, metrics.jumpStartedAt == nil {
+                    scrollToLatest(proxy, reason: "foreground")
+                }
+            }
+        }
+        .task {
+            DSBotLog.record(
+                "chat.startup", historyId: metrics.diagnosticID,
+                counts: ["messageCount": items.count], state: "following"
+            )
         }
         .onDisappear {
             metrics.cancelJump()
@@ -165,7 +216,7 @@ struct ConversationHistoryView<Content: View>: View {
             guard !Task.isCancelled else { return }
             metrics.isReviewPositioning = true
             followsLatest = false
-            proxy.scrollTo("history.first", anchor: .top)
+            if let first = items.first { proxy.scrollTo(first.id, anchor: .top) }
             return
         }
         guard arguments.contains("-dsbot-review-jump-cycle") else { return }
@@ -186,13 +237,14 @@ struct ConversationHistoryView<Content: View>: View {
     #endif
 
     /// Keep the in-flight jump in an unobserved reference: rebuilding the lazy stack on its first
-    /// frame disrupts its estimates. Following resumes after the footer command lands.
+    /// frame disrupts its estimates. Following resumes after the last message command lands.
     private func jumpToLatest(_ proxy: ScrollViewProxy) {
         metrics.cancelJump()
         metrics.isReviewPositioning = false
         metrics.jumpStartedAt = ProcessInfo.processInfo.systemUptime
         DSBotLog.record(
-            "chat.latest.jump", counts: ["messageCount": items.count], geometry: metrics.geometry, state: "scroll"
+            "chat.latest.jump", historyId: metrics.diagnosticID,
+            counts: ["messageCount": items.count], geometry: metrics.geometry, state: "scroll"
         )
         let animated = !reduceMotion && metrics.animateToLatest(itemIDs: items.map(\.id)) { id, anchor in
             proxy.scrollTo(id, anchor: UnitPoint(x: 0.5, y: anchor))
@@ -205,12 +257,25 @@ struct ConversationHistoryView<Content: View>: View {
     private func finishJump(_ proxy: ScrollViewProxy) {
         guard let startedAt = metrics.jumpStartedAt else { return }
         metrics.jumpStartedAt = nil
-        proxy.scrollTo("history.latest", anchor: .bottom)
+        scrollToLatest(proxy, reason: "jump.complete")
         followsLatest = true
         DSBotLog.record(
-            "chat.latest.complete",
+            "chat.latest.complete", historyId: metrics.diagnosticID,
             elapsedMs: (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000, geometry: metrics.geometry
         )
+    }
+
+    private func scrollToLatest(_ proxy: ScrollViewProxy, reason: String) {
+        // An animation can outlive the snapshot that started it.
+        guard let id = metrics.latestID ?? items.last?.id else { return }
+        // The end of an estimate that is too high is white; a row that is built is a real place (`BlankViewportRecovery`).
+        if let built = metrics.recoveryTarget(latestID: id) {
+            metrics.recordFollowing(reason: "\(reason).recover", targetID: built, messageCount: items.count)
+            proxy.scrollTo(built, anchor: .bottom)
+            return
+        }
+        metrics.recordFollowing(reason: reason, targetID: id, messageCount: items.count)
+        proxy.scrollTo(id, anchor: .bottom)
     }
 
     private func isAtEnd(_ geometry: ScrollGeometry) -> Bool {
@@ -218,6 +283,10 @@ struct ConversationHistoryView<Content: View>: View {
             contentHeight: geometry.contentSize.height, containerHeight: geometry.containerSize.height,
             contentOffset: geometry.contentOffset.y
         )
+    }
+
+    private func isAtStart(_ geometry: ScrollGeometry) -> Bool {
+        geometry.contentOffset.y + geometry.contentInsets.top <= 24
     }
 
     private struct ViewportChange: Equatable {
@@ -238,7 +307,7 @@ struct ConversationHistoryView<Content: View>: View {
     private func record(_ event: String, geometry: ScrollGeometry) {
         metrics.recordLayout(event: event + ".rows", messageCount: items.count, following: followsLatest)
         DSBotLog.record(
-            event, counts: ["messageCount": items.count],
+            event, historyId: metrics.diagnosticID, counts: ["messageCount": items.count],
             geometry: [
                 "contentHeight": Double(geometry.contentSize.height),
                 "contentOffset": Double(geometry.contentOffset.y),

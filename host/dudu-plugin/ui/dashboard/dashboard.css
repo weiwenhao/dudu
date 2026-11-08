@@ -41,7 +41,7 @@
 .db-board.db-editing .db-remove { display: inline-flex; position: absolute; z-index: 9; top: -8px; left: -8px; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 999px; border: 1px solid var(--input); background: var(--card); color: var(--foreground); box-shadow: 0 1px 3px var(--db-shadow); cursor: pointer; }
 .db-board.db-editing .db-remove:hover { background: var(--foreground); color: var(--background); }
 .db-board.db-editing .db-card:focus-visible { outline: none; }
-.db-board.db-editing .db-card:focus-visible .db-surface { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent); }
+.db-board.db-editing .db-card:focus-visible:where(html[data-dudu-tabbing] *) .db-surface { box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-focus-ring-color, var(--ring)) 50%, transparent); }
 .db-card.db-flash .db-frame { display: block; position: absolute; inset: 0; border-radius: 20px; border: 0; animation: db-flash 1.2s ease-out 1; pointer-events: none; }
 @keyframes db-flash { from { box-shadow: 0 0 0 4px var(--ring); } to { box-shadow: 0 0 0 4px transparent; } }
 

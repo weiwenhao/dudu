@@ -44,6 +44,16 @@ struct NavigationCatalog: Decodable, Equatable, Sendable {
         views = try container.decodeIfPresent([NavigationItem].self, forKey: .views) ?? []
         settings = try container.decodeIfPresent([NavigationItem].self, forKey: .settings) ?? []
     }
+
+    /// The plugin identifies the primary entries. Native routes also recognize older snapshots
+    /// from before the grouping field was added; the DSH plugin inventory stays dynamic.
+    var primarySidebar: [NavigationItem] {
+        sidebar.filter(\.isPrimarySidebarEntry)
+    }
+
+    var additionalSidebar: [NavigationItem] {
+        sidebar.filter { !$0.isPrimarySidebarEntry }
+    }
 }
 
 struct NavigationItem: Decodable, Identifiable, Equatable, Sendable {
@@ -55,10 +65,12 @@ struct NavigationItem: Decodable, Identifiable, Equatable, Sendable {
     /// The package that registered it in DSH, when it said so.
     var source: String?
     var sessionId: String?
+    /// `primary` for the permanent sidebar entries; `dudu` for its settings group. DSH's entries have none.
+    var group: String?
 
     init(
         id: String, title: String, order: Double = 0, icon: NavigationIcon? = nil,
-        open: NavigationOpen, source: String? = nil, sessionId: String? = nil
+        open: NavigationOpen, source: String? = nil, sessionId: String? = nil, group: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -67,9 +79,10 @@ struct NavigationItem: Decodable, Identifiable, Equatable, Sendable {
         self.open = open
         self.source = source
         self.sessionId = sessionId
+        self.group = group
     }
 
-    private enum CodingKeys: String, CodingKey { case id, title, order, icon, open, source, sessionId }
+    private enum CodingKeys: String, CodingKey { case id, title, order, icon, open, source, sessionId, group }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -81,9 +94,14 @@ struct NavigationItem: Decodable, Identifiable, Equatable, Sendable {
         open = try container.decode(NavigationOpen.self, forKey: .open)
         source = try container.decodeIfPresent(String.self, forKey: .source)
         sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
+        group = try container.decodeIfPresent(String.self, forKey: .group)
     }
 
     var target: NavigationTarget { NavigationTarget(open) }
+
+    var isPrimarySidebarEntry: Bool {
+        group == "primary" || [.assistant, .board, .collector].contains(target)
+    }
 }
 
 /// How an entry opens. `native` names a screen the app draws itself; `web` names the DSH page that is
@@ -100,10 +118,13 @@ struct NavigationOpen: Decodable, Equatable, Sendable {
     }
 
     var native: String?
+    /// The section of a native settings page.
+    var target: String?
     var web: Web?
 
-    init(native: String? = nil, web: Web? = nil) {
+    init(native: String? = nil, target: String? = nil, web: Web? = nil) {
         self.native = native
+        self.target = target
         self.web = web
     }
 }
@@ -111,6 +132,16 @@ struct NavigationOpen: Decodable, Equatable, Sendable {
 /// What the app does for an entry, decided by the screens this build actually has.
 enum NavigationTarget: Equatable, Sendable {
     case chat
+    /// The plugin's persistent assistant session, opened through the native conversation.
+    case assistant
+    /// The board, the page the app opens on.
+    case board
+    /// What the collectors brought back.
+    case collector
+    /// DSH's own settings pages, listed one level down in the settings.
+    case dshSettings
+    /// 嘟嘟's own configuration, drawn in SwiftUI.
+    case duduSettings(section: String)
     case files
     case schedule
     case web(page: EmbeddedDSHPage, target: String?)
@@ -120,16 +151,27 @@ enum NavigationTarget: Equatable, Sendable {
         if let native = open.native {
             switch native {
             case "chat": self = .chat; return
+            case "assistant": self = .assistant; return
+            case "board": self = .board; return
+            case "collector": self = .collector; return
+            case "dsh-settings": self = .dshSettings; return
+            case "dudu-settings": self = .duduSettings(section: open.target ?? open.web?.target ?? "general"); return
             case "files": self = .files; return
             case "schedule": self = .schedule; return
             default: break // A screen this build does not have: fall back to the page DSH has for it.
             }
         }
         if let web = open.web, let page = EmbeddedDSHPage(rawValue: web.page) {
-            self = .web(page: page, target: web.target)
+            // Cached navigation and older plugins still describe these pages as web pages.
+            self = page == .dudu ? .duduSettings(section: web.target ?? "general") : .web(page: page, target: web.target)
         } else {
             self = .unsupported
         }
+    }
+
+    var settingsSection: String? {
+        if case let .duduSettings(section) = self { return section }
+        return nil
     }
 }
 
@@ -138,7 +180,7 @@ extension EmbeddedDSHPage {
     var needsSession: Bool {
         switch self {
         case .trace, .context, .team, .tools, .view: return true
-        case .plugins, .settings, .panel: return false
+        case .plugins, .settings, .panel, .dudu: return false
         }
     }
 }

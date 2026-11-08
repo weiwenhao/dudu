@@ -46,7 +46,7 @@ test('a legacy import without a system head is eligible only while it contains n
   assert.equal(hasImportedContinuations(realSystem, 'codex', history.id), false);
 });
 
-async function setup(t: any, options: { rebind?: any; archive?: any; running?: boolean; race?: boolean } = {}) {
+async function setup(t: any, options: { rebind?: any; archive?: any; running?: boolean; race?: boolean; queryOnly?: boolean } = {}) {
   const folder = await mkdtemp(join(tmpdir(), 'dudu-repair-'));
   const links = await createLinkStore(folder);
   links.record({ route: 'codex', nativeSessionId: history.id, sessionId: 'old' });
@@ -56,14 +56,17 @@ async function setup(t: any, options: { rebind?: any; archive?: any; running?: b
   const archived = new Set<string>();
   const attached: string[] = [];
   let reads = 0;
+  const read = async (id: string) => {
+    const entry = stored.get(id);
+    if (options.race && ++reads === 2) entry.events.push({ type: 'request/header' });
+    return { header: entry.header, events: [...entry.events] };
+  };
   const repair = createImportRepair({
     links, rebind: options.rebind,
     agents: () => options.running ? { get: () => ({ status: 'running' }) } : undefined,
-    controller: () => ({ inspect: async (id: string) => {
-      const entry = stored.get(id);
-      if (options.race && ++reads === 2) entry.events.push({ type: 'request/header' });
-      return { header: entry.header, events: [...entry.events] };
-    } }),
+    ...(options.queryOnly
+      ? { query: () => ({ readSession: async (id: string) => { const { header, events } = await read(id); return { session: header, events }; } }) }
+      : { controller: () => ({ inspect: read }) }),
     workspaces: () => ({
       create: async () => ({ id: 'workspace', attachSession: async (id: string) => { attached.push(id); } }),
       archiveSession: async (id: string) => { await options.archive?.(id); archived.add(id); },
@@ -80,9 +83,9 @@ async function setup(t: any, options: { rebind?: any; archive?: any; running?: b
   return { run: () => repair({ sessionId: 'old', history, route: 'codex' }), stored, archived, attached, links, folder };
 }
 
-test('rebuilding preserves the old log and selected model, rebinds the issue, and persists one visible native mapping', async (t) => {
+for (const api of ['legacy', 'query']) test(`rebuilding preserves the old log and selected model, rebinds the issue, and persists one visible native mapping (${api})`, async (t) => {
   const rebound: any[] = [];
-  const w = await setup(t, { rebind: async (...args: any[]) => { rebound.push(args); } });
+  const w = await setup(t, { queryOnly: api === 'query', rebind: async (...args: any[]) => { rebound.push(args); } });
   w.stored.get('old').events.push({ type: 'permission/preset', data: { preset: 'read-only' } }, { type: 'sandbox/mode', data: { mode: 'read-only' } });
   const before = [...w.stored.get('old').events];
   const result = await w.run();

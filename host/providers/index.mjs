@@ -3,6 +3,10 @@ import { join } from 'node:path';
 import { createHarnessAdapter, HarnessBridge } from './harness-bridge.mjs';
 import { createMirrorTool, createMirrorTools } from './mirror-tools.mjs';
 import { createHarnessInput } from './input.mjs';
+import { registerHarnessCommands } from './commands.mjs';
+import { createHarnessTeams } from './teams.mjs';
+import { createInputJournal } from './input-delivery.mjs';
+import { createHarnessJobs } from './jobs.mjs';
 
 // The providers of DSH: the harnesses installed on this computer. A harness that is found and enabled becomes a
 // model route of its own (`claude`, `codex`); a session that selects the route is run by that harness, and the
@@ -32,11 +36,15 @@ async function writeSettings(file, settings) {
 export async function createProviders({ host, providers, folder, log = console }) {
   await mkdir(folder, { recursive: true, mode: 0o700 });
   const settingsFile = join(folder, 'providers.json');
+  const inputJournal = createInputJournal(join(folder, 'input-delivery'));
   let settings = await readSettings(settingsFile);
   const status = new Map();         // provider id -> what the settings page shows
   const registered = new Map();     // route -> { bridge, driver, path, dispose }
   const mirrored = new Map();       // agent id -> { agent, route, bridge, dispose }
+  const closing = new Set();
+  let refreshing = Promise.resolve();
   let closed = false;
+  let disposal;
 
   const routeOf = (agent) => host.providerOf?.(agent) ?? agent.options?.provider;
 
@@ -50,6 +58,7 @@ export async function createProviders({ host, providers, folder, log = console }
     const disposers = [];
     const dispose = () => { for (const stop of disposers) { try { stop(); } catch { /* the agent is gone */ } } };
     try {
+      disposers.push(registerHarnessCommands(agent, wanted));
       for (const definition of createMirrorTools({ bridge: wanted })) disposers.push(agent.ctx.tools.register(definition));
       mirrored.set(agent.id, { agent, route, bridge: wanted, dispose });
     } catch (error) {
@@ -69,16 +78,23 @@ export async function createProviders({ host, providers, folder, log = console }
       mirrored.delete(id);
     }
     entry.dispose();
-    void entry.bridge.dispose();
+    const stopped = entry.bridge.dispose().then(() => entry.teams?.close()).catch((error) => {
+      log.warn?.(`[dudu] Could not release the ${provider.route} provider: ${error.message}`);
+    }).finally(() => closing.delete(stopped));
+    closing.add(stopped);
+    return stopped;
   }
 
   function register(provider, detection) {
     const driver = provider.create({ installation: detection.installation });
     const bridge = new HarnessBridge({
       driver, agentOf: (id) => host.agents.get(id), permissionOf: (agent) => host.permissionOf?.(agent), onLink: host.onLink,
-      eventsOf: host.eventsOf,
+      eventsOf: host.eventsOf, flushSession: host.flushSession, inputJournal,
       inputOf: createHarnessInput({ attachments: () => host.attachments?.(), folder: join(folder, 'input-images') }),
     });
+    const teams = createHarnessTeams({ host, driver, log });
+    bridge.teams = teams;
+    bridge.jobs = createHarnessJobs({ host, route: driver.route, log });
     // AgentOptions keeps the host's default route after restore. Recheck the actual adapter before replaying tools.
     bridge.beforeStep = (sessionId) => {
       const agent = host.agents.get(sessionId);
@@ -98,10 +114,11 @@ export async function createProviders({ host, providers, folder, log = console }
       }
     };
     const dispose = host.llm.registerAdapter([driver.route], createHarnessAdapter(bridge));
-    registered.set(driver.route, { bridge, driver, path: detection.path, environment: provider.environment, dispose });
+    registered.set(driver.route, { bridge, teams, driver, path: detection.path, environment: provider.environment, dispose });
   }
 
-  async function refresh() {
+  async function refreshNow() {
+    if (closed) return;
     for (const provider of providers) {
       const detection = await provider.probe({ override: settings.paths[provider.id] });
       const enabled = !settings.disabled.includes(provider.id);
@@ -112,13 +129,19 @@ export async function createProviders({ host, providers, folder, log = console }
       if (closed) return;
       const entry = registered.get(provider.route);
       const wanted = enabled && detection.state === 'ready';
-      if (entry && (!wanted || entry.path !== detection.path)) unregister(provider);
+      if (entry && (!wanted || entry.path !== detection.path)) await unregister(provider);
+      if (closed) return;
       if (wanted && !registered.has(provider.route)) register(provider, detection);
       // A refresh is how a new model or a changed login shows up.
       else if (wanted) registered.get(provider.route).driver.refreshModels?.();
     }
     for (const agent of host.agents.list?.() ?? []) syncMirrorTools(agent, routeOf(agent));
   }
+  const refresh = () => {
+    const next = refreshing.then(refreshNow);
+    refreshing = next.catch(() => {});
+    return next;
+  };
 
   const disposers = [
     host.on('agent/created', ({ agent }) => syncMirrorTools(agent, routeOf(agent))),
@@ -130,7 +153,7 @@ export async function createProviders({ host, providers, folder, log = console }
     host.on('agent/disposed', ({ agent }) => {
       mirrored.get(agent.id)?.dispose();
       mirrored.delete(agent.id);
-      for (const { bridge } of registered.values()) void bridge.close(agent.id);
+      for (const { bridge } of registered.values()) void bridge.close(agent.id).finally(() => bridge.jobs?.forget(agent.id));
     }),
   ];
 
@@ -145,6 +168,11 @@ export async function createProviders({ host, providers, folder, log = console }
       id: driver.id, name: driver.name, route: driver.route, command: path, environment, driver, activeRuns: () => bridge.activeRuns(),
     })),
     refresh: async () => { await refresh(); return view(); },
+    /** Lets go of what the harnesses hold for a DSH session whose turn has ended (deep sleep); -> whether any of them held a run. */
+    async release(sessionId) {
+      const results = await Promise.all([...registered.values()].map(({ bridge }) => bridge.release(sessionId).catch(() => false)));
+      return results.some(Boolean);
+    },
     async save({ id, enabled, path }) {
       const provider = providers.find((candidate) => candidate.id === id);
       if (!provider) throw new Error('Unknown provider.');
@@ -172,12 +200,19 @@ export async function createProviders({ host, providers, folder, log = console }
         return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400, headers: { 'cache-control': 'no-store' } });
       }
     },
-    async close() {
+    close() {
+      if (disposal) return disposal;
       closed = true;
-      for (const dispose of disposers) dispose();
-      for (const entry of mirrored.values()) entry.dispose();
-      mirrored.clear();
-      for (const provider of providers) unregister(provider);
+      return disposal = (async () => {
+        for (const dispose of disposers) dispose();
+        for (const entry of mirrored.values()) entry.dispose();
+        mirrored.clear();
+        // A slow installation/model probe must not hold live native writers
+        // past Desktop's shutdown deadline. refreshNow checks closed on return.
+        for (const provider of providers) unregister(provider);
+        await refreshing;
+        await Promise.all(closing);
+      })();
     },
   };
 }

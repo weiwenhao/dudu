@@ -1,7 +1,8 @@
 // The rules that turn what a reader saw of a session into its state (docs/assistant.md 3.4: "状态由规则判定，不调用模型").
 // Pure: no I/O, no clock of its own, no model. `judge(provider, facts, { now })` answers { state, stateSince, pending }.
 //
-//   state     'running' | 'waiting_owner' | 'finished' | 'idle' | 'error'
+//   state     'running' | 'waiting_owner' | 'finished' | 'idle' | 'error' | 'stopped'
+//             stopped: the owner stopped the turn, or it was interrupted (owner, 2026-11-05: it needs them, so it is not idle; idle is what they will not handle soon)
 //   stateSince  ms since when the session has been in that state, from the source's own timestamps (null when it has none)
 //   pending   { kind: 'question' | 'approval', text } while the session waits for the owner, else null
 //
@@ -28,7 +29,7 @@
 //     tool result, or a message cut off) never finished: that is `error`, as a failed turn is.
 import { oneLine } from '../../providers/native/text.mjs';
 
-export const SESSION_STATES = Object.freeze(['running', 'waiting_owner', 'finished', 'idle', 'error']);
+export const SESSION_STATES = Object.freeze(['running', 'waiting_owner', 'finished', 'idle', 'error', 'stopped']);
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -59,6 +60,7 @@ const waiting = (since, pending) => ({ state: 'waiting_owner', stateSince: since
 const finished = (since) => ({ state: 'finished', stateSince: since, pending: null });
 const idle = (since) => ({ state: 'idle', stateSince: since, pending: null });
 const failed = (since) => ({ state: 'error', stateSince: since, pending: null });
+const stopped = (since) => ({ state: 'stopped', stateSince: since, pending: null });
 
 const pendingOf = (pending) => ({ kind: pending?.kind === 'approval' ? 'approval' : 'question', text: oneLine(pending?.text ?? '', EXCERPT_CHARS) });
 
@@ -87,7 +89,8 @@ function claude({ process: live = null, tail, dsh = null, updatedAt }, { now, st
   if (t.last === 'answer' && asked) return current ? waiting(t.at, { kind: 'question', text: asked }) : idle(t.at);
   if (t.last === 'error' && current) return failed(t.at);
   if (!live && MID_TURN.has(t.last) && current) return failed(t.at);
-  if (!live && t.last === 'answer') return finished(t.at);
+  if (t.last === 'answer') return finished(t.at);
+  if (t.last === 'interrupted' && current) return stopped(first(t.at, updatedAt));
   return idle(first(live?.since, t.at, updatedAt));
 }
 
@@ -104,6 +107,7 @@ function codex({ turn = null, updatedAt, dsh = null }, { now, staleMs, runningFr
     return finished(at);
   }
   if (turn?.status === 'failed' && current) return failed(at);
+  if (turn?.status === 'interrupted' && current) return stopped(at);
   return idle(at);
 }
 
@@ -114,6 +118,7 @@ function dshOwn({ dsh = null, updatedAt }, { now, staleMs }) {
   const at = first(dsh.at, updatedAt);
   if (dsh.last === 'error' && (at === null || now - at <= staleMs)) return failed(at);
   if (dsh.last === 'answer') return finished(at);
+  if (dsh.last === 'aborted' && (at === null || now - at <= staleMs)) return stopped(at);
   return idle(at);
 }
 
