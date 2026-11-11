@@ -1,288 +1,112 @@
-# Dudu
+# 嘟嘟（Dudu）
 
-Dudu 定位为个人 AI 助手，围绕自然对话、任务执行和日常使用持续演进。
-后续功能与交互设计以这一定位为准，优先适合手机上的操作与观察。
+DeepSeek Harness（DSH）里的助手：把信息收进来，把事一直推到做完，需要你的时候才找你。
+电脑上是一个 DSH 插件，手机上是一个原生 iPhone App。
 
-当前实现连接 DeepSeek Harness Desktop，使用 SwiftUI、
-UIKit 和 Apple 系统框架。聊天、侧栏、设置入口、扫码、照片选择和语音输入均在手机本地
-呈现。电脑继续运行 DSH，手机通过经过配对认证的连接操作会话。
+> 状态：个人项目，持续开发中，功能和接口还会变。尚未选定开源协议，见文末「许可证」。
 
-当前原生版本为 `0.3.0`。仓库保留旧 Expo 原型供迁移参考；原生构建不依赖
-Expo、React Native 或 Metro。核心交互使用原生界面；
-插件、轨迹、上下文、编队和 DSH 设置表单使用经过手机适配的真实前端，
-在 WKWebView 中通过 HTTP 或 HTTPS 直接加载，并保留页面范围内的数据访问校验。
+## 它做什么
 
-## 连接
+- **收集**：连接器（一段 Prompt，或 DSH 里已连上的 MCP 服务）加收集器（收集什么、多久一次），把外面的信息读成一条条记录，放在「信息收集器」里等你读。嘟嘟只收集，不替你判断，也不会自己建事项。
+- **事项（Issue）**：结构照 Linear：状态、优先级、项目、标签、子事项、截止日期；有列表和看板，默认按智能体的状态分组（工作中、需要你、空闲中）。事项的状态由你手动改。
+- **智能体**：把事项交给 Claude Code、ChatGPT（Codex）或 DeepSeek 去做，每个事项一个长期会话。事项是核心，会话只是载体，可以关掉、更换、恢复。
+- **和嘟嘟说话**：嘟嘟只有一个对话（电脑上收成右下角的宠物）。像群聊一样用 `@事项编号` 把话带给那个事项的智能体，它的回复回到对话里；输入框上方有「待办」「信息」「任务」三个快捷项。
+- **任务**：按规则定时执行的任务，嘟嘟自己也可以做任务的执行者，结果回到对话里。
+- **额度**：Claude、ChatGPT、DeepSeek 的订阅额度，点一下就看。
+- **仪表盘**：电脑上的首屏是一张可以自己摆的小组件网格：Issues、信息收集器、办公室（每个在做的事项是办公室里坐在工位上的一个人），也可以自己写小组件。
+- **手机 App**：SwiftUI 原生，首页是看板，点一行进这个事项的会话，另有信息收集器、任务、额度、对话、语音和图片。通过配对认证的 HTTP/HTTPS 连接你的电脑，不用 WebSocket。
 
-电脑端安装 `dudu` DSH 插件（`0.4.0` 前叫 `dsbot`），监听 `3170`。用户填写 HTTP 或 HTTPS 地址：
+## 怎么搭起来
 
-```text
-iPhone 原生聊天 ── HTTP/HTTPS /dsbot/api/v1 ── 电脑 3170
-iPhone WebView  ── HTTP/HTTPS /dsbot/ui/ ── 电脑 3170
+```
+iPhone App（SwiftUI）
+   │  HTTP / HTTPS，配对认证，长轮询
+   ▼
+DSH Desktop ── dudu 插件（端口 3170）
+                 ├─ 嘟嘟的库（SQLite：事项、记录、任务、版面……）  host/assistant/
+                 ├─ 供应商（经 OAR 接 Claude Code、Codex）         host/providers/
+                 ├─ 手机接口和页面（/dsbot/api/v1、/dsbot/ui/）    host/native-*.mjs
+                 └─ 嘟嘟的界面（React，编成 dist/client.js）       host/dudu-plugin/ui/
 ```
 
-配置了 TLS 的反向代理或隧道可以填写 `https://your-domain.example/dsbot`，
-局域网可以填写 `http://电脑地址:3170/dsbot`。原生 API 和 WebView 都使用用户填写的
-HTTP 或 HTTPS；实时会话更新通过带鉴权的 HTTP 长轮询获取。HTTPS 用于 TLS 隧道，
-HTTP 适用于用户自行配置的局域网地址。旧版 WS/WSS 配对链接仅在导入时转换为
-HTTP/HTTPS 地址，不会建立 WebSocket 连接。
+嘟嘟用的是 DSH 已有的工具、技能、智能体和 MCP，自己不另造一套；记忆系统也独立于 DSH 的其他插件。
 
-配对凭据只通过 Authorization 请求头发送。认证通过后，客户端才能调用限定的会话、
-工作区、模型、权限、附件和功能列表操作。
-打开复杂页面时，原生 App 使用已有配对凭据向 `/dsbot/web/open` 请求页面会话，
-再将只对该页面有效的 HttpOnly Cookie 放入独立 WebView。页面文档、资源、操作
-和数据订阅均通过 HTTP/HTTPS，并校验此会话；配对密钥不会进入网页脚本或请求 URL。
-插件不提供任意 URL 转发或任意 DSH RPC，页面仍受原有方法清单和会话范围限制。
-撤销设备会同时关闭其原生连接和网页会话。未鉴权的页面与资源不会被返回。
-TLS 反向代理终止加密，因此中转服务器仍能接触解密后的流量；这不是端到端加密。
+## 快速开始
 
-## 安装和配对
+环境：
 
-1. 运行 `npm run package:desktop`。
-2. 在 DSH Desktop「插件」中安装 `.local/release/dudu-0.4.0.tgz`。
-3. 在 DSH Desktop 里打开嘟嘟的页面，点右上角的设置，进入「手机控制」，填写电脑名称并添加一个或多个连接地址。
-4. 在页标题右侧手动点击「生成二维码」，一份二维码包含这台电脑已保存的全部地址。
-5. 手机打开 Dudu，扫码或粘贴完整配对链接；已连接时可在「电脑连接 → 添加电脑」继续配对。
-
-macOS 本地开发和更新可直接运行 `npm run desktop:update`。脚本打包当前源码，
-通过 DSH Desktop 自带的 CLI 安装插件，并请求 DSH 热重载；新运行实例的版本、
-代码指纹和服务探测全部匹配后才报告成功。热重载不可用时自动正常退出并重新打开
-DSH；运行中的任务可能使 DSH 显示自己的退出确认，脚本不会强制终止进程。
-可用 `-- --restart` 明确选择重启，`-- --app "/path/DeepSeek Harness.app"` 指定应用。
-在 DSH 里运行的任务（Claude、Codex 会话）里更新会被自保护拒绝：热重载会拆掉所有运行中会话的适配器。
-确实要在里面更新时加 `-- --force`，所有正在跑的 Claude 和 Codex 会话（包括运行它的那个）会被切断。
-每次打包、安装后都重启 Desktop，可直接运行 `npm run desktop:install`；
-它复用同一更新脚本，相当于 `npm run desktop:update -- --restart`。
-日志、结果回执和更新前的 profile 文件保存在 `.local/desktop-updates/`；
-原有配对和连接配置保留。
-安装包路径包含源码指纹，同版本修改也会安装新的包，避免包管理器复用旧缓存。
-
-电脑端的上游错误分类保存在 `~/.dsh/dudu/diagnostics/upstream.jsonl`，文件自动轮转，
-只记录接口、失败阶段和错误码，不记录请求参数、会话正文或凭据。
-
-插件 `0.3.19` 起不声明 DSH 版本约束，升级 DSH 不会仅因版本号变化而被标记为不兼容。
-
-插件 `0.4.0` 起改名为 `dudu`，状态目录改为 `~/.dsh/dudu/`。首次启动会把原 `~/.dsh/dsbot/` 里的
-已配对设备和设置复制过来，旧目录原样保留。已配对的手机无需任何操作，手机协议路径 `/dsbot` 不变。
-`npm run desktop:update` 装好 dudu 后会卸载同一个 profile 里旧的 dsbot 插件，两者不会同时运行。
-
-插件 `0.3.20` 起，DSH 窗口自己绘制的侧栏图标（例如「上下文洞察」）只绘制一次，之后某次上报没带图标时沿用已有的，手机侧栏的图标不再时有时无。
-
-连接地址第一项由电脑当前内网 IP 自动生成，不能修改或删除；网络变化后会自动更新。
-其他地址通过「添加地址」选择内网或公网类型，编辑收在铅笔按钮后。公网地址选填，未填写时不显示空行。
-手机先核验内网地址，内网不能连接时再尝试公网；连接状态显示实际地址，只有当前线路标「使用中」。
-所有候选地址都必须通过同一电脑、同一配对凭据的挑战核验，才会收到认证请求。
-
-安装插件、打开配置和保存地址都不会自动生成配对码。首次配对码有效期为
-10 分钟；已配对设备可以重新连接，也可以在电脑端逐台撤销。
-手机可以保存多台电脑并切换，每台电脑包含一组候选地址。旧配对成功连上新版插件后自动取得地址列表，
-保留凭据，无需重新扫码；如果旧地址已完全失效且尚未取得核验信息，则仍需通过正式配对入口恢复。
-在「电脑连接」中点击独立的信息按钮可查看状态、重新连接或编辑地址；手机手动编辑的地址不会被电脑返回的列表覆盖。
-切换 Wi-Fi / 蜂窝网络后重新选择可用地址，保留当前会话和草稿。
-安装包不包含个人域名、隧道或预置电脑地址。
-
-App 默认打开主页，使用已保存的配对记录恢复连接。回到前台时保留当前会话；
-首次未配对、连接失败或实际掉线后显示连接引导，重连成功后回到主页。
-
-聊天中可以直接输入 DSH 技能命令，例如 `/code-review 检查当前改动`，再手动发送。
-
-输入框左侧的「+」面板集中了 DSH 的原生功能：照片、文件（先传到电脑，再作为附件随下一条
-消息发送）、目标（`/goal`；有目标时，输入框上方独占一行显示目标栏，点文字展开全文，右侧「…」可暂停或恢复、编辑和清除）、
-计划（`/plan`，开启后加号菜单显示勾选和「退出计划模式」，再次点按退出；计划待审时对话里会出现「同意执行 / 要求修改」卡片）、压缩（`/compact`，
-点一下直接执行，进度只显示在对话记录里），以及权限和模型。手机只能触发这三条白名单命令，不能提交任意命令行。
-「新会话」打开 DSH 的新任务首页：鲸鱼、「探索未至之境」，上方是「选择工作区」和工作模式
-（标准模式、极简模式……），输入框在选定工作区之前不可输入。选定工作区后才会创建会话，
-并复用该工作区已有的空白会话。项目和模式只在这个还没发出第一条消息的页面里选；它不会出现在侧栏，
-发出第一条消息后才会进入侧栏，输入框上方不再显示这两个标签，项目和模式也不能再改。
-模型和推理等级在「+」面板里调。DSH 的任务清单显示在输入框上方，默认收起，只列「任务」和各状态的数量，
-点开才逐项显示。权限预设沿用 DSH 的中文名称，「完全权限」会先确认。
-待发送图片以缩略图显示在输入框内；对话里的图片独立显示为右对齐的圆角预览，点按可全屏查看。
-模型运行时，输入框为空显示停止按钮；输入文字或添加附件后切换为发送按钮，可继续追加消息。
-插件 `0.3.17` 起，两端共用 DSH 的排队消息：单条直接显示，多条默认折叠；「…」中可编辑或删除，右侧箭头可插话发送。
-
-插件 `0.3.18` 起，对话还支持：
-
-- 本轮文件改动收在「已编辑 N 个文件」摘要入口，显示增删行数，点开可搜索文件并查看带行号的 diff；明确交付的文件在聊天里最多显示 3 项，其余通过「全部 N 个文件」打开原生列表并使用系统预览。工具写入或修改的文件不再额外生成文件列表入口。
-- 在对话中回答单选、多选和文本问题，支持逐题回答、跳过、继续工作后的补答；不替换消息草稿。
-- 展开模型重试原因，保留本轮错误代码和输出 token 上限提示。
-- 在历史顶部加载更早消息，保持当前阅读位置；随后的实时更新保留已加载的历史。
-- 点击工具调用读取完整输入、输出、元数据及图片；长文本继续分页加载。
-- 长按消息在新对话中分支；从「性能与用量」查看会话统计，选择「详细」后显示本轮用量入口。
-- 队列图片显示缩略图，点击打开完整预览。
-
-这些读取和操作都使用已配对的 HTTP API，并校验当前会话及事件序号。文件最大为 16 MiB，且受 DSH 自身读取限制约束；已失效的修改记录会显示读取失败，不会用当前文件冒充历史 diff。
-队列、目标、任务与计划状态通过 DSH 的实时状态订阅同步。聊天只显示真正唤起一轮回复的通知，不显示途中注入的后台消息、权限命令或额外的逐轮用量脚注。
-清空输入或成功发送后恢复停止按钮，未发送的草稿会保留。从屏幕左边缘向右滑可以打开侧栏。
-App 打开时先恢复上次查看的会话和本地草稿，再在后台同步电脑端内容；已有缓存的会话不会先闪过新任务首页或加载页。
-会话和图片缓存按电脑隔离、有容量上限，移除电脑时一起清理；配对凭据仍由钥匙串保存。
-实时订阅意外断开时，手机保留当前内容并重新连接；损坏或超限的缓存会记录明确错误，图片读取失败可再次点按重试。
-
-长按消息会高亮显示预览，可选「复制」或「选择」；「选择」打开原生文本选择页，支持拖动选择范围。
-消息底部不再显示复制按钮和时间。时间居中显示在一组消息上方：首条、跨天或距上一轮结束至少 5 分钟时显示，连续交流和同一轮长回复不重复显示。
-命令、文件、结构化对话、工作模式、推理等级、侧栏分组和导航需要电脑端安装 `0.3.6` 或更新的插件，
-任务清单、会话的置顶和归档、遮罩类图标需要 `0.3.8`，对话图片读取需要 `0.3.9`；
-旧版插件仍能聊天，手机会提示先更新插件。轨迹、上下文、编队等页面离开后会在后台保留
-5 分钟，再次打开立即显示。
-
-### 侧栏、「…」菜单和设置来自 DSH
-
-侧栏的入口、会话视图（对话、轨迹、上下文、编队……）和设置分区都不写在 App 里。插件的 DSH 端模块在 DSH 自己的窗口里读取各个插件注册的内容，
-连同图标一起通过 `/api/dudu/nav` 交给插件主机，主机校验后保存到 `DSH_HOME/dudu/navigation.json`，
-手机用 `navigation.get` 取回。其他插件给 DSH 新增面板、会话标签页或设置分区，手机上会自动出现，
-不需要升级 App。
-
-每一项带一个 `open` 描述，由插件决定怎么打开：App 有自己的 SwiftUI 页面就直接进入
-（对话、自动化任务），没有就打开 DSH 对应页面的 WebView（`plugins`、`trace`、
-`context`、`team`，以及其他插件新增内容用的 `panel`、`view`）。DSH 的 id 到页面的对应关系
-只写在插件的 `host/native-navigation.mjs`，DSH 改版时只需更新插件。
-
-「…」菜单显示会话视图，只在已开始、且视图多于一个的会话里出现，和 DSH 一致。侧栏的图标和设置分区的图标是 DSH 的图标，以几何数据传输，
-由 App 原生绘制，不传 SVG 标记；少数图标（例如「上下文洞察」）用到遮罩，没法还原成几何形状，
-就由 DSH 窗口渲染成小图（64×64，插件校验后传输）再由 App 按前景色着色。设置分区的列表是一次插件请求，不再等待 DSH 设置页加载；
-导航接口或响应格式失败会显示错误，不会替换成一份内置列表。
-
-其他插件新增页面在手机上能否正常使用，取决于页面调用的 DSH 接口是否在插件的页面白名单内；
-页面只读，不提供写入，也不是任意 RPC 代理。
-
-App 里没有任何一份 DSH 入口的内置列表。电脑端插件还没更新，或者 DSH 窗口还没向插件报告时，
-侧栏会写明原因（更新插件 / 打开一次 DSH 窗口），「…」菜单不显示，设置列表则由设置页自己
-报告的分区代替。插件页右上角的「+」代替 DSH 的「添加插件」按钮（页面自带的刷新和添加按钮在手机上隐藏）。
-设置列表不显示桌面的「通用设置」，也不显示手机控制自己的配对页。
-
-### 页面和提示
-
-会话页是主页：左上角侧栏，右上角「…」（会话视图）。进入任何一个页面（DSH 的网页、
-自动化任务）之后顶部只有左上角一个返回按钮，页面自己的操作（插件页的「+」）除外；
-页面四周和页面同为白色，不再有一条灰色的接缝。App 没有主色：系统控件（菜单、按钮、提醒）的着色和
-所有图标一样用墨色，蓝色只留给发送按钮、配对按钮、运行状态和链接。
-
-需要解释某个按钮为什么不能用时，用系统自带的气泡（popover）锚在按钮上，不用顶部的提示条：SwiftUI 没有
-toast 控件，标准的提示层是 `.popover`（iPhone 上配合 `.presentationCompactAdaptation(.popover)` 显示成
-带箭头的小气泡）和 TipKit 的 `.popoverTip`，后者是一次性的功能引导，不适合每次点按都要解释的场合。
-
-### 手机页面与搜索
-
-插件 `0.3.15` 起移除手机端的资源管理、终端、浏览器及工作区文件网页和标签同步。
-轨迹、上下文、编队、插件和设置页面继续使用 DSH 网页，页面脚本和样式支持 gzip 传输。
-
-插件 `0.3.12` 起，手机的独立搜索页通过 `session.search` 搜索 DSH 会话正文，并合并标题和工作区匹配，展示命中片段与日期。
-从结果打开会话后再次打开侧栏，会保留搜索关键词与结果；搜索页的返回按钮回到普通侧栏。
-
-### 侧栏的会话列表
-
-会话按 DSH 的方式分组：默认按工作区，点工作区名称折叠或展开，折叠后名称右侧出现「›」；展开时
-不显示任何图标。每个工作区右侧的「…」可以重命名或删除工作区（只移除登记，目录和会话保留，
-会话移到「未分组」）。「…」旁的选项菜单与 DSH 的「视图选项」一致：分组方式（按工作区 / 单列表）、
-筛选会话（隐藏已归档 / 全部对话 / 仅显示已归档）。手机只显示一层
-工作区，不展开 DSH 的「按工作区树」。会话按最近更新排列，置顶的会话排在最前，最近置顶的在最上面。
-长按一个会话，它会浮成一张卡片，下面弹出菜单：重命名、置顶（已置顶的显示「取消置顶」）、归档。
-置顶后，这一行右侧的时间换成置顶图标。图标照参考截图描的（斜着的图钉，针头朝左下），不是图标库里竖着的那一个。
-DSH 没有删除会话的功能，只有归档，归档的会话不会丢：在「筛选会话」里选「仅显示已归档」，点按会话再选「取消归档」
-即可找回（已归档的会话长按菜单里也是「取消归档」）。置顶和归档需要插件 `0.3.8`。工作区右侧「…」菜单里的「新建会话」
-在该工作区里开始新会话。
-空白会话不在列表里出现（和 DSH 一样），正在打开的新会话页也不出现，发出第一条消息后才会进入列表；
-选定项目开始新会话时会复用该项目已有的空白会话，不会越堆越多。已归档的会话置灰，点按会提示「取消归档后才能打开」并可直接取消归档。
-
-升级保留原 App 的 bundle identifier 和 Keychain。原生客户端会迁移旧版保存的
-电脑记录，不会通过卸载 App 或清空配对来升级。旧凭据仅在认证成功后沿用，
-电脑端撤销后不能再次通过旧凭据导入。
-
-## 构建 iPhone App
-
-需要 Xcode、XcodeGen、Node.js 22.18 或更新版本，以及能为目标手机签名的
-Apple 开发者账号。构建目标为 iOS 18 或更新版本。
+- macOS（桌面更新脚本按 macOS 写）、DSH Desktop 0.2.x（在 0.2.2-rc.1 上验证，见 [docs/dsh-0.2.2-compatibility.md](docs/dsh-0.2.2-compatibility.md)）、Node.js 22.18 或更新。
+- 手机 App 另需 Xcode 27.2 或更新（SDK 27+）、XcodeGen，和一个能给你的手机签名的 Apple 开发者账号；App 最低支持 iOS 18。
 
 ```sh
 npm install
+
+# 电脑端：打出 .local/release/dudu-<版本>.tgz，在 DSH Desktop 的「插件」里安装
+npm run package:desktop
+# macOS 上开发时可以一步到位：打包、装进 DSH Desktop 并热重载
+npm run desktop:update
+
+# 手机端：构建 iPhone App，覆盖安装到已配对的手机
 npm run native:build
-npm run native:install -- --device YOUR_COREDEVICE_ID
+npm run native:install
 ```
 
-`native:build` 使用 `native/project.yml` 生成 Xcode 项目并构建 Release。
-产物为 `.local/native-ios/Build/Products/Release-iphoneos/dsbot.app`。
-`native:install` 覆盖安装，保留同一 App 的数据。只有一个已配对设备时可省略
-`--device`。指定 Debug 构建可添加 `--configuration Debug`。
+配对：在 DSH 里打开嘟嘟页面，进右上角设置的「手机控制」，填好电脑的连接地址，手动点「生成二维码」，再用手机上的 Dudu 扫码。安装插件和保存地址都不会自动生成配对码。连接方式、鉴权范围、更新脚本的细节见 [docs/phone-connection.md](docs/phone-connection.md)。
 
-App 显示名称为 `Dudu`，bundle identifier 为 `com.harnessmobile.app`。
-内部构建目标和配对协议（`/dsbot` 路径）继续使用 `dsbot`，现有配对和数据保持兼容。
-本地开发签名只适用于签名允许的设备。向其他用户分发 iOS App 需要自己的
-TestFlight、App Store 或适用的设备签名；本项目不包含商店发布凭据。
-
-## 交互
-
-左上角打开会话侧栏，最近会话按活动时间排序，可按项目分组。电脑名称打开电脑
-列表，底部统一设置入口。右上角「…」菜单切换 DSH 的会话视图。
-
-输入栏提供照片、按住说话、键盘和加号。模型、权限等设置放在加号菜单中。
-语音使用系统 Speech 和 AVAudioEngine；松手提交，上滑取消，没有识别内容时
-不显示占位提示。照片在发送前缩小和压缩，通过鉴权 HTTP 请求发送。
-
-当前对话加载最近 100 条消息，并限制历史与实时文本的总量，尚未提供更早消息的
-向上分页。手机审批目前支持单个计划审核问题，其他类型的问题仍需在电脑处理。
-聊天区按结构化来源区分用户输入与内部上下文，不把模型压缩替换、工具输出或
-纯推理过程显示为独立对话；已完成任务中的过程内容通过轨迹查看。
-
-## 日志与验证
-
-原生诊断日志位于手机 `Documents/diagnostics/native-swiftui/`，
-记录生命周期、点击、会话切换、键盘、语音状态、连接状态与请求耗时。
-日志轮转保存在本机，不记录配对密钥、聊天正文、语音正文或照片内容。
-覆盖安装保留已有诊断目录。
-
-```sh
-npm run logs:pull -- --device YOUR_COREDEVICE_ID
-```
-
-也可直接从已配对手机取回：
-
-```sh
-xcrun devicectl device copy from \
-  --device YOUR_COREDEVICE_ID \
-  --domain-type appDataContainer \
-  --domain-identifier com.harnessmobile.app \
-  --source Documents/diagnostics \
-  --destination .local/device-diagnostics
-```
-
-项目检查：
-
-```sh
-npm run lint
-npm run typecheck
-npm test
-npm run native:build
-npm run native:test -- --device YOUR_COREDEVICE_ID
-```
-
-测试只留关键的（主人 2026-11-07：“只留关键的 e2e 或者单元测试就行”）：`tests/` 是纯逻辑和数据安全的单元测试（毫秒级）；
-`tests/e2e/` 是少数几条真实隔离 DSH 里的端到端（插件加载与热更新、事项到智能体会话、对话、Claude/Codex 供应商的恢复与失败、
-原生会话同步、手机页面）加一条办公室场景测试。看起来对不对（尺寸、间距、字样、动画）不写测试，由主人看。
-`native/DSBotTests/` 只留对话投影、存储、HTTP 客户端、连接、滚动位置、智能体状态这些核心逻辑的单元测试；
-原生界面测试（XCUITest）已删除，原生端的检查是 `native:build`。`native:test` 在指定的真机上跑 `DSBotTests`：
-不生成真实配对码、不注入配对链接，也不删除用户现有连接；它使用 Debug 测试构建，结束后用 `native:install` 恢复 Release。
-删掉的测试都备份在 `.local/test-archive-2026-11-07/`（不进 git）。
-
-## 代码
+## 目录
 
 | 位置 | 用途 |
 | --- | --- |
-| `native/DSBot/Core/` | 原生连接、HTTP 页面会话、模型、电脑存储和诊断日志 |
-| `native/DSBot/Views/` | SwiftUI 聊天、侧栏、功能列表、设置和配对 |
-| `native/DSBot/Media/` | 系统扫码、照片和语音 |
-| `native/project.yml` | XcodeGen 项目定义 |
-| `host/native-server.mjs` | 鉴权 HTTP API、事件长轮询和 HTTP 页面入口 |
-| `host/web-page-http.mjs` | HTTP 页面鉴权、资源和受限操作 |
-| `host/native-bridge.mjs` | 允许的业务方法与 DSH 私有接口转换 |
-| `host/dsbot-control.mjs` | 电脑地址配置、配对和撤销 |
-| `host/dudu-plugin/` | DSH Desktop 插件 |
-| `host/providers/` | 供应商：在 DSH 里使用电脑上的 Claude Code 和 Codex，基于 OAR，见 `docs/providers.md` |
-| `host/providers/native/` | 嘟嘟：读 Claude / Codex 已有的会话，搜索，加载进 DSH，见 `docs/providers.md` |
-| `host/assistant/` | 嘟嘟的库：issue（SQLite，`issues/`）、仪表盘版面（`dashboard/`），各自带给桌面界面的 HTTP 接口（`api.mjs`），设计见 `docs/assistant.md` |
-| `host/dudu-plugin/ui/` | 嘟嘟页面的 React 界面（shadcn/ui、Tailwind）：仪表盘（`dashboard/`，gridstack）、小组件（`widgets/`）、Issues 列表、分组、Board、筛选、详情；所有的字在 `strings.js`，待审的见 `docs/issues-ui-wording.md` |
-| `scripts/build-client.mjs` | 把 `ui/` 编成 `dist/client.js`（`npm run client:build`；`package:desktop` 里自动跑） |
-| `tests/e2e/`、`scripts/e2e.mjs` | 端到端测试（`npm run test:e2e`）：把打好的插件装进真实的 `dsh web`（自己的 `DSH_HOME` 和 `HOME`），用 Chrome 点真实的界面 |
-| `scripts/package-desktop.mjs` | 打包原生客户端对应的电脑插件 |
-| `scripts/update-desktop.mjs` | 安装本地电脑插件、热重载及必要时重启，并检查运行代码 |
+| `host/dudu-plugin/` | DSH 插件入口，和嘟嘟页面的 React 界面（`ui/`，shadcn/ui + Tailwind） |
+| `host/assistant/` | 嘟嘟的库：事项、收集器、连接器、分配、任务、仪表盘版面、对话 |
+| `host/providers/` | 供应商（Claude Code、Codex，基于 OAR）、额度读取、读已有会话 |
+| `host/native-*.mjs` | 手机接口：鉴权 HTTP API、页面会话、事件长轮询 |
+| `native/` | iPhone App（SwiftUI，项目由 `native/project.yml` 经 XcodeGen 生成） |
+| `packages/oar-adapter/` | 对 OAR 的适配和补丁 |
+| `examples/dudu-widget/` | 给嘟嘟写小组件的模板 |
+| `docs/` | 设计和说明 |
+| `tests/` | 单元测试；`tests/e2e/` 是真实 DSH 里的端到端测试 |
+| `App.tsx`、`src/`、`host/plugin/` | 旧的 Expo 原型，只留作参考，不在运行链路里 |
 
-旧版 `App.tsx`、`src/`、`host/relay.mjs` 和 `host/plugin/` 不属于原生 App
-或 dudu 插件的运行链路。`legacy:ios`、`web`、`share` 等命令仅保留给旧原型。
+## 开发和测试
+
+```sh
+npm run typecheck
+npm test               # 单元测试，毫秒级；测试只留关键的（数据安全、鉴权、进程间约定、几条复杂规则）
+npm run test:e2e       # 端到端：把插件装进一个独立的 dsh web，用 Chrome 驱动，较慢，需要本机装有 DSH 和 Chrome
+npm run native:build   # iPhone App 的检查
+```
+
+界面看起来对不对（尺寸、间距、字样、动画）不写测试，靠人看。
+
+## 文档
+
+- [docs/assistant.md](docs/assistant.md)：设计文档，产品、架构、界面、接口都在里面。
+- [docs/phone-connection.md](docs/phone-connection.md)：手机连接、安装、配对，和 App 的行为。
+- [docs/providers.md](docs/providers.md)：供应商，怎么在 DSH 里用 Claude Code 和 Codex。
+- [docs/scheduled-tasks.md](docs/scheduled-tasks.md)：任务。
+- [docs/issues-api.md](docs/issues-api.md)：事项的接口。
+- [docs/dsh-0.2.2-compatibility.md](docs/dsh-0.2.2-compatibility.md)、[docs/dsh-session-control.md](docs/dsh-session-control.md)：DSH 的兼容和会话控制。
+- [docs/native-mobile-fixes.md](docs/native-mobile-fixes.md)：手机端遇到的问题和怎么修的。
+- [AGENTS.md](AGENTS.md)、[native/AGENTS.md](native/AGENTS.md)：给写代码的 agent 的约定。
+
+## 几条取舍
+
+- 事项是核心，会话只是载体。
+- 嘟嘟只收集，不替你处理收集来的信息；事项的状态只由你改，智能体的状态跟着会话的实际情况走。
+- 不推送，不通知。手机和电脑看同一份事项。
+- 通用：不预设任何人的工具、日历或任务系统。
+- 手机和电脑之间只有带鉴权的 HTTP/HTTPS：页面和接口都要先配对，没有匿名页面，也不转发任意 URL 或任意 DSH 调用。
+
+## 贡献
+
+动手之前请先读 [AGENTS.md](AGENTS.md) 和 [native/AGENTS.md](native/AGENTS.md)：界面要复用现有的组件和样式，不另起一套；界面上的字要作者看过；测试只留关键的；手机端的对话滚动有一串不能碰的约束。想改的东西比较大，建议先开 issue 说一声。
+
+## 许可证
+
+尚未选定开源协议。根目录的 `LICENSE` 是项目创建时 Expo 模板带来的 MIT 文本（版权人是 Expo），并不是本项目的协议，确定后会替换。
+第三方素材和协议见 [licenses/](licenses/)、[服务图标的来源](host/dudu-plugin/ui/connectors/icons/NOTICE.md) 和 [办公室场景的来源](host/dudu-plugin/ui/widgets/office/marvis/SOURCE.md)。
+
+## 致谢
+
+DSH（[deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)，MIT）、OAR、shadcn/ui、Radix、Tailwind CSS、gridstack、Lucide、swift-markdown-ui；办公室场景取自 [winterBI/marvis-office](https://github.com/winterBI/marvis-office)。
