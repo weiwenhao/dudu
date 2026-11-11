@@ -26,7 +26,7 @@ import slack from './icons/slack.svg';
 import stripe from './icons/stripe.svg';
 import telegram from './icons/telegram.svg';
 import trello from './icons/trello.svg';
-import wechat from './icons/wechat.png';
+import wechat from './icons/wechat.svg';
 import wecom from './icons/wecom.svg';
 import whatsapp from './icons/whatsapp.svg';
 import x from './icons/x.svg';

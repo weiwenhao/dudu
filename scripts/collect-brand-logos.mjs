@@ -5,8 +5,7 @@
 //   node scripts/collect-brand-logos.mjs --apps   only the icons of apps installed on this Mac (no network; one that is not installed keeps its committed file)
 // -> host/dudu-plugin/ui/connectors/icons/<key>.svg | .png (the logo, in colour) and host/dudu-plugin/ui/connectors/brand-logos.js (what the interface imports).
 // Sources (the marks stay with their owners; icons/NOTICE.md says so): SVG Logos (gilbarbara/logos, CC0), Simple Icons (CC0, drawn here in the brand's own colour),
-// Ant Design Icons and TDesign Icons through Iconify (MIT), Wikimedia Commons for Lark (public domain), and, for WeChat, the icon of WeChat.app (Tencent's own artwork,
-// taken from the app on the owner's Mac at the owner's word, 2026-11-07: "微信这个 logo 我觉得你可以带上"). Which service has which key, and what a name has to say to be
+// Ant Design Icons and TDesign Icons through Iconify (MIT), Wikimedia Commons for Lark (public domain). Which service has which key, and what a name has to say to be
 // taken for it, is host/assistant/connectors/brands.mjs.
 import { execFileSync } from 'node:child_process';
 import { Buffer } from 'node:buffer';
@@ -29,13 +28,13 @@ const GILBARBARA = {
   trello: 'trello', figma: 'figma', datadog: 'datadog-icon', pagerduty: 'pagerduty-icon', x: 'x', googlemeet: 'google-meet',
 };
 // key -> slug of Simple Icons: one colour, drawn here in the brand's own
-const SIMPLE = { stripe: 'stripe', hubspot: 'hubspot', intercom: 'intercom', mailchimp: 'mailchimp', qq: 'qq', alipay: 'alipay', icloud: 'icloud', protonmail: 'protonmail' };
+const SIMPLE = { stripe: 'stripe', hubspot: 'hubspot', intercom: 'intercom', mailchimp: 'mailchimp', qq: 'qq', wechat: 'wechat', alipay: 'alipay', icloud: 'icloud', protonmail: 'protonmail' };
 // key -> [Iconify set, icon, the brand's colour]
 const ICONIFY = { dingtalk: ['ant-design', 'dingtalk-circle-filled', '#3296FA'], wecom: ['tdesign', 'logo-wecom-filled', '#0082EF'] };
 // key -> a picture of the logo
 const COMMONS = { lark: 'https://upload.wikimedia.org/wikipedia/commons/4/42/Lark_Suite_logo_2022.png' };
-// key -> the icon file of an app installed on this Mac (the green square of WeChat, not the mark alone on white)
-const APP_ICONS = { wechat: '/Applications/WeChat.app/Contents/Resources/AppIcon.icns' };
+// key -> the icon file of an app installed on this Mac. None now: WeChat's came from WeChat.app until 2026-11-11, and is Simple Icons' CC0 mark like QQ's.
+const APP_ICONS = {};
 
 // curl, not fetch: it goes through the proxy the owner's machine is set to (HTTPS_PROXY), which Node's fetch does not.
 const get = async (url) => execFileSync('curl', ['-sfL', '--max-time', '60', url], { maxBuffer: 64 * 1024 * 1024 });
