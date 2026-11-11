@@ -1018,14 +1018,12 @@ final class DSBotStore: ObservableObject {
                   self.selectedSession?.id == sessionId else {
                 throw DSBotFailure.switchedComputer
             }
-            var params: [String: JSONValue] = [
+            let params: [String: JSONValue] = [
                 "id": .string(sessionId),
                 "requestId": .string(submission.requestId),
                 "text": .string(text),
                 "attachments": attachmentValue
             ]
-            // The phone attaches no page to a message to 嘟嘟; the null clears whatever the desktop left on, so a message from the phone never carries it.
-            if isAssistantConversation { params["assistantContext"] = .null }
             let receipt = try await request("session.send", params)
             guard currentGeneration == generation, currentSelection == sessionSelectionGeneration,
                   self.selectedSession?.id == sessionId, activeComputer?.id == computerId else {

@@ -5,7 +5,7 @@ import { Dashboard } from './dashboard/Dashboard.jsx';
 import { IssueDetail } from './issues/IssueDetail.jsx';
 import { IssueSessionDialog } from './issues/IssueSessionDialog.jsx';
 import { Scope } from './lib/scope.jsx';
-import { setWhere, subscribeOpenIssue, takeIssueRequest } from './lib/where.js';
+import { subscribeOpenIssue, takeIssueRequest } from './lib/open-issue.js';
 import { SettingsDialog } from './settings/SettingsDialog.jsx';
 import { SessionsDialog } from './sessions/SessionsDialog.jsx';
 import { TasksDialog } from './tasks/TasksDialog.jsx';
@@ -77,9 +77,7 @@ export function Page({ request, logo, actions = {}, renderConversation, renderSe
     window.addEventListener('dudu:settings-changed', changed);
     return () => window.removeEventListener('dudu:settings-changed', changed);
   }, []);
-  // The pet beside every DSH page asks what is on this one (for "Context") and for an issue to open (from a reminder).
-  useEffect(() => { setWhere(route.name === 'issue' ? { page: 'issue', id: route.id } : { page: 'dashboard' }); }, [route.name, route.id]);
-  useEffect(() => () => setWhere(null), []);
+  // The pet beside every DSH page asks for an issue to open (from a reminder).
   useEffect(() => {
     const take = () => { const id = takeIssueRequest(); if (id != null) openIssue(id); };
     take();

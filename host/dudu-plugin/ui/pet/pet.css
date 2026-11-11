@@ -65,14 +65,12 @@ body[data-ds-dark-theme] .dudu .dudu-pet-chip { box-shadow: 0 4px 14px var(--dud
 .dudu-pet-input-tools { display: flex; align-items: center; min-width: 0; gap: 4px; }
 .dudu-pet-permission { display: flex; flex: 0 1 auto; min-width: 0; max-width: 34%; }
 .dudu-pet-permission > button { max-width: 100%; }
-.dudu-pet-line { position: relative; --token: 0px; }
-.dudu-pet-line textarea { text-indent: var(--token); color: transparent; caret-color: var(--foreground); }
+.dudu-pet-line { position: relative; }
+.dudu-pet-line textarea { color: transparent; caret-color: var(--foreground); }
 /* What is typed is drawn here, behind the field's own (transparent) text, so that a /skill and an @address can be blue as they are in DSH's box
    (its own colour for them). Same box, font and wrapping as the field, or the caret would not sit on the letters. */
-.dudu-pet-mirror { position: absolute; top: 0; left: 0; right: 0; height: 40px; overflow: hidden; pointer-events: none; padding: 3px 6px; font: inherit; line-height: 22px; text-indent: var(--token); white-space: pre-wrap; overflow-wrap: break-word; }
+.dudu-pet-mirror { position: absolute; top: 0; left: 0; right: 0; height: 40px; overflow: hidden; pointer-events: none; padding: 3px 6px; font: inherit; line-height: 22px; white-space: pre-wrap; overflow-wrap: break-word; }
 .dudu-pet-mark { color: var(--dsw-alias-state-business-primary, #4176e6); }
-.dudu-pet-token { position: absolute; left: 6px; top: 3px; line-height: 22px; color: var(--dudu-strong); font-weight: 500; pointer-events: none; }
-.dudu-pet-where { position: absolute; left: calc(6px + var(--token)); right: 6px; top: 3px; line-height: 22px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 .dudu-pet-attachments { display: flex; gap: 8px; overflow-x: auto; padding: 2px 5px 5px; }
 .dudu-pet-attachment { flex: none; position: relative; width: 64px; height: 64px; }
 .dudu-pet-attachment img { display: block; width: 64px; height: 64px; box-sizing: border-box; object-fit: cover; border: 1px solid var(--border); border-radius: 16px; }

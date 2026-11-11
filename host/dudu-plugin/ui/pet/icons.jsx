@@ -8,7 +8,3 @@ export function PaperclipIcon({ className }) {
 export function CompactIcon({ className }) {
   return <svg viewBox="0 0 16 16" fill="none" strokeWidth="1" aria-hidden="true" className={className}><path opacity="0.35" d="M8 14.5C11.5899 14.5 14.5 11.5899 14.5 8C14.5 4.41015 11.5899 1.5 8 1.5C4.41015 1.5 1.5 4.41015 1.5 8C1.5 11.5899 4.41015 14.5 8 14.5Z" stroke="currentColor" /><path d="M8 1.5C8.85359 1.5 9.69883 1.66813 10.4874 1.99478C11.2761 2.32144 11.9926 2.80022 12.5962 3.40381C13.1998 4.00739 13.6786 4.72394 14.0052 5.51256C14.3319 6.30117 14.5 7.14641 14.5 8" stroke="currentColor" /></svg>;
 }
-
-export function ContextIcon({ className }) {
-  return <svg viewBox="0 0 16 16" fill="none" strokeWidth="1" aria-hidden="true" className={className}><path d="M5 2.5H3.5C3.23478 2.5 2.98043 2.60536 2.79289 2.79289C2.60536 2.98043 2.5 3.23478 2.5 3.5V13.5C2.5 13.7652 2.60536 14.0196 2.79289 14.2071C2.98043 14.3946 3.23478 14.5 3.5 14.5H12.5C12.7652 14.5 13.0196 14.3946 13.2071 14.2071C13.3946 14.0196 13.5 13.7652 13.5 13.5V3.5C13.5 3.23478 13.3946 2.98043 13.2071 2.79289C13.0196 2.60536 12.7652 2.5 12.5 2.5H11" stroke="currentColor" /><path d="M8 0.5V7.5" stroke="currentColor" /><path d="M5.5 5L8 7.5L10.5 5" stroke="currentColor" /><path d="M5.5 11H10.5" stroke="currentColor" /></svg>;
-}

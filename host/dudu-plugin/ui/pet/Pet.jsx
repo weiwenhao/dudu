@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronUp, Expand, EyeOff, FileText, LoaderCircle, Mic, RotateCcw, Settings, Square, X } from 'lucide-react';
 import { T } from '../strings.js';
 import { AgentLogo } from '../issues/AgentLogo.jsx';
@@ -11,7 +11,7 @@ import { ConversationControls } from './Models.jsx';
 import { PlusMenu } from './PlusMenu.jsx';
 import { Suggestions, useSuggestions } from './Suggestions.jsx';
 import { addressedMessage, highlightParts, issueAddress, replyDraft } from './completion.mjs';
-import { getWhere, requestIssue, useWhere } from '../lib/where.js';
+import { requestIssue } from '../lib/open-issue.js';
 import { requestDashboard } from '../lib/use-page-history.js';
 import { cardEvent, repeatableCard } from './card-events.mjs';
 import { groupEvent, placeReplies, waitingLines } from './group-events.mjs';
@@ -23,8 +23,6 @@ import { isPetInteraction } from './overlays.js';
 import pet from './pet.png';
 
 const P = T.pet;
-// What the owner sees after the word "Context": the page they are on, by name.
-const whereLabel = (where) => where?.page === 'issue' ? [where.ref ?? `#${where.id}`, where.title].filter(Boolean).join(' · ') : where?.page === 'dashboard' ? T.brand : '';
 const textOf = (content) => typeof content === 'string' ? content : (Array.isArray(content) ? content : []).filter((part) => part.type === 'text').map((part) => part.text).join('\n');
 const editable = (target) => target instanceof Element && Boolean(target.closest('input,textarea,select,button,a,[contenteditable]:not([contenteditable="false"]),[role="dialog"],[role="menu"],[role="listbox"]'));
 
@@ -104,14 +102,9 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
   const [retrying, setRetrying] = useState(false);
   const [sending, setSending] = useState(false);
   const [expanding, setExpanding] = useState(false);
-  const [context, setContext] = useState(false); // "Context" is on: the page the owner is on goes with each message, until it is taken off
   const [notice, setNotice] = useState(''); // what Compact answered, for a few seconds
   const [compacting, setCompacting] = useState(false);
   const box = useRef(null); // the composer, which the "+" menu opens above
-  const token = useRef(null); // the blue "Context" at the start of the first line, and the line that gives its width to the text
-  const line = useRef(null);
-  const contextOn = useRef(false);
-  const where = useWhere();
   const [listening, setListening] = useState(false);
   const [heard, setHeard] = useState('');
   const [bubble, setBubble] = useState('');
@@ -427,11 +420,6 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
         return;
       }
       const target = await ensure();
-      // Each message is read with what the owner chose for it: the page they are on, or nothing.
-      const now = getWhere();
-      const attachedPage = contextOn.current && now ? (now.page === 'issue' ? { page: 'issue', id: now.id } : { page: 'dashboard' }) : null;
-      const set = await request('assistant/context', { where: attachedPage });
-      if (set.outcome !== 'success') throw new Error(set.message);
       notify.current = true;
       const items = await encodeDrafts(attached);
       await actions.sendConversation(target.sessionId, text.trim(), items);
@@ -447,8 +435,6 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
     finally { sendingNow.current = false; if (alive.current) setSending(false); }
   }, [actions, ensure, read, request, closeSuggestions, relayRecipient]);
 
-  useEffect(() => { contextOn.current = context; }, [context]);
-  useLayoutEffect(() => { line.current?.style.setProperty('--token', context && token.current ? `${token.current.offsetWidth + 6}px` : '0px'); }, [context, open]);
   useEffect(() => {
     if (!notice) return undefined;
     if (list.current) list.current.scrollTop = list.current.scrollHeight;
@@ -732,10 +718,7 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
                   <button type="button" aria-label={`${T.settings.connectors.remove}: ${item.file.name}`} disabled={sending} onClick={() => removeDraft(item.id)}><X aria-hidden="true" /></button>
                 </div>)}
             </div>}
-            {/* Like /goal in DSH: the blue word first, then grey words about it (here, the page), which give way to what is typed. */}
-            <div className="dudu-pet-line" ref={line}>
-              {context && <span className="dudu-pet-token" ref={token}>{P.context}</span>}
-              {context && !draft && whereLabel(where) && <span className="dudu-pet-where" aria-hidden="true">{whereLabel(where)}</span>}
+            <div className="dudu-pet-line">
               <div className="dudu-pet-mirror" ref={mirror} aria-hidden="true">
                 {marked.map((part, index) => (part.mark ? <span key={index} className="dudu-pet-mark">{part.text}</span> : part.text))}{draft.endsWith('\n') ? '\n' : ''}
                 {replyHint?.draft === draft && <span className="dudu-pet-hint">{replyHint.title}</span>}
@@ -749,14 +732,12 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
               }} onKeyDown={(event) => {
                 if (suggestions.keyDown(event)) return;
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(draft); }
-                // The word is taken off the way a typed one is: Backspace at the start of the line.
-                else if (event.key === 'Backspace' && context && event.currentTarget.selectionStart === 0 && event.currentTarget.selectionEnd === 0) { event.preventDefault(); setContext(false); }
-              }} placeholder={context ? '' : P.message} aria-label={context ? `${P.context}: ${whereLabel(where)}` : P.message} disabled={sending} />
+              }} placeholder={P.message} aria-label={P.message} disabled={sending} />
             </div>
             <div className="dudu-pet-input-tools">
               <input ref={files} type="file" multiple hidden tabIndex={-1} onChange={(event) => { attach(event.target.files); event.target.value = ''; }} />
-              <PlusMenu anchor={box} disabled={sending} contextOn={context} contextAvailable={Boolean(where)} compactDisabled={compacting || Boolean(conversation?.running)}
-                onFile={() => files.current?.click()} onContext={() => { setContext(!context); input.current?.focus(); }} onCompact={() => void compact()} />
+              <PlusMenu anchor={box} disabled={sending} compactDisabled={compacting || Boolean(conversation?.running)}
+                onFile={() => files.current?.click()} onCompact={() => void compact()} />
               <ConversationControls sessionId={conversation?.sessionId} model={conversation?.model} actions={actions}
                 renderPermission={renderPermission} locked={sending || Boolean(conversation?.running)} onError={setProblem} />
               {available && settings.voice && <Button type="button" variant="ghost" size="icon-sm" aria-label={P.voice} aria-pressed={listening} onClick={() => listening ? stopVoice(false) : startVoice(false)}><Mic /></Button>}

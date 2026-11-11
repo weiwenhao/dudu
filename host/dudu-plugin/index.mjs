@@ -741,8 +741,7 @@ async function startConversation(ctx, folder, assignment) {
     route('conversation', async () => ({ outcome: 'success', ...await conversation.ensure() })),
     route('conversation-settings', (body) => conversation.preferences(body)),
     route('conversation-model', (body) => conversation.selectModel(body)),
-    // Where the owner is, sent with each message when they chose to attach it; and the conversation's Compact.
-    route('context', ({ where } = {}) => conversation.setContext(where)),
+    // The conversation's Compact.
     route('compact', () => conversation.compact()),
     // The quick buttons of the chat: a card is made as a command of the conversation (no model); the page asks for the contents of the ones it has read by their command ids.
     route('card', ({ kind, since } = {}) => conversation.card(kind, since)),
@@ -807,7 +806,6 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
       assistantConversation: () => assignment.conversation?.ensure(),
       assistant: {
         state: () => assignment.conversation?.state(),
-        context: (where) => assignment.conversation?.setContext(where),
         selectModel: (selection) => assignment.conversation?.selectModel(selection),
         issues: (action, body) => assignment.issuesApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
         tasks: (action, body) => assignment.tasks?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },

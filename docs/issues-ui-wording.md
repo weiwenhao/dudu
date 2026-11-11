@@ -269,8 +269,6 @@ Office 这轮撤去头部人数、Agent 图例和左下角未分配角标，白�
 | 位置 | English | 中文 | 来源 |
 |---|---|---|---|
 | + 菜单：加文件 | `File` | `文件` | DSH 自己的字，主人圈出来的 |
-| + 菜单：附上当前页面（也是输入框开头的蓝字） | `Context` | `上下文` | 主人的话 |
-| 上一项的说明 | `Attach the current page automatically` | `自动附加当前页面位置` | 主人的话 |
 | + 菜单：压缩 | `Compact` | `压缩` | DSH 自己的命令名（主人圈出来的） |
 | 上一项的说明 | `Compact the conversation above` | `压缩以上对话内容` | DSH 自己的中文 |
 | 模型小框的两行 | `Model` · `Reasoning effort` | `模型` · `推理等级` | DSH 自己的字；主人说的是“思考等级”，请定用哪个 |

@@ -128,18 +128,15 @@ test('opening the assistant reuses its scoped session and ignores caller-supplie
   await assert.rejects(unavailable.dispatch('assistant.open', {}, {}), { code: 'UPSTREAM_UNAVAILABLE' });
 });
 
-test('native assistant messages attach only the explicitly selected page and clear stale desktop context', async () => {
-  const contexts = [];
+test('a message to the assistant goes out as it is: a page that an older phone still sends with it is ignored, not rejected', async () => {
   const { bridge, calls } = makeHarness({
-    assistant: { state: () => ({ sessionId: 'dudu-owned' }), context: (where) => { contexts.push(where); } },
+    assistant: { state: () => ({ sessionId: 'dudu-owned' }) },
   });
-  const context = { page: 'issue', id: 7 };
-  await bridge.dispatch('session.send', { id: 'dudu-owned', text: 'with page', assistantContext: context }, {});
-  await bridge.dispatch('session.send', { id: 'dudu-owned', text: 'without page' }, {});
+  await bridge.dispatch('session.send', { id: 'dudu-owned', text: 'with a page of an older phone', assistantContext: { page: 'issue', id: 7 } }, {});
+  await bridge.dispatch('session.send', { id: 'dudu-owned', text: 'with a null', assistantContext: null }, {});
+  await bridge.dispatch('session.send', { id: 'dudu-owned', text: 'plain' }, {});
   await bridge.dispatch('session.send', { id: 'normal', text: 'ordinary' }, {});
-  assert.deepEqual(contexts, [context, null]);
-  assert.equal(calls.filter(({ endpoint }) => endpoint === 'session/prompt').length, 3);
-  await assert.rejects(bridge.dispatch('session.send', { id: 'dudu-owned', text: 'bad page', assistantContext: { page: 'files' } }, {}), { code: 'BAD_REQUEST' });
+  assert.equal(calls.filter(({ endpoint }) => endpoint === 'session/prompt').length, 4);
 });
 
 test('the phone asks for the quota the way the desktop icon does: the sheet opening is the ask, nothing else is accepted, and what the plugin has kept comes back with the outcome', async () => {

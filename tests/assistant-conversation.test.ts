@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createIssues } from '../host/assistant/issues/index.mjs';
-import { conversationModel, conversationSummary, createConversation, pageContextMaterial } from '../host/assistant/home/conversation.mjs';
+import { conversationModel, conversationSummary, createConversation } from '../host/assistant/home/conversation.mjs';
 import { assistantTools, readAttachedFile } from '../host/assistant/home/tools.mjs';
 
 test('conversation model recovery keeps the last selection and its reasoning setting across restart', () => {
@@ -235,30 +235,6 @@ test('chat cannot create an Urgent issue without an owner rule', async () => {
     assert.equal(result.outcome, 'needs_clarification');
     assert.equal(issues.counts().active, 0);
   } finally { issues.close(); }
-});
-
-test('the page the owner attached is the dashboard or one issue with its activity, and nothing once the issue is gone', () => {
-  const issues = createIssues({ file: ':memory:' });
-  try {
-    const { issue } = issues.add({ title: '修复图标对齐', brief: '图标和文件夹图标对不齐。' }) as any;
-    issues.log(issue.id, { kind: 'note', text: '已经改了一半', actor: 'dudu' });
-    assert.equal(pageContextMaterial(issues, null), null);
-    assert.match(pageContextMaterial(issues, { page: 'dashboard' })!.page, /dashboard/);
-    const material = pageContextMaterial(issues, { page: 'issue', id: issue.id })!;
-    assert.equal(material.issue.title, '修复图标对齐');
-    assert.ok(JSON.stringify(material.activity).includes('已经改了一半'));
-    assert.equal(pageContextMaterial(issues, { page: 'issue', id: 999 }), null);
-  } finally { issues.close(); }
-});
-
-test('only the dashboard or a numbered issue can be attached; anything else clears it', () => {
-  const conversation = createConversation({
-    ctx: { on: () => () => {} }, assistant: {}, issues: {}, assignment: {}, dashboard: {}, nativeSessions: {}, dsh: {}, tidyIssues: () => {},
-    file: '/nonexistent/dudu-conversation-test.json',
-  } as any);
-  for (const where of [null, undefined, { page: 'issue' }, { page: 'issue', id: 'x' }, { page: 'settings' }, 'dashboard']) {
-    assert.deepEqual(conversation.setContext(where as any), { outcome: 'success' });
-  }
 });
 
 test('a file the owner attached is read by name, from this conversation only, as text and cut to a bound', async () => {

@@ -2281,9 +2281,6 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
             content,
           };
           if (Buffer.byteLength(JSON.stringify(request), 'utf8') > MAX_MESSAGE_BYTES) fail('LIMIT_EXCEEDED');
-          // Ordinary native messages share the scoped assistant too. Clear a stale desktop page
-          // unless the phone explicitly chose to attach its own page to this message.
-          if (assistantBridge.isSession(sessionId)) await assistantBridge.context(sessionId, params.assistantContext);
           await remote.call('session/prompt', request);
           return { requestId: request.requestId };
         }

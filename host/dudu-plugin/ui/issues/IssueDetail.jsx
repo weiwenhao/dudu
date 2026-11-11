@@ -5,7 +5,6 @@ import { Button } from '../components/button.jsx';
 import { useToast } from '../components/toast.jsx';
 import { TooltipProvider } from '../components/tooltip.jsx';
 import { cn } from '../lib/cn.js';
-import { describeIssue } from '../lib/where.js';
 import { T } from '../strings.js';
 import { actorName, describe, isComment, storedSystemText, when } from './activity.js';
 import { AgentMenu } from './AgentMenu.jsx';
@@ -126,8 +125,6 @@ const firstLink = (text) => /https?:\/\/\S+/.exec(text ?? '')?.[0] ?? null;
  */
 export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSession, previewSession }) {
   const { status, issue, log, activeQuestion, nextLogCursor, change, assign, message, undo, loadEarlier, reload } = useIssue(request, id);
-  // The pet's "Context" names the page by its reference and title.
-  useEffect(() => { if (issue) describeIssue(issue.id, { ref: issue.ref, title: issue.title }); }, [issue]);
   const toast = useToast();
   const [opening, setOpening] = useState(false);
   const openConversation = async () => {

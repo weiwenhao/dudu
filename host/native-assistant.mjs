@@ -81,12 +81,6 @@ export function createNativeAssistant({ assistant, remote, fail, attachments, fi
 
   return {
     isSession,
-    async context(id, where) {
-      requireSession(id);
-      if (where !== null && where !== undefined
-        && (where?.page !== 'dashboard' && !(where?.page === 'issue' && Number.isSafeInteger(where.id) && where.id > 0))) fail('BAD_REQUEST');
-      return assistant.context(where ?? null);
-    },
     async dispatch(method, params) {
       requireSession(params.sessionId);
       switch (method) {

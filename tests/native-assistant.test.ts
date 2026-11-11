@@ -6,7 +6,6 @@ function harness(overrides = {}) {
   const calls = [];
   const assistant = {
     state: () => ({ sessionId: 'dudu-owned' }),
-    context: (where) => { calls.push(['context', where]); return { outcome: 'success' }; },
     issues: async (action, body) => {
       calls.push([action, body]);
       if (action === 'recipients') return { outcome: 'success', items: [{
@@ -41,10 +40,6 @@ test('assistant completions are scoped to the fixed session and use DSH skills a
   const result = await bridge.dispatch('assistant.recipients', { sessionId: 'dudu-owned', q: 'DUD' });
   assert.deepEqual(result.items[0].project, { name: 'dudu' });
   assert.equal(calls.some(([method]) => method === 'session/prompt'), false);
-  await assert.rejects(bridge.context('other', null), { code: 'NOT_FOUND' });
-  await bridge.context('dudu-owned', { page: 'issue', id: 7 });
-  await bridge.context('dudu-owned', null);
-  assert.deepEqual(calls.slice(-2), [['context', { page: 'issue', id: 7 }], ['context', null]]);
 });
 
 test('assistant forwarding stages files on the recipient and deduplicates an outstanding delivery', async () => {

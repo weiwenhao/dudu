@@ -349,7 +349,7 @@ const en = {
     // The line while Dudu works: DSH's own (chat.deepDiving, chat.deepDivingFor and its duration units). The owner showed the Chinese and asked for it (2026-11-04); the English is DSH's.
     running: 'Deep diving', runningFor: (duration) => `Deep diving for ${duration} ···`, duration: { hour: 'h ', minute: 'm ', second: 's' },
     // NEW: the "+" menu of the conversation window, the model box, and what Compact answers (docs/issues-ui-wording.md, 2026-11-01 evening).
-    file: 'File', context: 'Context', contextHint: 'Attach the current page automatically', compact: 'Compact', compactHint: 'Compact the conversation above',
+    file: 'File', compact: 'Compact', compactHint: 'Compact the conversation above',
     model: 'Model', effort: 'Reasoning effort', compacted: 'Compacted', nothingToCompact: 'Nothing to compact yet', compactFailed: 'Could not compact',
     // NEW: the card of the quick buttons when there is no scheduled task (the other two empty cards say the pages' own: No issues, Nothing here). Awaits review, docs/issues-ui-wording.md.
     noTasks: 'No tasks',
@@ -639,7 +639,7 @@ const zh = {
     stop: '停止', failed: '对话没能加载', voiceFailed: '语音输入失败',
     // 嘟嘟工作时的那一行：和 DSH 自己的一样（chat.deepDiving、chat.deepDivingFor 和时长单位），主人 2026-11-04 给了截图并要求加上
     running: '深度求索中', runningFor: (duration) => `深度求索中，用时 ${duration} ···`, duration: { hour: '小时', minute: '分', second: '秒' },
-    file: '文件', context: '上下文', contextHint: '自动附加当前页面位置', compact: '压缩', compactHint: '压缩以上对话内容',
+    file: '文件', compact: '压缩', compactHint: '压缩以上对话内容',
     model: '模型', effort: '推理等级', compacted: '已压缩', nothingToCompact: '还没有可压缩的内容', compactFailed: '压缩没能完成',
     noTasks: '没有任务', // 快捷项的卡片在没有任务时的话，句式照“没有连接器”“没有收集器”；另两张空卡片用看板和信息页现成的“没有事项”“没有信息”。主人 2026-11-10 审过“没有定时任务”，2026-11-11 说“定时任务改成任务”。
     expand: '展开', collapse: '收起', // 新（2026-11-11）：长回复的小药丸；展开是主人飞书截图上的字，收起是它的一对，等主人审

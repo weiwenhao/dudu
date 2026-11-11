@@ -4,7 +4,7 @@ import { Button } from '../components/button.jsx';
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
 import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
-import { CompactIcon, ContextIcon, PaperclipIcon } from './icons.jsx';
+import { CompactIcon, PaperclipIcon } from './icons.jsx';
 
 const P = T.pet;
 
@@ -19,10 +19,11 @@ function Item({ icon: Icon, label, hint, checked, disabled, onSelect }) {
 }
 
 /**
- * What "+" gives: add a file (a picture is a file too), attach where the person is (Context), and Compact, the one command of the window. The menu is as wide as the box
- * and opens above it (anchored to the box, not to the button inside it). Context stays on until it is taken off; it is not offered when no page is known (the person is not on a 嘟嘟 page).
+ * What "+" gives: add a file (a picture is a file too) and Compact, the one command of the window. The menu is as wide as the box
+ * and opens above it (anchored to the box, not to the button inside it). There was a Context item (the page the person is on went with each message);
+ * the owner had it taken out on 2026-11-12.
  */
-export function PlusMenu({ anchor, disabled, contextOn, contextAvailable, compactDisabled, onFile, onContext, onCompact }) {
+export function PlusMenu({ anchor, disabled, compactDisabled, onFile, onCompact }) {
   const [open, setOpen] = useState(false);
   const pick = (action) => { setOpen(false); action(); };
   return <Popover open={open} onOpenChange={setOpen}>
@@ -35,7 +36,6 @@ export function PlusMenu({ anchor, disabled, contextOn, contextAvailable, compac
     </PopoverTrigger>
     <PopoverContent data-pet-menu="" side="top" align="start" role="menu" aria-label={T.dashboard.add} className="w-[min(416px,calc(100vw-72px))] p-1">
       <Item icon={PaperclipIcon} label={P.file} onSelect={() => pick(onFile)} />
-      <Item icon={ContextIcon} label={P.context} hint={P.contextHint} checked={contextOn} disabled={!contextOn && !contextAvailable} onSelect={() => pick(onContext)} />
       <div className="-mx-1 my-1 h-px bg-border" role="separator" />
       <Item icon={CompactIcon} label={P.compact} hint={P.compactHint} disabled={compactDisabled} onSelect={() => pick(onCompact)} />
     </PopoverContent>
