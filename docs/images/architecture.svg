@@ -4,10 +4,10 @@
 <rect x="330" y="36" width="560" height="468" rx="20" fill="#f5f7fb" stroke="#d9dde3" stroke-width="1.5"/>
 <text x="358" y="72" font-size="16" font-weight="600" fill="#61666b">DSH Desktop · dudu 插件（端口 3170）</text>
 <rect x="358" y="100" width="244" height="132" rx="14" fill="#eef3ff" stroke="#4176E6" stroke-width="1.5"/>
-<text x="480.0" y="160.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">嘟嘟的库</text>
+<text x="480.0" y="160.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">Dudu 的库</text>
 <text x="480.0" y="186.0" text-anchor="middle" font-size="14" fill="#61666b">SQLite：事项 · 记录 · 任务 · 版面</text>
 <rect x="618" y="100" width="244" height="132" rx="14" fill="#ffffff" stroke="#d9dde3" stroke-width="1.5"/>
-<text x="740.0" y="160.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">嘟嘟的界面</text>
+<text x="740.0" y="160.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">Dudu 的界面</text>
 <text x="740.0" y="186.0" text-anchor="middle" font-size="14" fill="#61666b">React：仪表盘 · 看板 · 办公室 · 对话</text>
 <rect x="358" y="256" width="244" height="132" rx="14" fill="#ffffff" stroke="#d9dde3" stroke-width="1.5"/>
 <text x="480.0" y="316.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">手机接口</text>
@@ -33,7 +33,7 @@
 <text x="1060.0" y="240.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">Codex</text>
 <rect x="960" y="296" width="200" height="76" rx="14" fill="#ffffff" stroke="#d9dde3" stroke-width="1.5"/>
 <text x="1060.0" y="340.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">DeepSeek</text>
-<text x="1060" y="82" text-anchor="middle" font-size="14" fill="#61666b">智能体</text>
+<text x="1060" y="82" text-anchor="middle" font-size="14" fill="#61666b">Agent</text>
 <line x1="862" y1="322" x2="958" y2="150" stroke="#4176E6" stroke-width="2" marker-end="url(#a)"/>
 <line x1="862" y1="322" x2="958" y2="234" stroke="#4176E6" stroke-width="2" marker-end="url(#a)"/>
 <line x1="862" y1="440" x2="958" y2="334" stroke="#4176E6" stroke-width="2" marker-end="url(#a)"/>

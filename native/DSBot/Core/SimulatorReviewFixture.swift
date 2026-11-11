@@ -228,6 +228,8 @@ private actor ReviewTransport: DSBotTransport {
         return arguments[index + 1]
     }
     private static let tasksFile = reviewArgument("-dsbot-review-tasks")
+    /// The answer of `board.list`, as the plugin's own board would give it (a JSON file): what the board shows in the simulator, offline (made-up issues for pictures).
+    private static let boardFile = reviewArgument("-dsbot-review-board")
     private static let navigationFile = reviewArgument("-dsbot-review-navigation")
     private lazy var reviewTasksData: ReviewTasksFile? = {
         guard let file = Self.tasksFile, let data = try? Data(contentsOf: URL(fileURLWithPath: file)) else { return nil }
@@ -413,6 +415,7 @@ private actor ReviewTransport: DSBotTransport {
             return try await realPages.request(method, params: params)
         }
         if method.hasPrefix("tasks."), Self.tasksFile != nil { return try reviewTasksRequest(method, params) }
+        if method == "board.list", let file = Self.boardFile, let data = try? Data(contentsOf: URL(fileURLWithPath: file)), let answer = try? JSONDecoder().decode(JSONValue.self, from: data) { return answer }
         switch method {
         case "assistant.hide":
             return .object(["outcome": .string("success")])

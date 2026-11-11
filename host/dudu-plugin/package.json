@@ -21,7 +21,7 @@
     "./widget.css": "./widget.css",
     "./package.json": "./package.json"
   },
-  "description": "Dudu 手机连接：配置连接地址、生成配对码和管理设备",
+  "description": "基于 DSH 打造的多 Agent 协作的工作效率助手",
   "icon": "./icon.png",
   "license": "MIT",
   "files": ["index.mjs", "client.js", "widget.mjs", "widget.d.ts", "widget-ui.mjs", "widget-ui.d.ts", "widget-testing.mjs", "widget-testing.d.ts", "widget.css", "icon.png", "cordis.patch.yml", "dist/"],
