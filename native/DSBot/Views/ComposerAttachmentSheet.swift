@@ -37,9 +37,11 @@ struct ComposerAttachmentSheet: View {
             return min(titleBlock + sources + CGFloat(max(1, modelRows)) * rowHeight + levels + bottomInset + 16, maximumHeight)
         }
 
-        /// Content height of the root page; the sheet adds the bottom safe area itself.
+        /// Content height of the root page; the sheet adds the bottom safe area itself. `primaryRows` is the card between the
+        /// tiles and the commands (goal and plan); a page without one goes from the tiles straight to the commands.
         static func height(commandRows: Int, primaryRows: Int = 2) -> CGFloat {
-            let content = titleBlock + tileSize + tileGap + CGFloat(primaryRows) * rowHeight + sectionGap
+            let primary = primaryRows > 0 ? tileGap + CGFloat(primaryRows) * rowHeight : 0
+            let content = titleBlock + tileSize + primary + sectionGap
                 + sectionHeader + CGFloat(commandRows) * rowHeight + bottomInset
             return min(content, maximumHeight)
         }
@@ -56,9 +58,6 @@ struct ComposerAttachmentSheet: View {
     let onGoal: () -> Void
     let onPlan: () -> Void
     let onCompact: () -> Void
-    let contextOn: Bool
-    let contextAvailable: Bool
-    let onContext: (() -> Void)?
     let onStopTask: () -> Void
     let onClose: () -> Void
 
@@ -76,9 +75,6 @@ struct ComposerAttachmentSheet: View {
         onGoal: @escaping () -> Void,
         onPlan: @escaping () -> Void,
         onCompact: @escaping () -> Void,
-        contextOn: Bool = false,
-        contextAvailable: Bool = false,
-        onContext: (() -> Void)? = nil,
         onStopTask: @escaping () -> Void,
         onClose: @escaping () -> Void
     ) {
@@ -90,9 +86,6 @@ struct ComposerAttachmentSheet: View {
         self.onGoal = onGoal
         self.onPlan = onPlan
         self.onCompact = onCompact
-        self.contextOn = contextOn
-        self.contextAvailable = contextAvailable
-        self.onContext = onContext
         self.onStopTask = onStopTask
         self.onClose = onClose
         _page = State(initialValue: initialPage)
@@ -199,15 +192,8 @@ struct ComposerAttachmentSheet: View {
         case .root:
             VStack(alignment: .leading, spacing: 0) {
                 tileRow
-                if store.isAssistantConversation {
-                    VStack(spacing: 0) {
-                        commandRow(icon: .context, title: "上下文", value: store.assistantPageContext?.label,
-                                   showsChevron: false, isSelected: contextOn, identifier: "composer.assistant.context",
-                                   isEnabled: contextOn || contextAvailable) { onContext?() }
-                    }
-                    .background(Self.card, in: RoundedRectangle(cornerRadius: Layout.cardRadius, style: .continuous))
-                    .padding(.top, Layout.tileGap)
-                } else {
+                // 嘟嘟's own conversation has no goal or plan, so its sheet goes from the tiles straight to the commands.
+                if !store.isAssistantConversation {
                     goalAndPlanCard.padding(.top, Layout.tileGap)
                 }
                 sectionTitle("指令")

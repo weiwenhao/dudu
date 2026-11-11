@@ -124,7 +124,7 @@ final class BoardModel: ObservableObject {
     @Published private(set) var foldedGroups = BoardModel.initiallyFoldedGroups
     @Published private(set) var loadingMore: Set<String> = []
     @Published private(set) var deleting: Set<Int> = []
-    @Published private(set) var needsYouColor: UInt32 = 0x6486b8
+    @Published private(set) var needsYouColor: UInt32 = 0x4f948e
     var report: ((DSBotToastMessage) -> Void)?
     private let json = DSBotJSON()
     private var refreshing = false
@@ -150,7 +150,7 @@ final class BoardModel: ObservableObject {
         foldedGroups = Self.initiallyFoldedGroups
         loadingMore = []
         deleting = []
-        needsYouColor = 0x6486b8
+        needsYouColor = 0x4f948e
         tab = .active
     }
 

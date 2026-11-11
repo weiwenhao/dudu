@@ -61,7 +61,6 @@ struct ChatView: View {
     @State private var composerFocused = false
     @StateObject private var assistantCompletion = AssistantCompletions()
     @State private var editorSelection: ComposerSelection?
-    @State private var assistantContextOn = false
     /// The quick button of 嘟嘟's chat whose card is on its way.
     @State private var quickCardBusy: QuickCardKind?
     /// What 回复 put in the box and the title of the issue it is for: the title shows in grey after it for as long as nothing else is written.
@@ -171,7 +170,6 @@ struct ChatView: View {
             if transitionHistory?.target != draftTarget { transitionHistory = nil }
             assistantCompletion.reset()
             editorSelection = nil
-            assistantContextOn = false
             resetComposerAttachments()
             restoreDraft()
             if let target = draftTarget, let attachments = failedAttachments.removeValue(forKey: target) {
@@ -1199,9 +1197,6 @@ struct ChatView: View {
     }
 
     private var placeholder: String {
-        if store.isAssistantConversation, assistantContextOn {
-            return store.assistantPageContext?.label ?? "Dudu"
-        }
         switch composerIntent {
         case .goal: return "输入目标，智能体将持续执行"
         case .message: return store.planMode ? "描述你的任务以生成计划" : "发消息"
@@ -1225,14 +1220,6 @@ struct ChatView: View {
                 .accessibilityLabel("目标指令，点按取消")
                 .accessibilityIdentifier("composer.goal.token")
             }
-            if store.isAssistantConversation, assistantContextOn {
-                Button {
-                    assistantContextOn = false
-                } label: {
-                    Text("上下文").font(.system(size: 16)).foregroundStyle(DSBotStyle.blue)
-                }
-                .buttonStyle(.plain)
-            }
             ComposerTextView(
                 text: draftBinding, isFocused: $composerFocused, placeholder: placeholder,
                 selectionRequest: editorSelection,
@@ -1245,11 +1232,6 @@ struct ChatView: View {
                                                 enabled: !isVoiceMode && !isOverlayOpen && composerIntent == .message)
                 },
                 onCompletionKey: handleAssistantCompletionKey,
-                onBackspaceAtStart: {
-                    guard assistantContextOn else { return false }
-                    assistantContextOn = false
-                    return true
-                },
                 onTapEditor: { assistantCompletion.reopen() }
             )
                 .id(draftTarget)
@@ -1416,9 +1398,6 @@ struct ChatView: View {
             onGoal: { dismissAttachmentSheet(then: .goal) },
             onPlan: { dismissAttachmentSheet(then: .plan) },
             onCompact: { dismissAttachmentSheet(then: .compact) },
-            contextOn: assistantContextOn,
-            contextAvailable: store.assistantPageContext != nil,
-            onContext: { dismissAttachmentSheet(then: .assistantContext) },
             onStopTask: { Task { await store.stopSession() } },
             onClose: { attachmentSheetRequest = nil }
         )
@@ -1428,7 +1407,7 @@ struct ChatView: View {
                     modelRows: store.currentProviderModels.count, effortRows: store.currentEfforts.count,
                     modelGroups: store.currentModelGroups.count
                 )
-                : ComposerAttachmentSheet.Layout.height(commandRows: rows, primaryRows: store.isAssistantConversation ? 1 : 2)
+                : ComposerAttachmentSheet.Layout.height(commandRows: rows, primaryRows: store.isAssistantConversation ? 0 : 2)
         )])
         .presentationDragIndicator(.hidden)
         .presentationBackground(ComposerAttachmentSheet.background)
@@ -1458,9 +1437,6 @@ struct ChatView: View {
             runPlanCommand(argument: store.planMode ? "off" : nil)
         case .compact:
             compactConversation()
-        case .assistantContext:
-            assistantContextOn.toggle()
-            composerFocused = true
         }
     }
 
@@ -1679,14 +1655,13 @@ struct ChatView: View {
         let sentFileIDs = Set(files.map(\.id))
         let recipient = assistantCompletion.recipient
         let fileData = assistantFileData.filter { sentFileIDs.contains($0.key) }
-        let pageContext = assistantContextOn ? store.assistantPageContext : nil
         Task {
             guard draftTarget == target else { return }
             var handedOff = false
             do {
                 try await store.send(
                     text: text, attachments: attachments, files: files,
-                    assistantRecipient: recipient, assistantFiles: fileData, assistantContext: pageContext,
+                    assistantRecipient: recipient, assistantFiles: fileData,
                     draftText: submittedText
                 ) {
                     handedOff = true
@@ -1730,7 +1705,7 @@ struct ChatView: View {
                 return
             }
             followSentMessage()
-            try? await store.send(text: text, assistantContext: assistantContextOn ? store.assistantPageContext : nil)
+            try? await store.send(text: text)
         }
     }
 
@@ -1848,7 +1823,7 @@ struct ChatView: View {
 }
 
 private enum PendingSheetAction {
-    case photos, files, goal, plan, compact, assistantContext
+    case photos, files, goal, plan, compact
 }
 
 

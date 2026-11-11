@@ -85,7 +85,6 @@ final class DSBotStore: ObservableObject {
     @Published private(set) var catalogError: String?
     @Published private(set) var isLoadingSession = false
     @Published private(set) var isOpeningAssistant = false
-    @Published var assistantPageContext: AssistantPageContext?
     private var assistantRelayRetry: (signature: JSONValue, entryID: Int)?
     private var assistantRelayPending: (signature: JSONValue, requestID: String)?
     @Published private(set) var loadingLibrarySections: Set<String> = []
@@ -946,7 +945,6 @@ final class DSBotStore: ObservableObject {
     func send(
         text: String, attachments: [UploadAttachment] = [], files: [UploadedFile] = [],
         assistantRecipient: AssistantRecipient? = nil, assistantFiles: [String: Data] = [:],
-        assistantContext: AssistantPageContext? = nil,
         draftText: String? = nil, onSubmitted: (() -> Void)? = nil
     ) async throws {
         guard let selectedSession, let computerID = activeComputer?.id else { throw DSBotFailure.disconnected }
@@ -963,10 +961,7 @@ final class DSBotStore: ObservableObject {
             if isAssistantConversation, text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("@") {
                 try await forwardAssistant(text: text, recipient: assistantRecipient, images: attachments, files: files, fileData: assistantFiles)
             } else {
-                try await sendConversation(
-                    text: text, attachments: attachments, files: files,
-                    assistantContext: assistantContext, draftID: draftID
-                )
+                try await sendConversation(text: text, attachments: attachments, files: files, draftID: draftID)
             }
             finishSubmittedDraft(draftID, restoring: false)
         } catch {
@@ -985,8 +980,7 @@ final class DSBotStore: ObservableObject {
     }
 
     private func sendConversation(
-        text: String, attachments: [UploadAttachment], files: [UploadedFile],
-        assistantContext: AssistantPageContext?, draftID: UUID
+        text: String, attachments: [UploadAttachment], files: [UploadedFile], draftID: UUID
     ) async throws {
         guard let selectedSession else { throw DSBotFailure.disconnected }
         let currentGeneration = generation
@@ -1030,7 +1024,8 @@ final class DSBotStore: ObservableObject {
                 "text": .string(text),
                 "attachments": attachmentValue
             ]
-            if isAssistantConversation { params["assistantContext"] = assistantContext?.value ?? .null }
+            // The phone attaches no page to a message to 嘟嘟; the null clears whatever the desktop left on, so a message from the phone never carries it.
+            if isAssistantConversation { params["assistantContext"] = .null }
             let receipt = try await request("session.send", params)
             guard currentGeneration == generation, currentSelection == sessionSelectionGeneration,
                   self.selectedSession?.id == sessionId, activeComputer?.id == computerId else {
@@ -2236,7 +2231,6 @@ final class DSBotStore: ObservableObject {
 
     private func clearConversation() {
         persistConversation()
-        assistantPageContext = nil
         assistantRelayRetry = nil
         assistantRelayPending = nil
         isStoppingSession = false

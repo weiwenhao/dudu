@@ -12,7 +12,6 @@ struct ComposerTextView: UIViewRepresentable {
     var completionActive = false
     var onEditingChange: ((ComposerEditingState) -> Void)? = nil
     var onCompletionKey: ((String) -> Bool)? = nil
-    var onBackspaceAtStart: (() -> Bool)? = nil
     var onTapEditor: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
@@ -60,7 +59,6 @@ struct ComposerTextView: UIViewRepresentable {
         if let editor = view as? ComposerEditorView {
             editor.completionActive = completionActive
             editor.onCompletionKey = onCompletionKey
-            editor.onBackspaceAtStart = onBackspaceAtStart
             editor.onTapEditor = { [weak view, weak coordinator = context.coordinator] in
                 coordinator?.parent.onTapEditor?()
                 if let view { coordinator?.reportEditing(view) }
@@ -229,7 +227,6 @@ struct ComposerTextView: UIViewRepresentable {
 private final class ComposerEditorView: UITextView {
     var completionActive = false
     var onCompletionKey: ((String) -> Bool)?
-    var onBackspaceAtStart: (() -> Bool)?
     var onTapEditor: (() -> Void)?
 
     override var keyCommands: [UIKeyCommand]? {
@@ -244,12 +241,6 @@ private final class ComposerEditorView: UITextView {
     @objc private func completionKey(_ command: UIKeyCommand) {
         guard markedTextRange == nil else { return }
         _ = onCompletionKey?(command.input ?? "")
-    }
-
-    override func deleteBackward() {
-        if markedTextRange == nil, selectedRange.location == 0, selectedRange.length == 0,
-           onBackspaceAtStart?() == true { return }
-        super.deleteBackward()
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {

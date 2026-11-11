@@ -1085,11 +1085,6 @@ struct DSBotRootView: View {
         }
         if target == .assistant {
             let revision = sidebarNavigationRevision
-            let issue = destination.showsChat ? board.openedIssue(for: store.selectedSession) : nil
-            let pageContext: AssistantPageContext? = issue.map {
-                AssistantPageContext(issueID: $0.id, label: [$0.ref ?? "#\($0.id)", $0.title].joined(separator: " · "))
-            } ?? (destination.target == .board ? AssistantPageContext(issueID: nil, label: "Dudu")
-                  : destination.showsChat && store.isAssistantConversation ? store.assistantPageContext : nil)
             Task {
                 guard let session = await store.assistantSession(),
                       revision == sidebarNavigationRevision,
@@ -1097,7 +1092,6 @@ struct DSBotRootView: View {
                 closeSidebar()
                 dismissKeyboard()
                 conversationFromBoard = false
-                store.assistantPageContext = pageContext
                 destination = MainDestination(id: item.id, area: area, target: .chat, title: item.title)
                 await store.selectSession(session)
             }

@@ -11,15 +11,6 @@ struct AssistantRecipient: Decodable, Equatable, Sendable, Identifiable {
     var address: String { ref ?? "#\(id)" }
 }
 
-struct AssistantPageContext: Equatable, Sendable {
-    var issueID: Int?
-    var label: String
-    var value: JSONValue {
-        if let issueID { return .object(["page": .string("issue"), "id": .number(Double(issueID))]) }
-        return .object(["page": .string("dashboard")])
-    }
-}
-
 struct AssistantRelayResult: Decodable, Sendable {
     struct Issue: Decodable, Sendable { var id: Int; var ref: String?; var title: String }
     var outcome: String
