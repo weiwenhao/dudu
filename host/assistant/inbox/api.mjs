@@ -14,6 +14,9 @@
 //            (the issue needs an agent and a session: the same checks and the same note in its activity as the owner's own message to the agent);
 //            several records go in one message. The records are then the issue's: they move to Handled.
 //   link     { id, issue }        the record became that issue (made by the page); the line saying where it came from is in the issue's brief
+//   complete { id }               the owner wants more of this record's context (the Collector's button): the session of the collector that brought it reads the conversation around it, in the
+//            background (ten seconds to a few minutes), and what it read goes into that record. -> { outcome: 'success', started: true } at once; `get` then says `completing` while it runs and
+//            `completeError` (the plugin's own words, kept ten minutes) when it failed.
 //
 // A card is the row of the list, without the text: { id, ref, connector, connectorName, connectorIcon, title, from, at, url, state, verdict, ignored, done, byOwner, issue }
 // (`connector` is the id of the collector that brought the row, and `connectorName` its name: the fields kept their names when the two were told apart;
@@ -34,7 +37,8 @@ const clip = (value, size) => String(value ?? '').slice(0, size);
 // The catalog's keys that are a plain symbol and not a service's logo (the pages draw the first letter instead).
 const GENERIC = new Set(['browser', 'pencil', 'plug', 'terminal']);
 
-export const INBOX_ACTIONS = Object.freeze(['list', 'get', 'ignore', 'done', 'delete', 'restore', 'share', 'link']);
+export const INBOX_ACTIONS = Object.freeze(['list', 'get', 'ignore', 'done', 'delete', 'restore', 'share', 'link', 'complete']);
+const KEEP_ERROR_MS = 10 * 60_000;
 
 const needs = (message, code) => ({ outcome: 'needs_clarification', ...(code ? { code } : {}), message });
 const MAX_IDS = 200;
@@ -73,8 +77,10 @@ export function sessionMessage(records, name) {
   }).join('\n\n---\n\n');
 }
 
-export function createInboxApi({ issues, collectors = () => null, forward = null, now = Date.now }) {
+export function createInboxApi({ issues, collectors = () => null, forward = null, fill = null, now = Date.now }) {
   const { inbox } = issues;
+  // The completions in flight or failed lately, by record number: { running, error }. In memory only: a restart forgets them, and the record shows what it has.
+  const jobs = new Map();
 
   const catalog = loadCatalog();
 
@@ -109,8 +115,8 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
   const summariesOf = (rows) => new Map(issues.summaries(rows.map((row) => row.issueId).filter((id) => id !== null)).map((summary) => [summary.id, summary]));
   const numberOf = (id) => Number(String(id ?? '').replace(/^r/i, ''));
 
-  function one(id) {
-    const got = inbox.get(numberOf(id));
+  function one(id, options) {
+    const got = inbox.get(numberOf(id), options);
     return got?.record ?? null;
   }
 
@@ -139,7 +145,10 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
     const where = record.url ? `\n\n${W.sourceLine(clip(name, 100), record.url)}` : '';
     return {
       outcome: 'success',
-      record: { ...card(record, known, summaries), text: record.text, context: record.context, more: record.more, reason: record.reason, cleared: record.cleared, truncated: record.truncated },
+      record: {
+        ...card(record, known, summaries), text: record.text, context: record.context, more: record.more, reason: record.reason, cleared: record.cleared, truncated: record.truncated,
+        completing: jobs.get(record.id)?.running === true, completeError: jobs.get(record.id)?.error ?? null,
+      },
       // What an issue made of the record starts with (the page puts it in its New issue dialog): the same line of origin 嘟嘟 writes.
       draft: { title: clip(record.title, 300), brief: `${clip(record.text, 4000).trimEnd()}${where}`.trim(), sourceRef: `${record.connector}:${record.sourceId}` },
     };
@@ -154,13 +163,12 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
   function mark(change) {
     return (body) => {
       const ids = idsOf(body);
-      const records = ids.map(one);
+      const records = ids.map((id) => one(id, { summary: true }));
       if (!ids.length || records.some((record) => !record)) return needs('There is no record with that number.', 'unknown_record');
       const changed = records.filter((record) => change(record)).length;
       if (!changed) return { outcome: 'no_op', message: 'Nothing changed.' };
-      const after = ids.map(one);
-      const summaries = summariesOf(after);
-      return { outcome: 'success', changed, record: card(after[0], directory(), summaries) };
+      const after = one(ids[0], { summary: true });
+      return { outcome: 'success', changed, record: card(after, directory(), summariesOf([after])) };
     };
   }
 
@@ -175,7 +183,7 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
     const to = body?.to ?? 'issue';
     if (!['issue', 'session'].includes(to)) return needs('Share to an issue or to a session.', 'invalid_target');
     const ids = idsOf(body);
-    const records = ids.map(one);
+    const records = ids.map((id) => one(id));
     if (!ids.length || records.some((record) => !record)) return needs('There is no record with that number.', 'unknown_record');
     const found = open(body.issue);
     if (found.problem) return found.problem;
@@ -228,8 +236,28 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
     return { outcome: 'success', record: card(after, directory(), summariesOf([after])) };
   }
 
+  /** The owner asks for more of the record's context: the work is started and left to run (a session reading a thread takes a while); the answer says it started. */
+  function complete(body) {
+    const number = numberOf(body.id);
+    if (!Number.isInteger(number) || number <= 0) return needs('Name a record.', 'invalid_request');
+    if (!one(number, { summary: true })) return needs('There is no record with that number.', 'unknown_record');
+    if (typeof fill !== 'function') return { outcome: 'error', code: 'unavailable', message: 'Completing the context is unavailable.' };
+    if (jobs.get(number)?.running) return { outcome: 'success', started: true };
+    const job = { running: true, error: null };
+    jobs.set(number, job);
+    Promise.resolve().then(() => fill(number)).then((result) => {
+      if (result?.outcome !== 'success') job.error = clip(result?.message ?? 'The context could not be completed.', 300);
+    }, (error) => { job.error = clip(error instanceof Error ? error.message : error, 300) || 'The context could not be completed.'; }).finally(() => {
+      job.running = false;
+      if (!job.error) { jobs.delete(number); return; }
+      const forget = setTimeout(() => { if (jobs.get(number) === job) jobs.delete(number); }, KEEP_ERROR_MS);
+      forget.unref?.();
+    });
+    return { outcome: 'success', started: true };
+  }
+
   const CALLS = {
-    list, get, share, link,
+    list, get, share, link, complete,
     ignore: mark((record) => inbox.ignore(record.id)),
     done: mark((record) => inbox.done(record.id)),
     delete: mark((record) => inbox.remove(record.id)),

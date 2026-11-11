@@ -21,7 +21,7 @@ struct MainDestination: Equatable {
     /// The conversation, the board and the Collector are drawn by the app itself, on the canvas; every other page is white.
     var onCanvas: Bool {
         if target.settingsSection != nil { return true }
-        return [.chat, .board, .collector].contains(target)
+        return [.chat, .board, .collector, .tasks].contains(target)
     }
 
     /// A short, log-safe name for the target.
@@ -31,6 +31,7 @@ struct MainDestination: Equatable {
         case .assistant: return "assistant"
         case .board: return "board"
         case .collector: return "collector"
+        case .tasks: return "tasks"
         case .dshSettings: return "dshSettings"
         case .duduSettings: return "duduSettings"
         case .files: return "files"
@@ -52,10 +53,20 @@ struct DSBotRootView: View {
     /// The open conversation was chosen on the board: it has the way back to the board and the arrows between issues, and no views menu. A conversation chosen anywhere else
     /// (the sidebar, the Collector) is the app's own as it was: the sidebar button on the left, the views menu on the right (owner, 2026-11-07: the board is one page, it changes nothing else).
     @State private var conversationFromBoard = false
+    /// An issue's conversation opened from 嘟嘟's chat (a row of a todo card) has the chrome of one opened on the board, but its way back is that chat, not the board
+    /// (owner, 2026-11-10: "详情返回没有返回到聊天，而是返回到看板").
+    @State private var returnsToAssistant = false
+    @State private var boardMotion = BoardPageMotion()
+    @State private var boardConversationPreparation: BoardConversationPreparation?
+    @State private var boardTransitionMetrics = PageTransitionMetrics()
     @State private var showsConversationTitle = false
     /// The board and the Collector, kept while the app runs: going back to them shows what was there at once.
     @StateObject private var board = BoardModel()
     @StateObject private var collector = CollectorModel()
+    @StateObject private var tasks = TasksModel()
+    /// The subscription quota the gauge button at the top right of the board opens (read only when the sheet opens).
+    @StateObject private var quota = QuotaModel()
+    @State private var showsQuota = false
     /// 嘟嘟's own settings, drawn by the app: the pages of the one that is open.
     @StateObject private var settingsNav = SettingsNavigator()
     @State private var isMakingIssue = false
@@ -77,20 +88,16 @@ struct DSBotRootView: View {
     #endif
     /// A request from the toolbar's "+" to the plugin page.
     @State private var pageCommand: PageCommand?
-    @State private var edgeDragOffset: CGFloat = 0
+    @State private var drawerMotion = DrawerMotion()
     /// DSH pages stay loaded for a few minutes after the user leaves them.
     @StateObject private var pagePool = EmbeddedPagePool()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @GestureState(
-        resetTransaction: Transaction(animation: .spring(response: 0.38, dampingFraction: 0.88))
-    ) private var drawerDrag: CGFloat = 0
 
     init(store: DSBotStore) {
         self.store = store
     }
 
     var body: some View {
-        let drawerPosition = DrawerPosition(isOpen: isSidebarOpen, drag: drawerDrag, edgeOffset: edgeDragOffset)
         Group {
             if store.showsConnectionGuide {
                 ConnectionGuideView(
@@ -108,11 +115,17 @@ struct DSBotRootView: View {
                 .accessibilityHidden(presentedSheet != nil)
             } else {
                 GeometryReader { geometry in
-                    drawerStack(in: geometry, position: drawerPosition)
+                    drawerStack(in: geometry)
                 }
                 .accessibilityHidden(presentedSheet != nil)
                 .sheet(isPresented: $isMakingIssue) {
                     NewIssueSheet(board: board, store: store)
+                }
+                .sheet(isPresented: $showsQuota) {
+                    QuotaSheet(model: quota, store: store)
+                        .presentationDetents([.height(QuotaSheet.Layout.height(for: quota.blocks))])
+                        .presentationDragIndicator(.hidden)
+                        .presentationBackground(ComposerAttachmentSheet.background)
                 }
                 .sheet(item: $issueDetail) { issue in
                     IssueDetailSheet(issue: issue, board: board, store: store)
@@ -161,7 +174,7 @@ struct DSBotRootView: View {
             #if DEBUG && targetEnvironment(simulator)
             if ProcessInfo.processInfo.arguments.contains("-dsbot-review-open-sidebar") {
                 try? await Task.sleep(nanoseconds: 800_000_000)
-                isSidebarOpen = true
+                openSidebar()
             }
             if let spec = reviewArgument("-dsbot-review-open-item") {
                 // "sidebar:insight", "view:notes": open that DSH entry.
@@ -171,6 +184,10 @@ struct DSBotRootView: View {
                     try? await Task.sleep(nanoseconds: 250_000_000)
                 }
                 openReviewItem(spec)
+                if ProcessInfo.processInfo.arguments.contains("-dsbot-review-board-conversation") {
+                    conversationFromBoard = true
+                    boardMotion.reset(showingConversation: true)
+                }
             }
             if ProcessInfo.processInfo.arguments.contains("-dsbot-review-open-settings") {
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
@@ -190,6 +207,28 @@ struct DSBotRootView: View {
                 store.beginNewTask()
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
                 await store.startTask(in: "notes")
+            }
+            if ProcessInfo.processInfo.arguments.contains("-dsbot-review-open-tasks") {
+                // The tasks page, as the sidebar's fourth row opens it.
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                conversationFromBoard = false
+                destination = MainDestination(id: "dudu.tasks", area: .sidebar, target: .tasks, title: "任务")
+            }
+            if let seconds = reviewArgument("-dsbot-review-press-back").flatMap(Double.init) {
+                // The back button, once, after that many seconds: what a tap on it does (the simulator has no finger).
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                goBack()
+            }
+            if ProcessInfo.processInfo.arguments.contains("-dsbot-review-open-assistant") {
+                // What the sidebar's 嘟嘟 row does once the plugin has named its fixed conversation (the review's navigation has no such row): open that conversation as the plain one.
+                for _ in 0..<60 where !store.sessions.contains(where: { $0.isAssistant == true }) {
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                }
+                if let session = store.sessions.first(where: { $0.isAssistant == true }) {
+                    conversationFromBoard = false
+                    destination = .conversation
+                    await store.selectSession(session)
+                }
             }
             if ProcessInfo.processInfo.arguments.contains("-dsbot-review-page-switch") {
                 // Trace, context, team and trace again: each page owns its session, none reopens.
@@ -233,10 +272,15 @@ struct DSBotRootView: View {
         }
         .onChange(of: store.activeComputer?.id) { _, _ in
             isSidebarOpen = false
+            drawerMotion.reset()
             conversationFromBoard = false
+            resetBoardTransition(showingBoard: true)
             destination = .board
             board.reset()
             collector.reset()
+            tasks.reset()
+            quota.reset()
+            showsQuota = false
             isSearchActive = false
             conversationSearch.reset()
         }
@@ -245,17 +289,19 @@ struct DSBotRootView: View {
         }
         .onAppear {
             collector.report = { toast in pageToast = toast }
+            tasks.report = { toast in pageToast = toast }
+            board.report = { toast in pageToast = toast }
         }
         .onChange(of: store.isBlankSession) { _, isBlank in
             // DSH shows no conversation views for a conversation that has not started.
             if isBlank, destination.area == .view, !destination.showsChat { destination = .conversation }
         }
-        .onChange(of: isSidebarOpen) { _, isOpen in
-            // Pick up what plugins added to DSH since the app last asked.
-            if isOpen {
-                Task { await store.refreshNavigation() }
-                Task { await collector.refreshCount(using: store) }
-            }
+        .task(id: SidebarRefresh(active: sidebarIsActive, connected: store.status == .connected)) {
+            guard sidebarIsActive, store.status == .connected else { return }
+            async let navigation: Void = store.refreshNavigation()
+            async let count: Void = collector.refreshCount(using: store)
+            async let taskList: Void = tasks.refresh(using: store)
+            _ = await (navigation, count, taskList)
         }
         .onChange(of: store.showsConnectionGuide) { _, showsGuide in
             if showsGuide {
@@ -268,6 +314,9 @@ struct DSBotRootView: View {
         .onChange(of: destination) { _, next in
             DSBotLog.record("conversation.mode", state: next.logState)
             if let section = next.target.settingsSection { settingsNav.reset(section: section) }
+            if !next.showsChat || !conversationFromBoard {
+                resetBoardTransition(showingBoard: next.target == .board)
+            }
         }
         .onChange(of: store.isRestoring) { _, isRestoring in
             if !isRestoring,
@@ -282,49 +331,47 @@ struct DSBotRootView: View {
 
     // MARK: Drawer
 
-    private struct DrawerPosition {
-        let isOpen: Bool
-        let drag: CGFloat
-        let edgeOffset: CGFloat
-
-        func offset(for width: CGFloat) -> CGFloat {
-            if isOpen { return width + min(0, max(-width, drag)) }
-            return min(width, max(0, edgeOffset))
-        }
+    private struct SidebarRefresh: Equatable {
+        let active: Bool
+        let connected: Bool
     }
 
-    private struct DrawerMetrics {
-        let width: CGFloat
-        let offset: CGFloat
-        let progress: CGFloat
-        let isOpen: Bool
+    private var sidebarIsActive: Bool { isSidebarOpen && !drawerMotion.isMoving }
+
+    private var isBoardTransitioning: Bool { boardMotion.isAnimating }
+
+    private var boardPagePosition: BoardPagePosition {
+        if destination.target == .board { return .board }
+        return destination.showsChat && conversationFromBoard ? .issue : .other
     }
 
-    private func drawerMetrics(in geometry: GeometryProxy, position: DrawerPosition) -> DrawerMetrics {
+    private struct BoardConversationPreparation {
+        let id = UUID()
+        let target: DraftTarget
+        let navigationRevision: Int
+    }
+
+    private func drawerStack(in geometry: GeometryProxy) -> some View {
         let width = DSBotLayout.drawerWidth(in: geometry.size.width)
-        let offset = position.offset(for: width)
-        return DrawerMetrics(
-            width: width,
-            offset: offset,
-            progress: width > 0 ? min(1, max(0, offset / width)) : 0,
-            isOpen: position.isOpen
-        )
-    }
-
-    private func drawerStack(in geometry: GeometryProxy, position: DrawerPosition) -> some View {
-        let metrics = drawerMetrics(in: geometry, position: position)
         return ZStack(alignment: .leading) {
             DSBotStyle.canvas.ignoresSafeArea()
-            sidebarLayer(metrics)
-                .accessibilityHidden(isSidebarOpen && isSearchActive)
+            sidebarLayer(width: width)
+                .accessibilityHidden(!isSidebarOpen || isSearchActive)
                 .zIndex(0)
-            cardLayer(in: geometry, metrics)
+            cardLayer(in: geometry, drawerWidth: width)
                 .accessibilityHidden(isSidebarOpen && isSearchActive)
                 .zIndex(1)
-            backdropLayer(in: geometry, metrics)
+            if isSidebarOpen {
+                DrawerBackdrop(
+                    motion: drawerMotion, isOpen: isSidebarOpen, width: width,
+                    pageWidth: geometry.size.width, pageHeight: geometry.size.height,
+                    safeBottom: geometry.safeAreaInsets.bottom,
+                    animation: drawerAnimation, onClose: closeSidebar
+                )
                 .accessibilityHidden(isSidebarOpen && isSearchActive)
                 .zIndex(2)
-            edgeStripLayer(metrics).zIndex(3)
+            }
+            edgeStripLayer(drawerWidth: width, pageWidth: geometry.size.width).zIndex(3)
             if isSearchActive {
                 ConversationSearchView(
                     store: store, search: conversationSearch,
@@ -345,7 +392,6 @@ struct DSBotRootView: View {
                 .zIndex(4)
             }
         }
-        .animation(drawerAnimation, value: isSidebarOpen)
         .animation(drawerAnimation, value: isSearchActive)
         // At launch and after a rotation (the width changes), ask the window once it has settled.
         .task(id: geometry.size.width) { await readHomeInset() }
@@ -360,49 +406,62 @@ struct DSBotRootView: View {
         }
     }
 
-    @ViewBuilder
-    private func sidebarLayer(_ metrics: DrawerMetrics) -> some View {
-        if isSidebarOpen || edgeDragOffset > 0 {
-            SidebarView(
-                store: store,
-                onChooseItem: { open($0, in: .sidebar) },
-                onChooseConversation: showConversation,
-                onOpenComputers: {
-                    dismissKeyboard()
-                    presentedSheet = .computers
-                    DSBotLog.record("computers.open")
-                },
-                onOpenSettings: {
-                    dismissKeyboard()
-                    presentedSheet = .settings
-                    DSBotLog.record("settings.open")
-                },
-                onSearch: {
-                    isSearchActive = true
-                    DSBotLog.record("sidebar.search.open")
-                },
-                onClose: closeSidebar,
-                selectedItemID: destination.area == .sidebar ? destination.id : nil,
-                itemCounts: collector.waiting > 0 ? ["dudu.collector": collector.waiting] : [:]
-            )
-            .frame(width: metrics.width)
-            .frame(maxHeight: .infinity)
-            .transition(.opacity)
-        }
+    private func sidebarLayer(width: CGFloat) -> some View {
+        SidebarView(
+            store: store,
+            onChooseItem: { open($0, in: .sidebar) },
+            onChooseConversation: showConversation,
+            onOpenComputers: {
+                dismissKeyboard()
+                presentedSheet = .computers
+                DSBotLog.record("computers.open")
+            },
+            onOpenSettings: {
+                dismissKeyboard()
+                presentedSheet = .settings
+                DSBotLog.record("settings.open")
+            },
+            onSearch: {
+                isSearchActive = true
+                DSBotLog.record("sidebar.search.open")
+            },
+            onClose: closeSidebar,
+            selectedItemID: destination.area == .sidebar ? destination.id : nil,
+            itemCounts: sidebarCounts,
+            isActive: sidebarIsActive
+        )
+        .id(store.activeComputer?.id)
+        .environment(\.conversationIsCovered, !sidebarIsActive)
+        .frame(width: width)
+        .frame(maxHeight: .infinity)
+        .allowsHitTesting(isSidebarOpen)
+        .accessibilityHidden(!isSidebarOpen)
     }
 
     /// The conversation card: it slides aside, rounds its corners, dims and casts a soft shadow on
     /// the sidebar as the drawer opens. The toolbar rides along and fades with it.
-    private func cardLayer(in geometry: GeometryProxy, _ metrics: DrawerMetrics) -> some View {
+    private func cardLayer(in geometry: GeometryProxy, drawerWidth: CGFloat) -> some View {
         let safeTop = geometry.safeAreaInsets.top
         let safeBottom = geometry.safeAreaInsets.bottom
-        let radius = DSBotLayout.drawerCornerRadius * metrics.progress
         return ZStack(alignment: .top) {
-            cardContent(in: geometry, metrics)
-            toolbar
-                .frame(width: geometry.size.width, height: DSBotLayout.toolbarHeight)
-                .opacity(Double(1 - 0.4 * metrics.progress))
-                .zIndex(2)
+            boardLayer(in: geometry, drawerWidth: drawerWidth)
+            cardContent(in: geometry, drawerWidth: drawerWidth)
+                .modifier(DSBotScrollEdgeBar(edge: .top) {
+                    toolbar
+                        .frame(width: geometry.size.width, height: DSBotLayout.toolbarHeight)
+                        .background {
+                            if DSBotScrollEdges.usesSystemEffect, boardConversationTitle != nil {
+                                DSBotToolbarTitleBackdrop(safeAreaTop: safeTop)
+                            }
+                        }
+                        .modifier(DrawerToolbarEffect(motion: drawerMotion, isOpen: isSidebarOpen, width: drawerWidth))
+                })
+                .modifier(BoardConversationMotion(
+                    motion: boardMotion, position: boardPagePosition,
+                    width: geometry.size.width, reduceMotion: reduceMotion
+                ))
+                .allowsHitTesting(destination.target != .board && !isBoardTransitioning)
+                .accessibilityHidden(destination.target == .board || isBoardTransitioning)
             // The result of an action on the board or the Collector, under the toolbar; the conversation has its own.
             DSBotToastOverlay(message: destination.showsChat ? nil : pageToast) { dismissed in
                 if pageToast?.id == dismissed.id { pageToast = nil }
@@ -413,19 +472,47 @@ struct DSBotRootView: View {
             .zIndex(3)
         }
         .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
-        .mask {
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .padding(.top, -safeTop)
-                .padding(.bottom, -safeBottom)
+        .modifier(DrawerCardMotion(
+            motion: drawerMotion, isOpen: isSidebarOpen, width: drawerWidth,
+            safeTop: safeTop, safeBottom: safeBottom, background: cardBackground
+        ))
+    }
+
+    /// Keep the board's ScrollView alive behind the conversation, including its toolbar.
+    private func boardLayer(in geometry: GeometryProxy, drawerWidth: CGFloat) -> some View {
+        let isBoard = destination.target == .board
+        let isActive = isBoard && !isSidebarOpen && !drawerMotion.isMoving && boardConversationPreparation == nil
+        let safeTop = geometry.safeAreaInsets.top
+        return BoardView(
+            board: board, store: store,
+            topInset: DSBotScrollEdges.usesSystemEffect ? 0 : DSBotLayout.toolbarHeight,
+            isActive: isActive
+        ) { issue in
+            Task { await openIssue(issue) }
         }
-        .background {
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .fill(cardBackground)
-                .padding(.top, -safeTop)
-                .padding(.bottom, -safeBottom)
-                .shadow(color: .black.opacity(Double(0.22 * metrics.progress)), radius: 40 * metrics.progress, x: -3)
+        .id(store.activeComputer?.id)
+        .environment(\.conversationIsCovered, !isActive)
+        .modifier(DrawerPageEffect(motion: drawerMotion, isOpen: isSidebarOpen, width: drawerWidth))
+        .overlay(alignment: .top) {
+            if !DSBotScrollEdges.usesSystemEffect {
+                DSBotEdgeBlur(edge: .top, height: safeTop + DSBotLayout.toolbarHeight, strength: 0.8)
+                    .offset(y: -safeTop)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
-        .offset(x: metrics.offset)
+        .modifier(DSBotScrollEdgeBar(edge: .top) {
+            boardToolbar
+                .frame(width: geometry.size.width, height: DSBotLayout.toolbarHeight)
+                .modifier(DrawerToolbarEffect(motion: drawerMotion, isOpen: isSidebarOpen, width: drawerWidth))
+        })
+        .modifier(BoardBackgroundMotion(
+            motion: boardMotion, position: boardPagePosition,
+            width: geometry.size.width, reduceMotion: reduceMotion
+        ))
+        .opacity(isBoard || conversationFromBoard ? 1 : 0)
+        .allowsHitTesting(isBoard && !isSidebarOpen && !isBoardTransitioning)
+        .accessibilityHidden(!isBoard || isSidebarOpen || isBoardTransitioning)
     }
 
     /// Every page below the conversation (DSH's web pages, files, automations) is white; the card around
@@ -435,80 +522,86 @@ struct DSBotRootView: View {
         destination.onCanvas ? DSBotStyle.canvas : .white
     }
 
-    private func cardContent(in geometry: GeometryProxy, _ metrics: DrawerMetrics) -> some View {
+    private func cardContent(in geometry: GeometryProxy, drawerWidth: CGFloat) -> some View {
         let safeTop = geometry.safeAreaInsets.top
+        let conversationIsMoving = boardMotion.isMoving
         return ZStack(alignment: .top) {
             // The conversation stays mounted under every page, from the status bar to the bottom of the
             // screen. Coming back shows it as it was left (scroll position, draft) instead of building a
             // long history again, which could land scrolled past its end: a white screen.
             ChatView(
                 store: store,
-                isOverlayOpen: isSidebarOpen || presentedSheet != nil || !destination.showsChat,
-                historyTopInset: safeTop + DSBotLayout.toolbarHeight
+                isOverlayOpen: isSidebarOpen || drawerMotion.isMoving || presentedSheet != nil || !destination.showsChat || conversationIsMoving,
+                historyTopInset: DSBotScrollEdges.usesSystemEffect ? 0 : safeTop + DSBotLayout.toolbarHeight,
+                isPageTransitioning: conversationIsMoving || drawerMotion.isMoving,
+                presentationRequest: boardConversationPreparation?.id,
+                onPresentationLayout: presentPreparedBoardConversation
             )
             .id(chatIdentity)
-            .ignoresSafeArea(.container)
-            .opacity(destination.showsChat ? 1 : 0)
+            // Keep the toolbar's native safe area: ignoring the top also discards its scroll edge.
+            .ignoresSafeArea(.container, edges: DSBotScrollEdges.usesSystemEffect ? .bottom : .all)
             .allowsHitTesting(destination.showsChat)
             .accessibilityHidden(!destination.showsChat)
-            .environment(\.conversationIsCovered, !destination.showsChat)
+            .environment(\.conversationIsCovered, isSidebarOpen || drawerMotion.isMoving || !destination.showsChat || conversationIsMoving)
+            // A row of a todo card in 嘟嘟's chat opens its issue, as a row of the board does.
+            .environment(\.openQuickCardIssue, { issue in Task { await openIssue(issue) } })
+            // The picture of an issue in the thread, and 打开会话 under a row of the todo card, open that issue's own conversation, one to one; 信息 and 定时任务 open their pages.
+            .environment(\.openIssueConversation, { id in Task { await openIssueConversation(id: id) } })
+            .environment(\.openQuickPage, { kind in openQuickPage(kind) })
 
-            if !destination.showsChat {
+            if !destination.showsChat, destination.target != .board {
                 pageContent(safeAreaTop: safeTop)
-                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(destination.onCanvas ? DSBotStyle.canvas : Color.white)
             }
         }
-        .overlay {
-            Rectangle()
-                .fill(Color(white: 0.96))
-                .opacity(Double(0.4 * metrics.progress))
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
-        .blur(radius: 1.1 * metrics.progress)
-        .allowsHitTesting(!metrics.isOpen)
-        .accessibilityHidden(metrics.isOpen)
+        .modifier(DrawerPageEffect(motion: drawerMotion, isOpen: isSidebarOpen, width: drawerWidth))
+        .allowsHitTesting(!isSidebarOpen)
+        .accessibilityHidden(isSidebarOpen)
         .overlay(alignment: .top) {
             statusBarFrost(safeAreaTop: safeTop)
         }
     }
 
-    /// Backdrop over the visible edge of the pushed card. It stops short of the toolbar row so the
-    /// menu button keeps working, and never overlaps the sidebar.
-    @ViewBuilder
-    private func backdropLayer(in geometry: GeometryProxy, _ metrics: DrawerMetrics) -> some View {
-        if metrics.isOpen {
-            Button {
-                closeSidebar()
-            } label: {
-                Color.black.opacity(0.01)
-            }
-            .buttonStyle(.plain)
-            .contentShape(Rectangle())
-            .accessibilityLabel("关闭侧边栏")
-            .accessibilityIdentifier("sidebar.backdrop")
-            .gesture(drawerDismissGesture(width: metrics.width))
-            .frame(
-                width: max(0, geometry.size.width - metrics.offset),
-                height: max(0, geometry.size.height + geometry.safeAreaInsets.bottom - DSBotLayout.toolbarHeight)
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-            .offset(y: geometry.safeAreaInsets.bottom)
-        }
-    }
-
     /// Swiping in from the left screen edge pulls the card aside like the menu button does.
     @ViewBuilder
-    private func edgeStripLayer(_ metrics: DrawerMetrics) -> some View {
-        if !metrics.isOpen && presentedSheet == nil {
+    private func edgeStripLayer(drawerWidth: CGFloat, pageWidth: CGFloat) -> some View {
+        if !isSidebarOpen && presentedSheet == nil && !isBoardTransitioning {
             // The edge pulls the drawer out on the board and on a conversation of the sidebar's; on every page, and on a conversation opened from the board, it is the way back.
             if destination.target == .board || (destination.showsChat && !conversationFromBoard) {
                 Color.clear
                     .frame(width: DSBotLayout.edgeSwipeWidth)
                     .frame(maxHeight: .infinity)
                     .contentShape(Rectangle())
-                    .gesture(edgeOpenGesture(width: metrics.width))
+                    .modifier(DrawerDragGesture(
+                        motion: drawerMotion, opening: true, width: drawerWidth,
+                        animation: drawerAnimation,
+                        onBegin: {
+                            dismissKeyboard()
+                            DSBotLog.record("sidebar.edge.begin")
+                        },
+                        onComplete: openSidebar
+                    ))
+                    .accessibilityHidden(true)
+            } else if destination.showsChat && conversationFromBoard && !returnsToAssistant {
+                Color.clear
+                    .frame(width: DSBotLayout.edgeSwipeWidth)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .modifier(BoardBackGesture(
+                        motion: boardMotion, width: pageWidth,
+                        onBegin: {
+                            dismissKeyboard()
+                            showsConversationTitle = false
+                            boardTransitionMetrics.start(direction: "drag")
+                            DSBotLog.record("board.back.drag")
+                        },
+                        onComplete: {
+                            DSBotLog.record("page.back.edge")
+                            returnToBoard()
+                        },
+                        onCancel: cancelBoardBackGesture
+                    ))
                     .accessibilityHidden(true)
             } else {
                 Color.clear
@@ -519,6 +612,14 @@ struct DSBotRootView: View {
                     .accessibilityHidden(true)
             }
         }
+    }
+
+    private func cancelBoardBackGesture() {
+        guard boardMotion.isInteracting else { return }
+        boardTransitionMetrics.start(direction: "cancel")
+        boardMotion.animate(showingConversation: true, animation: boardTransitionAnimation, completion: {
+            boardTransitionMetrics.finish()
+        })
     }
 
     private func edgeBackGesture() -> some Gesture {
@@ -548,7 +649,7 @@ struct DSBotRootView: View {
                 }
                 toolbarTrailing
             }
-            if destination.target == .board {
+            if toolbarDestination.target == .board {
                 BoardScopeMenu(board: board)
             } else if boardConversationTitle == nil, let title = toolbarTitle {
                 Text(title)
@@ -559,6 +660,19 @@ struct DSBotRootView: View {
                     .allowsHitTesting(false)
                     .accessibilityAddTraits(.isHeader)
             }
+        }
+        .padding(.horizontal, DSBotLayout.toolbarHorizontalPadding)
+        .frame(height: DSBotLayout.toolbarHeight, alignment: .top)
+    }
+
+    private var boardToolbar: some View {
+        ZStack {
+            HStack(spacing: 8) {
+                sidebarButton
+                Spacer(minLength: 0)
+                boardTrailing
+            }
+            BoardScopeMenu(board: board)
         }
         .padding(.horizontal, DSBotLayout.toolbarHorizontalPadding)
         .frame(height: DSBotLayout.toolbarHeight, alignment: .top)
@@ -596,13 +710,22 @@ struct DSBotRootView: View {
     }
 
     private var boardConversationTitle: String? {
-        guard destination.showsChat, conversationFromBoard else { return nil }
+        guard toolbarDestination.showsChat, conversationChromeIsFromBoard else { return nil }
         return board.openedIssue(for: store.selectedSession)?.title ?? store.selectedSession?.title
     }
 
+    private var toolbarDestination: MainDestination {
+        boardConversationPreparation == nil ? destination : .conversation
+    }
+
+    private var conversationChromeIsFromBoard: Bool {
+        conversationFromBoard || boardConversationPreparation != nil
+    }
+
     private var toolbarTitle: String? {
-        switch destination.target {
-        case .collector: return collector.isSelecting ? "已选 \(collector.selection.count) 条" : destination.title
+        switch toolbarDestination.target {
+        case .collector: return collector.isSelecting ? "已选 \(collector.selection.count) 条" : toolbarDestination.title
+        case .tasks: return toolbarDestination.title
         case .duduSettings: return settingsNav.title
         default: return nil
         }
@@ -610,10 +733,10 @@ struct DSBotRootView: View {
 
     @ViewBuilder
     private var toolbarLeading: some View {
-        switch destination.target {
+        switch toolbarDestination.target {
         case .board:
             sidebarButton
-        case .chat where !conversationFromBoard:
+        case .chat where !conversationChromeIsFromBoard:
             sidebarButton
         case .collector where collector.isSelecting:
             Button {
@@ -634,13 +757,13 @@ struct DSBotRootView: View {
 
     @ViewBuilder
     private var toolbarTrailing: some View {
-        switch destination.target {
+        switch toolbarDestination.target {
         case .board:
-            newIssueButton
+            boardTrailing
         case .chat:
             // An issue's conversation has the arrows to the issue before and after where the views menu would be (owner, 2026-11-07:
             // "只有在看板进入会话界面右上角三个点才删掉，现在是上一个下一个。其他页面的三个点不用删"); any other conversation keeps the menu.
-            if conversationFromBoard && hasIssuePager {
+            if conversationChromeIsFromBoard && hasIssuePager {
                 issuePager
             } else {
                 conversationMenu
@@ -674,12 +797,37 @@ struct DSBotRootView: View {
                 .accessibilityLabel("选择")
                 .accessibilityIdentifier("collector.select")
             }
+        case .tasks:
+            newTaskButton
         case .duduSettings:
             NativeSettingsSaveButton(navigator: settingsNav, store: store) { pageToast = $0 }
                 .buttonStyle(DSBotGlassCapsuleButtonStyle())
         default:
             if isPluginPage { addPluginButton }
         }
+    }
+
+    /// The board's two buttons (owner, 2026-11-11: the quota beside the new issue, 44pt glass circles 8pt apart).
+    private var boardTrailing: some View {
+        HStack(spacing: 8) {
+            quotaButton
+            newIssueButton
+        }
+    }
+
+    private var quotaButton: some View {
+        Button {
+            dismissKeyboard()
+            showsQuota = true
+        } label: {
+            DSBotIcon(.quota, size: 22)
+                .foregroundStyle(DSBotStyle.ink)
+                .frame(width: DSBotLayout.toolbarButtonSize, height: DSBotLayout.toolbarButtonSize)
+                .contentShape(Circle())
+        }
+        .buttonStyle(DSBotGlassButtonStyle())
+        .accessibilityLabel("额度")
+        .accessibilityIdentifier("board.quota")
     }
 
     private var newIssueButton: some View {
@@ -695,6 +843,30 @@ struct DSBotRootView: View {
         .buttonStyle(DSBotGlassButtonStyle())
         .accessibilityLabel("新建事项")
         .accessibilityIdentifier("board.new")
+    }
+
+    /// The tasks page's "+": the editor of a new task, which the page presents.
+    private var newTaskButton: some View {
+        Button {
+            dismissKeyboard()
+            tasks.isMaking = true
+        } label: {
+            DSBotIcon(.plus, size: 22)
+                .foregroundStyle(DSBotStyle.ink)
+                .frame(width: DSBotLayout.toolbarButtonSize, height: DSBotLayout.toolbarButtonSize)
+                .contentShape(Circle())
+        }
+        .buttonStyle(DSBotGlassButtonStyle())
+        .accessibilityLabel("新建任务")
+        .accessibilityIdentifier("tasks.new")
+    }
+
+    /// The numbers behind the sidebar's rows: what waits in the Collector, and the tasks that are on.
+    private var sidebarCounts: [String: Int] {
+        var counts: [String: Int] = [:]
+        if collector.waiting > 0 { counts["dudu.collector"] = collector.waiting }
+        if tasks.enabled > 0 { counts["dudu.tasks"] = tasks.enabled }
+        return counts
     }
 
     /// The open conversation is an issue's, one of the board's rows.
@@ -734,9 +906,7 @@ struct DSBotRootView: View {
             if isSidebarOpen {
                 closeSidebar()
             } else {
-                dismissKeyboard()
-                isSidebarOpen = true
-                DSBotLog.record("sidebar.open")
+                openSidebar()
             }
         } label: {
             DSBotIcon(.menu)
@@ -837,50 +1007,54 @@ struct DSBotRootView: View {
         )
     }
 
+    @ViewBuilder
     private func statusBarFrost(safeAreaTop: CGFloat) -> some View {
         let toolbarBottom = safeAreaTop + DSBotLayout.toolbarHeight
-        let hasTitle = destination.showsChat && conversationFromBoard
-        // The 16pt title's line box ends about 10pt below the toolbar's centre.
-        let titleBottom = safeAreaTop + DSBotLayout.toolbarHeight / 2 + 10
-        // Keep the title backed by full blur, then fade to clear at the buttons' bottom edge.
-        return DSBotEdgeBlur(
-            edge: .top,
-            height: toolbarBottom,
-            strength: hasTitle ? 1 : 0.8,
-            fullStrengthHeight: hasTitle ? titleBottom : 0
-        )
-        .offset(y: -safeAreaTop)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
+        let hasTitle = toolbarDestination.showsChat && conversationChromeIsFromBoard
+        if !DSBotScrollEdges.usesSystemEffect {
+            DSBotEdgeBlur(
+                edge: .top,
+                height: hasTitle ? toolbarBottom + 20 : toolbarBottom,
+                strength: hasTitle ? 1.4 : 0.8,
+                fullStrengthHeight: hasTitle ? toolbarBottom - 4 : 0
+            )
+            .offset(y: -safeAreaTop)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
     }
 
     /// What covers the conversation while a page of DSH or of the app's own is open.
     @ViewBuilder
     private func pageContent(safeAreaTop: CGFloat) -> some View {
+        let toolbarInset: CGFloat = DSBotScrollEdges.usesSystemEffect ? 0 : DSBotLayout.toolbarHeight
         switch destination.target {
         case .chat, .assistant, .unsupported, .dshSettings:
             EmptyView()
         case .board:
-            // The page starts below the status bar, where the toolbar does: the toolbar is the only thing above it.
-            BoardView(board: board, store: store, topInset: DSBotLayout.toolbarHeight) { issue in
-                Task { await openIssue(issue) }
-            }
+            EmptyView()
         case .collector:
-            CollectorView(model: collector, board: board, store: store, topInset: DSBotLayout.toolbarHeight) { id in
+            CollectorView(model: collector, board: board, store: store, topInset: toolbarInset) { id in
                 Task { await openIssue(id: id) }
             }
         case .files:
             WorkPanelView(store: store)
-                .padding(.top, safeAreaTop)
+                .padding(.top, DSBotScrollEdges.usesSystemEffect ? 0 : safeAreaTop)
+        case .tasks:
+            TasksView(model: tasks, store: store, topInset: toolbarInset) { sessionID in
+                guard let session = store.sessions.first(where: { $0.id == sessionID }) else { return }
+                showConversation()
+                Task { await store.selectSession(session) }
+            }
         case .schedule:
             LibraryView(section: "schedule", store: store) { sessionID in
                 guard let session = store.sessions.first(where: { $0.id == sessionID }) else { return }
                 showConversation()
                 Task { await store.selectSession(session) }
             }
-            .padding(.top, safeAreaTop)
+            .padding(.top, DSBotScrollEdges.usesSystemEffect ? 0 : safeAreaTop)
         case .duduSettings:
-            NativeSettingsView(navigator: settingsNav, store: store, topInset: DSBotLayout.toolbarHeight) { pageToast = $0 }
+            NativeSettingsView(navigator: settingsNav, store: store, topInset: toolbarInset) { pageToast = $0 }
         case let .web(page, target):
             let sessionID = page.needsSession ? store.selectedSession?.id : nil
             EmbeddedPageView(
@@ -889,7 +1063,7 @@ struct DSBotRootView: View {
                 commandDelivered: { pageCommand = nil }
             )
                 // Pages of plugins this app has no layout for start below the toolbar buttons.
-                .padding(.top, [.panel, .view].contains(page) ? DSBotLayout.toolbarHeight : 0)
+                .padding(.top, [.panel, .view].contains(page) ? toolbarInset : 0)
                 // One view identity per page and conversation, so each owns its own session and web view.
                 .id("\(page.rawValue)/\(target ?? "")/\(sessionID ?? "")")
         }
@@ -938,12 +1112,14 @@ struct DSBotRootView: View {
 
     private func showConversation() {
         conversationFromBoard = false
+        returnsToAssistant = false
         destination = .conversation
         closeSidebar()
     }
 
     /// One level up: a page goes back to the conversation, as it always did; a conversation opened from the board goes back to the board.
     private func goBack() {
+        guard !isBoardTransitioning else { return }
         collector.stopSelecting()
         // A page of 嘟嘟's settings opened from another one (a status, a collector) goes back to that one first.
         if destination.target.settingsSection != nil, settingsNav.canPop {
@@ -951,35 +1127,150 @@ struct DSBotRootView: View {
             return
         }
         if destination.showsChat {
-            conversationFromBoard = false
-            destination = .board
+            if returnsToAssistant { returnToAssistant() } else { returnToBoard() }
+            return
         } else {
             destination = .conversation
         }
         closeSidebar()
     }
 
+    private var boardTransitionAnimation: Animation {
+        reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 1)
+    }
+
+    private func resetBoardTransition(showingBoard: Bool) {
+        boardConversationPreparation = nil
+        boardTransitionMetrics.cancel()
+        boardMotion.reset(showingConversation: !showingBoard)
+    }
+
+    private func presentBoardConversation() {
+        closeSidebar()
+        boardTransitionMetrics.start(direction: "enter")
+        boardMotion.animate(showingConversation: true, animation: boardTransitionAnimation, updates: {
+            boardConversationPreparation = nil
+            conversationFromBoard = true
+            returnsToAssistant = false
+            destination = .conversation
+        }, completion: {
+            boardTransitionMetrics.finish()
+        })
+    }
+
+    private func presentPreparedBoardConversation(_ request: UUID, target: DraftTarget?) -> Bool {
+        guard let preparation = boardConversationPreparation, preparation.id == request else { return false }
+        guard target == preparation.target, store.selectedSession?.id == target?.sessionID,
+              store.activeComputer?.id == target?.computerID, destination.target == .board,
+              preparation.navigationRevision == sidebarNavigationRevision,
+              !isSidebarOpen, presentedSheet == nil, !isBoardTransitioning else {
+            boardConversationPreparation = nil
+            return false
+        }
+        presentBoardConversation()
+        return true
+    }
+
+    private func returnToBoard() {
+        guard !isBoardTransitioning, destination.showsChat, conversationFromBoard else { return }
+        closeSidebar()
+        showsConversationTitle = false
+        let computer = store.activeComputer?.id
+        boardTransitionMetrics.start(direction: "return")
+        boardMotion.animate(showingConversation: false, animation: boardTransitionAnimation, completion: {
+            guard computer == store.activeComputer?.id,
+                  destination.showsChat, conversationFromBoard else { return }
+            boardTransitionMetrics.finish()
+            conversationFromBoard = false
+            destination = .board
+        })
+    }
+
+    /// The way back from an issue's conversation that was opened from 嘟嘟's chat: that chat again, with no board in between. The chat comes back as it was left (its draft is kept by the store).
+    private func returnToAssistant() {
+        guard !isBoardTransitioning, destination.showsChat, conversationFromBoard, returnsToAssistant else { return }
+        closeSidebar()
+        dismissKeyboard()
+        showsConversationTitle = false
+        conversationFromBoard = false
+        returnsToAssistant = false
+        Task {
+            if let session = await store.assistantSession() { await store.selectSession(session) }
+        }
+    }
+
     /// The conversation of an issue, over the board. A session the phone already lists opens at once; one that DSH folded away is put back first.
     /// An issue nobody has yet has no conversation: what it says is shown instead.
     private func openIssue(_ issue: BoardIssue) async {
+        guard !isBoardTransitioning else { return }
         dismissKeyboard()
-        if let id = issue.sessionId, let session = store.sessions.first(where: { $0.id == id }) {
-            showConversation()
-            conversationFromBoard = true
-            await store.selectSession(session)
-            return
-        }
+        let origin = destination
+        // Opened from 嘟嘟's chat, or paged on from an issue that was: the way back is that chat.
+        let fromAssistant = conversationFromBoard ? returnsToAssistant : (destination.showsChat && store.isAssistantConversation)
+        let navigationRevision = sidebarNavigationRevision
+        let computer = store.activeComputer?.id
         if issue.sessionId == nil {
             issueDetail = issue
             return
         }
-        guard let session = await board.session(of: issue, using: store) else {
+        let session: SessionSummary?
+        if let id = issue.sessionId, let known = store.sessions.first(where: { $0.id == id }) {
+            session = known
+        } else {
+            session = await board.session(of: issue, using: store)
+        }
+        guard origin == destination, navigationRevision == sidebarNavigationRevision,
+              computer == store.activeComputer?.id, !isBoardTransitioning else { return }
+        guard let session else {
             issueDetail = issue
             return
         }
-        showConversation()
-        conversationFromBoard = true
-        await store.selectSession(session)
+        await selectIssueSession(session, returningToAssistant: fromAssistant)
+    }
+
+    /// The conversation of an issue known by its number, opened from 嘟嘟's chat: the way back is that chat (the same chrome as one opened from a card).
+    private func openIssueConversation(id: Int) async {
+        guard !isBoardTransitioning else { return }
+        dismissKeyboard()
+        let fromAssistant = conversationFromBoard ? returnsToAssistant : (destination.showsChat && store.isAssistantConversation)
+        let origin = destination
+        let navigationRevision = sidebarNavigationRevision
+        let computer = store.activeComputer?.id
+        guard let session = await board.session(ofIssue: id, using: store) else { return }
+        guard origin == destination, navigationRevision == sidebarNavigationRevision,
+              computer == store.activeComputer?.id, !isBoardTransitioning else { return }
+        await selectIssueSession(session, returningToAssistant: fromAssistant)
+    }
+
+    private func selectIssueSession(_ session: SessionSummary, returningToAssistant: Bool) async {
+        if destination.target == .board {
+            let navigationRevision = sidebarNavigationRevision
+            let computer = store.activeComputer?.id
+            await store.selectSession(session) {
+                guard destination.target == .board, navigationRevision == sidebarNavigationRevision,
+                      let computer, computer == store.activeComputer?.id, !isBoardTransitioning else { return }
+                // Prepare the history and its actual bars while the board still covers the page.
+                boardConversationPreparation = BoardConversationPreparation(
+                    target: DraftTarget(computerID: computer, sessionID: session.id),
+                    navigationRevision: navigationRevision
+                )
+            }
+        } else {
+            showConversation()
+            conversationFromBoard = true
+            returnsToAssistant = returningToAssistant
+            await store.selectSession(session)
+        }
+    }
+
+    /// 信息 and 任务 above the input of 嘟嘟's chat: their pages, with the back button every page has (it leads to the conversation).
+    private func openQuickPage(_ kind: QuickCardKind) {
+        dismissKeyboard()
+        switch kind {
+        case .info: destination = MainDestination(id: "dudu.collector", area: .sidebar, target: .collector, title: "信息")
+        case .task: destination = MainDestination(id: "dudu.tasks", area: .sidebar, target: .tasks, title: "任务")
+        case .todo: break
+        }
     }
 
     /// The same for an issue known by its number (a record that went to it).
@@ -1021,52 +1312,19 @@ struct DSBotRootView: View {
     private func closeSidebar() {
         sidebarNavigationRevision &+= 1
         dismissKeyboard()
+        guard isSidebarOpen || drawerMotion.isInteracting else { return }
         if isSidebarOpen { DSBotLog.record("sidebar.close") }
-        isSidebarOpen = false
+        drawerMotion.settle(animation: drawerAnimation) { isSidebarOpen = false }
+    }
+
+    private func openSidebar() {
+        dismissKeyboard()
+        DSBotLog.record("sidebar.open")
+        drawerMotion.settle(animation: drawerAnimation) { isSidebarOpen = true }
     }
 
     private var drawerAnimation: Animation {
         reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.38, dampingFraction: 0.88)
-    }
-
-    private func edgeOpenGesture(width: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 8)
-            .onChanged { value in
-                guard edgeDragOffset > 0 || abs(value.translation.width) > abs(value.translation.height) else { return }
-                if edgeDragOffset == 0 {
-                    dismissKeyboard()
-                    DSBotLog.record("sidebar.edge.begin")
-                }
-                edgeDragOffset = min(width, max(0.5, value.translation.width))
-            }
-            .onEnded { value in
-                guard edgeDragOffset > 0 else { return }
-                let shouldOpen = value.translation.width > width * 0.3
-                    || value.predictedEndTranslation.width > width * 0.6
-                withAnimation(drawerAnimation) {
-                    edgeDragOffset = 0
-                    if shouldOpen {
-                        isSidebarOpen = true
-                        DSBotLog.record("sidebar.open")
-                    }
-                }
-            }
-    }
-
-    private func drawerDismissGesture(width: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 12)
-            .updating($drawerDrag) { value, state, transaction in
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                transaction.animation = nil
-                state = value.translation.width
-            }
-            .onEnded { value in
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                let travel = value.predictedEndTranslation.width
-                if isSidebarOpen && travel < -width * 0.25 {
-                    closeSidebar()
-                }
-            }
     }
 
     private func dismissKeyboard() {
@@ -1092,7 +1350,7 @@ struct DSBotRootView: View {
 func libraryTitle(for section: String) -> String {
     switch section {
     case "plugins": return "插件"
-    case "schedule": return "定时任务"
+    case "schedule": return "任务"
     default: return section
     }
 }

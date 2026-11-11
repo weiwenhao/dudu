@@ -17,7 +17,7 @@ import { migrateLegacyState } from './dist/legacy-state.mjs';
 import { createProviders } from './dist/providers/index.mjs';
 import { createLinkStore, createNativeSessions } from './dist/providers/native/index.mjs';
 import { createOverview } from './dist/providers/native/overview.mjs';
-import { createAccountBalance } from './dist/providers/native/balance.mjs';
+import { createPluginQuota, handleQuota } from './dist/providers/quota/index.mjs';
 import { claudeProvider } from './dist/providers/drivers/claude.mjs';
 import { codexProvider } from './dist/providers/drivers/codex.mjs';
 import { permissionOf } from './dist/providers/permission.mjs';
@@ -29,16 +29,20 @@ import { createInboxApi, INBOX_ACTIONS } from './dist/assistant/inbox/api.mjs';
 import { AGENTS, createAgentSessions, modelFor } from './dist/assistant/home/agent-sessions.mjs';
 import { approvalText, createDshSessions, questionText } from './dist/assistant/home/dsh-sessions.mjs';
 import { createAssignment } from './dist/assistant/home/assign.mjs';
-import { firstMessage } from './dist/assistant/home/first-message.mjs';
 import { createDispatch } from './dist/assistant/dispatch/index.mjs';
 import { createDshLlm } from './dist/assistant/dispatch/dsh-llm.mjs';
 import { createHandOut } from './dist/assistant/dispatch/hand-out.mjs';
 import { createScheduler } from './dist/assistant/schedule/index.mjs';
+import { createTasks, TASK_ACTIONS } from './dist/assistant/tasks/index.mjs';
+import { createTaskHost } from './dist/assistant/tasks/host.mjs';
 import { sessionOptions } from './dist/assistant/dispatch/rules.mjs';
 import { createDashboard } from './dist/assistant/dashboard/index.mjs';
 import { createDashboardApi, DASHBOARD_ACTIONS } from './dist/assistant/dashboard/api.mjs';
 import { GridStackEngine } from './dist/assistant/dashboard/engine.mjs';
 import { openAssistant } from './dist/assistant/assistant.mjs';
+import { createCards } from './dist/assistant/home/cards.mjs';
+import { createGroup } from './dist/assistant/home/group.mjs';
+import { createLatest } from './dist/assistant/home/latest.mjs';
 import { createConversation } from './dist/assistant/home/conversation.mjs';
 import { reminders } from './dist/assistant/home/reminders.mjs';
 import { createIssueTidy } from './dist/assistant/issues/tidy.mjs';
@@ -163,12 +167,21 @@ async function startProviders(ctx, folder, assignment) {
   assignment.sources = providers.sources;
   assignment.release = (sessionId) => providers.release(sessionId); // deep sleep lets go of what the harnesses hold for a session whose turn has ended
   assignment.links = links;
-  const overview = createOverview({
-    sources: providers.sources, links, titleOf: native.titleOf,
-    balance: createAccountBalance({ account: () => { try { return ctx.deepseekAccount; } catch { return undefined; } } }), // reading a service this DSH lacks throws
+  const overview = createOverview({ sources: providers.sources, links, titleOf: native.titleOf });
+  // The subscription quota: read only when a person asks (the panel's icon, the chat's card), from the providers that are found and enabled and from DSH's DeepSeek accounts, kept in quota.db.
+  // Each of DSH's services is read when needed: reading one this DSH lacks throws.
+  const quota = createPluginQuota({
+    file: join(folder, 'quota.db'), providers, log: console,
+    dsh: {
+      account: () => { try { return ctx.deepseekAccount; } catch { return undefined; } },
+      providers: () => { try { return ctx.llm.listConfigurableProviders?.(); } catch { return undefined; } },
+      settings: () => { try { return ctx.get('settings'); } catch { return undefined; } },
+      credentials: () => optionalService(ctx, 'credentials'),
+    },
   });
+  assignment.quota = quota;
   const disposers = [
-    ...['state', 'refresh', 'save'].map((action) => registerRoute(ctx, {
+    ...['state', 'refresh', 'save', 'foreground'].map((action) => registerRoute(ctx, {
       path: `/api/dudu/providers/${action}`, methods: ['POST'], requestBody: 'buffered',
       fetch: (request) => providers.handle(action, request),
     })),
@@ -189,10 +202,8 @@ async function startProviders(ctx, folder, assignment) {
       path: `/api/dudu/projects/${action}`, methods: ['POST'], requestBody: 'buffered',
       fetch: (request) => projects.handle(action, request),
     })),
-    ...['usage', 'running'].map((action) => registerRoute(ctx, {
-      path: `/api/dudu/overview/${action}`, methods: ['POST'], requestBody: 'buffered',
-      fetch: (request) => overview.handle(action, request),
-    })),
+    registerRoute(ctx, { path: '/api/dudu/overview/running', methods: ['POST'], requestBody: 'buffered', fetch: (request) => overview.handle('running', request) }),
+    registerRoute(ctx, { path: '/api/dudu/quota/get', methods: ['POST'], requestBody: 'buffered', fetch: (request) => handleQuota(quota, request) }),
   ];
   return {
     // Start native teardown as soon as plugin disposal begins; other services
@@ -206,6 +217,8 @@ async function startProviders(ctx, folder, assignment) {
       delete assignment.sources;
       delete assignment.release;
       delete assignment.links;
+      delete assignment.quota;
+      quota.close();
       for (const dispose of disposers) dispose();
       await Promise.all([providers.close(), native.close(), searchDsh.close()]);
       await links.flush();
@@ -222,12 +235,21 @@ async function startIssues(ctx, folder, assignment = {}) {
     sessionBases: (key) => assignment.sessionBases?.(key), sessionHandledAt: (key) => assignment.sessionHandledAt?.(key) ?? null, deepSleepMs: deepSleepAfter,
     deepSleepOn: () => assignment.assistant?.settings?.value('deepSleep') !== false }); // the settings open later (startAssistant): until then, and for a file without the key, it is on
   const attachmentApi = createIssueAttachmentApi({ issues, attachments: () => ctx.attachments });
-  const forward = async (issue, text, _entry, attachments = []) => {
+  const forward = async (issue, text, _entry, attachments = [], { chat = false } = {}) => {
     const current = issues.get(issue.id, { logLimit: 1 }).issue;
     if (!current?.project?.path || current.agent !== issue.agent || current.session !== issue.session) return { outcome: 'needs_clarification' };
     const target = await assignment.loadIssueSession?.(current) ?? current;
     const content = typeof attachments === 'function' ? await attachments(target.session?.replace(/^dsh:/, '')) : attachments;
-    return assignment.forward?.(target, text, content) ?? { outcome: 'error' };
+    // A line written in 嘟嘟's chat comes into that thread as a line of the group, and its answer when it comes (home/group.mjs): what the session does next is watched before the line goes.
+    const waiting = chat ? assignment.group?.expect(target.session) ?? null : null;
+    let sent;
+    try { sent = await (assignment.forward?.(target, text, content) ?? { outcome: 'error' }); }
+    catch (error) { if (waiting) assignment.group.cancel(waiting); throw error; }
+    if (waiting) {
+      if (['success', 'no_op'].includes(sent?.outcome)) await assignment.group.sent(waiting, { issue: current, text, files: Array.isArray(content) ? content.length : 0 });
+      else assignment.group.cancel(waiting);
+    }
+    return sent;
   };
   const api = createIssuesApi({
     issues,
@@ -254,7 +276,11 @@ async function startIssues(ctx, folder, assignment = {}) {
   assignment.issuesApi = api;
   // What the connectors collected, for the Collector widget: the connectors' names are asked for when a list is read (the project folder can move).
   // Sharing a record to a session is the owner's message to the agent of that issue, through the same door as the one typed on the issue's page.
-  const inboxApi = createInboxApi({ issues, collectors: () => assignment.assistant?.collectors ?? null, forward: (id, text) => api.execute('forward', { id, text }) });
+  const inboxApi = createInboxApi({
+    issues, collectors: () => assignment.assistant?.collectors ?? null, forward: (id, text) => api.execute('forward', { id, text }),
+    // The Collector's button: the collector's session reads the conversation around a record (dispatch starts after the issues, so it is asked for when used).
+    fill: (id) => assignment.fillRecord?.(id) ?? { outcome: 'error', message: 'Collection is unavailable.' },
+  });
   assignment.inboxApi = inboxApi;
   const disposers = [
     registerRoute(ctx, {
@@ -316,8 +342,8 @@ async function startAssignment(ctx, folder, assignment) {
     },
     agentSessions,
     snapshotOf: (key) => assignment.snapshots?.snapshotOf(key),
-    // What ASSIGN.md allows for this kind of issue; read-only when it says nothing (3.3).
-    accessOf: (issue) => sessionOptions(assignment.assistant?.memory?.rules?.()?.rules?.['ASSIGN.md'], issue, { home: homedir(), defaultAccess: issue.agent === 'claude' ? null : 'read-only' }),
+    // What ASSIGN.md allows for this kind of issue; full access when it says nothing (3.3, owner 2026-11-09), and for Claude Code its own default.
+    accessOf: (issue) => sessionOptions(assignment.assistant?.memory?.rules?.()?.rules?.['ASSIGN.md'], issue, { home: homedir(), defaultAccess: issue.agent === 'claude' ? null : 'danger-full-access' }),
   });
   Object.assign(assignment, { sessions: agentSessions, sessionState: hooks.sessionState, sessionSince: hooks.sessionSince, sessionBases: hooks.sessionBases, sessionHandledAt: hooks.sessionHandledAt, onAssign: hooks.onAssign, onReply: hooks.onReply, forward: hooks.forward, onResume: hooks.onResume, start: hooks.start, setAccess: hooks.setAccess, closeFor: hooks.closeFor, restore: hooks.restore });
   assignment.rebindSession = async (previousId, sessionId) => {
@@ -521,6 +547,8 @@ async function startAssistant(ctx, dshHome, folder, assignment = {}) {
     mountMcp: await mcpMounter(ctx), // what is connected is mounted in DSH, to be in every session
     credentials: optionalService(ctx, 'credentials'), // where the tokens, keys and values of environment variables of the connectors are kept
     createOAuth, // the browser sign-in of the hosted MCP servers
+    // A collector that is removed takes with it what it brought and the owner never dealt with (owner, 2026-11-10); what they marked or made an issue of stays.
+    onCollectorRemoved: (id) => assignment.issues?.inbox.dropUntouched(id),
     state: () => ({ conversation: assignment.conversation?.state() ?? null, lastIssueTidy: assignment.issueTidy?.state() ?? null, counts: assignment.issues?.counts() ?? null }),
     beforeFolderChange: () => assignment.conversation?.busy ? { outcome: 'needs_clarification', message: 'Wait until the conversation and memory tidy finish.' } : null,
   });
@@ -568,7 +596,7 @@ async function startDispatch(ctx, folder, assignment) {
     file: join(folder, 'assistant', 'intake.json'),
   });
 
-  const handOut = createHandOut({ dispatch, issues: assignment.issues, assignment, firstMessage });
+  const handOut = createHandOut({ dispatch, assignment });
   assignment.handOut = handOut;
   const tidy = createIssueTidy({
     issues: assignment.issues, llm, rules: () => assignment.assistant?.memory?.rules(),
@@ -584,6 +612,7 @@ async function startDispatch(ctx, folder, assignment) {
     run: collectOne,
   });
   assignment.runCollector = (id) => scheduler.runNow(id);
+  assignment.fillRecord = (id) => dispatch.complete({ id });
   scheduler.start();
   const prune = () => { try { assignment.issues.inbox.prune(); } catch (error) { console.warn(`[dudu] The inbox could not be cleared: ${error.message}`); } };
   const pruning = setInterval(prune, PRUNE_EVERY_MS);
@@ -620,6 +649,7 @@ async function startDispatch(ctx, folder, assignment) {
     await closing;
     delete assignment.llm;
     delete assignment.runCollector;
+    delete assignment.fillRecord;
     delete assignment.collectSource;
     delete assignment.issueTidy;
     delete assignment.handOut;
@@ -639,15 +669,62 @@ async function startDashboard(ctx, folder, assignment) {
   return async () => { for (const dispose of disposers) dispose(); delete assignment.dashboard; };
 }
 
+async function startTasks(ctx, folder, assignment) {
+  if (!assignment.assistant) throw new Error('The assistant services are unavailable.');
+  const dsh = createDshSessions(ctx);
+  const host = createTaskHost({ dsh, registry: ctx.workspaceRegistry, controller: ctx.sessionController, agents: ctx.agents,
+    access: () => assignment.assistant.settings.value('conversation').permission,
+    // The model the session itself recorded (what its owner or a task selected), as the sessions list reads it; a resumed agent's options are only DSH's default.
+    modelOf: (agent) => {
+      let saved;
+      try { saved = ctx.sessionProjections?.stateOf(agent.session, 'modelSelection'); } catch { saved = undefined; }
+      return saved?.next ?? saved?.pending ?? saved?.lastUsed ?? agent?.options;
+    },
+    // The tasks 嘟嘟 does itself run in conversations of their own that the assistant's conversation makes (it starts after the tasks, so it is asked for when a task needs it).
+    dudu: () => assignment.conversation?.taskRuns ?? null });
+  let tasks;
+  try { tasks = createTasks({ file: join(folder, 'assistant', 'tasks.db'), ...host }); }
+  catch (error) { await dsh.close(); throw error; }
+  assignment.tasks = tasks;
+  const disposers = TASK_ACTIONS.map((action) => registerRoute(ctx, {
+    path: `/api/dudu/tasks/${action}`, methods: ['POST'], requestBody: 'buffered',
+    fetch: (request) => tasks.handle(action, request),
+  }));
+  tasks.start();
+  return async () => { for (const dispose of disposers) dispose(); await tasks.close(); await dsh.close(); delete assignment.tasks; };
+}
+
 async function startConversation(ctx, folder, assignment) {
   if (!assignment.assistant || !assignment.issues || !assignment.dashboard || !ctx.tools) throw new Error('The assistant services are unavailable.');
+  // What the quick buttons of the chat send (docs/assistant.md): the lists are read from the same services the pages use, when a card is made (they start after the conversation).
+  const dsh = createDshSessions(ctx);
+  // The latest message of each issue's session, fed by what DSH says of every live session (home/latest.mjs), and the lines of the group chat (home/group.mjs): the owner's @ messages to issues
+  // and their answers come into the thread as commands of the conversation.
+  const latest = createLatest({
+    file: join(folder, 'assistant', 'latest.json'),
+    relevant: (sessionId) => Boolean(assignment.issues?.findBySession(`dsh:${sessionId}`)),
+    read: (sessionId, signal) => dsh.latestMessages(sessionId, signal),
+  });
+  const stopLatest = ctx.on?.('session/event', (session, event) => latest.observe(session?.id, event), { global: true });
+  const group = createGroup({
+    file: join(folder, 'assistant', 'group.json'),
+    sessions: () => assignment.sessions,
+    say: (kind, record) => assignment.conversation.say(kind, record),
+  });
+  const cards = createCards({
+    file: join(folder, 'assistant', 'cards.json'),
+    issues: () => assignment.issuesApi, inbox: () => assignment.inboxApi, tasks: () => assignment.tasks, quota: () => assignment.quota, latest,
+  });
   const conversation = createConversation({
     ctx, assistant: assignment.assistant, issues: assignment.issues, assignment, dashboard: assignment.dashboard,
-    nativeSessions: assignment.nativeSessions, dsh: createDshSessions(ctx),
+    nativeSessions: assignment.nativeSessions, dsh, cards, group,
     tidyIssues: (options) => assignment.issueTidy.run(options),
     file: join(folder, 'assistant', 'conversation.json'),
   });
   assignment.conversation = conversation;
+  assignment.cards = cards;
+  assignment.group = group;
+  assignment.latest = latest;
   // Restore our scoped owner before a remembered DSH conversation tab can promote the persisted session.
   // Keep the route available when no model is configured, so choosing one later can retry initialization.
   await conversation.ensure().catch((error) => console.warn(`[dudu] The assistant conversation could not be opened: ${error.message}`));
@@ -667,10 +744,23 @@ async function startConversation(ctx, folder, assignment) {
     // Where the owner is, sent with each message when they chose to attach it; and the conversation's Compact.
     route('context', ({ where } = {}) => conversation.setContext(where)),
     route('compact', () => conversation.compact()),
+    // The quick buttons of the chat: a card is made as a command of the conversation (no model); the page asks for the contents of the ones it has read by their command ids.
+    route('card', ({ kind, since } = {}) => conversation.card(kind, since)),
+    route('cards', ({ ids } = {}) => conversation.cardsOf(ids)),
+    // Hiding a line of the thread (the owner's 删除: only what the interface shows; the session's log and what 嘟嘟 was told stay) and which lines are hidden.
+    route('hide', ({ seqs } = {}) => group.hide(seqs)),
+    route('hidden', () => ({ outcome: 'success', seqs: [...group.hidden()] })),
     // What dudu says by itself beside the pet; read from the issues, with no model.
     route('reminders', () => ({ outcome: 'success', reminders: reminders(assignment.issues, Date.now()) })),
   ];
-  return async () => { for (const dispose of disposers) dispose(); await conversation.close(); delete assignment.conversation; };
+  return async () => {
+    for (const dispose of disposers) dispose();
+    stopLatest?.();
+    group.dispose();
+    latest.dispose();
+    await conversation.close();
+    delete assignment.conversation; delete assignment.cards; delete assignment.group; delete assignment.latest;
+  };
 }
 
 async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
@@ -708,7 +798,9 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
       folder,
       rpc,
       pages,
-      conversationReads: createConversationReads({ connection: ctx.connection, peer }),
+      conversationReads: createConversationReads({
+        connection: ctx.connection, peer, workspaceChanges: () => ctx.get('workspaceChanges'),
+      }),
       questionBridge,
       sessionActivity: (id) => assignment.sessionActivity?.(id),
       sessionSearch: assignment.searchSessions,
@@ -718,10 +810,21 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
         context: (where) => assignment.conversation?.setContext(where),
         selectModel: (selection) => assignment.conversation?.selectModel(selection),
         issues: (action, body) => assignment.issuesApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
+        tasks: (action, body) => assignment.tasks?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
+        // The quota panel of the phone: what the quota service has kept; `ask` is the sheet being opened.
+        quota: (options) => assignment.quota?.request(options),
+        // The quick buttons of the chat on the phone: the same card, and the contents of one the thread names.
+        card: (kind, since) => assignment.conversation?.card(kind, since) ?? { outcome: 'error', code: 'unavailable' },
+        cardOf: (commandId) => assignment.cards?.get(commandId) ?? null,
+        // The lines of the group chat in the thread, and the ones the owner hid.
+        groupOf: (commandId) => assignment.group?.get(commandId) ?? null,
+        hidden: () => assignment.group?.hidden() ?? null,
+        hide: (seqs) => assignment.group?.hide(seqs) ?? { outcome: 'error', code: 'unavailable' },
       },
       duduPages,
       // The phone's board and Collector: the same commands the desktop interface sends, run for the owner (the issues are opened later than this: asked for when used).
       board: {
+        getNeedsYouColor: () => assignment.assistant?.settings?.value('needsYouColor'),
         issues: (action, body) => assignment.issuesApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
         inbox: (action, body) => assignment.inboxApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
         projects: {
@@ -808,6 +911,13 @@ export async function apply(ctx, config = {}) {
     console.info('[dudu] Reading what comes in is ready.');
   } catch (error) {
     console.warn(`[dudu] Reading what comes in is unavailable: ${error.message}`);
+  }
+
+  try {
+    stops.push(await startTasks(ctx, folder, assignment));
+    console.info('[dudu] Scheduled tasks are ready.');
+  } catch (error) {
+    console.warn(`[dudu] Scheduled tasks are unavailable: ${error.message}`);
   }
 
   try {

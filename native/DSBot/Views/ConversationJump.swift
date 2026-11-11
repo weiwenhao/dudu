@@ -90,32 +90,84 @@ final class ScrollMetrics {
     weak var locator: UIView?
     let diagnosticID = UUID().uuidString
     var latestID: String?
+    /// The latest row is a card (`ConversationHistoryItem.isCard`) and the owner asked for it (`ConversationHistoryView.cardFromTop`): while it is taller than what can be seen, following and the jump to the
+    /// latest end at its top, so that its title and first rows are in view, and not at its bottom (owner, 2026-11-11: after 待办 the chat goes to the card by itself).
+    var latestIsCard = false
+    var showsCardFromTop = false
     var jumpStartedAt: TimeInterval?
     var isReviewPositioning = false
     private var layoutRecordsRemaining = 12
     private var commandRecordsRemaining = 32
+    private var followingCommandCount = 0
     private var rows: [String: WeakHistoryRow] = [:]
     private var jump: ConversationJump?
+    private var hasRealizedRows = false
     /// The estimated height at which the viewport was found with no built row in it (`BlankViewportRecovery`).
     private var heldEstimate: CGFloat?
 
-    /// The built row to follow instead of the latest, or nil to follow the latest as usual: the lazy stack's estimate can be higher than its rows reach, and the
-    /// end of such an estimate is white (`BlankViewportRecovery`).
-    func recoveryTarget(latestID: String) -> String? {
-        guard let scrollView else { return nil }
-        var frames: [HistoryRowFrame] = []
-        for (id, marker) in rows {
-            guard let view = marker.view, view.window === scrollView.window else { continue }
-            let frame = view.convert(view.bounds, to: scrollView)
-            guard frame.height > 0 else { continue }
-            frames.append(HistoryRowFrame(id: id, minY: frame.minY, maxY: frame.maxY))
+    struct FollowingTarget {
+        let id: String
+        let isRealized: Bool
+        let isRecovery: Bool
+        let anchor: CGFloat
+
+        var readerID: AnyHashable {
+            isRealized ? AnyHashable(RealizedHistoryAnchor(id: id)) : AnyHashable(id)
         }
+    }
+
+    func followingTarget(latestID: String, firstID: String?) -> FollowingTarget {
+        guard let scrollView else {
+            return FollowingTarget(id: latestID, isRealized: false, isRecovery: false, anchor: 1)
+        }
+        let frames = rowFrames(in: scrollView)
+        if !frames.isEmpty { hasRealizedRows = true }
         let answer = BlankViewportRecovery.target(
             latestID: latestID, rows: frames, contentOffset: scrollView.contentOffset.y, viewportHeight: scrollView.bounds.height,
-            contentHeight: scrollView.contentSize.height, heldEstimate: heldEstimate
+            contentHeight: scrollView.contentSize.height, heldEstimate: heldEstimate,
+            fallbackID: hasRealizedRows ? firstID : nil
         )
         heldEstimate = answer.held
-        return answer.target
+        let id = answer.target ?? latestID
+        let isRealized = frames.contains { $0.id == id }
+        var anchor: CGFloat = answer.target != nil && !isRealized ? 0 : 1
+        if answer.target == nil, id == self.latestID, cardIsShownFromTop(frames: frames, in: scrollView) { anchor = 0 }
+        return FollowingTarget(id: id, isRealized: isRealized, isRecovery: answer.target != nil, anchor: anchor)
+    }
+
+    /// Whether the latest row is a card to be shown from its top: asked for, and as tall as what can be seen or taller. A card that is not built yet is taken for one (its top is where it is shown from;
+    /// a short one is held at the end by the end of the content once it is built).
+    private func cardIsShownFromTop(frames: [HistoryRowFrame], in scrollView: UIScrollView) -> Bool {
+        guard showsCardFromTop, latestIsCard, let latestID else { return false }
+        guard let card = frames.first(where: { $0.id == latestID }) else { return true }
+        let inset = scrollView.adjustedContentInset
+        return card.maxY - card.minY > scrollView.bounds.height - inset.top - inset.bottom
+    }
+
+    /// Where the journey to the latest ends: the end of the content, or, for a card shown from its top, the offset that puts its top at the top of what can be seen.
+    private func endOffset(in scrollView: UIScrollView) -> CGFloat {
+        let inset = scrollView.adjustedContentInset
+        let contentEnd = max(-inset.top, scrollView.contentSize.height - scrollView.bounds.height + inset.bottom)
+        guard showsCardFromTop, latestIsCard, let latestID else { return contentEnd }
+        let frames = rowFrames(in: scrollView)
+        guard let card = frames.first(where: { $0.id == latestID }), cardIsShownFromTop(frames: frames, in: scrollView) else { return contentEnd }
+        return min(contentEnd, card.minY - inset.top)
+    }
+
+    var latestIsVisible: Bool {
+        guard let scrollView, let latestID else { return false }
+        return rowFrames(in: scrollView).contains {
+            $0.id == latestID && $0.maxY > scrollView.bounds.minY && $0.minY < scrollView.bounds.maxY
+        }
+    }
+
+    private func rowFrames(in scrollView: UIScrollView) -> [HistoryRowFrame] {
+        rows.compactMap { id, marker in
+            guard let view = marker.view, view.isDescendant(of: scrollView) else { return nil }
+            let frame = view.convert(view.bounds, to: scrollView)
+            guard frame.height > 0 else { return nil }
+            return HistoryRowFrame(id: id, minY: frame.minY, maxY: frame.maxY)
+        }
     }
 
     var geometry: [String: Double] {
@@ -130,6 +182,7 @@ final class ScrollMetrics {
     }
 
     func recordFollowing(reason: String, targetID: String, messageCount: Int) {
+        followingCommandCount += 1
         guard commandRecordsRemaining > 0 else { return }
         commandRecordsRemaining -= 1
         recordLayout(
@@ -155,7 +208,7 @@ final class ScrollMetrics {
         for (id, marker) in rows {
             guard let view = marker.view else { continue }
             registered += 1
-            guard view.window === scrollView.window else { continue }
+            guard view.isDescendant(of: scrollView) else { continue }
             let frame = view.convert(view.bounds, to: scrollView)
             guard frame.height > 0 else { continue }
             realized += 1
@@ -176,7 +229,8 @@ final class ScrollMetrics {
             counts: [
                 "messageCount": messageCount, "registeredCount": registered,
                 "realizedCount": realized, "visibleCount": visible,
-                "latestRealizedCount": latestFrame == nil ? 0 : 1, "followingCount": following ? 1 : 0
+                "latestRealizedCount": latestFrame == nil ? 0 : 1, "followingCount": following ? 1 : 0,
+                "scrollCommandCount": followingCommandCount
             ],
             geometry: values, state: state ?? (following ? "following" : "reading")
         )
@@ -184,10 +238,7 @@ final class ScrollMetrics {
 
     private func trajectory() -> ConversationJumpProgress? {
         guard let scrollView else { return nil }
-        let end = max(
-            -scrollView.adjustedContentInset.top,
-            scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom
-        )
+        let end = endOffset(in: scrollView)
         return ConversationJumpProgress(
             distance: end - scrollView.contentOffset.y,
             viewportHeight: scrollView.bounds.height
@@ -201,7 +252,7 @@ final class ScrollMetrics {
     }
 
     func animateToLatest(
-        itemIDs: [String], scroll: @escaping (String, CGFloat) -> Void, completion: @escaping () -> Void
+        itemIDs: [String], scroll: @escaping (AnyHashable, CGFloat) -> Void, completion: @escaping () -> Void
     ) -> Bool {
         cancelJump()
         guard let trajectory = trajectory() else { return false }
@@ -220,21 +271,23 @@ final class ScrollMetrics {
         jump = nil
     }
 
-    private func advance(fraction: CGFloat, itemIDs: [String], scroll: (String, CGFloat) -> Void) {
+    private func advance(fraction: CGFloat, itemIDs: [String], scroll: (AnyHashable, CGFloat) -> Void) {
         guard fraction < 1 else {
-            if let last = latestID ?? itemIDs.last { scroll(last, 1) }
+            if let last = latestID ?? itemIDs.last {
+                let target = followingTarget(latestID: last, firstID: itemIDs.first)
+                scroll(target.readerID, target.anchor)
+            }
             return
         }
         guard let scrollView else { return }
         let current = scrollView.contentOffset.y
         let viewport = scrollView.bounds.height
-        let end = max(-scrollView.adjustedContentInset.top,
-                      scrollView.contentSize.height - viewport + scrollView.adjustedContentInset.bottom)
+        let end = endOffset(in: scrollView)
         let desired = current + max(0, end - current) * fraction
         var best: (id: String, offset: CGFloat, anchor: CGFloat)?
         var realizedIDs = Set<String>()
         for (id, marker) in rows {
-            guard let view = marker.view, view.window === scrollView.window else { continue }
+            guard let view = marker.view, view.isDescendant(of: scrollView) else { continue }
             let frame = view.convert(view.bounds, to: scrollView)
             guard frame.height > 0, abs(viewport - frame.height) > 0.5 else { continue }
             realizedIDs.insert(id)
@@ -249,7 +302,7 @@ final class ScrollMetrics {
             }
         }
         if let best {
-            scroll(best.id, best.anchor)
+            scroll(AnyHashable(RealizedHistoryAnchor(id: best.id)), best.anchor)
         } else if let last = itemIDs.lastIndex(where: { realizedIDs.contains($0) }), last + 1 < itemIDs.count {
             // Materialize the next occurrence when the visible rows cannot carry us farther.
             scroll(itemIDs[last + 1], 0)
@@ -257,25 +310,14 @@ final class ScrollMetrics {
     }
 
     private var scrollView: UIScrollView? {
-        guard let locator, let window = locator.window else { return nil }
-        let target = locator.convert(locator.bounds, to: window)
-        guard target.width > 0, target.height > 0 else { return nil }
-        var best: (view: UIScrollView, overlap: CGFloat)?
-        func scan(_ view: UIView) {
-            for child in view.subviews {
-                if let scroll = child as? UIScrollView, !(scroll is UITextView), scroll.bounds.height > 200 {
-                    let frame = scroll.convert(scroll.bounds, to: window)
-                    let shared = frame.intersection(target)
-                    let overlap = shared.isNull ? 0 : shared.width * shared.height / (target.width * target.height)
-                    if abs(frame.width - target.width) < 1, overlap > 0.9, overlap > (best?.overlap ?? 0) {
-                        best = (scroll, overlap)
-                    }
-                }
-                scan(child)
-            }
+        // The locator is inside the lazy stack. Its ancestor owns this history; a matching
+        // rectangle elsewhere in the window may instead be the retained board or another page.
+        var ancestor = locator?.superview
+        while let view = ancestor {
+            if let scroll = view as? UIScrollView { return scroll }
+            ancestor = view.superview
         }
-        scan(window)
-        return best?.view
+        return nil
     }
 }
 
@@ -291,7 +333,13 @@ struct HistoryRowLocator: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(id: id, metrics: metrics) }
 
     func makeUIView(context: Context) -> UIView {
+        #if DEBUG && targetEnvironment(simulator)
+        let view = HistoryLayoutProbe()
+        view.historyID = metrics.diagnosticID
+        view.rowKind = id.hasPrefix("transcript:user:") ? "user" : "reply"
+        #else
         let view = UIView()
+        #endif
         view.isUserInteractionEnabled = false
         metrics.register(view, id: id)
         return view
@@ -312,6 +360,28 @@ struct HistoryRowLocator: UIViewRepresentable {
         }
     }
 }
+
+#if DEBUG && targetEnvironment(simulator)
+private final class HistoryLayoutProbe: UIView {
+    var historyID = ""
+    var rowKind = ""
+    private var previousHeight: CGFloat?
+    private var remaining = 6
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard ProcessInfo.processInfo.arguments.contains("-dsbot-review-row-layout") else { return }
+        defer { previousHeight = bounds.height }
+        guard let previousHeight, abs(previousHeight - bounds.height) > 0.5, remaining > 0 else { return }
+        remaining -= 1
+        DSBotLog.record(
+            "chat.scroll.row_resize", historyId: historyID,
+            geometry: ["lastRowHeight": Double(previousHeight), "latestRowHeight": Double(bounds.height)],
+            state: rowKind
+        )
+    }
+}
+#endif
 
 struct ScrollViewLocator: UIViewRepresentable {
     let metrics: ScrollMetrics

@@ -91,7 +91,7 @@ const MANUAL_AGENT_STATES = ['idle', 'blocked'];
 const GROUPS = {
   status: { sql: 'status', order: ['in_progress', 'in_review', 'todo', 'backlog', 'done', 'canceled'] },
   priority: { sql: 'priority', order: ['urgent', 'high', 'medium', 'low', 'none'] },
-  agentState: { sql: AGENT_STATE_SQL, order: ['working', 'blocked', 'idle', 'unassigned'] },
+  agentState: { sql: AGENT_STATE_SQL, order: ['blocked', 'working', 'idle', 'unassigned'] },
   agent: { sql: 'agent' },
   project: { sql: 'project_name' },
 };
@@ -385,6 +385,8 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
   const labels = createLabels({ db, now, write: (work) => write(work), bad: (message, next) => new Invalid(message, next) });
   const links = createLinks({ db, now, bad: (message, next) => new Invalid(message, next) });
   const inbox = createInbox(db, { now });
+  // Records kept without a title (the session left it out) get the first words of what they say; best effort, tried again at the next start.
+  try { inbox.repairTitles(); } catch { /* a blank title is only a looks problem: the service goes on */ }
   const isFinished = (status) => ['done', 'canceled'].includes(workflow.type(status));
   const groups = { ...GROUPS, status: { ...GROUPS.status, sql: 'COALESCE(workflow_status,status)' } };
   const parseIssueFields = (input, actor = OWNER) => {

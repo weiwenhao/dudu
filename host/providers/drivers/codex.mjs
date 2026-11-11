@@ -1,5 +1,6 @@
 import { OarNormalizer, createOarProvider } from '../oar.mjs';
 import { codexRuntime } from '../oar-runtimes.mjs';
+import { readCodexQuota } from '../quota/codex.mjs';
 import { CODEX_TOOLS, fallbackSpec } from './codex-tools.mjs';
 
 // Codex through OAR, which drives `codex app-server`. The `codex` installed on this computer, with this user's login,
@@ -59,6 +60,13 @@ export class CodexNormalizer extends OarNormalizer {
   resultOf(event, call, record) {
     return toolResultOf(record.body?.native?.item);
   }
+
+  backgroundResult(event, call) {
+    if (event.taskType !== 'shell' || event.nativeType !== 'commandExecution'
+      || event.background !== true || call.name !== 'shell') return;
+    // This is a yielded call, not a successful process exit. Its real outcome/output stays in the linked DSH job.
+    return { output: call.output ?? '', isError: false, data: { background: true, processId: event.taskId } };
+  }
 }
 
 /** The DSH access mode as Codex's sandbox. Nobody can answer an approval, so what the sandbox forbids stays forbidden. */
@@ -79,6 +87,8 @@ export function createCodexProvider({ runtime = codexRuntime } = {}) {
     fallbackModels: [{ id: 'default', displayName: 'Default' }],
     // Another Codex harness's identity must not leak into the child; the user's own CODEX_HOME must survive.
     scrub: { patterns: [/^(CODEX_|ORCA_|HERDR_)/], keep: ['CODEX_HOME'] },
+    // How much of the ChatGPT plan is left (see the Claude provider).
+    quota: readCodexQuota,
     // OAR sets the sandbox for the whole app-server with its own `-c`; a later one for the same key wins.
     session: ({ permission }) => ({ launchArgs: ['-c', `sandbox_mode="${sandboxOf(permission)}"`] }),
   });

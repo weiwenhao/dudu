@@ -24,7 +24,8 @@ export function useWidgetData() {
   const services = useServices();
   return useMemo(() => ({
     useIssues: function useIssues(view = {}) { return usePolled(services.request, 'issues/list', view); },
-    useQuota: function useQuota() { return usePolled(services.request, 'overview/usage', {}, { every: 120_000 }); },
+    // What the quota service has kept (the header icon's panel and the chat's card are what ask for a reading; a widget only looks, so it asks for nothing).
+    useQuota: function useQuota() { return usePolled(services.request, 'quota/get', {}, { every: 60_000 }); },
     useInputs: function useInputs() { return usePolled(services.request, 'dispatch/state', {}, { every: 30_000 }); },
     useSessions: function useSessions(query = {}) {
       const [indexing, setIndexing] = useState(false);

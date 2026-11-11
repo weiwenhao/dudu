@@ -269,8 +269,8 @@ export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, c
       service('permissionPresets').set(agent.session, mode); // throws for a preset this DSH does not have: the session then does not start
     },
 
-    async prompt(sessionId, text, { steer = false, attachments = [] } = {}) {
-      await service('sessionController').prompt({ requestId: `dudu-${randomUUID()}`, sessionId, mode: steer ? 'steer' : 'queue',
+    async prompt(sessionId, text, { steer = false, attachments = [], requestId } = {}) {
+      await service('sessionController').prompt({ requestId: requestId ?? `dudu-${randomUUID()}`, sessionId, mode: steer ? 'steer' : 'queue',
         content: [...attachments, ...(text ? [{ type: 'text', text }] : [])] }, new AbortController().signal);
     },
 
@@ -315,6 +315,22 @@ export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, c
       const last = !ended ? 'aborted' : kind === 'completed' || kind === 'max-tokens' ? 'answer' : kind === 'error' ? 'error' : 'aborted';
       const said = events.slice(Math.max(start, 0)).filter((event) => event.type === 'assistant/message').map((event) => textOf(event.data?.message?.content)).filter((text) => text.trim()).at(-1);
       return { last, at: (ended ?? events[start]).time ?? null, ...(kind === 'error' ? { error: ended.data.reason.error?.message } : {}), ...(said ? { ending: said } : {}) };
+    },
+
+    /** The last words of each side of a session from what DSH stored (the owner's, the agent's): `{ me?, agent? }`, each `{ text, at }`; null for a session DSH does not know. Read once for a session nobody has spoken in since this started (latest.mjs). */
+    async latestMessages(sessionId, signal) {
+      let events;
+      try { ({ events } = await inspectSession(sessionId, signal)); } catch { return null; }
+      const found = {};
+      for (let index = events.length - 1; index >= 0 && !(found.me && found.agent); index--) {
+        const event = events[index];
+        const message = event.data?.message ?? event.data;
+        const side = event.type === 'user/message' && message?.source?.kind === 'user' ? 'me' : event.type === 'assistant/message' ? 'agent' : null;
+        if (!side || found[side]) continue;
+        const said = textOf(message?.content ?? event.data?.content);
+        if (said.trim()) found[side] = { text: said, at: Number.isFinite(event.time) ? event.time : 0 };
+      }
+      return found;
     },
 
     /** Listens to DSH for the sessions `handlers.owns` names (see agent-sessions.mjs). Returns the way to stop. */

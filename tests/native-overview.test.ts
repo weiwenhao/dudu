@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { listRunningClaude, summarizeRunning } from '../host/providers/native/running.mjs';
-import { codexLimitsView, createOverview, usageView, windowView } from '../host/providers/native/overview.mjs';
+import { createOverview } from '../host/providers/native/overview.mjs';
 
 async function folder(t: { after: (cleanup: () => Promise<void>) => void }) {
   const root = await mkdtemp(join(tmpdir(), 'dudu-overview-'));
@@ -65,146 +65,22 @@ test('what is running is split into working now, finished a moment ago, and idle
   assert.equal(summary.total, 5);
 });
 
-// ---- usage and the service -------------------------------------------------------------------------------------------
-
-const claudeSnapshot = {
-  kind: 'available', plan: 'team', rateLimited: false,
-  windows: [
-    { label: 'Current week (Fable)', usedRatio: 0, resetsAt: '2026-11-02T18:00:00.000Z', id: 'model_scoped:Fable', durationMs: 604800000 },
-    { label: 'Current week (all models)', usedRatio: 0.334, resetsAt: '2026-11-02T18:00:00.272Z', id: 'seven_day', durationMs: 604800000 },
-    { label: 'Current session', usedRatio: 0.14, resetsAt: '2026-10-29T09:00:00.272Z', id: 'five_hour', durationMs: 18000000 },
-    { label: 'Current week (Opus)', usedRatio: 0.2, resetsAt: '2026-11-02T18:00:00.000Z', id: 'model_scoped:Opus', durationMs: 604800000 },
-  ],
-};
-
-test('a usage reading is shown as short windows, the two every plan has first, and nothing nobody used', () => {
-  const view = usageView({ id: 'claude', name: 'Claude' }, claudeSnapshot);
-  assert.deepEqual([view.state, view.limited, view.plan], ['ok', false, 'Team']);
-  assert.deepEqual(view.windows.map((window: any) => [window.label, Math.round(window.used * 100)]), [['5 小时', 14], ['每周', 33], ['Opus 每周', 20]]);
-  assert.equal(view.windows[0].resetsAt, Date.parse('2026-10-29T09:00:00.272Z'));
-  assert.deepEqual(usageView({ id: 'claude', name: 'Claude' }, { ...claudeSnapshot, rateLimited: true }).limited, true);
-  assert.deepEqual(usageView({ id: 'codex', name: 'ChatGPT' }, { kind: 'unsupported', reason: 'unsupported_auth_mode' }), { id: 'codex', name: 'ChatGPT', state: 'hidden', plan: '', limited: false, windows: [] });
-  assert.equal(usageView({ id: 'claude', name: 'Claude' }, { kind: 'reauth_required' }).state, 'login');
-  assert.equal(windowView({ label: 'Daily budget', usedRatio: 5 }).used, 1, 'a ratio is kept within 0 to 1');
-  assert.equal(windowView({ label: 'Odd', usedRatio: 0.5, resetsAt: 'never' }).resetsAt, undefined);
-});
-
-// What Codex answered to account/rateLimits/read on a real Team account (the numbers rounded).
-const codexReply = {
-  ordinaryUsageAllowed: true,
-  rateLimits: {
-    limitId: 'codex', primary: { usedPercent: 1, windowDurationMins: 300, resetsAt: 1793263787 }, secondary: { usedPercent: 6, windowDurationMins: 10080, resetsAt: 1793775118 },
-    credits: { hasCredits: false, unlimited: false, balance: null }, spendControlReached: false, planType: 'team', rateLimitReachedType: null,
-  },
-};
-
-test('Codex\'s own limits are shown the way Claude\'s are, with the plan, and a reached limit is marked', () => {
-  const source = { id: 'codex', name: 'ChatGPT' };
-  const view = codexLimitsView(source, codexReply);
-  assert.deepEqual([view.state, view.plan, view.limited], ['ok', 'Team', false]);
-  assert.deepEqual(view.windows.map((window: any) => [window.label, Math.round(window.used * 100), window.resetsAt]), [['5 小时', 1, 1793263787000], ['每周', 6, 1793775118000]]);
-  assert.equal(codexLimitsView(source, { ...codexReply, rateLimits: { ...codexReply.rateLimits, rateLimitReachedType: 'primary' } }).limited, true);
-  assert.equal(codexLimitsView(source, { ...codexReply, ordinaryUsageAllowed: false }).limited, true);
-  assert.equal(codexLimitsView(source, { rateLimits: { ...codexReply.rateLimits, primary: { usedPercent: 40, windowDurationMins: 1440 }, secondary: null } }).windows[0].label, '1 天');
-  assert.equal(codexLimitsView(source, {}).state, 'hidden');
-});
-
-function setupService(t: { after: (cleanup: () => Promise<void>) => void }, extra: Record<string, unknown> = {}, start = 1_000_000_000_000) {
-  const calls = { usage: 0, codexLimits: 0 };
-  let clock = start;
-  const sources = [
-    { id: 'claude', name: 'Claude', route: 'claude', activeRuns: () => [], driver: { accountUsage: async () => { calls.usage++; return claudeSnapshot; } } },
-    { id: 'codex', name: 'ChatGPT', route: 'codex', command: 'codex', activeRuns: () => [{ route: 'codex', sessionId: 's1', nativeSessionId: 'thread-1', startedAt: clock - 5000, cwd: '/w/x' }], driver: { accountUsage: async () => ({ kind: 'unsupported' }) } },
-  ];
-  const links = { get: (provider: string, id: string) => (id === 'thread-1' ? 'session-1' : undefined) };
-  const service = createOverview({
-    sources: () => sources, links, titleOf: (_provider: string, id: string) => (id === 'thread-1' ? 'A Codex thread' : undefined), now: () => clock,
-    codexLimits: async () => { calls.codexLimits++; return codexReply; },
-    ...extra,
-  });
-  return { service, calls, sources, tick: (ms: number) => { clock += ms; } };
-}
-
-test('usage is read once in two minutes however often the page asks, Codex is asked directly when OAR cannot read it, and a failing harness is marked', async (t) => {
-  const { service, calls, sources, tick } = setupService(t);
-  const first = await service.usage();
-  assert.deepEqual(first.providers.map((provider: any) => [provider.id, provider.state, provider.plan, provider.windows.length]), [['claude', 'ok', 'Team', 3], ['codex', 'ok', 'Team', 2]],
-    'OAR says Codex is unsupported here (a custom model provider hides the account), its own limits call still answers');
-  await service.usage(); await service.usage();
-  assert.deepEqual([calls.usage, calls.codexLimits], [1, 1]);
-  tick(121_000);
-  const stale = await service.usage();
-  assert.deepEqual(stale, first, 'the last reading is shown while a new one is taken');
-  await service.settled();
-  assert.deepEqual([calls.usage, calls.codexLimits], [2, 2]);
-  sources[0].driver.accountUsage = async () => { throw new Error('the harness did not answer'); };
-  const failed = await service.usage({ refresh: true });
-  assert.equal(failed.providers[0].state, 'unavailable');
-  assert.equal(failed.providers[1].state, 'ok', 'one harness failing leaves the other');
-});
-
 test('running: the registry and DSH\'s own runs, named by the sessions list, over the HTTP face', async (t) => {
   const root = await folder(t);
   await writeFile(join(root, '1.json'), JSON.stringify({ pid: process.pid, sessionId: 'claude-1', cwd: '/w/a', status: 'busy', statusUpdatedAt: 1_000_000_000_000 - 60_000, updatedAt: 1_000_000_000_000 }));
-  const { service } = setupService(t, { claude: { registry: root } });
+  const sources = [
+    { id: 'claude', name: 'Claude', route: 'claude', activeRuns: () => [] },
+    { id: 'codex', name: 'ChatGPT', route: 'codex', activeRuns: () => [{ route: 'codex', sessionId: 's1', nativeSessionId: 'thread-1', startedAt: 1_000_000_000_000 - 5000, cwd: '/w/x' }] },
+  ];
+  const links = { get: (_provider: string, id: string) => (id === 'thread-1' ? 'session-1' : undefined) };
+  const service = createOverview({
+    sources: () => sources, links, titleOf: (_provider: string, id: string) => (id === 'thread-1' ? 'A Codex thread' : undefined), now: () => 1_000_000_000_000, claude: { registry: root },
+  });
   const running = await service.running();
   assert.deepEqual(running.busy.map((item: any) => [item.provider, item.id, item.title, item.dshSessionId]), [['claude', 'claude-1', '', undefined], ['codex', 'thread-1', 'A Codex thread', 'session-1']]);
   const post = (action: string) => service.handle(action, new Request('http://x/api', { method: 'POST', body: '{}' }));
   const reply = await post('running');
   assert.equal(reply.status, 200);
   assert.equal((await reply.json()).busy.length, 2);
-  assert.equal((await post('usage')).status, 200);
   assert.equal((await post('nothing')).status, 404);
-});
-
-// ---- a row for every harness, Claude read without a paid-by-use environment, and the DeepSeek balance --------------------
-
-test('a harness that cannot report its plan keeps its row as "—", Codex included', async () => {
-  const quiet = { kind: 'unsupported', reason: 'quota_unavailable' };
-  const service = createOverview({
-    sources: () => [
-      { id: 'claude', name: 'Claude', route: 'claude', driver: { accountUsage: async () => quiet } },
-      { id: 'codex', name: 'ChatGPT', route: 'codex', command: 'codex', driver: { accountUsage: async () => quiet } },
-    ],
-    links: { get: () => undefined }, titleOf: () => undefined, codexLimits: async () => ({}), env: {},
-  });
-  const { providers } = await service.usage();
-  assert.deepEqual(providers.map((provider: any) => [provider.id, provider.state, provider.windows.length]), [['claude', 'unavailable', 0], ['codex', 'unavailable', 0]]);
-});
-
-test('Claude that answers "unsupported" while the host has a key in its environment is asked again without it, and the plan\'s own reading wins', async () => {
-  const asked: (Record<string, unknown> | undefined)[] = [];
-  const source = (answer: (extra?: Record<string, unknown>) => unknown) => ({
-    id: 'claude', name: 'Claude', route: 'claude',
-    driver: { accountUsage: async (extra?: Record<string, unknown>) => { asked.push(extra); return answer(extra); } },
-  });
-  const read = async (env: Record<string, string>, answer: (extra?: Record<string, unknown>) => unknown) => (await createOverview({
-    sources: () => [source(answer)], links: { get: () => undefined }, titleOf: () => undefined, env,
-  }).usage()).providers[0];
-
-  // A key in the environment: the first reading says unsupported, the second (the key taken out of the overlay) is the plan's.
-  const plan = await read({ ANTHROPIC_API_KEY: 'x', ANTHROPIC_BASE_URL: 'https://gateway.test', PATH: '/bin' }, (extra) => (extra ? claudeSnapshot : { kind: 'unsupported' }));
-  assert.equal(plan.state, 'ok');
-  assert.deepEqual(plan.windows.map((window: any) => window.label), ['5 小时', '每周', 'Opus 每周']);
-  assert.deepEqual(asked, [undefined, { ANTHROPIC_API_KEY: null, ANTHROPIC_BASE_URL: null }], 'only the names that are set are taken out, and only for the second reading');
-
-  // Nothing of the kind in the environment: there is nothing else to try, and the row says "—".
-  asked.length = 0;
-  assert.equal((await read({ PATH: '/bin' }, () => ({ kind: 'unsupported' }))).state, 'unavailable');
-  assert.equal(asked.length, 1);
-  // A second reading that is no better (no sign-in for a plan either) changes nothing.
-  asked.length = 0;
-  assert.equal((await read({ ANTHROPIC_API_KEY: 'x' }, (extra) => (extra ? { kind: 'reauth_required' } : { kind: 'unsupported' }))).state, 'unavailable');
-  assert.equal(asked.length, 2);
-});
-
-test('DeepSeek\'s balance is a row of its own when an account has one, read while the harnesses are asked; nothing without an account', async () => {
-  const base = { sources: () => [{ id: 'claude', name: 'Claude', route: 'claude', driver: { accountUsage: async () => claudeSnapshot } }], links: { get: () => undefined }, titleOf: () => undefined, env: {} };
-  const wallet = { id: 'deepseek', name: 'DeepSeek', kind: 'balance', state: 'ok', plan: '', limited: false, windows: [], balance: [{ currency: 'CNY', text: '¥12.34' }] };
-  const ids = async (balance?: () => unknown) => (await createOverview({ ...base, balance }).usage()).providers.map((provider: any) => provider.id);
-  assert.deepEqual(await ids(), ['claude'], 'without a reader there is no row');
-  assert.deepEqual(await ids(async () => wallet), ['claude', 'deepseek']);
-  assert.deepEqual(await ids(async () => ({ ...wallet, state: 'hidden' })), ['claude'], 'no account, no row');
-  assert.deepEqual(await ids(async () => { throw new Error('the account did not answer'); }), ['claude'], 'a reader that fails costs the other rows nothing');
-  assert.deepEqual(await ids(async () => ({ ...wallet, state: 'unavailable', balance: undefined })), ['claude', 'deepseek'], 'an account whose balance cannot be read says "—"');
 });

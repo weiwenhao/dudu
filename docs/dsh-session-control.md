@@ -9,14 +9,17 @@
 2026-11-01 后续要求：@ 对应 Agent 只转发用户消息，通过 `prompt(..., mode: 'queue')` 进入已有会话，不解析问题答案或授权。下面的 `answerOf` / `outcomeOf` 是兼容的显式 `issues/reply` API 和 DSH 原生问题流程，不是 @ 的路由行为。来源为 `session` 的已有对话不由嘟嘟自动审阅、评论或请求确认。
 
 2026-11-06 接口更新：Desktop 随附 DSH `0.2.2-rc.1` 已移除 `sessionController.inspect()`。
-统一通过 `host/dsh-session-history.mjs` 调用 `sessionQuery.readSession(id)`，返回 `{ session, inheritedEventCount, events }`，
-优先读活跃会话，否则读持久历史，不激活会话；全文搜索索引关闭时仍可精确读取。共享层把 `session` 归一到原有的
-`meta` / `header` 字段，并仅在新方法缺失时回退到旧 `inspect()`，读取错误不触发回退。新 API 不接收信号，取消由调用侧
-停止等待，底层只读请求可能继续。下文更早的自动进度处理是历史记录，当前事项工作流以主人手动修改为准，不随 Agent 状态变化。
+统一通过 `host/dsh-session-history.mjs` 读取历史。2026-11-11 起优先调用
+`sessionQuery.observeSession(id, { projectionMode: 'none', signal })`，共享它提供的不可变事件快照，
+取得快照后用 `[Symbol.dispose]()` 释放准备租约；不复制整段工具输出、不额外计算投影。完整事件和继承事件数仍保留，
+不激活会话；全文搜索索引关闭时仍可精确读取。能力缺失时才选择 `sessionQuery.readSession(id)` 或更早的
+`sessionController.inspect(id, signal)`，读取错误不触发换源。共享层统一 `session` / `meta` / `header`；
+旧 `readSession` 不接收信号，只能取消等待，底层只读请求可能继续。观察调用取消后迟到的租约也会释放。
+下文更早的自动进度处理是历史记录，当前事项工作流以主人手动修改为准，不随 Agent 状态变化。
 
 ## 用到的接口
 
-插件的 `inject` 里都写成可选（`sessionController`、`sessionQuery`、`permissionPresets`、`userQuestions`、`agentDefaultModel`，`workspaceRegistry`、`sessionProjections` 原来就有），缺哪个，用到它的那一步报"This DSH has no … service"，别的功能照常。历史读取兼容两个接口，均不存在时报 `UNSUPPORTED`。
+插件的 `inject` 里都写成可选（`sessionController`、`sessionQuery`、`permissionPresets`、`userQuestions`、`agentDefaultModel`，`workspaceRegistry`、`sessionProjections` 原来就有），缺哪个，用到它的那一步报"This DSH has no … service"，别的功能照常。历史读取按能力选择观察、新查询或旧检查接口，均不存在时报 `UNSUPPORTED`。
 
 | 做什么 | 怎么做 |
 |---|---|
@@ -28,7 +31,7 @@
 | 第一条、后续的消息 | `ctx.sessionController.prompt({ requestId, sessionId, mode: 'queue' \| 'steer', content: [{ type: 'text', text }] }, signal)` → `{ accepted: true }`。`queue` 是下一轮。重启后的冷会话它自己恢复 |
 | 停 | `ctx.sessionController.cancel({ sessionId })`，这一轮以 `aborted` 结束 |
 | 收起、放回 | `ctx.workspaceRegistry.archiveSession(id, { stopActivity? })`、`unarchiveSession(id)`、`archivedSessionIds` |
-| 读存着的会话 | `ctx.sessionQuery.readSession(id)` → `{ session, inheritedEventCount, events }`，不唤醒会话；旧宿主兼容 `sessionController.inspect(id)` |
+| 读存着的会话 | `ctx.sessionQuery.observeSession(id, { projectionMode: 'none', signal })` → 不可变 `{ header, inheritedEventCount, events }`，随后释放观察租约，不唤醒会话；旧宿主兼容 `readSession` / `inspect` |
 
 ## 状态怎么读
 

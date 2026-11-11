@@ -31,22 +31,25 @@ struct AgentAvatar: View {
     /// Deep sleep (the owner picked the picture on 2026-11-05): an agent that nobody has handled for a while. The crescent takes the place of whatever mark the agent has (owner,
     /// 2026-11-07: "进入到睡眠状态，右下角的图标应该都变成月亮才对。重新激活后再恢复到原来的状态"): the ring, the check or the red dot is only covered, and is there again when the agent wakes.
     var asleep = false
+    /// 20 on the board; the marks grow with it.
+    var size: CGFloat = 20
 
     private var sleeping: Bool { asleep && state != .working }
+    private var unit: CGFloat { size / 20 }
 
     var body: some View {
-        AgentLogo(agent: agent)
-            .frame(width: 20, height: 20)
+        AgentLogo(agent: agent, size: size * 0.9)
+            .frame(width: size, height: size)
             .overlay(alignment: .bottomTrailing) {
                 if sleeping {
                     // One point larger than the mark's box on every side, centred where the ring is centred, as on the Desktop.
                     AgentSleepMark()
-                        .frame(width: 10, height: 10)
-                        .offset(x: 3, y: 3)
+                        .frame(width: 10 * unit, height: 10 * unit)
+                        .offset(x: 3 * unit, y: 3 * unit)
                 } else {
                     activity
-                        .frame(width: 8, height: 8)
-                        .offset(x: 2, y: 2)
+                        .frame(width: 8 * unit, height: 8 * unit)
+                        .offset(x: 2 * unit, y: 2 * unit)
                 }
             }
             .accessibilityElement(children: .ignore)
@@ -105,7 +108,11 @@ private struct AgentDoneMark: View {
 
 private struct AgentWorkingRing: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.conversationIsCovered) private var covered
+    @Environment(\.scenePhase) private var scenePhase
     @State private var spinning = false
+
+    private var animates: Bool { !reduceMotion && !covered && scenePhase == .active }
 
     var body: some View {
         Circle().strokeBorder(DSBotStyle.muted.opacity(0.3), lineWidth: 1.5)
@@ -114,8 +121,8 @@ private struct AgentWorkingRing: View {
                     .stroke(DSBotStyle.muted, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
                     .padding(0.75)
             }
-            .rotationEffect(.degrees(spinning && !reduceMotion ? 360 : 0))
-            .animation(reduceMotion ? nil : .linear(duration: 1).repeatForever(autoreverses: false), value: spinning)
-            .onAppear { spinning = true }
+            .rotationEffect(.degrees(spinning && animates ? 360 : 0))
+            .animation(animates ? .linear(duration: 1).repeatForever(autoreverses: false) : nil, value: spinning)
+            .onChange(of: animates, initial: true) { _, active in spinning = active }
     }
 }

@@ -7,6 +7,8 @@ struct ComposerTextView: UIViewRepresentable {
     let placeholder: String
     var selectionRequest: ComposerSelection? = nil
     var highlights: [NSRange] = []
+    /// Grey words after what is written, while they are all that is there: the title of the issue whose `@ID` the owner chose to answer (the group chat's reply). They give way to the first letter.
+    var ghost: String? = nil
     var completionActive = false
     var onEditingChange: ((ComposerEditingState) -> Void)? = nil
     var onCompletionKey: ((String) -> Bool)? = nil
@@ -84,6 +86,7 @@ struct ComposerTextView: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: ComposerTextView
         private let placeholderLabel = UILabel()
+        private let ghostLabel = UILabel()
         private var focusRevision = 0
         var isUpdating = false
         private var appliedSelection: UUID?
@@ -106,12 +109,38 @@ struct ComposerTextView: UIViewRepresentable {
                 placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.frameLayoutGuide.trailingAnchor),
                 placeholderLabel.topAnchor.constraint(equalTo: view.frameLayoutGuide.topAnchor)
             ])
+            ghostLabel.font = view.font
+            ghostLabel.textColor = UIColor(DSBotStyle.muted)
+            ghostLabel.lineBreakMode = .byTruncatingTail
+            ghostLabel.isUserInteractionEnabled = false
+            ghostLabel.isAccessibilityElement = false
+            ghostLabel.isHidden = true
+            view.addSubview(ghostLabel)
         }
 
         func updatePlaceholder(in view: UITextView) {
             placeholderLabel.text = parent.placeholder
             placeholderLabel.isHidden = !view.text.isEmpty
             view.accessibilityLabel = parent.placeholder
+            placeGhost(in: view)
+        }
+
+        /// The grey words go where the caret is at the end of the text; the next layout puts them right if the text has not been laid out yet.
+        private func placeGhost(in view: UITextView) {
+            guard let ghost = parent.ghost, !view.text.isEmpty, view.markedTextRange == nil else {
+                ghostLabel.isHidden = true
+                return
+            }
+            ghostLabel.text = ghost
+            ghostLabel.isHidden = false
+            let place = { [weak self, weak view] in
+                guard let self, let view, view.bounds.width > 0 else { return }
+                let caret = view.caretRect(for: view.endOfDocument)
+                let x = caret.maxX + 5
+                self.ghostLabel.frame = CGRect(x: x, y: caret.minY, width: max(0, view.bounds.width - x), height: caret.height)
+            }
+            place()
+            DispatchQueue.main.async(execute: place)
         }
 
         func updateFocus(in view: UITextView) {

@@ -22,7 +22,10 @@ body[data-ds-dark-theme] .dudu .dudu-pet-menu { box-shadow: 0 8px 24px var(--dud
 .dudu-pet-conversation { position: absolute; right: 0; bottom: 76px; width: min(440px, calc(100vw - 48px)); height: min(520px, calc(100dvh - 124px)); display: flex; flex-direction: column; border: 1px solid var(--input); border-radius: 20px; background: var(--card); box-shadow: 0 12px 32px var(--dudu-shadow); overflow: hidden; }
 .dudu-pet-conversation header { flex: none; display: flex; justify-content: space-between; align-items: center; height: 46px; padding: 0 10px 0 16px; color: var(--muted-foreground); font-size: 12px; }
 .dudu-pet-error { display: flex; flex: none; align-items: center; gap: 6px; margin: 0 12px 8px; padding: 6px 8px; border: 1px solid var(--input); border-radius: 12px; color: var(--muted-foreground); background: var(--card); font-size: 12px; line-height: 18px; }
-.dudu-pet-messages { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: auto; padding: 0 16px 8px; }
+/* The thread and the quick buttons that float over its bottom. The thread keeps 44px under its last line for them: their 32px and 4px under them, and 8px between them and the line, which is what the row they used to be
+   (32px and 4px, in the flow) and the 8px under the thread added up to. */
+.dudu-pet-stage { position: relative; display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.dudu-pet-messages { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: auto; padding: 0 16px 44px; }
 .dudu-pet-thread { display: flex; flex-direction: column; flex-shrink: 0; gap: 12px; margin-top: auto; }
 .dudu-pet-day { align-self: center; color: var(--muted-foreground); font-size: 12px; }
 .dudu-pet-message { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -32,6 +35,29 @@ body[data-ds-dark-theme] .dudu .dudu-pet-menu { box-shadow: 0 8px 24px var(--dud
 .dudu-pet-message--action svg { align-self: center; color: var(--dudu-success); }
 .dudu-pet-message--action > span:first-of-type { flex-shrink: 0; }
 .dudu-pet-message-image { display: block; max-width: 100%; max-height: 200px; margin: 4px 0; border-radius: 10px; object-fit: contain; }
+/* The quick buttons float over the bottom of the thread in glass, as the phone's do (owner, 2026-11-11: "使用和手机一样的悬浮按钮吧，而不是背景白色"; they were white buttons with an edge in a row of their own that cut
+   the thread off). 8px over the input (the input has 4px on top, this 4px under), level with its left edge. The row takes no room and does not catch the pointer between the buttons, so the thread under the gaps can be
+   scrolled, clicked and right-clicked; a window too narrow for the three wraps upward. */
+.dudu-pet-quick { position: absolute; left: 12px; right: 12px; bottom: 4px; z-index: 1; display: flex; flex-wrap: wrap; align-content: flex-end; gap: 8px; pointer-events: none; }
+.dudu-pet-quick > button:not(:disabled) { pointer-events: auto; }
+/* The glass is design B of .local/designs/desktop-chips-2026-11-11 (the owner's pick): the popover colour at 42% under a 20px blur, more colour (saturate 1.6), a hairline of the border colour at 55%, a light line along the
+   top inside and a soft shadow, made as the pet menu above is (`.dudu-pet-menu`); a plain surface where there is nothing to blur with or the system asks for less transparency.
+   The hover lays the accent (6% of a dark blue-grey in DSH) OVER the glass: replacing the glass with it left the button see-through. A button that cannot be pressed dims what is in it, not itself: a whole
+   button at 50% lets the text under it show through sharp. */
+.dudu-pet-chip { background-color: var(--popover); border: 1px solid var(--input); box-shadow: 0 4px 14px var(--dudu-shadow), 0 1px 3px var(--dudu-shadow), inset 0 1px 0 rgb(255 255 255 / .85); }
+.dudu-pet-chip:hover:not(:disabled), .dudu-pet-chip:focus-visible:where(html[data-dudu-tabbing] *) { background-image: linear-gradient(var(--accent), var(--accent)); }
+.dudu-pet-chip:disabled { border-color: color-mix(in srgb, var(--input) 70%, transparent); }
+.dudu-pet-chip:disabled > * { opacity: .5; }
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dudu-pet-chip { background-color: color-mix(in srgb, var(--popover) 42%, transparent); border-color: color-mix(in srgb, var(--input) 55%, transparent); -webkit-backdrop-filter: blur(20px) saturate(1.6); backdrop-filter: blur(20px) saturate(1.6); }
+  .dudu-pet-chip:disabled { border-color: color-mix(in srgb, var(--input) 38%, transparent); }
+}
+body[data-ds-dark-theme] .dudu .dudu-pet-chip { box-shadow: 0 4px 14px var(--dudu-shadow), 0 1px 3px var(--dudu-shadow), inset 0 1px 0 rgb(255 255 255 / .08); }
+@media (prefers-reduced-transparency: reduce) {
+  .dudu-pet-chip { background-color: var(--popover); border-color: var(--input); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .dudu-pet-chip:disabled { border-color: color-mix(in srgb, var(--input) 70%, transparent); }
+}
+.dudu-pet-message--card { align-self: stretch; white-space: normal; }
 .dudu-pet-input { flex: none; display: flex; flex-direction: column; gap: 6px; margin: 4px 12px 12px; padding: 10px 8px 8px; border: 1px solid var(--input); border-radius: 16px; background: var(--card); }
 .dudu-pet-input:focus-within { border-color: var(--ring); }
 .dudu-pet-input textarea { min-width: 0; width: 100%; min-height: 40px; max-height: 120px; resize: none; border: 0; outline: none; box-shadow: none; padding: 3px 6px; background: transparent; font: inherit; line-height: 22px; }
@@ -70,11 +96,37 @@ body[data-ds-dark-theme] .dudu .dudu-pet-menu { box-shadow: 0 8px 24px var(--dud
 .dudu-pet-ring--second { animation-delay: .9s; }
 .dudu-pet-bubble small { display: block; margin-top: 8px; color: var(--muted-foreground); font-size: 11px; white-space: nowrap; }
 .dudu-pet-bubble-open { margin-top: 6px; color: var(--muted-foreground); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
-.dudu-pet-reminder { position: absolute; right: 76px; bottom: 14px; width: 296px; max-width: calc(100vw - 136px); box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--input); border-radius: 16px; background: var(--card); box-shadow: 0 8px 24px var(--dudu-shadow); font-size: 14px; overflow-wrap: anywhere; }
-.dudu-pet-reminder::after { content: ""; position: absolute; right: -6px; bottom: 15px; width: 10px; height: 10px; background: var(--card); border-top: 1px solid var(--input); border-right: 1px solid var(--input); transform: rotate(45deg); }
-.dudu-pet-reminder-head { display: flex; align-items: center; gap: 8px; height: 24px; margin-right: -6px; font-size: 12px; line-height: 16px; }
-.dudu-pet-reminder-text { margin-top: 2px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.dudu-pet-reminder-open { margin-top: 8px; padding: 0; color: var(--muted-foreground); font-size: 12px; line-height: 16px; text-decoration: underline; text-underline-offset: 2px; }
+/* The thread as a group chat (owner, 2026-11-10; .local/designs/group-chat-2026-11-10/desktop.png). A row is one line of the thread, edge to edge (it grows 4px over and under its line and 16px at the sides,
+   and takes the same back in padding), so that the tint of an open right-click menu runs from side to side, as the one of Lark does. */
+.dudu-pet-row { display: flex; flex-direction: column; margin: -4px -16px; padding: 4px 16px; }
+.dudu-pet-row[data-state="open"] { background: color-mix(in srgb, var(--foreground) 6%, transparent); }
+.dudu-pet-guest { display: flex; align-items: flex-start; gap: 8px; max-width: 100%; white-space: normal; }
+.dudu-pet-guest-face { flex: none; display: inline-flex; align-items: flex-start; justify-content: flex-start; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: none; }
+.dudu-pet-guest-face:focus-visible:where(html[data-dudu-tabbing] *) { outline: 2px solid var(--ring); outline-offset: 1px; }
+.dudu-pet-guest-label { display: flex; align-items: baseline; gap: 8px; min-width: 0; margin-bottom: 4px; font-size: 12px; line-height: 14px; }
+.dudu-pet-guest-bubble { position: relative; width: fit-content; max-width: 330px; padding: 7px 12px; border-radius: 4px 14px 14px 14px; background: var(--muted); overflow-wrap: anywhere; }
+.dudu-pet-clamp { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+/* The cut of a long answer, as Lark draws it (owner, 2026-11-11): the last lines fade out (a mask, so the bubble's own translucent grey shows through), and a white capsule, 展开, sits over the fade, in the middle. Opened, the capsule, 收起,
+   ends the answer, in the middle too. 22px high, 12px type, a hairline and a soft shadow. */
+.dudu-pet-clamp--cut { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 46px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 46px), transparent); }
+.dudu-pet-fold { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); height: 22px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--background); color: var(--foreground);
+  font-size: 12px; line-height: 20px; white-space: nowrap; box-shadow: 0 1px 4px rgb(0 0 0 / .12); }
+.dudu-pet-fold:hover { background: var(--accent); }
+.dudu-pet-fold:focus-visible:where(html[data-dudu-tabbing] *) { outline: 2px solid var(--ring); outline-offset: 1px; }
+.dudu-pet-fold--end { position: static; display: block; margin: 8px auto 1px; transform: none; }
+.dudu-pet-dots { display: flex; align-items: center; gap: 8px; width: 52px; height: 32px; padding: 0 9px; box-sizing: border-box; }
+.dudu-pet-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted-foreground); opacity: .4; animation: dudu-pet-dot 1.2s ease-in-out infinite; }
+.dudu-pet-dots i:nth-child(2) { animation-delay: .15s; }
+.dudu-pet-dots i:nth-child(3) { animation-delay: .3s; }
+.dudu-pet-at { display: flex; flex-direction: column; align-items: flex-end; }
+/* The result of a scheduled task of 嘟嘟 (owner, 2026-11-11; .local/designs/scheduled-tasks-fresh-session-2026-11-11/chat.png, the left frame): its own words under a header of the type of an issue's line (12px on 14px),
+   a 13px clock level with the letters, 6px before the task's name, and the time 8px after it. The words themselves are `.dudu-pet-message--dudu`. */
+.dudu-pet-task { display: flex; flex-direction: column; }
+.dudu-pet-task-label { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin-bottom: 4px; font-size: 12px; line-height: 14px; }
+/* The title of the issue in grey after the @ID that 回复 filled in, until the first letter is typed (it is drawn in the mirror of the field, right where the caret is). */
+.dudu-pet-hint { color: var(--muted-foreground); }
+@keyframes dudu-pet-dot { 0%, 60%, 100% { opacity: .4; } 30% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .dudu-pet-dots i { animation: none; } .dudu-pet-dots i:nth-child(2) { opacity: .65; } .dudu-pet-dots i:nth-child(3) { opacity: 1; } }
 @keyframes dudu-pet-bob { 50% { transform: translateY(-2px); } }
 @keyframes dudu-pet-blink { 0%, 94%, 100% { transform: scaleY(1); } 97% { transform: scaleY(.12); } }
 @keyframes dudu-pet-ring { from { transform: scale(.8); opacity: .5; } to { transform: scale(1.5); opacity: 0; } }

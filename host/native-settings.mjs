@@ -68,7 +68,7 @@ function describeState(state, line) {
   if (!state) return { line };
   switch (state.status) {
     case 'needs-auth': return { line, tone: 'warn', words: '需要授权', verb: 'authorize' };
-    case 'waiting': return { line, tone: 'muted', words: '等待浏览器…', verb: 'cancel' };
+    case 'waiting': return { line: state.code || line, tone: 'muted', words: '等待浏览器…', verb: 'cancel' };
     case 'needs-login': return { line: state.login ? `在终端运行 ${state.login}，再点重试` : line, tone: 'warn', words: '需要登录', verb: 'retry' };
     case 'missing': return { line: state.command ? `没找到 ${state.command}${state.install ? `：${state.install}` : ''}` : line, tone: 'bad', words: '没装', verb: 'retry' };
     case 'error': return { line, tone: 'bad', words: state.message === 'timeout' ? '连接超时' : text(state.message, 120), verb: 'retry' };

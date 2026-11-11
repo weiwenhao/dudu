@@ -2,6 +2,49 @@ import XCTest
 @testable import dsbot
 
 final class ConversationProjectionTests: XCTestCase {
+    func testChangeCountsUpdateWithoutOpeningFilesAndRemainScopedToTheirComparison() async throws {
+        let projector = ConversationProjector()
+        let counts = ConversationChangeSummary(total: 9, added: 78, deleted: 12)
+        var incoming = Transcript(entries: [
+            TranscriptEntry(type: "assistant", id: "before", seq: 1, text: "Before", turn: 1, step: 1),
+            TranscriptEntry(type: "user", id: "follow-up", seq: 2, text: "Continue"),
+            TranscriptEntry(type: "assistant", id: "after", seq: 3, text: "After", turn: 1, step: 2)
+        ], turns: [TranscriptTurn(turn: 1, start: 100, end: 200, outcome: "done", changesSeq: 4)])
+        var projection = await projector.project(current: nil, incoming: incoming, currentRows: [], isRunning: false)
+        let rowIDs = projection.rows.map(\.id)
+        incoming.turns[0].changesSummary = counts
+        projection = await projector.project(
+            current: projection.transcript, incoming: incoming, currentRows: projection.rows, isRunning: false
+        )
+        XCTAssertTrue(projection.rowsChanged)
+        XCTAssertEqual(projection.rows.map(\.id), rowIDs)
+        let turns = projection.rows.compactMap { row -> TurnRow? in
+            if case let .turn(turn) = row { return turn }
+            return nil
+        }
+        XCTAssertNil(turns.first?.changesSummary)
+        XCTAssertEqual(turns.last?.changesSummary, counts)
+        let cached = try JSONDecoder().decode(Transcript.self, from: JSONEncoder().encode(try XCTUnwrap(projection.transcript)))
+        XCTAssertEqual(cached.turns[0].changesSummary, counts)
+        incoming.turns[0].changesSummary = nil
+        projection = await projector.project(
+            current: cached, incoming: incoming, currentRows: projection.rows, isRunning: false
+        )
+        XCTAssertEqual(projection.transcript?.turns[0].changesSummary, counts)
+        XCTAssertFalse(projection.rowsChanged)
+        incoming.turns[0].changesSeq = 5
+        projection = await projector.project(
+            current: projection.transcript, incoming: incoming, currentRows: projection.rows, isRunning: false
+        )
+        XCTAssertNil(projection.transcript?.turns[0].changesSummary)
+        XCTAssertEqual(projection.rows.map(\.id), rowIDs)
+        incoming.turns[0].changesSummary = ConversationChangeSummary(total: 1, added: 2, deleted: 3)
+        projection = await projector.project(
+            current: projection.transcript, incoming: incoming, currentRows: projection.rows, isRunning: false
+        )
+        XCTAssertEqual(projection.transcript?.turns[0].changesSummary, incoming.turns[0].changesSummary)
+    }
+
     func testInterleavedTurnKeepsTheImageQuestionInPlaceDuringLiveUpdatesAndPagination() async throws {
         let projector = ConversationProjector()
         let question = TranscriptEntry(type: "user", id: "follow-up", seq: 5, time: 3_000,

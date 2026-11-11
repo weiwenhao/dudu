@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer';
 import { ACCESS_MODES, allowedAccess, explicitAccess, grantAccess, tablePriority, urgentAllowed } from '../dispatch/rules.mjs';
 import { createIssueCommands } from '../issues/api.mjs';
 import { ISSUE_FIELDS, ISSUE_ID, ISSUE_PROJECT, ISSUE_REQUESTS } from '../issues/contract.mjs';
+import { taskTools } from '../tasks/tools.mjs';
 const object = { type: 'object', additionalProperties: true };
 const string = { type: 'string' };
 const id = ISSUE_ID;
@@ -56,6 +57,7 @@ export function assistantTools({ assistant, issues, assignment, dashboard, nativ
   const commands = createIssueCommands({
     issues, actor: 'dudu', onAssign: (issue) => assignment.onAssign?.(issue),
     onChange: (issue) => ['done', 'canceled'].includes(issue.statusType ?? issue.status) ? assignment.closeFor?.(issue) : assignment.onAssign?.(issue),
+    onDelete: (issue) => assignment.deleteSessions?.(issue) ?? Promise.reject(new Error('Session cleanup is unavailable.')),
   });
   const command = (action, body) => commands.execute(action, body);
   let forgetPreview = null;
@@ -99,6 +101,7 @@ export function assistantTools({ assistant, issues, assignment, dashboard, nativ
   }
   const tool = definition;
   return [
+    ...taskTools(definition, () => assignment.tasks),
     tool('issues_schema', 'Read the versioned OpenAPI contract for issue operations.', {}, [], () => command('schema')),
     tool('issues_statuses', 'Read the available workflow statuses and their stable ids. Workflow settings can only be changed by boss.', {}, [], () => command('statuses')),
     tool('issues_list', 'List issues. Filters, ordering and cursors use the dashboard view format. Use numeric id for issues with no project reference.', { view: ISSUE_REQUESTS.list }, [], ({ view }) => command('list', view)),
@@ -124,9 +127,10 @@ export function assistantTools({ assistant, issues, assignment, dashboard, nativ
     }),
     tool('issues_log', 'Add context, progress or a decision to an issue.', ISSUE_REQUESTS.log.properties, ['id', 'text'], ({ kind = 'note', ...args }) => command('log', { ...args, kind })),
     tool('projects_list', 'List DSH projects. Choose a project before assigning an agent.', {}, [], async () => ({ outcome: 'success', projects: await dsh.projects() })),
-    tool('issues_assign', 'Give an issue with a selected project folder to Claude, ChatGPT (codex) or DeepSeek. Starts its session in that folder under ASSIGN.md.', { id, agent: ISSUE_FIELDS.properties.agent, project: ISSUE_PROJECT, reason: string }, ['id', 'agent'], (args) => command('assign', args)),
+    tool('issues_assign', 'Give an issue with a selected project folder to Claude, ChatGPT (codex) or DeepSeek. Starts its session in that folder under ASSIGN.md.', { id, agent: ISSUE_FIELDS.properties.agent, project: ISSUE_PROJECT, reason: string }, ['id', 'agent'], ({ id, agent, project, reason }) => command('assign', { id, agent, project, reason })),
     tool('issues_complete', 'Mark an issue Done with its outcome, when the owner confirms completion.', { id, outcome: string }, ['id', 'outcome'], (args) => command('complete', args)),
     tool('issues_cancel', 'Cancel an issue with a reason.', { id, reason: string }, ['id', 'reason'], (args) => command('cancel', args)),
+    tool('issues_delete', 'Delete an issue only when the owner explicitly asks. Call without token to inspect the issue, then apply the returned token. Removes the local issue and activity and archives its linked sessions; native Claude/Codex history is retained.', ISSUE_REQUESTS.delete.properties, ['id'], (args) => command('delete', args)),
     tool('issues_snooze', 'Snooze an issue question until a time in milliseconds, or clear with null.', ISSUE_REQUESTS.snooze.properties, ['id', 'until'], (args) => command('snooze', args)),
     tool('issues_undo', 'Undo an event or group only when the owner requests it. Later edits are preserved.', ISSUE_REQUESTS.undo.properties, [], (args) => command('undo', args)),
     tool('issues_tidy', 'Preview a bounded issue tidy. Apply only the returned preview token after showing its changes.', { token: string }, [], ({ token }) => tidyIssues(token ? { token } : {})),
@@ -175,7 +179,7 @@ export function assistantTools({ assistant, issues, assignment, dashboard, nativ
     tool('connector_remove', 'Delete a connector when the owner asks. A connector that collectors still read through is not deleted.', { id: string }, ['id'], ({ id }) => connectors().remove(id)),
     tool('collector_register', 'Save a collector the owner requested. Entry is {name, connector, prompt, frequency?, id?}: `connector` is the id of a saved connector, `prompt` says what to collect, `frequency` is text such as 15m, 2h, 1d or a cron expression. It starts collecting at its pace.', { entry: object }, ['entry'], ({ entry }) => collectors().register(entry)),
     tool('collector_update', 'Update a saved collector name, connector, what to collect or how often when the owner asks.', { id: string, patch: object }, ['id', 'patch'], ({ id, patch }) => collectors().update(id, patch)),
-    tool('collector_remove', 'Delete a collector when the owner asks. Its records stay in the inbox.', { id: string }, ['id'], ({ id }) => collectors().remove(id)),
+    tool('collector_remove', 'Delete a collector when the owner asks. The records it brought that the owner has not dealt with are deleted with it; the ones they marked or made an issue of stay. Never use a collector to answer a one-off question: what it collects is kept in the owner\'s inbox.', { id: string }, ['id'], ({ id }) => collectors().remove(id)),
     tool('sessions_list', 'List existing DSH, Claude and ChatGPT conversations from the same catalog as the Sessions window. query searches titles and full conversation text; provider filters the source. With state, list tracked runtime snapshots instead. Excludes this conversation.', {
       ...sessionQuery,
       state: { type: 'string', enum: ['running', 'waiting_owner', 'finished', 'idle', 'error', 'stopped'] },

@@ -40,6 +40,10 @@ test('assistant tools keep source and session identity out of edits, and Done ca
       assert.equal((await call('issues_update', { id, patch })).outcome, 'needs_clarification');
     }
     assert.equal((await call('issues_add', { fields: { title: 'done', status: 'done', outcome: 'done' } })).outcome, 'needs_clarification');
+    const assigned = await call('issues_assign', { id, agent: 'claude', project: { name: 'work', path: '/work' }, session: 'dsh:previous-contract' });
+    assert.equal(assigned.outcome, 'success');
+    assert.equal(assigned.issue.agent, 'claude');
+    assert.equal(assigned.issue.session, null, 'undeclared tool arguments cannot attach an old session');
     assert.equal(issues.get(id).issue.status, 'todo');
     assert.equal(issues.events({ issueId: id }).events.every((event: any) => event.actor === 'dudu'), true);
     assert.ok(!tools.some((tool: any) => /^(bash|write|read|connector_enable|connector_tick)$/.test(tool.name)));
@@ -169,7 +173,7 @@ test('session access follows rules or an explicit grant in the current user mess
   try {
     const { issue } = issues.add({ title: 'Todo', kind: '开发', session: 'dsh:work' });
     const calls: any[] = [];
-    let rules = '';
+    let rules = '开发 → Codex，只读'; // the rules limit this kind: with nothing written the default is full access and there would be nothing to grant
     const tools = assistantTools({
       assistant: { memory: { rules: () => ({ rules: { 'ASSIGN.md': rules } }) } }, issues, dashboard: {}, dsh: {},
       assignment: { setAccess: async (...args: any[]) => { calls.push(args); return { outcome: 'success', access: args[1] }; } },

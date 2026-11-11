@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createIssues } from '../host/assistant/issues/index.mjs';
 import { createIssueCommands } from '../host/assistant/issues/api.mjs';
+import { assistantTools } from '../host/assistant/home/tools.mjs';
 import { createSessionCleanup } from '../host/assistant/home/session-cleanup.mjs';
 import { createLinkStore } from '../host/providers/native/index.mjs';
 import { createSessionInbox } from '../host/assistant/home/inbox.mjs';
@@ -12,7 +13,7 @@ import { createAgentSessions } from '../host/assistant/home/agent-sessions.mjs';
 import { createAssignment } from '../host/assistant/home/assign.mjs';
 import { fakeDsh } from './fake-dsh.mjs';
 
-test('deletion requires a current preview, cleans all linked sessions, and a waiting native source cannot recreate the issue after restart', async (t) => {
+test('assistant deletion requires a current preview, cleans linked sessions without canceling, and a waiting native source cannot recreate the issue after restart', async (t) => {
   const folder = await mkdtemp(join(tmpdir(), 'dudu-delete-'));
   const issues = createIssues({ file: ':memory:', sessionState: () => 'running' });
   let links = await createLinkStore(folder);
@@ -22,16 +23,21 @@ test('deletion requires a current preview, cleans all linked sessions, and a wai
   const archived: string[] = [];
   const cleanup = createSessionCleanup({
     issues, links, forget: () => {}, registry: () => ({ archiveSession: async (id: string, options: any) => {
-      assert.equal(options.stopActivity, true); archived.push(id);
+      assert.equal(options.stopActivity, true);
+      assert.equal(issues.get(issue.id).issue.status, 'todo', 'deletion must not substitute a workflow cancellation');
+      archived.push(id);
     } }),
   });
-  const commands = createIssueCommands({ issues, onDelete: cleanup });
-  const preview = await commands.execute('delete', { id: issue.id });
+  const tools = assistantTools({ assistant: {}, issues, assignment: { deleteSessions: cleanup }, dashboard: {}, dsh: {} });
+  const remove = tools.find((tool: any) => tool.name === 'issues_delete');
+  assert.ok(remove, 'the assistant must expose the same deletion capability as the issue UI');
+  const call = async (args: any) => JSON.parse(await remove.execute(args));
+  const preview = await call({ id: issue.ref });
   assert.equal(preview.preview, true);
   assert.deepEqual(archived, []);
-  assert.equal((await commands.execute('delete', { id: issue.id, token: 'wrong' })).outcome, 'needs_clarification');
+  assert.equal((await call({ id: issue.ref, token: 'wrong' })).outcome, 'needs_clarification');
   assert.deepEqual(archived, []);
-  assert.equal((await commands.execute('delete', { id: issue.id, token: preview.token })).forgotten, true);
+  assert.equal((await call({ id: issue.ref, token: preview.token })).forgotten, true);
   assert.deepEqual(archived, ['one']);
   links = await createLinkStore(folder);
   assert.equal(links.get('claude', 'native-1'), undefined);
@@ -62,9 +68,13 @@ test('failed cleanup keeps the issue, while a session shared by another issue st
   const one = issues.add({ title: 'one', session: 'dsh:shared' }).issue;
   links.record({ route: 'claude', nativeSessionId: 'shared-native', sessionId: 'shared' });
   const two = issues.add({ title: 'two', session: 'claude:shared-native' }).issue;
-  const failing = createIssueCommands({ issues, onDelete: () => { throw new Error('unavailable'); } });
-  const preview = await failing.execute('delete', { id: one.id });
-  assert.equal((await failing.execute('delete', { id: one.id, token: preview.token })).code, 'session_cleanup_failed');
+  const failing = assistantTools({
+    assistant: {}, issues, dashboard: {}, dsh: {},
+    assignment: { deleteSessions: () => { throw new Error('unavailable'); } },
+  }).find((tool: any) => tool.name === 'issues_delete');
+  const preview = JSON.parse(await failing.execute({ id: one.id }));
+  const failure = JSON.parse(await failing.execute({ id: one.id, token: preview.token }));
+  assert.equal(failure.code, 'session_cleanup_failed');
   assert.equal(issues.get(one.id).outcome, 'success');
   const cleanup = createSessionCleanup({
     links, issues, forget: () => {}, registry: () => ({ archiveSession: () => { throw new Error('shared session must not close'); } }),

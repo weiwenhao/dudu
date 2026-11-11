@@ -9,7 +9,7 @@ What is taken from it, unchanged unless said:
 | In the repo | Here |
 |---|---|
 | `src/assets/img/workstation@2x.webp` and `.json` (desks, chairs, monitors, shadows, the water bar, the treadmill, the toilet) | `assets/workstation@2x.webp`, `.json` |
-| `src/assets/agent/fc_screen_*.webp` and `.json` (the animated monitors: four of the working ones and the game), `fc_ticket` | `assets/screens/` (the 1x sheets; the repo loads the 2x ones) |
+| `src/assets/agent/fc_screen_*.webp` and `.json` (the animated monitors: three of the working ones and the game), `fc_ticket` | `assets/screens/` (the 1x sheets; the repo loads the 2x ones) |
 | `src/hooks/useScene.ts`, `useWorkstation.ts`, `useSprite.ts`, `useActionTextures.ts`: layers, sprite positions and scales, the desk group, the screen and effect sprites, the viewport fit | `furniture.js`, `textures.js` and `../scene.js`, as JavaScript without Vue |
 | `src/hooks/usePerson.ts`, `useAnimation.ts`: how a person moves (straight lines, 0.22 px/ms, ease in and out, 800 ms at least) and how the office is told what to do | `person.js`, `office.js` |
 | `src/assets/agent/roles.ts`: where the six desks are | `../layout.js` (`deskAt`: the first row as it is, the columns nearer each other and a fourth row at a smaller pitch make the eight desks the widget has) |

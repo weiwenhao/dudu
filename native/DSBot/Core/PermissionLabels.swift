@@ -16,13 +16,20 @@ enum PermissionLabels {
     /// kebab-case name is title-cased.
     static func localized(_ choice: Choice) -> Choice {
         var result = choice
-        if let label = builtIn[choice.id], choice.name == choice.id || choice.name == label.english {
-            result.name = label.zh
-        } else if choice.name.range(of: #"^[a-z0-9]+(-[a-z0-9]+)*$"#, options: .regularExpression) != nil {
-            result.name = choice.name.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }
+        result.name = name(id: choice.id, name: choice.name)
+        return result
+    }
+
+    /// The same rule for a bare id and name, for lists that are not `Choice`s (the phone's settings).
+    static func name(id: String, name: String) -> String {
+        if let label = builtIn[id], name == id || name == label.english {
+            return label.zh
+        }
+        if name.range(of: #"^[a-z0-9]+(-[a-z0-9]+)*$"#, options: .regularExpression) != nil {
+            return name.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }
                 .joined(separator: " ")
         }
-        return result
+        return name
     }
 
     struct Confirmation: Equatable {

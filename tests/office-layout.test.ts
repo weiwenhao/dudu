@@ -15,10 +15,10 @@ const working = (id: number, status = 'in_progress') => issue(id, status, 'worki
 const SEVEN = [issue(12, 'in_progress', 'blocked', 'deepseek'), issue(13, 'in_progress', 'blocked', 'claude'), issue(9, 'todo', 'idle', null), issue(14, 'in_progress', 'working', 'claude'),
   issue(10, 'todo', 'idle', 'deepseek'), issue(8, 'in_progress', 'blocked', 'claude'), issue(11, 'in_review', 'blocked', 'codex')];
 
-test('there are eight desks, fixed, in two columns of four: the first row as marvis-office has it (roles.ts: the boss\'s desk, and the one beside it a little lower)', () => {
+test('there are eight desks, fixed, in two columns of four: both desks of the first row at one height, and no desk is different from another', () => {
   assert.equal(DESKS, 8);
-  assert.deepEqual(Array.from({ length: 8 }, (_, seat) => { const { x, y } = deskAt(seat); return [x, y]; }), [[415, 66], [685, 90], [415, 339], [685, 339], [415, 601], [685, 601], [415, 863], [685, 863]]);
-  assert.deepEqual(Array.from({ length: 8 }, (_, seat) => deskAt(seat).boss), [true, ...Array(7).fill(false)], 'the first desk is the boss\'s');
+  assert.deepEqual(Array.from({ length: 8 }, (_, seat) => { const { x, y } = deskAt(seat); return [x, y]; }), [[415, 90], [685, 90], [415, 339], [685, 339], [415, 601], [685, 601], [415, 863], [685, 863]]);
+  assert.ok(Array.from({ length: 8 }, (_, seat) => deskAt(seat)).every((desk) => !('boss' in desk)), 'no desk is the boss\'s');
   assert.equal(deskAt(1).x - deskAt(0).x, 270, 'the empty column between the two columns of desks is narrower than marvis-office\'s (351)');
   // the rows after the first are one pitch apart, and a desk\'s chair does not reach the next desk\'s monitor (the way between the rows is open floor)
   for (let seat = 2; seat < DESKS - 2; seat++) assert.equal(deskAt(seat + 2).y - deskAt(seat).y, 262);
@@ -64,7 +64,7 @@ test('a person sits in the middle of the desk, and the name tag points just abov
     const at = seatAnchor(seat);
     assert.equal(at.x, desk.x + 91, 'the middle of the desk (183 wide)');
     assert.ok(at.y > desk.y && at.y < desk.y + 105, 'behind the top of the chair, inside the desk');
-    assert.equal(at.y, desk.y + (seat === 0 ? 80 : 62), 'the boss sits lower, in front of the monitor');
+    assert.equal(at.y, desk.y + 62, 'everybody sits the same way');
     const head = headPoint(at);
     assert.equal(head.x, at.x);
     assert.ok(head.y < at.y - SEATED_TOP, 'above the top of the bust');

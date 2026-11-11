@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { loadCatalog } from '../host/assistant/connectors/catalog.mjs';
 import { createConnections } from '../host/assistant/connectors/connections.mjs';
 import { createConnectors } from '../host/assistant/connectors/index.mjs';
 import { createState } from '../host/assistant/connectors/state.mjs';
@@ -42,6 +43,7 @@ function world(t: any, extra: any = {}) {
   const connections = createConnections({
     connectors, state, secrets, oauth, open, ...(extra.catalog ? { catalog: extra.catalog } : {}),
     ...(extra.publisher ? { publisher: extra.publisher } : {}), warn: extra.warn ?? (() => {}),
+    ...(extra.device ? { device: extra.device } : {}), ...(extra.openUrl ? { openUrl: extra.openUrl } : {}),
     probe: extra.probe ?? (async (url: string) => { calls.probed.push(url); return { auth: 'oauth' }; }),
     run: extra.run ?? (async (file: string, args: string[]) => { calls.ran.push([file, ...args]); return { code: 0, stdout: '{}', stderr: '', failed: null }; }),
     which: extra.which ?? ((command: string) => `/usr/bin/${command}`),
@@ -161,4 +163,68 @@ test('disconnecting takes the connector out of DSH first; closing lets all of it
   assert.equal(w.connections.list().connectors.length, 0);
   await w.connections.close();
   assert.equal(publisher.calls.closed, 1);
+});
+
+// GitHub: its authorization server registers no client, so dudu signs in with a code the owner enters on GitHub's page (device.mjs, RFC 8628), and the token is kept in
+// the credential store like one pasted by hand. The read-only address is the one connected.
+test('a server signed in to by a device code: the code is on the row while it waits, the browser is sent to the page for it, the token goes to the store only, and the connector connects with it', async (t) => {
+  const catalog = loadCatalog({ groups: ['dev'], items: [{ id: 'github', name: 'GitHub', group: 'dev', icon: 'github', line: 'x', how: 'device', url: 'https://mcp.example/readonly', clientId: 'client-1', scope: 'repo', deviceUrl: 'https://login.example/device/code', tokenUrl: 'https://login.example/token' }] });
+  const seen: any = { asked: [], opened: [] };
+  let release: (value: any) => void = () => {};
+  const device = {
+    requestCode: async (options: any) => { seen.asked.push(options); return { ok: true, userCode: 'ABCD-1234', verificationUri: 'https://login.example/device', deviceCode: 'dev-1', interval: 5, expiresIn: 900 }; },
+    waitForToken: (options: any) => { seen.waited = options; return new Promise((resolve) => { release = resolve; }); },
+  };
+  const w = world(t, { catalog, device, openUrl: async (url: string) => { seen.opened.push(url); } });
+  assert.deepEqual(await w.connections.connect('github'), { outcome: 'success', id: 'github' });
+  for (let n = 0; n < 20 && !seen.waited; n++) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual([seen.asked[0].clientId, seen.asked[0].scope, seen.opened], ['client-1', 'repo', ['https://login.example/device']]);
+  assert.deepEqual([w.state.get('github')?.status, w.state.get('github')?.code], ['waiting', 'ABCD-1234']);
+  assert.deepEqual(w.connections.list().connectors[0].state, { status: 'waiting', code: 'ABCD-1234' }, 'the row carries the code the owner types in the browser');
+  release({ ok: true, token: 'gho_secret', scope: 'repo' });
+  await w.connections.idle();
+  assert.equal(w.state.get('github')?.status, 'connected');
+  assert.deepEqual(w.store.get('github'), { token: 'gho_secret' });
+  assert.equal(w.calls.opened.at(-1).spec.headers.Authorization, 'Bearer gho_secret', 'the server is opened with that token');
+  assert.ok(!w.read().includes('gho_secret') && !JSON.stringify(w.connections.list()).includes('gho_secret'), 'and it is in neither the file nor the list');
+  // Connected already: another click only looks, and asks for no new code.
+  await w.connections.retry('github');
+  await w.connections.idle();
+  assert.equal(seen.asked.length, 1);
+});
+
+test('a device sign-in that is not approved asks again; a code that ran out or a server that did not answer is an error; cancel ends the wait; a token the server refuses is replaced', async (t) => {
+  const catalog = loadCatalog({ groups: ['dev'], items: [{ id: 'github', name: 'GitHub', group: 'dev', icon: 'github', line: 'x', how: 'device', url: 'https://mcp.example/readonly', clientId: 'c', scope: 'repo', deviceUrl: 'https://login.example/device/code', tokenUrl: 'https://login.example/token' }] });
+  const code = async () => ({ ok: true, userCode: 'AAAA-1111', verificationUri: 'https://login.example/device', deviceCode: 'd', interval: 5, expiresIn: 900 });
+  const outcome = async (device: any) => {
+    const w = world(t, { catalog, device, openUrl: async () => { throw new Error('no browser'); } });
+    await w.connections.connect('github');
+    await w.connections.idle();
+    return w;
+  };
+  const denied = await outcome({ requestCode: code, waitForToken: async () => ({ ok: false, reason: 'denied', message: 'x' }) });
+  assert.equal(denied.state.get('github')?.status, 'needs-auth');
+  assert.equal(denied.store.get('github'), undefined);
+  const expired = await outcome({ requestCode: code, waitForToken: async () => ({ ok: false, reason: 'expired', message: 'x' }) });
+  assert.deepEqual([expired.state.get('github')?.status, expired.state.get('github')?.message], ['error', 'timeout']);
+  const down = await outcome({ requestCode: async () => ({ ok: false, reason: 'failed', message: 'device_flow_disabled' }), waitForToken: async () => { throw new Error('not reached'); } });
+  assert.deepEqual([down.state.get('github')?.status, down.state.get('github')?.message], ['error', 'device_flow_disabled']);
+  const waiting = world(t, { catalog, device: { requestCode: code, waitForToken: ({ signal }: any) => new Promise((resolve) => signal.addEventListener('abort', () => resolve({ ok: false, reason: 'cancelled', message: 'x' }))) } });
+  await waiting.connections.connect('github');
+  for (let n = 0; n < 20 && waiting.state.get('github')?.code === undefined; n++) await new Promise((resolve) => setImmediate(resolve));
+  waiting.connections.cancel('github');
+  await waiting.connections.idle();
+  assert.equal(waiting.state.get('github')?.status, 'needs-auth');
+  // A kept token that the server no longer takes is not shown as an error to read: a new code is asked for.
+  const stale = world(t, { catalog, device: { requestCode: code, waitForToken: async () => ({ ok: true, token: 'fresh', scope: '' }) },
+    open: async (spec: any) => {
+      if (spec.headers?.Authorization === 'Bearer old') throw unauthorized();
+      return { tools: async () => [], call: async () => ({}), close: async () => {} };
+    } });
+  await stale.connections.connect('github');
+  await stale.connections.idle();
+  stale.store.set('github', { token: 'old' });
+  await stale.connections.retry('github');
+  await stale.connections.idle();
+  assert.deepEqual([stale.state.get('github')?.status, stale.store.get('github')], ['connected', { token: 'fresh' }]);
 });

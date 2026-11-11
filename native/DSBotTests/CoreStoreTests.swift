@@ -4,6 +4,105 @@ import XCTest
 
 @MainActor
 final class CoreStoreTests: XCTestCase {
+    func testSelectionPreparesCachedHistoryBeforeWatchAndAlsoSignalsTheRetainedSession() async {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await store.selectSession(session("b"))
+        await transport.holdWatch("a")
+        var preparations = 0
+        let selection = Task {
+            await store.selectSession(session("a")) {
+                preparations += 1
+                XCTAssertEqual(store.selectedSession?.id, "a")
+                XCTAssertEqual(store.messages.first?.text, "a")
+            }
+        }
+        await transport.waitForWatch("a")
+        XCTAssertEqual(preparations, 1, "The page can prepare its local history before the held watch replies.")
+        await transport.finishWatch("a", text: "fresh a")
+        await selection.value
+        await store.selectSession(session("a")) { preparations += 1 }
+        XCTAssertEqual(preparations, 2, "A retained session also needs to start its page presentation.")
+        let watches = await transport.watchCount("a")
+        XCTAssertEqual(watches, 2, "Reopening the retained page must not start another watch.")
+    }
+
+    func testAssistantOpensPersistedHistoryBeforeItsWatchRefresh() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let firstTransport = StoreTransportFixture()
+        let first = DSBotStore(
+            repository: StoreComputerFixture(), client: firstTransport,
+            conversationStorage: FileConversationStorage(directory: directory)
+        )
+        await first.start()
+        let resolved = await first.assistantSession()
+        let assistant = try XCTUnwrap(resolved)
+        await first.selectSession(assistant)
+        XCTAssertTrue(first.isAssistantConversation)
+        let current = await first.assistantSession()
+        XCTAssertEqual(current?.id, assistant.id)
+        await first.selectSession(try XCTUnwrap(current))
+        let resolutions = await firstTransport.requestCount("assistant.open")
+        let watches = await firstTransport.watchCount(assistant.id)
+        XCTAssertEqual(resolutions, 1, "Reopening an active assistant must not resolve it again.")
+        XCTAssertEqual(watches, 1)
+        await first.selectSession(session("b"))
+        await first.flushConversationCache()
+
+        let transport = StoreTransportFixture()
+        let restored = DSBotStore(
+            repository: StoreComputerFixture(), client: transport,
+            conversationStorage: FileConversationStorage(directory: directory)
+        )
+        await restored.start()
+        let cached = await restored.assistantSession()
+        let cachedAssistant = try XCTUnwrap(cached)
+        XCTAssertEqual(cachedAssistant.id, assistant.id)
+        XCTAssertFalse(restored.isOpeningAssistant)
+        let repeatedResolutions = await transport.requestCount("assistant.open")
+        XCTAssertEqual(repeatedResolutions, 0, "The persisted plugin identity is enough to open the cached conversation.")
+        await transport.holdWatch(assistant.id)
+        let selection = Task { await restored.selectSession(cachedAssistant) }
+        await transport.waitForWatch(assistant.id)
+        XCTAssertEqual(restored.selectedSession?.id, assistant.id)
+        XCTAssertEqual(restored.messages.first?.text, assistant.id, "Cached history must precede the network response.")
+        XCTAssertTrue(restored.isLoadingSession)
+        await transport.finishWatch(assistant.id, text: "fresh assistant history")
+        await selection.value
+        XCTAssertEqual(restored.messages.first?.text, "fresh assistant history")
+        await restored.flushConversationCache()
+    }
+
+    func testAssistantUsesThePluginIdentityFromTheSessionList() async throws {
+        let transport = StoreTransportFixture()
+        await transport.listSession("assistant")
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        let assistant = await store.assistantSession()
+        XCTAssertEqual(assistant?.id, "assistant")
+        let resolutions = await transport.requestCount("assistant.open")
+        XCTAssertEqual(resolutions, 0, "A known plugin identity must not need another round trip.")
+    }
+
+    func testAssistantResolutionDoesNotGuessFromTitlesOrOverrideANewerSelection() async {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        store.sessions[0].title = "Dudu"
+        await transport.holdNextRequest("assistant.open")
+        let opening = Task { await store.assistantSession() }
+        await transport.waitForRequest("assistant.open")
+        XCTAssertTrue(store.isOpeningAssistant)
+        await store.selectSession(session("b"))
+        await transport.finishRequest("assistant.open")
+        let result = await opening.value
+        XCTAssertNil(result)
+        XCTAssertEqual(store.selectedSession?.id, "b")
+        XCTAssertFalse(store.isOpeningAssistant)
+    }
+
     func testAssistantCompletionCanResumeAfterTemporaryEditingChanges() {
         let store = DSBotStore(repository: StoreComputerFixture(), client: StoreTransportFixture())
         store.selectedSession = SessionSummary(
@@ -1932,6 +2031,8 @@ private actor StoreTransportFixture: DSBotTransport {
             throw failure.error
         }
         switch method {
+        case "assistant.open":
+            return summary("assistant")
         case "session.list":
             return .array(listedSessions)
         case "session.fork":
@@ -2228,6 +2329,7 @@ private actor StoreTransportFixture: DSBotTransport {
             "updatedAt": .number(1), "status": .string("idle")
         ]
         if let workspaceId = createdWorkspaces[id] { row["workspaceId"] = .string(workspaceId) }
+        if id == "assistant" { row["isAssistant"] = .bool(true) }
         return .object(row)
     }
 

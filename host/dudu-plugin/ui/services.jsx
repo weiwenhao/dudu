@@ -2,6 +2,6 @@
 // Widgets are rendered into cells gridstack made, but through React portals, so context reaches them from here.
 import { createContext, useContext } from 'react';
 
-const ServicesContext = createContext({ request: async () => ({}), openIssue: () => {}, openNativeSession: async () => {}, openIssueSession: async () => {}, previewIssueSession: () => {}, addSession: async () => {} });
+const ServicesContext = createContext({ request: async () => ({}), openIssue: () => {}, openNativeSession: async () => {}, openIssueSession: async () => {}, previewIssueSession: () => {}, addSession: async () => {}, pickProjectDirectory: undefined });
 export const ServicesProvider = ServicesContext.Provider;
 export const useServices = () => useContext(ServicesContext);

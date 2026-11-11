@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 export const STATUS_CATEGORIES = ['backlog', 'unstarted', 'started', 'completed', 'canceled'];
+export const STATUS_ICON_PROGRESS = [0, 0.25, 0.5, 0.75, 1];
 export const CATEGORY_TYPE = { backlog: 'backlog', unstarted: 'todo', started: 'in_progress', completed: 'done', canceled: 'canceled' };
 export const DEFAULT_STATUSES = [
   { id: 'backlog', category: 'backlog', type: 'backlog' },
@@ -61,7 +62,7 @@ export function migrateWorkflow(db) {
 /** Stable workflow identities keep history readable when names, colors and ordering change. */
 export function createWorkflow(db, invalid) {
   const toStatus = (row) => row && ({
-    id: row.id, category: row.category, type: row.type, name: row.name, color: row.color,
+    id: row.id, category: row.category, type: row.type, name: row.name, color: row.color, iconProgress: row.icon_progress,
     description: row.description, position: row.position, isDefault: Boolean(row.is_default), archived: Boolean(row.archived),
   });
   const all = db.prepare('SELECT * FROM issue_statuses ORDER BY position,id');
@@ -79,9 +80,9 @@ export function createWorkflow(db, invalid) {
     return active.find((status) => status.id === type)?.id ?? active.find((status) => status.type === type)?.id ??
       active.find((status) => status.category === DEFAULT_STATUSES.find((entry) => entry.id === type)?.category)?.id;
   };
-  const validate = (input, adding) => {
+  const validate = (input, adding, category = input?.category) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw invalid('invalid_status');
-    const allowed = adding ? ['name', 'color', 'description', 'category'] : ['name', 'color', 'description', 'isDefault'];
+    const allowed = adding ? ['name', 'color', 'iconProgress', 'description', 'category'] : ['name', 'color', 'iconProgress', 'description', 'isDefault'];
     if (Object.keys(input).some((key) => !allowed.includes(key))) throw invalid('invalid_status');
     const clean = {};
     for (const key of ['name', 'description']) {
@@ -93,6 +94,10 @@ export function createWorkflow(db, invalid) {
     if (Object.hasOwn(input, 'color')) {
       if (input.color !== null && (typeof input.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(input.color))) throw invalid('invalid_status');
       clean.color = input.color;
+    }
+    if (Object.hasOwn(input, 'iconProgress')) {
+      if (category !== 'started' || !STATUS_ICON_PROGRESS.includes(input.iconProgress)) throw invalid('invalid_status');
+      clean.icon_progress = input.iconProgress;
     }
     if (Object.hasOwn(input, 'isDefault')) {
       if (input.isDefault !== true) throw invalid('invalid_status');
@@ -112,13 +117,14 @@ export function createWorkflow(db, invalid) {
       unique(clean.name);
       const id = `status-${randomUUID()}`;
       const position = Math.max(-1, ...rows().filter((status) => status.category === input.category).map((status) => status.position)) + 1;
-      db.prepare('INSERT INTO issue_statuses(id,category,type,name,color,description,position) VALUES(?,?,?,?,?,?,?)')
-        .run(id, input.category, CATEGORY_TYPE[input.category], clean.name, clean.color ?? null, clean.description ?? '', position);
+      db.prepare('INSERT INTO issue_statuses(id,category,type,name,color,icon_progress,description,position) VALUES(?,?,?,?,?,?,?,?)')
+        .run(id, input.category, CATEGORY_TYPE[input.category], clean.name, clean.color ?? null,
+          clean.icon_progress ?? (input.category === 'started' ? 0.5 : null), clean.description ?? '', position);
       return get(id);
     },
     update(id, input) {
       const status = requireStatus(id);
-      const clean = validate(input, false);
+      const clean = validate(input, false, status.category);
       unique(clean.name, id);
       if (clean.is_default) {
         if (['completed', 'canceled'].includes(status.category)) throw invalid('invalid_status');

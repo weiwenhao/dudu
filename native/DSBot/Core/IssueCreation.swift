@@ -5,6 +5,7 @@ struct IssueWorkflowStatus: Decodable, Identifiable, Equatable, Sendable {
     var type: String
     var name: String?
     var color: String?
+    var iconProgress: Double?
     var isDefault: Bool
 
     var title: String { name ?? Self.title(for: type) }
@@ -43,7 +44,7 @@ struct IssueProject: Codable, Identifiable, Equatable, Sendable {
     var id: String { path ?? name }
 }
 
-struct IssueLabel: Decodable, Identifiable, Equatable, Sendable {
+struct IssueLabel: Codable, Identifiable, Equatable, Sendable {
     var id: Int
     var name: String
     var color: String

@@ -15,7 +15,7 @@ export function WidgetPreview({ widget, editing, resize, children }) {
   const body = useRef(null);
   const examples = useMemo(() => {
     const data = exampleData();
-    const answers = { 'issues/list': data.issues, 'overview/usage': data.quota, 'dispatch/state': data.inputs, 'sessions/list': data.sessions,
+    const answers = { 'issues/list': data.issues, 'quota/get': data.quota, 'dispatch/state': data.inputs, 'sessions/list': data.sessions,
       'sessions/read': { outcome: 'success', messages: [{ role: 'assistant', text: data.sessions.sessions[0].evidence.text }], nextCursor: null } };
     return { ...services, request: async (action) => answers[action] ?? { outcome: 'no_op' }, openIssue() {}, async openNativeSession() {}, async openIssueSession() {} };
   }, [services]);

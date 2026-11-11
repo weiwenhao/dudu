@@ -1,9 +1,10 @@
 import { forwardRef, useCallback, useMemo, useRef, useState } from 'react';
-import { Check, ListFilter, RotateCcw, Trash2 } from 'lucide-react';
+import { Check, ListFilter, LoaderCircle, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import { Tabs } from 'radix-ui';
 import { Button } from '../components/button.jsx';
 import { Checkbox } from '../components/checkbox.jsx';
 import { useToast } from '../components/toast.jsx';
+import { abortable } from '../lib/abortable.js';
 import { cn } from '../lib/cn.js';
 import { isTyping } from '../lib/typing.js';
 import { when } from '../issues/activity.js';
@@ -20,6 +21,7 @@ import { COLLECTOR_FIELDS, COLLECTOR_KEYS, COLLECTOR_SCHEMA, SINGLE } from './fi
 import { issueRef } from './IssuePicker.jsx';
 import { RecordDialog } from './RecordDialog.jsx';
 import { RecordMenu } from './RecordMenu.jsx';
+import { useCompletion } from './use-completion.js';
 import { useNarrowness } from './use-narrowness.js';
 import { useRecords } from './use-records.js';
 import { TABS, useCollectorView } from './view.js';
@@ -31,43 +33,47 @@ const BAR_STEPS = [700, 256];
 
 /**
  * One row: a box to tick it, then where it comes from as a small picture (the owner, 2026-11-07: the box goes in front of the picture, it does not cover it), the title
- * and when, then who it is from and which collector brought it (the issue it became, in place of the time, once it is handled). As in Issues, the box has a place of its
- * own that every row keeps, so the pictures line up; it shows when the pointer is on the row, and on every row once any row is ticked. The pointer on the row also brings
- * the two things that are one click: handled, and delete (restore, in their place, for a row that was put aside or handled). A row that is handled has nothing to do in
- * bulk: no box, and no place for one.
+ * and when, then its number, who it is from and which collector brought it (the issue it became, in place of the time, once it is handled). The number is first on that line, so a
+ * row that is cut short keeps it, and the pointer's buttons, which cover the time, do not hide it (owner, 2026-11-11, option A of `.local/designs/record-id-2026-11-11/`, on rows that
+ * read alike: "设计一个 id 吧，不然我都不知道哪个是哪个"). The box and its place appear only in
+ * selection mode, entered through the row's context menu (the owner, 2026-11-09). Outside that mode the pointer on the row brings the two things
+ * that are one click: fill in its context, handled, and delete (restore, in their place, for a row that was put aside or handled). A row that is handled has nothing to do in bulk.
+ * While the record's context is being filled in (`completing`) a small spinner stands before the time, as the connectors' rows have theirs, and the first button turns into one.
+ * (The owner, 2026-11-11, on a screenshot with the place marked left of the tick: "是在这里增加了一个补全的按钮么？")
  */
-const Row = forwardRef(function Row({ record, tab, selected, selecting, onSelect, onOpen, onDone, onRemove, onRestore, className, ...props }, ref) {
-  const by = [record.from, record.connectorName].filter(Boolean).join(' · ');
-  const boxed = selected || selecting;
-  // Handled with an issue is the issue's: nothing to do with it here. Anything else has the two one-click buttons.
-  const quick = tab === 'todo' ? [[T.collector.markDone, Check, onDone], [T.collector.remove, Trash2, onRemove]]
-    : record.issue ? [] : [[T.collector.restore, RotateCcw, onRestore], [T.collector.remove, Trash2, onRemove]];
+const Spinner = (props) => <LoaderCircle {...props} className={cn(props.className, 'animate-spin')} />;
+const Row = forwardRef(function Row({ record, tab, selected, selecting, marking, completing, onSelect, onOpen, onDone, onRemove, onRestore, onComplete, className, ...props }, ref) {
+  const by = [record.ref, record.from, record.connectorName].filter(Boolean).join(' · ');
+  // Handled with an issue is the issue's: nothing to do with it here. Anything else has the one-click buttons; the last of each is a button's fourth, whether it waits.
+  const fill = [T.collector.complete, completing ? Spinner : RefreshCw, onComplete, completing];
+  const quick = tab === 'todo' ? [fill, [T.collector.markDone, Check, onDone], [T.collector.remove, Trash2, onRemove]]
+    : record.issue ? [] : [fill, [T.collector.restore, RotateCcw, onRestore], [T.collector.remove, Trash2, onRemove]];
   return (
     <div ref={ref} {...props} data-record-row={record.id}
       className={cn('group relative flex h-12 w-full shrink-0 items-center gap-2.5 rounded-lg px-3 hover:bg-accent/60 has-[:focus-visible]:bg-accent/60 data-[state=open]:bg-accent/60', selected && 'bg-accent/60', className)}>
-      {tab !== 'done' && (
+      {selecting && (
         <span className="flex size-4 shrink-0 items-center justify-center">
           <Checkbox
             checked={selected} aria-label={T.bulk.select(record.title)}
-            className={cn(!boxed && 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100')}
             onClick={(event) => { event.stopPropagation(); onSelect(record.id, event.shiftKey); }}
           />
         </span>
       )}
       <ConnectorAvatar icon={record.connectorIcon} name={record.connectorName} />
-      <button type="button" onClick={onOpen} className="flex h-full min-w-0 flex-1 flex-col justify-center rounded text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+      <button type="button" onClick={(event) => { if (selecting) onSelect(record.id, event.shiftKey); else onOpen(); }} className="flex h-full min-w-0 flex-1 flex-col justify-center rounded text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
         <span className="flex items-center gap-3">
           <span className="min-w-0 flex-1 truncate font-medium">{record.title}</span>
-          <span className={cn('flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground tabular-nums', quick.length > 0 && !boxed && 'group-hover:opacity-0 group-focus-within:opacity-0')}>
+          <span className={cn('flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground tabular-nums', quick.length > 0 && !selecting && 'group-hover:opacity-0 group-focus-within:opacity-0')}>
+            {completing && <LoaderCircle className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />}
             {tab === 'done' && record.issue ? <><StatusIcon status={record.issue.status} />{issueRef(record.issue)}</> : when(record.at)}
           </span>
         </span>
         <span className="block truncate text-xs text-muted-foreground">{by}</span>
       </button>
       {quick.length > 0 && (
-        <span className={cn('absolute top-1/2 right-2.5 flex -translate-y-1/2 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100', boxed && 'hidden')}>
-          {quick.map(([label, Icon, run]) => (
-            <Button key={label} variant="ghost" size="icon-xs" aria-label={label} title={label} onClick={() => run(record)}><Icon aria-hidden="true" /></Button>
+        <span className={cn('absolute top-1/2 right-2.5 flex -translate-y-1/2 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100', selecting && 'hidden')}>
+          {quick.map(([label, Icon, run, waiting]) => (
+            <Button key={label} variant="ghost" size="icon-xs" disabled={marking || waiting} aria-label={label} aria-busy={waiting || undefined} title={label} onClick={() => run(record)}><Icon aria-hidden="true" /></Button>
           ))}
         </span>
       )}
@@ -77,8 +83,8 @@ const Row = forwardRef(function Row({ record, tab, selected, selecting, onSelect
 
 /**
  * What the connectors collected (docs/assistant.md 4.1, "Collector"): three tabs (to handle, handled, ignored), a filter like Issues', a row
- * for each record. A click opens it in full; a right click shares it to an issue, makes an issue of it, opens its source, or ignores it.
- * Reading and the owner's marks are the plugin's `inbox/*` calls; nothing here asks a model.
+ * for each record. A click opens it in full; a right click selects it, shares it to the session of an issue, makes an issue of it, opens its source, fills in its context, or ignores it.
+ * Reading and the owner's marks are the plugin's `inbox/*` calls; nothing here asks a model (filling in context is the plugin asking the collector's own session, which the owner asked for: `completion.js`).
  */
 export function CollectorWidget({ request, openIssue }) {
   const toast = useToast();
@@ -91,29 +97,31 @@ export function CollectorWidget({ request, openIssue }) {
   const [paged, setPaged] = useState({ scope, pages: 1 });
   const pages = paged.scope === scope ? paged.pages : 1;
   const records = useRecords(request, { tab, filter, pages });
-  const { refresh } = records;
+  const { refresh, beginMark, marking } = records;
+  // Fill in context: the plugin asks the collector's own session to read the conversation around a record, a few seconds to a few minutes; a failure is said the way the other actions' are.
+  // The plugin's own reason (English) when it gave one: "更改没能保存" would say something else.
+  const completion = useCompletion(request, (reason) => toast({ message: reason || T.toast.failed }));
+  const { start: startCompletion, follow: followCompletion } = completion;
   const items = records.value?.items ?? [];
   const [opened, setOpened] = useState(null);
   const [creating, setCreating] = useState(null);
 
-  // Ticked rows, by record number: what a bulk action is done to. They go with the tab or the filter (a new one starts with nothing ticked, and going
-  // back to the old one does not bring the ticks back), and with a row that leaves the list (derived at each draw from what was ticked in this scope).
-  const [picked, setPicked] = useState({ scope, ids: new Set() });
-  if (picked.scope !== scope) setPicked({ scope, ids: new Set() });
-  const anchor = useRef(null);
+  // The context menu ticks the first row to enter selection mode; unticking the last one leaves it. Ticks and the Shift anchor reset with the tab or filter.
+  // A row that leaves the list is dropped from the ticks, derived at each draw from what was ticked in this scope.
+  const [picked, setPicked] = useState({ scope, ids: new Set(), anchor: null });
+  if (picked.scope !== scope) setPicked({ scope, ids: new Set(), anchor: null });
   const visibleIds = items.map((record) => record.id);
-  const selected = picked.scope === scope ? keepVisible(picked.ids, visibleIds) : new Set();
+  const selected = picked.scope === scope && tab !== 'done' ? keepVisible(picked.ids, visibleIds) : new Set();
+  const selecting = selected.size > 0;
   const select = (id, shift) => {
-    setPicked({ scope, ids: selectRow(selected, id, { shift, anchor: anchor.current, ids: visibleIds }) });
-    anchor.current = id;
+    setPicked({ scope, ids: selectRow(selected, id, { shift, anchor: selecting ? picked.anchor : null, ids: visibleIds }), anchor: id });
   };
-  const clearSelection = () => { setPicked({ scope, ids: new Set() }); anchor.current = null; };
+  const clearSelection = () => setPicked({ scope, ids: new Set(), anchor: null });
   const chosen = items.filter((record) => selected.has(record.id));
   // "Select all", in the bar that comes up once a row is ticked: every row that is loaded; it is not offered when they all are ticked already.
   const allSelected = items.length > 0 && selected.size === items.length;
   const selectAll = () => {
-    setPicked({ scope, ids: new Set(visibleIds) });
-    anchor.current = null;
+    setPicked({ scope, ids: new Set(visibleIds), anchor: null });
   };
 
   // A filter keeps the connectors by id; the chips say them by name, which the list brings.
@@ -127,24 +135,33 @@ export function CollectorWidget({ request, openIssue }) {
   // A page is 50 rows, more than any widget holds, so there is something to scroll whenever there is more to ask for.
   const wantMore = () => setPaged((current) => ({ scope, pages: (current.scope === scope ? current.pages : 1) + 1 }));
 
-  const call = useCallback(async (action, body) => {
-    try { return await request(action, body); } catch { return null; }
+  const call = useCallback(async (action, body, signal) => {
+    try { return await (signal ? abortable(request(action, body, { signal }), signal) : request(action, body)); } catch { return null; }
   }, [request]);
   const ok = (result) => ['success', 'no_op'].includes(result?.outcome);
   const actions = useMemo(() => {
     // One mark (ignore, restore) on one or several records, with one Undo for all of them.
-    const mark = async (action, back, records, message) => {
+    const saveMark = async (action, records) => {
+      const change = beginMark(action, records);
+      if (!change) return null;
       const ids = records.map((record) => record.id);
-      if (!ok(await call(action, { ids }))) { toast({ message: T.toast.failed }); return; }
+      const result = await call(action, { ids }, AbortSignal.timeout(15_000));
+      const saved = ok(result);
+      change.settle(saved, result?.record);
       refresh();
-      toast({ message, action: { label: T.toast.undo, run: async () => { await call(back, { ids }); refresh(); } } });
+      if (!saved) { toast({ message: T.toast.failed }); return null; }
+      return change.records;
     };
-    // One or several records shared to an issue (a note in its activity) or to the session of one (a message to its agent).
-    const shareTo = async (records, issue, to) => {
+    const mark = async (action, back, records, message) => {
+      const saved = await saveMark(action, records);
+      if (saved) toast({ message, action: { label: T.toast.undo, run: () => saveMark(back, saved) } });
+    };
+    // One or several records shared to the session of an issue (a message to its agent). Sharing to the issue itself is gone from this widget (owner, 2026-11-10).
+    const shareTo = async (records, issue) => {
       const ids = records.map((record) => record.id);
-      if (!ok(await call('inbox/share', { ids, issue: issue.id, ...(to === 'session' ? { to } : {}) }))) { toast({ message: T.toast.failed }); return; }
+      if (!ok(await call('inbox/share', { ids, issue: issue.id, to: 'session' }))) { toast({ message: T.toast.failed }); return; }
       refresh();
-      toast({ message: to === 'session' ? T.collector.toast.sharedSession(issueRef(issue)) : T.collector.toast.shared(issueRef(issue)) });
+      toast({ message: T.collector.toast.sharedSession(issueRef(issue)) });
     };
     return {
       openSource: (record) => window.open(record.url, '_blank', 'noopener,noreferrer'),
@@ -159,23 +176,24 @@ export function CollectorWidget({ request, openIssue }) {
       doneMany: (records) => mark('inbox/done', 'inbox/restore', records, T.collector.toast.done),
       remove: (record) => mark('inbox/delete', 'inbox/restore', [record], T.collector.toast.deleted),
       removeMany: (records) => mark('inbox/delete', 'inbox/restore', records, T.collector.toast.deleted),
-      share: (record, issue) => shareTo([record], issue, 'issue'),
-      shareMany: (records, issue) => shareTo(records, issue, 'issue'),
-      shareSession: (record, issue) => shareTo([record], issue, 'session'),
-      shareSessionMany: (records, issue) => shareTo(records, issue, 'session'),
+      shareSession: (record, issue) => shareTo([record], issue),
+      shareSessionMany: (records, issue) => shareTo(records, issue),
+      // Fill in context (completion.js): `complete` has the collector's session read the conversation around the record; `follow` waits for one that is running already.
+      complete: startCompletion,
+      follow: followCompletion,
       // The New issue dialog opens with the record's title and text; the issue it makes is marked as the record's, and the record is linked to it.
       async makeIssue(record, draft) {
         const found = draft ?? (await call('inbox/get', { id: record.id }))?.draft;
         if (found) setCreating({ record, draft: found }); else toast({ message: T.toast.failed });
       },
     };
-  }, [call, openIssue, refresh, tab, toast]);
+  }, [beginMark, call, followCompletion, openIssue, refresh, startCompletion, tab, toast]);
 
   return (
     <section ref={root} aria-label={T.widgets.titles.collector} className="@container relative flex h-full min-h-0 flex-col"
       // F opens the filter, as in Issues, but only while the focus is in this widget: two widgets on one page would otherwise both answer.
       onKeyDown={(event) => {
-        if (event.key === 'Escape' && !event.defaultPrevented && selected.size) { clearSelection(); return; }
+        if (event.key === 'Escape' && !event.defaultPrevented && selecting) { event.preventDefault(); clearSelection(); return; }
         if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target) || event.key.toLowerCase() !== 'f' || !filterButton.current) return;
         event.preventDefault();
         openFilter(filterButton.current, 'end');
@@ -224,10 +242,10 @@ export function CollectorWidget({ request, openIssue }) {
             onScroll={(event) => { const element = event.currentTarget; if (more && element.scrollHeight - element.scrollTop - element.clientHeight < NEAR_END) wantMore(); }}
           >
             {items.map((record) => (
-              <RecordMenu key={record.id} record={record} tab={tab} request={request} actions={actions}>
+              <RecordMenu key={record.id} record={record} tab={tab} request={request} actions={actions} selected={selected.has(record.id)} completing={completion.running.has(record.id)} onSelectRecord={select}>
                 <Row
-                  record={record} tab={tab} selected={selected.has(record.id)} selecting={selected.size > 0} onSelect={select} onOpen={() => setOpened(record)}
-                  onDone={actions.done} onRemove={actions.remove} onRestore={actions.restore}
+                  record={record} tab={tab} selected={selected.has(record.id)} selecting={selecting} marking={marking.has(record.id)} completing={completion.running.has(record.id)} onSelect={select} onOpen={() => setOpened(record)}
+                  onDone={actions.done} onRemove={actions.remove} onRestore={actions.restore} onComplete={actions.complete}
                 />
               </RecordMenu>
             ))}
@@ -237,7 +255,6 @@ export function CollectorWidget({ request, openIssue }) {
       {chosen.length > 0 && tab !== 'done' && (
         <BulkBar
           request={request} tab={tab} level={narrow} count={chosen.length} onClear={clearSelection} onSelectAll={allSelected ? undefined : selectAll}
-          onShare={(issue) => { actions.shareMany(chosen, issue); clearSelection(); }}
           onShareSession={(issue) => { actions.shareSessionMany(chosen, issue); clearSelection(); }}
           onIgnore={() => { actions.ignoreMany(chosen); clearSelection(); }}
           onRestore={() => { actions.restoreMany(chosen); clearSelection(); }}
@@ -250,7 +267,12 @@ export function CollectorWidget({ request, openIssue }) {
         onOpenChange={(open) => setMenu((current) => ({ ...current, open }))}
         onToggle={(field, value) => view.setFilter(tab, (current) => toggleFilter(current, field, value, SINGLE))}
       />
-      {opened && <RecordDialog key={opened.id} card={opened} tab={tab} request={request} actions={actions} onClose={() => { setOpened(null); refresh(); }} />}
+      {opened && (
+        <RecordDialog
+          key={opened.id} card={opened} tab={tab} request={request} actions={actions} marking={marking.has(opened.id)}
+          completing={completion.running.has(opened.id)} finished={completion.ended.get(opened.id) ?? 0} onClose={() => { setOpened(null); refresh(); }}
+        />
+      )}
       {creating && (
         <NewIssueDialog
           key={creating.record.id} open request={request} initial={creating.draft} preset={{ source: 'connector', sourceRef: creating.draft.sourceRef }}

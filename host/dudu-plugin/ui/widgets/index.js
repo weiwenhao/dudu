@@ -4,13 +4,12 @@ import { BUILT_IN_WIDGETS } from '../../../assistant/dashboard/widgets.mjs';
 import { CollectorCard } from './CollectorCard.jsx';
 import { IssuesCard } from './IssuesCard.jsx';
 import { OfficeCard } from './OfficeCard.jsx';
-import { Quota } from './Quota.jsx';
 import { defineWidget } from '../../widget.mjs';
 import { createElement } from 'react';
 import { WidgetData } from './data.jsx';
 import { localizedWidget } from './localized.js';
 
-const COMPONENTS = { issues: IssuesCard, quota: Quota, office: OfficeCard, collector: CollectorCard };
+const COMPONENTS = { issues: IssuesCard, office: OfficeCard, collector: CollectorCard };
 
 export const REGISTRY = BUILT_IN_WIDGETS.filter((widget) => COMPONENTS[widget.id]).map((widget) => localizedWidget({ ...widget, Component: defineWidget(widget, COMPONENTS[widget.id]) }));
 

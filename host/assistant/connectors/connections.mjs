@@ -23,6 +23,7 @@ import { brandOf } from './brands.mjs';
 import { loadCatalog } from './catalog.mjs';
 import { which as findOnPath, runProcess } from './cli.mjs';
 import { createAgentConfigs, fingerprint } from './discover.mjs';
+import { requestCode, waitForToken } from './device.mjs';
 import { isUnauthorized, openMcp, probeServer } from './mcp.mjs';
 import { createPublisher } from './publish.mjs';
 import { recognize as recognizeText, slug } from './recognize.mjs';
@@ -45,6 +46,7 @@ const pick = (value, path) => path.split('.').reduce((node, key) => (node && typ
 export function createConnections({
   connectors, catalog = loadCatalog(), state, secrets, oauth = null, open = openMcp, probe = probeServer, run = runProcess, which = findOnPath,
   here = null, env = process.env, now = Date.now, mount = null, publisher: given = null, warn = console.warn,
+  openUrl = null, device = { requestCode, waitForToken },
 }) {
   const jobs = new Map(); // id -> { controller, done }
   const owner = () => connectors.owner;
@@ -223,8 +225,37 @@ export function createConnections({
     state.set(entry.id, { status: 'connected' });
   }
 
+  /**
+   * A server signed in to by a device code: what is kept is tried first; without a token, or when the server no longer takes it, the owner is given a code, it is shown on
+   * the row ('waiting') and the browser is sent to the service's page for it, and the token that comes is kept in the credential store (never in a state or a list).
+   */
+  async function deviceFlow(entry, item, signal) {
+    if ((await secrets.read(entry.id))?.token) {
+      await checkMcp(entry, signal);
+      if (signal?.aborted || state.get(entry.id)?.status === 'connected') return;
+    }
+    const asked = await device.requestCode({ clientId: item.clientId, scope: item.scope, deviceUrl: item.deviceUrl, signal });
+    if (signal?.aborted) return;
+    if (!asked.ok) { state.set(entry.id, { status: 'error', message: asked.message }); return; }
+    state.set(entry.id, { status: 'waiting', code: asked.userCode });
+    // If the browser cannot be opened the code is still on the row, and the owner knows the address.
+    try { await openUrl?.(asked.verificationUri); } catch (error) { warn(`[dudu] The browser could not be opened for ${entry.name}: ${error?.message ?? error}`); }
+    const got = await device.waitForToken({ clientId: item.clientId, tokenUrl: item.tokenUrl, deviceCode: asked.deviceCode, interval: asked.interval, expiresIn: asked.expiresIn, signal });
+    if (signal?.aborted) return;
+    if (!got.ok) {
+      // Not approving, or letting the code run out, is a connector to sign in to again.
+      state.set(entry.id, got.reason === 'denied' ? { status: 'needs-auth' } : got.reason === 'expired' ? { status: 'error', message: 'timeout' } : { status: 'error', message: got.message });
+      return;
+    }
+    await secrets.modify(entry.id, (record) => ({ ...(record ?? {}), token: got.token }));
+    state.set(entry.id, { status: 'waiting' });
+    await checkMcp(entry, signal);
+  }
+
   async function flow(entry, signal) {
     if (entry.legacy) { state.set(entry.id, { status: 'error', message: LEGACY }); return; }
+    const item = catalog.byId(entry.via);
+    if (item?.how === 'device' && entry.kind === 'mcp') return deviceFlow(entry, item, signal);
     if (entry.kind === 'prompt') return checkCli(entry);
     return checkMcp(entry, signal);
   }
@@ -247,7 +278,7 @@ export function createConnections({
     if (existing) { start(existing); return { outcome: 'success', id: existing.id }; }
     const item = catalog.byId(id);
     let made;
-    if (item?.how === 'oauth' || item?.how === 'open') made = owner().add({ id: item.id, name: item.name, kind: 'mcp', spec: { url: item.url }, via: item.id });
+    if (item?.how === 'oauth' || item?.how === 'open' || item?.how === 'device') made = owner().add({ id: item.id, name: item.name, kind: 'mcp', spec: { url: item.url }, via: item.id });
     else if (item) made = owner().add({ id: item.id, name: item.name, kind: 'prompt', prompt: item.prompt, via: item.id });
     else {
       const server = (await found().catch(() => [])).find((candidate) => candidate.id === id);
@@ -255,7 +286,7 @@ export function createConnections({
       made = owner().add({ id: unique(server.name), name: server.name, kind: 'mcp', spec: server.spec });
     }
     if (made.outcome !== 'success') return made;
-    if (item?.how === 'oauth') state.set(made.connector.id, { status: 'waiting' });
+    if (item?.how === 'oauth' || item?.how === 'device') state.set(made.connector.id, { status: 'waiting' });
     start(made.connector);
     return { outcome: 'success', id: made.connector.id };
   }

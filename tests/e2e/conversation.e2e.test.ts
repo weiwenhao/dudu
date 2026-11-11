@@ -27,7 +27,7 @@ before(async () => {
       { name: 'issues_add', arguments: { fields: { title: '合同续费', brief: '周四前处理' } } },
     ], then: () => '已加到 Issues。' },
     { when: 'CHAT-MEMORY', calls: [{ name: 'memory_remember', arguments: { text: '合同先抄送法务' } }], then: () => '记下了。' },
-    { when: 'CHAT-DASH', calls: [{ name: 'dashboard_add', arguments: { type: 'quota' } }], then: () => '已加 Quota。' },
+    { when: 'CHAT-DASH', calls: [{ name: 'dashboard_add', arguments: { type: 'office' } }], then: () => '已加 Office。' },
     { when: 'CHAT-RECALL', calls: [{ name: 'memory_recall', arguments: { query: '合同先抄送法务' } }], then: (results: string[]) => `找到了：${results.at(-1)}` },
     { when: 'CHAT-FORBIDDEN', calls: [{ name: 'terminal_open', arguments: { command: 'touch forbidden.txt' }, force: true }], then: () => '没有执行。' },
     { when: 'CHAT-SLOW', say: '这个回复应该被停止。', delay: 8000 },
@@ -219,8 +219,8 @@ test('DSH opens on the dashboard; chat changes issues, memory and layout through
   assert.equal(created.items[0].ask, '交给谁处理？');
   await chat(page, 'CHAT-MEMORY：记住合同先抄送法务', '记下了。');
   await page.getByRole('dialog', { name: 'Dudu', exact: true }).getByText('Remembered', { exact: true }).waitFor();
-  await chat(page, 'CHAT-DASH：加 Quota', '已加 Quota。');
-  await page.getByRole('region', { name: 'Quota', exact: true }).waitFor({ timeout: 10_000 });
+  await chat(page, 'CHAT-DASH：加 Office', '已加 Office。');
+  await page.getByRole('region', { name: 'Office', exact: true }).waitFor({ timeout: 10_000 });
   const state = await dudu.api('assistant/state');
   assert.match(state.conversation.sessionId, /^dudu-assistant-/);
   assert.equal((await dudu.api('memory/records')).records[0].text, '合同先抄送法务');

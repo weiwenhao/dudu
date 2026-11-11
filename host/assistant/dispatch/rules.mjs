@@ -57,6 +57,16 @@ function namedBy(right) {
   return lowest;
 }
 
+/** Whether a rule's right-hand side takes a mode away ("不可以改工作区里的文件"): a mode word with a "not" in front of it. */
+function deniesMode(right) {
+  for (const clause of right.split(CLAUSE)) {
+    for (const [, pattern] of WORDS) {
+      for (const match of clause.matchAll(pattern)) if (NEGATED.test(clause.slice(0, match.index))) return true;
+    }
+  }
+  return false;
+}
+
 /** A direct permission statement in the current user's own words, not an agent's request or an ambiguous "yes". */
 export function explicitAccess(text) {
   const statement = String(text ?? '').trim();
@@ -92,21 +102,24 @@ function ruleLines(assign) {
 
 /**
  * The most an agent may do for this kind of issue, as ASSIGN.md says it: the lowest mode named by the rules that name this kind, and
- * read-only when none does. A mode with a "not" in front of it is not named. The model never gets to read this differently.
+ * full access when none does (owner, 2026-11-09: the default must not be read only). A mode with a "not" in front of it is not named. The model never gets to read this differently.
  */
-export function allowedAccess(assign, issue, { fallback = 'read-only' } = {}) {
+export function allowedAccess(assign, issue, { fallback = 'danger-full-access' } = {}) {
   const kind = issue?.kind;
   let allowed = null;
+  let denied = false;
   for (const { left, right } of ruleLines(assign)) {
     if (!left.split(/[、，,;；/|]|\s+和\s+|\s+and\s+|\s+or\s+/i).some((term) => covers(term, kind))) continue;
     const mode = namedBy(right);
     if (mode !== null && (allowed === null || RANK[mode] < RANK[allowed])) allowed = mode;
+    if (deniesMode(right)) denied = true;
   }
-  return allowed ?? fallback;
+  // A rule that only takes something away ("不可以改…") and names nothing else leaves read-only, not the default: what the owner wrote there must never turn into more.
+  return allowed ?? (denied ? 'read-only' : fallback);
 }
 
 /** Literal folder/model choices from matching owner rules. Never take a working directory from model output. */
-export function sessionOptions(assign, issue, { home = '', defaultAccess = 'read-only' } = {}) {
+export function sessionOptions(assign, issue, { home = '', defaultAccess = 'danger-full-access' } = {}) {
   const folders = new Set();
   const models = new Set();
   for (const { left, right } of ruleLines(assign)) {

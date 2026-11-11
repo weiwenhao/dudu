@@ -61,7 +61,7 @@ function Lane({ column, field, subField, now, show, menuFor, setMenuFor, onStatu
     return (
       <section ref={dropRef} aria-label={label} data-lane-over={isOver ? '' : undefined} className={cn('flex w-11 shrink-0 flex-col items-center gap-2 rounded-xl bg-muted/50 py-2', isOver && 'bg-accent ring-2 ring-ring/40')}>
         <Button variant="ghost" size="icon-xs" className="text-muted-foreground" aria-label={`${T.lane.expand}: ${label}`} aria-expanded="false" onClick={onToggle}><ChevronsRight /></Button>
-        <GroupIcon field={field} groupKey={column.key} count={column.count} />
+        <GroupIcon field={field} groupKey={column.key} count={column.count} pickColor />
         <span className="text-muted-foreground">{column.count}</span>
         <h2 className="font-medium [writing-mode:vertical-rl]">{label}</h2>
       </section>
@@ -71,7 +71,7 @@ function Lane({ column, field, subField, now, show, menuFor, setMenuFor, onStatu
     <section ref={dropRef} aria-label={label} data-lane-over={isOver ? '' : undefined} className={cn('flex w-[296px] shrink-0 flex-col rounded-xl bg-muted/50 p-2', isOver && 'bg-accent ring-2 ring-ring/40')}>
       <div className="flex h-9 shrink-0 items-center gap-1 px-1.5">
         <span className="flex items-center gap-2">
-          <GroupIcon field={field} groupKey={column.key} count={column.count} />
+          <GroupIcon field={field} groupKey={column.key} count={column.count} pickColor />
           <h2 className="font-medium">{label}</h2>
           <span className="text-muted-foreground">{column.count}</span>
         </span>
@@ -84,7 +84,7 @@ function Lane({ column, field, subField, now, show, menuFor, setMenuFor, onStatu
           <div key={String(leaf.key)} className="flex flex-col gap-2">
             {column.groups && (
               <div className="flex h-7 items-center gap-2 px-1.5 text-xs">
-                <GroupIcon field={subField} groupKey={leaf.key} className="size-3.5" count={leaf.count} />
+                <GroupIcon field={subField} groupKey={leaf.key} className="size-3.5" count={leaf.count} pickColor />
                 <h3 className="font-medium">{groupLabel(subField, leaf.key)}</h3>
                 <span className="text-muted-foreground">{leaf.count}</span>
               </div>

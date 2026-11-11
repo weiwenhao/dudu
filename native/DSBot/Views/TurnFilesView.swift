@@ -5,12 +5,13 @@ import UIKit
 struct TurnFilesView: View {
     let files: [DeliveredFile]
     let changesSeq: Double?
+    let changesSummary: ConversationChangeSummary?
 
     var body: some View {
         let collection = TurnFileCollection(files)
         VStack(alignment: .leading, spacing: 10) {
             if let changesSeq {
-                TurnChangesCard(seq: changesSeq)
+                TurnChangesCard(seq: changesSeq, summary: changesSummary)
                     .id(changesSeq)
             }
             if !collection.presented.isEmpty {
@@ -23,82 +24,44 @@ struct TurnFilesView: View {
 
 private struct TurnChangesCard: View {
     let seq: Double
+    let summary: ConversationChangeSummary?
     @Environment(\.conversationAccess) private var access
     @State private var changes: ConversationChanges?
-    @State private var unavailable = false
-    @State private var loading = false
-    @State private var failure: String?
     @State private var showingFiles = false
-    @State private var requestID: UUID?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if !unavailable && (changes == nil || changes?.files.isEmpty == false) {
-                Button { showingFiles = true } label: {
-                    HStack(spacing: 12) {
-                        Image("ChangedFiles")
-                            .resizable()
-                            .renderingMode(.original)
-                            .frame(width: 24, height: 24)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(changes.map { "已编辑 \($0.total) 个文件" } ?? "已编辑文件")
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(DSBotStyle.chatInk)
-                            if let changes {
-                                FileChangeCounts(added: changes.added, deleted: changes.deleted)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        if loading {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            FileDisclosure()
-                        }
-                    }
-                    .padding(14)
-                    .frame(minHeight: 56)
-                    .contentShape(Rectangle())
+        let counts = changes?.summary ?? summary
+        Button { showingFiles = true } label: {
+            HStack(spacing: 12) {
+                Image("ChangedFiles")
+                    .resizable()
+                    .renderingMode(.original)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(counts.map { "已编辑 \($0.total) 个文件" } ?? "已编辑文件")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(DSBotStyle.chatInk)
+                        .lineLimit(1)
+                    // Keep the loaded card's existing two-line layout stable while its
+                    // details are unknown. Loading and failure belong to the opened sheet.
+                    FileChangeCounts(added: counts?.added ?? 0, deleted: counts?.deleted ?? 0)
+                        .opacity(counts == nil ? 0 : 1)
+                        .accessibilityHidden(counts == nil)
                 }
-                .buttonStyle(.plain)
-                .disabled(changes == nil)
-                .accessibilityIdentifier("changes.toggle")
-                .modifier(TurnFileSurface())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                FileDisclosure()
             }
-            if let failure {
-                ConversationFailureView(message: failure) { Task { await loadChanges() } }
-            }
+            .padding(14)
+            .frame(minHeight: 56)
+            .contentShape(Rectangle())
         }
-        .task(id: access?.connected) { await loadChanges() }
+        .buttonStyle(.plain)
+        .disabled(access?.connected != true)
+        .accessibilityIdentifier("changes.toggle")
+        .modifier(TurnFileSurface())
         .sheet(isPresented: $showingFiles) {
-            if let changes {
-                ChangedFilesBrowser(changes: changes, seq: seq)
-            }
-        }
-    }
-
-    @MainActor private func loadChanges() async {
-        guard let access, access.connected, changes == nil else { return }
-        let id = UUID()
-        requestID = id
-        loading = true
-        failure = nil
-        unavailable = false
-        defer { if requestID == id { loading = false } }
-        do {
-            let result: ConversationChanges = try await access.read("session.changes", ["seq": .number(seq)])
-            try Task.checkCancellation()
-            guard requestID == id else { return }
-            changes = result
-        } catch is CancellationError {
-        } catch {
-            guard requestID == id, !Task.isCancelled else { return }
-            // DSH keeps the announcement in history after its in-memory comparison expires.
-            if error as? DSBotFailure == .remote("NOT_FOUND") {
-                unavailable = true
-            } else {
-                failure = error.localizedDescription
-            }
+            ChangedFilesBrowser(changes: $changes, seq: seq)
         }
     }
 }
@@ -249,49 +212,77 @@ private struct DeliveredFilesBrowser: View {
 }
 
 private struct ChangedFilesBrowser: View {
-    let changes: ConversationChanges
+    @Binding var changes: ConversationChanges?
     let seq: Double
     @Environment(\.conversationAccess) private var access
     @State private var query = ""
+    @State private var failure: String?
+    @State private var requestID: UUID?
 
     var body: some View {
         NavigationStack {
             List {
-                ForEach(TurnFileCollection.matchingChanges(changes.files, query: query), id: \.self) { index in
-                    let file = changes.files[index]
-                    NavigationLink {
-                        ConversationDiffContent(seq: seq, index: index, name: file.display)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(file.display)
-                                .font(.subheadline)
-                                .foregroundStyle(DSBotStyle.chatInk)
-                                .lineLimit(2)
-                                .truncationMode(.middle)
-                            FileChangeCounts(added: file.added, deleted: file.deleted)
+                if let changes {
+                    ForEach(TurnFileCollection.matchingChanges(changes.files, query: query), id: \.self) { index in
+                        let file = changes.files[index]
+                        NavigationLink {
+                            ConversationDiffContent(seq: seq, index: index, name: file.display)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(file.display)
+                                    .font(.subheadline)
+                                    .foregroundStyle(DSBotStyle.chatInk)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                                FileChangeCounts(added: file.added, deleted: file.deleted)
+                            }
+                            .padding(.vertical, 8)
+                            .frame(minHeight: 52, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.vertical, 8)
-                        .frame(minHeight: 52, alignment: .leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
+                        .disabled(access?.connected != true)
+                        .accessibilityIdentifier("changes.file.\(index)")
+                        .contextMenu {
+                            Button("复制路径") { UIPasteboard.general.string = file.path }
+                        }
                     }
-                    .disabled(access?.connected != true)
-                    .accessibilityIdentifier("changes.file.\(index)")
-                    .contextMenu {
-                        Button("复制路径") { UIPasteboard.general.string = file.path }
-                    }
+                } else if let failure {
+                    ConversationFailureView(message: failure) { Task { await loadChanges() } }
+                        .listRowBackground(Color.clear)
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .listRowBackground(Color.clear)
                 }
             }
             .listStyle(.plain)
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索文件")
             .searchPresentationToolbarBehavior(.avoidHidingContent)
-            .navigationTitle("已编辑 \(changes.total) 个文件")
+            .navigationTitle(changes.map { "已编辑 \($0.total) 个文件" } ?? "已编辑文件")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { FileBrowserClose() }
             .accessibilityIdentifier("changes.browser")
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+        .task(id: access?.connected) { await loadChanges() }
+    }
+
+    @MainActor private func loadChanges() async {
+        guard let access, access.connected, changes == nil else { return }
+        let id = UUID()
+        requestID = id
+        failure = nil
+        do {
+            let result: ConversationChanges = try await access.read("session.changes", ["seq": .number(seq)])
+            try Task.checkCancellation()
+            guard requestID == id else { return }
+            changes = result
+        } catch is CancellationError {
+        } catch {
+            if requestID == id, !Task.isCancelled { failure = error.localizedDescription }
+        }
     }
 }
 

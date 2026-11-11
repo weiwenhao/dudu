@@ -48,14 +48,22 @@ export interface WidgetIssues {
   [field: string]: unknown;
 }
 
+/** What the quota service has kept (read by a person opening the quota panel; a widget only looks): one entry for each provider whose usage could be read. */
 export interface WidgetQuota {
   providers: {
     id: string;
+    /** The logo's key: several entries may be one agent's (DeepSeek's account and key). */
+    agent: string;
     name: string;
     plan?: string | null;
-    state: string;
-    windows: { key: string; label: string; used: number; resetsAt?: number | null }[];
+    kind?: 'balance';
+    windows: { key: string; label: string; used: number; resetsAt?: number | null; core?: boolean }[];
+    balance?: { text: string }[];
+    /** When this was read (ms), which may be well before now. */
+    readAt: number | null;
   }[];
+  refreshing: boolean;
+  readAt: number | null;
 }
 
 export interface WidgetCollector {

@@ -12,7 +12,7 @@ struct SidebarView: View {
     @State private var archivedChoice: SessionSummary?
     @State private var renamingSession: SessionSummary?
     @State private var sessionTitle = ""
-    @State private var isMoreExpanded = false
+    @State private var isMoreExpanded = SidebarView.startsExpanded
     /// The strip under the home indicator, which the list runs on into.
     @Environment(\.homeIndicatorInset) private var homeInset
 
@@ -20,6 +20,7 @@ struct SidebarView: View {
     let selectedItemID: String?
     /// A number to show at the end of an entry's row (the records waiting in the Collector), by the entry's id.
     let itemCounts: [String: Int]
+    var isActive = true
     let onChooseItem: (NavigationItem) -> Void
     let onChooseConversation: () -> Void
     let onOpenComputers: () -> Void
@@ -36,11 +37,13 @@ struct SidebarView: View {
         onSearch: @escaping () -> Void,
         onClose: @escaping () -> Void,
         selectedItemID: String? = nil,
-        itemCounts: [String: Int] = [:]
+        itemCounts: [String: Int] = [:],
+        isActive: Bool = true
     ) {
         self.store = store
         self.selectedItemID = selectedItemID
         self.itemCounts = itemCounts
+        self.isActive = isActive
         self.onChooseItem = onChooseItem
         self.onChooseConversation = onChooseConversation
         self.onOpenComputers = onOpenComputers
@@ -68,35 +71,34 @@ struct SidebarView: View {
 
     var body: some View {
         DSBotGlassGroup(spacing: 8) {
-            ZStack(alignment: .bottom) {
-                VStack(spacing: 0) {
-                    brandHeader
-                        .padding(.horizontal, 20)
-                        .padding(.top, 8)
-                        .padding(.bottom, 10)
+            VStack(spacing: 0) {
+                brandHeader
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .padding(.bottom, 10)
 
-                    searchField
-                        .padding(.horizontal, DSBotLayout.sidebarPadding)
-                        .padding(.bottom, 16)
+                searchField
+                    .padding(.horizontal, DSBotLayout.sidebarPadding)
+                    .padding(.bottom, 16)
 
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 18) {
-                            libraryButtons
-                            sessionsList
-                        }
-                        .padding(.horizontal, DSBotLayout.sidebarPadding)
-                        // The last row can be scrolled clear of the footer that floats over the list.
-                        .padding(.bottom, SidebarMetrics.footerHeight + SidebarMetrics.footerBottomGap + 16 + homeInset)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        libraryButtons
+                        sessionsList
                     }
-                    .padding(.bottom, -homeInset)
+                    .padding(.horizontal, DSBotLayout.sidebarPadding)
+                    .padding(.bottom, listBottomPadding)
                 }
-
-                accountFooter(homeInset: homeInset)
+                .padding(.bottom, DSBotScrollEdges.usesSystemEffect ? 0 : -homeInset)
             }
+            .modifier(DSBotScrollEdgeBar(edge: .bottom) {
+                accountFooter(homeInset: homeInset)
+            })
         }
         .background(DSBotStyle.canvas)
         .accessibilityElement(children: .contain)
-        .task(id: store.status) {
+        .task(id: SidebarLoad(active: isActive, connected: store.status == .connected)) {
+            guard isActive, store.status == .connected else { return }
             await store.refreshSessions(quiet: !store.sessions.isEmpty || !store.workspaces.isEmpty)
             while !Task.isCancelled && store.status == .connected {
                 do { try await Task.sleep(for: .seconds(5)) }
@@ -159,6 +161,17 @@ struct SidebarView: View {
         }
     }
 
+    private struct SidebarLoad: Equatable {
+        let active: Bool
+        let connected: Bool
+    }
+
+    private var listBottomPadding: CGFloat {
+        // The native bar reserves its own height; the overlay fallback needs that room here.
+        DSBotScrollEdges.usesSystemEffect ? 16
+            : SidebarMetrics.footerHeight + SidebarMetrics.footerBottomGap + 16 + homeInset
+    }
+
     private var brandHeader: some View {
         HStack {
             Text("Dudu")
@@ -182,6 +195,15 @@ struct SidebarView: View {
             .accessibilityIdentifier("session.new")
         }
         .frame(height: 44)
+    }
+
+    /// `-dsbot-review-sidebar-more` opens 查看更多 from the start (the simulator has no finger).
+    private static var startsExpanded: Bool {
+        #if DEBUG && targetEnvironment(simulator)
+        return ProcessInfo.processInfo.arguments.contains("-dsbot-review-sidebar-more")
+        #else
+        return false
+        #endif
     }
 
     private var searchField: some View {
@@ -269,7 +291,7 @@ struct SidebarView: View {
                         .foregroundStyle(DSBotStyle.muted)
                         .monospacedDigit()
                         .padding(.trailing, 2)
-                        .accessibilityLabel("\(count) 条")
+                        .accessibilityLabel(item.target == .tasks ? "\(count) 个任务" : "\(count) 条")
                 }
             }
             .font(.system(size: 16, weight: .medium))
@@ -296,13 +318,15 @@ struct SidebarView: View {
         } else if let icon = item.icon {
             NavigationIconView(icon: icon, size: 20)
         } else {
-            DSBotIcon(glyph(for: item), size: 20)
+            // The app's own glyph for an entry that came without a picture, at the weight of the pictures around it: a Lucide icon of a 24 grid at 20pt has a line of 1.67pt (the plugin's own
+            // icons, 看板 and 信息, are drawn so), and the plain 2pt of `DSBotIcon` made it the one bold icon of the list (owner, 2026-11-10: "那个定时任务的图标也很奇怪，是加粗的").
+            DSBotIcon(glyph(for: item), size: 20, scalesStroke: true)
         }
     }
 
     private func glyph(for item: NavigationItem) -> DSBotGlyph {
         switch item.target {
-        case .schedule: return .schedule
+        case .schedule, .tasks: return .schedule
         case .files: return .folder
         case .collector: return .inbox
         case .web(.plugins, _): return .plugins
@@ -512,12 +536,14 @@ struct SidebarView: View {
         .padding(.horizontal, DSBotLayout.sidebarPadding)
         .padding(.bottom, SidebarMetrics.footerBottomGap)
         .background {
-            DSBotPanelBackdrop(
-                horizontalExtension: 0,
-                topExtension: 16,
-                bottomExtension: homeInset,
-                tintOpacity: 0.65
-            )
+            if !DSBotScrollEdges.usesSystemEffect {
+                DSBotPanelBackdrop(
+                    horizontalExtension: 0,
+                    topExtension: 16,
+                    bottomExtension: homeInset,
+                    tintOpacity: 0.65
+                )
+            }
         }
     }
 }
@@ -720,7 +746,7 @@ private struct SidebarSessionRow: View, Equatable {
 }
 
 /// The card the pressed row lifts into while its menu is open.
-private struct SidebarSessionCard: View {
+struct SidebarSessionCard: View {
     let title: String
 
     var body: some View {

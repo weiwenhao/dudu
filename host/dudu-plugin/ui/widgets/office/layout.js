@@ -13,12 +13,12 @@
 // desks and of beds, three treadmills) so that it keeps the look of the widget's default size, 5 x 3 cells (about 1.7 : 1), with the
 // people as big as they were.
 
-// --- the desks (roles.ts of marvis-office: the first desk is the boss's, the others are the same desk in a grid)
+// --- the desks (marvis-office's desk, the same one eight times, in a grid: no desk is anybody's, and none is bigger or lit)
 const DESKS_CLOSER = 100; // the desks are this much nearer the rest area than in marvis-office (the empty column between them is narrower)
 const FIRST_X = 491 - DESKS_CLOSER; // the left column of desks
 const COLUMN_DX = 270; // the right column (351 in marvis-office: the empty column between the two is narrower here)
 const ROW_DY = 262; // the rows after the first (300 in marvis-office, which has three rows: here there are four, in a plane a fifth taller)
-const FIRST_ROW = [57, 81]; // the first row: the boss's desk, and the desk beside it, a little lower
+const FIRST_ROW_Y = 81; // the first row: both desks at the height marvis-office gives the desk that is not the bigger one
 const OTHER_ROWS_Y = 330; // the second row
 const DESK_OFFSET = { x: 24, y: 9 }; // the desk group sits this far from the person's origin (deskPosition - position in roles.ts)
 const PLANE_RIGHT = 899; // the second column of desks ends at 875
@@ -28,15 +28,15 @@ const COLUMNS = 2;
 export const DESKS = 8;
 
 /**
- * Where desk `seat` is on the plane: its group's origin, and whether it is the boss's (the bigger desk, the first seat). A number past the eighth (the activity
+ * Where desk `seat` is on the plane: its group's origin. A number past the eighth (the activity
  * area has ten places, and whoever is there keeps a number too) is a desk of its own number minus eight: the place they appear at and set off from.
  */
 export function deskAt(seat) {
   const number = ((seat % DESKS) + DESKS) % DESKS;
   const column = number % COLUMNS;
   const row = Math.floor(number / COLUMNS);
-  const personY = row === 0 ? FIRST_ROW[Math.min(column, 1)] : OTHER_ROWS_Y + (row - 1) * ROW_DY;
-  return { x: FIRST_X + column * COLUMN_DX + DESK_OFFSET.x, y: personY + DESK_OFFSET.y, boss: number === 0, column, row };
+  const personY = row === 0 ? FIRST_ROW_Y : OTHER_ROWS_Y + (row - 1) * ROW_DY;
+  return { x: FIRST_X + column * COLUMN_DX + DESK_OFFSET.x, y: personY + DESK_OFFSET.y, column, row };
 }
 
 // --- the activity area (the rest area): marvis-office's column (the water bar and the treadmills, 398 wide: `y` is where each picture starts) and, level
@@ -122,16 +122,15 @@ const ABOVE_HEAD = 8; // the name tag's tip is this far above the top of the hea
  */
 export function chairBottom(seat) {
   const desk = deskAt(seat);
-  return desk.y + (desk.boss ? 170 : 148);
+  return desk.y + 148;
 }
 
 /**
  * Where the hips of whoever sits at desk `seat` are: in the middle of the desk, behind the top of the chair, which hides everything below.
- * The boss sits lower, in front of the monitor, as the boss's mascot does (the other mascots sit at the monitor's foot).
  */
 export function seatAnchor(seat) {
   const desk = deskAt(seat);
-  return { x: desk.x + 91, y: desk.y + (desk.boss ? 80 : 62) };
+  return { x: desk.x + 91, y: desk.y + 62 };
 }
 
 /** The point the name tag points at for somebody at `at`, `top` units tall from there (more when they stand): just above the head. */
@@ -171,7 +170,7 @@ export function spreadTags(anchors, sizes, { gap = 2, slack = 8, fallback = { wi
   return spread;
 }
 
-// --- the activity area: where somebody goes who is not working and whose agent is awake: the work waits for the boss (Blocked), or the agent is Idle. Where each person is when they are there (`x`, `y`: their
+// --- the activity area: where somebody goes who is not working and whose agent is awake: the work waits for the owner (Blocked), or the agent is Idle. Where each person is when they are there (`x`, `y`: their
 // feet; their hips where they sit: at the toilet and on the PS5 sofa), and for the places seen from the side, which
 // way they face (1: to the right, -1: to the left). Somebody who sits, or who steps up onto something, arrives at `stand` (their feet, on
 // the open floor in front of it) and moves the short way from there. `after` keeps a seat free until the one before it is taken (the
@@ -227,7 +226,7 @@ export function placeOf(key, seat = 0) {
   if (key === 'desk') {
     const desk = deskAt(seat);
     const rest = seatAnchor(seat);
-    return { rest, seated: true, hop: false, stand: { x: rest.x, y: rest.y + HIPS_ABOVE_FEET }, gate: { x: desk.x + 8, y: desk.y + (desk.boss ? 140 : 118) } };
+    return { rest, seated: true, hop: false, stand: { x: rest.x, y: rest.y + HIPS_ABOVE_FEET }, gate: { x: desk.x + 8, y: desk.y + 118 } };
   }
   const spot = spotAt(key);
   const stand = spot.stand ?? { x: spot.x, y: spot.y };
@@ -317,7 +316,7 @@ export const CAPACITY = Object.freeze({ working: DESKS, resting: REST_SPOTS.filt
 /**
  * Hot desks (owner, 2026-11-05: "whoever needs to work goes and sits; no fixed place for each person"). Whoever has a place in their zone keeps it, whatever happens to the order of
  * the list or to anybody else (`prev`, the seating of the last look, [{ id, seat, zone }]: a sleeper's bed is theirs for as long as they sleep, and nobody walks because the list was
- * shuffled). Whoever changed zone, and anybody new, takes the first free place of their zone, in the order of the list (the boss's desk, the first, goes to the first who works; the
+ * shuffled). Whoever changed zone, and anybody new, takes the first free place of their zone, in the order of the list (the first desk goes to the first who works; the
  * beds fill from the first); when the zone has none left they have no place and are outside (owner, 2026-11-07: when a part of the office has no room "走到屏幕外面就行了，什么额外
  * 的操作都不需要做": nobody is moved or pushed out to make room, and nothing is said of it): they walk in when a place is free. The places are `CAPACITY`.
  */

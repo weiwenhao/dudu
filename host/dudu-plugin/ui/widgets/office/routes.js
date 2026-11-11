@@ -46,7 +46,7 @@ function deskBlocks(seat) {
   const desk = deskAt(seat);
   return [
     // the desk, from the top of its monitor (behind it nobody stands: the desk's picture is under the people) to the front of the desk
-    [`desk ${seat}`, desk.x - 6, desk.y - 30, desk.x + 190, desk.y + (desk.boss ? 130 : 108)],
+    [`desk ${seat}`, desk.x - 6, desk.y - 30, desk.x + 190, desk.y + 108],
     // the chair, down to its foot: it is drawn over whoever sits in it and under whoever walks past in front of it (marvis/office.js), so the
     // floor below it is open (the rows of desks are close: that is the way between them)
     [`chair ${seat}`, desk.x + 34, desk.y + 56, desk.x + 146, chairBottom(seat)],

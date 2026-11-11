@@ -2,6 +2,7 @@ import { Children, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkCjkFriendly from 'remark-cjk-friendly';
 import remarkGfm from 'remark-gfm';
+import { cn } from '../lib/cn.js';
 import { splitByTerms } from './highlight.js';
 import { textMatch } from '../../../conversation-search.mjs';
 
@@ -44,9 +45,9 @@ function componentsFor(terms) {
   };
 }
 
-/** What an agent said, with its bold, lists and code shown as such; the words of a search are marked in it. */
-export function Markdown({ text, terms = [] }) {
+/** What an agent said, with its bold, lists and code shown as such; the words of a search are marked in it. `className` changes the size where a card asks for its own (the todo rows of 嘟嘟's chat). */
+export function Markdown({ text, terms = [], className }) {
   const key = terms.join('\u0000');
   const components = useMemo(() => componentsFor(terms), [key]); // eslint-disable-line react-hooks/exhaustive-deps -- the words are represented by `key`
-  return <div className="text-sm leading-[22px] break-words [overflow-wrap:anywhere]"><ReactMarkdown remarkPlugins={PLUGINS} components={components}>{text}</ReactMarkdown></div>;
+  return <div className={cn('text-sm leading-[22px] break-words [overflow-wrap:anywhere]', className)}><ReactMarkdown remarkPlugins={PLUGINS} components={components}>{text}</ReactMarkdown></div>;
 }

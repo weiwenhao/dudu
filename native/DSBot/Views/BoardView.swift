@@ -2,13 +2,17 @@ import SwiftUI
 
 /// The page the app opens on: the owner's board (owner, 2026-11-07), as a list grouped by what each agent is doing, "需要你" first.
 /// Its header (the sidebar button, the scope menu, "+") is the root's toolbar; this is the rest of the page. A row is the sidebar's own:
-/// the agent's mark, the title, the time. A tap opens the issue's conversation.
+/// the priority, agent's mark, reference, title and time. A tap opens the issue's conversation.
 struct BoardView: View {
     @ObservedObject var board: BoardModel
     @ObservedObject var store: DSBotStore
     /// The toolbar above the page (the page itself starts below the status bar).
     let topInset: CGFloat
+    var isActive = true
     let onOpen: (BoardIssue) -> Void
+    @State private var removing: BoardIssue?
+    @State private var revealed: Int?
+    @State private var editing: IssueActionRequest?
 
     var body: some View {
         ScrollView {
@@ -21,11 +25,34 @@ struct BoardView: View {
         .refreshable { await board.refresh(using: store) }
         .background(DSBotStyle.canvas)
         .accessibilityIdentifier("board.page")
+        .sheet(item: $editing) { request in
+            if request.action == .subIssue {
+                NewIssueSheet(board: board, store: store, parent: request.issue)
+            } else {
+                IssueActionsSheet(board: board, store: store, issue: request.issue, action: request.action)
+            }
+        }
+        .alert(
+            removing.map { "删除“\($0.reference) \($0.title)”？" } ?? "删除",
+            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })
+        ) {
+            Button("取消", role: .cancel) { removing = nil }
+            Button("删除", role: .destructive) {
+                guard let issue = removing else { return }
+                removing = nil
+                Task { await board.delete(issue, using: store) }
+            }
+        } message: {
+            Text("将删除这条事项、活动和本地关联。来源消息和会话历史会保留。")
+        }
+        .onChange(of: store.activeComputer?.id) { _, _ in removing = nil; revealed = nil; editing = nil }
+        .onChange(of: board.tab) { _, _ in revealed = nil }
+        .onChange(of: isActive) { _, active in if !active { removing = nil; revealed = nil; editing = nil } }
         // Read when the tab is on screen and again every few seconds while it is, as the desktop does. The page is open before the computer is connected (the app
         // opens on it): a read that has nowhere to go is skipped, so the loop starts again the moment the connection is there instead of after its pause
         // (2026-11-08: a connect of 60 ms and a read of 49 ms showed the spinner for five seconds).
-        .task(id: BoardLoad(tab: board.tab, connected: store.status == .connected)) {
-            guard store.status == .connected else { return }
+        .task(id: BoardLoad(tab: board.tab, connected: store.status == .connected, active: isActive)) {
+            guard isActive, store.status == .connected else { return }
             while !Task.isCancelled {
                 await board.refresh(using: store)
                 try? await Task.sleep(for: .seconds(5))
@@ -37,6 +64,7 @@ struct BoardView: View {
     struct BoardLoad: Hashable {
         var tab: BoardTab
         var connected: Bool
+        var active: Bool
     }
 
     @ViewBuilder
@@ -73,13 +101,30 @@ struct BoardView: View {
                     .accessibilityIdentifier("board.empty")
             } else {
                 ForEach(board.groups) { group in
-                    BoardGroupHeader(group: group, isFolded: board.isFolded(group)) { board.toggle(group) }
+                    BoardGroupHeader(group: group, isFolded: board.isFolded(group), needsYouColor: board.needsYouColor) { board.toggle(group) }
                         .padding(.top, group.id == board.groups.first?.id ? 0 : DSBotLayout.sidebarPadding)
                     if !board.isFolded(group) {
                         ForEach(group.items) { issue in
-                            BoardRow(issue: issue) { onOpen(issue) }
+                            SwipeActionRow(actions: actions(for: issue), isRevealed: revealed == issue.id, onReveal: { revealed = $0 ? issue.id : nil }) {
+                                BoardRow(issue: issue, busy: board.deleting.contains(issue.id)) {
+                                    if revealed != nil { revealed = nil } else { onOpen(issue) }
+                                }
+                                .contextMenu {
+                                    ForEach(IssueQuickAction.allCases) { action in
+                                        if action == .subIssue { Divider() }
+                                        Button { edit(issue, action: action) } label: { DSBotLabel(action.title, icon: action.glyph) }
+                                            .disabled(!action.isAvailable(for: issue) || store.status != .connected)
+                                    }
+                                    Divider()
+                                    Button(role: .destructive) { revealed = nil; removing = issue } label: { DSBotLabel("删除", icon: .trash) }
+                                        .disabled(store.status != .connected)
+                                } preview: { SidebarSessionCard(title: issue.title) }
+                            }
+                                .disabled(board.deleting.contains(issue.id))
+                                .padding(.horizontal, DSBotLayout.sidebarPadding)
+                                .padding(.bottom, 2)
                                 .onAppear {
-                                    if issue.id == group.items.last?.id, group.nextCursor != nil {
+                                    if isActive, issue.id == group.items.last?.id, group.nextCursor != nil {
                                         Task { await board.loadMore(group, using: store) }
                                     }
                                 }
@@ -88,6 +133,19 @@ struct BoardView: View {
                 }
             }
         }
+    }
+
+    private func actions(for issue: BoardIssue) -> [SwipeAction] {
+        guard store.status == .connected else { return [] }
+        return [
+            SwipeAction(id: "more", title: "更多", symbol: "ellipsis", color: SwipeAction.grey) { edit(issue) },
+            SwipeAction(id: "delete", title: "删除", symbol: "trash", color: SwipeAction.red) { removing = issue },
+        ]
+    }
+
+    private func edit(_ issue: BoardIssue, action: IssueQuickAction? = nil) {
+        revealed = nil
+        editing = IssueActionRequest(issue: issue, action: action)
     }
 }
 
@@ -169,19 +227,26 @@ struct GlassTabs<Tab: Identifiable & Hashable>: View {
 private struct BoardGroupHeader: View {
     let group: BoardGroup
     let isFolded: Bool
+    let needsYouColor: UInt32
     let onToggle: () -> Void
 
     var body: some View {
         Button(action: onToggle) {
             HStack(spacing: 10) {
                 // Keep the state on the outer edge so it reads as the parent of the inset rows.
-                BoardGroupIcon(key: group.key, active: group.count > 0)
+                BoardGroupIcon(key: group.key, active: group.count > 0, needsYouColor: needsYouColor)
                     .frame(width: 20)
                 HStack(alignment: .firstTextBaseline, spacing: 1) {
                     Text(group.title)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(DSBotStyle.chatSecondary)
                         .lineLimit(1)
+                    Text("\(group.count)")
+                        .font(.system(size: 12))
+                        .monospacedDigit()
+                        .foregroundStyle(DSBotStyle.muted)
+                        .padding(.leading, 5)
+                        .padding(.trailing, 3)
                     if isFolded {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 10.5, weight: .semibold))
@@ -201,42 +266,88 @@ private struct BoardGroupHeader: View {
         .padding(.trailing, 4)
         .padding(.horizontal, DSBotLayout.sidebarPadding)
         .accessibilityLabel("\(group.title)，\(isFolded ? "已折叠" : "已展开")")
+        .accessibilityValue("\(group.count)")
         .accessibilityHint("点按折叠或展开")
         .accessibilityIdentifier("board.group.\(group.key)")
     }
 }
 
-/// The icon of an agent state, as the desktop draws it (`AgentStateIcon`): idle a ring, working a ring that turns while the group has somebody in it, needs you an octagon with a pause
-/// in the warning colour, unassigned a person.
+/// Needs you takes the computer's chosen color with the ordinary board response;
+/// the heading and the other state icons keep their existing colors.
 private struct BoardGroupIcon: View {
     let key: String
     let active: Bool
+    let needsYouColor: UInt32
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.conversationIsCovered) private var covered
     @State private var turning = false
 
     private var glyph: DSBotGlyph {
         switch key {
         case "working": return .stateWorking
-        case "blocked": return .stateBlocked
         case "unassigned": return .stateUnassigned
         default: return .stateIdle
         }
     }
 
-    private var spins: Bool { key == "working" && active && !reduceMotion }
+    private var spins: Bool { key == "working" && active && !reduceMotion && !covered }
 
     var body: some View {
-        DSBotIcon(glyph, size: 16, strokeWidth: 1.7)
-            .foregroundStyle(key == "blocked" ? Color(red: 245.0 / 255, green: 158.0 / 255, blue: 11.0 / 255) : DSBotStyle.muted)
-            .rotationEffect(.degrees(spins && turning ? 360 : 0))
-            .animation(spins ? .linear(duration: 1).repeatForever(autoreverses: false) : nil, value: turning)
-            .onAppear { turning = true }
-            .accessibilityHidden(true)
+        Group {
+            if key == "blocked" {
+                BoardNeedsYouMark(active: active, hex: needsYouColor)
+            } else {
+                DSBotIcon(glyph, size: 16, strokeWidth: 1.7)
+                    .foregroundStyle(DSBotStyle.muted)
+                    .rotationEffect(.degrees(spins && turning ? 360 : 0))
+                    .animation(spins ? .linear(duration: 1).repeatForever(autoreverses: false) : nil, value: turning)
+                    .onChange(of: spins, initial: true) { _, spins in turning = spins }
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// The center stays still while one faint ring expands and disappears.
+private struct BoardNeedsYouMark: View {
+    let active: Bool
+    let hex: UInt32
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.conversationIsCovered) private var covered
+    @State private var expanded = false
+
+    private var color: Color {
+        Color(red: Double(hex >> 16 & 255) / 255, green: Double(hex >> 8 & 255) / 255, blue: Double(hex & 255) / 255)
+    }
+    private var animates: Bool { active && !reduceMotion && !covered && scenePhase == .active }
+
+    var body: some View {
+        ZStack {
+            if animates {
+                Circle()
+                    .stroke(color, lineWidth: 0.8)
+                    .frame(width: 13, height: 13)
+                    .scaleEffect(expanded ? 20.0 / 13 : 7.0 / 13)
+                    .opacity(expanded ? 0 : 0.32)
+                    .animation(.easeOut(duration: 2.6).repeatForever(autoreverses: false), value: expanded)
+                    .onAppear { expanded = true }
+                    .onDisappear { expanded = false }
+            }
+            Circle()
+                .fill(color.opacity(0.1))
+                .frame(width: 13, height: 13)
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+        }
+        .frame(width: 16, height: 16)
+        .accessibilityHidden(true)
     }
 }
 
 /// What an issue with no agent has where the agent's mark is: the desktop's dashed ring with a person in it.
-private struct BoardNoAgentMark: View {
+struct BoardNoAgentMark: View {
     var body: some View {
         Circle()
             .strokeBorder(DSBotStyle.muted.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [2.5, 2.5]))
@@ -247,14 +358,22 @@ private struct BoardNoAgentMark: View {
     }
 }
 
-/// One issue, laid out like a conversation of the sidebar: what the agent is doing, its number, the title, and when it last changed.
-private struct BoardRow: View {
+/// The approved aligned columns: priority under the group mark, then the agent, a fixed-width reference and title.
+/// The todo card of 嘟嘟's chat draws its rows with it too (`QuickCardView`).
+struct BoardRow: View {
     let issue: BoardIssue
+    var busy = false
     let onOpen: () -> Void
+
+    private var priority: IssuePriority { IssuePriority(rawValue: issue.priority) ?? .none }
 
     var body: some View {
         Button(action: onOpen) {
             HStack(spacing: 0) {
+                IssuePriorityIcon(priority: priority)
+                    .offset(y: priority == .high || priority == .medium || priority == .low ? -0.5 : 0)
+                    .frame(width: 20, height: 20)
+                    .padding(.trailing, 6)
                 // Every row has the mark's column, so the titles line up (an issue without an agent had none, and its title stood further left).
                 Group {
                     if let agent = issue.sessionAgent {
@@ -271,29 +390,34 @@ private struct BoardRow: View {
                     .monospacedDigit()
                     .foregroundStyle(DSBotStyle.muted)
                     .lineLimit(1)
-                    .frame(minWidth: 48, alignment: .leading)
+                    .minimumScaleFactor(0.85)
+                    .frame(width: 50, alignment: .leading)
                     .padding(.trailing, 6)
                 Text(issue.title)
                     .font(.system(size: 15, weight: .regular))
                     .foregroundStyle(DSBotStyle.ink)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text(relativeTime(issue.updatedAt))
-                    .font(.system(size: 10))
-                    .foregroundStyle(DSBotStyle.muted)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-                    .frame(width: DSBotLayout.actionColumnWidth, alignment: .center)
+                Group {
+                    if busy {
+                        ProgressView().controlSize(.small).tint(DSBotStyle.muted)
+                    } else {
+                        Text(relativeTime(issue.updatedAt))
+                            .font(.system(size: 10))
+                            .foregroundStyle(DSBotStyle.muted)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                    }
+                }
+                .frame(width: DSBotLayout.actionColumnWidth, alignment: .center)
             }
             .frame(minHeight: 46)
-            .padding(.leading, 10 + DSBotLayout.sidebarPadding)
+            .padding(.leading, 10)
             .padding(.trailing, 4)
             .contentShape(Rectangle())
         }
         .buttonStyle(DSBotRowButtonStyle())
         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .padding(.horizontal, DSBotLayout.sidebarPadding)
-        .padding(.bottom, 2)
         .accessibilityIdentifier("board.issue.\(issue.id)")
     }
 }

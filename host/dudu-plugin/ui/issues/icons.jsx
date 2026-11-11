@@ -1,4 +1,4 @@
-import { Box, Circle, LoaderCircle, OctagonPause, User } from 'lucide-react';
+import { Box, Circle, LoaderCircle, User } from 'lucide-react';
 import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
 import { DUE_ICON_TONE } from './due.js';
@@ -6,6 +6,7 @@ import { AGENT_LETTERS, AGENT_NAMES } from './model.js';
 import { AgentLogo } from './AgentLogo.jsx';
 import { agentLogo } from './agent-logos.js';
 import { statusDefinition } from './workflow.js';
+import { useNeedsYouColor } from './NeedsYouColor.jsx';
 
 const STATUS_COLOR = {
   backlog: 'text-status-backlog',
@@ -20,18 +21,23 @@ const Svg = ({ className, style, children }) => (
   <svg className={className} style={style} viewBox="0 0 16 16" fill="none" aria-hidden="true">{children}</svg>
 );
 
-/** Linear's status shapes: dashed circle, empty circle, half, three quarters, check, cross. */
-export function StatusIcon({ status, className, color }) {
+/** Started statuses choose their inner fill; the category's ring, check and cross keep their existing shapes. */
+export function StatusIcon({ status, className, color, iconProgress }) {
   const definition = statusDefinition(status);
   status = definition?.type ?? status;
+  const progress = iconProgress ?? definition?.iconProgress ?? (status === 'in_review' ? 0.75 : 0.5);
   const style = (color ?? definition?.color) ? { color: color ?? definition.color } : undefined;
   const cls = cn('size-4 shrink-0', STATUS_COLOR[status], className);
   const ring = <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.6" strokeDasharray={status === 'backlog' ? '1.6 2.4' : undefined} strokeLinecap="round" />;
   switch (status) {
     case 'in_progress':
-      return <Svg className={cls} style={style}>{ring}<path d="M8 4.2a3.8 3.8 0 0 1 0 7.6z" fill="currentColor" /></Svg>;
     case 'in_review':
-      return <Svg className={cls} style={style}>{ring}<path d="M8 8V4.2a3.8 3.8 0 1 1-3.8 3.8z" fill="currentColor" /></Svg>;
+      return <Svg className={cls} style={style}>{ring}
+        {progress === 0.25 && <path d="M8 8V4.2a3.8 3.8 0 0 1 3.8 3.8z" fill="currentColor" />}
+        {progress === 0.5 && <path d="M8 4.2a3.8 3.8 0 0 1 0 7.6z" fill="currentColor" />}
+        {progress === 0.75 && <path d="M8 8V4.2a3.8 3.8 0 1 1-3.8 3.8z" fill="currentColor" />}
+        {progress === 1 && <circle cx="8" cy="8" r="3.8" fill="currentColor" />}
+      </Svg>;
     case 'done':
       return <Svg className={cls} style={style}><circle cx="8" cy="8" r="7" fill="currentColor" /><path d="M5 8.2l2 2 4-4.4" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></Svg>;
     case 'canceled':
@@ -42,12 +48,20 @@ export function StatusIcon({ status, className, color }) {
 }
 
 /**
- * The icon of an agent state. Working is an arc that turns only while somebody is working (`active`: its group has at least one issue; owner's choice A, 2026-11-05, after
- * "工作中 0" turned for nothing); an empty group, and the item in a menu, hold still.
+ * Working turns only in a nonempty group. Needs you uses the computer's chosen color and the phone's outward ripple.
+ * An empty group and the item in a menu hold still.
  */
 export function AgentStateIcon({ state, className, active = false }) {
-  const Icon = { idle: Circle, working: LoaderCircle, blocked: OctagonPause, unassigned: User }[state] ?? Circle;
-  return <Icon aria-hidden="true" strokeWidth={1.7} className={cn('size-4 shrink-0', state === 'blocked' ? 'text-warning' : 'text-muted-foreground', state === 'working' && active && 'animate-spin motion-reduce:animate-none', className)} />;
+  const { color } = useNeedsYouColor();
+  if (state === 'blocked') {
+    return <Svg className={cn('size-4 shrink-0 overflow-visible', className)} style={{ color }}>
+      {active && <circle className="dudu-needs-you-ripple motion-reduce:hidden" cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="0.8" />}
+      <circle cx="8" cy="8" r="6.5" fill="currentColor" fillOpacity="0.1" />
+      <circle cx="8" cy="8" r="3.5" fill="currentColor" />
+    </Svg>;
+  }
+  const Icon = { idle: Circle, working: LoaderCircle, unassigned: User }[state] ?? Circle;
+  return <Icon aria-hidden="true" strokeWidth={1.7} className={cn('size-4 shrink-0 text-muted-foreground', state === 'working' && active && 'animate-spin motion-reduce:animate-none', className)} />;
 }
 const BARS = [[2, 9, 5], [6.5, 6, 8], [11, 3, 11]];
 const LEVEL = { high: 3, medium: 2, low: 1 };

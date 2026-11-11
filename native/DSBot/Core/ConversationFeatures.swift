@@ -104,6 +104,12 @@ struct ConversationToolDetail: Codable, Sendable {
     var images: [TranscriptAttachment]
 }
 
+struct ConversationChangeSummary: Codable, Equatable, Sendable {
+    var total: Int
+    var added: Int
+    var deleted: Int
+}
+
 struct ConversationChanges: Codable, Sendable {
     struct File: Codable, Equatable, Sendable {
         var path: String
@@ -118,6 +124,10 @@ struct ConversationChanges: Codable, Sendable {
     var total: Int
     var added: Int
     var deleted: Int
+
+    var summary: ConversationChangeSummary {
+        ConversationChangeSummary(total: total, added: added, deleted: deleted)
+    }
 }
 
 struct ConversationDiff: Codable, Sendable {
@@ -153,6 +163,7 @@ extension Transcript {
         let prefix = entries.filter { ($0.seq ?? currentBoundary) < currentBoundary }
         combined.entries = prefix + newer.entries
         combined.pendingInputs = newer.pendingInputs
+        if hidden != nil || newer.hidden != nil { combined.hidden = Array(Set(hidden ?? []).union(newer.hidden ?? [])).sorted() }
         var references = tools ?? [:]
         for (id, next) in newer.tools ?? [:] {
             let old = references[id]
@@ -188,7 +199,11 @@ extension Transcript {
                 if old.notices != nil || next.notices != nil {
                     old.notices = Self.mergeItems(old.notices ?? [], next.notices ?? [])
                 }
-                old.changesSeq = next.changesSeq ?? old.changesSeq
+                if let seq = next.changesSeq {
+                    old.changesSummary = seq == old.changesSeq
+                        ? next.changesSummary ?? old.changesSummary : next.changesSummary
+                    old.changesSeq = seq
+                }
                 old.stats = next.stats ?? old.stats
                 old.usage = next.usage ?? old.usage
                 turnMap[next.turn] = old

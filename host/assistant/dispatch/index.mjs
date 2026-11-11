@@ -33,8 +33,8 @@
 //       deferred or failed (error). waiting is null or { outputs }.
 //   assign(issueId)     async. Hands a Todo issue that has no agent to one, only with a selected or rule-specified project:
 //       one model call over ASSIGN.md, the issue, the enabled agents and what
-//       the agents handled before for the same kind of issue. A chosen agent -> issues.assign (as 嘟嘟, with the reason); the session only when
-//       it is one that history offered and is free. -> { outcome: 'success', assigned: true, agent, session, reused, access, requested, allowed,
+//       the agents handled before for the same kind of issue. A chosen agent -> issues.assign (as 嘟嘟, with the reason), always with a fresh
+//       session. -> { outcome: 'success', assigned: true, agent, session: null, reused: false, access, requested, allowed,
 //       reason, issue }. `access` is for whoever starts the session: what the model asked for, never above what ASSIGN.md allows for this kind
 //       (rules.mjs), read-only when it says nothing. No agent (the model is not sure, names one that is not available, or none is enabled) ->
 //       { outcome: 'needs_clarification', assigned: false, ask, ... }: the issue stays Todo and its ask is "交给谁处理？". Already assigned, not
@@ -56,8 +56,6 @@ import { createIntakeState } from './state.mjs';
 import { WORDS as W } from './words.mjs';
 
 export const LIMITS = Object.freeze({ collectionsPerRun: 5, modelMs: 60_000, collectMs: 600_000, history: 30, historyScan: 200 });
-
-const BUSY_SESSION = ['running', 'waiting_owner', 'error'];
 
 const clip = (text, max) => [...String(text ?? '')].slice(0, max).join('');
 const oneLine = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
@@ -194,6 +192,32 @@ export function createDispatch({ issues, collectors = null, collect = null, rule
     return { op: { ...op, ...summary }, items: fresh, added: fresh };
   }
 
+  /**
+   * The owner asked for more of one record's context (the Collector's button): the session of the collector that brought it reads the conversation around it, and what it read is put in that
+   * record (inbox.addContext). It is no collection: no run is kept and the time of the last good collection, which the next one reads from, does not move.
+   */
+  async function complete({ id } = {}) {
+    if (disposed) return { outcome: 'error', message: W.disposed };
+    if (!collect?.fill) return { outcome: 'error', message: 'The DSH collection service is unavailable.' };
+    const got = inbox.get(id);
+    if (!got?.record) return { outcome: 'needs_clarification', code: 'unknown_record', message: 'There is no record with that number.' };
+    const found = await listViews();
+    if (found.error) return { outcome: 'error', message: found.error };
+    const view = found.views.find((item) => item.id === got.record.connector);
+    if (!view) return { outcome: 'needs_clarification', code: 'no_collector', message: 'The collector that brought this record is no longer saved.' };
+    if (!view.via && view.via !== undefined) return { outcome: 'error', message: W.noConnector };
+    const timeout = AbortSignal.timeout(cap.collectMs);
+    let read;
+    try {
+      read = await collect.fill(view, got.record, { signal: AbortSignal.any([stop.signal, timeout]) });
+    } catch (error) {
+      read = { outcome: 'error', message: timeout.aborted ? W.collectTimeout(Math.round(cap.collectMs / 60_000)) : error?.message };
+    }
+    if (disposed) return { outcome: 'error', message: W.disposed };
+    if (read?.outcome !== 'success') return { outcome: 'error', message: safe(read?.message ?? W.readFailed, 300) };
+    return inbox.addContext(got.record.id, normalizeRecords(read.records, { now }).records);
+  }
+
   async function runIntake(only, run) {
     const found = await listViews();
     if (found.error) return { outcome: 'error', message: found.error };
@@ -268,14 +292,12 @@ export function createDispatch({ issues, collectors = null, collect = null, rule
 
   // --- assignment
 
-  // What the agents handled before, for the kinds of issue they handled: one entry per kind, agent and session, the sessions that can take
-  // another issue now (not the session of an issue that is open, not one that is working, waiting for the owner or failed), the kind of
-  // this issue first.
+  // Agent experience in this project, one entry per kind and agent, this issue's kind first. Session identities are never offered:
+  // each new issue gets its own conversation even when the same agent handled similar work before.
   function historyFor(issue, available) {
     const ids = available.map((agent) => agent.id);
     const page = issues.list({ tab: 'all', filter: { agent: ids }, order: 'updated', limit: cap.historyScan });
     if (page.outcome !== 'success') return [];
-    const held = new Set(page.items.filter((past) => !isFinished(past.statusType ?? past.status) && past.session).map((past) => past.session));
     const groups = new Map();
     for (const past of page.items) {
       if (past.id === issue.id || !past.kind || past.project?.path !== issue.project?.path) continue;
@@ -284,19 +306,18 @@ export function createDispatch({ issues, collectors = null, collect = null, rule
       for (const session of full.issue.sessions) {
         const agent = session.agent || past.agent;
         if (!ids.includes(agent)) continue;
-        const key = `${past.kind.trim().toLowerCase()}|${agent}|${session.key}`;
-        const group = groups.get(key) ?? { kind: past.kind, agent, session: session.key, lastUsedAt: 0, issues: new Set(), busy: held.has(session.key) };
+        const key = `${past.kind.trim().toLowerCase()}|${agent}`;
+        const group = groups.get(key) ?? { kind: past.kind, agent, lastUsedAt: 0, issues: new Set() };
         group.lastUsedAt = Math.max(group.lastUsedAt, session.openedAt, session.closedAt ?? 0);
         group.issues.add(past.id);
-        group.busy ||= BUSY_SESSION.includes(session.state);
         groups.set(key, group);
       }
     }
     const same = (group) => (sameKind(group.kind, issue.kind) ? 0 : 1);
-    return [...groups.values()].filter((group) => !group.busy)
+    return [...groups.values()]
       .sort((a, b) => same(a) - same(b) || b.lastUsedAt - a.lastUsedAt)
       .slice(0, cap.history)
-      .map((group) => ({ kind: group.kind, agent: group.agent, session: group.session, lastUsedAt: group.lastUsedAt, issues: group.issues.size }));
+      .map((group) => ({ kind: group.kind, agent: group.agent, lastUsedAt: group.lastUsedAt, issues: group.issues.size }));
   }
 
   const latest = (id) => {
@@ -308,7 +329,6 @@ export function createDispatch({ issues, collectors = null, collect = null, rule
   function leaveToOwner(issue, why) {
     const reason = safe(why, 500);
     if (!issue.ask) issues.update(issue.id, { ask: W.whoShouldTake }, { actor: 'dudu', reason });
-    if (issue.ask !== W.whoShouldTake) issues.log(issue.id, { kind: 'note', text: W.notAssigned(reason), actor: 'dudu' });
     return {
       outcome: 'needs_clarification', assigned: false, ask: issue.ask || W.whoShouldTake, reason, message: W.notAssignedMessage(issue.ref, reason),
       next: W.ownerDecides, issue: latest(issue.id) ?? issue,
@@ -324,9 +344,8 @@ export function createDispatch({ issues, collectors = null, collect = null, rule
     if (options.problem || !project) return leaveToOwner(issue, options.problem ?? '请先选择项目，再分配智能体。');
     issue = { ...issue, project };
     let choice = { agent: null, session: null, access: null, reason: W.noAgentOn };
-    let history = [];
     if (available.length) {
-      history = issue.kind ? historyFor(issue, available) : [];
+      const history = issue.kind ? historyFor(issue, available) : [];
       let reply;
       try {
         reply = await ask(assignMessages({ assign: files.assign, issue, agents: available, history }));
@@ -343,18 +362,17 @@ export function createDispatch({ issues, collectors = null, collect = null, rule
     if (choice.agent === null) return leaveToOwner(again, choice.reason);
     if (!available.some((agent) => agent.id === choice.agent)) return leaveToOwner(again, W.unavailable(safe(choice.agent, 40), choice.reason));
 
-    // A session is continued only if history offered it for this agent; anything else the model wrote is a new session.
-    const offered = choice.session ? history.find((entry) => entry.session === choice.session && entry.agent === choice.agent) : null;
-    const session = offered ? offered.session : null;
+    // History chooses the agent, never its conversation. Ignore session fields from legacy rules or model replies as well.
+    const session = null;
     const allowed = allowedAccess(files.assign, again, { fallback: choice.agent === 'claude' ? null : 'read-only' });
     const access = allowed === null ? null : grantAccess(choice.access, allowed);
     const reason = safe(choice.reason, 500);
-    const notes = [choice.session && !offered ? W.sessionDropped : null, access && W.access(access, choice.access, allowed)].filter(Boolean);
+    const notes = [choice.session ? W.sessionDropped : null, access && W.access(access, choice.access, allowed)].filter(Boolean);
     const assigned = issues.assign(again.id, { agent: choice.agent, session, project: again.project?.path ? again.project : project, actor: 'dudu', reason: [reason, ...notes].filter(Boolean).join(' · ') });
     if (assigned.outcome !== 'success') return { outcome: assigned.outcome, message: safe(assigned.message, 300), issue: assigned.issue ?? again };
     if (again.ask === W.whoShouldTake) issues.update(again.id, { ask: '' }, { actor: 'dudu' });
     return success({
-      assigned: true, agent: choice.agent, session, reused: session !== null, access, requested: choice.access, allowed, reason,
+      assigned: true, agent: choice.agent, session, reused: false, access, requested: choice.access, allowed, reason,
       message: W.assigned(again.ref, choice.agent, session, access), issue: latest(again.id) ?? assigned.issue,
     });
   }
@@ -414,5 +432,5 @@ export function createDispatch({ issues, collectors = null, collect = null, rule
     await Promise.allSettled([...work]);
   }
 
-  return { intake, assign, state: stateOf, dispose };
+  return { intake, complete, assign, state: stateOf, dispose };
 }

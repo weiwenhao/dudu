@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, ExternalLink, X } from 'lucide-react';
+import { ChevronDown, ExternalLink, LoaderCircle, X } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '../components/dialog.jsx';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
@@ -25,25 +25,30 @@ function verdictLine(record) {
 
 /**
  * A record in full: what it says, what was around it, who and where from, and what the owner can do with it (the actions are the row menu's).
- * `card` is the row that was clicked; the rest is read when the dialog opens.
+ * `card` is the row that was clicked; the rest is read when the dialog opens, and again when a completion of its context has ended (`finished` counts them; `completing` says one runs:
+ * the button is busy and the window stays open). A completion that was running when the window opened is waited for too (`actions.follow`).
  */
-export function RecordDialog({ card, tab, request, actions, onClose }) {
+export function RecordDialog({ card, tab, request, actions, marking, completing, finished, onClose }) {
   const [detail, setDetail] = useState(null);
   const [failed, setFailed] = useState(false);
-  const [picking, setPicking] = useState(false);
   const [pickingSession, setPickingSession] = useState(false);
+  const { follow } = actions;
   useEffect(() => {
     let live = true;
     request('inbox/get', { id: card.id }).then((result) => {
       if (!live) return;
-      if (result?.outcome === 'success') setDetail(result); else setFailed(true);
+      if (result?.outcome !== 'success') { setFailed(true); return; }
+      setDetail(result);
+      setFailed(false);
+      if (result.record?.completing) follow(card.id);
     }).catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
-  }, [request, card.id]);
+  }, [request, card.id, finished, follow]);
   const record = detail?.record ?? card;
-  const meta = [record.from, record.connectorName, record.at ? when(record.at) : ''].filter(Boolean).join(' · ');
+  const meta = [record.ref, record.from, record.connectorName, record.at ? when(record.at) : ''].filter(Boolean).join(' · ');
   const verdict = verdictLine(record);
   const then = (work) => async (...args) => { await work(...args); onClose(); };
+  const markThen = (work) => () => { void work(record); onClose(); };
   return <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
     <DialogContent className="max-h-[min(640px,calc(100dvh-2rem))] gap-0 overflow-hidden p-0 sm:max-w-[720px]" aria-describedby={undefined}>
       <div className="flex shrink-0 items-start gap-3 pt-4 pr-3.5 pl-5">
@@ -68,19 +73,13 @@ export function RecordDialog({ card, tab, request, actions, onClose }) {
         </>}
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-t px-5 py-3">
-        {!record.issue && <Button variant="ghost" onClick={then(() => actions.remove(record))}>{T.collector.remove}</Button>}
-        {tab === 'todo' && <Button variant="ghost" onClick={then(() => actions.ignore(record))}>{T.collector.ignore}</Button>}
-        {(tab === 'ignored' || (tab === 'done' && !record.issue)) && <Button variant="ghost" onClick={then(() => actions.restore(record))}>{T.collector.restore}</Button>}
+        {!record.issue && <Button variant="ghost" disabled={marking} onClick={markThen(actions.remove)}>{T.collector.remove}</Button>}
+        {tab === 'todo' && <Button variant="ghost" disabled={marking} onClick={markThen(actions.ignore)}>{T.collector.ignore}</Button>}
+        {(tab === 'ignored' || (tab === 'done' && !record.issue)) && <Button variant="ghost" disabled={marking} onClick={markThen(actions.restore)}>{T.collector.restore}</Button>}
+        <Button variant="ghost" disabled={completing} aria-busy={completing || undefined} onClick={() => { void actions.complete(record); }}>{completing && <LoaderCircle className="animate-spin" />}{T.collector.complete}</Button>
         <span className="flex-1" />
         {tab !== 'done' && <>
-          <Button variant="outline" onClick={then(() => actions.done(record))}>{T.collector.markDone}</Button>
-          <Popover open={picking} onOpenChange={setPicking}>
-            <PopoverTrigger asChild><Button variant="outline">{T.collector.share}<ChevronDown className="text-muted-foreground" /></Button></PopoverTrigger>
-            <PopoverContent side="top" align="end" className="w-80" aria-label={T.collector.share}
-              onKeyDown={(event) => { if (event.target.closest('[cmdk-root]') && !['Escape', 'ArrowLeft', 'Tab'].includes(event.key)) event.stopPropagation(); }}>
-              <IssuePicker request={request} onSelect={(issue) => { setPicking(false); then(actions.share)(record, issue); }} />
-            </PopoverContent>
-          </Popover>
+          <Button variant="outline" disabled={marking} onClick={markThen(actions.done)}>{T.collector.markDone}</Button>
           <Popover open={pickingSession} onOpenChange={setPickingSession}>
             <PopoverTrigger asChild><Button variant="outline">{T.collector.shareSession}<ChevronDown className="text-muted-foreground" /></Button></PopoverTrigger>
             <PopoverContent side="top" align="end" className="w-80" aria-label={T.collector.shareSession}

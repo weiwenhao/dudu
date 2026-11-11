@@ -31,7 +31,10 @@ final class ConversationMarkdown: @unchecked Sendable {
                     if case let .reply(id, text) = $0, !id.hasPrefix("live:") { return text }
                     return nil
                 }
-            case let .command(command): return command.detail.map { [$0] } ?? []
+            case let .command(command):
+                // The result of a task that 嘟嘟 did itself is drawn as one of its messages: prepared with the rest, so it never shows as raw text first.
+                let task = command.group.flatMap { $0.kind == .task ? $0.taskText : nil }.flatMap { $0.isEmpty ? nil : $0 }
+                return (command.detail.map { [$0] } ?? []) + (task.map { [$0] } ?? [])
             default: return []
             }
         })

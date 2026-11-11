@@ -2,6 +2,45 @@ import XCTest
 @testable import dsbot
 
 final class ChatScrollPositionTests: XCTestCase {
+    func testTopInsetDoesNotBreakFollowingWhenTheKeyboardChangesTheViewport() {
+        // Device log: the 912pt scroll view has a 112pt top bar and a 355pt keyboard.
+        let snapshots: [(content: CGFloat, viewport: CGFloat, offset: CGFloat)] = [
+            (6_239, 800, 5_327),
+            (6_223, 445, 5_666),
+            (6_239, 800, 5_327),
+        ]
+        for snapshot in snapshots {
+            XCTAssertTrue(ChatScrollPosition.shouldFollowAfterDrag(
+                contentHeight: snapshot.content, containerHeight: snapshot.viewport,
+                contentOffset: snapshot.offset, topInset: 112,
+                beganFollowingWithKeyboard: false, keyboardVisible: snapshot.viewport == 445
+            ))
+            XCTAssertFalse(ChatScrollPosition.isAwayFromEnd(
+                contentHeight: snapshot.content, containerHeight: snapshot.viewport,
+                contentOffset: snapshot.offset, topInset: 112
+            ))
+            XCTAssertFalse(ChatScrollPosition.shouldFollowAfterDrag(
+                contentHeight: snapshot.content, containerHeight: snapshot.viewport,
+                contentOffset: snapshot.offset - 43, topInset: 112,
+                beganFollowingWithKeyboard: false, keyboardVisible: snapshot.viewport == 445
+            ))
+            XCTAssertFalse(ChatScrollPosition.isAwayFromEnd(
+                contentHeight: snapshot.content, containerHeight: snapshot.viewport,
+                contentOffset: snapshot.offset - 43, topInset: 112
+            ))
+        }
+        // Reading old messages stays separate from following, with or without the keyboard.
+        for viewport: CGFloat in [445, 800] {
+            XCTAssertFalse(ChatScrollPosition.shouldFollowAfterDrag(
+                contentHeight: 6_239, containerHeight: viewport, contentOffset: 5_000, topInset: 112,
+                beganFollowingWithKeyboard: false, keyboardVisible: viewport == 445
+            ))
+            XCTAssertTrue(ChatScrollPosition.isAwayFromEnd(
+                contentHeight: 6_239, containerHeight: viewport, contentOffset: 5_000, topInset: 112
+            ))
+        }
+    }
+
     func testNativeGeometryUsesTheVisibleViewportWithoutAddingKeyboardInsetsAgain() {
         XCTAssertTrue(ChatScrollPosition.isAtEnd(
             contentHeight: 1_900, containerHeight: 912, contentOffset: 988
@@ -89,6 +128,37 @@ final class ChatScrollPositionTests: XCTestCase {
         XCTAssertFalse(ChatScrollPosition.isAwayFromEnd(contentHeight: 1_000, containerHeight: 300, contentOffset: 600))
     }
 
+    func testADragAwayFromTheEndStaysReadingEvenWithinTheOldFollowTolerance() {
+        // The 23:41 device log: a drag ends 43pt above the bottom, then "drag.end" pulls it back.
+        XCTAssertFalse(ChatScrollPosition.shouldFollowAfterDrag(
+            contentHeight: 2_137, containerHeight: 912, contentOffset: 1_182,
+            beganFollowingWithKeyboard: false, keyboardVisible: false
+        ))
+        XCTAssertTrue(ChatScrollPosition.shouldFollowAfterDrag(
+            contentHeight: 2_137, containerHeight: 912, contentOffset: 1_224.5,
+            beganFollowingWithKeyboard: false, keyboardVisible: false
+        ))
+        XCTAssertTrue(ChatScrollPosition.shouldFollowAfterDrag(
+            contentHeight: 2_137, containerHeight: 912, contentOffset: 1_240,
+            beganFollowingWithKeyboard: false, keyboardVisible: false
+        ))
+    }
+
+    func testKeyboardFollowingSurvivesOnlyAnActualDismissalFromTheLatest() {
+        XCTAssertTrue(ChatScrollPosition.shouldFollowAfterDrag(
+            contentHeight: 2_137, containerHeight: 912, contentOffset: 900,
+            beganFollowingWithKeyboard: true, keyboardVisible: false
+        ))
+        XCTAssertFalse(ChatScrollPosition.shouldFollowAfterDrag(
+            contentHeight: 2_137, containerHeight: 557, contentOffset: 900,
+            beganFollowingWithKeyboard: true, keyboardVisible: true
+        ))
+        XCTAssertFalse(ChatScrollPosition.shouldFollowAfterDrag(
+            contentHeight: 2_137, containerHeight: 912, contentOffset: 900,
+            beganFollowingWithKeyboard: false, keyboardVisible: false
+        ))
+    }
+
     // The device log of 2026-11-07 12:37: 20 rows, the estimate 14,982 against 13,955 really, a viewport of 912 at the estimated end (offset 14,070), and the only
     // row built (1,652 tall) ending at 13,818: above the viewport. The latest (136 tall) was not built, so there was nothing to draw.
     private let blank = (
@@ -134,11 +204,33 @@ final class ChatScrollPositionTests: XCTestCase {
         XCTAssertNil(answer.held)
     }
 
-    func testNothingBuiltYetOrTheLatestBuiltIsFollowedAsUsual() {
+    func testAnInitialHistoryWithoutBuiltRowsUsesItsNormalInitialAnchor() {
         XCTAssertNil(BlankViewportRecovery.target(latestID: "row19", rows: [], contentOffset: 14_070, viewportHeight: 912, contentHeight: 14_982, heldEstimate: nil).target)
-        XCTAssertNil(BlankViewportRecovery.target(
+    }
+
+    func testABuiltLatestOutsideTheViewportStillNeedsRecovery() {
+        let answer = BlankViewportRecovery.target(
+            latestID: "latest", rows: [HistoryRowFrame(id: "latest", minY: 7_286.67, maxY: 7_415)],
+            contentOffset: 12_827.67, viewportHeight: 912, contentHeight: 13_739.67, heldEstimate: nil
+        )
+        XCTAssertEqual(answer.target, "latest", "The recorded 02:39 blank viewport has a built latest row thousands of points above it.")
+        XCTAssertEqual(answer.held, 13_739.67)
+        XCTAssertEqual(BlankViewportRecovery.target(
             latestID: "row18", rows: blank.rows, contentOffset: blank.contentOffset, viewportHeight: blank.viewport, contentHeight: blank.content, heldEstimate: 14_982
-        ).target, "the latest is built: its place is real, even where an estimate was held")
+        ).target, "row18")
+        XCTAssertNil(BlankViewportRecovery.target(
+            latestID: "latest", rows: [HistoryRowFrame(id: "latest", minY: 7_286.67, maxY: 7_415)],
+            contentOffset: 6_503, viewportHeight: 912, contentHeight: 7_415, heldEstimate: 13_739.67
+        ).target, "The latest is now actually visible.")
+    }
+
+    func testAPreviouslyPopulatedHistoryCanMaterializeItsFirstOccurrenceWhenNoRowsRemain() {
+        let answer = BlankViewportRecovery.target(
+            latestID: "latest", rows: [], contentOffset: 12_827.67, viewportHeight: 912,
+            contentHeight: 13_739.67, heldEstimate: nil, fallbackID: "first"
+        )
+        XCTAssertEqual(answer.target, "first")
+        XCTAssertEqual(answer.held, 13_739.67)
     }
 
     func testTheLastBuiltRowIsTheOneWithTheGreatestBottomWhateverTheOrderOfTheRows() {

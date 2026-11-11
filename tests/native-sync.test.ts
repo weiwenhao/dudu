@@ -195,7 +195,7 @@ test('Properties exposes the native id and its exact resume command, including s
   const links = { nativeKey: () => 'claude:abc-123' };
   assert.deepEqual(await sessionInfo({ key: 'dsh:session-1', links }), { provider: 'claude', sessionId: 'abc-123', command: 'claude --resume abc-123' });
   assert.equal((await sessionInfo({ key: "codex:bad'; echo nope", links })).command, "codex resume 'bad'\\''; echo nope'");
-  assert.equal((await sessionInfo({ key: 'dsh:session-2' })).command, null);
+  assert.equal((await sessionInfo({ key: 'dsh:session-2', query: { readSession: async () => ({ events: [] }) } })).command, null);
 });
 
 test('Properties recovers a native resume command through sessionQuery when the link is missing', async () => {
@@ -206,4 +206,10 @@ test('Properties recovers a native resume command through sessionQuery when the 
   assert.deepEqual(await sessionInfo({ key: 'dsh:dsh-1', query }), {
     provider: 'codex', sessionId: 'native-1', command: 'codex resume native-1',
   });
+});
+
+test('Properties propagates history read failure instead of pretending the native identity is pending', async () => {
+  const failure = new Error('Session not found');
+  await assert.rejects(sessionInfo({ key: 'dsh:missing', query: { readSession: async () => { throw failure; } } }), (error) => error === failure);
+  await assert.rejects(sessionInfo({ key: 'dsh:unsupported' }), { code: 'UNSUPPORTED' });
 });

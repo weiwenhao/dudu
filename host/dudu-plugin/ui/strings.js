@@ -4,7 +4,30 @@ import { localized } from './lib/locale.mjs';
 import { compileDiagnostics } from './lib/diagnostics.mjs';
 import { TEXT as CONNECTOR_TEXT } from '../../assistant/connectors/text.mjs';
 
+// Owner-approved color names, 2026-11-10. Keep these exact reviewed names in both
+// locales until English names are reviewed too; Color and Default already exist.
+const NEEDS_YOU_COLORS = {
+  mist: '雾蓝', indigo: '靛蓝', teal: '青绿', mauve: '灰紫', 'rose-gray': '玫瑰灰', slate: '蓝灰', gold: '金色',
+  blue: '亮蓝', violet: '电光紫', orange: '鲜橙', rose: '玫红', green: '墨绿', graphite: '石墨黑',
+};
+
 const en = {
+  needsYouColors: NEEDS_YOU_COLORS,
+  // Scheduled-task modal design approved by the owner, 2026-11-10.
+  // NEW: targets.new/existing, kinds.weekly/monthly/interval/cron, delivery.delivering/failed/uncertain await review (docs/issues-ui-wording.md).
+  // NEW (2026-11-11): runFailed, in front of the reason when a run of a task of 嘟嘟 failed (its line in 嘟嘟's conversation); it awaits the owner's review. 嘟嘟 as a provider is the brand word, not a new one.
+  tasks: {
+    title: 'Tasks', search: 'Search tasks', create: 'New task', manual: 'Create manually', inConversation: 'Create in conversation',
+    all: 'All statuses', statuses: { active: 'Enabled', paused: 'Paused', ended: 'Ended' },
+    rules: 'Rules', history: 'Task run history', name: 'Automation task name', prompt: 'Automation task content', provider: 'Provider', model: 'Model', defaultModel: 'Default model',
+    target: 'Run in', workspace: 'Workspace', timing: 'Run time', timezone: 'Time zone', next: 'Next run',
+    targets: { reuse: 'Create a conversation and reuse it', new: 'New conversation each run', existing: 'Existing conversation' },
+    kinds: { daily: 'Every day', workdays: 'Monday to Friday', weekly: 'Every week', monthly: 'Every month', interval: 'Interval', once: 'Once', cron: 'Cron' },
+    pause: 'Pause task', resume: 'Resume task', run: 'Run now', duplicate: 'Duplicate task', delete: 'Delete task',
+    linked: 'Linked conversation', unsaved: 'You have unsaved changes', discard: 'Discard', save: 'Save changes', more: 'Load more',
+    delivery: { delivered: 'Delivered', delivering: 'Delivering', failed: 'Delivery failed', uncertain: 'Needs confirmation' },
+    runFailed: 'Run failed', // NEW
+  },
   brand: 'Dudu',
   issues: 'Issues',
   tabs: { active: 'Active', backlog: 'Backlog', all: 'All issues' },
@@ -49,6 +72,7 @@ const en = {
   expand: (name) => `Expand ${name}`, // NEW
   // NEW: the Activity of an issue and its page (the doc fixes the sections; the words are mine).
   detail: {
+    menuDetails: 'Open issue', // Existing English copy; the owner supplied the Chinese menu label on 2026-11-10.
     duduMention: 'Dudu', // Name supplied by the owner.
     mention: 'Mention',
     messageErrors: {
@@ -79,7 +103,7 @@ const en = {
     assigned: (agent) => `assigned the issue to ${agent}`, unassigned: 'removed the agent', asked: 'asked', session: 'changed the session', commented: 'commented',
     sessionStarted: (agent) => `started a session with ${agent}`, sessionClosed: 'closed the session', sessionResumed: 'resumed the session',
     // NEW: stored system messages; user and model content keeps its original language.
-    whoShouldTake: 'Who should handle this?', notAssigned: (reason) => `No agent chosen: ${reason}`,
+    whoShouldTake: 'Who should handle this?',
     failed: (reason) => `Something went wrong: ${reason}. What should we do?`, noReason: 'No reason given',
     notStarted: (reason) => `Could not start: ${reason}. Choose another agent, or try later?`,
     notDelivered: (reason) => `Could not send the reply to the session: ${reason}`,
@@ -112,11 +136,13 @@ const en = {
   total: (count) => (count === 1 ? '1 issue' : `${count.toLocaleString('en-US')} issues`),
   // NEW: the Collector widget. The owner approved its design and these words on 2026-11-05 ("没问题，就按你的推荐实现吧"); the rest is Issues' own (Filter, Clear, Dates, New issue, Open source, Open issue, Search issues…, Undo).
   collector: {
+    select: 'Select', // Existing bulk-selection wording; moved to the context menu at the owner's request, 2026-11-09.
     tabs: { todo: 'To handle', done: 'Handled', ignored: 'Ignored' },
     empty: 'Nothing here', loadFailed: 'Could not load the information',
-    share: 'Share to issue', shareSession: 'Share to session', ignore: 'Ignore', restore: 'Restore', // NEW: Share to session (the owner's words, 2026-11-05)
+    shareSession: 'Share to session', ignore: 'Ignore', restore: 'Restore', // NEW: Share to session (the owner's words, 2026-11-05)
     markDone: 'Handled', remove: 'Delete', // NEW (2026-11-07): the owner's buttons 已处理 and 删除 ("collected information is often wrong"); the English names are mine
-    toast: { ignored: 'Ignored', restored: 'Restored', done: 'Handled', deleted: 'Deleted', shared: (ref) => `Shared to ${ref}`, sharedSession: (ref) => `Shared to the session of ${ref}` }, // NEW: sharedSession, done, deleted
+    complete: 'Fill in context', // NEW (2026-11-11): 补全上下文, the owner's own phrase ("让收集信息对应的会话去继续补全这一条信息的上下文"); the English name is mine
+    toast: { ignored: 'Ignored', restored: 'Restored', done: 'Handled', deleted: 'Deleted', sharedSession: (ref) => `Shared to the session of ${ref}` }, // NEW: sharedSession, done, deleted
     // The line of the dialog about which issue the record went to: "Dudu made [DUD-12]" (an issue it made before it stopped making them), and what the owner did ("Shared to [DUD-12]", then the issue's status icon and number)
     verdict: { made: 'made', shared: 'Shared to', created: 'Created' },
   },
@@ -137,7 +163,7 @@ const en = {
     actionAdded: (name) => `Added「${name}」`, actionRemoved: (name) => `Removed「${name}」`,
     actionMoved: (name) => `Moved「${name}」`, actionResized: (name, w, h) => w === 'fill' || h === 'fill' ? `「${name}」resized to ${w === 'fill' ? 'full width' : w} × ${h === 'fill' ? 'full height' : h}` : `「${name}」resized to ${w}×${h}`, restored: 'Restored default', changed: 'Changed layout',
   },
-  projects: { choose: 'Choose a project', create: 'Create project', name: 'Project name', path: 'Project folder', createFolder: 'Create the folder if it does not exist', empty: 'No projects yet', loading: 'Loading projects…', failed: 'Could not load projects', createFailed: 'Could not open the project folder. Check its path or create it.', }, // NEW
+  projects: { choose: 'Choose a project', create: 'Create project', empty: 'No projects yet', loading: 'Loading projects…', failed: 'Could not load projects' }, // NEW
   // NEW (2026-11-05): labels and sub-issues, after Linear (the owner's screenshots). The words are Linear's where the screenshots show them and mine elsewhere; they await the owner's review.
   labels: {
     name: 'Labels', add: 'Add label', search: 'Change or add labels…', create: (name) => `Create new label: "${name}"`, pickColor: 'Pick a color for label',
@@ -184,18 +210,19 @@ const en = {
   widgets: {
     titles: { issues: 'Issues', quota: 'Quota', sessions: 'Sessions', office: 'Office', collector: 'Collector' },
     descriptions: {
-      issues: 'Every issue, as a list or a board', quota: 'Subscription usage, one line per agent',
+      issues: 'Every issue, as a list or a board',
       office: 'Assigned active issues as people at desks',
       collector: 'What the collectors collected, to share to an issue, make an issue of, or ignore', // NEW
     },
     needs: { issues: 'issues', quota: 'quota', inputs: 'inputs', sessions: 'sessions', network: 'network' },
     quota: {
-      // NEW (Quota as a table of what is left): the corner of the table, what a cell says to a screen reader, and a line of the hover.
-      left: 'Left', leftOf: (name, window, percent) => `${name} ${window}: ${percent}% left`, leftLine: (window, percent) => `${window} ${percent}% left`,
+      // NEW: what is left of a window, in a block of the quota panel and its card ("5-hour 79% left"; the number is told apart from the words by where it stands in the line).
+      leftLine: (window, percent) => `${window} ${percent}% left`,
       empty: 'No usage to show', unknown: '—', fiveHour: '5-hour', weekly: 'Weekly', days: (n) => `${n}-day`, used: (label, percent) => `${label} ${percent}% used`,
       resets: (when) => `resets ${when}`, resetsAt: (when) => `Resets ${when}`, limitReached: (when) => `Limit reached, resets ${when}`, label: (name, percent) => `${name} ${percent}% used`,
-      login: 'Sign in to see usage',
       balance: 'Balance', // NEW: the wallet of DeepSeek's account, beside its amount
+      until: (date) => `Until ${date}`, // NEW (2026-11-11, magpie's own words from the owner's screenshot): when the plan's paid time ends, after the plan's name; awaits the owner's review
+      updated: (when) => `Updated ${when}`, // NEW (2026-11-11): the time of the reading a panel shows, at the top of the quota panel behind the header icon; awaits the owner's review
     },
     sessions: {
       search: 'Search sessions', empty: 'No sessions', failed: 'Could not read sessions',
@@ -217,6 +244,8 @@ const en = {
     // NEW: Linear-style workflow settings; exact wording awaits owner review.
     statuses: {
       title: 'Status', name: 'Name', description: 'Description', color: 'Color', create: 'Create', add: (category) => `Add status to ${category}`,
+      // Owner approved the Chinese preview on 2026-11-10; English wording awaits review.
+      icon: '状态图标', progress: '完成度',
       options: 'Status options', reorder: 'Reorder', moveUp: 'Move up', moveDown: 'Move down', makeDefault: 'Set as default', moveIssues: 'Move issues to',
       categories: { backlog: 'Backlog', unstarted: 'Unstarted', started: 'Started', completed: 'Completed', canceled: 'Canceled' },
       errors: {
@@ -322,7 +351,14 @@ const en = {
     // NEW: the "+" menu of the conversation window, the model box, and what Compact answers (docs/issues-ui-wording.md, 2026-11-01 evening).
     file: 'File', context: 'Context', contextHint: 'Attach the current page automatically', compact: 'Compact', compactHint: 'Compact the conversation above',
     model: 'Model', effort: 'Reasoning effort', compacted: 'Compacted', nothingToCompact: 'Nothing to compact yet', compactFailed: 'Could not compact',
-    actions: { issues_add: 'Issue added', issues_update: 'Issue updated', issues_assign: 'Issue assigned', issues_complete: 'Issue completed', issues_cancel: 'Issue canceled', memory_remember: 'Remembered', memory_forget: 'Forgotten', connector_register: 'Connector added', collector_register: 'Collector added', dashboard_add: 'Widget added', dashboard_remove: 'Widget removed', dashboard_reset: 'Layout restored' },
+    // NEW: the card of the quick buttons when there is no scheduled task (the other two empty cards say the pages' own: No issues, Nothing here). Awaits review, docs/issues-ui-wording.md.
+    noTasks: 'No tasks',
+    // NEW (2026-11-11): the capsule of a long answer. 展开 is the word of the owner's Lark screenshot, 收起 is its pair; the English is mine. They await the owner's review (docs/issues-ui-wording.md).
+    expand: 'Expand', collapse: 'Collapse',
+    // NEW (2026-11-10): the menu of a message and the "You:" of a line in the todo rows; the owner approved the Chinese with "你就按这一版实现吧" (docs/issues-ui-wording.md); the English is mine.
+    reply: 'Reply', copy: 'Copy', remove: 'Delete', you: 'You: ',
+    // NEW: tasks_create/resume/duplicate/delete await review; update/pause match the approved task receipts, run reuses the approved action.
+    actions: { tasks_create: 'Task created', tasks_update: 'Task updated', tasks_pause: 'Task paused', tasks_resume: 'Task resumed', tasks_duplicate: 'Task duplicated', tasks_run: 'Run now', tasks_delete: 'Task deleted', issues_add: 'Issue added', issues_update: 'Issue updated', issues_assign: 'Issue assigned', issues_complete: 'Issue completed', issues_cancel: 'Issue canceled', memory_remember: 'Remembered', memory_forget: 'Forgotten', connector_register: 'Connector added', collector_register: 'Collector added', dashboard_add: 'Widget added', dashboard_remove: 'Widget removed', dashboard_reset: 'Layout restored' },
   },
   attachments: { download: 'Download', copyImage: 'Copy image', copyLink: 'Copy link' }, // NEW: issue attachment controls, pending wording review
   noAgent: 'No agent',
@@ -351,6 +387,19 @@ const en = {
 };
 
 const zh = {
+  needsYouColors: NEEDS_YOU_COLORS,
+  tasks: {
+    title: '任务', search: '搜索任务', create: '新建任务', manual: '手动创建', inConversation: '在对话中创建',
+    all: '全部状态', statuses: { active: '已开启', paused: '已暂停', ended: '已结束' },
+    rules: '规则', history: '任务运行记录', name: '自动化任务名称', prompt: '自动化任务内容', provider: '供应商', model: '模型', defaultModel: '默认模型',
+    target: '执行位置', workspace: '关联工作区', timing: '运行时间', timezone: '时区', next: '下次运行',
+    targets: { reuse: '新建对话并复用', new: '每次新建对话', existing: '已有会话' },
+    kinds: { daily: '每天', workdays: '周一至周五', weekly: '每周', monthly: '每月', interval: '间隔', once: '仅一次', cron: 'Cron' },
+    pause: '暂停任务', resume: '恢复任务', run: '立即执行', duplicate: '复制任务', delete: '删除任务',
+    linked: '关联会话', unsaved: '有未保存的修改', discard: '放弃', save: '保存修改', more: '加载更多',
+    delivery: { delivered: '已投递', delivering: '正在投递', failed: '投递失败', uncertain: '待确认' },
+    runFailed: '运行失败', // NEW (2026-11-11): 待主人审核
+  },
   brand: '嘟嘟', issues: '看板',
   tabs: { active: '进行中', backlog: '待规划', all: '全部事项' },
   status: { backlog: '待规划', todo: '待办', in_progress: '处理中', in_review: '待审核', done: '已完成', canceled: '已取消' },
@@ -376,6 +425,7 @@ const zh = {
   },
   collapse: (name) => `折叠${name}`, expand: (name) => `展开${name}`,
   detail: {
+    menuDetails: '详情', // Owner wording, 2026-11-10.
     duduMention: 'Dudu',
     mention: '提及',
     messageErrors: {
@@ -399,7 +449,7 @@ const zh = {
     status: (from, to) => `将状态从${from}改为${to}`, priority: (to) => `将优先级改为${to}`, due: (date) => `将截止日期设为 ${date}`,
     dueRemoved: '移除了截止日期', assigned: (agent) => `交给了 ${agent}`, unassigned: '移除了智能体', asked: '提问', session: '更换了会话', commented: '评论',
     sessionStarted: (agent) => `与 ${agent} 开始了会话`, sessionClosed: '关闭了会话', sessionResumed: '恢复了会话',
-    whoShouldTake: '交给谁处理？', notAssigned: (reason) => `还没分配智能体：${reason}`,
+    whoShouldTake: '交给谁处理？',
     failed: (reason) => `出错了：${reason}。怎么办？`, noReason: '没有说明原因',
     notStarted: (reason) => `没能开始：${reason}。要换个智能体，还是稍后再试？`,
     notDelivered: (reason) => `回复没能发给会话：${reason}`,
@@ -419,11 +469,13 @@ const zh = {
   search: { label: '搜索事项', placeholder: '搜索事项…' }, total: (n) => `${n.toLocaleString('zh-CN')} 条事项`,
   // 信息收集器：设计和这些字主人 2026-11-05 看过（“没问题，就按你的推荐实现吧”）；别的字是事项自己的（筛选、清除、日期、新建事项、打开来源、打开事项、搜索事项…、撤销）。
   collector: {
+    select: '选择', // 已批准的原字；主人 2026-11-09 改为右键菜单入口。
     tabs: { todo: '待处理', done: '已处理', ignored: '已忽略' },
     empty: '没有信息', loadFailed: '信息没能加载',
-    share: '分享到事项', shareSession: '分享到会话', ignore: '忽略', restore: '恢复', // 分享到会话：主人的原话（2026-11-05）
+    shareSession: '分享到会话', ignore: '忽略', restore: '恢复', // 分享到会话：主人的原话（2026-11-05）
     markDone: '已处理', remove: '删除', // 主人的原话（2026-11-07）：“收集器增加删除和已处理按钮”
-    toast: { ignored: '已忽略', restored: '已恢复', done: '已处理', deleted: '已删除', shared: (ref) => `已分享到 ${ref}`, sharedSession: (ref) => `已分享到 ${ref} 的会话` }, // sharedSession：新写的；done 用主人的“已处理”，deleted：新写的
+    complete: '补全上下文', // NEW（2026-11-11）：主人的原话“让收集信息对应的会话去继续补全这一条信息的上下文”
+    toast: { ignored: '已忽略', restored: '已恢复', done: '已处理', deleted: '已删除', sharedSession: (ref) => `已分享到 ${ref} 的会话` }, // sharedSession：新写的；done 用主人的“已处理”，deleted：新写的
     // 详情里说这条信息去了哪个事项的一行：“嘟嘟 建了 [DUD-12]”（嘟嘟不再建事项之前建的），和主人自己做的（“已分享到 [DUD-12]”，后面跟事项的状态图标和编号）
     verdict: { made: '建了', shared: '已分享到', created: '已新建' },
   },
@@ -440,7 +492,7 @@ const zh = {
     actionAdded: (name) => `已添加「${name}」`, actionRemoved: (name) => `已移除「${name}」`, actionMoved: (name) => `已移动「${name}」`,
     actionResized: (name, w, h) => w === 'fill' || h === 'fill' ? `已将「${name}」调整为${w === 'fill' ? '全宽' : w} × ${h === 'fill' ? '全高' : h}` : `已将「${name}」调整为 ${w}×${h}`, restored: '已恢复默认', changed: '已更改版面',
   },
-  projects: { choose: '选择项目', create: '新建项目', name: '项目名称', path: '项目文件夹', createFolder: '文件夹不存在时创建', empty: '还没有项目', loading: '正在读取项目…', failed: '项目没能读取', createFailed: '项目文件夹没能打开，请检查路径，或勾选创建文件夹。' }, // NEW
+  projects: { choose: '选择项目', create: '新建项目', empty: '还没有项目', loading: '正在读取项目…', failed: '项目没能读取' }, // NEW
   // NEW (2026-11-05): 标签和子事项，参照 Linear（主人的截图）。主人审过之前的字都是暂定。
   labels: {
     name: '标签', add: '添加标签', search: '修改或添加标签…', create: (name) => `新建标签：“${name}”`, pickColor: '选择标签颜色',
@@ -485,10 +537,10 @@ const zh = {
   },
   widgets: {
     titles: { issues: '看板', quota: '额度', sessions: '会话', office: '办公室', collector: '信息' },
-    descriptions: { issues: '所有事项，可按列表或看板查看', quota: '各智能体的订阅用量', office: '已分配智能体的进行中事项，各有一位员工', collector: '收集器收集回来的信息，可分享到事项、新建事项或忽略' }, // collector: 新写的
+    descriptions: { issues: '所有事项，可按列表或看板查看', office: '已分配智能体的进行中事项，各有一位员工', collector: '收集器收集回来的信息，可分享到事项、新建事项或忽略' }, // collector: 新写的
     needs: { issues: '事项', quota: '额度', inputs: '输入', sessions: '会话', network: '网络' },
-    quota: { left: '剩余', leftOf: (name, window, percent) => `${name} ${window}：剩余 ${percent}%`, leftLine: (window, percent) => `${window} 剩余 ${percent}%`, empty: '暂无用量', unknown: '—', fiveHour: '5 小时', weekly: '每周', days: (n) => `${n} 天`, used: (label, percent) => `${label} 已用 ${percent}%`,
-      resets: (when) => `${when} 重置`, resetsAt: (when) => `${when} 重置`, limitReached: (when) => `已达上限，${when} 重置`, label: (name, percent) => `${name} 已用 ${percent}%`, login: '登录后查看用量', balance: '余额' },
+    quota: { leftLine: (window, percent) => `${window} 剩余 ${percent}%`, empty: '暂无用量', unknown: '—', fiveHour: '5 小时', weekly: '每周', days: (n) => `${n} 天`, used: (label, percent) => `${label} 已用 ${percent}%`,
+      resets: (when) => `${when} 重置`, resetsAt: (when) => `${when} 重置`, limitReached: (when) => `已达上限，${when} 重置`, label: (name, percent) => `${name} 已用 ${percent}%`, balance: '余额', updated: (when) => `更新于 ${when}`, until: (date) => `有效期至${date}` },
     sessions: {
       search: '搜索会话', empty: '暂无会话', failed: '会话没能读取',
       // NEW（2026-11-05）：搜索看不到什么，搜了之后在结果下面用灰字说；以及列表不全。待主人审核。
@@ -508,6 +560,7 @@ const zh = {
     // NEW: reviewed together with the English workflow settings above.
     statuses: {
       title: '状态', name: '名称', description: '描述', color: '颜色', create: '创建', add: (category) => `在${category}中添加状态`,
+      icon: '状态图标', progress: '完成度', // Owner approved; fractions are accessibility labels only.
       options: '状态选项', reorder: '调整顺序', moveUp: '上移', moveDown: '下移', makeDefault: '设为默认', moveIssues: '将事项移至',
       categories: { backlog: '待规划', unstarted: '未开始', started: '已开始', completed: '已完成', canceled: '已取消' },
       errors: {
@@ -578,7 +631,7 @@ const zh = {
       pass: '通过', fail: '待检查', idMismatch: '小组件编号与插槽注册不一致。' },
     skills: { empty: '还没有技能', delete: '删除', back: '返回技能', deleteOf: (name) => `删除：${name}` },
   },
-  agentState: { idle: '空闲', working: '工作中', blocked: '需要你', unassigned: '未分配' }, // 主人 2026-11-04 定的词，提问、出错、停止和正常结束都是「需要你」；「未分配」是主人 2026-11-05 要求的状态，这个词待审
+  agentState: { idle: '空闲中', working: '工作中', blocked: '需要你', unassigned: '未分配' }, // 主人 2026-11-09 将「空闲」改为「空闲中」；提问、出错、停止和正常结束都是「需要你」；「未分配」这个词待审
   deepSleep: '深度睡眠', // 主人 2026-11-05 的原话：代替空闲圈的月牙的名字（悬停提示、读屏）
   pet: {
     open: '展开对话', close: '关闭', conversation: '嘟嘟', message: '发消息', send: '发送', earlier: '更早的对话', voice: '语音输入', release: '松开发送 · Esc 取消',
@@ -588,7 +641,10 @@ const zh = {
     running: '深度求索中', runningFor: (duration) => `深度求索中，用时 ${duration} ···`, duration: { hour: '小时', minute: '分', second: '秒' },
     file: '文件', context: '上下文', contextHint: '自动附加当前页面位置', compact: '压缩', compactHint: '压缩以上对话内容',
     model: '模型', effort: '推理等级', compacted: '已压缩', nothingToCompact: '还没有可压缩的内容', compactFailed: '压缩没能完成',
-    actions: { issues_add: '已添加事项', issues_update: '已更新事项', issues_assign: '已分配事项', issues_complete: '已完成事项', issues_cancel: '已取消事项',
+    noTasks: '没有任务', // 快捷项的卡片在没有任务时的话，句式照“没有连接器”“没有收集器”；另两张空卡片用看板和信息页现成的“没有事项”“没有信息”。主人 2026-11-10 审过“没有定时任务”，2026-11-11 说“定时任务改成任务”。
+    expand: '展开', collapse: '收起', // 新（2026-11-11）：长回复的小药丸；展开是主人飞书截图上的字，收起是它的一对，等主人审
+    reply: '回复', copy: '复制', remove: '删除', you: '你：', // 新：消息的菜单（长按、右键）和待办行里“你：”；主人 2026-11-10：“我们有这个回复和删除和复制就行”“你就按这一版实现吧”
+    actions: { tasks_create: '已创建任务', tasks_update: '已更新任务', tasks_pause: '已暂停任务', tasks_resume: '已恢复任务', tasks_duplicate: '已复制任务', tasks_run: '立即执行', tasks_delete: '已删除任务', issues_add: '已添加事项', issues_update: '已更新事项', issues_assign: '已分配事项', issues_complete: '已完成事项', issues_cancel: '已取消事项',
       memory_remember: '已记录', memory_forget: '已忘记', connector_register: '已添加连接器', collector_register: '已添加收集器', dashboard_add: '已添加小组件', dashboard_remove: '已移除小组件', dashboard_reset: '已恢复版面' },
   },
   noAgent: '未分配', today: '今天', dueIn: (n) => `${n} 天后`, overdue: (n) => `逾期 ${n} 天`, empty: '没有事项', loadFailed: '事项没能加载', retry: '重试',

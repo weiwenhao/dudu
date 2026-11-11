@@ -2,7 +2,7 @@
 // (docs/assistant.md 3.1, 状态). A connection is checked when the owner connects, retries or signs in, and when a collection uses it; this is where the answer is kept.
 //
 //   const state = createState({ file, now })
-//   state.get(id) / state.all()      -> { status, message?, command?, login?, install?, tools?, at } | null
+//   state.get(id) / state.all()      -> { status, message?, command?, login?, install?, code?, tools?, at } | null   `code`: what the owner enters in the browser (device.mjs) while 'waiting'
 //   state.set(id, record)            status: 'connected' | 'needs-auth' | 'waiting' | 'error' | 'needs-login' | 'missing'; the file is replaced whole, never half written
 //   state.delete(id)
 // 'waiting' (for the owner in the browser) belongs to the run of the plugin that wrote it: a record of another run is read as 'needs-auth', so that a restart
@@ -41,7 +41,7 @@ export function createState({ file, now = Date.now } = {}) {
     set(id, record) {
       if (!STATUSES.has(record?.status)) throw new Error(`Unknown connection status: ${record?.status}`);
       const clean = {};
-      for (const key of ['status', 'message', 'command', 'login', 'install']) if (typeof record[key] === 'string' && record[key]) clean[key] = record[key].slice(0, 500);
+      for (const key of ['status', 'message', 'command', 'login', 'install', 'code']) if (typeof record[key] === 'string' && record[key]) clean[key] = record[key].slice(0, 500);
       if (Number.isSafeInteger(record.tools) && record.tools >= 0) clean.tools = record.tools;
       data[id] = { ...clean, at: now(), run };
       save();

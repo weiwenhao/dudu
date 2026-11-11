@@ -234,7 +234,7 @@ test('an issue without an agent is "unassigned", and it is the state it starts i
   assert.deepEqual(s.issues.list({ tab: 'all', filter: { agentState: ['idle', 'working', 'blocked'] } }).items, [], 'idle is an agent with nothing to do, not no agent');
   const working = s.issue('dsh:w', 'running', 100);
   const resting = s.issue('dsh:r', 'idle', 100);
-  assert.deepEqual(s.lanes(), { working: [working], idle: [resting], unassigned: [made.issue.id] }, 'the lanes: working, blocked, idle, then unassigned');
+  assert.deepEqual(s.lanes(), { working: [working], idle: [resting], unassigned: [made.issue.id] }, 'the lanes: blocked, working, idle, then unassigned');
   assert.deepEqual(Object.keys(s.lanes()), ['working', 'idle', 'unassigned']);
 });
 

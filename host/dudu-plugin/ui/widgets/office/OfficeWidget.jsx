@@ -5,7 +5,7 @@ import { AgentLogo } from '../../issues/AgentLogo.jsx';
 import { agentLogo } from '../../issues/agent-logos.js';
 import { AgentActivity } from '../../issues/icons.jsx';
 import { T } from '../../strings.js';
-import { agentColor, boardCounts, DESKS, fitScene, headPoint, hex, SCENE, seatAnchor, seating, spreadTags, stateOf, STATES, summarize, toCanvas } from './layout.js';
+import { agentColor, boardCounts, DESKS, employeesOf, fitScene, headPoint, hex, SCENE, seatAnchor, seating, spreadTags, stateOf, STATES, summarize, toCanvas } from './layout.js';
 import { O } from './strings.js';
 import { useReducedMotion } from './use-environment.js';
 
@@ -35,6 +35,10 @@ function staticTags(seated, width, height) {
 export function OfficeWidget({ size, issues = [], totals, openIssue, editing = false }) {
   const reduced = useReducedMotion();
   const { seated } = useMemo(() => seating(issues), [issues]);
+  // A name tag for everyone who can be in the office, shown only where the scene has that person (`place` hides the rest). `seated` is a fresh seating of the list; the scene keeps who
+  // was in a bed or at a desk before, so once a part has more people than places the two choose different people, and a tag made only for `seated` left somebody lying in a bed with
+  // no name (2026-11-09).
+  const people = useMemo(() => employeesOf(issues).map((issue) => ({ id: issue.id, issue })), [issues]);
   const counts = useMemo(() => totals?.counts ?? summarize(issues), [issues, totals]);
 
   const stage = useRef(null);
@@ -142,7 +146,7 @@ export function OfficeWidget({ size, issues = [], totals, openIssue, editing = f
   useEffect(() => { scene.current?.setHover(hover); }, [hover, mode]);
 
   // an issue that is no longer in the office is no longer under the pointer
-  useEffect(() => { if (hover != null && !seated.some((entry) => entry.id === hover)) setHover(null); }, [seated, hover]);
+  useEffect(() => { if (hover != null && !people.some((entry) => entry.id === hover)) setHover(null); }, [people, hover]);
 
   // the pointer over the picture: the person under it is highlighted, a click opens their issue
   const pick = (event) => {
@@ -159,7 +163,7 @@ export function OfficeWidget({ size, issues = [], totals, openIssue, editing = f
   const onClick = (event) => { const id = pick(event); if (id != null) openIssue?.(id); };
 
   const sentence = O.summary(counts);
-  const hovered = hover == null ? null : seated.find((entry) => entry.id === hover)?.issue ?? null;
+  const hovered = hover == null ? null : people.find((entry) => entry.id === hover)?.issue ?? null;
   return (
     <section aria-label={O.title} data-office-desks={DESKS} data-office-people={seated.length} data-office-unassigned={board[0]} className="flex h-full min-h-0 w-full flex-col overflow-hidden text-card-foreground">
       <div
@@ -170,7 +174,7 @@ export function OfficeWidget({ size, issues = [], totals, openIssue, editing = f
         <div role="img" aria-label={sentence} className="absolute inset-0" style={{ background: BACKGROUND }}>
           <div ref={host} className="absolute inset-0" />
         </div>
-        {seated.map(({ id, issue }) => {
+        {people.map(({ id, issue }) => {
           const state = stateOf(issue);
           const status = statusLabel(issue.status);
           return (

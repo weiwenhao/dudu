@@ -93,8 +93,8 @@ export function createSleepRoom(textures) {
 }
 
 /**
- * A desk group at `desk` ({ x, y, boss }): its shadow, the desk and the monitor (`base`), and the chair, which is drawn above the person
- * so the back of it hides their lower half. The boss's is bigger and its monitor is always lit.
+ * A desk group at `desk` ({ x, y }): its shadow, the desk and the monitor (`base`), and the chair, which is drawn above the person
+ * so the back of it hides their lower half. Every desk is the same.
  */
 export function createDesk(atlas, desk) {
   const sprite = (name, x, y, alpha = 1) => {
@@ -108,11 +108,10 @@ export function createDesk(atlas, desk) {
   const chair = new Container();
   base.x = chair.x = desk.x;
   base.y = chair.y = desk.y;
-  base.addChild(sprite(desk.boss ? 'shadow_boss.png' : 'shadow.png', -216, desk.boss ? 256 : 181, desk.boss ? 0.8 : 0.72));
-  base.addChild(sprite(desk.boss ? 'desk_boss.png' : 'desk.png', 0, 0));
-  chair.addChild(sprite(desk.boss ? 'chair_boss.png' : 'chair.png', desk.boss ? 187 : 197, desk.boss ? 257 : 187));
-  if (desk.boss) base.addChild(sprite('screen.png', 184, -18));
-  base.addChild(desk.boss ? sprite('screen_on.png', 190.8, -10.4) : sprite('screen.png', 184, -95));
+  base.addChild(sprite('shadow.png', -216, 181, 0.72));
+  base.addChild(sprite('desk.png', 0, 0));
+  chair.addChild(sprite('chair.png', 197, 187));
+  base.addChild(sprite('screen.png', 184, -95));
   base.scale.set(DESK_SCALE);
   chair.scale.set(DESK_SCALE);
   return { base, chair };

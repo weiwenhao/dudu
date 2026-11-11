@@ -16,7 +16,7 @@ window.__ModuleLoader__.load({
      * header shows later and inside the bar, so DSH never does it for that and it is dragged, not clicked (no hover, no tooltip). This does the same flip whenever the
      * control appears, changes size or the window changes. Harmless anywhere else: the attribute does nothing outside DSH's macOS styles. Returns the cleanup.
      */
-    const followWindowDrag = (doc) => {
+    const followWindowDrag = (doc, control) => {
       const win = doc?.defaultView;
       if (!win || !doc.body || typeof doc.addEventListener !== 'function') return undefined; // not a real page (a test's stand-in)
       const ATTRIBUTE = 'data-window-drag-recall';
@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
         off = win.requestAnimationFrame(() => { off = win.requestAnimationFrame(() => { off = 0; doc.body.removeAttribute(ATTRIBUTE); }); });
       };
       const recall = () => { if (!frame) frame = win.requestAnimationFrame(flip); };
-      const entry = doc.querySelector('[data-dudu-home-entry]');
+      const entry = control ?? doc.querySelector('[data-dudu-home-entry]');
       const observer = typeof win.ResizeObserver === 'function' && entry ? new win.ResizeObserver(recall) : null;
       observer?.observe(entry);
       const events = ['transitionend', 'animationend'];
@@ -50,17 +50,23 @@ window.__ModuleLoader__.load({
 .dsbot-input{display:flex;width:100%;max-width:100%;min-width:0;box-sizing:border-box}
 .dsbot-input input{flex:1 1 auto;width:100%;min-width:0;box-sizing:border-box}
 .dsbot-error{color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;margin:12px 0 0}
-/* DSH reserves the frame's leading clearance in the following title cell; put this slot's control into that space.
-   Like DSH's own reopen / New Session controls (the frame says data-sidebar-collapsed), it is there only while the sidebar is closed: with the sidebar open the
-   Dudu panel is in the sidebar. On macOS the title bar is a window-drag area, and Electron keeps a map of which parts are buttons that DSH refreshes (by flipping
-   data-window-drag-recall on the body for a frame) only when the bar's own box changes; a control that comes in later is dragged instead of clicked, with no hover and
-   no tooltip (owner, 2026-11-06), so HomeEntry makes the same flip itself whenever it appears, moves or changes size. */
+/* The frame's shell.leading seat holds the native reopen / New Session controls. The plugin wraps that component, preserving its actions and locale,
+   then appends Home (owner, 2026-11-09). Match its 28px controls and 8px gap, and reserve one more control's width in the frame's existing clearance.
+   Older hosts and non-macOS windows keep the conversation-header entry; hide it whenever the frame seat is present so there is only one Home.
+   HomeEntry also refreshes Electron's draggable-region map when its own button appears or changes size (owner, 2026-11-06). */
 .dudu-home-entry[data-dudu-home-entry]{display:none;position:relative;inset-inline-start:max(0px,calc(var(--dsh-frame-leading-clearance,0px) - 20px));flex:none;width:28px;height:28px;margin-inline-end:8px;padding:0;border-radius:var(--dsw-radius-sm);background:transparent}
 [data-sidebar-collapsed="true"] .dudu-home-entry[data-dudu-home-entry]{display:inline-flex}
 .dudu-home-entry:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dudu-shell-leading{display:flex;align-items:center;gap:8px}
+.dudu-home-entry[data-dudu-shell-home-entry]{position:static;inset-inline-start:auto;margin-inline-end:0;color:var(--dsw-alias-label-secondary)}
+[data-platform="darwin"] [data-sidebar-collapsed="true"]:has([data-dudu-shell-leading]){--dsh-frame-leading-clearance:196px}
+[data-platform="darwin"][data-fullscreen] [data-sidebar-collapsed="true"]:has([data-dudu-shell-leading]){--dsh-frame-leading-clearance:120px}
+[data-sidebar-collapsed="true"]:has([data-dudu-shell-leading]) .dudu-home-entry:not([data-dudu-shell-home-entry]){display:none}
 .dudu-session-header-actions{display:flex;align-items:center;gap:8px;flex:none;min-width:0}
 .dudu-session-header-actions:empty{display:none}
 [data-dudu-session-overlay]{z-index:1100!important}
+/* Match DSH's hidden holding row while its native root waits for background work. Keep its height stable. */
+[data-conversation-session]:has([data-dudu-harness-background]) [data-chat-running]{visibility:hidden;opacity:0}
 /* Only cells with Dudu's portal use the shared logo + lifecycle mark. */
 [data-row-key^="session:"]>span:has(>[data-dudu-sidebar-agent])>:not([data-dudu-sidebar-agent]){display:none!important}
 `;
@@ -72,7 +78,7 @@ window.__ModuleLoader__.load({
         body: JSON.stringify(body), credentials: 'same-origin', signal,
       });
       const value = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(value.error || (S?.unavailable ?? '连接暂时不可用。'));
+      if (!response.ok) throw Object.assign(new Error(value.error || (S?.unavailable ?? '连接暂时不可用。')), { code: value.code });
       return value;
     }
 
@@ -657,6 +663,7 @@ window.__ModuleLoader__.load({
         ctx.effect(() => installScoping(ctx.modelDirectories));
         ctx.effect(() => installHeroChip(ctx, ctx.modelDirectories, providerChip(primitives, ctx.modelDirectories)));
         ctx.effect(() => ui?.installHarnessStats(ctx, { createElement: h, useMemo }));
+        ctx.effect(() => ui?.installHarnessForeground(ctx, { createElement: h, useEffect, useState }, request));
       },
     };
 
@@ -695,10 +702,6 @@ window.__ModuleLoader__.load({
 .dudu-label{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:0 0 6px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
 .dudu-name{display:flex;align-items:baseline;gap:8px;margin:6px 0 2px;font-weight:500}.dudu-name:first-of-type{margin-top:0}
 .dudu-warn{color:var(--dsw-alias-state-error-primary);font-weight:400;font-size:12px}
-.dudu-limit{display:grid;grid-template-columns:52px minmax(0,1fr) 36px 78px;align-items:center;gap:8px;padding:2px 0;font-variant-numeric:tabular-nums}
-.dudu-limit span:last-child{color:var(--dsw-alias-label-secondary);font-size:12px;text-align:right;white-space:nowrap}.dudu-limit span:nth-child(3){text-align:right}
-.dudu-meter{height:6px;border-radius:3px;background:var(--dsw-alias-border-l2);overflow:hidden}
-.dudu-meter i{display:block;height:100%;border-radius:3px;background:#4176e6}.dudu-meter i.warn{background:#e8a317}.dudu-meter i.hot{background:#e5484d}
 .dudu-run{display:flex;align-items:center;gap:8px;padding:3px 0;min-width:0}
 .dudu-run b{flex:1 1 auto;min-width:0;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dudu-run em{flex:0 1 38%;min-width:0;font-style:normal;color:var(--dsw-alias-label-secondary);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
@@ -740,14 +743,6 @@ window.__ModuleLoader__.load({
       if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`;
       if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时`;
       return `${Math.floor(seconds / 86400)} 天`;
-    };
-    const clock = (time) => new Date(time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
-    // When a window starts over: the time of day when that is today, else the weekday too.
-    const resetText = (time) => {
-      if (!Number.isFinite(time)) return '';
-      const date = new Date(time);
-      const sameDay = date.toDateString() === new Date().toDateString();
-      return sameDay ? `${clock(time)} 重置` : `${date.toLocaleDateString('zh-CN', { weekday: 'short' })} ${clock(time)}`;
     };
     const shortPath = (path, home) => {
       if (!path) return '';
@@ -795,32 +790,8 @@ window.__ModuleLoader__.load({
       return value;
     }
 
-    function Meter({ used }) {
-      const level = used >= 0.9 ? 'hot' : used >= 0.7 ? 'warn' : '';
-      return h('div', { className: 'dudu-meter', role: 'meter', 'aria-valuenow': Math.round(used * 100), 'aria-valuemin': 0, 'aria-valuemax': 100 },
-        h('i', { className: level, style: { width: `${Math.max(1, Math.round(used * 100))}%` } }));
-    }
-
-    function UsageCard({ usage }) {
-      const shown = (usage?.providers ?? []).filter((provider) => provider.state !== 'hidden');
-      if (usage && !shown.length) return null;
-      return h('div', { className: 'dudu-card', 'data-testid': 'dudu-usage' },
-        h('div', { className: 'dudu-label' }, '用量'),
-        !usage && h('div', { className: 'dudu-none' }, '…'),
-        shown.map((provider) => h(Fragment, { key: provider.id },
-          h('div', { className: 'dudu-name' }, provider.name,
-            provider.limited && h('span', { className: 'dudu-warn' }, '已限流'),
-            provider.state === 'login' && h('span', { className: 'dudu-none' }, '需要登录'),
-            provider.state === 'unavailable' && h('span', { className: 'dudu-none' }, '无法读取')),
-          provider.windows.map((window) => h('div', { className: 'dudu-limit', key: window.key },
-            h('span', null, window.label),
-            h(Meter, { used: window.used }),
-            h('span', null, `${Math.round(window.used * 100)}%`),
-            h('span', null, resetText(window.resetsAt)))))));
-    }
-
     function RunningRow({ item, kind, home, onOpen }) {
-      const state = kind === 'busy' ? `忙${span(item.since) ? ` ${span(item.since)}` : ''}` : kind === 'done' ? `${ago(item.since)}完成` : `空闲${span(item.since) ? ` ${span(item.since)}` : ''}`;
+      const state = kind === 'busy' ? `忙${span(item.since) ? ` ${span(item.since)}` : ''}` : kind === 'done' ? `${ago(item.since)}完成` : `空闲中${span(item.since) ? ` ${span(item.since)}` : ''}`;
       const open = item.dshSessionId ? () => onOpen(item.dshSessionId) : undefined;
       return h('div', { className: `dudu-run${open ? ' dudu-run--open' : ''}`, 'data-testid': 'dudu-running', 'data-state': kind, onClick: open },
         h('i', { className: `dudu-dot dudu-dot--${kind === 'busy' ? 'busy' : kind === 'done' ? 'done' : ''}` }),
@@ -882,7 +853,6 @@ window.__ModuleLoader__.load({
       const latest = useRef(0);
       const searching = query.trim() !== '' || agent !== 'all';
       const limit = searching ? FOUND : showAll ? MORE : RECENT;
-      const usage = usePoll(() => request('overview/usage'), 120_000);
       const running = usePoll(() => request('overview/running'), 5_000);
       const phone = usePoll(() => request('state'), 30_000);
       const fetchList = (refresh = false) => {
@@ -930,7 +900,6 @@ window.__ModuleLoader__.load({
             h(Button, { size: 'sm', variant: 'outline', className: 'dsbot-button', onClick: () => { void fetchList(true); } }, '刷新'),
             phone && h('span', { className: 'dudu-phone', 'data-testid': 'dudu-phone' }, h('i', { className: `dudu-dot${online ? ' dudu-dot--on' : ''}` }), online ? '手机已连接' : '手机未连接')),
           !searching && h('div', { className: 'dudu-grid' },
-            h('div', { className: 'dudu-col' }, h(UsageCard, { usage })),
             h('div', { className: 'dudu-col' }, h(RunningCard, { running, home, onOpen: (sessionId) => openSession({ sessionId }) }))),
           error && h('p', { className: 'dsbot-error', role: 'alert' }, `读取会话失败：${error}`),
           unavailable.map((provider) => h('p', { key: provider.id, className: 'dsbot-error', role: 'alert' }, `${provider.name}：${provider.error}`)),
@@ -1098,7 +1067,8 @@ window.__ModuleLoader__.load({
           document.head.appendChild(style);
           return () => style.remove();
         });
-        // Listed sessions already have readable DSH history. Retaining them starts the existing foreground synchronizer.
+        // Listed sessions have readable history, including archived ones. This cache does not establish permission to send.
+        // Retaining them starts the existing foreground synchronizer.
         const preparedSessions = new Map();
         const preparedSession = (requestedId) => {
           const sessionId = preparedSessions.get(requestedId) ?? requestedId;
@@ -1167,7 +1137,7 @@ window.__ModuleLoader__.load({
           return content;
         };
         const actions = {
-          preparedSession,
+          pickProjectDirectory: () => ctx.uiWorkspace.pickDirectory(),
           conversationPermissionLabel: (option) => {
             const key = { 'read-only': 'preset.readOnly', 'workspace-write': 'preset.workspaceWrite', 'danger-full-access': 'preset.fullAccess' }[option.value];
             return key ? ctx.locale.bind('settings.permission')(key) : option.name;
@@ -1249,7 +1219,10 @@ window.__ModuleLoader__.load({
             } finally { reference.release(); }
           },
           conversationImage: async (sessionId, attachment) => {
-            const result = await ctx.remote.session.attachment({ sessionId, attachmentId: attachment.attachmentId });
+            // DSH 0.2.2 asks for the attachment itself (as the phone's bridge sends it) and refuses its id alone ("wire field request failed boundary validation", found 2026-11-10: the history
+            // pictures of the pet did not load); 0.2.0 took the id alone. The attachment is tried first, the id is the way for the older one.
+            let result = await ctx.remote.session.attachment({ sessionId, attachment });
+            if (result.error) result = await ctx.remote.session.attachment({ sessionId, attachmentId: attachment.attachmentId });
             if (result.error) throw new Error(result.error.message);
             const value = result.value ?? result;
             return `data:${value.attachment.mediaType};base64,${value.data}`;
@@ -1294,11 +1267,14 @@ window.__ModuleLoader__.load({
           // The page of the plugin in DSH's main area (a reminder beside the pet opens an issue there).
           openPanel: () => { ctx.layout.selectPanel(PANEL_ID); },
           openSession: async (target, options) => {
-            let workspaceId = target?.workspaceId;
-            if (target?.sessionId && !preparedSession(target.sessionId)) {
-              try { workspaceId = workspaceId ?? (await request('issues/resume', { session: `dsh:${target.sessionId}` }))?.workspaceId; } catch { /* it opens as it is */ }
+            if (target?.sessionId) {
+              const resumed = await request('issues/resume', { session: `dsh:${target.sessionId}` });
+              if (!['success', 'no_op'].includes(resumed?.outcome) || typeof resumed.sessionId !== 'string' || !resumed.sessionId) {
+                throw new Error(resumed?.message || ui?.T.widgets.sessions.openFailed || S?.unavailable);
+              }
+              target = { ...target, sessionId: resumed.sessionId, workspaceId: resumed.workspaceId ?? target.workspaceId };
             }
-            await openSession({ ...target, ...(workspaceId ? { workspaceId } : {}) }, options);
+            await openSession(target, options);
           },
         };
         const petInShell = Boolean(ui?.AssistantOverlay && ctx.slots.spec?.('shell.overlay'));
@@ -1363,20 +1339,53 @@ window.__ModuleLoader__.load({
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
           name: 'sidebar.panellist', id: PANEL_ID, order: 20, label: () => ui?.T.brand ?? '嘟嘟',
         }, (props) => h(DuduGlyph, { ...props, home: true })));
-        ctx.slots.inject('conversation.header.leading', () => {
-          function HomeEntry() {
-            useLanguage();
-            useEffect(() => followWindowDrag(document), []);
-            const label = ui?.T.brand ?? '嘟嘟';
-            return h(Tooltip, { label, delayMs: 500 },
-              h(Button, {
-                size: 'sm', variant: 'ghost', className: 'dudu-home-entry',
-                'aria-label': label, 'data-dudu-home-entry': '',
-                onClick: () => { ui?.openDashboard(); ctx.layout.selectPanel(PANEL_ID); },
-              }, h(DuduGlyph, { size: 16 })));
-          }
-          return ctx.slots.register({ name: 'conversation.header.leading' }, HomeEntry);
-        });
+        function HomeEntry({ inShell = false }) {
+          useLanguage();
+          const control = useRef(null);
+          useEffect(() => followWindowDrag(document, control.current), []);
+          const label = ui?.T.brand ?? '嘟嘟';
+          return h(Tooltip, { label, delayMs: 500 },
+            h(Button, {
+              ref: control, size: 'sm', variant: 'ghost', className: 'dudu-home-entry',
+              'aria-label': label, 'data-dudu-home-entry': '', ...(inShell ? { 'data-dudu-shell-home-entry': '' } : {}),
+              onClick: () => { ui?.openDashboard(); ctx.layout.selectPanel(PANEL_ID); },
+            }, h(DuduGlyph, { size: 16 })));
+        }
+        ctx.slots.inject('conversation.header.leading', () => ctx.slots.register({ name: 'conversation.header.leading' }, HomeEntry));
+        if (!window.__DSBOT_PAGE__ && document.documentElement?.dataset?.platform === 'darwin') {
+          // shell.leading is a single slot. Shadow it the same way the hero mode chip is wrapped above, cloning the host occupant into a private child slot.
+          // Never reimplement sidebar actions: the original component keeps its shortcuts, remote-access behavior and locale.
+          const leadingSlot = 'shell.leading';
+          const nativeSlot = 'dudu.shell.leading.native';
+          const registrant = 'dudu:home-leading';
+          ctx.slots.inject(leadingSlot, () => {
+            function Leading(props) {
+              return h('div', { className: 'dudu-shell-leading', 'data-dudu-shell-leading': '' },
+                props.renderSlot(nativeSlot, {}), h(HomeEntry, { inShell: true }));
+            }
+            const disposeLeading = ctx.slots.register({
+              name: leadingSlot, registrant, priority: -1,
+              children: { [nativeSlot]: { kind: 'single', scope: 'root' } },
+            }, Leading);
+            let original;
+            let disposeNative = () => {};
+            const sync = () => {
+              const entry = ctx.slots.entries(leadingSlot).find((candidate) => candidate.registrant !== registrant);
+              if (entry === original) return;
+              disposeNative();
+              original = entry;
+              disposeNative = entry ? ctx.slots.register({
+                name: nativeSlot,
+                ...(entry.inject ? { inject: entry.inject } : {}),
+                ...(entry.locale ? { locale: entry.locale } : {}),
+                registrant: `${registrant}:native`,
+              }, entry.component) : () => {};
+            };
+            const unsubscribe = ctx.slots.subscribe(leadingSlot, sync);
+            sync();
+            return () => { unsubscribe(); disposeNative(); disposeLeading(); };
+          });
+        }
       },
     };
 

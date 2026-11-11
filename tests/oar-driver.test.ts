@@ -346,7 +346,7 @@ test('native background agents keep OAR alive after the root answer and are obse
   assert.equal(disposed, 1);
 });
 
-test('native process failure still ends a held root, while shell and ambient tasks do not hold it', async () => {
+test('native process failure still ends a held root, while foreground shell and ambient tasks do not hold it', async () => {
   const broken = queueingSession();
   const handle = await startRun(broken.session);
   const seen = collect(handle);
@@ -354,7 +354,7 @@ test('native process failure still ends a held root, while shell and ambient tas
   broken.emit(turnEnded({ kind: 'completed' }));
   broken.emit({ kind: 'response', sessionId: broken.session.id, agentPath: [], body: { kind: 'exited', code: 9 } });
   assert.equal((await seen).at(-1).error.code, 'HARNESS_EXITED');
-  for (const task of [{ taskType: 'shell' }, { taskType: 'agent', ambient: true }]) {
+  for (const task of [{ taskType: 'shell', background: false }, { taskType: 'shell', ambient: true }, { taskType: 'agent', ambient: true }]) {
     const next = queueingSession();
     const current = await startRun(next.session);
     const finished = collect(current);

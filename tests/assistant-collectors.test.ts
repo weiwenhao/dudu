@@ -230,3 +230,24 @@ test('the page asks for the connectors and the collectors through the assistant:
   assert.deepEqual(assistant.connectors && Object.keys(assistant.connectors.owner).sort(), ['add', 'list', 'remove', 'undo', 'update']);
   assert.ok(assistant.collectors);
 });
+
+test('removing a collector tells whoever clears what it brought, once and only when it was removed; a hook that fails does not undo the removal', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'dudu-collectors-'));
+  writeFileSync(join(dir, 'CONNECTORS.md'), '# 连接器\n\n## lark\n<!-- id: lark | source: owner | kind: prompt -->\n\n用 lark CLI 读。\n');
+  writeFileSync(join(dir, 'COLLECTORS.md'), '# 收集器\n');
+  const connectors = createConnectors({ file: join(dir, 'CONNECTORS.md') });
+  const removed: string[] = [];
+  let failing = false;
+  const collectors = createCollectors({ file: join(dir, 'COLLECTORS.md'), connectors: () => connectors, onRemoved: (id: string) => { removed.push(id); if (failing) throw new Error('disk'); } });
+  t.after(async () => { await collectors.close(); await connectors.close(); rmSync(dir, { recursive: true, force: true }); });
+  const a: any = collectors.owner.add({ name: 'A', connector: 'lark', prompt: '收集 A' });
+  const b: any = collectors.dudu.register({ name: 'B', connector: 'lark', prompt: '收集 B' });
+  assert.deepEqual([a.outcome, b.outcome], ['success', 'success']);
+  assert.equal(collectors.owner.remove('nothing').outcome, 'no_op');
+  assert.deepEqual(removed, [], 'nothing was removed, nothing to clear');
+  assert.equal(collectors.owner.remove(a.collector.id).outcome, 'success');
+  failing = true;
+  assert.equal(collectors.dudu.remove(b.collector.id).outcome, 'success', 'the same for 嘟嘟\'s own call, and a failing hook does not bring the collector back');
+  assert.deepEqual(removed, [a.collector.id, b.collector.id]);
+  assert.equal((collectors.owner.list() as any).collectors.length, 0);
+});

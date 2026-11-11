@@ -26,11 +26,24 @@ struct BoardIssue: Codable, Identifiable, Equatable, Sendable {
     var description: String?
     var hasSession: Bool?
     var createdAt: Double?
+    var projectInfo: IssueProject?
+    var labels: [IssueLabel]?
+    /// Only on the rows of a todo card: the latest message of the issue's session (the owner's own words or the agent's) when the card was made.
+    var latest: IssueLatest?
 
     var sessionAgent: SessionAgent? { agent.flatMap(SessionAgent.init(rawValue:)) }
     var workState: AgentWorkState { AgentWorkState(rawValue: agentState) ?? .idle }
     /// What the issue is called by: its project's reference, else its number.
     var reference: String { ref ?? "#\(id)" }
+}
+
+/// The latest message of an issue's session, as the plugin kept it (`host/assistant/home/latest.mjs`): who said it (`me` or `agent`), what and when.
+struct IssueLatest: Codable, Equatable, Sendable {
+    var who: String
+    var text: String
+    var at: Double
+
+    var isMine: Bool { who == "me" }
 }
 
 /// The issues of one agent state, in the order the plugin sent them.
@@ -50,7 +63,7 @@ struct BoardGroup: Codable, Identifiable, Equatable, Sendable {
         switch key {
         case "blocked": return "需要你"
         case "working": return "工作中"
-        case "idle": return "空闲"
+        case "idle": return "空闲中"
         default: return "未分配"
         }
     }
@@ -74,6 +87,7 @@ private struct BoardAnswer: Decodable, Sendable {
     var tab: String?
     var total: Int?
     var groups: [BoardGroup]?
+    var needsYouColor: String?
 }
 
 private struct IssueAnswer: Decodable, Sendable {
@@ -85,18 +99,38 @@ private struct IssueAnswer: Decodable, Sendable {
     var label: IssueLabel?
 }
 
+private struct IssueDeletionAnswer: Decodable, Sendable {
+    var outcome: String
+    var preview: Bool?
+    var token: String?
+    var issue: BoardIssue?
+    var forgotten: Bool?
+    var id: Int?
+    var code: String?
+}
+
 /// The board and what the phone does with an issue: list, open its session, make one.
 @MainActor
 final class BoardModel: ObservableObject {
     enum LoadState: Equatable { case loading, loaded, failed }
 
+    private static let initiallyFoldedGroups = Set(BoardTab.allCases.flatMap { tab in
+        ["working", "idle"].map { "\(tab.rawValue)/\($0)" }
+    })
+
     @Published private(set) var tab: BoardTab = .active
     @Published private(set) var groupsByTab: [BoardTab: [BoardGroup]] = [:]
     @Published private(set) var states: [BoardTab: LoadState] = [:]
-    @Published private(set) var foldedGroups: Set<String> = []
+    @Published private(set) var foldedGroups = BoardModel.initiallyFoldedGroups
     @Published private(set) var loadingMore: Set<String> = []
+    @Published private(set) var deleting: Set<Int> = []
+    @Published private(set) var needsYouColor: UInt32 = 0x6486b8
+    var report: ((DSBotToastMessage) -> Void)?
     private let json = DSBotJSON()
     private var refreshing = false
+    private var refreshPending = false
+    private var resetID = UUID()
+    private var mutationRevision = 0
 
     var groups: [BoardGroup] { groupsByTab[tab] ?? [] }
     var state: LoadState { states[tab] ?? .loading }
@@ -108,10 +142,15 @@ final class BoardModel: ObservableObject {
 
     /// Forget what was read: another computer has another board.
     func reset() {
+        resetID = UUID()
+        mutationRevision += 1
+        refreshPending = false
         groupsByTab = [:]
         states = [:]
-        foldedGroups = []
+        foldedGroups = Self.initiallyFoldedGroups
         loadingMore = []
+        deleting = []
+        needsYouColor = 0x6486b8
         tab = .active
     }
 
@@ -124,15 +163,29 @@ final class BoardModel: ObservableObject {
 
     /// Read the tab again. A refresh keeps what is on screen; only a tab that has nothing yet shows its loading.
     func refresh(using store: DSBotStore) async {
-        guard !refreshing, store.status == .connected else { return }
+        guard store.status == .connected else { return }
+        if refreshing { refreshPending = true; return }
         refreshing = true
-        defer { refreshing = false }
+        let reset = resetID
+        defer {
+            refreshing = false
+            if refreshPending {
+                refreshPending = false
+                // An in-flight poll cannot hide a mutation's authoritative refresh until the next timer tick.
+                Task { if reset == resetID { await refresh(using: store) } }
+            }
+        }
         let wanted = tab
+        let revision = mutationRevision
         if groupsByTab[wanted] == nil { states[wanted] = .loading }
         do {
             let value = try await store.request("board.list", ["tab": .string(wanted.rawValue)])
             let answer = try await json.decode(BoardAnswer.self, from: value)
+            guard revision == mutationRevision else { return }
             guard answer.outcome == "success" else { throw DSBotFailure.protocolError }
+            if let hex = answer.needsYouColor, let color = UInt32(hex.dropFirst(), radix: 16), needsYouColor != color {
+                needsYouColor = color
+            }
             let groups = (answer.groups ?? []).sorted {
                 (BoardGroup.order.firstIndex(of: $0.key) ?? .max) < (BoardGroup.order.firstIndex(of: $1.key) ?? .max)
             }
@@ -148,6 +201,7 @@ final class BoardModel: ObservableObject {
     func loadMore(_ group: BoardGroup, using store: DSBotStore) async {
         let wanted = tab
         let key = "\(wanted.rawValue)/\(group.key)"
+        let revision = mutationRevision
         guard let cursor = group.nextCursor, !loadingMore.contains(key), store.status == .connected else { return }
         loadingMore.insert(key)
         defer { loadingMore.remove(key) }
@@ -156,7 +210,7 @@ final class BoardModel: ObservableObject {
                 "tab": .string(wanted.rawValue), "groupKey": .string(group.key), "cursor": .string(cursor),
             ])
             let answer = try await json.decode(BoardAnswer.self, from: value)
-            guard answer.outcome == "success", let page = answer.groups?.first,
+            guard revision == mutationRevision, answer.outcome == "success", let page = answer.groups?.first,
                   var current = groupsByTab[wanted], let index = current.firstIndex(where: { $0.key == group.key }) else { return }
             let known = Set(current[index].items.map(\.id))
             current[index].items += page.items.filter { !known.contains($0.id) }
@@ -164,6 +218,51 @@ final class BoardModel: ObservableObject {
             groupsByTab[wanted] = current
         } catch {
             DSBotLog.networkFailure("board.more.fail", error: error)
+        }
+    }
+
+    /// The owner confirmed this exact row. Recheck it on the computer before submitting its single-use deletion token.
+    func delete(_ issue: BoardIssue, using store: DSBotStore) async {
+        guard !deleting.contains(issue.id) else { return }
+        let computer = store.activeComputer?.id
+        let connection = store.connectionRevision
+        let reset = resetID
+        deleting.insert(issue.id)
+        defer {
+            if reset == resetID { deleting.remove(issue.id) }
+        }
+        do {
+            let value = try await store.request("issue.delete", ["id": .number(Double(issue.id))])
+            let preview = try await json.decode(IssueDeletionAnswer.self, from: value)
+            guard !Task.isCancelled, computer == store.activeComputer?.id, connection == store.connectionRevision else { return }
+            guard preview.outcome == "success", preview.preview == true, let token = preview.token,
+                  preview.issue?.id == issue.id, preview.issue?.title == issue.title, preview.issue?.ref == issue.ref else {
+                throw DSBotFailure.remote(preview.code?.uppercased() ?? "REQUEST_FAILED")
+            }
+            let removed = try await store.request("issue.delete", ["id": .number(Double(issue.id)), "token": .string(token)])
+            let answer = try await json.decode(IssueDeletionAnswer.self, from: removed)
+            guard !Task.isCancelled, computer == store.activeComputer?.id, connection == store.connectionRevision else { return }
+            guard answer.outcome == "success", answer.forgotten == true, answer.id == issue.id else {
+                throw DSBotFailure.remote(answer.code?.uppercased() ?? "REQUEST_FAILED")
+            }
+            mutationRevision += 1
+            // Remove the row immediately; other scopes and the next poll read their authoritative counts again.
+            let current = groups.map { group -> BoardGroup in
+                var group = group
+                if group.items.contains(where: { $0.id == issue.id }) {
+                    group.items.removeAll { $0.id == issue.id }
+                    group.count = max(0, group.count - 1)
+                }
+                return group
+            }.filter { $0.count > 0 }
+            groupsByTab = [tab: current]
+            states = [tab: .loaded]
+            await store.refreshSessions(quiet: true)
+            await refresh(using: store)
+        } catch {
+            guard !Task.isCancelled, computer == store.activeComputer?.id, connection == store.connectionRevision else { return }
+            DSBotLog.networkFailure("issue.delete.fail", error: error)
+            report?(DSBotToastMessage(text: "更改没能保存", kind: .error))
         }
     }
 
@@ -226,6 +325,35 @@ final class BoardModel: ObservableObject {
 
     func creationOptions(using store: DSBotStore) async -> IssueCreationOptions? {
         await creationRequest(IssueCreationOptions.self, "issue.options", using: store)
+    }
+
+    func update(_ issue: BoardIssue, patch: [String: JSONValue], using store: DSBotStore) async -> BoardIssue? {
+        await change("issue.update", issue: issue, params: ["patch": .object(patch)], using: store)
+    }
+
+    func assign(_ issue: BoardIssue, agent: SessionAgent, project: IssueProject, using store: DSBotStore) async -> BoardIssue? {
+        guard let path = project.path, !path.isEmpty else { return nil }
+        return await change("issue.assign", issue: issue, params: [
+            "agent": .string(agent.rawValue), "project": .object(["name": .string(project.name), "path": .string(path)]),
+        ], using: store)
+    }
+
+    private func change(_ method: String, issue: BoardIssue, params: [String: JSONValue], using store: DSBotStore) async -> BoardIssue? {
+        var params = params
+        params["id"] = .number(Double(issue.id))
+        guard let answer = await creationRequest(IssueAnswer.self, method, params, using: store),
+              answer.outcome == "success", let changed = answer.issue, changed.id == issue.id else { return nil }
+        mutationRevision += 1
+        // The response updates the loaded row immediately; the authoritative read then reconciles groups and counts.
+        let current = groups.map { group -> BoardGroup in
+            var group = group
+            group.items = group.items.map { $0.id == changed.id ? changed : $0 }
+            return group
+        }
+        groupsByTab = [tab: current]
+        states = [tab: .loaded]
+        await refresh(using: store)
+        return changed
     }
 
     func parentIssues(query: String, using store: DSBotStore) async -> [BoardIssue]? {
@@ -292,7 +420,7 @@ enum CollectorTab: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-struct CollectorIssue: Decodable, Equatable, Sendable {
+struct CollectorIssue: Codable, Equatable, Sendable {
     var id: Int
     var ref: String?
     var title: String
@@ -302,14 +430,14 @@ struct CollectorIssue: Decodable, Equatable, Sendable {
     var reference: String { ref ?? "#\(id)" }
 }
 
-struct CollectorContext: Decodable, Equatable, Sendable {
+struct CollectorContext: Codable, Equatable, Sendable {
     var from: String?
     var at: Double?
     var text: String?
 }
 
-/// One collected record: what a collector brought back, without its words (those come with `inbox.get`).
-struct CollectorRecord: Decodable, Identifiable, Equatable, Sendable {
+/// One collected record: what a collector brought back, without its words (those come with `inbox.get`). Codable because a card of 嘟嘟's chat keeps some (`QuickCard`).
+struct CollectorRecord: Codable, Identifiable, Equatable, Sendable {
     var id: Int
     var ref: String?
     var connector: String
@@ -327,9 +455,14 @@ struct CollectorRecord: Decodable, Identifiable, Equatable, Sendable {
     var issue: CollectorIssue?
     var text: String?
     var context: [CollectorContext]?
+    /// The collector's session is going back to the source to read what is around this record (`inbox.complete`); `inbox.get` says it, and an older plugin says nothing.
+    var completing: Bool?
+    /// Why the last such completion failed, in the plugin's own words (English system text, which the plugin keeps ten minutes).
+    var completeError: String?
 
-    /// The line under the title: who it is from, and which collector brought it.
-    var byLine: String { [from ?? "", connectorName].filter { !$0.isEmpty }.joined(separator: " · ") }
+    /// The line under the title: its number (`r143`), who it is from, and which collector brought it. The number is first, so a line that is cut short keeps it
+    /// (owner, 2026-11-11, option A of `.local/designs/record-id-2026-11-11/`, on records that read alike: "设计一个 id 吧，不然我都不知道哪个是哪个").
+    var byLine: String { [ref ?? "", from ?? "", connectorName].filter { !$0.isEmpty }.joined(separator: " · ") }
 }
 
 /// What the owner can do with a record without making an issue of it.
@@ -360,6 +493,9 @@ private struct CollectorAnswer: Decodable, Sendable {
     var draft: CollectorDraft?
     var changed: Int?
     var issue: CollectorShared?
+    /// `inbox.complete`: whether a completion was begun; an answer that is not a success says why, in the plugin's own words.
+    var started: Bool?
+    var message: String?
 }
 
 private struct CollectorShared: Decodable, Sendable {
@@ -376,12 +512,17 @@ final class CollectorModel: ObservableObject {
     @Published private(set) var isLoadingMore = false
     @Published var isSelecting = false
     @Published private(set) var selection: Set<Int> = []
+    /// The records whose context the collector's session is completing and which this phone waits for: their button shows it, and cannot be pressed again.
+    @Published private(set) var completing: Set<Int> = []
+    /// Why a completion failed, in the plugin's own words ("" when it gave none): the record in full says it, or the page when that record is not open.
+    @Published private(set) var completionProblems: [Int: String] = [:]
     /// The result of the last action, for the toast the page shows (with an undo, where there is one).
     var report: ((DSBotToastMessage) -> Void)?
 
     private var cursors: [CollectorTab: String] = [:]
     private let json = DSBotJSON()
     private var refreshing: Set<CollectorTab> = []
+    private var followers: [Int: Task<Void, Never>] = [:]
 
     var items: [CollectorRecord] { itemsByTab[tab] ?? [] }
     var state: BoardModel.LoadState { states[tab] ?? .loading }
@@ -398,6 +539,11 @@ final class CollectorModel: ObservableObject {
         cursors = [:]
         tab = .todo
         stopSelecting()
+        // The completions that were being waited for ran on the other computer.
+        followers.values.forEach { $0.cancel() }
+        followers = [:]
+        completing = []
+        completionProblems = [:]
     }
 
     func select(_ next: CollectorTab) {
@@ -469,14 +615,91 @@ final class CollectorModel: ObservableObject {
 
     /// One record in full: its words, what was around it, and what an issue made of it starts with.
     func detail(of record: CollectorRecord, using store: DSBotStore) async -> (record: CollectorRecord, draft: CollectorDraft)? {
+        await detail(id: record.id, using: store)
+    }
+
+    private func detail(id: Int, using store: DSBotStore) async -> (record: CollectorRecord, draft: CollectorDraft)? {
         do {
-            let value = try await store.request("inbox.get", ["id": .number(Double(record.id))])
+            let value = try await store.request("inbox.get", ["id": .number(Double(id))])
             let answer = try await json.decode(CollectorAnswer.self, from: value)
             guard answer.outcome == "success", let full = answer.record, let draft = answer.draft else { return nil }
             return (full, draft)
         } catch {
             DSBotLog.networkFailure("inbox.get.fail", error: error)
             return nil
+        }
+    }
+
+    /// Fill in the context of a record (`inbox.complete`): its collector's own session goes back to the source and reads the conversation around it. The busy mark is in at once, before the
+    /// request goes. The work runs on the computer in the background and takes from ten seconds to a few minutes, so the record is read again every three seconds until the computer says it
+    /// is over (and for four minutes at most), as the desktop's page does (`ui/collector/completion.js`). What it came to is the record in full's to read: more lines in `text` or `context`,
+    /// and a failure in `completionProblems`.
+    func complete(_ record: CollectorRecord, using store: DSBotStore) {
+        follow(record.id, asking: true, using: store)
+    }
+
+    /// A record the computer says is being completed already (a record in full that was opened in the middle of it): wait for its end in the same way, without asking again.
+    func follow(_ record: CollectorRecord, using store: DSBotStore) {
+        follow(record.id, asking: false, using: store)
+    }
+
+    /// A failure that has been said (in the record in full, or by the page): it is not said again.
+    func clearProblem(_ id: Int) {
+        if completionProblems[id] != nil { completionProblems[id] = nil }
+    }
+
+    private func follow(_ id: Int, asking: Bool, using store: DSBotStore) {
+        guard !completing.contains(id) else { return }
+        completing.insert(id)
+        completionProblems[id] = nil
+        let computer = store.activeComputer?.id
+        followers[id] = Task { [weak self] in
+            guard let self else { return }
+            let problem = await self.waitForEnd(of: id, asking: asking, computer: computer, using: store)
+            guard !Task.isCancelled else { return }
+            self.followers[id] = nil
+            // The failure is in before the mark goes, so that whoever shows the record sees both in the same update.
+            if let problem { self.completionProblems[id] = problem }
+            self.completing.remove(id)
+        }
+    }
+
+    /// Ask (unless the computer is at it already) and wait for the end. Nil when it went well or when the waiting was cancelled; otherwise why it failed: what the plugin said, or "" when it
+    /// said nothing (as the desktop does, a wait that is still not over after four minutes is a failure without a reason).
+    private func waitForEnd(of id: Int, asking: Bool, computer: String?, using store: DSBotStore) async -> String? {
+        if asking {
+            var started = false
+            var message = ""
+            do {
+                let value = try await store.request("inbox.complete", ["id": .number(Double(id))])
+                let answer = try await json.decode(CollectorAnswer.self, from: value)
+                started = answer.outcome == "success" && answer.started == true
+                message = answer.message ?? ""
+            } catch {
+                guard !Task.isCancelled else { return nil }
+                DSBotLog.networkFailure("inbox.complete.fail", error: error)
+            }
+            if !started {
+                // Not started (the plugin says it is busy, or its answer did not come): one for this record may be running all the same, started on the desktop say. The record tells.
+                let running = await detail(id: id, using: store)?.record.completing == true
+                guard !Task.isCancelled else { return nil }
+                guard running else { return message }
+            }
+        }
+        let since = ContinuousClock.now
+        while true {
+            do { try await Task.sleep(for: .seconds(3)) } catch { return nil }
+            guard computer == store.activeComputer?.id else { return nil }
+            // A reading that says it is over is believed even when it comes late.
+            if store.status == .connected, let full = await detail(id: id, using: store) {
+                if Task.isCancelled { return nil }
+                if full.record.completing != true {
+                    guard let error = full.record.completeError, !error.isEmpty else { return nil }
+                    return error
+                }
+            }
+            if Task.isCancelled { return nil }
+            if ContinuousClock.now - since >= .seconds(240) { return "" }
         }
     }
 

@@ -15,10 +15,12 @@ enum DSBotLayout {
 
     static let composerHeight: CGFloat = 44
     static let composerCornerRadius: CGFloat = 28
-    static let composerSideMargin: CGFloat = 32
+    static let conversationSideMargin: CGFloat = 24
+    static let userMessageSideMargin: CGFloat = 20
+    static let composerSideMargin: CGFloat = conversationSideMargin
     /// Distance from the composer to the bottom edge of the screen (the conversation runs to that edge, under
-    /// the home indicator), the same as its side margin.
-    static let composerBottomMargin: CGFloat = composerSideMargin
+    /// the home indicator).
+    static let composerBottomMargin: CGFloat = 24
     /// Distance from the composer to the keyboard.
     static let composerKeyboardGap: CGFloat = 8
 
@@ -86,7 +88,7 @@ enum DSBotStyle {
     static let chatSecondary = Color(red: 0x61 / 255, green: 0x66 / 255, blue: 0x6b / 255)
     static let chatTertiary = Color(red: 0x81 / 255, green: 0x85 / 255, blue: 0x8c / 255)
     static let chatCaption = Color(red: 0xad / 255, green: 0xb2 / 255, blue: 0xb8 / 255)
-    static let chatBubble = Color(red: 0xed / 255, green: 0xf3 / 255, blue: 0xfe / 255)
+    static let chatBubble = Color(red: 0xed / 255, green: 0xf2 / 255, blue: 0xfe / 255)
     static let chatPanel = Color(red: 0xf9 / 255, green: 0xfa / 255, blue: 0xfb / 255)
     static let chatBorder = Color.black.opacity(0.04)
     static let chatDivider = Color.black.opacity(0.10)
@@ -95,28 +97,76 @@ enum DSBotStyle {
     static let chatError = Color(red: 0xec / 255, green: 0x13 / 255, blue: 0x13 / 255)
 }
 
+/// One continuous backing across the status bar and title, fading only below the controls.
+struct DSBotToolbarTitleBackdrop: View {
+    let safeAreaTop: CGFloat
+
+    var body: some View {
+        Rectangle()
+            .fill(.regularMaterial)
+            .opacity(0.85)
+            .mask {
+                VStack(spacing: 0) {
+                    Rectangle()
+                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 20)
+                }
+            }
+            .padding(.top, -safeAreaTop)
+            .padding(.bottom, -12)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+/// Bound the system material to the composer and its bottom gap, with the fade inside that area.
+struct DSBotComposerBackdrop: View {
+    let bottomGap: CGFloat
+
+    var body: some View {
+        Rectangle()
+            .fill(.regularMaterial)
+            .mask {
+                LinearGradient(stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black, location: 0.7),
+                    .init(color: .black, location: 1)
+                ], startPoint: .top, endPoint: .bottom)
+            }
+            .clipped()
+            .padding(.horizontal, -DSBotLayout.composerSideMargin)
+            .padding(.bottom, -bottomGap)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+/// Fallback backing for floating controls; iOS 26 supplies this through the scroll edge.
 struct DSBotPanelBackdrop: View {
     var horizontalExtension: CGFloat = DSBotLayout.composerSideMargin
     var topExtension: CGFloat = 0
     var bottomExtension: CGFloat = 8
     var tintOpacity: Double = 0.35
 
+    @ViewBuilder
     var body: some View {
-        Rectangle()
-            .fill(.regularMaterial)
-            .overlay(DSBotStyle.canvas.opacity(tintOpacity))
-            .mask {
-                VStack(spacing: 0) {
-                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 16)
-                    Rectangle()
+        if !DSBotScrollEdges.usesSystemEffect {
+            Rectangle()
+                .fill(.regularMaterial)
+                .overlay(DSBotStyle.canvas.opacity(tintOpacity))
+                .mask {
+                    VStack(spacing: 0) {
+                        LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                            .frame(height: 16)
+                        Rectangle()
+                    }
                 }
-            }
-            .padding(.horizontal, -horizontalExtension)
-            .padding(.top, -topExtension)
-            .padding(.bottom, -bottomExtension)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+                .padding(.horizontal, -horizontalExtension)
+                .padding(.top, -topExtension)
+                .padding(.bottom, -bottomExtension)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
     }
 }
 

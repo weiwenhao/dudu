@@ -86,3 +86,37 @@ test('changed recipients are rejected before staging, and a saved failed note ca
   assert.equal((await retry.dispatch('assistant.forward', { ...message, requestId: 'retry', retryEntry: 9 })).outcome, 'success');
   assert.equal(delivered[1][1].retryEntry, 9);
 });
+
+test('a quick button asks for a card by its kind, on the fixed session only, and the answer is the command id alone', async () => {
+  const asked: string[] = [];
+  const sinces: unknown[] = [];
+  const { bridge } = harness({ card: async (kind: string, since?: string) => { asked.push(kind); sinces.push(since); return since === 'same' ? { outcome: 'success', commandId: since, unchanged: true } : { outcome: 'success', commandId: 'cmd-1', secret: 'not for the phone' }; } });
+  await assert.rejects(bridge.dispatch('assistant.card', { sessionId: 'other', kind: 'todo' }), { code: 'NOT_FOUND' });
+  for (const kind of ['everything', undefined, 7, '']) await assert.rejects(bridge.dispatch('assistant.card', { sessionId: 'dudu-owned', kind }), { code: 'BAD_REQUEST' });
+  assert.deepEqual(asked, [], 'nothing invalid reaches the host');
+  for (const kind of ['todo', 'info', 'task']) assert.deepEqual(await bridge.dispatch('assistant.card', { sessionId: 'dudu-owned', kind }), { outcome: 'success', commandId: 'cmd-1' });
+  assert.deepEqual(asked, ['todo', 'info', 'task']);
+  // The card the phone sees at the end of its thread goes to the host, which says when a new one would only repeat it; nothing else of the host's answer goes back.
+  assert.deepEqual(await bridge.dispatch('assistant.card', { sessionId: 'dudu-owned', kind: 'todo', since: 'cmd-1' }), { outcome: 'success', commandId: 'cmd-1' });
+  assert.deepEqual(await bridge.dispatch('assistant.card', { sessionId: 'dudu-owned', kind: 'todo', since: 'same' }), { outcome: 'success', commandId: 'same', unchanged: true });
+  assert.deepEqual(sinces, [undefined, undefined, undefined, 'cmd-1', 'same']);
+  for (const since of ['', 7, 'x'.repeat(129), {}]) await assert.rejects(bridge.dispatch('assistant.card', { sessionId: 'dudu-owned', kind: 'todo', since }), { code: 'BAD_REQUEST' });
+  assert.equal(asked.length, 5, 'a bad `since` reaches nothing');
+  const failing = harness({ card: async () => ({ outcome: 'error', code: 'unavailable', message: 'a long message with paths' }) }).bridge;
+  assert.deepEqual(await failing.dispatch('assistant.card', { sessionId: 'dudu-owned', kind: 'todo' }), { outcome: 'error', code: 'unavailable' });
+  await assert.rejects(harness().bridge.dispatch('assistant.card', { sessionId: 'dudu-owned', kind: 'todo' }), { code: 'UNSUPPORTED' }, 'a plugin that cannot make cards says so');
+});
+
+test('a line written in the chat says so when it is forwarded, and hiding takes whole sequence numbers of the fixed session only', async () => {
+  const hidden: number[][] = [];
+  const { bridge, calls } = harness({ hide: (seqs: number[]) => { hidden.push(seqs); return { outcome: 'success' }; } });
+  await bridge.dispatch('assistant.forward', { sessionId: 'dudu-owned', id: 'DUD-7', text: '结论了吗', requestId: 'r-1' });
+  assert.equal((calls.find(([action]) => action === 'forward') as any)[1].chat, true, 'the plugin makes the line a line of the thread');
+  assert.deepEqual(await bridge.dispatch('assistant.hide', { sessionId: 'dudu-owned', seqs: [3, 8] }), { outcome: 'success' });
+  assert.deepEqual(hidden, [[3, 8]]);
+  for (const params of [{ sessionId: 'other', seqs: [1] }, { sessionId: 'dudu-owned', seqs: [] }, { sessionId: 'dudu-owned', seqs: ['3'] }, { sessionId: 'dudu-owned', seqs: [1.5] }, { sessionId: 'dudu-owned' }]) {
+    await assert.rejects(bridge.dispatch('assistant.hide', params), (error: any) => ['NOT_FOUND', 'BAD_REQUEST'].includes(error.code), JSON.stringify(params));
+  }
+  assert.equal(hidden.length, 1);
+});
+

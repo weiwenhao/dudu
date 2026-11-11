@@ -146,6 +146,28 @@ test('conversation reader permits only fixed owner-scoped routes and bounded res
   await assert.rejects(large.read('file', { path: '/tmp/a' }), { code: 'LIMIT_EXCEEDED' });
 });
 
+test('conversation change counts use the retained summary without reading files or exposing paths', () => {
+  const expected = { total: 9, added: 78, deleted: 12 };
+  let summary: unknown = { ...expected, cwd: '/workspace', files: [{ path: '/workspace/private.md' }] };
+  const reads = createConversationReads({
+    peer: { principal: { kind: 'owner' } },
+    connection: { createSharedFetchHandler: () => ({ fetch() { assert.fail('Counts must not fetch a comparison'); } }) },
+    workspaceChanges: () => ({ summary(sessionId, seq) {
+      assert.equal(sessionId, 'session-1');
+      assert.equal(seq, 7);
+      return summary;
+    } }),
+  });
+  assert.deepEqual(reads.changeCounts('session-1', 7), expected);
+  for (const invalid of [undefined, {}, { ...expected, total: -1 }, { ...expected, added: 1.5 },
+    { ...expected, deleted: Number.MAX_SAFE_INTEGER + 1 }]) {
+    summary = invalid;
+    assert.equal(reads.changeCounts('session-1', 7), undefined);
+  }
+  const unavailable = createConversationReads({ peer: { principal: { kind: 'owner' } } });
+  assert.equal(unavailable.changeCounts('session-1', 7), undefined);
+});
+
 test('conversation reader times out uncooperative fetches and cancels late bodies', async () => {
   let finish;
   let cancelled = false;

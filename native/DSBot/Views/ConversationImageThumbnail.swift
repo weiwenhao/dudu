@@ -19,11 +19,6 @@ struct ConversationImageThumbnail: View {
         let isReady: Bool
     }
 
-    private var aspectRatio: CGFloat {
-        guard let size = image?.image.size, size.height > 0 else { return 0.8 }
-        return max(0.75, min(1.6, size.width / size.height))
-    }
-
     private var imageKey: ConversationImageKey? {
         guard let target else { return nil }
         return ConversationImageKey(target: target, attachment: attachment)
@@ -35,7 +30,9 @@ struct ConversationImageThumbnail: View {
             else { Task { await load() } }
         } label: {
             DSBotStyle.chatPanel
-                .aspectRatio(aspectRatio, contentMode: .fit)
+                // Loading pixels must not resize a history row under the reader.
+                // The full-screen preview keeps the original image's aspect ratio.
+                .aspectRatio(0.8, contentMode: .fit)
                 .overlay {
                 if let image {
                     Image(uiImage: image.image).resizable().scaledToFill()

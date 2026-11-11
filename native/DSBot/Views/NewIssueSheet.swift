@@ -16,16 +16,21 @@ struct NewIssueSheet: View {
     @State private var computerID: String?
     @State private var isCreating = false
     @State private var failed = false
+    @State private var formHeight: CGFloat = 0
+    @State private var formTopInset: CGFloat = 0
     @FocusState private var titleFocused: Bool
+    @Namespace private var sheetSpace
 
     let record: Int?
     let onCreated: () -> Void
+    private let parentToLoad: BoardIssue?
 
-    init(board: BoardModel, store: DSBotStore, title: String = "", brief: String = "", record: Int? = nil, onCreated: @escaping () -> Void = {}) {
+    init(board: BoardModel, store: DSBotStore, title: String = "", brief: String = "", record: Int? = nil, parent: BoardIssue? = nil, onCreated: @escaping () -> Void = {}) {
         self.board = board
         self.store = store
         self.record = record
-        _draft = State(initialValue: IssueCreationDraft(title: title, brief: brief))
+        parentToLoad = parent?.projectInfo == nil && parent?.project != nil ? parent : nil
+        _draft = State(initialValue: IssueCreationDraft(title: title, brief: brief, project: parent?.projectInfo, parent: parent))
         _computerID = State(initialValue: store.activeComputer?.id)
         self.onCreated = onCreated
     }
@@ -82,9 +87,18 @@ struct NewIssueSheet: View {
                 }
                 .disabled(isCreating)
                 .padding(20)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    if height > 0, abs(formHeight - height) > 0.5 { formHeight = height }
+                }
             }
             .scrollDismissesKeyboard(.interactively)
+            .scrollBounceBehavior(.basedOnSize)
             .background(DSBotStyle.canvas)
+            .onGeometryChange(for: CGFloat.self) { geometry in
+                max(0, geometry.frame(in: .named(sheetSpace)).minY) + geometry.safeAreaInsets.top
+            } action: { inset in
+                if path.isEmpty, abs(formTopInset - inset) > 0.5 { formTopInset = inset }
+            }
             .navigationTitle("新建事项")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -112,7 +126,11 @@ struct NewIssueSheet: View {
                 destination(picker)
             }
         }
-        .presentationDetents([.large])
+        .coordinateSpace(name: sheetSpace)
+        .background {
+            SheetOutsideTapDismiss(isEnabled: !isCreating) { dismiss() }
+        }
+        .presentationDetents(path.isEmpty ? [.height(formHeight > 0 ? formHeight + formTopInset : 360)] : [.large])
         .presentationCornerRadius(32)
         .interactiveDismissDisabled(isCreating)
         .task { titleFocused = true }
@@ -125,7 +143,7 @@ struct NewIssueSheet: View {
     private var properties: some View {
         IssueValueFlow(spacing: 6) {
             chip(status?.title ?? "状态", identifier: "status", picker: .status) {
-                IssueStatusIcon(type: status?.type ?? "todo", color: status?.color)
+                IssueStatusIcon(type: status?.type ?? "todo", color: status?.color, iconProgress: status?.iconProgress)
             }
             chip(draft.priority == .none ? "优先级" : draft.priority.title, identifier: "priority", picker: .priority) {
                 IssuePriorityIcon(priority: draft.priority)
@@ -201,7 +219,7 @@ struct NewIssueSheet: View {
             IssueChoiceList(title: "状态") {
                 ForEach(options?.statuses ?? []) { item in
                     IssueChoiceRow(title: item.title, selected: draft.status == item.id) {
-                        IssueStatusIcon(type: item.type, color: item.color)
+                        IssueStatusIcon(type: item.type, color: item.color, iconProgress: item.iconProgress)
                     } action: { draft.status = item.id; path.removeLast() }
                 }
             }
@@ -258,7 +276,15 @@ struct NewIssueSheet: View {
     private func loadOptions() async {
         guard sameComputer, store.status == .connected else { return }
         optionsFailed = false
-        guard let fresh = await board.creationOptions(using: store), fresh.outcome == "success", sameComputer, !Task.isCancelled else {
+        async let catalog = board.creationOptions(using: store)
+        if options == nil, let parent = parentToLoad, draft.parent?.id == parent.id {
+            guard let full = await board.detail(of: parent, using: store), sameComputer, !Task.isCancelled else {
+                if !Task.isCancelled && sameComputer { optionsFailed = true }
+                return
+            }
+            if draft.parent?.id == parent.id, draft.project == nil { draft.project = full.projectInfo }
+        }
+        guard let fresh = await catalog, fresh.outcome == "success", sameComputer, !Task.isCancelled else {
             if !Task.isCancelled && sameComputer { optionsFailed = true }
             return
         }
@@ -285,7 +311,7 @@ struct NewIssueSheet: View {
 }
 
 /// The desktop's wrapping property row, sized from its pills without reading window geometry.
-private struct IssueValueFlow: Layout {
+struct IssueValueFlow: Layout {
     let spacing: CGFloat
 
     private func arrange(_ subviews: Subviews, width: CGFloat) -> (sizes: [CGSize], origins: [CGPoint], height: CGFloat, width: CGFloat) {

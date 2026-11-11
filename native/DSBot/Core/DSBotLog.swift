@@ -8,25 +8,27 @@ enum DSBotLog {
         "workspace.list", "session.list", "session.create", "session.open",
         "session.watch", "session.unwatch", "session.send", "session.stop",
         "session.rename", "session.pin", "session.archive", "session.unarchive", "session.configure",
-        "catalog.get", "navigation.get", "plugins.list",
+        "catalog.get", "navigation.get", "plugins.list", "assistant.open",
         "schedule.list", "approval.respond", "files.list", "files.read",
         "web.open", "web.close", "web.resource", "web.invoke",
         "web.stream.open", "web.stream.next", "web.stream.close",
         "session.search", "session.queue.update", "session.page", "session.tool",
         "session.changes", "session.diff", "session.file", "session.fork",
         "session.performance", "session.attachment", "question.answer",
-        "board.list", "issue.get", "issue.open", "issue.pick", "issue.create",
-        "inbox.list", "inbox.get", "inbox.mark", "inbox.share"
+        "board.list", "issue.get", "issue.open", "issue.pick", "issue.create", "issue.update", "issue.assign",
+        "inbox.list", "inbox.get", "inbox.mark", "inbox.share", "inbox.complete"
     ]
     private static let allowedCountKeys: Set<String> = [
         "payloadBytes", "computerCount", "sessionCount", "workspaceCount",
         "attachmentCount", "messageCount", "pendingCount", "realizedCount", "visibleCount",
-        "registeredCount", "latestRealizedCount", "followingCount",
+        "registeredCount", "latestRealizedCount", "followingCount", "scrollCommandCount",
+        "frameCount", "lateFrameCount",
         "lanAddressCount", "publicAddressCount"
     ]
     private static let allowedGeometryKeys: Set<String> = [
         "bottomY", "viewportHeight", "lastRowHeight", "contentHeight", "contentOffset", "topInset", "bottomInset",
         "latestTopY", "latestBottomY", "latestRowHeight",
+        "longestFrameMs",
         // where a tap or a hold was on the screen (points) and how big the screen is: `UserActionRecorder`
         "tapX", "tapY", "screenWidth", "screenHeight"
     ]

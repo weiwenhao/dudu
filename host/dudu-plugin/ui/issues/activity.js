@@ -24,6 +24,13 @@ export function when(ms, now = Date.now()) {
 
 export const actorName = (actor) => (actor === 'owner' ? T.activity.you : actor === 'dudu' ? T.brand : (AGENT_NAMES[actor] ?? actor));
 export const isDiscussion = (entry) => ['note', 'progress', 'decision', 'result', 'blocked'].includes(entry.kind) && Boolean(entry.text?.trim() || entry.data?.attachments?.length);
+/**
+ * What dudu wrote into an issue by itself (owner, 2026-11-08: "嘟嘟不需要做任何这种东西……去掉嘟嘟在事项中的自动参与"): progress sentences, the questions it copied from an
+ * agent's session (they read as if dudu asked), notes about a dispatch. The Activity does not show them (old ones included); what stays is the owner's and the agents' words,
+ * the status changes, dudu's answer to a message the owner wrote to it (`replyTo`), and the current question (its own card).
+ */
+export const isAutomatic = (entry) => entry.actor === 'dudu' && (entry.kind === 'progress' || entry.kind === 'blocked' || (entry.kind === 'note' && !entry.data?.replyTo));
+export const isComment = (entry) => isDiscussion(entry) && !isAutomatic(entry);
 const agentName = (agent) => AGENT_NAMES[agent] ?? agent;
 const dueText = (ms) => dayYear.format(ms);
 
@@ -40,7 +47,6 @@ export function storedSystemText(entry) {
     if (start) return A.notStarted(start[1]);
     if (text.startsWith('回复没能发给会话：')) return A.notDelivered(text.slice('回复没能发给会话：'.length));
   }
-  if (entry.kind === 'note' && text.startsWith('No agent chosen: ')) return A.notAssigned(text.slice('No agent chosen: '.length));
   if (entry.kind === 'assign') {
     return text.replace('the session it named was not offered, so a new one starts', A.sessionDropped)
       .replace(/access: ([\w-]+)(?: \(asked for ([\w-]+); ASSIGN\.md allows ([\w-]+)\))?/g,

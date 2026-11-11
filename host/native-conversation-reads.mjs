@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { isAbsolute } from 'node:path';
 import { ConversationError } from './native-conversation.mjs';
 
@@ -5,10 +6,18 @@ const ROUTES = Object.freeze({ summary: '/api/changes.summary', diff: '/api/chan
 const MAX_BYTES = 16 * 1024 * 1024;
 const fail = (code) => { throw new ConversationError(code); };
 
-export function createConversationReads({ connection, peer, timeoutMs = 20_000 }) {
+export function createConversationReads({ connection, peer, workspaceChanges, timeoutMs = 20_000 }) {
   if (peer?.principal?.kind !== 'owner') throw new TypeError('Conversation reads require an owner peer.');
   const handler = connection?.createSharedFetchHandler?.('/api');
   return Object.freeze({
+    changeCounts(sessionId, seq) {
+      // DSH retains this summary alongside its comparison. Reading it does not
+      // regenerate a diff or open the full historical file response.
+      const summary = workspaceChanges?.()?.summary?.(sessionId, seq);
+      if (!summary || !['total', 'added', 'deleted'].every((key) =>
+        Number.isSafeInteger(summary[key]) && summary[key] >= 0)) return undefined;
+      return { total: summary.total, added: summary.added, deleted: summary.deleted };
+    },
     async read(kind, coordinates, signal) {
       if (!Object.hasOwn(ROUTES, kind) || typeof handler?.fetch !== 'function') fail('UNSUPPORTED');
       const allowed = kind === 'file' ? ['path'] : kind === 'diff' ? ['sessionId', 'seq', 'index'] : ['sessionId', 'seq'];

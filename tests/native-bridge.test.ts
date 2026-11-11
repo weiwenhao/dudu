@@ -142,6 +142,18 @@ test('native assistant messages attach only the explicitly selected page and cle
   await assert.rejects(bridge.dispatch('session.send', { id: 'dudu-owned', text: 'bad page', assistantContext: { page: 'files' } }, {}), { code: 'BAD_REQUEST' });
 });
 
+test('the phone asks for the quota the way the desktop icon does: the sheet opening is the ask, nothing else is accepted, and what the plugin has kept comes back with the outcome', async () => {
+  const asked: unknown[] = [];
+  const view = { providers: [{ id: 'claude', agent: 'claude', name: 'Claude', plan: 'Max', windows: [], readAt: 5 }], refreshing: true, readAt: 5 };
+  const { bridge } = makeHarness({ assistant: { quota: async (options: unknown) => { asked.push(options); return view; } } });
+  assert.deepEqual(await bridge.dispatch('quota.get', { ask: true }, {}), { outcome: 'success', ...view });
+  await bridge.dispatch('quota.get', {}, {});
+  assert.deepEqual(asked, [{ ask: true }, { ask: false }], 'looking is not asking');
+  await assert.rejects(bridge.dispatch('quota.get', { ask: 'yes' }, {}), { code: 'BAD_REQUEST' });
+  await assert.rejects(bridge.dispatch('quota.get', { ask: true, source: 'claude' }, {}), { code: 'BAD_REQUEST' }, 'no caller-chosen source');
+  await assert.rejects(makeHarness().bridge.dispatch('quota.get', {}, {}), { code: 'UPSTREAM_UNAVAILABLE' });
+});
+
 test('assistant model changes use its own selector and reselecting a model preserves its effort', async () => {
   const selections = [];
   const { bridge, calls } = makeHarness({
@@ -794,6 +806,41 @@ test('workspace and catalog failures and missing newly-created sessions cannot r
   await assert.rejects(created.bridge.dispatch('session.create', {}, {}), { code: 'UPSTREAM_UNAVAILABLE' });
 });
 
+test('file change counts accompany initial and paged transcripts without opening the file browser', async () => {
+  const expected = { total: 9, added: 78, deleted: 12 };
+  let summary: typeof expected | undefined = expected;
+  const records = [
+    surface('turn/start', 1, 100, { turn: 1 }),
+    surface('workspace/changes', 2, 150, { turn: 1 }),
+    surface('turn/end', 3, 200, { turn: 1, reason: { kind: 'completed' } }),
+  ];
+  const { bridge } = makeHarness({
+    snapshot: { type: 'snapshot', records, cursor: 3, projections: { values: {} } },
+    responses: { 'session/page': { records: records.slice(0, 2), hasMore: false } },
+    conversationReads: {
+      changeCounts(sessionId, seq) {
+        assert.equal(sessionId, 'session-1');
+        assert.equal(seq, 2);
+        return summary;
+      },
+      read() { assert.fail('Transcript counts must not read full comparisons'); },
+    },
+  });
+  const connection = attachmentConnection();
+  try {
+    const detail = await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, connection, { watchGeneration: 1 });
+    assert.deepEqual(detail.transcript.turns[0].changesSummary, expected);
+    const page = await bridge.dispatch('session.page', { id: 'session-1', beforeSeq: 3, throughSeq: 3 }, connection);
+    assert.deepEqual(page.transcript.turns[0].changesSummary, expected);
+    const opened = await bridge.dispatch('session.open', { id: 'session-1', transcript: true }, connection);
+    assert.deepEqual(opened.transcript.turns[0].changesSummary, expected);
+    summary = undefined;
+    const expired = await bridge.dispatch('session.page', { id: 'session-1', beforeSeq: 3, throughSeq: 3 }, connection);
+    assert.equal(expired.transcript.turns[0].changesSeq, 2);
+    assert.equal(Object.hasOwn(expired.transcript.turns[0], 'changesSummary'), false);
+  } finally { await bridge.closeConnection(connection); }
+});
+
 test('paged conversation features use durable event coordinates and never accept phone-supplied file paths', async () => {
   const fileReads = [];
   const records = [
@@ -1092,4 +1139,50 @@ test('a conversation is pinned, unpinned and archived through DSH, validated, an
   }
   assert.equal(calls.length, before, 'nothing invalid reaches DSH');
   assert.ok(!NATIVE_METHODS.includes('session.delete'), 'DSH has no session deletion, so the phone has none');
+});
+
+test('a line of the group chat is its command in the thread with what it said attached, and the lines the owner hid are left out of 嘟嘟\'s thread only', async () => {
+  const line = { v: 1, kind: 'reply', issue: { id: 9, ref: 'DUD-9', title: 'x', agent: 'codex' }, text: '结论', to: 'cmd-at', answer: 'answer', at: 5 };
+  const records = [
+    surface('command/run', 1, 100, { commandId: 'cmd-say', name: 'dudu-say', args: 'reply abc', source: { kind: 'user' } }),
+    surface('command/done', 2, 110, { commandId: 'cmd-say', kind: 'success', text: 'DUD-9: 结论' }),
+    surface('command/run', 3, 120, { commandId: 'cmd-card', name: 'dudu-card', args: 'todo', source: { kind: 'user' } }),
+    surface('command/done', 4, 130, { commandId: 'cmd-card', kind: 'success' }),
+  ];
+  const harness = (assistantId: string) => makeHarness({
+    snapshot: { type: 'snapshot', records, cursor: 4, hasMore: false, projections: { values: {} } },
+    assistant: { state: () => ({ sessionId: assistantId }), groupOf: (id: string) => (id === 'cmd-say' ? line : null), hidden: () => new Set([3]), cardOf: () => null },
+  });
+  const watch = async (id: string) => (await harness(id).bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, attachmentConnection(), { watchGeneration: 1 })).transcript.entries;
+  const mine = await watch('session-1');
+  assert.deepEqual(mine.find((entry: any) => entry.commandId === 'cmd-say').group, line);
+  assert.equal(mine.some((entry: any) => entry.commandId === 'cmd-card'), false, 'the card that was hidden is not in the thread');
+  const another = await watch('some-other-session');
+  assert.equal(another.some((entry: any) => entry.commandId === 'cmd-card'), true, 'what is hidden in the assistant\'s thread is not hidden anywhere else');
+});
+
+test('a quick button\'s card is its command in the thread with what it listed attached; any other command, an unknown card and a failed one stay plain', async () => {
+  const card = { v: 1, kind: 'todo', at: 5, total: 1, rows: [{ id: 9, ref: 'DUD-9', title: 'x', agent: 'codex', agentState: 'blocked', status: 'todo', statusType: 'todo', priority: 'none', updatedAt: 1 }] };
+  const records = [
+    surface('command/run', 1, 100, { commandId: 'cmd-card', name: 'dudu-card', args: 'todo', source: { kind: 'user' } }),
+    surface('command/done', 2, 110, { commandId: 'cmd-card', kind: 'success', text: 'DUD-9 x' }),
+    surface('command/run', 3, 120, { commandId: 'cmd-gone', name: 'dudu-card', args: 'info', source: { kind: 'user' } }),
+    surface('command/done', 4, 130, { commandId: 'cmd-gone', kind: 'success' }),
+    surface('command/run', 5, 140, { commandId: 'cmd-bad', name: 'dudu-card', args: 'task', source: { kind: 'user' } }),
+    surface('command/done', 6, 150, { commandId: 'cmd-bad', kind: 'error', text: 'unavailable' }),
+    surface('command/run', 7, 160, { commandId: 'cmd-other', name: 'compact', source: { kind: 'user' } }),
+    surface('command/done', 8, 170, { commandId: 'cmd-other', kind: 'success', text: 'ok' }),
+  ];
+  const kept = new Map([['cmd-card', card], ['cmd-bad', card], ['cmd-other', card]]);
+  const { bridge } = makeHarness({
+    snapshot: { type: 'snapshot', records, cursor: 8, hasMore: false, projections: { values: {} } },
+    assistant: { cardOf: (id: string) => kept.get(id) ?? null },
+  });
+  const detail = await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, attachmentConnection(), { watchGeneration: 1 });
+  const byId = Object.fromEntries(detail.transcript.entries.map((entry: any) => [entry.commandId, entry]));
+  assert.deepEqual(byId['cmd-card'].card, card);
+  assert.equal(byId['cmd-card'].summary, 'DUD-9 x', 'the plain list stays as the summary');
+  assert.equal('card' in byId['cmd-gone'], false, 'a card that is no longer known is the plain command');
+  assert.equal('card' in byId['cmd-bad'], false, 'a command that failed has no card');
+  assert.equal('card' in byId['cmd-other'], false, 'only the card command carries one');
 });

@@ -2,7 +2,8 @@
 // have several collectors (an @-mention feed and an alerts feed on the same service), each with its own pace and its own words. The records it
 // brings, the runs and the issues made from them are all kept under the collector's id.
 //
-//   const collectors = createCollectors({ file, connectors })     connectors() -> the connectors registry (connectors/index.mjs) | null
+//   const collectors = createCollectors({ file, connectors, onRemoved })     connectors() -> the connectors registry (connectors/index.mjs) | null;
+//                                                                  onRemoved(id) is called once a collector was removed (by the owner or by 嘟嘟), to clear what it brought
 //   collectors.owner.list() / add(input) / update(id, patch) / remove(id) / undo(token)     the owner's, from the settings page
 //   collectors.dudu.list() / register(input) / update / remove / undo                       the same, as 嘟嘟's tools call them
 //   collectors.resolve()      -> { outcome, collectors: [{ ...collector, via: connector | null }] }    what a collection needs: the connector it reads through
@@ -29,7 +30,7 @@ const KEYS = ['name', 'connector', 'prompt', 'frequency'];
 
 const view = ({ id, name, connector, prompt, frequency, source }) => ({ id, name, connector, prompt, frequency: frequency ?? null, source });
 
-export function createCollectors({ file, connectors = () => null }) {
+export function createCollectors({ file, connectors = () => null, onRemoved = null }) {
   const entries = createEntriesFile({ file, messages: MESSAGES });
   const meta = (entry) => `<!-- id: ${entry.id} | source: ${entry.source} | connector: ${entry.connector}${entry.frequency ? ` | ${/^\d+[mhd]$/.test(entry.frequency) ? 'every' : 'cron'}: ${entry.frequency}` : ''} -->`;
   const render = (entry, eol) => [`## ${entry.name}`, meta(entry), '', entry.prompt, ''].join(eol);
@@ -116,7 +117,13 @@ export function createCollectors({ file, connectors = () => null }) {
   const remove = entries.guard((id) => {
     const read = entries.load();
     const entry = read.parsed.entries.find((item) => item.id === id);
-    return entry ? entries.remove(read, entry) : { outcome: 'no_op' };
+    if (!entry) return { outcome: 'no_op' };
+    const result = entries.remove(read, entry);
+    // What the collector brought and nobody dealt with goes with it; failing to clear it never undoes the removal.
+    if (result.outcome === 'success') {
+      try { onRemoved?.(id); } catch (error) { console.warn(`[dudu] The records of the removed collector ${id} could not be cleared: ${error?.message ?? error}`); }
+    }
+    return result;
   });
 
   const api = { list, update, remove, undo: entries.undo };

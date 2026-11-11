@@ -7,7 +7,7 @@ import { TooltipProvider } from '../components/tooltip.jsx';
 import { cn } from '../lib/cn.js';
 import { describeIssue } from '../lib/where.js';
 import { T } from '../strings.js';
-import { actorName, describe, isDiscussion, storedSystemText, when } from './activity.js';
+import { actorName, describe, isComment, storedSystemText, when } from './activity.js';
 import { AgentMenu } from './AgentMenu.jsx';
 import { dueInfo, DUE_ICON_TONE } from './due.js';
 import { DueMenu } from './DueMenu.jsx';
@@ -165,7 +165,7 @@ export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSessio
   const waiting = Boolean(issue?.ask);
   const question = waiting ? activeQuestion ?? log.find((entry) => entry.kind === 'blocked' && entry.text === issue?.ask) : null;
   const discussion = [...log, ...(question && !log.some((entry) => entry.id === question.id) ? [question] : [])]
-    .filter((entry) => entry.kind === 'status' || isDiscussion(entry)).sort((a, b) => a.at - b.at || a.id - b.id);
+    .filter((entry) => entry.id === question?.id || entry.kind === 'status' || isComment(entry)).sort((a, b) => a.at - b.at || a.id - b.id);
   return (
     <TooltipProvider>
     <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground">

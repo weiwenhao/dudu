@@ -125,7 +125,6 @@ export function SessionDetail({ session, terms, now, readSession, busy, failure,
       session={session} terms={terms} readSession={readSession} />
     <div className="flex shrink-0 items-center justify-end gap-2 border-t px-5 py-3">
       {failure && <p role="alert" className="mr-auto text-[13px]/5 text-danger-foreground">{failure}</p>}
-      {busy && <p role="status" className="mr-auto flex items-center gap-2 text-[13px]/5 text-muted-foreground"><LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />{T.shell.busy}</p>}
       <Button variant="outline" className="h-9 rounded-lg px-4" disabled={Boolean(busy)} onClick={onOpen}>
         {pending('open')}{session.dshSessionId || session.issue ? T.detail.openSession : W.importLabel}
       </Button>

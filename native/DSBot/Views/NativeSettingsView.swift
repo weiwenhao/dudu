@@ -356,7 +356,15 @@ private struct SettingsPageView: View {
     }
 
     private func choiceRow(_ row: SettingsItem) -> some View {
-        let options = row.options ?? []
+        var options = row.options ?? []
+        if row.id == "permission" {
+            // The host reports DSH's preset ids; the phone's own menu shows them under DSH's names.
+            options = options.map { option in
+                var named = option
+                named.title = PermissionLabels.name(id: option.id, name: option.title)
+                return named
+            }
+        }
         let selected = selectedID(row)
         let shown = options.first { $0.id == selected }
         return Menu {
@@ -386,7 +394,9 @@ private struct SettingsPageView: View {
                     Text(shown?.title ?? "")
                         .font(.system(size: 15))
                         .lineLimit(1)
-                    if row.id == "model", let source = shown?.subtitle {
+                    // The group's name is dropped when the model's own name already starts with it ("DeepSeek" under "DeepSeek Flash").
+                    if row.id == "model", let source = shown?.subtitle, let name = shown?.title,
+                       !name.lowercased().hasPrefix(source.lowercased()) {
                         Text(source).font(.system(size: 13)).lineLimit(1)
                     }
                 }

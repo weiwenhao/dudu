@@ -4,11 +4,15 @@ import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
 import { AgentAvatar, AgentStateIcon, PriorityIcon, projectColor, StatusIcon, Triangle } from './icons.jsx';
 import { groupLabel } from './flatten.js';
+import { NeedsYouColorPicker } from './NeedsYouColor.jsx';
 
 /** `count`: how many issues the group has; a Working group turns its icon only when it is not empty. */
-export function GroupIcon({ field, groupKey, className = 'size-4', count = 0 }) {
+export function GroupIcon({ field, groupKey, className = 'size-4', count = 0, pickColor = false }) {
   if (field === 'status') return <StatusIcon status={groupKey} className={className} />;
-  if (field === 'agentState') return <AgentStateIcon state={groupKey} className={className} active={count > 0} />;
+  if (field === 'agentState') {
+    const icon = <AgentStateIcon state={groupKey} className={className} active={count > 0} />;
+    return pickColor && groupKey === 'blocked' ? <NeedsYouColorPicker className={className}>{icon}</NeedsYouColorPicker> : icon;
+  }
   if (field === 'priority') return <PriorityIcon priority={groupKey} className={className} />;
   if (field === 'agent') return <AgentAvatar agent={groupKey} state="idle" />;
   if (groupKey == null) return <Box className={cn(className, 'text-muted-foreground')} aria-hidden="true" />;
@@ -27,7 +31,7 @@ export function GroupBar({ entry, onToggle, onAdd }) {
           <Triangle direction={entry.folded ? 'right' : 'down'} />
         </button>
         <span className="flex items-center gap-2">
-          <GroupIcon field={entry.field} groupKey={entry.groupKey} count={entry.count} />
+          <GroupIcon field={entry.field} groupKey={entry.groupKey} count={entry.count} pickColor />
           <h2 className="font-medium">{entry.label}</h2>
           <span className="text-muted-foreground">{entry.count}</span>
         </span>
@@ -49,7 +53,7 @@ export function SubGroupBar({ entry, onToggle }) {
           <Triangle direction={entry.folded ? 'right' : 'down'} />
         </button>
         <span className="flex items-center gap-2">
-          <GroupIcon field={entry.field} groupKey={entry.groupKey} count={entry.count} />
+          <GroupIcon field={entry.field} groupKey={entry.groupKey} count={entry.count} pickColor />
           <h3 className="font-medium">{entry.label}</h3>
           <span className="text-muted-foreground">{entry.count}</span>
         </span>

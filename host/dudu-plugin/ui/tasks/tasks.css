@@ -1,0 +1,51 @@
+/* DSH's preset menus and schedule rule rows, kept local so its package upgrades do not own this UI.
+ * References: dsh-client-ui-schedule RuleCard / TaskMenu and ui-primitives Menu.module.css. */
+.dudu-task-filters { display: flex; flex-direction: column; gap: 14px; padding: 20px; border-bottom: 0.5px solid var(--border); }
+.dudu-task-statuses { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dudu-task-status-tab { display: inline-flex; flex: none; align-items: center; height: 28px; padding: 0 8px; border-radius: 14px; color: var(--dsw-alias-label-tertiary, var(--muted-foreground)); font-size: 13px; line-height: 22px; white-space: nowrap; }
+.dudu-task-status-tab[aria-pressed="true"] { background: var(--accent); color: var(--foreground); }
+.dudu-task-status-tab:hover { background: var(--accent); }
+/* The number of tasks in a tab (owner, 2026-11-11): the lighter grey the search box's hint has; the open tab's is the one grey darker. */
+.dudu-task-status-count { margin-left: 4px; color: var(--dsw-alias-label-caption, var(--muted-foreground)); font-size: 12px; font-variant-numeric: tabular-nums; }
+.dudu-task-status-tab[aria-pressed="true"] .dudu-task-status-count { color: var(--muted-foreground); }
+.dudu-task-search { display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l3, var(--input)); border-radius: 12px; }
+.dudu-task-search:focus-within { border-color: var(--ring); }
+.dudu-task-search input { min-width: 0; flex: 1; height: 100%; font-size: 14px; outline: none; }
+.dudu-task-search input::placeholder { color: var(--dsw-alias-label-caption, var(--muted-foreground)); }
+.dudu-task-form { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.dudu-task-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.dudu-task-field-label { color: var(--foreground); font-size: 14px; line-height: 22px; }
+.dudu-task-text { width: 100%; min-width: 0; min-height: 36px; padding: 8px 12px; border: 0.5px solid var(--dsw-alias-border-l3, var(--input)); border-radius: 12px; background: transparent; font-size: 14px; line-height: 22px; outline: none; }
+.dudu-task-text:focus { border-color: var(--ring); }
+.dudu-task-textarea { min-height: 88px; resize: vertical; }
+.dudu-task-rule-rows { display: flex; flex-direction: column; min-width: 0; padding: 0 12px; border: 0.5px solid var(--dsw-alias-border-l3, var(--input)); border-radius: 16px; }
+.dudu-task-rule-row,
+.dudu-task-rule-select { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-width: 0; min-height: 48px; border-bottom: 0.5px solid var(--dsw-alias-border-l3, var(--input)); font-size: 14px; line-height: 22px; }
+.dudu-task-rule-rows > :last-child { border-bottom: 0; }
+.dudu-task-rule-label { flex: none; }
+.dudu-task-select { display: inline-flex; align-items: center; min-width: 0; min-height: 32px; border-radius: 18px; font-size: 14px; }
+.dudu-task-select-face { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; min-height: 32px; padding: 0 8px; border-radius: 18px; text-align: right; }
+.dudu-task-rule-select .dudu-task-select-face { max-width: 70%; }
+.dudu-task-select-face > svg { flex: none; color: var(--dsw-alias-label-tertiary, var(--muted-foreground)); }
+.dudu-task-rule-select:not(:disabled):hover .dudu-task-select-face,
+.dudu-task-select:not(:disabled):hover { background: var(--accent); }
+.dudu-task-rule-select:disabled,
+.dudu-task-select:disabled { color: var(--muted-foreground); cursor: default; }
+.dudu-task-rule-input { min-width: 0; max-width: 58%; padding: 5px 8px; border-radius: 18px; text-align: right; font-size: 14px; outline: none; }
+.dudu-task-rule-input:hover { background: var(--accent); }
+.dudu-task-rule-input:focus { box-shadow: 0 0 0 1px var(--ring); }
+.dudu-task-menu { position: relative; z-index: 1100; isolation: isolate; width: max-content; min-width: 144px; max-width: min(360px, calc(100vw - 24px)); max-height: var(--radix-popover-content-available-height); padding: 4px; overflow: hidden; border: 0; border-radius: var(--dsw-radius-lg, 16px); background: transparent; --dsw-elevation-stroke-color: var(--dsw-alias-border-l1); box-shadow: var(--dsw-elevation-prominent, 0 6px 24px #0002); }
+.dudu-task-menu::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--dsw-menu-surface-fill, var(--popover)); backdrop-filter: var(--dsw-menu-backdrop-filter, none); pointer-events: none; }
+.dudu-task-menu .dudu-task-choices { max-height: min(300px, calc(var(--radix-popover-content-available-height) - 8px)); }
+.dudu-task-menu:has(.dudu-task-menu-search) .dudu-task-choices { max-height: min(300px, calc(var(--radix-popover-content-available-height) - 46px)); }
+.dudu-task-menu .dudu-task-menu-item { gap: 6px; height: auto; min-height: 34px; padding: 6px 8px; border-radius: var(--dsw-radius-md, 8px); font-size: 13px; line-height: 20px; }
+.dudu-task-menu-search { flex: none; padding: 1px; border-bottom: 0.5px solid var(--border); }
+.dudu-task-menu-search [data-slot="command-input-wrapper"] { height: 34px; }
+.dudu-task-menu-search input { height: 34px; }
+.dudu-task-actions [data-slot="command-item"] { min-height: 34px; font-size: 13px; }
+.dudu-task-footer-action[data-slot="button"] { height: 32px; padding: 0 12px; border-radius: 16px; font-size: 13px; line-height: 20px; }
+.dudu-task-primary { border-radius: 16px; background: var(--dsw-alias-button-primary-fill, var(--primary)); color: var(--primary-foreground); }
+.dudu-task-primary:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover, var(--primary)); }
+.dudu-task-new { display: flex; align-items: center; overflow: hidden; border-radius: 16px; background: var(--dsw-alias-button-primary-fill, var(--primary)); }
+.dudu-task-new [data-slot="button"] { border-radius: 0; }
+.dudu-task-detail-tab[aria-selected="true"] { border-color: var(--ring); color: var(--ring); }

@@ -6,6 +6,9 @@
 //                 `cursor`, the next page of that one group
 //                 -> { tab, total, groups: [{ key: 'working' | 'blocked' | 'idle' | 'unassigned', count, nextCursor, items: [row] }] }
 //   issue.get     { id }                                     -> { issue }                          one issue, with its description
+//   issue.delete  { id, token? }                             -> { preview, token, issue } or { forgotten, id }; the desktop's preview and deletion
+//   issue.update  { id, patch: { status?, priority?, agentState?, dueAt?, labels?, project? } } -> { issue }
+//   issue.assign  { id, agent, project: { name, path } }       -> { issue }; the same locked assignment as Desktop
 //   issue.open    { id }                                     -> { sessionId | null }               the session of the issue, put back in DSH's sidebar if it was folded away
 //   issue.pick    { withSession? }                           -> { items: [row] }                   the open issues, the one touched last first (what a record is shared to)
 //   issue.options {}                                        -> { statuses, labels, projects }     the desktop's creation choices, including its configured default status
@@ -18,12 +21,14 @@
 //   inbox.get     { id }                                     -> { record, draft }
 //   inbox.mark    { action: 'ignore' | 'done' | 'delete' | 'restore', ids }          -> { outcome, changed }
 //   inbox.share   { ids, issue, to?: 'issue' | 'session' }   -> { outcome, changed }
+//   inbox.complete { id }                                    -> { outcome, started }              more context for one record: its collector's session reads the conversation around it, in the
+//                                                                                               background; `inbox.get` then says `completing` and, when it failed, `completeError`
 //
 // A row is { id, ref, title, agent, agentState, agentFinished?, deepSleep?, status, statusType, priority, project?, dueAt?, updatedAt, sessionId? }; a card is the inbox's own
 // (inbox/api.mjs). An answer that is not a success keeps its `outcome`, `code` and `message`: the app says it failed in its own words.
 export const NATIVE_BOARD_METHODS = Object.freeze([
-  'board.list', 'issue.get', 'issue.open', 'issue.pick', 'issue.options', 'issue.parents', 'issue.project.create', 'issue.label.create', 'issue.create',
-  'inbox.list', 'inbox.get', 'inbox.mark', 'inbox.share',
+  'board.list', 'issue.get', 'issue.delete', 'issue.update', 'issue.assign', 'issue.open', 'issue.pick', 'issue.options', 'issue.parents', 'issue.project.create', 'issue.label.create', 'issue.create',
+  'inbox.list', 'inbox.get', 'inbox.mark', 'inbox.share', 'inbox.complete',
 ]);
 
 const TABS = new Set(['active', 'backlog', 'all']);
@@ -41,7 +46,16 @@ const positive = (value) => Number.isSafeInteger(value) && value > 0;
 /** The DSH session behind an issue's key (`dsh:<id>`); an issue held by a harness alone has none the phone can open. */
 const sessionIdOf = (key) => (typeof key === 'string' && key.startsWith('dsh:') && key.length > 4 ? key.slice(4) : null);
 
-function row(issue) {
+function detail(issue) {
+  return {
+    ...row(issue), description: text(issue.brief, MAX_DESCRIPTION), hasSession: Boolean(issue.session), createdAt: issue.createdAt,
+    projectInfo: issue.project ? { name: text(issue.project.name, 200), path: issue.project.path ?? null } : null,
+    labels: (issue.labels ?? []).map(({ id, name, color }) => ({ id, name, color })),
+  };
+}
+
+/** An issue as the app's rows have it. The cards of 嘟嘟's chat (assistant/home/cards.mjs) list issues in this very shape. */
+export function boardRow(issue) {
   const sessionId = sessionIdOf(issue.session);
   return {
     id: issue.id, ref: issue.ref ?? null, title: text(issue.title, MAX_TITLE),
@@ -54,6 +68,7 @@ function row(issue) {
     ...(sessionId ? { sessionId } : {}),
   };
 }
+const row = boardRow;
 
 const problem = (result) => ({
   outcome: typeof result?.outcome === 'string' ? result.outcome : 'error',
@@ -66,7 +81,7 @@ const succeeded = (result) => result?.outcome === 'success';
  * `issues(action, body)` and `inbox(action, body)` run the desktop interface's commands (the owner's: every change is written as the owner); each may answer at once or
  * later. `fail(code)` throws the bridge's own error for a request that is not well formed.
  */
-export function createNativeBoard({ issues, inbox, projects, fail }) {
+export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, fail }) {
   const unavailable = () => fail('UPSTREAM_UNAVAILABLE');
   const askIssues = async (action, body) => (issues ? issues(action, body) : unavailable());
   const askInbox = async (action, body) => (inbox ? inbox(action, body) : unavailable());
@@ -80,7 +95,7 @@ export function createNativeBoard({ issues, inbox, projects, fail }) {
     if (bad) return problem(bad);
     return {
       outcome: 'success',
-      statuses: (statuses.statuses ?? []).filter((status) => !status.archived).map(({ id, type, name, color, isDefault }) => ({ id, type, name, color, isDefault })),
+      statuses: (statuses.statuses ?? []).filter((status) => !status.archived).map(({ id, type, name, color, iconProgress, isDefault }) => ({ id, type, name, color, iconProgress, isDefault })),
       labels: (labels.labels ?? []).map(({ id, name, color }) => ({ id, name, color })),
       projects: (folders.projects ?? []).map(({ name, path }) => ({ name, path })),
     };
@@ -121,15 +136,16 @@ export function createNativeBoard({ issues, inbox, projects, fail }) {
     }
     const result = await askIssues('list', request);
     if (!succeeded(result)) return { tab, ...problem(result) };
+    const appearance = getNeedsYouColor ? { needsYouColor: getNeedsYouColor() } : {};
     const groups = (result.groups ?? []).filter((group) => GROUPS.has(group.key)).map((group) => ({
       key: group.key, count: Number.isSafeInteger(group.count) ? group.count : (group.items ?? []).length,
       nextCursor: typeof group.nextCursor === 'string' ? group.nextCursor : null, items: (group.items ?? []).map(row),
     }));
     // A page of one group comes back flat: the rows of that group, and the cursor of its next page.
     if (request.groupFilter && !result.groups?.length) {
-      return { outcome: 'success', tab, total: result.total ?? 0, groups: [{ key: params.groupKey, count: result.total ?? 0, nextCursor: result.nextCursor ?? null, items: (result.items ?? []).map(row) }] };
+      return { outcome: 'success', tab, ...appearance, total: result.total ?? 0, groups: [{ key: params.groupKey, count: result.total ?? 0, nextCursor: result.nextCursor ?? null, items: (result.items ?? []).map(row) }] };
     }
-    return { outcome: 'success', tab, total: Number.isSafeInteger(result.total) ? result.total : 0, groups };
+    return { outcome: 'success', tab, ...appearance, total: Number.isSafeInteger(result.total) ? result.total : 0, groups };
   }
 
   async function get(params) {
@@ -139,8 +155,65 @@ export function createNativeBoard({ issues, inbox, projects, fail }) {
     const { issue } = result;
     return {
       outcome: 'success',
-      issue: { ...row(issue), description: text(issue.brief, MAX_DESCRIPTION), hasSession: Boolean(issue.session), createdAt: issue.createdAt },
+      issue: detail(issue),
     };
+  }
+
+  async function update(params) {
+    const { patch } = params;
+    const allowed = new Set(['status', 'priority', 'agentState', 'dueAt', 'labels', 'project']);
+    if (!positive(params.id) || !isRecord(patch) || !Object.keys(patch).length
+      || !Object.keys(patch).every((key) => allowed.has(key))) fail('BAD_REQUEST');
+    const fields = {};
+    if (Object.hasOwn(patch, 'status')) {
+      if (!shortText(patch.status, 100)) fail('BAD_REQUEST');
+      fields.status = patch.status;
+    }
+    if (Object.hasOwn(patch, 'priority')) {
+      if (!['none', 'urgent', 'high', 'medium', 'low'].includes(patch.priority)) fail('BAD_REQUEST');
+      fields.priority = patch.priority;
+    }
+    if (Object.hasOwn(patch, 'agentState')) {
+      if (!['blocked', 'idle'].includes(patch.agentState)) fail('BAD_REQUEST');
+      fields.agentState = patch.agentState;
+    }
+    if (Object.hasOwn(patch, 'dueAt')) {
+      if (patch.dueAt !== null && (!Number.isSafeInteger(patch.dueAt) || patch.dueAt < 0)) fail('BAD_REQUEST');
+      fields.dueAt = patch.dueAt;
+    }
+    if (Object.hasOwn(patch, 'labels')) {
+      if (!Array.isArray(patch.labels) || patch.labels.length > 50 || !patch.labels.every(positive)) fail('BAD_REQUEST');
+      fields.labels = [...new Set(patch.labels)];
+    }
+    if (Object.hasOwn(patch, 'project')) {
+      if (patch.project !== null && (!isRecord(patch.project) || !shortText(patch.project.name, 200)
+        || patch.project.path != null && !shortText(patch.project.path, 1000))) fail('BAD_REQUEST');
+      fields.project = patch.project === null ? null : { name: patch.project.name.trim(), path: patch.project.path?.trim() ?? null };
+    }
+    const result = await askIssues('update', { id: params.id, patch: fields });
+    return ['success', 'no_op'].includes(result?.outcome) && result.issue
+      ? { outcome: 'success', issue: detail(result.issue) } : problem(result);
+  }
+
+  async function assign(params) {
+    if (!positive(params.id) || !['claude', 'codex', 'deepseek'].includes(params.agent)
+      || !isRecord(params.project) || !shortText(params.project.name, 200) || !shortText(params.project.path, 1000)) fail('BAD_REQUEST');
+    const result = await askIssues('assign', {
+      id: params.id, agent: params.agent, project: { name: params.project.name.trim(), path: params.project.path.trim() },
+    });
+    return ['success', 'no_op'].includes(result?.outcome) && result.issue
+      ? { outcome: 'success', issue: detail(result.issue) } : problem(result);
+  }
+
+  async function remove(params) {
+    if (!positive(params.id) || params.token !== undefined && !shortText(params.token, 200)) fail('BAD_REQUEST');
+    const result = await askIssues('delete', { id: params.id, ...(params.token === undefined ? {} : { token: params.token }) });
+    if (!succeeded(result)) return problem(result);
+    if (result.preview === true && result.issue && typeof result.token === 'string') {
+      return { outcome: 'success', preview: true, token: result.token, issue: row(result.issue) };
+    }
+    if (result.forgotten === true) return { outcome: 'success', forgotten: true, id: params.id };
+    return { outcome: 'error' };
   }
 
   /** The session of an issue, brought back to DSH's sidebar when it was folded away (as the desktop does when the owner opens it). */
@@ -243,6 +316,12 @@ export function createNativeBoard({ issues, inbox, projects, fail }) {
     return ['success', 'no_op'].includes(result?.outcome) ? { outcome: result.outcome, changed: result.changed ?? 0 } : problem(result);
   }
 
+  async function inboxComplete(params) {
+    if (!positive(params.id)) fail('BAD_REQUEST');
+    const result = await askInbox('complete', { id: params.id });
+    return succeeded(result) ? { outcome: 'success', started: result.started === true } : problem(result);
+  }
+
   async function inboxShare(params) {
     if (!positive(params.issue)) fail('BAD_REQUEST');
     if (params.to !== undefined && !['issue', 'session'].includes(params.to)) fail('BAD_REQUEST');
@@ -253,9 +332,9 @@ export function createNativeBoard({ issues, inbox, projects, fail }) {
   }
 
   const METHODS = {
-    'board.list': list, 'issue.get': get, 'issue.open': open, 'issue.pick': pick,
+    'board.list': list, 'issue.get': get, 'issue.delete': remove, 'issue.update': update, 'issue.assign': assign, 'issue.open': open, 'issue.pick': pick,
     'issue.options': options, 'issue.parents': parents, 'issue.project.create': createProject, 'issue.label.create': createLabel, 'issue.create': create,
-    'inbox.list': inboxList, 'inbox.get': inboxGet, 'inbox.mark': inboxMark, 'inbox.share': inboxShare,
+    'inbox.list': inboxList, 'inbox.get': inboxGet, 'inbox.mark': inboxMark, 'inbox.share': inboxShare, 'inbox.complete': inboxComplete,
   };
   return {
     async dispatch(method, params) {

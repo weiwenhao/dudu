@@ -1,5 +1,5 @@
 import { T } from '../strings.js';
-import { actorName, describe, isDiscussion, storedSystemText } from './activity.js';
+import { actorName, describe, isAutomatic, isDiscussion, storedSystemText } from './activity.js';
 import { statusLabel } from './workflow.js';
 import { AGENT_NAMES } from './model.js';
 
@@ -43,7 +43,7 @@ export function everythingMarkdown(issue, { log = [], links = issue.links ?? [] 
   const parts = [heading(issue), lines.join('\n')];
   if (String(issue.brief ?? '').trim()) parts.push(issue.brief.trim());
   if (links.length) parts.push(`## ${T.links.title}\n\n${links.map(linkLine).join('\n')}`);
-  const entries = [...log].sort((a, b) => a.at - b.at || a.id - b.id).map((entry) => {
+  const entries = log.filter((entry) => !isAutomatic(entry)).sort((a, b) => a.at - b.at || a.id - b.id).map((entry) => {
     const who = actorName(entry.actor);
     if (isDiscussion(entry)) return `- **${who}** · ${dayOf(entry.at)}: ${storedSystemText(entry).replace(/\n+/g, ' ')}`;
     const said = describe(entry);

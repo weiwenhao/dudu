@@ -11,6 +11,7 @@ private struct CatalogResult: Decodable, Sendable {
 
 private struct AssistantSkillsResult: Decodable, Sendable { var skills: [AssistantSkill] }
 private struct AssistantRecipientsResult: Decodable, Sendable { var outcome: String; var items: [AssistantRecipient] }
+private struct AssistantCardResult: Decodable, Sendable { var outcome: String; var code: String?; var unchanged: Bool?; var commandId: String? }
 
 @MainActor
 final class DSBotStore: ObservableObject {
@@ -418,10 +419,21 @@ final class DSBotStore: ObservableObject {
         }
     }
 
-    /// Resolve the same scoped assistant the desktop uses, before opening it with the ordinary
-    /// native session/watch flow. A late reply must not override another computer or selection.
+    /// Reuse the plugin's computer-scoped identity so cached history opens before any network
+    /// request. Only an unknown assistant needs resolution; the ordinary watch refreshes history.
     func assistantSession() async -> SessionSummary? {
         guard status == .connected, !isOpeningAssistant else { return nil }
+        if let computerID = conversationComputerID, computerID == activeComputer?.id {
+            let isAssistant: (SessionSummary) -> Bool = {
+                $0.isAssistant == true && $0.id != self.unavailableSessionID
+            }
+            if let cached = sessions.first(where: isAssistant)
+                ?? selectedSession.flatMap({ isAssistant($0) ? $0 : nil })
+                ?? recentConversationDetails.lazy.map(\.session).first(where: isAssistant) {
+                DSBotLog.record("assistant.open.cached")
+                return cached
+            }
+        }
         let currentGeneration = generation
         let currentSelection = sessionSelectionGeneration
         isOpeningAssistant = true
@@ -446,6 +458,10 @@ final class DSBotStore: ObservableObject {
 
     var isAssistantConversation: Bool { selectedSession?.isAssistant == true }
 
+    /// The lines of 嘟嘟's thread that the owner hid, by the sequence number of their event: the interface leaves them out (the plugin's answers add the ones hidden on another screen). Only for the assistant's own thread.
+    @Published private(set) var hiddenSeqs = Set<Double>()
+    private var shownHidden: Set<Double> { isAssistantConversation ? hiddenSeqs : [] }
+
     func assistantSkills() async throws -> [AssistantSkill] {
         guard let session = selectedSession, isAssistantConversation else { throw DSBotFailure.switchedComputer }
         let target = sessionSelectionGeneration
@@ -463,6 +479,71 @@ final class DSBotStore: ObservableObject {
         guard target == sessionSelectionGeneration else { throw DSBotFailure.switchedComputer }
         guard result.outcome == "success" else { throw DSBotFailure.remote("UPSTREAM_UNAVAILABLE") }
         return result.items
+    }
+
+    /// A quick button of 嘟嘟's chat: the plugin makes 嘟嘟 send the card into this conversation, and it arrives like any entry of the thread (`QuickCard`). `since` names the card at the end of the
+    /// thread that a repeat would only copy (`QuickCard.repeatable`): when the list is the same the plugin makes nothing and says so. A failure is said in the app's ordinary words (the plugin out
+    /// of date, the computer out of reach).
+    @discardableResult
+    func assistantCard(_ kind: QuickCardKind, since: String? = nil) async -> QuickCardAnswer {
+        guard let session = selectedSession, isAssistantConversation else { return .failed }
+        let currentGeneration = generation
+        let target = sessionSelectionGeneration
+        do {
+            var params: [String: JSONValue] = ["sessionId": .string(session.id), "kind": .string(kind.rawValue)]
+            if let since { params["since"] = .string(since) }
+            let value = try await request("assistant.card", params)
+            let result = try await json.decode(AssistantCardResult.self, from: value)
+            guard currentGeneration == generation, target == sessionSelectionGeneration else { return .failed }
+            guard result.outcome == "success" else { throw DSBotFailure.remote(result.code ?? "UPSTREAM_UNAVAILABLE") }
+            return result.unchanged == true ? .unchanged(commandId: result.commandId) : .made(commandId: result.commandId)
+        } catch {
+            if currentGeneration == generation, target == sessionSelectionGeneration {
+                self.error = featureMessage(for: error)
+            }
+            return .failed
+        }
+    }
+
+    /// The owner's 删除 on lines of 嘟嘟's thread (owner, 2026-11-10: "删除只是在会话界面删除这个消息，实际是没有删除"): the plugin keeps which lines are hidden, and nothing else is removed (the session's log
+    /// and what 嘟嘟 was told stay). The lines leave the thread at once; one the plugin cannot hide comes back with a message in the app's ordinary words.
+    @discardableResult
+    func assistantHide(_ seqs: [Double]) async -> Bool {
+        guard let session = selectedSession, isAssistantConversation, !seqs.isEmpty else { return false }
+        let currentGeneration = generation
+        let target = sessionSelectionGeneration
+        let numbers = seqs.map { JSONValue.number($0) }
+        hiddenSeqs.formUnion(seqs)
+        await reprojectRows()
+        do {
+            let value = try await request("assistant.hide", ["sessionId": .string(session.id), "seqs": .array(numbers)])
+            guard currentGeneration == generation, target == sessionSelectionGeneration else { return false }
+            guard value["outcome"]?.stringValue == "success" else { throw DSBotFailure.remote("UPSTREAM_UNAVAILABLE") }
+            return true
+        } catch {
+            if currentGeneration == generation, target == sessionSelectionGeneration {
+                hiddenSeqs.subtract(seqs)
+                await reprojectRows()
+                self.error = featureMessage(for: error)
+            }
+            return false
+        }
+    }
+
+    /// The rows of the transcript that is open, built again (the set of hidden lines changed).
+    private func reprojectRows() async {
+        let selection = sessionSelectionGeneration
+        while true {
+            let revision = transcriptRevision
+            let projection = await conversationProjector.project(
+                current: nil, incoming: transcript, currentRows: transcriptRows,
+                isRunning: selectedSession?.status == "running", hidden: shownHidden
+            )
+            guard selection == sessionSelectionGeneration else { return }
+            if revision != transcriptRevision { continue }
+            apply(projection)
+            return
+        }
     }
 
     /// Explicit @issue messages go to the desktop's routing action, without a turn in Dudu.
@@ -520,7 +601,6 @@ final class DSBotStore: ObservableObject {
                 throw DSBotFailure.remote("DELIVERY_FAILED")
             }
             assistantRelayRetry = nil
-            if let issue = result.issue { notice = "✓ @\(issue.ref ?? "#\(issue.id)") · \(issue.title)" }
         } catch {
             let failure = safeFailure(for: error)
             if currentSelection == sessionSelectionGeneration, activeComputer?.id == computerID,
@@ -536,7 +616,7 @@ final class DSBotStore: ObservableObject {
         }
     }
 
-    func selectSession(_ session: SessionSummary) async {
+    func selectSession(_ session: SessionSummary, onPrepared: () -> Void = {}) async {
         guard status == .connected else {
             error = DSBotFailure.disconnected.localizedDescription
             return
@@ -546,6 +626,7 @@ final class DSBotStore: ObservableObject {
                 current.isAssistant = true
                 selectedSession = current
             }
+            onPrepared()
             return
         }
         let startedAt = ProcessInfo.processInfo.systemUptime
@@ -608,6 +689,8 @@ final class DSBotStore: ObservableObject {
             await apply(cached)
             guard currentGeneration == generation, currentSelection == sessionSelectionGeneration else { return }
         }
+        // Navigation may now lay out the cached history, without waiting for the remote watch.
+        onPrepared()
         scheduleConversationSave()
         do {
             // session.watch replaces the prior watch without waiting for its stream to close.
@@ -1333,7 +1416,8 @@ final class DSBotStore: ObservableObject {
                 current: transcript, incoming: page.transcript, currentRows: transcriptRows,
                 isRunning: selectedSession?.status == "running", prepending: true,
                 additionalMarkdown: questions.flatMap { $0.questions.compactMap(\.detail) } +
-                    approvals.compactMap(\.detail)
+                    approvals.compactMap(\.detail),
+                hidden: shownHidden
             )
             guard !Task.isCancelled, connection == generation, watchID == currentWatchID,
                   selection == sessionSelectionGeneration,
@@ -1930,7 +2014,8 @@ final class DSBotStore: ObservableObject {
                 current: transcript, incoming: detail.transcript, currentRows: transcriptRows,
                 isRunning: detail.session.status == "running", messages: detail.messages,
                 additionalMarkdown: detail.questions.flatMap { $0.questions.compactMap(\.detail) } +
-                    detail.approvals.compactMap(\.detail)
+                    detail.approvals.compactMap(\.detail),
+                hidden: detail.session.isAssistant == true ? hiddenSeqs : []
             )
             guard application == detailApplicationRevision, selection == sessionSelectionGeneration,
                   connection == generation, watchID == currentWatchID else { return }
@@ -2185,6 +2270,7 @@ final class DSBotStore: ObservableObject {
         providers = []
         permissions = []
         presets = []
+        hiddenSeqs = []
         navigation = .empty
         navigationAvailability = .unknown
         selectedModelId = nil

@@ -72,11 +72,12 @@ export function IssueRow({ issue, now, show, selected, selecting, onSelect, menu
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <button
           type="button" onClick={openRow} aria-label={issue.title} data-issue-title=""
-          className="min-w-0 cursor-pointer truncate rounded text-left font-medium outline-none"
+          title={issue.parent ? `${issue.parent.title}#${issue.title}` : issue.title}
+          className="flex min-w-0 cursor-pointer items-center rounded text-left font-medium outline-none"
         >
           {/* A sub-issue reads "parent#sub-issue" (the owner's choice, 2026-11-05: @ first, then #): the parent's title in grey, then the title of the sub-issue. */}
-          {issue.parent && <span data-issue-parent={issue.parent.id} aria-hidden="true" className="font-normal text-muted-foreground"><span className="inline-block max-w-[40%] truncate align-bottom">{issue.parent.title}</span>#</span>}
-          {issue.title}
+          {issue.parent && <span data-issue-parent={issue.parent.id} aria-hidden="true" className="flex min-w-0 max-w-[280px] items-center font-normal text-muted-foreground"><span className="truncate">{issue.parent.title}</span><span className="shrink-0">#</span></span>}
+          <span className="min-w-0 truncate">{issue.title}</span>
         </button>
         {issue.subIssues && <span className="shrink-0 @max-[560px]:hidden"><SubIssueChipMenu progress={issue.subIssues} issueId={issue.id} request={request} onOpen={onNavigate} /></span>}
       </span>

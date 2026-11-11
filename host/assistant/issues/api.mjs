@@ -148,7 +148,8 @@ const CALLS = {
   search: (issues, { q, limit, tab }) => issues.search(q, { limit, tab }),
   recipients: (issues, body) => issues.recipients(body),
   // An explicit issue address routes the owner's body verbatim, even when it contains @names or /skills.
-  forward: async (issues, { id, session, text, attachments, retryEntry }, { onForward, ...scope }) => {
+  // `chat`: the line was written in 嘟嘟's chat, so it comes into that thread (and its answer after it) as well as going to the session (home/group.mjs).
+  forward: async (issues, { id, session, text, attachments, retryEntry, chat }, { onForward, ...scope }) => {
     if (typeof text !== 'string' || !text.trim() || text.length > 20_000) return { outcome: 'needs_clarification', code: 'invalid_message' };
     const attached = forwardAttachments(attachments);
     if (!attached) return { outcome: 'needs_clarification', code: 'invalid_message' };
@@ -169,7 +170,7 @@ const CALLS = {
     } else logged = issues.log(id, { kind: 'note', text: text.trim(), data: { mention: got.issue.agent, session: got.issue.session }, ...meta({}, scope) });
     if (logged.outcome !== 'success') return logged;
     try {
-      const result = await onForward(got.issue, text.trim(), logged.entry, attached);
+      const result = await onForward(got.issue, text.trim(), logged.entry, attached, { chat: chat === true });
       if (!result || !['success', 'no_op'].includes(result.outcome)) return { ...logged, outcome: 'error', code: 'delivery_failed', saved: true };
       return { ...logged, issue: issues.get(id, { logLimit: 1 }).issue ?? got.issue, delivery: result };
     } catch { return { ...logged, outcome: 'error', code: 'delivery_failed', saved: true }; }

@@ -8,6 +8,8 @@ import { Scope } from './lib/scope.jsx';
 import { setWhere, subscribeOpenIssue, takeIssueRequest } from './lib/where.js';
 import { SettingsDialog } from './settings/SettingsDialog.jsx';
 import { SessionsDialog } from './sessions/SessionsDialog.jsx';
+import { TasksDialog } from './tasks/TasksDialog.jsx';
+import { subscribeTaskRequest, takeTaskRequest } from './tasks/navigation.js';
 import { ServicesProvider } from './services.jsx';
 import { DIRECT_REGISTRY, REGISTRY } from './widgets/index.js';
 import { warmSessions } from './widgets/data.jsx';
@@ -19,6 +21,8 @@ import { T } from './strings.js';
 import { getLocale, subscribeLocale } from './lib/locale.mjs';
 import { requestDashboard, usePageHistory } from './lib/use-page-history.js';
 import { receiveStatuses, subscribeWorkflow, workflowRevision } from './issues/workflow.js';
+import { NeedsYouColorProvider } from './issues/NeedsYouColor.jsx';
+import { resolveIssueSession as resolveSessionTarget } from './issues/session.js';
 
 export { REGISTRY, createWidgetSource };
 export { connectLocale, getLocale, intlLocale, subscribeLocale } from './lib/locale.mjs';
@@ -29,6 +33,7 @@ export { createSidebarActivity } from './sessions/sidebar-state.js';
 export { installChatAutoHistory } from './lib/auto-chat-history.js';
 export { installSessionHistoryCache } from './lib/session-history-cache.js';
 export { installHarnessStats } from './lib/harness-stats.js';
+export { installHarnessForeground } from './lib/harness-foreground.js';
 export { installIssueHeader, ISSUE_HEADER_SLOT } from './lib/session-header.jsx';
 export function openDashboard() { takeIssueRequest(); requestDashboard(); }
 
@@ -59,6 +64,12 @@ export function Page({ request, logo, actions = {}, renderConversation, renderSe
   const { route, openIssue, backToDashboard } = usePageHistory();
   const [settings, setSettings] = useState(false);
   const [sessions, setSessions] = useState(false);
+  const [tasks, setTasks] = useState(false);
+  useEffect(() => {
+    const take = () => { const id = takeTaskRequest(); if (id) { requestDashboard(); setTasks(id); } };
+    take();
+    return subscribeTaskRequest(take);
+  }, []);
   const [previewIssue, setPreviewIssue] = useState(null);
   const [version, setVersion] = useState(0); // settings changes refresh the dashboard and pet
   useEffect(() => {
@@ -82,40 +93,34 @@ export function Page({ request, logo, actions = {}, renderConversation, renderSe
     await actions.openSession?.(target);
   }, [request, actions]);
   // An issue names its session as `claude:<id>`, `codex:<id>` or `dsh:<id>`.
-  const resolveIssueSession = useCallback(async (issue, { signal } = {}) => {
-    const [provider, ...rest] = String(issue.session ?? '').split(':');
-    const id = rest.join(':');
-    if (!id) throw new Error('The issue has no session.');
-    const prepared = provider === 'dsh' && actions.preparedSession?.(id);
-    if (prepared) return { sessionId: prepared };
-    const target = await request('issues/resume', { id: issue.id }, { signal });
-    if (target.sessionId && ['success', 'no_op'].includes(target.outcome)) return target;
-    if (provider === 'dsh') return { sessionId: id };
-    return request('sessions/load', { provider, id }, { signal });
-  }, [request, actions]);
+  const resolveIssueSession = useCallback((issue, options) => resolveSessionTarget(request, actions, issue, options), [request, actions]);
   const openIssueSession = useCallback(async (issue) => {
     await actions.openSession?.(await resolveIssueSession(issue));
   }, [actions, resolveIssueSession]);
   // A session that was just put into DSH is listed in DSH's sidebar, without being opened.
   const addSession = useCallback(async (target) => { await actions.addSession?.(target); }, [actions]);
   const services = useMemo(() => ({
-    request, openIssue, openNativeSession, openIssueSession, previewIssueSession: setPreviewIssue, addSession,
-  }), [request, openIssue, openNativeSession, openIssueSession, addSession]);
+    request, openIssue, openNativeSession, openIssueSession, previewIssueSession: setPreviewIssue, addSession, pickProjectDirectory: actions.pickProjectDirectory,
+  }), [request, openIssue, openNativeSession, openIssueSession, addSession, actions.pickProjectDirectory]);
   return (
     <Scope>
       <ToastProvider>
-        <ServicesProvider value={services}>
+        <NeedsYouColorProvider request={request}><ServicesProvider value={services}>
           {route.name === 'issue' ? (
             <IssueDetail request={request} id={route.id} ids={route.ids} logo={logo} onBack={backToDashboard} onOpen={openIssue} openSession={openIssueSession} previewSession={setPreviewIssue} />
           ) : (
-            <Dashboard key={version} request={request} registry={registry} onSettings={() => setSettings(true)} onSessions={() => setSessions(true)} />
+            <Dashboard key={version} request={request} registry={registry} onSettings={() => setSettings(true)} onSessions={() => setSessions(true)} onTasks={() => setTasks(true)} />
           )}
           <SessionsDialog open={sessions} onOpenChange={setSessions} />
+          <TasksDialog open={Boolean(tasks)} initialTaskId={typeof tasks === 'string' ? tasks : null} onOpenChange={setTasks} onConversation={async () => {
+            const conversation = await request('assistant/conversation');
+            await actions.openSession?.({ sessionId: conversation.sessionId });
+          }} />
           {previewIssue && <IssueSessionDialog key={previewIssue.id} issue={previewIssue} resolveSession={resolveIssueSession}
             actions={actions} renderConversation={renderConversation} renderSessionHeader={renderSessionHeader} onClose={() => setPreviewIssue(null)} />}
-        </ServicesProvider>
+        </ServicesProvider></NeedsYouColorProvider>
         <SettingsDialog open={settings} onOpenChange={setSettings} request={request} actions={actions} onChanged={notifySettingsChanged} />
-        {!petInShell && <Pet request={request} actions={actions} renderPermission={renderPermission} version={version} suppressed={settings || sessions || Boolean(previewIssue)} onSettings={() => setSettings(true)} />}
+        {!petInShell && <Pet request={request} actions={actions} renderPermission={renderPermission} version={version} suppressed={settings || sessions || tasks || Boolean(previewIssue)} onSettings={() => setSettings(true)} />}
       </ToastProvider>
     </Scope>
   );

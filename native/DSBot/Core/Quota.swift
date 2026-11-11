@@ -1,0 +1,185 @@
+import Foundation
+
+// The subscription quota the plugin keeps (`quota.get`), as the quota sheet behind the board's gauge button shows it (owner, 2026-11-11: "手机就按你的设计", the sheet of
+// `.local/designs/quota-icon-2026-11-11/phone.png`). The plugin reads each source (the enabled providers, DeepSeek's account and key) only when somebody asks and at most once in ten minutes,
+// so opening the sheet is the ask and the numbers are whatever it has kept, with the time they were read. Nothing here names an agent: a block is whatever the plugin lists.
+
+struct QuotaWindow: Decodable, Equatable, Identifiable, Sendable {
+    var key: String?
+    /// The plugin's own name for it, in Chinese: "5 小时", "每周", "Fable 每周", "3 天".
+    var label: String
+    /// 0 to 1.
+    var used: Double
+    /// When it starts over, in milliseconds since 1970.
+    var resetsAt: Double?
+    var id: String { key ?? label }
+}
+
+struct QuotaAmount: Decodable, Equatable, Sendable {
+    var text: String
+}
+
+struct QuotaProvider: Decodable, Equatable, Identifiable, Sendable {
+    var id: String
+    /// The key of the logo (`claude`, `codex`, `deepseek`); an agent the app has no logo for is drawn by its name.
+    var agent: String
+    var name: String
+    var plan: String?
+    var kind: String?
+    var windows: [QuotaWindow]
+    var balance: [QuotaAmount]?
+    /// When this was read, in milliseconds since 1970.
+    var readAt: Double?
+    /// When the plan's paid time ends, in milliseconds since 1970: only for a plan whose sign-in tells it, and only while it is still ahead (the plugin leaves it out otherwise).
+    var until: Double?
+
+    /// "Team · 有效期至11月24日": the plan's name, then when it ends (owner, 2026-11-11, magpie's words).
+    var planLine: String? {
+        let parts = [plan?.isEmpty == false ? plan : nil, until.map { "有效期至\(QuotaText.date($0))" }].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    var amount: String? {
+        guard kind == "balance", let balance, !balance.isEmpty else { return nil }
+        return balance.map(\.text).joined(separator: " + ")
+    }
+    var rows: [QuotaRow] { kind == "balance" ? [] : windows.map { QuotaRow($0) } }
+    var hasContent: Bool { amount != nil || !rows.isEmpty }
+}
+
+/// One window as a row: what is left, how it is coloured as it runs low (amber from 70 % used, red from 90 %: the desktop's rule), and when it starts over.
+struct QuotaRow: Identifiable, Equatable {
+    enum Level { case normal, warn, hot }
+
+    let id: String
+    let label: String
+    let used: Int
+    let reset: String?
+    let phrase: String?
+
+    init(_ window: QuotaWindow, now: Date = Date()) {
+        id = window.id
+        label = window.label
+        used = min(100, max(0, Int((window.used * 100).rounded())))
+        let when = window.resetsAt.map { QuotaText.when($0, now: now) }
+        reset = used >= 100 ? nil : when.map { "\($0) 重置" }
+        phrase = used >= 100 ? when.map { "已达上限，\($0) 重置" } : nil
+    }
+
+    var left: Int { 100 - used }
+    var isOut: Bool { used >= 100 }
+    var level: Level { used >= 90 ? .hot : used >= 70 ? .warn : .normal }
+}
+
+enum QuotaText {
+    private static let clock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_GB")
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+    private static let weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+    private static let day: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日"
+        return formatter
+    }()
+
+    /// The month and day ("11月24日"), as a plan's end is told.
+    static func date(_ milliseconds: Double) -> String {
+        day.string(from: Date(timeIntervalSince1970: milliseconds / 1000))
+    }
+
+    /// The time of day when that is today, else the weekday too ("周二 01:59"): the desktop's `resetText`.
+    static func when(_ milliseconds: Double, now: Date = Date()) -> String {
+        let date = Date(timeIntervalSince1970: milliseconds / 1000)
+        let time = clock.string(from: date)
+        let calendar = Calendar.current
+        if calendar.isDate(date, inSameDayAs: now) { return time }
+        return "\(weekdays[calendar.component(.weekday, from: date) - 1]) \(time)"
+    }
+
+    /// The line at the top of the sheet.
+    static func updated(_ milliseconds: Double?, now: Date = Date()) -> String? {
+        milliseconds.map { "更新于 \(when($0, now: now))" }
+    }
+}
+
+private struct QuotaAnswer: Decodable, Sendable {
+    var outcome: String
+    var providers: [QuotaProvider]?
+    var refreshing: Bool?
+    var readAt: Double?
+}
+
+@MainActor
+final class QuotaModel: ObservableObject {
+    enum LoadState { case idle, loading, loaded, failed }
+
+    @Published private(set) var providers: [QuotaProvider] = []
+    @Published private(set) var refreshing = false
+    @Published private(set) var readAt: Double?
+    @Published private(set) var state: LoadState = .idle
+
+    private let json = DSBotJSON()
+    private var reading: Task<Void, Never>?
+    /// While a reading is under way the sheet looks again every few seconds (a look asks for nothing), up to this many times.
+    private static let looks = 10
+    private static let lookSeconds: UInt64 = 3
+
+    /// The blocks that have something to say, for the sheet.
+    var blocks: [QuotaProvider] { providers.filter(\.hasContent) }
+
+    /// Forget what was read: another computer has other sources.
+    func reset() {
+        close()
+        providers = []
+        refreshing = false
+        readAt = nil
+        state = .idle
+    }
+
+    /// The sheet opened: the one ask. What the plugin has kept comes back at once; a source it had not asked for in ten minutes is read in the background and `refreshing` says so.
+    func open(using store: DSBotStore) {
+        reading?.cancel()
+        reading = Task { await run(using: store) }
+    }
+
+    func close() {
+        reading?.cancel()
+        reading = nil
+    }
+
+    private func run(using store: DSBotStore) async {
+        guard store.status == .connected else {
+            if providers.isEmpty { state = .failed }
+            return
+        }
+        if providers.isEmpty { state = .loading }
+        var ask = true
+        for _ in 0...Self.looks {
+            if Task.isCancelled { return }
+            do {
+                let value = try await store.request("quota.get", ["ask": .bool(ask)])
+                let answer = try await json.decode(QuotaAnswer.self, from: value)
+                guard answer.outcome == "success", let list = answer.providers else { throw DSBotFailure.protocolError }
+                if Task.isCancelled { return }
+                if providers != list { providers = list }
+                refreshing = answer.refreshing == true
+                readAt = answer.readAt
+                state = .loaded
+                if !refreshing { return }
+            } catch {
+                if Task.isCancelled { return }
+                DSBotLog.networkFailure("quota.get.fail", error: error)
+                refreshing = false
+                if providers.isEmpty { state = .failed }
+                return
+            }
+            ask = false
+            try? await Task.sleep(nanoseconds: Self.lookSeconds * 1_000_000_000)
+        }
+        refreshing = false
+    }
+}

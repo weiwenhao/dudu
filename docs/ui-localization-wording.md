@@ -163,7 +163,6 @@
 | activity.sessionClosed | closed the session | 关闭了会话 |
 | activity.sessionResumed | resumed the session | 恢复了会话 |
 | activity.whoShouldTake | Who should handle this? | 交给谁处理？ |
-| activity.notAssigned | No agent chosen: {reason} | 还没分配智能体：{reason} |
 | activity.failed | Something went wrong: {reason}. What should we do? | 出错了：{reason}。怎么办？ |
 | activity.noReason | No reason given | 没有说明原因 |
 | activity.notStarted | Could not start: {reason}. Choose another agent, or try later? | 没能开始：{reason}。要换个智能体，还是稍后再试？ |
@@ -250,13 +249,9 @@
 | dashboard.changed | Changed layout | 已更改版面 |
 | projects.choose | Choose a project | 选择项目 |
 | projects.create | Create project | 新建项目 |
-| projects.name | Project name | 项目名称 |
-| projects.path | Project folder | 项目文件夹 |
-| projects.createFolder | Create the folder if it does not exist | 文件夹不存在时创建 |
 | projects.empty | No projects yet | 还没有项目 |
 | projects.loading | Loading projects… | 正在读取项目… |
 | projects.failed | Could not load projects | 项目没能读取 |
-| projects.createFailed | Could not open the project folder. Check its path or create it. | 项目文件夹没能打开，请检查路径，或勾选创建文件夹。 |
 | widgets.titles.issues | Issues | 事项 |
 | widgets.titles.overview | Overview | 概览 |
 | widgets.titles.upcoming | Upcoming | 接下来 |
@@ -270,7 +265,6 @@
 | widgets.descriptions.upcoming | Issues with a due date, soonest first | 按截止日期从近到远排列 |
 | widgets.descriptions.stuck | Issues an agent is stuck on | 智能体卡住的事项 |
 | widgets.descriptions.inputs | Whether each connector works and what it read today | 连接器的状态和今天读到的内容 |
-| widgets.descriptions.quota | Subscription usage, one line per agent | 各智能体的订阅用量 |
 | widgets.descriptions.sessions | Search and open sessions | 搜索和打开会话 |
 | widgets.descriptions.office | Assigned active issues as people at desks | 已分配智能体的进行中事项，各有一位员工 |
 | widgets.needs.issues | issues | 事项 |
@@ -440,7 +434,7 @@
 | settings.skills.back | Back to skills | 返回技能 |
 | settings.skills.note | Dudu’s own skills are separate from each agent’s skills. | 嘟嘟自己的技能，和各智能体的技能互不影响。 |
 | settings.skills.deleteOf | Delete: {name} | 删除：{name} |
-| agentState.idle | Idle | 空闲 |
+| agentState.idle | Idle | 空闲中 |
 | agentState.working | Working | 工作中 |
 | agentState.blocked | Needs you | 需要你 |
 | agentState.unassigned | Unassigned | 未分配 |

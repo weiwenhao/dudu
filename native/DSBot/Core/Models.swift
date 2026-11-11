@@ -86,7 +86,7 @@ enum AgentWorkState: String, Codable, Sendable {
 
     var name: String {
         switch self {
-        case .idle: return "空闲"
+        case .idle: return "空闲中"
         case .working: return "工作中"
         case .blocked: return "需要你"
         }

@@ -12,6 +12,8 @@
 // messages of a chat or a comment thread that one collection brings are put together under the thread's id, oldest first, one message to a
 // line that starts with its time; `conversation: true` tells the inbox to add the messages that come later to the row that is still waiting.
 //
+// A record's title is the session's. One it left out is the first words of what the record says (`titleFromText`): a row is never blank.
+//
 // The session is a model that has read other people's messages, so nothing it wrote is taken as it is: text is cleaned of control and
 // bidirectional characters, secrets are blanked, lengths are cut (and a cut is counted, not silent), a link must be http or https. One bad record
 // is rejected with its reason and the others stay good. At most 100 records are taken; the rest is counted in `dropped`.
@@ -47,6 +49,29 @@ function timeOf(value) {
   if (typeof value !== 'string' || !value.trim()) return null;
   const ms = Date.parse(value.trim());
   return Number.isFinite(ms) ? ms : null;
+}
+
+const TITLE_FROM_TEXT = 60;
+const LINK = /https?:\/\/[^\s<>"'`）)】」]+/giu;
+
+/**
+ * A title for a record the session gave none: the first words of what it says. The session leaves the field out now and then (the prompt only showed it in the answer's example, and
+ * in one session it left it out of all eleven messages it gave: records 135, 136 and 149 were shown as blank rows, owner, 2026-11-11). Links are left out of the words, and a text that
+ * is only a link gives the link's host. '' when there is nothing to say. The text has been through `cleanText`, so no secret is in it.
+ */
+export function titleFromText(text, max = TITLE_FROM_TEXT) {
+  const said = typeof text === 'string' ? text : '';
+  const links = said.match(LINK) ?? [];
+  let title = said.replace(LINK, ' ').replace(/\s+/g, ' ').trim();
+  if (!title && links.length) {
+    try {
+      title = new URL(links[0]).host;
+    } catch {
+      title = '';
+    }
+  }
+  const chars = [...title];
+  return chars.length > max ? `${chars.slice(0, max - 1).join('').trimEnd()}…` : title;
 }
 
 const linkOf = (value) => {
@@ -133,6 +158,12 @@ export function messagesOf(text) {
   return messages;
 }
 
+/** What the newest message of a kept text says, without the time and the name that start its line (a text that is not a conversation is one message: the whole of it). */
+export function newestSaid(text) {
+  const last = messagesOf(text).at(-1) ?? '';
+  return last.replace(/^\d{2}-\d{2} \d{2}:\d{2} (?:[^：\n]{1,200}：)?/u, '');
+}
+
 /** Messages as one text of at most `max` characters: when there are too many the oldest go first. */
 function fit(messages, max) {
   const kept = [...messages];
@@ -159,6 +190,24 @@ export function addMessages(old, incoming, max = RECORD_LIMITS.text) {
   return { ...fit([...had, ...fresh], max), added: fresh.length };
 }
 
+/**
+ * A conversation's text with messages added that may come before, among or after the ones it has (what a session read around a record, when the owner asked for more of its context): all of
+ * them in the order of their times, each once. The messages of a text that have no times cannot be ordered: the new ones then go in front of the old. -> { text, added, cut }
+ */
+export function mergeMessages(old, incoming, max = RECORD_LIMITS.text) {
+  const had = messagesOf(old);
+  const have = new Set(had);
+  const fresh = messagesOf(incoming).filter((message) => !have.has(message));
+  if (!fresh.length) return { text: old, added: 0, cut: false };
+  const all = [...fresh, ...had];
+  const timed = all.every((message) => HEADER.test(message));
+  const key = (message) => message.slice(0, 11); // `11-06 14:43`
+  const ordered = timed
+    ? all.map((message, index) => ({ message, index })).sort((a, b) => (key(a.message) < key(b.message) ? -1 : key(a.message) > key(b.message) ? 1 : a.index - b.index)).map(({ message }) => message)
+    : all;
+  return { ...fit(ordered, max), added: fresh.length };
+}
+
 /** The messages one collection brought of one conversation, as one record. */
 function together(members) {
   const timed = members.every((member) => member.at != null);
@@ -168,11 +217,28 @@ function together(members) {
     : [...members].reverse();
   const newest = ordered.at(-1);
   const names = [...new Set(ordered.map((member) => member.author).filter(Boolean))];
-  const { text, cut } = fit(ordered.map(lineOf), RECORD_LIMITS.text);
+  // What the session read around the messages (their `context`) belongs to the talk too: a bare mention says nothing without the messages before it (owner, 2026-11-11: "我不知道这个@是让我干什么").
+  // A line the talk has already is not added twice, and one with no time takes the time of the first message, so that it still begins like a message and comes before it.
+  const own = ordered.map((member) => ({ at: member.at, line: lineOf(member) }));
+  const known = new Set(own.map((entry) => entry.line));
+  const around = [];
+  for (const member of ordered) {
+    for (const item of member.context ?? []) {
+      if (!item.text) continue;
+      const at = item.at ?? ordered[0].at;
+      const line = lineOf({ at, author: item.from, text: item.text, title: '' });
+      if (known.has(line)) continue;
+      known.add(line);
+      around.push({ at, line });
+    }
+  }
+  const lines = [...around, ...own];
+  if (around.length && lines.every((entry) => entry.at != null)) lines.sort((a, b) => a.at - b.at); // stable: on the same time what was read around comes first
+  const { text, cut } = fit(lines.map((entry) => entry.line), RECORD_LIMITS.text);
   const said = (name) => ordered.map((member) => member[name]);
   return {
     sourceId: `thread:${newest.thread}`, version: newest.version, kind: newest.kind,
-    title: [...said('title')].reverse().find(Boolean) ?? '', author: names.join('、').slice(0, RECORD_LIMITS.from),
+    title: [...said('title')].reverse().find(Boolean) || titleFromText(newest.text), author: names.join('、').slice(0, RECORD_LIMITS.from),
     url: [...said('url')].reverse().find(Boolean) ?? '', thread: newest.thread, at: newest.at, text, context: [],
     more: [...said('more')].reverse().find(Boolean) ?? '', truncated: cut || ordered.some((member) => member.truncated),
     toMe: ordered.some((member) => member.toMe === true) ? true : ordered.some((member) => member.toMe === false) ? false : null,
@@ -223,5 +289,7 @@ export function normalizeRecords(raw, { now = Date.now } = {}) {
     out.records.push(result.record);
   });
   out.records = gather(out.records);
+  // A title the session left out is the first words of what the record says, never a blank row (`titleFromText`).
+  for (const record of out.records) if (!record.title) record.title = titleFromText(record.text);
   return out;
 }

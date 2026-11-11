@@ -7,6 +7,7 @@ import { registerHarnessCommands } from './commands.mjs';
 import { createHarnessTeams } from './teams.mjs';
 import { createInputJournal } from './input-delivery.mjs';
 import { createHarnessJobs } from './jobs.mjs';
+import { createForegroundWatch } from './foreground.mjs';
 
 // The providers of DSH: the harnesses installed on this computer. A harness that is found and enabled becomes a
 // model route of its own (`claude`, `codex`); a session that selects the route is run by that harness, and the
@@ -40,6 +41,10 @@ export async function createProviders({ host, providers, folder, log = console }
   let settings = await readSettings(settingsFile);
   const status = new Map();         // provider id -> what the settings page shows
   const registered = new Map();     // route -> { bridge, driver, path, dispose }
+  const foreground = createForegroundWatch((id) => [...registered.values()].some(({ bridge }) => {
+    const run = bridge.runOf(id);
+    return run && !run.finished && run.foregroundActive === false;
+  }));
   const mirrored = new Map();       // agent id -> { agent, route, bridge, dispose }
   const closing = new Set();
   let refreshing = Promise.resolve();
@@ -90,6 +95,7 @@ export async function createProviders({ host, providers, folder, log = console }
     const bridge = new HarnessBridge({
       driver, agentOf: (id) => host.agents.get(id), permissionOf: (agent) => host.permissionOf?.(agent), onLink: host.onLink,
       eventsOf: host.eventsOf, flushSession: host.flushSession, inputJournal,
+      onForeground: (id) => foreground.changed(id),
       inputOf: createHarnessInput({ attachments: () => host.attachments?.(), folder: join(folder, 'input-images') }),
     });
     const teams = createHarnessTeams({ host, driver, log });
@@ -114,7 +120,7 @@ export async function createProviders({ host, providers, folder, log = console }
       }
     };
     const dispose = host.llm.registerAdapter([driver.route], createHarnessAdapter(bridge));
-    registered.set(driver.route, { bridge, teams, driver, path: detection.path, environment: provider.environment, dispose });
+    registered.set(driver.route, { bridge, teams, driver, path: detection.path, version: detection.version, environment: provider.environment, dispose });
   }
 
   async function refreshNow() {
@@ -164,8 +170,8 @@ export async function createProviders({ host, providers, folder, log = console }
   return {
     state: view,
     /** The harnesses that are found and enabled, with what reading their sessions needs. */
-    sources: () => [...registered.values()].map(({ bridge, driver, path, environment }) => ({
-      id: driver.id, name: driver.name, route: driver.route, command: path, environment, driver, activeRuns: () => bridge.activeRuns(),
+    sources: () => [...registered.values()].map(({ bridge, driver, path, version, environment }) => ({
+      id: driver.id, name: driver.name, route: driver.route, command: path, version, environment, driver, activeRuns: () => bridge.activeRuns(),
     })),
     refresh: async () => { await refresh(); return view(); },
     /** Lets go of what the harnesses hold for a DSH session whose turn has ended (deep sleep); -> whether any of them held a run. */
@@ -195,6 +201,13 @@ export async function createProviders({ host, providers, folder, log = console }
         if (action === 'state') return Response.json(view(), { headers: { 'cache-control': 'no-store' } });
         if (action === 'refresh') return Response.json(await this.refresh(), { headers: { 'cache-control': 'no-store' } });
         if (action === 'save') return Response.json(await this.save(await request.json()), { headers: { 'cache-control': 'no-store' } });
+        if (action === 'foreground') {
+          const body = await request.json();
+          if (typeof body?.sessionId !== 'string' || !body.sessionId || body.sessionId.length > 512
+            || body.after !== undefined && typeof body.after !== 'boolean') return new Response('Invalid request', { status: 400 });
+          return Response.json(await foreground.wait(body.sessionId, { after: body.after, signal: request.signal }),
+            { headers: { 'cache-control': 'no-store' } });
+        }
         return new Response('Not found', { status: 404 });
       } catch (error) {
         return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400, headers: { 'cache-control': 'no-store' } });
@@ -204,6 +217,7 @@ export async function createProviders({ host, providers, folder, log = console }
       if (disposal) return disposal;
       closed = true;
       return disposal = (async () => {
+        foreground.close();
         for (const dispose of disposers) dispose();
         for (const entry of mirrored.values()) entry.dispose();
         mirrored.clear();

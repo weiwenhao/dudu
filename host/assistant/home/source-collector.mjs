@@ -15,9 +15,9 @@ export const INTAKE_PREFIX = 'dudu-assistant-intake-';
 export const MAX_RUNS = 24;
 /**
  * What a collection is told, as a number. A session that was told otherwise is not used again (its conversation holds the old words, and what the model does
- * next follows its conversation as much as the new question), so the next collection starts another. 2: the notes were taken out (2026-11-05).
+ * next follows its conversation as much as the new question), so the next collection starts another. 2: the notes were taken out (2026-11-05). 3: the messages around an item that cannot be understood alone are required (2026-11-11). 4: a title is asked for (the session had left it out of every message it gave, 2026-11-11).
  */
-export const PROMPT_VERSION = 2;
+export const PROMPT_VERSION = 4;
 const STOP_WAIT_MS = 5_000;
 
 // Which tools of an MCP server a collection may call. DSH does not carry a server's own `readOnlyHint` into its tool registry (checked on a real DSH:
@@ -44,6 +44,29 @@ function reach(via) {
   if (!via) return '';
   if (via.kind === 'mcp') return `Connector: ${via.name}. Read through its MCP tools, named mcp__${via.id}__… Use only those tools.\n\n`;
   return `Connector: ${via.name}.${via.prompt ? `\nHow to reach the service:\n${via.prompt}` : ''}\n\n`;
+}
+
+/**
+ * What a session is asked when the owner wants more of one record's context (the Collector's button, 2026-11-11): the same answer as a collection gives, for the conversation the record belongs to.
+ * `record` is the whole record (inbox.get): its words, its thread, and the line that says how to read more of it.
+ */
+export function fillQuestion(source, record) {
+  const when = Number.isFinite(record.at) ? new Date(record.at).toISOString() : '';
+  const said = String(record.text ?? '');
+  // A row that holds a conversation (its messages were folded into one: `thread:<id>`) gets the messages of that conversation back, one record each. Any other row (a mail, an issue, a page, a
+  // message that came with no thread) gets back the item itself with its context filled in: that is what the inbox keeps for it.
+  const talk = String(record.sourceId ?? '').startsWith('thread:');
+  const ask = talk
+    ? `Read the conversation it belongs to now: the thread or the chat, the way above or as the skill says. Answer with the same JSON as a collection, one record for each message of that conversation, oldest first: the ${RECORD_LIMITS.context * 2} or so messages before the item, the item itself, and what comes after it. Each record: id (the service's own message id), kind "message", from, at, text (as written, not shortened), thread (the thread above). Do not leave the item out. If it cannot be read, answer {"ok":false,"error":"the reason"}.`
+    : `Read what it belongs to now (the conversation around it, the mail thread, the comments of the issue, the page it is on), the way above or as the skill says. Answer with the same JSON as a collection that holds ONE record: the item itself, the same id and the same words, with its context filled in: the messages or comments around it, oldest first, at most ${RECORD_LIMITS.context}, each with from, at and text (as written). If it cannot be read, answer {"ok":false,"error":"the reason"}.`;
+  return `Collector: ${source.name}
+${reach(source.via)}The owner wants more context for one item this collector brought, because it cannot be understood alone (a bare mention, a few words). What is kept of the item:
+- title: ${record.title}
+- from: ${record.from}${when ? `\n- time: ${when}` : ''}${record.thread ? `\n- thread: ${record.thread}` : ''}${record.url ? `\n- link: ${record.url}` : ''}
+- words${said.length > 3000 ? ' (the last 3000 characters)' : ''}:
+${said.length > 3000 ? said.slice(-3000) : said}${record.more ? `\n- how to read more of it: ${record.more}` : ''}
+
+${ask}`;
 }
 
 const textOf = (content) => typeof content === 'string' ? content : (content ?? []).filter((part) => part.type === 'text').map((part) => part.text).join('\n');
@@ -153,7 +176,7 @@ export function createSourceCollector(ctx, { folder, file = null, maxRuns = MAX_
     return () => link.close();
   }
 
-  async function collectOnce(source, { signal, since }) {
+  async function collectOnce(source, { signal, since, ask }) {
     signal?.throwIfAborted();
     const model = pickModel(await ctx.sessionController.modelCatalog());
     if (!model) throw new Error('This DSH has no conversation model.');
@@ -204,9 +227,10 @@ Give one record for each separate item (a mail, a message, an issue, a comment, 
 - id: the id the service itself gives the item (Message-ID, issue link or number, message_id, page id plus comment id). Never make one up; when there really is none, use the link.
 - version: when the item last changed (the service's updated time or version number), so that a changed item can be told from an unchanged one.
 - kind: one of mail, message, issue, comment, page, task, other.
+- title: one short line that says what the item is about (a mail's subject, the name of an issue or page; for a message, what it says). Always give one.
 - text: the original relevant text, as it was written. Do not summarize it. At most about ${RECORD_LIMITS.text} characters.
 - thread: the id of the conversation, mail thread, issue or page the item belongs to.
-- context: the messages around the item in its thread, oldest first, at most ${RECORD_LIMITS.context}, only as many as are needed to understand it. more: one line saying how to get more of the thread (the tool and its arguments, or a link).
+- context: what the item refers to: the messages before it in its thread or chat (and any after it that answer it), oldest first, at most ${RECORD_LIMITS.context}, each with from, at and text. Read them, do not guess: the command you give in more is how. A message that mentions or addresses the owner, replies to someone, or is only a few words cannot be understood alone (a bare @ asks nothing), so for such an item context is required; leave it out only for an item that says everything itself (a mail, an issue, a long message). more: one line saying how to get more of the thread (the tool and its arguments, or a link).
 - Give records only for what the prompt asks for. When it says which items it wants (those that mention the owner, those sent to them, one kind of notice), an item that does not match is left out, however important or interesting it looks; a word such as "especially" or "mainly" there names the items to give, it does not widen the prompt to every item. When you cannot tell whether an item matches, leave it out.
 - Leave out a field you cannot fill. When there is nothing new, answer "records":[].
 If access fails, answer {"ok":false,"error":"the actual reason"}. Do not invent records or claim success without reading. Current local time: ${new Date().toISOString()}.`,
@@ -243,7 +267,7 @@ If access fails, answer {"ok":false,"error":"the actual reason"}. Do not invent 
       const before = handle.agent.session.seq; // what this collection says starts here; the conversation holds the earlier ones too
       await ctx.sessionController.prompt({
         sessionId: handle.agent.session.id, requestId: `dudu-collect-${randomUUID()}`, mode: 'queue',
-        content: [{ type: 'text', text: `Collector: ${source.name}\n${reach(source.via)}What to collect:\n${source.prompt ?? source.description}\n\nLast collection: ${since ? new Date(since).toISOString() : 'first collection'}\nCollect what is new or changed since then.` }],
+        content: [{ type: 'text', text: ask ?? `Collector: ${source.name}\n${reach(source.via)}What to collect:\n${source.prompt ?? source.description}\n\nLast collection: ${since ? new Date(since).toISOString() : 'first collection'}\nCollect what is new or changed since then.` }],
       }, signal ?? new AbortController().signal);
       await handle.agent.whenIdle();
       const events = handle.agent.session.snapshotEvents().filter((event) => !(event.seq < before));
@@ -287,6 +311,9 @@ If access fails, answer {"ok":false,"error":"the actual reason"}. Do not invent 
     turn.then(forget, forget);
     return turn;
   };
+
+  /** The owner asked for more of one record's context: the collector's own session (queued behind a collection that is running) is asked to read the conversation around that record. */
+  collect.fill = (source, record, options = {}) => collect(source, { ...options, ask: fillQuestion(source, record) });
 
   /**
    * Puts away the collection sessions this plugin made before it kept one for each connector: they are in DSH's list of sessions, not in

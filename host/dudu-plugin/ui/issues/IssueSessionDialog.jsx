@@ -42,6 +42,7 @@ export function IssueSessionDialog({ issue, resolveSession, actions, renderConve
   const [attempt, setAttempt] = useState(0);
   const [expanding, setExpanding] = useState(false);
   const surface = useRef(null);
+  const backdrop = useRef(null);
   const opener = useRef(null);
   useEffect(() => {
     let active = true;
@@ -71,17 +72,22 @@ export function IssueSessionDialog({ issue, resolveSession, actions, renderConve
   };
   // DSH portals its model menus to body. Radix's modal trap would hide them and block their pointer/focus events.
   return <Dialog open modal={false} onOpenChange={(open) => { if (!open) onClose(); }}>
-    <DialogContent ref={surface} data-dudu-conversation-dialog
+    <DialogContent ref={surface} overlayRef={backdrop} data-dudu-conversation-dialog
       className="h-[min(900px,calc(100dvh-4rem))] w-[min(1008px,calc(100vw-4rem))] gap-0 overflow-hidden p-0 sm:max-w-none"
       onOpenAutoFocus={() => { opener.current = document.activeElement; }}
       onCloseAutoFocus={(event) => {
         event.preventDefault();
         if (!expanding && opener.current?.isConnected) opener.current.focus();
       }}
+      onInteractOutside={(event) => {
+        // DSH's image and model menus portal outside this dialog and take focus. Only a primary press on our own backdrop dismisses it.
+        const original = event.detail.originalEvent;
+        if (original.type !== 'pointerdown' || original.button !== 0 || original.ctrlKey || event.target !== backdrop.current) event.preventDefault();
+      }}
       onEscapeKeyDown={(event) => {
         const hostMenu = [...(surface.current?.querySelectorAll('[aria-expanded="true"][aria-controls]') ?? [])]
           .some((trigger) => document.getElementById(trigger.getAttribute('aria-controls')));
-        if (hostMenu || surface.current?.querySelector('[data-dudu-session-header-action] [aria-expanded="true"]')) event.preventDefault();
+        if (hostMenu || document.querySelector('[data-context-menu]') || surface.current?.querySelector('[data-dudu-session-header-action] [aria-expanded="true"]')) event.preventDefault();
       }}
       aria-describedby={undefined}>
       <header className="flex h-11 shrink-0 items-center gap-2 border-b pr-2 pl-4">

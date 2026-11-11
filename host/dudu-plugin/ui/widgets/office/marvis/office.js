@@ -30,8 +30,8 @@ const FLIGHT = 1.1; // seconds, for the ping-pong ball to go from one player to 
 const FADE = 0.45; // seconds, for somebody who appears or goes
 const ease = (p) => (p < 0.5 ? 2 * p * p : 1 - ((-2 * p + 2) ** 2) / 2);
 
-const SCREEN_KINDS = ['browser', 'apk', 'file']; // what the monitors of the desks after the boss's show while somebody works, in turn
-const screenFor = (seat) => (seat === 0 ? 'main' : SCREEN_KINDS[(seat - 1) % SCREEN_KINDS.length]);
+const SCREEN_KINDS = ['browser', 'apk', 'file']; // what the monitors of the desks show while somebody works, in turn
+const screenFor = (seat) => SCREEN_KINDS[seat % SCREEN_KINDS.length];
 
 /**
  * What is drawn and what it does. `atlas` is the furniture's textures by name, `people` the 16 people's frames, `screen(name)` and

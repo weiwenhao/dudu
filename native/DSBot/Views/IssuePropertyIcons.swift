@@ -4,6 +4,7 @@ import SwiftUI
 struct IssueStatusIcon: View {
     let type: String
     var color: String?
+    var iconProgress: Double?
     var size: CGFloat = 16
 
     private var ink: Color {
@@ -36,11 +37,16 @@ struct IssueStatusIcon: View {
             } else {
                 context.stroke(circle, with: .color(ink), style: StrokeStyle(lineWidth: 1.6, lineCap: .round, dash: type == "backlog" ? [1.6, 2.4] : []))
                 if type == "in_progress" || type == "in_review" {
-                    var sector = Path()
-                    sector.move(to: CGPoint(x: 8, y: 8))
-                    sector.addArc(center: CGPoint(x: 8, y: 8), radius: 3.8, startAngle: .degrees(-90), endAngle: .degrees(type == "in_review" ? 180 : 90), clockwise: false)
-                    sector.closeSubpath()
-                    context.fill(sector, with: .color(ink))
+                    let progress = iconProgress ?? (type == "in_review" ? 0.75 : 0.5)
+                    if progress == 1 {
+                        context.fill(Path(ellipseIn: CGRect(x: 4.2, y: 4.2, width: 7.6, height: 7.6)), with: .color(ink))
+                    } else if progress > 0 {
+                        var sector = Path()
+                        sector.move(to: CGPoint(x: 8, y: 8))
+                        sector.addArc(center: CGPoint(x: 8, y: 8), radius: 3.8, startAngle: .degrees(-90), endAngle: .degrees(-90 + progress * 360), clockwise: false)
+                        sector.closeSubpath()
+                        context.fill(sector, with: .color(ink))
+                    }
                 }
             }
         }

@@ -1,26 +1,26 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Activity, Box, CircleDot, Copy, CopyPlus, CornerDownRight, Expand, Signal, SquareArrowOutUpRight, Tag, Trash2, User } from 'lucide-react';
+import { Activity, Box, CircleDot, Copy, CopyPlus, CornerDownRight, Pencil, Signal, SquareArrowOutUpRight, Tag, Trash2, User } from 'lucide-react';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from '../components/context-menu.jsx';
 import { Command, CommandInput, CommandItem, CommandList, CommandSeparator } from '../components/command.jsx';
 import { Popover, PopoverAnchor, PopoverContent } from '../components/popover.jsx';
-import { useToast } from '../components/toast.jsx';
 import { COPY_KINDS } from './copy.js';
 import { useCopyIssue } from './use-copy.js';
 import { T } from '../strings.js';
 import { AGENT_NAMES } from './model.js';
 import { AgentAvatar, DueIcon } from './icons.jsx';
 import { DueChoices, DueDateDialog } from './DueMenu.jsx';
-import { CreateProjectDialog, ProjectChoices } from './ProjectMenu.jsx';
+import { ProjectChoices } from './ProjectMenu.jsx';
 import { AgentStateChoices } from './AgentStateMenu.jsx';
 import { StatusChoices } from './StatusMenu.jsx';
 import { PriorityChoices } from './PriorityMenu.jsx';
 import { LabelChoices } from './LabelMenu.jsx';
+import { IssueRenameDialog } from './IssueRenameDialog.jsx';
 
-function AssignmentChoices({ issue, project, request, onSelect, onCreate }) {
-  const [selected, setSelected] = useState(project ?? issue.project);
+function AssignmentChoices({ issue, request, onSelect }) {
+  const [selected, setSelected] = useState(issue.project);
   const [choosing, setChoosing] = useState(!selected?.path);
   if (choosing) return <ProjectChoices request={request} project={selected}
-    onSelect={(value) => { setSelected(value); setChoosing(false); }} onCreate={onCreate} />;
+    onSelect={(value) => { setSelected(value); setChoosing(false); }} />;
   return <>
     <button type="button" onClick={() => setChoosing(true)} className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs text-muted-foreground hover:bg-accent">
       <Box className="size-3.5" />{selected.name}
@@ -38,25 +38,21 @@ function AssignmentChoices({ issue, project, request, onSelect, onCreate }) {
 }
 
 /** Cards and list rows share the same single-issue actions and property pickers. */
-export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpenSession, onOpenIssue, onAddSub, onDuplicate, children }) {
+export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpenIssue, onAddSub, onDuplicate, children }) {
   const [open, setOpen] = useState(false);
   const [shortcut, setShortcut] = useState(null);
-  const [creating, setCreating] = useState(null);
-  const [createdProject, setCreatedProject] = useState(null);
   const [customDue, setCustomDue] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const card = useRef(null);
   const currentAction = useRef(null);
-  const toast = useToast();
   const copy = useCopyIssue(request);
   const close = () => { setOpen(false); setShortcut(null); };
   const change = (patch) => { close(); onChange(issue, patch); };
-  const createProject = (field) => { close(); setCreating(field); };
   // A hovered row keeps its callback across refreshes; shortcuts must still read the latest assignment and menu state.
   useLayoutEffect(() => {
     currentAction.current = (field) => {
-      if (open || creating || customDue || (issue.agent && ['agent', 'project'].includes(field))) return;
+      if (open || customDue || renaming || (issue.agent && ['agent', 'project'].includes(field))) return;
       if (field === 'delete') { onDelete(issue); return; }
-      setCreatedProject(null);
       setShortcut(field);
     };
   });
@@ -67,10 +63,10 @@ export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpen
     if (field === 'status') return <StatusChoices status={issue.status} shortcut={Boolean(shortcut)} onSelect={(status) => change({ status })} />;
     if (field === 'priority') return <PriorityChoices priority={issue.priority} onSelect={(priority) => change({ priority })} />;
     if (field === 'agentState') return <AgentStateChoices state={issue.agentState} onSelect={(agentState) => change({ agentState })} />;
-    if (field === 'agent') return <AssignmentChoices issue={issue} project={createdProject} request={request}
-      onCreate={() => createProject(field)} onSelect={(agent, project) => { close(); onAssign(issue, agent, project); }} />;
+    if (field === 'agent') return <AssignmentChoices issue={issue} request={request}
+      onSelect={(agent, project) => { close(); onAssign(issue, agent, project); }} />;
     if (field === 'project') return <ProjectChoices request={request} project={issue.project} allowClear
-      onCreate={() => createProject(field)} onSelect={(project) => change({ project })} />;
+      onSelect={(project) => change({ project })} />;
     if (field === 'labels') return <LabelChoices request={request} value={(issue.labels ?? []).map((label) => label.id)} onChange={(labels) => onChange(issue, { labels })} />;
     return <DueChoices dueAt={issue.dueAt} onSelect={(dueAt) => change({ dueAt })}
       onCustom={() => { close(); setCustomDue(true); }} />;
@@ -81,7 +77,7 @@ export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpen
   };
   return <>
     <Popover open={Boolean(shortcut)} onOpenChange={(value) => { if (!value) setShortcut(null); }}>
-      <ContextMenu open={open} onOpenChange={(value) => { setOpen(value); if (value) { setShortcut(null); setCreatedProject(null); } }}>
+      <ContextMenu open={open} onOpenChange={(value) => { setOpen(value); if (value) setShortcut(null); }}>
         <PopoverAnchor asChild>
           <ContextMenuTrigger asChild ref={card}>
             {/* eslint-disable-next-line react-hooks/refs -- The render prop binds this callback to events; it never invokes it. */}
@@ -90,13 +86,13 @@ export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpen
         </PopoverAnchor>
         <ContextMenuContent onCloseAutoFocus={(event) => {
           event.preventDefault();
-          if (!creating && !customDue) card.current?.focus({ preventScroll: true });
+          if (!renaming && !customDue) card.current?.focus({ preventScroll: true });
         }}>
           {[
-            ['status', T.fields.status, CircleDot, 'S'],
+            ['agentState', T.fields.agentState, Activity],
             ['priority', T.fields.priority, Signal, 'P'],
             ['agent', T.fields.agent, User, 'A'],
-            ['agentState', T.fields.agentState, Activity],
+            ['status', T.fields.status, CircleDot, 'S'],
             ['due', T.detail.dueDate, DueIcon, '⇧ D'],
             ['labels', T.labels.name, Tag, 'L'],
             ['project', T.detail.project, Box, '⇧ P'],
@@ -108,6 +104,7 @@ export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpen
               onKeyDown={pickerKeys}>{choices(field)}</ContextMenuSubContent>
           </ContextMenuSub>)}
           <ContextMenuSeparator />
+          <ContextMenuItem onSelect={() => { close(); setRenaming(true); }}><Pencil aria-hidden="true" />{T.views.rename}</ContextMenuItem>
           {onAddSub && <ContextMenuItem onSelect={() => onAddSub(issue)}><CornerDownRight aria-hidden="true" />{T.subIssues.add}</ContextMenuItem>}
           <ContextMenuSub>
             <ContextMenuSubTrigger><Copy aria-hidden="true" /><span>{T.copy.menu}</span></ContextMenuSubTrigger>
@@ -118,28 +115,20 @@ export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpen
             </ContextMenuSubContent>
           </ContextMenuSub>
           {onDuplicate && <ContextMenuItem onSelect={() => onDuplicate(issue)}><CopyPlus aria-hidden="true" />{T.copy.duplicate}</ContextMenuItem>}
-          {onOpenIssue && <ContextMenuItem onSelect={() => onOpenIssue(issue)}><SquareArrowOutUpRight aria-hidden="true" />{T.widgets.sessions.openIssue}</ContextMenuItem>}
-          {issue.session && <ContextMenuItem onSelect={async () => {
-            try { await onOpenSession(issue); } catch { toast({ message: T.widgets.sessions.openFailed }); }
-          }}><Expand aria-hidden="true" />{T.detail.openSession}</ContextMenuItem>}
+          {onOpenIssue && <ContextMenuItem onSelect={() => onOpenIssue(issue)}><SquareArrowOutUpRight aria-hidden="true" />{T.detail.menuDetails}</ContextMenuItem>}
           <ContextMenuSeparator />
           <ContextMenuItem shortcut={/Mac/.test(navigator.platform) ? '⌘ ⌫' : 'Ctrl ⌫'} onSelect={() => onDelete(issue)}><Trash2 aria-hidden="true" />{T.settings.skills.delete}</ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
       <PopoverContent className={shortcut === 'due' ? 'w-auto overflow-hidden p-0' : shortcut === 'project' ? 'w-80' : shortcut === 'labels' ? 'w-[272px]' : 'w-[232px]'}
         aria-label={shortcut === 'due' ? T.detail.dueDate : shortcut === 'labels' ? T.labels.name : T.fields[shortcut]}
-        onCloseAutoFocus={(event) => { event.preventDefault(); if (!customDue) card.current?.focus({ preventScroll: true }); }}>
+        onCloseAutoFocus={(event) => { event.preventDefault(); if (!customDue && !renaming) card.current?.focus({ preventScroll: true }); }}>
         {shortcut && choices(shortcut)}
       </PopoverContent>
     </Popover>
     {customDue && <DueDateDialog dueAt={issue.dueAt} onClose={() => setCustomDue(false)} onSelect={(dueAt) => change({ dueAt })}
       onCloseAutoFocus={(event) => { event.preventDefault(); card.current?.focus({ preventScroll: true }); }} />}
-    <CreateProjectDialog request={request} open={Boolean(creating)} onOpenChange={(value) => { if (!value) setCreating(null); }}
-      onCreated={(project) => {
-        const next = creating;
-        setCreating(null);
-        if (next === 'agent') { setCreatedProject(project); setShortcut('agent'); }
-        else change({ project });
-      }} />
+    {renaming && <IssueRenameDialog issue={issue} onClose={() => setRenaming(false)} onSave={(title) => onChange(issue, { title })}
+      onCloseAutoFocus={(event) => { event.preventDefault(); card.current?.focus({ preventScroll: true }); }} />}
   </>;
 }

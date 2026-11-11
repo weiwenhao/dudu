@@ -248,7 +248,7 @@ const settled = (layout, items, change, message, corrections) => (JSON.stringify
 
 function typeOf(request) {
   const { type } = request;
-  if (typeof type !== 'string' || !type || type.length > 200 || REMOVED_WIDGETS.includes(type)) throw new Invalid('type must be the id of a widget, such as "quota".', 'Call dashboard_get to see the ids.');
+  if (typeof type !== 'string' || !type || type.length > 200 || REMOVED_WIDGETS.includes(type)) throw new Invalid('type must be the id of a widget, such as "issues".', 'Call dashboard_get to see the ids.');
   return type;
 }
 

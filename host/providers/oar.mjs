@@ -102,6 +102,9 @@ export class OarNormalizer {
   /** The result of a call the bridge knows. */
   resultOf(event) { return { output: contentText(event.content), isError: event.result === 'failed', ...(Number.isInteger(event.exitCode) ? { data: { exitCode: event.exitCode } } : {}) }; }
 
+  /** A native task can return control before its process exits; only runtimes with that evidence provide a result. */
+  backgroundResult() { return undefined; }
+
   /** The turn the normalizer reported as ended continues: the harness took up a message that had been waiting. */
   reopen() { this.#finished = false; }
 
@@ -134,6 +137,17 @@ export class OarNormalizer {
         case 'tool_call_started': this.#start(event, record, events); break;
         case 'tool_call_input': this.#input(event, events); break;
         case 'tool_call_ended': this.#end(event, record, events); break;
+        case 'tool_call_progress': {
+          const call = this.#calls.get(event.callId);
+          if (call && event.outputDelta) call.output = ((call.output ?? '') + event.outputDelta).slice(0, MAX_OUTPUT + 1);
+          break;
+        }
+        case 'task_started': {
+          const call = this.#calls.get(event.toolCallId);
+          const result = call?.announced && this.backgroundResult(event, call, record);
+          if (result) this.#end({ callId: event.toolCallId }, record, events, result);
+          break;
+        }
         case 'compaction_started': events.push({ type: 'compaction-start' }); break;
         case 'compaction_ended': events.push({ type: 'compaction-end', outcome: event.outcome, ...(event.reason ? { reason: event.reason } : {}) }); break;
         case 'turn_ended': this.#turnEnded(event, events); break;
@@ -167,14 +181,15 @@ export class OarNormalizer {
     if (closes) this.#closeStep(events);
   }
 
-  #end(event, record, events) {
+  #end(event, record, events, result) {
     const call = this.#calls.get(event.callId);
     if (!call?.announced) return;
     // A result means the message that made the call is over, even where the harness gave no sign of it.
     if (this.#inStep > 0) this.#closeStep(events);
-    const result = this.resultOf(event, call, record);
+    result ??= this.resultOf(event, call, record);
     if (typeof result.output === 'string' && result.output.length > MAX_OUTPUT) result.output = `${result.output.slice(0, MAX_OUTPUT)}\n… (output truncated)`;
     events.push({ type: 'tool-result', id: event.callId, ...result });
+    this.#calls.delete(event.callId);
   }
 
   #closeStep(events) {
@@ -301,8 +316,14 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   }
 
   const events = new AsyncQueue();
+  let foreground = true;
+  const setForeground = (active) => {
+    if (foreground === active) return;
+    foreground = active;
+    events.push({ type: 'foreground-state', active });
+  };
   resident ??= new OarResident(session, { normalizer, observedSubagents, onTasks, options: sessionOptions });
-  const hasChildren = () => resident.hasChildren;
+  const hasWork = () => resident.hasChildren || resident.backgroundActive;
   let finished = false;
   // OAR answers a second `dispose()` at once, without waiting for the process: one disposal is kept, so that whoever
   // asks to close the run waits for the process that the end of the turn already started to stop.
@@ -315,7 +336,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   }
   let unsubscribe = () => {};
   let stopping;
-  let childStep;
+  let heldStep;
   async function close({ preserveBackground = false } = {}) {
     if (!finished) events.push({ type: 'turn-end', ok: false, error: harnessError('The turn was interrupted.', 'ABORTED') });
     finished = true;
@@ -338,8 +359,8 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     finished = true;
     clearTimeout(holdTimer);
     signal?.removeEventListener('abort', onAbort);
-    if (event.ok && childStep) events.push(childStep);
-    childStep = undefined;
+    if (event.ok && heldStep) events.push(heldStep);
+    heldStep = undefined;
     events.push(event);
     events.close();
     // After the observer returns: the session is still reading the frame this record came from.
@@ -355,10 +376,10 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   const read = (record) => {
     if (finished) return;
     onRecord?.(record, session.id);
-    // Keep the native writer alive for delegated work after the root's first answer. The next native root turn
-    // resumes the same DSH turn; a quiet root is released only after its last actual child settles.
-    if (held && waiting.size === 0 && !hasChildren() && !holdTimer) holdTimer = setTimeout(release, followUpMs);
-    if (held && hasChildren()) { clearTimeout(holdTimer); holdTimer = undefined; }
+    // Native children and background commands can finish after the root's first answer. Keep both the process and
+    // this DSH turn open so the native completion notification can start its follow-up on the same stream.
+    if (held && waiting.size === 0 && !hasWork() && !holdTimer) holdTimer = setTimeout(release, followUpMs);
+    if (held && hasWork()) { clearTimeout(holdTimer); holdTimer = undefined; }
     // Codex child threads may have an empty agentPath; their own sessionId still keeps their ends and text out of the parent.
     if (record.sessionId !== undefined && record.sessionId !== session.id) return;
     const seen = record.kind === 'frame' && (record.agentPath?.length ?? 0) === 0 ? record.body?.events ?? [] : [];
@@ -374,18 +395,20 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
       holdTimer = undefined;
       held = undefined;
       normalizer.reopen();
-      if (childStep) events.push({ type: 'text-delta', text: '\n\n' });
-      childStep = undefined;
+      setForeground(true);
+      if (heldStep) events.push({ type: 'text-delta', text: '\n\n' });
+      heldStep = undefined;
     }
     for (const event of normalizer.feed(record)) {
       // A tool-free final step also stops DSH's loop. Defer that boundary together with the root end while
-      // native research runs, so DSH keeps its stop control and never reports a completed parent prematurely.
-      if (event.type === 'step-end' && event.reason === 'stop' && hasChildren()) { childStep = event; continue; }
+      // native work runs, so DSH keeps its stop control and never reports a completed parent prematurely.
+      if (event.type === 'step-end' && event.reason === 'stop' && hasWork()) { heldStep = event; continue; }
       if (event.type !== 'turn-end') { events.push(event); continue; }
-      if (event.ok && (waiting.size > 0 || hasChildren())) {
+      if (event.ok && (waiting.size > 0 || hasWork())) {
         held = event;
+        if (hasWork()) setForeground(false);
         clearTimeout(holdTimer);
-        holdTimer = hasChildren() ? undefined : setTimeout(release, followUpMs);
+        holdTimer = hasWork() ? undefined : setTimeout(release, followUpMs);
       }
       else finish(event);
     }
@@ -432,6 +455,12 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     });
     return outcome;
   }
+  async function deliver(content, options) {
+    const delivered = await session.deliver(content, options);
+    return delivered.landed === 'rejected'
+      ? { kind: 'rejected', code: delivered.code, reason: delivered.reason }
+      : delivered.result;
+  }
   let outcome;
   try {
     if (reused) waiting.add(inputId);
@@ -439,10 +468,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
       const options = { inputId, ...(images?.length ? { images } : {}) };
       if (!reused) return session.prompt(prompt, options);
       // A Monitor may have opened a native turn while DSH was idle. OAR owns delivery across that race.
-      const delivered = await session.deliver(prompt, options);
-      return delivered.landed === 'rejected'
-        ? { kind: 'rejected', code: delivered.code, reason: delivered.reason }
-        : delivered.result;
+      return deliver(prompt, options);
     }, onInput);
   }
   catch (error) { await interrupt(); throw error; }
@@ -461,13 +487,17 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     get backgroundActive() { return resident.backgroundActive; },
     nativeSessionId: session.id,
     events: drain(events),
-    // Real steering where the harness takes it; OAR reports whether it did, and a miss means the turn had just ended.
+    // A DSH turn held for native background work can have an idle root. OAR owns the prompt/steer race there.
     async pushUserMessage(content, images, { onInput } = {}) {
-      if (typeof session.steer !== 'function') return;
+      const continuing = Boolean(held) || hasWork();
+      if (!continuing && typeof session.steer !== 'function') return;
       const inputId = randomUUID();
       forwarded.add(inputId);
-      if (queuesSteer) waiting.add(inputId);
-      const outcome = await submit(() => session.steer(content, { inputId, ...(images?.length ? { images } : {}) }), onInput);
+      if (queuesSteer || continuing) waiting.add(inputId);
+      const outcome = await submit(() => {
+        const options = { inputId, ...(images?.length ? { images } : {}) };
+        return continuing ? deliver(content, options) : session.steer(content, options);
+      }, onInput);
       if (!outcome || outcome.kind === 'rejected') waiting.delete(inputId);
       if (outcome?.kind === 'rejected') {
         throw Object.assign(harnessError(`${name} did not take the message: ${outcome.reason}`, 'HARNESS_REJECTED'), {
@@ -484,7 +514,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
  * A harness provider on an OAR runtime. `session` returns what is specific to the harness in the options of one OAR
  * session (environment, tool limits, launch arguments) from the DSH access mode.
  */
-export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer }) {
+export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, quota }) {
   const known = new Set(tools.map((tool) => tool.name));
   const environment = (extra) => ({ ...scrubbedEnvironment(scrub.patterns, scrub), ...extra });
 
@@ -540,12 +570,8 @@ export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbac
         knowsTool: (toolName) => known.has(toolName),
         fallbackTool,
         refreshModels() { loaded = undefined; },
-        /** How much of the account's plan is used, asked of the harness itself (OAR starts it for the question). */
-        accountUsage(extra) {
-          if (typeof runtime.accountUsage !== 'function') return Promise.resolve({ kind: 'unsupported' });
-          // `extra` adds to the overlay (`null` removes a name): the plan's usage read without an API key in the environment, say.
-          return runtime.accountUsage(installation, { env: environment(extra), timeoutMs: 30_000 });
-        },
+        /** How much of the account's plan is left, for the provider that can say (`quota({ command, environment, version, signal })`; see `providers/quota/`). */
+        ...(typeof quota === 'function' ? { quota } : {}),
         async listModels() {
           const models = await load();
           // The harness's own default comes first: a provider's first model is what the provider chip selects.

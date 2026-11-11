@@ -89,7 +89,7 @@ export function analyzeRequest(messages, route, events, promptFilter = isPrompt)
 export class HarnessRun {
   #tools = new Map();
 
-  constructor({ sessionId, handle, prompts, activity, team }) {
+  constructor({ sessionId, handle, prompts, activity, team, onForeground }) {
     this.sessionId = sessionId;
     this.handle = handle;
     this.nativeSessionId = handle.nativeSessionId;
@@ -100,6 +100,8 @@ export class HarnessRun {
     this.turnEnd = undefined;
     this.activity = activity;
     this.team = team;
+    this.foregroundActive = true;
+    this.onForeground = onForeground;
     this.pump = this.#pump();
   }
 
@@ -119,6 +121,10 @@ export class HarnessRun {
       case 'tool-result': this.#tool(event.id).resolve(event); break;
       case 'compaction-start':
       case 'compaction-end': this.activity?.update(event); break;
+      case 'foreground-state':
+        this.foregroundActive = event.active;
+        this.onForeground?.();
+        break;
       case 'turn-end': this.#end(event); break;
       default: this.steps.push(event);
     }
@@ -127,6 +133,8 @@ export class HarnessRun {
   #end(event) {
     if (this.finished) return;
     this.finished = true;
+    this.foregroundActive = false;
+    this.onForeground?.();
     this.turnEnd = event;
     this.activity?.end(event);
     this.steps.push(event);
@@ -177,7 +185,7 @@ export class HarnessBridge {
   #opening = new Set();
   #disposal;
 
-  constructor({ driver, agentOf = () => undefined, permissionOf = () => undefined, onLink, inputOf, eventsOf, flushSession, inputJournal }) {
+  constructor({ driver, agentOf = () => undefined, permissionOf = () => undefined, onLink, inputOf, eventsOf, flushSession, inputJournal, onForeground }) {
     this.driver = driver;
     this.agentOf = agentOf;
     this.permissionOf = permissionOf;
@@ -187,6 +195,7 @@ export class HarnessBridge {
     this.eventsOf = eventsOf;
     this.flushSession = flushSession;
     this.inputJournal = inputJournal;
+    this.onForeground = onForeground;
     // Set by the owner of the agents: registers a mirror tool for a tool name the harness's catalog does not list.
     this.onUnknownTool = undefined;
   }
@@ -251,7 +260,7 @@ export class HarnessBridge {
       throw error;
     }
     const activity = createHarnessActivity({ session: agent?.session, route: this.route, nativeSessionId: handle.nativeSessionId, signal });
-    const run = new HarnessRun({ sessionId, handle, prompts, activity, team });
+    const run = new HarnessRun({ sessionId, handle, prompts, activity, team, onForeground: () => this.onForeground?.(sessionId) });
     this.#runs.set(sessionId, run);
     try { this.onLink?.({ route: this.route, nativeSessionId: handle.nativeSessionId, sessionId }); } catch { /* bookkeeping only */ }
     return run;

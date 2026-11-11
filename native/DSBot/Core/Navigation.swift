@@ -97,10 +97,15 @@ struct NavigationItem: Decodable, Identifiable, Equatable, Sendable {
         group = try container.decodeIfPresent(String.self, forKey: .group)
     }
 
-    var target: NavigationTarget { NavigationTarget(open) }
+    /// What the app does for the entry. The plugin's own tasks entry is known by its id as well as by its `target`: a plugin that predates the `target` still gets the tasks page, and as the fourth
+    /// permanent row (owner, 2026-11-10), instead of the old schedule list under 查看更多.
+    var target: NavigationTarget {
+        if id == "dudu.tasks", open.native == "schedule" { return .tasks }
+        return NavigationTarget(open)
+    }
 
     var isPrimarySidebarEntry: Bool {
-        group == "primary" || [.assistant, .board, .collector].contains(target)
+        group == "primary" || [.assistant, .board, .collector, .tasks].contains(target)
     }
 }
 
@@ -143,7 +148,10 @@ enum NavigationTarget: Equatable, Sendable {
     /// 嘟嘟's own configuration, drawn in SwiftUI.
     case duduSettings(section: String)
     case files
+    /// DSH's own schedule list (what an older plugin and DSH's `schedules` entry open).
     case schedule
+    /// 嘟嘟's scheduled tasks, the fourth permanent row (owner, 2026-11-10): the plugin's `dudu.tasks` entry says `target: dudu-tasks`.
+    case tasks
     case web(page: EmbeddedDSHPage, target: String?)
     case unsupported
 
@@ -157,7 +165,7 @@ enum NavigationTarget: Equatable, Sendable {
             case "dsh-settings": self = .dshSettings; return
             case "dudu-settings": self = .duduSettings(section: open.target ?? open.web?.target ?? "general"); return
             case "files": self = .files; return
-            case "schedule": self = .schedule; return
+            case "schedule": self = open.target == "dudu-tasks" ? .tasks : .schedule; return
             default: break // A screen this build does not have: fall back to the page DSH has for it.
             }
         }

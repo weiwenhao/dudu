@@ -192,8 +192,52 @@ private actor ReviewTransport: DSBotTransport {
         "流式输出第 \($0) 段：持续补充回答，检查滚动位置。"
     }.joined(separator: "\n\n")
     private var sentMessages: [String: [ChatMessage]] = [:]
+    /// `-dsbot-review-quick-cards <file>`: 嘟嘟's own conversation, with the cards the plugin's card module made (the file holds the command entries as its bridge attaches the rows to them:
+    /// `.local/designs/quick-chips-2026-11-09/verify/make-phone-cards.mjs`). `-dsbot-review-quick-cards-initial N` shows the first N of them from the start; a tap on a button adds
+    /// the last one of its kind, as `assistant.card` does on a real computer, and `-dsbot-review-slow-card` makes that answer take a while.
+    private static let quickCardsFile: String? = {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-dsbot-review-quick-cards"), index + 1 < arguments.count else { return nil }
+        return arguments[index + 1]
+    }()
+    private lazy var quickCardEntries: [TranscriptEntry] = {
+        guard let file = Self.quickCardsFile, let data = try? Data(contentsOf: URL(fileURLWithPath: file)) else { return [] }
+        return (try? JSONDecoder().decode([TranscriptEntry].self, from: data)) ?? []
+    }()
+    private var tappedCards: [TranscriptEntry] = []
+    /// `-dsbot-review-tasks <file>`: the scheduled tasks the plugin's own tasks service made (`.local/designs/phone-tasks-2026-11-10/verify/make-tasks.mjs`), answered and changed in memory like the plugin's
+    /// `tasks.*`. `-dsbot-review-navigation <file>` answers `navigation.get` with a sidebar the plugin's own navigation store made, instead of the old fixed one.
+    private struct ReviewTasksFile: Decodable {
+        var tasks: [ScheduledTask]
+        var options: JSONValue
+        var sessions: JSONValue
+        var history: [String: [JSONValue]]
+    }
+    private struct ReviewTaskFields: Decodable {
+        var title: String
+        var prompt: String
+        var agent: String
+        var model: String?
+        var project: TaskProject?
+        var target: TaskTarget
+        var schedule: TaskSchedule
+    }
+    private static func reviewArgument(_ name: String) -> String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else { return nil }
+        return arguments[index + 1]
+    }
+    private static let tasksFile = reviewArgument("-dsbot-review-tasks")
+    private static let navigationFile = reviewArgument("-dsbot-review-navigation")
+    private lazy var reviewTasksData: ReviewTasksFile? = {
+        guard let file = Self.tasksFile, let data = try? Data(contentsOf: URL(fileURLWithPath: file)) else { return nil }
+        return try? JSONDecoder().decode(ReviewTasksFile.self, from: data)
+    }()
+    private var reviewTasks: [ScheduledTask]?
+    private var reviewRuns: [String: [JSONValue]] = [:]
     private var queues: [String: [QueuedMessage]] = ProcessInfo.processInfo.arguments.contains("-dsbot-review-queue")
-        ? ["review-chat": [QueuedMessage(id: "queued-desktop", text: "电脑端排队的消息", editable: true)]] : [:]
+        ? ["review-chat": [QueuedMessage(id: "queued-desktop", text: "电脑端排队的消息", editable: true)],
+           "review-assistant": [QueuedMessage(id: "queued-assistant", text: "等 HOU-15 回复后再看测试环境", editable: true)]] : [:]
     private var embeddedPages: [String: String] = [:]
     private let realPages = ReviewEmbeddedPages()
     /// Local-only replay data is copied into the simulator, never bundled with the app.
@@ -333,6 +377,7 @@ private actor ReviewTransport: DSBotTransport {
     }
 
     func request(_ method: String, params: [String: JSONValue], timeoutSeconds: UInt64) async throws -> JSONValue {
+        if let response = hostPageReview?["responses"]?[method] { return response }
         if ProcessInfo.processInfo.arguments.contains("-dsbot-review-parity") {
             switch method {
             case "session.page":
@@ -367,7 +412,36 @@ private actor ReviewTransport: DSBotTransport {
         if method.hasPrefix("web.") && ProcessInfo.processInfo.arguments.contains("-dsbot-review-real-pages") {
             return try await realPages.request(method, params: params)
         }
+        if method.hasPrefix("tasks."), Self.tasksFile != nil { return try reviewTasksRequest(method, params) }
         switch method {
+        case "assistant.hide":
+            return .object(["outcome": .string("success")])
+        case "assistant.card":
+            // What the plugin does for a quick button: the command makes the card, and it comes back as an entry of the thread (here, a snapshot that has it).
+            if ProcessInfo.processInfo.arguments.contains("-dsbot-review-slow-card") { try await Task.sleep(nanoseconds: 2_500_000_000) }
+            guard let kind = params["kind"]?.stringValue,
+                  var entry = quickCardEntries.last(where: { $0.card?.card?.kind.rawValue == kind }) else { throw DSBotFailure.remote("BAD_REQUEST") }
+            // A repeat: the same list as the card the phone names (`since`) makes nothing, and the plugin says so.
+            if let since = params["since"]?.stringValue,
+               let earlier = (quickCardEntries + tappedCards).first(where: { $0.commandId == since }), earlier.card == entry.card {
+                return .object(["outcome": .string("success"), "commandId": .string(since), "unchanged": .bool(true)])
+            }
+            let number = tappedCards.count + 1
+            entry.id = "command:review-card-\(number)"
+            entry.commandId = "review-card-\(number)"
+            entry.seq = Double(1_000 + number)
+            entry.time = Date().timeIntervalSince1970 * 1_000
+            tappedCards.append(entry)
+            if ProcessInfo.processInfo.arguments.contains("-dsbot-review-late-card") {
+                // The answer comes first and the card arrives with the thread's snapshot a moment later, as it can on a real computer.
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    await self?.publishSnapshot("review-assistant")
+                }
+            } else {
+                await publishSnapshot("review-assistant")
+            }
+            return .object(["outcome": .string("success"), "commandId": .string("review-card-\(number)")])
         case "session.list":
             sessionListRequests += 1
             if sessionListRequests > 1,
@@ -425,6 +499,9 @@ private actor ReviewTransport: DSBotTransport {
             // A host whose plugin predates navigation answers nothing useful here, so the app falls back.
             guard !ProcessInfo.processInfo.arguments.contains("-dsbot-review-no-navigation") else {
                 throw DSBotFailure.remote("UNSUPPORTED")
+            }
+            if let file = Self.navigationFile, let data = try? Data(contentsOf: URL(fileURLWithPath: file)) {
+                return try JSONDecoder().decode(JSONValue.self, from: data)
             }
             return try JSONDecoder().decode(JSONValue.self, from: Data(ReviewNavigation.json.utf8))
         case "catalog.get":
@@ -776,6 +853,12 @@ private actor ReviewTransport: DSBotTransport {
         if ProcessInfo.processInfo.arguments.contains("-dsbot-review-long-history") {
             values.insert(SessionSummary(id: "review-long", title: "长对话与排版检查", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now + 1, status: "idle"), at: 0)
         }
+        if Self.quickCardsFile != nil {
+            // The plugin's fixed conversation: the plugin says so (`isAssistant`), the app never guesses it from the title.
+            var assistant = SessionSummary(id: "review-assistant", title: "嘟嘟", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now + 3, status: "idle")
+            assistant.isAssistant = true
+            values.insert(assistant, at: 0)
+        }
         if ProcessInfo.processInfo.arguments.contains("-dsbot-review-heavy-history") {
             values.insert(SessionSummary(id: "review-heavy", title: "很长的对话", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now + 2, status: "idle"), at: 0)
         }
@@ -916,6 +999,15 @@ private actor ReviewTransport: DSBotTransport {
     /// The legacy review messages as transcript entries, plus a richer history behind `-dsbot-review-rich`.
     private func reviewTranscript(_ id: String, messages: [ChatMessage]) -> Transcript {
         let arguments = ProcessInfo.processInfo.arguments
+        if id == "review-assistant" {
+            let initial = arguments.firstIndex(of: "-dsbot-review-quick-cards-initial")
+                .flatMap { $0 + 1 < arguments.count ? Int(arguments[$0 + 1]) : nil } ?? 0
+            let entries = [
+                TranscriptEntry(type: "user", id: "assistant-user-1", seq: 1, time: now - 3_600_000, text: "今天有什么要处理的？"),
+                TranscriptEntry(type: "assistant", id: "assistant-a1", seq: 2, time: now - 3_590_000, text: "先看一眼待办吧。", turn: 1, step: 1),
+            ] + Array(quickCardEntries.prefix(initial)) + tappedCards
+            return Transcript(entries: entries, turns: [TranscriptTurn(turn: 1, start: now - 3_595_000, end: now - 3_590_000, outcome: "done")], live: nil)
+        }
         if id == "review-chat", arguments.contains("-dsbot-review-partial-history") {
             // A paged tail may start inside a tall interrupted turn, followed by two short rows.
             let progress = (0..<60).flatMap { index in
@@ -1091,12 +1183,14 @@ private actor ReviewTransport: DSBotTransport {
         ]
         turns = [TranscriptTurn(turn: 1, start: day + 1_000, end: day + 45_000, outcome: "done")]
         if arguments.contains("-dsbot-review-streaming-fast") {
-            let history = (1...30).flatMap { index in
-                [
-                    TranscriptEntry(type: "user", id: "stress-user-\(index)", seq: Double(-200 + index * 2),
-                                    time: day - Double(31 - index) * 120_000, text: "检查第 \(index) 轮长对话。"),
-                    TranscriptEntry(type: "assistant", id: "stress-answer-\(index)", seq: Double(-199 + index * 2),
-                                    time: day - Double(31 - index) * 120_000 + 20_000,
+            let history = (1...30).flatMap { index -> [TranscriptEntry] in
+                let sequence = Double(-200 + index * 2)
+                let start = day - Double(31 - index) * 120_000
+                return [
+                    TranscriptEntry(type: "user", id: "stress-user-\(index)", seq: sequence,
+                                    time: start, text: "检查第 \(index) 轮长对话。"),
+                    TranscriptEntry(type: "assistant", id: "stress-answer-\(index)", seq: sequence + 1,
+                                    time: start + 20_000,
                                     text: Self.heavyAnswer(index), turn: index + 2, step: 1)
                 ]
             }
@@ -1137,6 +1231,83 @@ private actor ReviewTransport: DSBotTransport {
             )
         }
         return Transcript(entries: entries + compactionEntries(), turns: turns, live: live)
+    }
+
+    /// What the plugin does for `tasks.*`, on the tasks of the file: a list, the options, a new task, a change of one (its revision must be the one the phone has), a pause or a resume, a run now, a copy, a delete and the deliveries.
+    private func reviewTasksRequest(_ method: String, _ params: [String: JSONValue]) throws -> JSONValue {
+        guard let file = reviewTasksData else { throw DSBotFailure.remote("UNSUPPORTED") }
+        var items = reviewTasks ?? file.tasks
+        if reviewRuns.isEmpty { reviewRuns = file.history }
+        defer { reviewTasks = items }
+        func ok(_ extra: [String: JSONValue] = [:]) -> JSONValue {
+            .object(["outcome": .string("success")].merging(extra) { _, new in new })
+        }
+        func failed(_ code: String) -> JSONValue { .object(["outcome": .string("error"), "code": .string(code)]) }
+        switch method {
+        case "tasks.list":
+            return ok(["tasks": try encode(items)])
+        case "tasks.options":
+            guard case var .object(options) = file.options else { return failed("unavailable") }
+            if params["includeSessions"]?.boolValue == true { options["sessions"] = file.sessions }
+            return .object(options)
+        case "tasks.history":
+            return ok(["runs": .array(reviewRuns[params["id"]?.stringValue ?? ""] ?? []), "nextCursor": .null])
+        case "tasks.create":
+            guard let value = params["fields"],
+                  let fields = try? JSONDecoder().decode(ReviewTaskFields.self, from: JSONEncoder().encode(value)) else { return failed("invalid_task") }
+            let task = ScheduledTask(
+                id: UUID().uuidString, revision: 1, status: "active", title: fields.title, prompt: fields.prompt, agent: fields.agent, model: fields.model,
+                project: fields.project, target: fields.target, schedule: fields.schedule, nextRunAt: now + 3_600_000
+            )
+            items.insert(task, at: 0)
+            return ok(["task": try encode(task)])
+        default:
+            break
+        }
+        guard let id = params["id"]?.stringValue, let index = items.firstIndex(where: { $0.id == id }) else { return failed("not_found") }
+        guard params["revision"].flatMap({ $0.numberValue }).map({ Int($0) }) == items[index].revision else { return failed("conflict") }
+        switch method {
+        case "tasks.update":
+            guard let value = params["patch"],
+                  let fields = try? JSONDecoder().decode(ReviewTaskFields.self, from: JSONEncoder().encode(value)) else { return failed("invalid_task") }
+            if items[index].status == "ended", fields.schedule != items[index].schedule { items[index].status = "paused" }
+            items[index].title = fields.title
+            items[index].prompt = fields.prompt
+            items[index].agent = fields.agent
+            items[index].model = fields.model
+            items[index].project = fields.project
+            items[index].target = fields.target
+            items[index].schedule = fields.schedule
+            items[index].revision += 1
+            return ok(["task": try encode(items[index])])
+        case "tasks.pause", "tasks.resume":
+            items[index].status = method == "tasks.pause" ? "paused" : "active"
+            if method == "tasks.resume" { items[index].nextRunAt = now + 3_600_000 }
+            items[index].revision += 1
+            return ok(["task": try encode(items[index])])
+        case "tasks.run":
+            let run: JSONValue = .object([
+                "id": .string(UUID().uuidString), "seq": .number(Double(100 + (reviewRuns[id]?.count ?? 0))), "at": .number(now), "manual": .bool(true),
+                "status": .string("delivered"), "sessionId": .string("review-second"),
+            ])
+            reviewRuns[id, default: []].insert(run, at: 0)
+            items[index].lastRun = TaskLastRun(id: UUID().uuidString, at: now, status: "delivered")
+            return ok(["run": run, "task": try encode(items[index]), "pending": .bool(true)])
+        case "tasks.duplicate":
+            var copy = items[index]
+            copy.id = UUID().uuidString
+            copy.status = "paused"
+            copy.revision = 1
+            copy.sessionId = nil
+            copy.lastRun = nil
+            items.insert(copy, at: 0)
+            return ok(["task": try encode(copy)])
+        case "tasks.delete":
+            let removed = items.remove(at: index)
+            return ok(["id": .string(removed.id), "title": .string(removed.title)])
+        default:
+            throw DSBotFailure.remote("UNSUPPORTED")
+        }
     }
 
     private func encode<T: Encodable>(_ value: T) throws -> JSONValue {

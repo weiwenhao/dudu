@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createCollectors } from '../host/assistant/collectors/index.mjs';
 import { createConnectors } from '../host/assistant/connectors/index.mjs';
 import { createDispatch } from '../host/assistant/dispatch/index.mjs';
+import { createHandOut } from '../host/assistant/dispatch/hand-out.mjs';
 import { allowedAccess, grantAccess, sessionOptions, tablePriority, urgentAllowed } from '../host/assistant/dispatch/rules.mjs';
 import { createIssues } from '../host/assistant/issues/index.mjs';
 import { TEMPLATES } from '../host/assistant/templates.mjs';
@@ -104,6 +105,36 @@ test('collected records are kept in the inbox and nothing else is done with them
   assert.equal(w.issues.counts().total, 0);
 });
 
+test('more context for one record: the session of its collector reads the conversation around it and the record grows; no run is kept, and a failure changes nothing', async (t) => {
+  const w = world(t);
+  w.records.set('mail', [rec('m9', { kind: 'message', thread: 'omt_1', from: 'Frank Wang', at: '2026-10-31T11:00:00+08:00', text: '@我', more: 'read the thread' })]);
+  await w.dispatch.intake({});
+  const [row] = w.issues.inbox.list({}).items;
+  const runsBefore = w.issues.inbox.lastStarted('mail');
+  const filled: any[] = [];
+  const read = { outcome: 'success', records: [
+    rec('m1', { kind: 'message', thread: 'omt_1', from: 'SigmaAI-QA', at: '2026-10-31T10:30:00+08:00', text: '两个条件不满足' }),
+    rec('m9', { kind: 'message', thread: 'omt_1', from: 'Frank Wang', at: '2026-10-31T11:00:00+08:00', text: '@我' }),
+  ] };
+  const fill = async (source: any, record: any, options: any) => { filled.push({ source, record, options }); return read; };
+  const asked = w.reopen({ collect: Object.assign(async () => ({ outcome: 'success', records: [] }), { fill }) });
+  const done = await asked.complete({ id: row.id });
+  assert.deepEqual([done.outcome, done.added], ['success', 1]);
+  assert.deepEqual([filled[0].source.id, filled[0].record.thread, filled[0].record.more], ['mail', 'omt_1', 'read the thread']);
+  assert.ok(filled[0].options.signal);
+  assert.match(w.issues.inbox.get(row.id).record.text, /SigmaAI-QA：两个条件不满足\n.*Frank Wang：@我/);
+  assert.equal(w.issues.inbox.lastStarted('mail'), runsBefore, 'it is no collection: nothing is kept of it and the next one still reads from where it was');
+  // it comes back with an error: the record is as it was
+  const failing = w.reopen({ collect: Object.assign(async () => ({ outcome: 'success', records: [] }), { fill: async () => ({ outcome: 'error', message: 'lark-cli is not signed in' }) }) });
+  const failed = await failing.complete({ id: row.id });
+  assert.deepEqual([failed.outcome, failed.message], ['error', 'lark-cli is not signed in']);
+  assert.equal((await asked.complete({ id: 9999 })).code, 'unknown_record');
+  // a collector that was removed since
+  w.sources.dudu.remove?.('mail');
+  const gone = await asked.complete({ id: row.id });
+  assert.ok(['no_collector', undefined].includes(gone.code) && gone.outcome !== 'success');
+});
+
 test('collecting needs no model: a dispatch without one still collects', async (t) => {
   const w = world(t);
   w.records.set('mail', [rec('a')]);
@@ -194,6 +225,38 @@ test('assignment never races an owner project change or reuses a session from a 
   assert.equal(result.issue.project.path, '/work/new');
 });
 
+test('new issues may reuse an agent but never its previous session, even under a legacy rule or model reply', async (t) => {
+  const w = world(t);
+  w.rules({ 'ASSIGN.md': '- 没写明的，同一类的事接着用上次处理它的会话' });
+  const old = w.add({ agent: 'claude', session: 'dsh:previous-contract', status: 'canceled' });
+  const prior = w.issues.get(old.id);
+  const issue = w.add();
+  w.answers.push({ agent: 'claude', session: old.session, access: 'danger-full-access', reason: '按同类历史选择 Claude' });
+  const result = await w.dispatch.assign(issue.id);
+  assert.equal(result.assigned, true, JSON.stringify(result));
+  assert.equal(result.agent, 'claude');
+  assert.equal(result.session, null);
+  assert.equal(result.reused, false);
+  assert.equal(result.issue.session, null);
+  assert.equal(result.issue.status, issue.status);
+  assert.equal(result.issue.sessions.length, 0);
+  assert.deepEqual(w.issues.get(old.id), prior, 'the previous issue and its session are untouched');
+  const data = w.calls[0].messages.find((message: any) => message.role === 'user').content;
+  assert.ok(data.includes('合同回复 | claude'), 'history still informs the choice of agent');
+  assert.ok(!data.includes(old.session), 'assignment history offers no previous session identity');
+  const starts: any[] = [];
+  const handOut = createHandOut({
+    dispatch: { assign: async () => result },
+    assignment: {
+      start: async (value: any, options: any) => { starts.push([value, options]); },
+      restore: () => assert.fail('a new issue must not restore the previous session'),
+      onReply: () => assert.fail('a new issue must not send its task into the previous session'),
+    },
+  });
+  assert.equal(await handOut(issue.id), result);
+  assert.deepEqual(starts, [[result.issue, { access: result.access }]]);
+});
+
 test('the day\'s counts of what was collected start again each local day, and nothing is ever counted as created', async (t) => {
   const w = world(t);
   w.records.set('mail', [rec('a'), rec('b')]);
@@ -230,7 +293,7 @@ test('matching owner rules supply the session folder and model; examples and con
   assert.deepEqual(sessionOptions(`${ASSIGN}\n- 合同回复 → Claude Code，模型：sonnet`, issue), {
     access: 'workspace-write', cwd: '/work/docs', model: 'sonnet',
   });
-  assert.deepEqual(sessionOptions('<!-- 合同回复 → Claude，/secret -->\n- 续费 → DeepSeek，在 /other 里', issue), { access: 'read-only' });
+  assert.deepEqual(sessionOptions('<!-- 合同回复 → Claude，/secret -->\n- 续费 → DeepSeek，在 /other 里', issue), { access: 'danger-full-access' }, 'nothing written for this kind: the default, full access');
   assert.match(sessionOptions('- 合同 → Claude，/one\n- 合同回复 → Claude，/two', issue).problem, /conflicting/);
 });
   test('the rules code reads from the owner\'s files: priority table, Urgent, the most an agent may do', () => {
@@ -243,9 +306,9 @@ test('matching owner rules supply the session folder and model; examples and con
     assert.equal(urgentAllowed(`${TRIAGE}\n<!-- Urgent: always -->\n`), false, 'a comment is not a rule');
     assert.equal(urgentAllowed(`${TRIAGE}\n- Urgent：合同到期前三天内\n`), true);
     assert.equal(urgentAllowed(`${TRIAGE}\n- 服务器宕机算紧急\n`), true);
-    // The most an agent may do: the lowest that the rules naming this kind say, read-only when none does.
-    assert.equal(allowedAccess(TEMPLATES['ASSIGN.md'], { kind: '合同回复' }), 'read-only', 'the shipped template grants nothing');
-    assert.equal(allowedAccess(TEMPLATES['ASSIGN.md'], { kind: '服务器续费' }), 'read-only');
+    // The most an agent may do: the lowest that the rules naming this kind say, full access when none does.
+    assert.equal(allowedAccess(TEMPLATES['ASSIGN.md'], { kind: '合同回复' }), 'danger-full-access', 'the shipped template names no mode: the default applies');
+    assert.equal(allowedAccess(TEMPLATES['ASSIGN.md'], { kind: '服务器续费' }), 'danger-full-access');
     const rules: [string, string, string][] = [
       ['- 合同回复 → Claude，可以改工作区里的文件', '合同回复', 'workspace-write'],
       ['1. 合同回复 → Claude，完全访问', '合同回复', 'danger-full-access'],
@@ -258,11 +321,12 @@ test('matching owner rules supply the session folder and model; examples and con
       ['- 合同回复 → Claude，不改别的文件，可以改工作区里的文件', '合同回复', 'workspace-write'],
       ['- 合同回复 → Claude，可以改工作区里的文件\n- 合同回复 → DeepSeek，只读', '合同回复', 'read-only'],
       ['- 合同回复 → Claude，在 ~/docs 里\n- 合同回复 → Claude，可以改工作区里的文件', '合同回复', 'workspace-write'],
-      ['合同回复：完全访问', '合同回复', 'read-only'], // not a rule line
-      ['- 完全访问 → 谁都行', '合同回复', 'read-only'],
-      ['- 合同回复 → Claude，完全访问', '', 'read-only'],
-      ['- 合同回复 → Claude，完全访问', '回复', 'read-only'],
-      ['', '合同回复', 'read-only'],
+      ['合同回复：完全访问', '合同回复', 'danger-full-access'], // not a rule line: the default
+      ['- 完全访问 → 谁都行', '合同回复', 'danger-full-access'],
+      ['- 合同回复 → Claude，完全访问', '', 'danger-full-access'],
+      ['- 合同回复 → Claude，完全访问', '回复', 'danger-full-access'],
+      ['', '合同回复', 'danger-full-access'],
+      ['- 服务器续费 → DeepSeek', '服务器续费', 'danger-full-access'], // routes only, names no mode: the default
     ];
     for (const [text, kind, expected] of rules) assert.equal(allowedAccess(text, { kind }), expected, `${JSON.stringify(text)} for ${JSON.stringify(kind)}`);
     assert.deepEqual([['danger-full-access', 'read-only'], ['read-only', 'workspace-write'], [undefined, 'workspace-write'], ['root', 'read-only'], ['workspace-write', 'danger-full-access']].map(([asked, allowed]) => grantAccess(asked, allowed as string)),

@@ -16,6 +16,12 @@ const option = (name, fallback) => {
 };
 const configuration = option('--configuration', testing ? 'Debug' : 'Release');
 if (!['Release', 'Debug'].includes(configuration)) throw new Error('Unsupported build configuration.');
+const sdkVersion = execFileSync('xcrun', ['--sdk', 'iphoneos', '--show-sdk-version'], {
+  cwd: root, encoding: 'utf8',
+}).trim();
+if (Number.parseInt(sdkVersion, 10) < 27) {
+  throw new Error(`Dudu requires iOS SDK 27 or later for native scroll edges on iOS 27. Selected SDK: ${sdkVersion}.`);
+}
 const derived = join(root, '.local', 'native-ios');
 await mkdir(derived, { recursive: true });
 await syncAgentAssets();

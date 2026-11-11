@@ -1,5 +1,5 @@
 import { forwardRef, useState } from 'react';
-import { Check, CheckCheck, EyeOff, ListPlus, MessageSquarePlus, RotateCcw, Trash2, X } from 'lucide-react';
+import { Check, CheckCheck, EyeOff, MessageSquarePlus, RotateCcw, Trash2, X } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/tooltip.jsx';
@@ -40,11 +40,11 @@ function Share({ level, label, icon, request, eligible, onSelect }) {
 
 /**
  * The bar that comes up at the bottom once rows are ticked, the way it does in Issues: how many, "select all" (every row that is loaded), and what can be done with all of them at once. To handle:
- * share them to an issue or to the session of one, mark them handled, ignore them or delete them. Ignored: restore them, share them, mark them handled or delete them. It sits over the widget, not over the window, and
+ * share them to the session of an issue, mark them handled, ignore them or delete them. Ignored: restore them, share them, mark them handled or delete them. It sits over the widget, not over the window, and
  * stays on one line: `level` says how narrow the widget is (0 wide enough for the words, 1 the actions are icons, 2 the count is left to screen readers too). In the narrowest
  * widget the seven icons are still wider than it: the bar then keeps inside the widget and scrolls sideways, with no bar of its own.
  */
-export function BulkBar({ request, tab, level = 0, count, onClear, onSelectAll, onShare, onShareSession, onIgnore, onRestore, onDone, onDelete }) {
+export function BulkBar({ request, tab, level = 0, count, onClear, onSelectAll, onShareSession, onIgnore, onRestore, onDone, onDelete }) {
   return (
     <TooltipProvider>
       <div role="toolbar" aria-label={T.bulk.toolbar} className="absolute bottom-5 left-1/2 z-20 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-0.5 overflow-x-auto rounded-xl border bg-popover p-1.5 text-popover-foreground shadow-lg [scrollbar-width:none]">
@@ -53,7 +53,6 @@ export function BulkBar({ request, tab, level = 0, count, onClear, onSelectAll, 
         {/* Select all: every row that is loaded; not offered once they all are ticked. */}
         {onSelectAll && <Action level={level} label={T.bulk.selectAll} icon={CheckCheck} onClick={onSelectAll} />}
         <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
-        <Share level={level} label={T.collector.share} icon={ListPlus} request={request} eligible={() => true} onSelect={onShare} />
         <Share level={level} label={T.collector.shareSession} icon={MessageSquarePlus} request={request} eligible={hasSession} onSelect={onShareSession} />
         <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
         <Action level={level} label={T.collector.markDone} icon={Check} onClick={onDone} />

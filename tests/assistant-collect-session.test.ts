@@ -228,6 +228,23 @@ test('the question names the collector, the connector it reads through and what 
   assert.match(bare.log.prompts[1].text, /^Collector: lark\nWhat to collect:\n收集 lark/);
 });
 
+test('more context for a record is asked of the collector\'s own session, with what is kept of the record and how to read more of it; it is not a collection', async (t) => {
+  const dsh = world([records('a'), records('b')]);
+  const collect = make(dsh.ctx, folder(t));
+  await collect.fill({ ...SOURCE, name: '飞书 @我' }, { id: 143, sourceId: 'thread:omt_1', title: '@我 · Project Channel', from: 'Frank Wang', at: Date.UTC(2026, 10, 10, 20, 7), thread: 'omt_1', url: 'https://x.test/t', text: '11-11 04:07 Frank Wang：@我', more: 'lark-cli im +threads-messages-list --thread omt_1' });
+  const asked = dsh.log.prompts[0].text as string;
+  assert.match(asked, /^Collector: 飞书 @我\n/);
+  assert.match(asked, /- thread: omt_1\n- link: https:\/\/x\.test\/t/);
+  assert.match(asked, /Frank Wang：@我/);
+  assert.match(asked, /how to read more of it: lark-cli im \+threads-messages-list --thread omt_1/);
+  assert.doesNotMatch(asked, /Last collection/);
+  assert.match(asked, /one record for each message of that conversation/);
+  // Any other row (a mail, a message that came with no thread) is asked for the item again with its context, as one record: that is what the inbox keeps for it.
+  await collect.fill({ ...SOURCE, name: '飞书 @我' }, { id: 7, sourceId: 'om_42', title: '单聊', from: 'Alice', text: '好的', more: 'lark-cli im +chat-messages-list --chat-id oc_1' });
+  assert.match(dsh.log.prompts[1].text, /holds ONE record: the item itself, the same id and the same words, with its context filled in/);
+  assert.doesNotMatch(dsh.log.prompts[1].text, /one record for each message/);
+});
+
 test('what the model is told: to give only what the prompt names, and no notes to write: a collection hands back records and nothing else', async (t) => {
   const dsh = world([records('a')]);
   await make(dsh.ctx, folder(t))(SOURCE);

@@ -7,6 +7,7 @@
 @import "gridstack/dist/gridstack.min.css";
 @import "./dashboard/dashboard.css";
 @import "./pet/pet.css";
+@import "./tasks/tasks.css";
 @import "../widget.css";
 @source "./";
 
@@ -152,6 +153,13 @@ button:disabled:not(:where(.dudu-host-conversation *)) { cursor: default; }
 :is(ul, ol):not(:where(.dudu-host-conversation *)) { list-style: none; }
 a:not(:where(.dudu-host-conversation *)) { color: inherit; text-decoration: inherit; }
 svg:not(:where(.dudu-host-conversation *)) { display: block; }
+
+/* BoardNeedsYouMark on the phone: a 7px centre, a 13px wash, and one ring expanding from 7px to 20px in 2.6s. */
+.dudu-needs-you-ripple { transform-box: view-box; transform-origin: center; animation: dudu-needs-you-ripple 2.6s ease-out infinite; }
+@keyframes dudu-needs-you-ripple {
+  from { transform: scale(0.5384615385); opacity: 0.32; }
+  to { transform: scale(1.5384615385); opacity: 0; }
+}
 
 /* A scroll bar is for scrolling: not drawn while the content rests, shown while it is being scrolled (lib/quiet-scrollbars.js marks the
  * element that is, with data-scrolling). The first rule is as weak as the reset above, so a utility can still say otherwise. */

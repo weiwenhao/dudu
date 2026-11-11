@@ -13,8 +13,10 @@
 //   issueFor(connector, sourceId)          the issue this source id became, or null
 //   list({ connector, state, thread, issue, since, limit, cursor })   -> { items (no text), nextCursor }
 //   search(q, { connector, limit })        full text, Chinese included -> [row without text]
-//   get(id, { around })                    -> { record, thread: [rows of the same thread, without text] } | null
+//   get(id, { around, summary })           -> { record, thread: [rows of the same thread, without text] } | null; summary skips body and thread
 //   forIssue(issueId)                      the rows that became or fed this issue
+//   dropUntouched(connector)               the rows of a collector that was removed which the owner never dealt with (the widget's "待处理": no issue, not ignored, not
+//                                          handled, not deleted) are deleted for good; what the owner marked or made an issue of stays -> the number deleted
 //   prune()                                30 days after judgement the text of a row that has no issue is cleared; a year after, the row goes
 //   browse({ tab, connector, since, limit, cursor })   the collector widget's list: tab todo | done | ignored, newest first -> { items, nextCursor, facets }
 //   ignore(id) / restore(id)               the owner's own mark: a row that is ignored is no one's to judge, and is listed under "ignored"
@@ -30,7 +32,7 @@
 // The owner's marks sit beside that and change none of it: `ignored_at` (the owner ignored it), `done_at` (they dealt with it themselves, no issue made),
 // `deleted_at` (it was wrong) and `by_owner` (the owner, not 嘟嘟, decided the issue).
 import { matchQuery, segment } from '../segment.mjs';
-import { addMessages } from './records.mjs';
+import { addMessages, mergeMessages, newestSaid, titleFromText } from './records.mjs';
 
 export const KEEP_TEXT_MS = 30 * 86_400_000;
 export const KEEP_ROW_MS = 365 * 86_400_000;
@@ -211,6 +213,57 @@ export function createInbox(db, { now = Date.now } = {}) {
     return { added, updated, seen };
   }
 
+  /**
+   * What a session read around one record, when the owner asked for more of its context (the Collector's button): for a row that is a conversation, the messages of that talk come into its text, in the order
+   * of their times and each once; for any other row, the context the session read becomes its `context`. It is that row, whatever its state: nothing is added and no row is made.
+   * `records` come from normalizeRecords. -> { outcome, added }
+   */
+  function addContext(id, records) {
+    const row = sql(`SELECT ${COLUMNS} FROM inbox_records WHERE id = ? AND deleted_at IS NULL`).get(id);
+    if (!row) return { outcome: 'needs_clarification', code: 'unknown_record', message: 'There is no record with that number.' };
+    let added = 0;
+    transaction(() => {
+      if (row.source_id.startsWith('thread:')) {
+        const talks = records.filter((record) => record.conversation);
+        const talk = talks.find((record) => record.sourceId === row.source_id) ?? (talks.length === 1 ? talks[0] : null);
+        const merged = talk ? mergeMessages(row.text, talk.text) : null;
+        if (!merged?.added) return;
+        sql('UPDATE inbox_records SET text = ?, truncated = ? WHERE id = ?').run(merged.text, row.truncated || merged.cut ? 1 : 0, row.id);
+        sql('DELETE FROM inbox_fts WHERE rowid = ?').run(row.id);
+        sql('INSERT INTO inbox_fts (rowid, title, text, author) VALUES (?,?,?,?)').run(row.id, ...indexed({ title: row.title, text: merged.text, author: row.author }));
+        added = merged.added;
+        return;
+      }
+      const same = records.find((record) => record.sourceId === row.source_id) ?? records[0];
+      const context = same?.context ?? [];
+      if (!context.length) return;
+      sql('UPDATE inbox_records SET context = ? WHERE id = ?').run(JSON.stringify(context), row.id);
+      added = context.length;
+    });
+    return { outcome: 'success', added };
+  }
+
+  /**
+   * Gives the rows that were kept without a title the first words of what they say (`titleFromText`; the session left the title out of some records before the answer was checked for it,
+   * and the Collector showed them as blank rows: 135, 136, 149), and puts them in the word index again. A row whose text is gone (`prune`) has nothing to say and stays as it is.
+   * Safe to run twice. -> the number of rows given a title
+   */
+  function repairTitles() {
+    const blank = sql("SELECT id, text, author FROM inbox_records WHERE trim(title) = '' AND trim(text) <> ''").all();
+    let filled = 0;
+    transaction(() => {
+      for (const row of blank) {
+        const title = titleFromText(newestSaid(row.text));
+        if (!title) continue;
+        sql('UPDATE inbox_records SET title = ? WHERE id = ?').run(title, row.id);
+        sql('DELETE FROM inbox_fts WHERE rowid = ?').run(row.id);
+        sql('INSERT INTO inbox_fts (rowid, title, text, author) VALUES (?,?,?,?)').run(row.id, ...indexed({ title, text: row.text, author: row.author }));
+        filled++;
+      }
+    });
+    return filled;
+  }
+
   function known(row) {
     const same = sql("SELECT issue_id AS issueId, verdict FROM inbox_records WHERE connector = ? AND source_id = ? AND state = 'done' AND id <> ? ORDER BY id DESC LIMIT 1").get(row.connector, row.source_id, row.id);
     if (same) return { ...same, where: 'source' };
@@ -269,12 +322,12 @@ export function createInbox(db, { now = Date.now } = {}) {
     return rows.map(view);
   }
 
-  function get(id, { around = 4 } = {}) {
+  function get(id, { around = 4, summary = false } = {}) {
     const number = typeof id === 'string' ? Number(id.replace(/^r/i, '')) : id;
     if (!Number.isSafeInteger(number)) return null;
-    const row = sql(`SELECT ${COLUMNS} FROM inbox_records WHERE id = ?`).get(number);
+    const row = sql(`SELECT ${summary ? LIGHT : COLUMNS} FROM inbox_records WHERE id = ?`).get(number);
     if (!row) return null;
-    const thread = row.thread
+    const thread = !summary && around > 0 && row.thread
       ? sql(`SELECT ${LIGHT} FROM inbox_records WHERE connector = ? AND thread = ? AND id <> ? ORDER BY ABS(id - ?) LIMIT ?`).all(row.connector, row.thread, row.id, row.id, Math.max(0, Math.min(20, around))).map(view).sort((a, b) => a.id - b.id)
       : [];
     return { record: view(row), thread };
@@ -294,6 +347,16 @@ export function createInbox(db, { now = Date.now } = {}) {
       for (const { id } of gone) sql('DELETE FROM inbox_fts WHERE rowid = ?').run(id);
       for (const { id } of gone) sql('DELETE FROM inbox_records WHERE id = ?').run(id);
       return { cleared: old.length, deleted: gone.length };
+    });
+  }
+
+  /** A collector was removed (owner, 2026-11-10): what it brought and nobody dealt with has no collector and no owner's mark, so it goes. The marked rows are the owner's record. */
+  function dropUntouched(connector) {
+    return transaction(() => {
+      const gone = sql(`SELECT id FROM inbox_records WHERE connector = ? AND ${TABS.todo}`).all(connector);
+      for (const { id } of gone) sql('DELETE FROM inbox_fts WHERE rowid = ?').run(id);
+      for (const { id } of gone) sql('DELETE FROM inbox_records WHERE id = ?').run(id);
+      return gone.length;
     });
   }
 
@@ -351,5 +414,5 @@ export function createInbox(db, { now = Date.now } = {}) {
   const lastMe = (connector) => meOf(sql("SELECT me FROM collect_runs WHERE connector = ? AND me IS NOT NULL ORDER BY id DESC LIMIT 1").get(connector)?.me);
   const lastStarted = (connector) => sql('SELECT MAX(started_at) AS at FROM collect_runs WHERE connector = ?').get(connector)?.at ?? null;
 
-  return { ingest, pending, waiting, judge, fail, issueFor, list, search, get, forIssue, prune, browse, ignore, done, remove, restore, link, startRun, finishRun, lastRun, lastFinished, lastGood, lastStarted, lastMe };
+  return { ingest, addContext, repairTitles, pending, waiting, judge, fail, issueFor, list, search, get, forIssue, prune, dropUntouched, browse, ignore, done, remove, restore, link, startRun, finishRun, lastRun, lastFinished, lastGood, lastStarted, lastMe };
 }

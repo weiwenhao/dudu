@@ -12,8 +12,6 @@ import doorImage from './assets/modules/door.webp';
 import sleepModule from './assets/modules/sleep.webp';
 import sleepFrontImage from './assets/modules/sleep-front.webp';
 import peopleMeta from './assets/people/people.json';
-import mainScreenImage from './assets/screens/fc_screen_working_main.webp';
-import mainScreenSheet from './assets/screens/fc_screen_working_main.webp.json';
 import apkScreenImage from './assets/screens/fc_screen_working_apk_use.webp';
 import apkScreenSheet from './assets/screens/fc_screen_working_apk_use.webp.json';
 import fileScreenImage from './assets/screens/fc_screen_working_file_use.webp';
@@ -48,9 +46,8 @@ export const MODULE_IMAGES = { pingpong: pingpongModule, ps5: ps5Module, ps5Sofa
 export const ATLAS = { image: workstationImage, sheet: workstationSheet };
 export const TICKET = { image: ticketImage, sheet: ticketSheet };
 
-/** The monitors' animations: what is on a screen while somebody works (main is the boss's), and a game for somebody who is not. */
+/** The monitors' animations: what is on a screen while somebody works, and a game for somebody who is not. */
 export const SCREENS = {
-  main: { image: mainScreenImage, sheet: mainScreenSheet },
   apk: { image: apkScreenImage, sheet: apkScreenSheet },
   file: { image: fileScreenImage, sheet: fileScreenSheet },
   browser: { image: browserScreenImage, sheet: browserScreenSheet },

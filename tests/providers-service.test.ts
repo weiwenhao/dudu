@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createProviders } from '../host/providers/index.mjs';
+import { AsyncQueue } from '../host/providers/async.mjs';
 
 function fakeHost() {
   const handlers = new Map<string, Set<Function>>();
@@ -319,6 +320,46 @@ test('the settings page talks to it with JSON actions and gets a plain error for
   assert.equal(bad.status, 400);
   assert.match((await bad.json()).error, /Unknown provider/);
   assert.equal((await providers.handle('other')).status, 404);
+});
+
+test('foreground HTTP observation follows the current run without changing execution or leaking another session state', async t => {
+  const { host, provider, providers } = await setup(t);
+  const agent = host.addAgent('s1', 'fake');
+  host.emit('agent/created', { agent });
+  const events = new AsyncQueue();
+  const started = Promise.withResolvers<void>();
+  provider.created[0].start = async () => {
+    started.resolve();
+    return {
+      nativeSessionId: 'native-live',
+      events: { async *[Symbol.asyncIterator]() { for (;;) { const next = await events.next(); if (next.done) return; yield next.value; } } },
+      close() { events.push({ type: 'turn-end', ok: true }); events.close(); },
+    };
+  };
+  const stream = host.adapters.get('fake').stream({
+    sessionId: agent.id, messages: [{ id: 'u1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'work' }] }],
+  });
+  const reading = stream.next();
+  await started.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  const read = (body: unknown) => providers.handle('foreground', new Request('http://x/api/dudu/providers/foreground', {
+    method: 'POST', body: JSON.stringify(body),
+  }));
+  assert.deepEqual(await (await read({ sessionId: agent.id })).json(), { backgroundOnly: false });
+  const idle = read({ sessionId: agent.id, after: false });
+  events.push({ type: 'foreground-state', active: false });
+  assert.deepEqual(await (await idle).json(), { backgroundOnly: true });
+  assert.deepEqual(await (await read({ sessionId: 'another' })).json(), { backgroundOnly: false });
+  const resumed = read({ sessionId: agent.id, after: true });
+  events.push({ type: 'foreground-state', active: true });
+  assert.deepEqual(await (await resumed).json(), { backgroundOnly: false });
+  assert.equal((await read({ sessionId: agent.id, after: 'false' })).status, 400);
+  events.push({ type: 'foreground-state', active: false });
+  await new Promise(resolve => setImmediate(resolve));
+  const closing = read({ sessionId: agent.id, after: true });
+  await providers.close();
+  assert.deepEqual(await (await closing).json(), { backgroundOnly: false });
+  await reading;
 });
 
 test('refreshing asks a harness that is still the same for its models again', async (t) => {

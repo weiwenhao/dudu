@@ -13,7 +13,6 @@ export const WORDS = Object.freeze({
   // --- the log of an issue
   whoShouldTake: '交给谁处理？',
   sourceLine: (connector, url) => `来源：${connector} · ${url}`,
-  notAssigned: (why) => `No agent chosen: ${why}`,
   sessionDropped: 'the session it named was not offered, so a new one starts',
   access: (access, requested, allowed) => (requested && requested !== access ? `access: ${access} (asked for ${requested}; ASSIGN.md allows ${allowed})` : `access: ${access}`),
 

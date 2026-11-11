@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, CircleDot, GripVertical, MoreHorizontal, Plus } from 'lucide-react';
+import { ToggleGroup } from 'radix-ui';
 import { Button } from '../components/button.jsx';
 import { Input } from '../components/input.jsx';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
@@ -14,6 +15,8 @@ const CATEGORIES = ['backlog', 'unstarted', 'started', 'completed', 'canceled'];
 const TYPES = { backlog: 'backlog', unstarted: 'todo', started: 'in_progress', completed: 'done', canceled: 'canceled' };
 const TOKENS = { backlog: '--status-backlog', todo: '--status-todo', in_progress: '--status-progress', in_review: '--status-review', done: '--status-done', canceled: '--status-canceled' };
 const COLORS = ['#95a2b3', '#61666b', '#eb5757', '#f2994a', '#f2c94c', '#4cb782', '#26b5ce', '#5e6ad2', '#8f6bde'];
+const PROGRESS = [0, 0.25, 0.5, 0.75, 1];
+const FRACTIONS = ['0', '1/4', '1/2', '3/4', '1'];
 const W = T.settings.statuses;
 const rowButton = 'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40';
 
@@ -21,23 +24,39 @@ function StatusForm({ status, category, busy, onSave, onCancel }) {
   const [name, setName] = useState(status ? statusLabel(status.id) : '');
   const [description, setDescription] = useState(status?.description ?? '');
   const [color, setColor] = useState(status ? status.color : '#95a2b3');
+  const [iconProgress, setIconProgress] = useState(status?.iconProgress ?? (status?.type === 'in_review' ? 0.75 : 0.5));
   const [palette, setPalette] = useState(false);
+  const hasProgress = category === 'started';
   return <form data-status-form className="flex flex-wrap items-center gap-2 border-t border-border/60 py-3"
-    onSubmit={(event) => { event.preventDefault(); if (name.trim() && !busy) onSave({ name: name.trim(), description: description.trim(), color }); }}
+    onSubmit={(event) => { event.preventDefault(); if (name.trim() && !busy) onSave({ name: name.trim(), description: description.trim(), color, ...(hasProgress ? { iconProgress } : {}) }); }}
     onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onCancel(); } }}>
     <Popover open={palette} onOpenChange={setPalette}>
       <PopoverTrigger asChild>
-        <button type="button" aria-label={W.color} disabled={busy} className="flex size-8 shrink-0 items-center justify-center rounded-lg border outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50">
-          <StatusIcon status={status?.type ?? TYPES[category]} color={color} />
+        <button type="button" aria-label={hasProgress ? W.icon : W.color} disabled={busy} className="flex size-8 shrink-0 items-center justify-center rounded-lg border outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50">
+          <StatusIcon status={status?.type ?? TYPES[category]} color={color} iconProgress={iconProgress} />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[208px] p-3">
+      <PopoverContent className={hasProgress ? 'w-[268px] p-3' : 'w-[208px] p-3'} onEscapeKeyDown={(event) => event.stopPropagation()}>
+        {hasProgress && <>
+          <div className="mb-2 text-xs text-muted-foreground">{W.progress}</div>
+          <ToggleGroup.Root type="single" value={String(iconProgress)} disabled={busy} aria-label={W.progress}
+            className="grid grid-cols-5 gap-1.5" onValueChange={(value) => { if (value) setIconProgress(Number(value)); }}>
+            {PROGRESS.map((value, index) => <ToggleGroup.Item key={value} value={String(value)} asChild>
+              <Button variant="ghost" size="sm" aria-label={`${W.progress} ${FRACTIONS[index]}`}
+                className="h-8 w-full rounded-md border border-transparent p-0 data-[state=on]:border-muted-foreground/40 data-[state=on]:bg-accent">
+                <StatusIcon status={status?.type ?? TYPES[category]} color={color} iconProgress={value} />
+              </Button>
+            </ToggleGroup.Item>)}
+          </ToggleGroup.Root>
+          <div className="my-3 border-t" />
+          <div className="mb-2 text-xs text-muted-foreground">{W.color}</div>
+        </>}
         <div className="grid grid-cols-5 gap-2">
-          {COLORS.map((value) => <button key={value} type="button" aria-label={value} aria-pressed={color === value}
-            className="size-6 rounded-full border-2 border-transparent outline-none aria-pressed:border-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-            style={{ backgroundColor: value }} onClick={() => { setColor(value); setPalette(false); }} />)}
+          {COLORS.map((value) => <button key={value} type="button" aria-label={value} aria-pressed={color === value} disabled={busy}
+            className={`size-6 rounded-full border-2 border-transparent outline-none aria-pressed:border-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50${hasProgress ? ' justify-self-center' : ''}`}
+            style={{ backgroundColor: value }} onClick={() => { setColor(value); if (!hasProgress) setPalette(false); }} />)}
         </div>
-        <Input aria-label={W.color} value={color ?? ''} maxLength={7} onChange={(event) => setColor(event.target.value || null)}
+        <Input aria-label={W.color} value={color ?? ''} disabled={busy} maxLength={7} onChange={(event) => setColor(event.target.value || null)}
           className="mt-3 h-8 font-mono text-xs" pattern="#[0-9a-fA-F]{6}" />
       </PopoverContent>
     </Popover>

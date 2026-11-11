@@ -1,5 +1,6 @@
 import { ISSUE_AGENT_STATES } from '../sessions/work-state.mjs';
 import { LABEL_COLORS } from './labels.mjs';
+import { STATUS_ICON_PROGRESS } from './workflow.mjs';
 
 const text = { type: 'string' };
 const time = { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
@@ -11,6 +12,7 @@ const statusId = { ...text, minLength: 1, maxLength: 100, description: 'Stable w
 const statusCategory = choice(['backlog', 'unstarted', 'started', 'completed', 'canceled']);
 const statusFields = {
   name: { ...text, minLength: 1, maxLength: 80 }, color: nullable({ ...text, pattern: '^#[0-9a-fA-F]{6}$' }),
+  iconProgress: { type: 'number', enum: STATUS_ICON_PROGRESS, description: 'Icon fill for a started status; does not change issue workflow.' },
   description: { ...text, maxLength: 500 },
 };
 const groups = ['status', 'priority', 'agent', 'agentState', 'project'];
@@ -67,7 +69,7 @@ export const ISSUE_REQUESTS = {
   log: object({ id: ISSUE_ID, kind: choice(['source', 'priority', 'due', 'assign', 'status', 'progress', 'decision', 'blocked', 'session', 'result', 'note']), text, data: {}, ...meta }, ['id', 'kind', 'text']),
   message: object({ id: ISSUE_ID, text: { ...text, maxLength: 20000 },
     attachmentIds: list({ ...text, minLength: 1, maxLength: 100 }), requestId: { ...text, minLength: 1, maxLength: 100 } }, ['id', 'text']),
-  forward: object({ id: ISSUE_ID, session: text, text: { ...text, minLength: 1, maxLength: 20000 }, attachments: list(promptAttachment), retryEntry: { type: 'integer', minimum: 1 } }, ['id', 'text']),
+  forward: object({ id: ISSUE_ID, session: text, text: { ...text, minLength: 1, maxLength: 20000 }, attachments: list(promptAttachment), retryEntry: { type: 'integer', minimum: 1 }, chat: { type: 'boolean' } }, ['id', 'text']),
   recipients: object({ q: { ...text, maxLength: 300 }, limit: { type: 'integer', minimum: 1, maximum: 200 } }),
   reply: object({ id: ISSUE_ID, text, ...meta }, ['id', 'text']),
   complete: object({ id: ISSUE_ID, outcome: text, ...meta }, ['id']),

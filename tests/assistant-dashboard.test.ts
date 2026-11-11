@@ -25,7 +25,7 @@ type Item = { id: string; type: string; x: number; y: number; w: number | 'fill'
 // The test widgets are the ones of the ten-column grid with every cell count a half more (rounded up), so the cases below are the same cases on fifteen columns.
 const gridWidgets = [
   ['test.summary', 'Summary', 3, 3, 6, 3], ['test.history', 'History', 5, 3, 6, 6],
-  ['test.future', 'Future', 3, 3, 6, 6], ['test.blocked', 'Blocked', 3, 3, 6, 3], ['test.source', 'Source', 3, 3, 6, 3],
+  ['test.future', 'Future', 3, 3, 6, 6], ['test.blocked', 'Blocked', 3, 3, 6, 3], ['test.source', 'Source', 3, 3, 6, 3], ['test.small', 'Small', 3, 2, 3, 2],
 ].map(([id, label, mw, mh, w, h]) => ({
   id, label, min: { w: mw, h: mh }, size: { w, h }, needs: [], widgetApi: 1,
 }));
@@ -101,7 +101,7 @@ function assertSound(layout: { v: number; widgets: Item[] }, rows = FILL_ROWS) {
 
 test('the built-in widgets are the table of the design doc, and a declaration that breaks the rules is refused with a reason', () => {
   assert.deepEqual(BUILT_IN_WIDGETS.map((widget) => [widget.id, widget.label, `${widget.min.w}x${widget.min.h}`, `${widget.size.w}x${widget.size.h}`]), [
-    ['issues', 'Issues', '6x3', 'fillxfill'], ['quota', 'Quota', '3x2', '3x2'], ['office', 'Office', '5x3', '5x3'], ['collector', 'Collector', '4x3', '6x5'],
+    ['issues', 'Issues', '6x3', 'fillxfill'], ['office', 'Office', '5x3', '5x3'], ['collector', 'Collector', '4x3', '6x5'],
   ]);
   for (const widget of BUILT_IN_WIDGETS) {
     assert.deepEqual(validateDeclaration(widget), { ok: true }, widget.id);
@@ -121,7 +121,7 @@ test('the built-in widgets are the table of the design doc, and a declaration th
     [{ ...fine, min: undefined }, /no minimum size/], [{ ...fine, min: { w: 0, h: 2 } }, /minimum size/], [{ ...fine, min: { w: 2, h: 2.5 } }, /minimum size/],
     [{ ...fine, size: undefined }, /no recommended size/], [{ ...fine, size: { w: 1, h: 2 } }, /smaller than its minimum/], [{ ...fine, size: { w: 3, h: 1 } }, /smaller than its minimum/],
     [{ ...fine, min: { w: 2, h: 25 }, size: { w: 3, h: 25 } }, /minimum size/], [{ ...fine, size: { w: 3, h: 25 } }, /recommended size/], [{ ...fine, size: { w: 3, h: 'tall' } }, /recommended size/],
-    [{ ...fine, needs: 'network' }, /needs/], [{ ...fine, description: 5 }, /description/], [null, /not a widget declaration/], ['quota', /not a widget declaration/], [[], /not a widget declaration/],
+    [{ ...fine, needs: 'network' }, /needs/], [{ ...fine, description: 5 }, /description/], [null, /not a widget declaration/], ['test.small', /not a widget declaration/], [[], /not a widget declaration/],
   ];
   for (const [declaration, reason] of refused) {
     const result: any = validateDeclaration(declaration);
@@ -159,20 +159,20 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
 
   // No room beside a filling Issues, so a new widget goes below everything, at its recommended size; the file is then written whole.
   // How far down "below" is depends on the rows the window shows, which the page says (nine when nobody does).
-  const quota = await s.ok('add', { type: 'quota', columns: 9 });
-  assert.deepEqual(box(quota.layout, 'quota'), [0, FILL_ROWS, 3, 2]);
-  assert.equal(quota.undo.label, 'Added「Quota」');
+  const quota = await s.ok('add', { type: 'test.small', columns: 9 });
+  assert.deepEqual(box(quota.layout, 'test.small'), [0, FILL_ROWS, 3, 2]);
+  assert.equal(quota.undo.label, 'Added「Small」');
   assert.deepEqual(s.onDisk(), quota.layout);
   assert.deepEqual(readdirSync(join(s.dir, 'state')), ['dashboard.json'], 'the temporary file is gone');
   assert.match(readFileSync(s.file, 'utf8'), /^\{\n {2}"v": 3,\n {2}"widgets": \[\n {4}\{"id":"issues"/, 'one widget per line');
   assert.deepEqual(box((await s.ok('undo')).layout, 'issues'), [0, 0, 'fill', 'fill']);
-  assert.deepEqual(box((await s.ok('add', { type: 'quota', rows: 15 })).layout, 'quota'), [0, 15, 3, 2], 'below the fifteen rows this window shows');
+  assert.deepEqual(box((await s.ok('add', { type: 'test.small', rows: 15 })).layout, 'test.small'), [0, 15, 3, 2], 'below the fifteen rows this window shows');
   await s.ok('undo');
   for (const rows of [0, -3, 2.5, 'ten', null, 5000]) {
-    assert.deepEqual(box((await s.ok('add', { type: 'quota', rows })).layout, 'quota'), [0, FILL_ROWS, 3, 2], `rows ${JSON.stringify(rows)} is not said`);
+    assert.deepEqual(box((await s.ok('add', { type: 'test.small', rows })).layout, 'test.small'), [0, FILL_ROWS, 3, 2], `rows ${JSON.stringify(rows)} is not said`);
     await s.ok('undo');
   }
-  await s.ok('add', { type: 'quota' });
+  await s.ok('add', { type: 'test.small' });
 
   // The owner drags Issues smaller: the page sends the whole layout and says which widget it was.
   const dragged = await s.ok('set', { layout: { v: 3, widgets: [{ id: 'issues', type: 'issues', x: 0, y: 0, w: 8, h: 9 }, ...quota.layout.widgets.slice(1)] }, type: 'issues' });
@@ -185,21 +185,21 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
   assert.deepEqual(box((await s.ok('add', { type: 'test.history', columns: 9 })).layout, 'test.history'), [8, 3, 6, 6]);
   const full = await s.ok('add', { type: 'office', columns: 9 });
   assert.deepEqual(box(full.layout, 'office'), [3, 9, 5, 3], 'no room in the first nine rows: the first slot below, beside Quota (Office comes at 5 × 3, its minimum)');
-  assert.deepEqual(box(full.layout, 'quota'), [0, 9, 3, 2], 'nothing else moved');
+  assert.deepEqual(box(full.layout, 'test.small'), [0, 9, 3, 2], 'nothing else moved');
   const again = await s.call('add', { type: 'office' });
   assert.equal(again.body.outcome, 'no_op', 'one widget per type');
   assert.equal(again.body.undo.label, 'Added「Office」', 'a call that changes nothing leaves the undo entry alone');
 
   // 嘟嘟 moves Quota onto Summary: what it lands on is pushed down, and what that lands on, and so on; the rest stays.
-  const pushed = await s.ok('move', { type: 'quota', x: 8, y: 2 });
-  assert.equal(pushed.undo.label, 'Moved「Quota」');
-  assert.deepEqual(['issues', 'quota', 'test.summary', 'test.history', 'office'].map((type) => box(pushed.layout, type)), [[0, 0, 8, 9], [8, 2, 3, 2], [8, 4, 6, 3], [8, 7, 6, 6], [3, 9, 5, 3]]);
+  const pushed = await s.ok('move', { type: 'test.small', x: 8, y: 2 });
+  assert.equal(pushed.undo.label, 'Moved「Small」');
+  assert.deepEqual(['issues', 'test.small', 'test.summary', 'test.history', 'office'].map((type) => box(pushed.layout, type)), [[0, 0, 8, 9], [8, 2, 3, 2], [8, 4, 6, 3], [8, 7, 6, 6], [3, 9, 5, 3]]);
   assertSound(pushed.layout);
 
   // Undo takes back the last change, once (the one before it stays); the layout it restores is the one on disk.
   const undone = await s.ok('undo');
   assert.deepEqual(undone.layout, full.layout);
-  assert.deepEqual(undone.undone, { label: 'Moved「Quota」' });
+  assert.deepEqual(undone.undone, { label: 'Moved「Small」' });
   assert.equal(undone.undo, null);
   assert.deepEqual(s.onDisk(), full.layout);
   const twice = await s.call('undo');
@@ -253,14 +253,14 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
   };
   const base = (await s.ok('get')).layout;
   await roundTrip('add', { type: 'test.future', columns: 12 }, 'Added「Future」');
-  await roundTrip('move', { type: 'quota', x: 3, y: 40 }, 'Moved「Quota」');
+  await roundTrip('move', { type: 'test.small', x: 3, y: 40 }, 'Moved「Small」');
   await roundTrip('resize', { type: 'issues', w: 12, h: 6 }, '「Issues」resized to 12×6');
-  await roundTrip('remove', { type: 'quota' }, 'Removed「Quota」');
+  await roundTrip('remove', { type: 'test.small' }, 'Removed「Small」');
   await roundTrip('reset', {}, 'Restored default');
   await roundTrip('set', { layout: { v: 3, widgets: base.widgets.map((item: Item) => (item.type === 'issues' ? { ...item, y: 60 } : item)) }, type: 'issues' }, 'Moved「Issues」');
-  await s.ok('move', { type: 'quota', y: 41 });
-  await s.ok('remove', { type: 'quota' });
-  assert.equal((await s.ok('undo')).undone.label, 'Removed「Quota」');
+  await s.ok('move', { type: 'test.small', y: 41 });
+  await s.ok('remove', { type: 'test.small' });
+  assert.equal((await s.ok('undo')).undone.label, 'Removed「Small」');
   assert.equal((await s.call('undo')).body.outcome, 'no_op', 'the move before it cannot be undone any more');
 
   // Wrong values are answers, not failures; a widget that is not there is an error.
@@ -306,10 +306,10 @@ test('a dashboard.json written by something else is corrected when read, and the
   const written = JSON.stringify({ v: 3, widgets: [
     { id: 'issues', type: 'issues', x: 0, y: 0, w: 8, h: 9 },
     { id: 'test.summary', type: 'test.summary', x: 4, y: 2, w: 6, h: 3 }, // lands on Issues: the later one in reading order goes below it
-    { id: 'quota', type: 'quota', x: 8, y: 0, w: 1, h: 1 }, // below the minimum of 3 × 2
+    { id: 'test.small', type: 'test.small', x: 8, y: 0, w: 1, h: 1 }, // below the minimum of 3 × 2
     { id: 'test.blocked', type: 'test.blocked', x: 15, y: 0, w: 2, h: 50 }, // taller than 18 rows, and past the right edge
     { id: 'acme.weather', type: 'acme.weather', x: 11, y: 0, w: 4, h: 3 }, // a plugin that is not installed: kept as it is
-    { id: 'again', type: 'quota', x: 0, y: 30, w: 3, h: 2 }, // a second Quota
+    { id: 'again', type: 'test.small', x: 0, y: 30, w: 3, h: 2 }, // a second Quota
     'garbage', null, 7, [], { x: 1 }, { type: 5 }, { id: 'test.history', x: -4, y: 1.4, w: 'wide', h: null }, // not widgets, or half of one
   ] });
   writeFileSync(s.file, written);
@@ -317,7 +317,7 @@ test('a dashboard.json written by something else is corrected when read, and the
   const view = await s.ok('get');
   assertSound(view.layout);
   assert.deepEqual(view.layout.widgets.map((item: Item) => [item.type, item.x, item.y, item.w, item.h]), [
-    ['issues', 0, 0, 8, 9], ['quota', 8, 0, 3, 2], ['acme.weather', 11, 0, 4, 3], ['test.blocked', 12, 3, 3, 18],
+    ['issues', 0, 0, 8, 9], ['test.small', 8, 0, 3, 2], ['acme.weather', 11, 0, 4, 3], ['test.blocked', 12, 3, 3, 18],
     ['test.history', 0, 9, 6, 6], // half a widget: its type from the id, the recommended size, a column and a row that exist, and then below Issues
     ['test.summary', 4, 15, 6, 3], // below Issues, and then below History, which took the place first
   ]);
@@ -331,12 +331,12 @@ test('a dashboard.json written by something else is corrected when read, and the
 
   // The page's own layout is corrected the same way, and says what it changed.
   const sent = await s.ok('set', { layout: { v: 3, widgets: [
-    { id: 'issues', type: 'issues', x: 0, y: 0, w: 8, h: 9 }, { id: 'quota', type: 'quota', x: 4, y: 2, w: 1, h: 1 }, 7, { id: 'quota', type: 'quota', x: 14, y: 18, w: 3, h: 2 },
+    { id: 'issues', type: 'issues', x: 0, y: 0, w: 8, h: 9 }, { id: 'test.small', type: 'test.small', x: 4, y: 2, w: 1, h: 1 }, 7, { id: 'test.small', type: 'test.small', x: 14, y: 18, w: 3, h: 2 },
   ] } });
-  assert.deepEqual(sent.layout.widgets.map((item: Item) => [item.type, item.x, item.y, item.w, item.h]), [['issues', 0, 0, 8, 9], ['quota', 4, 9, 3, 2]]);
+  assert.deepEqual(sent.layout.widgets.map((item: Item) => [item.type, item.x, item.y, item.w, item.h]), [['issues', 0, 0, 8, 9], ['test.small', 4, 9, 3, 2]]);
   assert.deepEqual(sent.corrections, [
-    { type: 'quota', reason: 'size', from: { w: 1, h: 1 }, to: { w: 3, h: 2 } }, { type: null, reason: 'unusable' }, { type: 'quota', reason: 'position', from: { x: 14, y: 18 }, to: { x: 12, y: 18 } }, { type: 'quota', reason: 'duplicate' },
-    { type: 'quota', reason: 'overlap', from: { x: 4, y: 2 }, to: { x: 4, y: 9 } },
+    { type: 'test.small', reason: 'size', from: { w: 1, h: 1 }, to: { w: 3, h: 2 } }, { type: null, reason: 'unusable' }, { type: 'test.small', reason: 'position', from: { x: 14, y: 18 }, to: { x: 12, y: 18 } }, { type: 'test.small', reason: 'duplicate' },
+    { type: 'test.small', reason: 'overlap', from: { x: 4, y: 2 }, to: { x: 4, y: 9 } },
   ]);
 
   // A plugin whose declaration is known is held to its minimum like the built-in widgets.
@@ -366,10 +366,10 @@ test('a dashboard.json written by something else is corrected when read, and the
   assert.ok(corrected > 1000, 'most of the random input did need correcting');
   // ...even if the engine itself fails: every widget keeps a place of its own.
   const broken = class { constructor() { throw new Error('the engine broke'); } };
-  const stacked = normalize({ v: 3, widgets: [{ type: 'quota', x: 0, y: 0, w: 3, h: 2 }, { type: 'test.blocked', x: 0, y: 0, w: 3, h: 3 }] }, { known, engine: broken }).layout;
-  assert.deepEqual(stacked.widgets.map((item: Item) => [item.type, item.y]), [['quota', 0], ['test.blocked', 2]]);
-  const stackedFill = normalize({ v: 3, widgets: [{ type: 'issues', w: 'fill', h: 'fill' }, { type: 'quota', x: 0, y: 0, w: 3, h: 2 }] }, { known, engine: broken, rows: 15 }).layout;
-  assert.deepEqual(stackedFill.widgets.map((item: Item) => [item.type, item.y]), [['issues', 0], ['quota', 15]], 'a height that fills counts the rows the window shows even when the engine fails');
+  const stacked = normalize({ v: 3, widgets: [{ type: 'test.small', x: 0, y: 0, w: 3, h: 2 }, { type: 'test.blocked', x: 0, y: 0, w: 3, h: 3 }] }, { known, engine: broken }).layout;
+  assert.deepEqual(stacked.widgets.map((item: Item) => [item.type, item.y]), [['test.small', 0], ['test.blocked', 2]]);
+  const stackedFill = normalize({ v: 3, widgets: [{ type: 'issues', w: 'fill', h: 'fill' }, { type: 'test.small', x: 0, y: 0, w: 3, h: 2 }] }, { known, engine: broken, rows: 15 }).layout;
+  assert.deepEqual(stackedFill.widgets.map((item: Item) => [item.type, item.y]), [['issues', 0], ['test.small', 15]], 'a height that fills counts the rows the window shows even when the engine fails');
 });
 
 test('old extra built-ins disappear from saved layouts, cannot be re-added, and Undo preserves the migration', async (t) => {
@@ -377,11 +377,10 @@ test('old extra built-ins disappear from saved layouts, cannot be re-added, and 
   mkdirSync(join(s.dir, 'state'), { recursive: true });
   const retained = [
     { id: 'issues', type: 'issues', x: 0, y: 0, w: 8, h: 9 },
-    { id: 'quota', type: 'quota', x: 8, y: 0, w: 3, h: 2 },
     { id: 'office', type: 'office', x: 0, y: 9, w: 9, h: 6 },
     { id: 'acme.weather', type: 'acme.weather', x: 9, y: 9, w: 4, h: 3 },
   ];
-  const retired = ['overview', 'upcoming', 'stuck', 'inputs', 'sessions'];
+  const retired = ['overview', 'upcoming', 'stuck', 'inputs', 'sessions', 'quota'];
   const old = { v: 3, widgets: [
     ...retained, ...retired.map((type, n) => ({ id: type, type, x: 0, y: 15 + n * 6, w: 6, h: 6 })),
   ] };
@@ -389,12 +388,12 @@ test('old extra built-ins disappear from saved layouts, cannot be re-added, and 
   writeFileSync(s.file, text);
   const view = await s.ok('get');
   assert.deepEqual(view.layout.widgets, retained, 'designed widgets and third-party widgets keep their cells');
-  assert.deepEqual(view.widgets.map((widget: any) => widget.id), ['issues', 'quota', 'office', 'collector']);
+  assert.deepEqual(view.widgets.map((widget: any) => widget.id), ['issues', 'office', 'collector']);
   assert.equal(readFileSync(s.file, 'utf8'), text, 'reading does not rewrite the file');
   for (const type of retired) {
     assert.equal((await s.call('add', { type, w: 6, h: 6 })).body.outcome, 'needs_clarification', type);
   }
-  const change = await s.ok('move', { type: 'quota', y: 4 });
+  const change = await s.ok('move', { type: 'acme.weather', y: 14 });
   assert.deepEqual(s.onDisk(), change.layout, 'the next edit saves the migrated layout');
   assert.deepEqual((await s.ok('undo')).layout.widgets, retained);
   assert.deepEqual(s.onDisk().widgets, retained, 'Undo does not resurrect removed built-ins');
@@ -406,7 +405,7 @@ test('a layout of the ten-column grid is read on fifteen: every cell count is a 
   mkdirSync(join(s.dir, 'state'), { recursive: true });
   const v1 = { v: 1, widgets: [
     { id: 'issues', type: 'issues', x: 0, y: 0, w: 'fill', h: 6 },
-    { id: 'quota', type: 'quota', x: 0, y: 6, w: 2, h: 1 },
+    { id: 'test.small', type: 'test.small', x: 0, y: 6, w: 2, h: 1 },
     { id: 'office', type: 'office', x: 2, y: 6, w: 6, h: 4 },
     { id: 'test.history', type: 'test.history', x: 6, y: 10, w: 4, h: 4 },
     { id: 'acme.weather', type: 'acme.weather', x: 7, y: 0, w: 3, h: 2 }, // a plugin that is not installed keeps what it asked for, scaled
@@ -417,11 +416,11 @@ test('a layout of the ten-column grid is read on fifteen: every cell count is a 
   const view = await s.ok('get');
   assertSound(view.layout);
   assert.deepEqual(view.layout.widgets.map((item: Item) => [item.type, item.x, item.y, item.w, item.h]), [
-    ['issues', 0, 0, 'fill', 'fill'], ['quota', 0, 9, 3, 2], ['acme.weather', 11, 9, 4, 3], ['office', 3, 12, 9, 6], ['test.history', 9, 18, 6, 6],
+    ['issues', 0, 0, 'fill', 'fill'], ['test.small', 0, 9, 3, 2], ['acme.weather', 11, 9, 4, 3], ['office', 3, 12, 9, 6], ['test.history', 9, 18, 6, 6],
   ]);
   assert.equal(readFileSync(s.file, 'utf8'), text, 'reading does not rewrite the file');
   // The next change writes it as version 3.
-  const moved = await s.ok('move', { type: 'quota', y: 40 });
+  const moved = await s.ok('move', { type: 'test.small', y: 40 });
   assert.equal(s.onDisk().v, 3);
   assert.deepEqual(s.onDisk(), moved.layout);
   assert.deepEqual((await s.ok('undo')).layout, view.layout, 'undo goes back to the migrated layout, not the ten-column one');
@@ -431,15 +430,15 @@ test('a layout of the ten-column grid is read on fifteen: every cell count is a 
   assert.deepEqual(migrate({ v: 1, widgets: [{ type: 'issues', x: 0, y: 0, w: 'fill', h: 6 }] }).widgets, [{ type: 'issues', x: 0, y: 0, w: 'fill', h: 'fill' }]);
   assert.deepEqual(migrate({ v: 1, widgets: [{ type: 'issues', x: 0, y: 0, w: 'fill', h: 4 }] }).widgets, [{ type: 'issues', x: 0, y: 0, w: 'fill', h: 6 }]);
   assert.deepEqual(migrate({ v: 1, widgets: [{ type: 'issues', x: 0, y: 0, w: 5, h: 6 }] }).widgets, [{ type: 'issues', x: 0, y: 0, w: 8, h: 9 }]);
-  assert.deepEqual(migrate({ v: 1, widgets: [{ type: 'quota', x: 0, y: 0, w: 'fill', h: 6 }] }).widgets, [{ type: 'quota', x: 0, y: 0, w: 'fill', h: 9 }], 'only Issues has a default');
+  assert.deepEqual(migrate({ v: 1, widgets: [{ type: 'test.small', x: 0, y: 0, w: 'fill', h: 6 }] }).widgets, [{ type: 'test.small', x: 0, y: 0, w: 'fill', h: 9 }], 'only Issues has a default');
   // Damaged values are not numbers to scale; they are left for the rules to correct, and nothing throws.
-  const damaged = migrate({ v: 1, widgets: ['x', null, { type: 'quota', x: 'a', y: null, w: {}, h: NaN }, { x: 1.5, type: 'quota', w: 1, h: 1 }] }) as any;
+  const damaged = migrate({ v: 1, widgets: ['x', null, { type: 'test.small', x: 'a', y: null, w: {}, h: NaN }, { x: 1.5, type: 'test.small', w: 1, h: 1 }] }) as any;
   assert.equal(damaged.v, 3);
   assert.deepEqual(damaged.widgets.slice(0, 2), ['x', null]);
-  assert.deepEqual(damaged.widgets[3], { x: 2, type: 'quota', w: 2, h: 2 });
-  assert.doesNotThrow(() => normalize({ v: 1, widgets: [1, 'x', null, [], { type: 'quota', x: 'a', y: null, w: {}, h: NaN }] }, { known, engine: GridStackEngine }));
+  assert.deepEqual(damaged.widgets[3], { x: 2, type: 'test.small', w: 2, h: 2 });
+  assert.doesNotThrow(() => normalize({ v: 1, widgets: [1, 'x', null, [], { type: 'test.small', x: 'a', y: null, w: {}, h: NaN }] }, { known, engine: GridStackEngine }));
   // A version 3 layout and anything else is returned as it is.
-  const current = { v: 3, widgets: [{ type: 'quota', x: 1, y: 1, w: 3, h: 2 }] };
+  const current = { v: 3, widgets: [{ type: 'test.small', x: 1, y: 1, w: 3, h: 2 }] };
   assert.equal(migrate(current), current);
   assert.equal(migrate(null as any), null);
   assert.equal(migrate({ v: 1, widgets: 'no' } as any).v, 1);
@@ -448,8 +447,8 @@ test('a layout of the ten-column grid is read on fifteen: every cell count is a 
   // A page of an older build still sends version 1 with its own cell counts: they are read the same way.
   const t2 = session(t);
   assert.deepEqual((await t2.ok('get')).layout, defaultLayout());
-  const sent = await t2.ok('set', { layout: { v: 1, widgets: [{ id: 'issues', type: 'issues', x: 0, y: 0, w: 5, h: 6 }, { id: 'quota', type: 'quota', x: 5, y: 0, w: 2, h: 1 }] }, type: 'issues' });
-  assert.deepEqual(sent.layout.widgets.map((item: Item) => [item.type, item.x, item.y, item.w, item.h]), [['issues', 0, 0, 8, 9], ['quota', 8, 0, 3, 2]]);
+  const sent = await t2.ok('set', { layout: { v: 1, widgets: [{ id: 'issues', type: 'issues', x: 0, y: 0, w: 5, h: 6 }, { id: 'test.small', type: 'test.small', x: 5, y: 0, w: 2, h: 1 }] }, type: 'issues' });
+  assert.deepEqual(sent.layout.widgets.map((item: Item) => [item.type, item.x, item.y, item.w, item.h]), [['issues', 0, 0, 8, 9], ['test.small', 8, 0, 3, 2]]);
   assert.equal(sent.layout.v, 3);
   assert.equal(t2.onDisk().v, 3);
 });
@@ -459,7 +458,7 @@ test('a layout of the twenty-column grid is read on fifteen: every cell count is
   mkdirSync(join(s.dir, 'state'), { recursive: true });
   const v2 = { v: 2, widgets: [
     { id: 'issues', type: 'issues', x: 0, y: 0, w: 'fill', h: 'fill' },
-    { id: 'quota', type: 'quota', x: 0, y: 12, w: 4, h: 2 },
+    { id: 'test.small', type: 'test.small', x: 0, y: 12, w: 4, h: 2 },
     { id: 'office', type: 'office', x: 4, y: 12, w: 8, h: 6 },
     { id: 'test.history', type: 'test.history', x: 12, y: 12, w: 8, h: 8 },
     { id: 'acme.weather', type: 'acme.weather', x: 16, y: 2, w: 4, h: 4 }, // a plugin that is not installed keeps what it asked for, scaled
@@ -470,10 +469,10 @@ test('a layout of the twenty-column grid is read on fifteen: every cell count is
   assertSound(view.layout);
   assert.deepEqual(view.layout.widgets.map((item: Item) => [item.type, item.x, item.y, item.w, item.h]), [
     // The weather (row 2 of the old grid) is read before History (row 12): it lands below Issues first, and History, which then overlaps it, goes below.
-    ['issues', 0, 0, 'fill', 'fill'], ['quota', 0, 9, 3, 2], ['office', 3, 9, 6, 5], ['acme.weather', 12, 9, 3, 3], ['test.history', 9, 12, 6, 6],
+    ['issues', 0, 0, 'fill', 'fill'], ['test.small', 0, 9, 3, 2], ['office', 3, 9, 6, 5], ['acme.weather', 12, 9, 3, 3], ['test.history', 9, 12, 6, 6],
   ]);
   assert.equal(readFileSync(s.file, 'utf8'), text, 'reading does not rewrite the file');
-  await s.ok('move', { type: 'quota', y: 30 });
+  await s.ok('move', { type: 'test.small', y: 30 });
   assert.equal(s.onDisk().v, 3, 'the next change writes version 3');
   assert.deepEqual((await s.ok('undo')).layout, view.layout, 'undo goes back to the migrated layout');
 
@@ -483,54 +482,54 @@ test('a layout of the twenty-column grid is read on fifteen: every cell count is
   assert.deepEqual(next([{ x: 0, w: 6 }, { x: 6, w: 7 }, { x: 13, w: 7 }]), [[0, 5], [5, 5], [10, 5]]);
   assert.deepEqual(next([{ x: 16, w: 4 }]), [[12, 3]], 'the right edge of the grid is the right edge');
   // Whatever is not a number is left for the rules, as for the ten-column file; "fill" stays "fill".
-  assert.deepEqual(migrate({ v: 2, widgets: [{ type: 'issues', x: 0, y: 0, w: 'fill', h: 'fill' }, 'x', { type: 'quota', x: 'a', y: null, w: {}, h: NaN }, { x: 6, type: 'quota', w: 1 }] }).widgets,
-    [{ type: 'issues', x: 0, y: 0, w: 'fill', h: 'fill' }, 'x', { type: 'quota', x: 'a', y: null, w: {}, h: NaN }, { x: 5, type: 'quota', w: 1 }]);
+  assert.deepEqual(migrate({ v: 2, widgets: [{ type: 'issues', x: 0, y: 0, w: 'fill', h: 'fill' }, 'x', { type: 'test.small', x: 'a', y: null, w: {}, h: NaN }, { x: 6, type: 'test.small', w: 1 }] }).widgets,
+    [{ type: 'issues', x: 0, y: 0, w: 'fill', h: 'fill' }, 'x', { type: 'test.small', x: 'a', y: null, w: {}, h: NaN }, { x: 5, type: 'test.small', w: 1 }]);
 
   // A widget scaled below its minimum is held to it, and what that then overlaps is pushed down, never the others rearranged.
   const crowded = normalize({ v: 2, widgets: [
-    { type: 'quota', x: 0, y: 0, w: 2, h: 1 },
+    { type: 'test.small', x: 0, y: 0, w: 2, h: 1 },
     { type: 'test.summary', x: 2, y: 0, w: 8, h: 4 },
     { type: 'test.future', x: 10, y: 0, w: 8, h: 8 },
   ] }, { known, engine: GridStackEngine });
   assertSound(crowded.layout);
   assert.deepEqual(crowded.layout.widgets.map((item: Item) => [item.type, item.x, item.y, item.w, item.h]), [
-    ['quota', 0, 0, 3, 2], ['test.future', 8, 0, 6, 6], ['test.summary', 2, 2, 6, 3],
+    ['test.small', 0, 0, 3, 2], ['test.future', 8, 0, 6, 6], ['test.summary', 2, 2, 6, 3],
   ], 'Quota grew to its minimum and Summary, which it now overlaps, goes below it; Future stays beside');
   assert.ok(crowded.corrections.some((entry: any) => entry.type === 'test.summary' && entry.reason === 'overlap'));
-  assert.doesNotThrow(() => normalize({ v: 2, widgets: [1, 'x', null, [], { type: 'quota', x: 'a', y: null, w: {}, h: NaN }] }, { known, engine: GridStackEngine }));
+  assert.doesNotThrow(() => normalize({ v: 2, widgets: [1, 'x', null, [], { type: 'test.small', x: 'a', y: null, w: {}, h: NaN }] }, { known, engine: GridStackEngine }));
 
   // A page of the build before this one still sends version 2: it is read the same way.
   const t2 = session(t);
-  const sent = await t2.ok('set', { layout: { v: 2, widgets: [{ id: 'issues', type: 'issues', x: 0, y: 0, w: 10, h: 12 }, { id: 'quota', type: 'quota', x: 10, y: 0, w: 4, h: 2 }] }, type: 'issues' });
-  assert.deepEqual(sent.layout.widgets.map((item: Item) => [item.type, item.x, item.y, item.w, item.h]), [['issues', 0, 0, 8, 9], ['quota', 8, 0, 3, 2]]);
+  const sent = await t2.ok('set', { layout: { v: 2, widgets: [{ id: 'issues', type: 'issues', x: 0, y: 0, w: 10, h: 12 }, { id: 'test.small', type: 'test.small', x: 10, y: 0, w: 4, h: 2 }] }, type: 'issues' });
+  assert.deepEqual(sent.layout.widgets.map((item: Item) => [item.type, item.x, item.y, item.w, item.h]), [['issues', 0, 0, 8, 9], ['test.small', 8, 0, 3, 2]]);
   assert.equal(sent.layout.v, 3);
   assert.equal(t2.onDisk().v, 3);
 });
 
 test('a height that fills counts the rows the window shows: the page says them, the plugin keeps "fill", and what gets in the way is pushed down', async (t) => {
   const s = session(t, { plugins: true });
-  const fillAndQuota = (y: number) => ({ v: 3, widgets: [{ id: 'issues', type: 'issues', x: 0, y: 0, w: 'fill', h: 'fill' }, { id: 'quota', type: 'quota', x: 0, y, w: 3, h: 2 }] });
+  const fillAndQuota = (y: number) => ({ v: 3, widgets: [{ id: 'issues', type: 'issues', x: 0, y: 0, w: 'fill', h: 'fill' }, { id: 'test.small', type: 'test.small', x: 0, y, w: 3, h: 2 }] });
 
   // Issues fills fifteen rows in this window: a Quota the page put at row 12 is in the way and goes below it; the fill is still "fill".
-  const tall = await s.ok('set', { layout: fillAndQuota(12), type: 'quota', rows: 15 });
-  assert.deepEqual(tall.layout.widgets.map((item: Item) => [item.type, item.y, item.h]), [['issues', 0, 'fill'], ['quota', 15, 2]]);
-  assert.deepEqual(tall.corrections, [{ type: 'quota', reason: 'overlap', from: { x: 0, y: 12 }, to: { x: 0, y: 15 } }]);
+  const tall = await s.ok('set', { layout: fillAndQuota(12), type: 'test.small', rows: 15 });
+  assert.deepEqual(tall.layout.widgets.map((item: Item) => [item.type, item.y, item.h]), [['issues', 0, 'fill'], ['test.small', 15, 2]]);
+  assert.deepEqual(tall.corrections, [{ type: 'test.small', reason: 'overlap', from: { x: 0, y: 12 }, to: { x: 0, y: 15 } }]);
   assertSound(tall.layout, 15);
   // In a window of eight rows (a small one) Issues is shorter than Quota's row and nothing moves; the minimum of Issues is three rows.
-  const small = await s.ok('set', { layout: fillAndQuota(12), type: 'quota', rows: 8 });
-  assert.deepEqual(small.layout.widgets.map((item: Item) => [item.type, item.y, item.h]), [['issues', 0, 'fill'], ['quota', 12, 2]]);
+  const small = await s.ok('set', { layout: fillAndQuota(12), type: 'test.small', rows: 8 });
+  assert.deepEqual(small.layout.widgets.map((item: Item) => [item.type, item.y, item.h]), [['issues', 0, 'fill'], ['test.small', 12, 2]]);
   // `get` with the rows of a window shows the layout as that window sees it, and stores nothing: a window of fifteen rows sees Quota below
   // the fifteen rows of Issues, while the file still says row 12 (undo and reset answer the same way).
   assert.deepEqual((await s.ok('get', { rows: 15 })).layout.widgets.map((item: Item) => item.y), [0, 15]);
   assert.deepEqual((await s.ok('get')).layout.widgets.map((item: Item) => item.y), [0, 12], 'what is kept is unchanged');
   assert.deepEqual(s.onDisk().widgets.map((item: Item) => item.y), [0, 12]);
-  const tiny = await s.ok('set', { layout: fillAndQuota(2), type: 'quota', rows: 1 });
-  assert.deepEqual(tiny.layout.widgets.map((item: Item) => [item.type, item.y, item.h]), [['issues', 0, 'fill'], ['quota', 3, 2]], 'a window too small for the minimum counts the minimum: three rows');
+  const tiny = await s.ok('set', { layout: fillAndQuota(2), type: 'test.small', rows: 1 });
+  assert.deepEqual(tiny.layout.widgets.map((item: Item) => [item.type, item.y, item.h]), [['issues', 0, 'fill'], ['test.small', 3, 2]], 'a window too small for the minimum counts the minimum: three rows');
 
   // Rows nobody can use are not said: the default counts.
   for (const rows of [undefined, 0, -1, 1.5, 'ten', 5000]) {
     await s.ok('reset');
-    const said = await s.ok('set', { layout: fillAndQuota(8), type: 'quota', ...(rows === undefined ? {} : { rows }) });
+    const said = await s.ok('set', { layout: fillAndQuota(8), type: 'test.small', ...(rows === undefined ? {} : { rows }) });
     assert.deepEqual(said.layout.widgets.map((item: Item) => item.y), [0, FILL_ROWS], `rows ${JSON.stringify(rows)}`);
   }
 
@@ -544,8 +543,8 @@ test('a height that fills counts the rows the window shows: the page says them, 
   await s.ok('reset');
 
   // A widget that is put on Issues' rows from row 0 pushes Issues down; Issues then has a number of rows of its own.
-  const landed = await s.ok('add', { type: 'quota', x: 0, y: 0, rows: 15 });
-  assert.deepEqual(landed.layout.widgets.map((item: Item) => [item.type, item.y, item.h]), [['quota', 0, 2], ['issues', 2, 15]]);
+  const landed = await s.ok('add', { type: 'test.small', x: 0, y: 0, rows: 15 });
+  assert.deepEqual(landed.layout.widgets.map((item: Item) => [item.type, item.y, item.h]), [['test.small', 0, 2], ['issues', 2, 15]]);
   await s.ok('reset');
 
   // Only the one that is at row 0 and has every row fills: given a height of "fill" at another row it has the rows a window gives it.
@@ -573,7 +572,7 @@ test('a height that fills counts the rows the window shows: the page says them, 
   assert.deepEqual(box(column.layout, 'test.column'), [0, 0, 6, 'fill']);
   assert.equal((await s.ok('get')).widgets.find((widget: any) => widget.id === 'test.column').size.h, 'fill');
   // Another widget at the same row is pushed below it when Issues returns; the column keeps filling.
-  assert.deepEqual(box((await s.ok('add', { type: 'quota', x: 0, y: 0, rows: 9 })).layout, 'test.column'), [0, 2, 6, 9], 'pushed by something put on it, it has numbers');
+  assert.deepEqual(box((await s.ok('add', { type: 'test.small', x: 0, y: 0, rows: 9 })).layout, 'test.column'), [0, 2, 6, 9], 'pushed by something put on it, it has numbers');
 });
 
 test('a dashboard.json that cannot be used is set aside, not lost, and a failed save changes nothing', async (t) => {
@@ -591,8 +590,8 @@ test('a dashboard.json that cannot be used is set aside, not lost, and a failed 
     assert.equal(readFileSync(view.recovered.file, 'utf8'), content, 'what the owner had is kept, byte for byte');
     assert.equal(existsSync(s.file), false);
     // The next change writes a good file; the set-aside one stays.
-    await s.ok('add', { type: 'quota' });
-    assert.deepEqual(s.onDisk().widgets.map((item: Item) => item.type), ['issues', 'quota']);
+    await s.ok('add', { type: 'office' });
+    assert.deepEqual(s.onDisk().widgets.map((item: Item) => item.type), ['issues', 'office']);
     assert.equal(readFileSync(view.recovered.file, 'utf8'), content);
   }
 
@@ -617,7 +616,7 @@ test('a dashboard.json that cannot be used is set aside, not lost, and a failed 
   // A folder that cannot be written: the change is an error, the layout and the undo entry stay as they were, nothing is left behind.
   const blocked = session(t, { file: join(s.dir, 'a-file-not-a-folder', 'dashboard.json') });
   writeFileSync(join(s.dir, 'a-file-not-a-folder'), 'x');
-  const failed = await blocked.call('add', { type: 'quota' });
+  const failed = await blocked.call('add', { type: 'office' });
   assert.equal(failed.status, 200);
   assert.equal(failed.body.outcome, 'error');
   assert.match(failed.body.message, /could not be saved/);
@@ -723,7 +722,7 @@ test('moves, resizes, adds and overlapping files give the positions the bare gri
   // moves. This is a case the real GridStack gave in Chromium. Issues lands on Source and Office, which go below it and onto each other;
   // History is pushed first by Office and is freed when Office moves on, so it ends where it started.
   writeFileSync(s.file, JSON.stringify({ v: 3, widgets: [
-    { type: 'test.source', x: 8, y: 2, w: 4, h: 4 }, { type: 'quota', x: 1, y: 3, w: 5, h: 3 }, { type: 'office', x: 4, y: 6, w: 7, h: 6 },
+    { type: 'test.source', x: 8, y: 2, w: 4, h: 4 }, { type: 'test.small', x: 1, y: 3, w: 5, h: 3 }, { type: 'office', x: 4, y: 6, w: 7, h: 6 },
     { type: 'test.history', x: 2, y: 9, w: 6, h: 5 }, { type: 'test.blocked', x: 4, y: 14, w: 4, h: 4 }, { type: 'test.future', x: 1, y: 17, w: 6, h: 6 },
   ] }));
   const chained = open();
@@ -738,7 +737,7 @@ test('moves, resizes, adds and overlapping files give the positions the bare gri
 
   // Adding without a position takes the first free slot, scanning left to right, top to bottom: checked against a plain search of the cells.
   for (let round = 0; round < 100; round++) {
-    const pool: string[] = known.map((widget) => widget.id).filter((id) => id !== 'issues' && id !== 'quota').sort(() => random() - 0.5).slice(0, between(1, 4));
+    const pool: string[] = known.map((widget) => widget.id).filter((id) => id !== 'issues' && id !== 'test.small').sort(() => random() - 0.5).slice(0, between(1, 4));
     const raw: Item[] = pool.map((type) => {
       const { min } = declared(type);
       return { id: type, type, x: between(0, 12), y: between(0, 16), w: between(min.w, min.w + 5), h: between(min.h, min.h + 6) };
@@ -747,13 +746,13 @@ test('moves, resizes, adds and overlapping files give the positions the bare gri
     const dashboard = open();
     const start = dashboard.get().layout;
     const columns = between(4, 14);
-    const added = dashboard.add({ type: 'quota', columns });
+    const added = dashboard.add({ type: 'test.small', columns });
     assert.equal(added.outcome, 'success');
-    assert.deepEqual(added.layout.widgets.filter((item: Item) => item.type !== 'quota'), start.widgets, 'it never pushes anything');
+    assert.deepEqual(added.layout.widgets.filter((item: Item) => item.type !== 'test.small'), start.widgets, 'it never pushes anything');
     const width = MAX_COLUMNS;
     const free = (x: number, y: number) => start.widgets.every((item: Item) => y >= item.y + (item.h as number) || y + 2 <= item.y || x + 3 <= item.x || x >= item.x + (item.w as number));
     let first: number[] | null = null;
     for (let y = 0; first === null; y++) for (let x = 0; x + 3 <= width && first === null; x++) if (free(x, y)) first = [x, y];
-    assert.deepEqual(box(added.layout, 'quota').slice(0, 2), first, `${JSON.stringify(start.widgets)} in ${columns} columns`);
+    assert.deepEqual(box(added.layout, 'test.small').slice(0, 2), first, `${JSON.stringify(start.widgets)} in ${columns} columns`);
   }
 });

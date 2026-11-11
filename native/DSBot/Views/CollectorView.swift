@@ -42,13 +42,13 @@ struct CollectorView: View {
         }
         .padding(.top, topInset + 10)
         .background(DSBotStyle.canvas)
-        .overlay(alignment: .bottom) {
+        .modifier(DSBotScrollEdgeBar(edge: .bottom) {
             if model.isSelecting {
                 bulkBar
-                    .padding(.bottom, 2)
+                    .padding(.bottom, GlassActionBar.bottomGap)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-        }
+        })
         .animation(.easeOut(duration: 0.2), value: model.isSelecting)
         .accessibilityIdentifier("collector.page")
         // Read when the tab is shown and when the computer connects (a read before that is skipped, and the page would stay empty until it was pulled).
@@ -72,6 +72,14 @@ struct CollectorView: View {
         }
         .onChange(of: model.isSelecting) { _, _ in revealed = nil }
         .onChange(of: model.tab) { _, _ in revealed = nil }
+        // A completion that failed while its record was not open is said here, as the page says its other failures: the plugin's own words, or the word for a change that did not go
+        // through (the desktop's toast says the same). A record in full that is open says it itself, inside the sheet, because the sheet covers this toast.
+        .onChange(of: model.completionProblems) { old, new in
+            for (id, problem) in new where old[id] != problem && opened?.id != id {
+                model.report?(DSBotToastMessage(text: problem.isEmpty ? "更改没能保存" : problem, kind: .error))
+                model.clearProblem(id)
+            }
+        }
     }
 
     @ViewBuilder
@@ -112,14 +120,14 @@ struct CollectorView: View {
             ForEach(model.items) { record in
                 SwipeActionRow(actions: swipeActions(for: record), isRevealed: revealed == record.id, onReveal: { revealed = $0 ? record.id : nil }) {
                     Button { tap(record) } label: {
-                        CollectorRow(record: record, tab: model.tab, selecting: model.isSelecting, selected: model.selection.contains(record.id))
+                        CollectorRow(record: record, tab: model.tab, selecting: model.isSelecting, selected: model.selection.contains(record.id), completing: model.completing.contains(record.id))
                     }
                     .buttonStyle(DSBotRowButtonStyle())
                     // Press and hold: the row lifts as a card and the menu opens under it, as on a conversation.
                     .contextMenu {
                         rowMenu(for: record)
                     } preview: {
-                        CollectorRowCard(record: record, tab: model.tab)
+                        CollectorRowCard(record: record, tab: model.tab, completing: model.completing.contains(record.id))
                     }
                     .accessibilityIdentifier("collector.record.\(record.id)")
                 }
@@ -130,8 +138,8 @@ struct CollectorView: View {
                     if record.id == model.items.last?.id, model.hasMore { Task { await model.loadMore(using: store) } }
                 }
             }
-            // Room under the last row for the bar that comes up when rows are chosen.
-            Color.clear.frame(height: model.isSelecting ? 96 : 24)
+            // Only the legacy overlay needs its bar's height reserved inside the list.
+            Color.clear.frame(height: listBottomPadding)
                 .listRowInsets(EdgeInsets())
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
@@ -139,6 +147,11 @@ struct CollectorView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .refreshable { await model.refresh(using: store) }
+    }
+
+    private var listBottomPadding: CGFloat {
+        guard model.isSelecting else { return 24 }
+        return DSBotScrollEdges.usesSystemEffect ? 96 - GlassActionBar.reservedHeight : 96
     }
 
     /// A tap: puts away the swipe actions that are showing; chooses or leaves out the row while rows are being chosen; otherwise opens the record.
@@ -173,18 +186,21 @@ struct CollectorView: View {
     }
 
     /// What pressing and holding a record offers: the desktop's right-click menu (and the bar of a record in full), for that one record. Nothing while rows are
-    /// being chosen. A record that went to an issue is the issue's: it can be opened, and that is all.
+    /// being chosen. A record that went to an issue is the issue's: it can be opened, and that is all but filling in its context, which every record has, in every tab (it comes after
+    /// what passes the record on and before the marks, as the desktop's menu has it).
     @ViewBuilder
     private func rowMenu(for record: CollectorRecord) -> some View {
         if !model.isSelecting {
             if let issue = record.issue {
                 Button { onOpenIssue(issue.id) } label: { DSBotLabel("打开事项", icon: .open) }
+                completeButton(for: record)
             } else {
                 if model.tab != .done {
                     Button { picking = PickRequest(target: .issue, records: [record]) } label: { DSBotLabel("分享到事项", icon: .shareToIssue) }
                     Button { picking = PickRequest(target: .session, records: [record]) } label: { DSBotLabel("分享到会话", icon: .shareToSession) }
                     Button { makeIssue(from: record) } label: { DSBotLabel("新建事项", icon: .plus) }
                 }
+                completeButton(for: record)
                 if model.tab == .todo {
                     Button { mark(.done, record) } label: { DSBotLabel("已处理", icon: .check) }
                     Button { mark(.ignore, record) } label: { DSBotLabel("忽略", icon: .hide) }
@@ -197,6 +213,13 @@ struct CollectorView: View {
                 Button(role: .destructive) { mark(.delete, record) } label: { DSBotLabel("删除", icon: .trash) }
             }
         }
+    }
+
+    /// Fill in the context of a record: its collector's session goes back to the source and reads what is around it. The row shows a spinner at once and the item cannot be chosen again
+    /// until it is over; what comes of it is in the record when it is opened, and a failure is said by a toast (`model.completionProblems`).
+    private func completeButton(for record: CollectorRecord) -> some View {
+        Button { model.complete(record, using: store) } label: { DSBotLabel("补全上下文", icon: .completeContext) }
+            .disabled(model.completing.contains(record.id))
     }
 
     /// A new issue that starts with the record's title and text (the record in full has them).
@@ -231,11 +254,14 @@ struct NewIssueDraft: Identifiable {
 }
 
 /// One record: where it comes from as a small picture, its title, who it is from and which collector, and when (or the issue it went to).
-private struct CollectorRow: View {
+/// The information card of 嘟嘟's chat draws its rows with it too (`QuickCardView`).
+struct CollectorRow: View {
     let record: CollectorRecord
     let tab: CollectorTab
     let selecting: Bool
     let selected: Bool
+    /// Its context is being filled in (`CollectorModel.complete`): a small spinner stands before the time, as on the desktop's row.
+    var completing = false
 
     /// A handled record that went to an issue is the issue's: nothing to choose it for.
     private var choosable: Bool { tab != .done || record.issue == nil }
@@ -270,7 +296,17 @@ private struct CollectorRow: View {
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            trailing
+            HStack(spacing: 6) {
+                if completing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.7)
+                        .tint(DSBotStyle.muted)
+                        .frame(width: 14, height: 14)
+                        .accessibilityHidden(true)
+                }
+                trailing
+            }
         }
         .frame(minHeight: 58)
         .padding(.horizontal, 10)
@@ -298,9 +334,10 @@ private struct CollectorRow: View {
 private struct CollectorRowCard: View {
     let record: CollectorRecord
     let tab: CollectorTab
+    var completing = false
 
     var body: some View {
-        CollectorRow(record: record, tab: tab, selecting: false, selected: false)
+        CollectorRow(record: record, tab: tab, selecting: false, selected: false, completing: completing)
             .padding(.horizontal, 6)
             .frame(width: 340)
             .background(Color.white)
@@ -309,11 +346,17 @@ private struct CollectorRowCard: View {
 
 /// A glass bar of actions, each an icon over its word: the bar of chosen rows, and the bottom of a record in full.
 struct GlassActionBar: View {
+    static let barHeight: CGFloat = 46
+    static let bottomGap: CGFloat = 2
+    static var reservedHeight: CGFloat { barHeight + bottomGap }
+
     struct Item: Identifiable {
         let id: String
         let title: String
         let glyph: DSBotGlyph
         var isDisabled = false
+        /// What it asks for is under way: a spinner stands in the place of its icon (so that it shows at once and is not pressed again) and it cannot be pressed.
+        var isBusy = false
         let action: () -> Void
 
         init(id: String, title: String, glyph: DSBotGlyph, action: @escaping () -> Void) {
@@ -328,6 +371,12 @@ struct GlassActionBar: View {
             copy.isDisabled = true
             return copy
         }
+
+        func busy(_ on: Bool) -> Item {
+            var copy = self
+            copy.isBusy = on
+            return copy
+        }
     }
 
     let items: [Item]
@@ -336,16 +385,16 @@ struct GlassActionBar: View {
 
     /// The blur starts at the top of the bar and runs to the screen's bottom edge, across the whole width: it is on the bar's left, right and below it, and nothing above the bar is
     /// blurred (owner, 2026-11-07: "上部不要模糊，左右下模糊"; the first try faded it upwards from the bar, over the page above).
-    private var blurHeight: CGFloat { Self.barHeight + 2 + max(homeInset, 20) }
-    private static let barHeight: CGFloat = 46
-
+    private var blurHeight: CGFloat { Self.reservedHeight + max(homeInset, 20) }
     var body: some View {
         ZStack(alignment: .bottom) {
-            DSBotEdgeBlur(edge: .bottom, height: blurHeight, strength: 0.9)
-                .frame(height: blurHeight)
-                .ignoresSafeArea(edges: .bottom)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+            if !DSBotScrollEdges.usesSystemEffect {
+                DSBotEdgeBlur(edge: .bottom, height: blurHeight, strength: 0.9)
+                    .frame(height: blurHeight)
+                    .ignoresSafeArea(edges: .bottom)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
             bar
         }
     }
@@ -355,14 +404,23 @@ struct GlassActionBar: View {
         HStack(spacing: 0) {
             ForEach(items) { item in
                 Button(action: item.action) {
-                    DSBotIcon(item.glyph, size: 21)
-                        .foregroundStyle(DSBotStyle.ink.opacity(item.isDisabled ? 0.35 : 1))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: Self.barHeight)
-                        .contentShape(Rectangle())
+                    Group {
+                        if item.isBusy {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(DSBotStyle.ink)
+                                .frame(width: 21, height: 21)
+                        } else {
+                            DSBotIcon(item.glyph, size: 21)
+                                .foregroundStyle(DSBotStyle.ink.opacity(item.isDisabled ? 0.35 : 1))
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: Self.barHeight)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(DSBotQuietPressStyle())
-                .disabled(item.isDisabled)
+                .disabled(item.isDisabled || item.isBusy)
                 .accessibilityLabel(item.title)
                 .accessibilityIdentifier("collector.action.\(item.id)")
             }
@@ -403,8 +461,20 @@ private struct CollectorRecordSheet: View {
 
     private var shown: CollectorRecord { detail?.record ?? record }
 
+    /// The collector's session is filling in this record's context (asked here or in the list, or at it already when the record was opened).
+    private var isCompleting: Bool { model.completing.contains(record.id) }
+
+    /// Why the last completion failed, in the plugin's own words or in the word for a change that did not go through (the desktop's toast says the same); the sheet says it itself, for it
+    /// covers the page's toast. What the plugin said of an earlier one comes with the record (it keeps that ten minutes).
+    private var completionProblem: String? {
+        guard !isCompleting else { return nil }
+        if let problem = model.completionProblems[record.id] { return problem.isEmpty ? "更改没能保存" : problem }
+        guard let error = detail?.record.completeError, !error.isEmpty else { return nil }
+        return error
+    }
+
     private var meta: String {
-        [shown.from ?? "", shown.connectorName, shown.at.map(relativeTime) ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+        [shown.ref ?? "", shown.from ?? "", shown.connectorName, shown.at.map(relativeTime) ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     var body: some View {
@@ -430,6 +500,13 @@ private struct CollectorRecordSheet: View {
                             .font(.system(size: 15))
                             .foregroundStyle(DSBotStyle.muted)
                             .padding(.top, 20)
+                    }
+                    if let problem = completionProblem {
+                        Text(problem)
+                            .font(.system(size: 13))
+                            .foregroundStyle(DSBotStyle.chatError)
+                            .padding(.top, 20)
+                            .accessibilityIdentifier("collector.record.completeError")
                     }
                     if let text = detail?.record.text, !text.isEmpty {
                         Text(text)
@@ -459,22 +536,35 @@ private struct CollectorRecordSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 24)
                 .padding(.top, 84)
-                .padding(.bottom, 100)
+                .padding(.bottom, DSBotScrollEdges.usesSystemEffect ? 100 - GlassActionBar.reservedHeight : 100)
             }
             header
         }
-        .overlay(alignment: .bottom) {
+        .modifier(DSBotScrollEdgeBar(edge: .bottom) {
             GlassActionBar(items: barItems)
-                .padding(.bottom, 2)
-        }
+                .padding(.bottom, GlassActionBar.bottomGap)
+        })
         .background(DSBotStyle.canvas.ignoresSafeArea())
         .presentationDetents([.large])
         .presentationDragIndicator(.hidden)
         .presentationCornerRadius(32)
         .presentationBackground(DSBotStyle.canvas)
         .task {
-            if let loaded = await model.detail(of: record, using: store) { detail = loaded } else { failed = true }
+            if let loaded = await model.detail(of: record, using: store) {
+                detail = loaded
+                // One that was running when the record was opened is waited for as well.
+                if loaded.record.completing == true { model.follow(record, using: store) }
+            } else {
+                failed = true
+            }
         }
+        // A completion has begun (what the computer said of the last one is out of date) or has come to its end: read the record again, for the lines it added.
+        .onChange(of: isCompleting) { was, now in
+            detail?.record.completeError = nil
+            guard was, !now else { return }
+            Task { if let loaded = await model.detail(of: record, using: store) { detail = loaded } }
+        }
+        .onDisappear { model.clearProblem(record.id) }
         .sheet(item: $next) { destination in
             switch destination {
             case .shareIssue, .shareSession:
@@ -523,6 +613,8 @@ private struct CollectorRecordSheet: View {
             }
             if !moreActions.isEmpty {
                 Menu {
+                    Button { completeContext() } label: { DSBotLabel("补全上下文", icon: .completeContext) }
+                        .disabled(isCompleting)
                     ForEach(moreActions, id: \.title) { item in
                         Button(role: item.glyph == .trash ? .destructive : nil) {
                             Task {
@@ -557,7 +649,7 @@ private struct CollectorRecordSheet: View {
         let mark: CollectorMark
     }
 
-    /// What is left after the bar's four: put aside or handled, and delete (not for a record an issue holds).
+    /// What is left after the bar's: put aside or handled, and delete (not for a record an issue holds), with filling in the context first.
     private var moreActions: [MoreAction] {
         guard record.issue == nil else { return [] }
         switch tab {
@@ -567,6 +659,14 @@ private struct CollectorRecordSheet: View {
         }
     }
 
+    /// Fill in the context of the record: a spinner stands in the button's place while it runs, and the sheet stays open (the new lines come into it).
+    private func completeContext() {
+        guard !isCompleting else { return }
+        model.complete(record, using: store)
+    }
+
+    /// What can be done with the record, left to right: what passes it on, then filling in its context (every record, in every tab; between the two, as the desktop's menu has it), then
+    /// the mark that is done with it, which stays last.
     private var barItems: [GlassActionBar.Item] {
         func mark(_ id: String, _ title: String, _ glyph: DSBotGlyph, _ action: CollectorMark) -> GlassActionBar.Item {
             .init(id: id, title: title, glyph: glyph) {
@@ -576,20 +676,22 @@ private struct CollectorRecordSheet: View {
                 }
             }
         }
+        let complete = GlassActionBar.Item(id: "complete", title: "补全上下文", glyph: .completeContext) { completeContext() }.busy(isCompleting)
         if tab == .done {
             if let issue = record.issue {
                 return [.init(id: "issue", title: "打开事项", glyph: .open) {
                     dismiss()
                     onOpenIssue(issue.id)
-                }]
+                }, complete]
             }
-            return [mark("restore", "恢复", .restore, .restore)]
+            return [complete, mark("restore", "恢复", .restore, .restore)]
         }
         let draft = NewIssueDraft(title: detail?.draft.title ?? record.title, brief: detail?.draft.brief ?? "", record: record.id)
         return [
             .init(id: "share", title: "分享到事项", glyph: .shareToIssue) { next = .shareIssue },
             .init(id: "session", title: "分享到会话", glyph: .shareToSession) { next = .shareSession },
             .init(id: "new", title: "新建事项", glyph: .plus) { next = .newIssue(draft) },
+            complete,
             tab == .ignored ? mark("restore", "恢复", .restore, .restore) : mark("done", "已处理", .check, .done),
         ]
     }

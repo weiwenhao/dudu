@@ -12,6 +12,7 @@ struct ConversationProjection: Sendable {
 actor ConversationProjector {
     private var previousTranscript: Transcript?
     private var previousRunning = false
+    private var previousHidden = Set<Double>()
     private var previousRows: [TranscriptRow] = []
     private var previousSeparators: [String: Double] = [:]
     private var previousMarkdown = ConversationMarkdown.empty
@@ -19,7 +20,7 @@ actor ConversationProjector {
     func project(
         current: Transcript?, incoming: Transcript?, currentRows: [TranscriptRow],
         isRunning: Bool, prepending: Bool = false, messages: [ChatMessage] = [],
-        additionalMarkdown: [String] = []
+        additionalMarkdown: [String] = [], hidden: Set<Double> = []
     ) -> ConversationProjection {
         let combined: Transcript?
         if let current, let incoming {
@@ -27,8 +28,16 @@ actor ConversationProjector {
         } else {
             combined = incoming
         }
-        if combined != previousTranscript || isRunning != previousRunning {
-            if let combined, let previousTranscript,
+        // The lines of 嘟嘟's thread that the owner hid are only left out of what is shown: the transcript keeps them.
+        let hiding = hidden.union(combined?.hidden ?? [])
+        let shown: Transcript? = {
+            guard var visible = combined, !hiding.isEmpty else { return combined }
+            visible.entries = visible.entries.filter { entry in entry.seq.map { !hiding.contains($0) } ?? true }
+            return visible
+        }()
+        if combined != previousTranscript || isRunning != previousRunning || hiding != previousHidden {
+            if let combined = shown, let previousTranscript,
+               hiding == previousHidden,
                isRunning, previousRunning,
                combined.entries == previousTranscript.entries, combined.turns == previousTranscript.turns,
                combined.pendingInputs == previousTranscript.pendingInputs,
@@ -50,11 +59,12 @@ actor ConversationProjector {
                     previousSeparators = TranscriptTimeGrouping.separators(for: previousRows)
                 }
             } else {
-                previousRows = combined.map { TranscriptBuilder.rows(from: $0, isRunning: isRunning) } ?? []
+                previousRows = shown.map { TranscriptBuilder.rows(from: $0, isRunning: isRunning) } ?? []
                 previousSeparators = TranscriptTimeGrouping.separators(for: previousRows)
             }
             previousTranscript = combined
             previousRunning = isRunning
+            previousHidden = hiding
         }
         var texts = ConversationMarkdown.texts(in: previousRows)
         if combined == nil {

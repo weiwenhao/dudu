@@ -2,8 +2,10 @@ import SwiftUI
 import UIKit
 
 extension View {
-    func messageActions(text: String, isUser: Bool = false, seq: Double? = nil) -> some View {
-        modifier(MessageActions(text: text, isUser: isUser, seq: seq))
+    /// The long-press menu of a message. In 嘟嘟's own conversation, which is a group chat, it is the menu of the thread (owner, 2026-11-10: "我们有这个回复和删除和复制就行"): 回复 where there is an issue to
+    /// answer (`reply`), 复制, and 删除 of the lines `seqs` (or this message's `seq`), which only hides them; everywhere else it is the menu every conversation has.
+    func messageActions(text: String, isUser: Bool = false, seq: Double? = nil, reply: GroupIssue? = nil, seqs: [Double] = []) -> some View {
+        modifier(MessageActions(text: text, isUser: isUser, seq: seq, reply: reply, seqs: seqs))
     }
 }
 
@@ -11,7 +13,10 @@ private struct MessageActions: ViewModifier {
     let text: String
     let isUser: Bool
     let seq: Double?
+    var reply: GroupIssue? = nil
+    var seqs: [Double] = []
     @Environment(\.conversationAccess) private var access
+    @Environment(\.groupChat) private var group
     @State private var selection: MessageSelection?
     @State private var forkFailure: DSBotToastMessage?
     @State private var forking = false
@@ -20,6 +25,43 @@ private struct MessageActions: ViewModifier {
         content
             .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20, style: .continuous))
             .contextMenu {
+                if let group {
+                    groupMenu(group)
+                } else {
+                ordinaryMenu
+                }
+            } preview: {
+                MessageMenuPreview(text: text, isUser: isUser, seq: seq)
+            }
+            .accessibilityAction(named: "复制", copy)
+            .sheet(item: $selection) { selection in
+                MessageSelectionSheet(text: selection.text)
+            }
+            .overlay(alignment: .top) {
+                DSBotToastOverlay(message: forkFailure) { _ in forkFailure = nil }
+            }
+    }
+
+    /// The menu of 嘟嘟's thread: 回复, 复制, 删除.
+    @ViewBuilder
+    private func groupMenu(_ group: GroupChatContext) -> some View {
+        if let reply {
+            Button { group.reply(reply) } label: { DSBotLabel("回复", icon: .reply) }
+                .accessibilityIdentifier("message.reply")
+        }
+        if !text.isEmpty {
+            Button(action: copy) { DSBotLabel("复制", icon: .copy) }
+                .accessibilityIdentifier("message.copy")
+        }
+        let lines = seqs.isEmpty ? (seq.map { [$0] } ?? []) : seqs
+        if !lines.isEmpty {
+            Button(role: .destructive) { group.hide(lines) } label: { DSBotLabel("删除", icon: .trash) }
+                .accessibilityIdentifier("message.delete")
+        }
+    }
+
+    @ViewBuilder
+    private var ordinaryMenu: some View {
                 if !text.isEmpty {
                     Button(action: copy) {
                         DSBotLabel("复制", icon: .copy)
@@ -46,16 +88,6 @@ private struct MessageActions: ViewModifier {
                     .disabled(!access.connected || forking)
                     .accessibilityIdentifier("message.fork")
                 }
-            } preview: {
-                MessageMenuPreview(text: text, isUser: isUser, seq: seq)
-            }
-            .accessibilityAction(named: "复制", copy)
-            .sheet(item: $selection) { selection in
-                MessageSelectionSheet(text: selection.text)
-            }
-            .overlay(alignment: .top) {
-                DSBotToastOverlay(message: forkFailure) { _ in forkFailure = nil }
-            }
     }
 
     private func copy() {

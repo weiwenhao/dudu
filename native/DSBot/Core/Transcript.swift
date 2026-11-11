@@ -47,6 +47,10 @@ struct TranscriptEntry: Codable, Identifiable, Equatable, Sendable {
     var items: Int?
     var tokens: Int?
     var requestId: String? = nil
+    /// The rows of a card of 嘟嘟's chat, on the entry of the command that made it (`QuickCard`).
+    var card: QuickCardSlot? = nil
+    /// A line of the group chat (the owner's @ message to an issue, its answer, the result of a scheduled task), on the entry of the command that made it (`GroupLine`).
+    var group: GroupLineSlot? = nil
 }
 
 struct TranscriptTurn: Codable, Equatable, Sendable {
@@ -57,6 +61,7 @@ struct TranscriptTurn: Codable, Equatable, Sendable {
     var lastSeq: Double? = nil
     var files: [DeliveredFile]? = nil
     var changesSeq: Double? = nil
+    var changesSummary: ConversationChangeSummary? = nil
     var notices: [TurnNotice]? = nil
     var stats: [String: Double]? = nil
     var usage: [String: Double]? = nil
@@ -79,6 +84,8 @@ struct Transcript: Codable, Equatable, Sendable {
     var tools: [String: TranscriptToolReference]? = nil
     /// Host-authoritative next-step input, kept separate from the durable transcript.
     var pendingInputs: [QueuedMessage]? = nil
+    /// The lines of 嘟嘟's thread that the owner hid, by the sequence number of their event (only in the answer for that conversation): the interface does not show them.
+    var hidden: [Double]? = nil
 }
 
 struct TranscriptToolReference: Codable, Equatable, Sendable {
@@ -340,6 +347,7 @@ struct TurnRow: Identifiable, Equatable, Sendable {
     var messageSequences: [String: Double] = [:]
     var files: [DeliveredFile] = []
     var changesSeq: Double? = nil
+    var changesSummary: ConversationChangeSummary? = nil
     var notices: [TurnNotice] = []
     var performanceSeq: Double? = nil
     /// A user message can interrupt a turn. Only its last chronological fragment owns the turn footer.
@@ -384,6 +392,16 @@ struct CommandRow: Identifiable, Equatable, Sendable {
     /// What opens when the row is tapped: the compaction summary, as in DSH.
     var detail: String? = nil
     var isCompaction = false
+    /// A card of 嘟嘟's chat: the row is drawn as the card, not as a command.
+    var card: QuickCard? = nil
+    /// The id of the command that made the row (`assistant.card` names the card a repeat would only copy by it).
+    var commandId: String? = nil
+    /// A line of the group chat: the row is drawn as the owner's @ message, as the answer of an issue's agent or as the result of a scheduled task of 嘟嘟's, not as a command.
+    var group: GroupLine? = nil
+    /// The sequence number of the command's event: what hiding the row names.
+    var seq: Double? = nil
+    /// The answer of the issue is on its way: the row is the dots that stand for it (`GroupChat.waiting`).
+    var isTyping = false
 }
 
 struct TriggerRow: Identifiable, Equatable, Sendable {
@@ -465,6 +483,14 @@ enum TranscriptBuilder {
                 if entry.source == "dudu-harness", entry.name == "compact", entry.outcome == "success" {
                     continue
                 }
+                // A card that is still being made has nothing to show yet: the button's own spinner says so, and the card replaces it.
+                if entry.name == QuickCard.command, entry.outcome == nil {
+                    continue
+                }
+                // The same for a line of the group chat, and the silent mark that an answer will not come is no row at all.
+                if entry.name == GroupChat.command, entry.outcome == nil || entry.group?.line?.kind == .end {
+                    continue
+                }
                 rows.append(.command(commandRow(entry)))
             case "compaction":
                 rows.append(.command(CommandRow(
@@ -506,6 +532,7 @@ enum TranscriptBuilder {
             row.startedAt = info?.start
             row.files = row.isLastFragment ? info?.files ?? [] : []
             row.changesSeq = row.isLastFragment ? info?.changesSeq : nil
+            row.changesSummary = row.isLastFragment ? info?.changesSummary : nil
             var retryChains = Set<String>()
             row.notices = (row.isLastFragment ? info?.notices ?? [] : []).reversed().filter { notice in
                 guard notice.kind == "retry", let retryId = notice.retryId, !retryId.isEmpty else { return true }
@@ -547,6 +574,15 @@ enum TranscriptBuilder {
         if isRunning, runningTurn == nil {
             rows.append(.status(startedAt: nil))
         }
+        // An issue's answer stands under the line it answers, and the dots of the answers still on their way stand there too, until the answer comes: not at the end of the thread (owner, 2026-11-11:
+        // "应该在原位吧，我新发的消息可以把它慢慢覆盖", and for the answer "我希望这个消息能停留在 loading 框对应的位置").
+        rows = GroupChat.placingReplies(in: rows)
+        rows = GroupChat.placingTyping(in: rows, now: Date().timeIntervalSince1970 * 1000) { line in
+            .command(CommandRow(
+                id: "typing:\(line.commandId ?? line.id)", name: GroupChat.command, summary: "", isError: false, isRunning: true,
+                group: line.group, isTyping: true
+            ))
+        }
         let admittedIDs = Set(transcript.entries.filter { $0.type == "user" }.map(\.id))
         for input in transcript.pendingInputs ?? [] where !admittedIDs.contains(input.id) {
             rows.append(.user(UserRow(
@@ -583,7 +619,11 @@ enum TranscriptBuilder {
         return CommandRow(
             id: entry.id, name: name, summary: summary, isError: isError, isRunning: running,
             detail: isCompaction && !isError ? nonEmpty(entry.compaction?.summary) : nil,
-            isCompaction: isCompaction
+            isCompaction: isCompaction,
+            card: name == QuickCard.command && !isError ? entry.card?.card : nil,
+            commandId: entry.commandId,
+            group: name == GroupChat.command && !isError ? entry.group?.line : nil,
+            seq: entry.seq
         )
     }
 

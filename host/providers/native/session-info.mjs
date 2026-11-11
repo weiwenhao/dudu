@@ -21,11 +21,9 @@ export async function sessionInfo({ key, links, controller, query }) {
   if (provider === 'dsh') {
     let native = links?.nativeKey(id);
     if (!native) {
-      try {
-        const { events } = await readSessionHistory({ controller, query }, id);
-        const identity = nativeIdentity(events);
-        if (identity) native = `${identity.provider}:${identity.id}`;
-      } catch { /* the DSH identity still shows when a native one is not available */ }
+      const { events } = await readSessionHistory({ controller, query }, id);
+      const identity = nativeIdentity(events);
+      if (identity) native = `${identity.provider}:${identity.id}`;
     }
     if (native) { [provider, ...parts] = native.split(':'); id = parts.join(':'); }
   }

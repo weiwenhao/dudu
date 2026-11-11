@@ -10,7 +10,11 @@ import { markdownImagePath } from './native-markdown-images.mjs';
 import { mapLimit } from './providers/async.mjs';
 import { providerDefault, providerFamily, sessionProviders } from './providers/catalog.mjs';
 import { agentMarkForActivity, stateOfMark } from './assistant/sessions/work-state.mjs';
+import { CARD_COMMAND } from './assistant/home/cards.mjs';
+import { SAY_COMMAND } from './assistant/home/group.mjs';
 import { createNativeAssistant, NATIVE_ASSISTANT_METHODS } from './native-assistant.mjs';
+import { NATIVE_TASK_METHODS } from './assistant/tasks/contract.mjs';
+import { AGENTS } from './assistant/home/agent-sessions.mjs';
 import {
   conversationState, deliveredPath, questionsFrom, recordConversationEvent, sessionPerformance,
   performanceEvent, toolPayload, toolReference, turnPerformance, validateAnswers,
@@ -73,6 +77,9 @@ export const NATIVE_METHODS = Object.freeze([
   'navigation.get',
   'assistant.open',
   ...NATIVE_ASSISTANT_METHODS,
+  ...NATIVE_TASK_METHODS,
+  // The subscription quota the plugin has kept: `{ ask }` (the phone's sheet opening is the ask, as the desktop icon's click is) -> `{ outcome, providers, refreshing, readAt }`.
+  'quota.get',
   'plugins.list',
   'schedule.list',
   'approval.respond',
@@ -957,8 +964,27 @@ function liveStep(state) {
   };
 }
 
-function transcriptFrom(state) {
-  const entries = state.entries.map((entry) => {
+// The contents of a card of 嘟嘟's chat, by the id of the command that made it (set when the bridge is made; nothing when the plugin has none). The lines of the group chat are kept the same way,
+// and the lines the owner hid (by the sequence number of their event) are left out of the thread of that conversation.
+let cardOf = () => null;
+let groupOf = () => null;
+let hiddenOf = () => null;
+let assistantId = () => null;
+
+function transcriptFrom(state, changeCounts) {
+  const hidden = state.summary?.id && state.summary.id === assistantId() ? hiddenOf() : null;
+  const shown = hidden?.size ? state.entries.filter((entry) => !(Number.isSafeInteger(entry.seq) && hidden.has(entry.seq))) : state.entries;
+  const entries = shown.map((entry) => {
+    // A line of the group chat (the owner's @ message to an issue, its answer) is its command's pair of events too, with what it said that moment.
+    if (entry.type === 'command' && entry.name === SAY_COMMAND && entry.outcome === 'success') {
+      const group = groupOf(entry.commandId);
+      return group ? { ...entry, group } : entry;
+    }
+    // A quick button's card is its command's pair of events, with what it listed that moment; a card that is no longer known stays the plain command.
+    if (entry.type === 'command' && entry.name === CARD_COMMAND && entry.outcome === 'success') {
+      const card = cardOf(entry.commandId);
+      return card ? { ...entry, card } : entry;
+    }
     if (entry.type !== 'assistant' || !entry.calls) return entry;
     return {
       ...entry,
@@ -978,6 +1004,11 @@ function transcriptFrom(state) {
   const live = liveStep(state);
   for (const [turn, extra] of state.conversation.turns) {
     if (!turns.some((item) => item.turn === turn)) turns.push({ turn, ...extra });
+  }
+  for (const turn of turns) {
+    if (!Number.isSafeInteger(turn.changesSeq)) continue;
+    const summary = changeCounts?.(state.summary.id, turn.changesSeq);
+    if (summary) turn.changesSummary = summary;
   }
   const beforeSeq = state.historyTrimmed
     ? entries.find((entry) => Number.isSafeInteger(entry.seq))?.seq ?? state.historyStart
@@ -1022,7 +1053,7 @@ function queueFrom(values, lane = 'next-turn') {
   }).slice(0, 100);
 }
 
-function detailFrom(state, { transcript = false } = {}) {
+function detailFrom(state, { transcript = false, changeCounts } = {}) {
   const values = state.values;
   const summary = summaryFrom({ ...state.summary, projections: { values } });
   const model = values.modelSelection?.next ?? values.modelSelection?.lastUsed;
@@ -1047,7 +1078,7 @@ function detailFrom(state, { transcript = false } = {}) {
   return {
     session: summary,
     messages: transcript ? [] : publicMessages(messages, state),
-    ...(transcript ? { transcript: transcriptFrom(state) } : {}),
+    ...(transcript ? { transcript: transcriptFrom(state, changeCounts) } : {}),
     ...(goalFrom(values) ? { goal: goalFrom(values) } : {}),
     ...(todosFrom(values) ? { todos: todosFrom(values) } : {}),
     queuedMessages: queueFrom(values),
@@ -1520,6 +1551,10 @@ function mapPresets(result) {
 
 export function createNativeBridge({ rpc, pages, navigation, conversationReads, questionBridge, sessionActivity, sessionSearch, assistantConversation, assistant, board, duduPages }) {
   const remote = createRemote(rpc);
+  cardOf = typeof assistant?.cardOf === 'function' ? (commandId) => assistant.cardOf(commandId) : () => null;
+  groupOf = typeof assistant?.groupOf === 'function' ? (commandId) => assistant.groupOf(commandId) : () => null;
+  hiddenOf = typeof assistant?.hidden === 'function' ? () => assistant.hidden() : () => null;
+  assistantId = typeof assistant?.state === 'function' ? () => assistant.state()?.sessionId ?? null : () => null;
   const assistantBridge = createNativeAssistant({
     assistant, remote, fail, attachments: validateAttachments,
     fileBytes: (data) => decodeBase64(data, MAX_FILE_BYTES),
@@ -1696,7 +1731,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
   });
   const pageBridge = pages ?? createNativePages({ rpc, files });
   // The board and the Collector: the plugin's own issues and inbox, asked through the commands the desktop interface sends (`board` gives the two).
-  const boardBridge = createNativeBoard({ issues: board?.issues, inbox: board?.inbox, projects: board?.projects, fail });
+  const boardBridge = createNativeBoard({ issues: board?.issues, inbox: board?.inbox, projects: board?.projects, getNeedsYouColor: board?.getNeedsYouColor, fail });
   // 嘟嘟's own settings, drawn by the app: the pages the web view used to show, asked through the same list of actions (phone-pages.mjs).
   const settingsBridge = createNativeSettings({ call: (action, body) => (duduPages?.allowed(action) ? duduPages.call(action, body) : { status: 404, body: {} }) });
 
@@ -1758,14 +1793,14 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
       const state = emptySessionState(summary);
       installSnapshot(state, snapshot, sessionId);
       invalidateListForState(sessionId, state);
-      return detailFrom(state, options);
+      return detailFrom(state, { ...options, changeCounts: conversationReads?.changeCounts });
     } finally {
       await stream.close();
     }
   }
 
   async function watchSession(params, connection, watchGeneration) {
-    const options = { transcript: params.transcript === true };
+    const options = { transcript: params.transcript === true, changeCounts: conversationReads?.changeCounts };
     const sessionId = params.id;
     const watchId = params.watchId;
     if (watchId !== undefined && (typeof watchId !== 'string' || !WATCH_ID.test(watchId))) {
@@ -1989,7 +2024,18 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
       if (NATIVE_BOARD_METHODS.includes(method)) return boardBridge.dispatch(method, params);
       if (NATIVE_SETTINGS_METHODS.includes(method)) return settingsBridge.dispatch(method, params ?? {});
       if (NATIVE_ASSISTANT_METHODS.includes(method)) return assistantBridge.dispatch(method, params ?? {});
+      if (NATIVE_TASK_METHODS.includes(method)) {
+        if (typeof assistant?.tasks !== 'function') fail('UPSTREAM_UNAVAILABLE');
+        return assistant.tasks(method.slice('tasks.'.length), params);
+      }
       switch (method) {
+        case 'quota.get': {
+          if (typeof assistant?.quota !== 'function') fail('UPSTREAM_UNAVAILABLE');
+          if (Object.keys(params).some((key) => key !== 'ask') || (params.ask !== undefined && typeof params.ask !== 'boolean')) fail('BAD_REQUEST');
+          const view = await assistant.quota({ ask: params.ask === true });
+          if (!view || !Array.isArray(view.providers)) fail('UPSTREAM_UNAVAILABLE');
+          return { outcome: 'success', ...view };
+        }
         case 'assistant.open': {
           if (typeof assistantConversation !== 'function') fail('UNSUPPORTED');
           // The plugin owns the assistant identity and setup. Never create a generic conversation
@@ -2113,7 +2159,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
           stillWatched(connection, watched);
           const state = emptySessionState(watched.state.summary);
           installSnapshot(state, { ...page, cursor: throughSeq }, params.id);
-          return { transcript: transcriptFrom(state) };
+          return { transcript: transcriptFrom(state, conversationReads?.changeCounts) };
         }
         case 'session.tool': {
           const watched = watchedSession(connection, params.id);
@@ -2306,7 +2352,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
           if (params.source !== undefined) {
             const watched = watchedSession(connection, sessionId);
             const [event, row] = await Promise.all([eventAt(watched, params.seq), findSessionRow(sessionId)]);
-            const path = markdownImagePath(event, params.source, row?.cwd ?? watched.state.values.workingDirectory);
+            const path = markdownImagePath(event, params.source, row?.cwd ?? watched.state.values.workingDirectory, (commandId) => groupOf(commandId));
             stillWatched(connection, watched);
             const file = await readConversation('file', { path });
             stillWatched(connection, watched);
@@ -2428,8 +2474,23 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
           }).filter(Boolean);
         }
         case 'schedule.list': {
-          const result = await remote.call('schedule/catalog');
-          return arrayValue(result, 'tasks').map((task) => {
+          // The current App can show our timers in its existing native schedule list. It needs no DSH schedule plugin for them.
+          const own = typeof assistant?.tasks === 'function' ? await assistant.tasks('list', {}) : null;
+          const ownRows = own?.outcome === 'success' ? own.tasks.map((task) => ({
+            id: `dudu:${task.id}`, name: task.title, enabled: task.status === 'active', detail: text(`${task.agent === 'dudu' ? '嘟嘟' : AGENTS[task.agent] ?? task.agent} · ${task.schedule.timezone}\n${task.prompt}`, 4000),
+            subtitle: task.status === 'active' && task.nextRunAt ? new Date(task.nextRunAt).toISOString() : task.status,
+            ...((task.sessionId || task.target.sessionId) ? { schedule: { sessionId: task.sessionId || task.target.sessionId, rule: {
+              kind: ({ interval: 'every', once: 'at', workdays: 'weekly', monthly: 'cron' })[task.schedule.kind] ?? task.schedule.kind,
+              time: task.schedule.time, timeZone: task.schedule.timezone,
+              expression: task.schedule.kind === 'monthly' ? `${Number(task.schedule.time.split(':')[1])} ${Number(task.schedule.time.split(':')[0])} ${task.schedule.day} * *` : task.schedule.expression,
+              ...(task.schedule.kind === 'interval' ? { everySeconds: task.schedule.minutes * 60 } : {}),
+              ...(task.schedule.kind === 'workdays' ? { weekdays: [1, 2, 3, 4, 5] } : task.schedule.kind === 'weekly' ? { weekdays: task.schedule.weekdays.map((day) => day || 7) } : {}),
+            } } } : {}),
+          })) : [];
+          let result;
+          try { result = await remote.call('schedule/catalog'); }
+          catch (error) { if (own?.outcome === 'success') return ownRows; throw error; }
+          return [...ownRows, ...arrayValue(result, 'tasks').map((task) => {
             const schedule = librarySchedule(task);
             return {
               id: text(task.id, 256),
@@ -2439,7 +2500,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
               detail: text(task.prompt, 4000),
               ...(schedule ? { schedule } : {}),
             };
-          }).filter((item) => item.id && item.name);
+          }).filter((item) => item.id && item.name)];
         }
         case 'approval.respond':
           return permissionsFor(params.sessionId, params.id, params.decision);

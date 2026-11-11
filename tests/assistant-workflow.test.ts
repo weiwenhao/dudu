@@ -73,6 +73,55 @@ test('custom status identity, color, description and default survive rename and 
   assert.equal(reopened.add({ title: 'Still the default' }).issue.status, status.id);
 });
 
+test('workflow icon progress migrates old shapes and persists owner choices without changing issues', async (t) => {
+  const folder = mkdtempSync(join(tmpdir(), 'dudu-workflow-icons-'));
+  t.after(() => rmSync(folder, { recursive: true, force: true }));
+  const file = join(folder, 'issues.db');
+  const previous = createIssues({ file });
+  const custom = previous.statusAdd({ name: 'Investigating', category: 'started', color: '#f2994a' }).status;
+  const issue = previous.add({ title: 'Keep this workflow', status: custom.id }).issue;
+  const saved = previous.get(issue.id);
+  const events = previous.events();
+  const counts = previous.counts();
+  previous.close();
+  const db = new DatabaseSync(file);
+  db.exec(`ALTER TABLE issue_statuses DROP COLUMN icon_progress; PRAGMA user_version=${SCHEMA_VERSION - 1};`);
+  db.close();
+
+  const { issues } = world(t, file);
+  const boss = createIssueCommands({ issues });
+  const all = (await boss.execute('statuses')).statuses;
+  assert.deepEqual(all.filter((entry: any) => entry.category === 'started').map((entry: any) => entry.iconProgress), [0.5, 0.75, 0.5]);
+  assert.ok(all.filter((entry: any) => entry.category !== 'started').every((entry: any) => entry.iconProgress === null));
+  assert.deepEqual(issues.get(issue.id), saved);
+  assert.deepEqual(issues.events(), events);
+  assert.deepEqual(issues.counts(), counts);
+  for (const iconProgress of [0, 0.5, 0.75, 1, 0.25]) {
+    const result = await boss.execute('status-update', { id: custom.id, patch: { iconProgress } });
+    assert.equal(result.outcome, 'success', result.message);
+    assert.equal(result.status.iconProgress, iconProgress);
+  }
+  const snapshot = issues.statuses();
+  for (const iconProgress of [-0.25, 0.1, 1.25, '1/4', null]) {
+    assert.equal((await boss.execute('status-update', { id: custom.id, patch: { name: 'Must not be written', iconProgress } })).code, 'invalid_status');
+  }
+  assert.equal(issues.statusUpdate('done', { iconProgress: 0.25 }).code, 'invalid_status');
+  assert.equal(issues.statusAdd({ name: 'Wrong category', category: 'unstarted', iconProgress: 0.5 }).code, 'invalid_status');
+  assert.deepEqual(issues.statuses(), snapshot, 'invalid icon changes leave every field intact');
+  assert.deepEqual(issues.get(issue.id), saved, 'icon changes do not touch the workflow, activity or timestamps');
+  assert.deepEqual(issues.events(), events);
+  assert.deepEqual(issues.counts(), counts);
+  const added = await boss.execute('status-add', { fields: { name: 'Quarter filled', category: 'started', iconProgress: 0.25 } });
+  assert.equal(added.outcome, 'success');
+  assert.equal(added.status.iconProgress, 0.25);
+  issues.close();
+  const reopened = createIssues({ file });
+  t.after(() => reopened.close());
+  for (const id of [custom.id, added.status.id]) {
+    assert.equal(reopened.statuses().statuses.find((entry: any) => entry.id === id).iconProgress, 0.25);
+  }
+});
+
 test('custom workflow groups, filters, counts and status order agree across keyset pages', (t) => {
   const { issues, addStatus } = world(t);
   const first = addStatus('Investigating');

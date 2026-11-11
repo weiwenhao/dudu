@@ -48,3 +48,24 @@ test('Markdown image selectors reject other events, remote transports, missing w
   assert.equal(markdownImagePath(duplicateDefinition, '/workspace/first.png'), '/workspace/first.png');
   assert.throws(() => markdownImagePath(duplicateDefinition, '/workspace/last.png'), { code: 'NOT_FOUND' });
 });
+
+test('A line of 嘟嘟\'s group chat grants its images as a message does: an answer or a task\'s result, only through the command that carries it', () => {
+  const run = (name: string, commandId: string) => ({ type: 'command/run', data: { name, commandId } });
+  const lines: Record<string, { kind: string; text?: string }> = {
+    answer: { kind: 'reply', text: 'Done.\n\n![shot](/workspace/shot.png)' },
+    task: { kind: 'task', text: 'Result ![chart](/workspace/chart.png)' },
+    mine: { kind: 'at', text: '![mine](/workspace/mine.png)' },
+  };
+  const lookup = (id: string) => lines[id] ?? null;
+  assert.equal(markdownImagePath(run('dudu-say', 'answer'), '/workspace/shot.png', undefined, lookup), '/workspace/shot.png');
+  assert.equal(markdownImagePath(run('dudu-say', 'task'), '/workspace/chart.png', undefined, lookup), '/workspace/chart.png');
+  // the owner's own line, another command, a command the plugin does not know, a file the line does not show, and no lookup at all grant nothing
+  assert.throws(() => markdownImagePath(run('dudu-say', 'mine'), '/workspace/mine.png', undefined, lookup), { code: 'NOT_FOUND' });
+  assert.throws(() => markdownImagePath(run('dudu-card', 'answer'), '/workspace/shot.png', undefined, lookup), { code: 'NOT_FOUND' });
+  assert.throws(() => markdownImagePath(run('dudu-say', 'gone'), '/workspace/shot.png', undefined, lookup), { code: 'NOT_FOUND' });
+  assert.throws(() => markdownImagePath(run('dudu-say', 'answer'), '/etc/passwd', undefined, lookup), { code: 'NOT_FOUND' });
+  assert.throws(() => markdownImagePath(run('dudu-say', 'answer'), '/workspace/shot.png'), { code: 'NOT_FOUND' });
+  // a relative path has no working directory in a group line (it would be the assistant's, not the issue's)
+  lines.relative = { kind: 'reply', text: '![r](pictures/r.png)' };
+  assert.throws(() => markdownImagePath(run('dudu-say', 'relative'), 'pictures/r.png', undefined, lookup), { code: 'NOT_FOUND' });
+});

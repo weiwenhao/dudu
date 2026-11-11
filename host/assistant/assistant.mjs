@@ -2,7 +2,7 @@
 // and the collectors, and the calls the settings page makes on them. Nothing here imports DSH; the plugin passes in what it must (the
 // folders, a model function, how to open a file).
 //
-//   const assistant = openAssistant({ dshHome, stateFolder, env, llm?, openPath?, credentials?, createOAuth? });
+//   const assistant = openAssistant({ dshHome, stateFolder, env, llm?, openPath?, credentials?, createOAuth?, onCollectorRemoved? });
 //   assistant.handle('connectors/list', request)      one POST of the page, answered with JSON
 //   assistant.memory, assistant.connectors, assistant.connections, assistant.collectors     null when the project folder could not be opened (see `problems`)
 //   credentials                                       DSH's credential store ({ readRecord, modifyRecord, deleteRecord }): where tokens, keys and the values of environment variables are kept
@@ -53,7 +53,7 @@ function recordStore(credentials, prefix, scope = 'dudu') {
   };
 }
 
-export function openAssistant({ dshHome, stateFolder, env = process.env, llm = null, now = Date.now, openPath = openWithSystem, state = () => ({}), beforeFolderChange = () => null, credentials = null, mountMcp = null, createOAuth = null, connectionDeps = {} }) {
+export function openAssistant({ dshHome, stateFolder, env = process.env, llm = null, now = Date.now, openPath = openWithSystem, state = () => ({}), beforeFolderChange = () => null, credentials = null, mountMcp = null, createOAuth = null, connectionDeps = {}, onCollectorRemoved = null }) {
   const settings = createSettings({ file: join(stateFolder, 'settings.json'), now });
   const problems = [];
   let model = llm;
@@ -71,11 +71,13 @@ export function openAssistant({ dshHome, stateFolder, env = process.env, llm = n
       file: join(folder, 'CONNECTORS.md'),
       inUse: (id) => (collectors?.owner.list().collectors ?? []).filter((collector) => collector.connector === id).map((collector) => collector.name),
     });
-    collectors = createCollectors({ file: join(folder, 'COLLECTORS.md'), connectors: () => connectors });
+    collectors = createCollectors({ file: join(folder, 'COLLECTORS.md'), connectors: () => connectors, onRemoved: onCollectorRemoved });
     const oauthStore = recordStore(credentials, 'oauth-');
+    const openBrowser = (url) => openPath(url).then((opened) => { if (!opened?.ok) throw new Error(opened?.message ?? 'The browser could not be opened.'); });
     connections = createConnections({
       connectors, state: createState({ file: join(stateFolder, 'connectors-state.json'), now }), secrets: recordStore(credentials, 'connector-'), env, now,
-      oauth: createOAuth ? createOAuth({ store: oauthStore, openUrl: (url) => openPath(url).then((opened) => { if (!opened?.ok) throw new Error(opened?.message ?? 'The browser could not be opened.'); }) }) : null,
+      oauth: createOAuth ? createOAuth({ store: oauthStore, openUrl: openBrowser }) : null,
+      openUrl: openBrowser, // a sign-in by device code sends the browser to the service's page for it
       mount: mountMcp, // what is connected is given to DSH's sessions too (connectors/publish.mjs)
       ...connectionDeps,
     });

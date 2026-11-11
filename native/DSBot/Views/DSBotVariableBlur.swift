@@ -1,6 +1,47 @@
 import SwiftUI
 import UIKit
 
+enum DSBotScrollEdges {
+    static var usesSystemEffect: Bool {
+        if #available(iOS 26.0, *) { return true }
+        return false
+    }
+
+    @available(iOS 26.0, *)
+    static var systemStyle: ScrollEdgeEffectStyle {
+        // Build with SDK 27+: SDK 26.2 omitted the toolbar from this effect on iOS 27.
+        return .soft
+    }
+}
+
+/// Attach the actual controls so the system can shape the scroll edge around them.
+struct DSBotScrollEdgeBar<Bar: View>: ViewModifier {
+    let edge: VerticalEdge
+    var underlapsBar = false
+    var showsEffect = true
+    @ViewBuilder let bar: () -> Bar
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                // Chat already reserves the measured chrome on its last history row.
+                .ignoresSafeArea(.container, edges: underlapsBar ? edges : [])
+                .safeAreaBar(edge: edge, spacing: 0) {
+                    bar()
+                }
+                .scrollEdgeEffectStyle(DSBotScrollEdges.systemStyle, for: edges)
+                .scrollEdgeEffectHidden(!showsEffect, for: edges)
+        } else {
+            content
+                .overlay(alignment: edge == .top ? .top : .bottom) {
+                    bar()
+                }
+        }
+    }
+
+    private var edges: Edge.Set { edge == .top ? .top : .bottom }
+}
+
 /// Progressive blur that is strongest at a screen edge and eases to nothing across `height`.
 ///
 /// Public API only: a stack of `UIVisualEffectView`s whose blur radius is dialled in by pausing a
@@ -12,7 +53,7 @@ struct DSBotEdgeBlur: UIViewRepresentable {
     let height: CGFloat
     /// Scales every layer's radius: 1 is the full effect, less is lighter.
     var strength: CGFloat = 1
-    /// Keeps all layers fully visible this far from the edge, then eases them out below it.
+    /// Positions the title transition; stronger layers begin easing out before this height.
     var fullStrengthHeight: CGFloat = 0
 
     func makeUIView(context: Context) -> VariableBlurView {
@@ -59,6 +100,7 @@ final class VariableBlurView: UIView {
         didSet { if fullStrengthHeight != oldValue { setNeedsLayout() } }
     }
     private var effectViews: [UIVisualEffectView] = []
+    private var masks: [EdgeBlurMaskView] = []
     private var animators: [UIViewPropertyAnimator] = []
     private var observer: NSObjectProtocol?
 
@@ -80,9 +122,11 @@ final class VariableBlurView: UIView {
         for layer in Self.layers {
             let view = UIVisualEffectView(effect: nil)
             view.isUserInteractionEnabled = false
-            view.layer.mask = CAGradientLayer()
+            let mask = EdgeBlurMaskView()
+            view.mask = mask
             addSubview(view)
             effectViews.append(view)
+            masks.append(mask)
             animators.append(makeAnimator(for: view, fraction: layer.radius * strength))
         }
 
@@ -130,18 +174,42 @@ final class VariableBlurView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let solidFraction = bounds.height > 0 ? min(1, max(0, fullStrengthHeight / bounds.height)) : 0
-        let fadeFraction = 1 - solidFraction
-        for (view, layer) in zip(effectViews, Self.layers) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        for (index, layer) in Self.layers.enumerated() where index < effectViews.count {
+            let view = effectViews[index]
             view.frame = bounds
-            guard let mask = view.layer.mask as? CAGradientLayer else { continue }
-            mask.frame = view.bounds
-            mask.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
-            mask.locations = [
-                0,
-                NSNumber(value: Double(solidFraction + layer.solid * fadeFraction)),
-                NSNumber(value: Double(solidFraction + layer.reach * fadeFraction))
-            ]
+            // Keep the reference's faint ink shadows rather than whitening them away.
+            view.contentView.backgroundColor = fullStrengthHeight > 0 && index == Self.layers.count - 1
+                ? UIColor.systemBackground.withAlphaComponent(0.36) : .clear
+            let maskView = masks[index]
+            maskView.frame = view.bounds
+            let mask = maskView.gradient
+            if fullStrengthHeight > 0 {
+                // Synchronized stops draw a horizontal boundary. Begin the stronger
+                // layers earlier, with a zero-slope transition at both ends.
+                let strongestRadius = Self.layers.last?.radius ?? layer.radius
+                let startHeight = max(0, fullStrengthHeight - 24 * layer.radius / strongestRadius)
+                let start = bounds.height > 0 ? min(1, startHeight / bounds.height) : 0
+                let steps = 32
+                mask.colors = [UIColor.black.cgColor] + (0...steps).map { step in
+                    let progress = Double(step) / Double(steps)
+                    let eased = progress * progress * (3 - 2 * progress)
+                    let opacity = 1 - eased
+                    return UIColor.black.withAlphaComponent(CGFloat(opacity)).cgColor
+                }
+                mask.locations = [0] + (0...steps).map { step in
+                    NSNumber(value: Double(start + (1 - start) * CGFloat(step) / CGFloat(steps)))
+                }
+            } else {
+                mask.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
+                mask.locations = [
+                    0,
+                    NSNumber(value: Double(layer.solid)),
+                    NSNumber(value: Double(layer.reach))
+                ]
+            }
             if edge == .top {
                 mask.startPoint = CGPoint(x: 0.5, y: 0)
                 mask.endPoint = CGPoint(x: 0.5, y: 1)
@@ -149,6 +217,15 @@ final class VariableBlurView: UIView {
                 mask.startPoint = CGPoint(x: 0.5, y: 1)
                 mask.endPoint = CGPoint(x: 0.5, y: 0)
             }
+            // UIKit copies a view mask into its backdrop and content views. A layer mask
+            // only clips the effect's output; reassign after resizing to refresh those copies.
+            view.mask = nil
+            view.mask = maskView
         }
     }
+}
+
+private final class EdgeBlurMaskView: UIView {
+    override class var layerClass: AnyClass { CAGradientLayer.self }
+    var gradient: CAGradientLayer { layer as! CAGradientLayer }
 }

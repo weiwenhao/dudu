@@ -1,18 +1,24 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ArrowUp, Check, ChevronDown, ChevronUp, Expand, EyeOff, FileText, LoaderCircle, Mic, RotateCcw, Settings, Square, X } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronUp, Expand, EyeOff, FileText, LoaderCircle, Mic, RotateCcw, Settings, Square, X } from 'lucide-react';
 import { T } from '../strings.js';
+import { AgentLogo } from '../issues/AgentLogo.jsx';
+import { requestTask } from '../tasks/navigation.js';
+import { scheduleLabel, taskAgentName } from '../tasks/format.js';
 import { Button } from '../components/button.jsx';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '../components/context-menu.jsx';
 import { readySpeech, recordSpeech } from './voice.mjs';
 import { ConversationControls } from './Models.jsx';
 import { PlusMenu } from './PlusMenu.jsx';
 import { Suggestions, useSuggestions } from './Suggestions.jsx';
-import { addressedMessage, highlightParts, issueAddress } from './completion.mjs';
-import { getWhere, useWhere } from '../lib/where.js';
-import { Reminder } from './Reminder.jsx';
+import { addressedMessage, highlightParts, issueAddress, replyDraft } from './completion.mjs';
+import { getWhere, requestIssue, useWhere } from '../lib/where.js';
+import { requestDashboard } from '../lib/use-page-history.js';
+import { cardEvent, repeatableCard } from './card-events.mjs';
+import { groupEvent, placeReplies, waitingLines } from './group-events.mjs';
+import { AtMessage, GuestMessage, MessageRow, TaskMessage, WaitingMessage, lineText } from './GroupChat.jsx';
+import { CardMessage, QuickChips } from './QuickCards.jsx';
 import { RunningStatus } from './RunningStatus.jsx';
 import { turnStart } from './running.mjs';
-import { useReminders } from './use-reminders.js';
 import { isPetInteraction } from './overlays.js';
 import pet from './pet.png';
 
@@ -26,6 +32,8 @@ export function conversationMessages(records, calls = new Map()) {
   return records.flatMap(({ event }) => {
     if (!event) return [];
     const data = event.data ?? {};
+    // A quick button's card and a line of the group chat are each their command's two events; the contents come by the command's id.
+    if (event.type === 'command/run' || event.type === 'command/done') { const one = cardEvent(event, calls) ?? groupEvent(event, calls); return one ? [one] : []; }
     if (event.type === 'tool/call') { calls.set(data.callId, data); return []; }
     if (event.type === 'tool/result') {
       const message = data.message ?? data;
@@ -38,7 +46,8 @@ export function conversationMessages(records, calls = new Map()) {
         return [{
           id: event.seq, at: event.time, role: 'action', action: call.name,
           widget: call.name.startsWith('dashboard_') ? args.type : null,
-          text: result.issue?.title ?? result.record?.text ?? result.connector?.name ?? '',
+          text: result.task?.title ?? result.title ?? result.issue?.title ?? result.record?.text ?? result.connector?.name ?? '',
+          ...(call.name.startsWith('tasks_') && result.task ? { task: result.task } : {}),
         }];
       } catch { return []; }
     }
@@ -128,12 +137,22 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
   const prepend = useRef(null);
   const notify = useRef(false);
   const calls = useRef(new Map());
+  // The cards of the quick buttons: what each lists is kept by the plugin under its command's id (assistant/cards), asked for once when its events have been read.
+  const [cards, setCards] = useState({});
+  const cardsAsked = useRef(new Set());
+  const [quickBusy, setQuickBusy] = useState('');
+  // The lines the owner hid (删除: only what this thread shows; DSH's log and what 嘟嘟 was told stay), by the sequence number of their event; and the grey title after the @ID that 回复 put in the box.
+  const [hidden, setHidden] = useState(() => new Set());
+  const [replyHint, setReplyHint] = useState(null);
+  // An issue's answer stands under the line it answers, where its dots were, not at the end of the thread (`placeReplies`).
+  const visibleMessages = useMemo(() => placeReplies(messages.filter((message) => !hidden.has(message.id)), cards), [messages, hidden, cards]);
+  // What is at the end of the thread: its last line, and whether that line has what it is drawn from (a card or a line comes by its command's id, after its events).
+  const endKey = useMemo(() => { const last = visibleMessages.at(-1); return last ? `${last.id}:${last.role === 'card' || last.role === 'group' ? Boolean(cards[last.commandId]) : true}` : ''; }, [visibleMessages, cards]);
+  const scrolledTo = useRef(null);
   const sendingNow = useRef(false);
   const failedRelay = useRef(null);
   const hostVoice = readySpeech(speechCatalog) && Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder && window.AudioContext && window.OfflineAudioContext);
   const available = hostVoice;
-  // What the pet says by itself, when nothing else is speaking: the conversation closed, nobody dictating, no reply or problem bubble.
-  const reminders = useReminders({ request, actions, active: settings.enabled && !suppressed, quiet: !open && !menuOpen && !listening && !bubble });
 
   useEffect(() => { alive.current = true; return () => {
     alive.current = false; speech.current?.stop(true);
@@ -195,8 +214,11 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
     if (prepend.current) {
       element.scrollTop = prepend.current.top + element.scrollHeight - prepend.current.height;
       prepend.current = null;
-    } else if (open && !earlier) element.scrollTop = element.scrollHeight;
-  }, [messages, open, earlier]);
+    } else if (!open || earlier) scrolledTo.current = null;
+    // The thread goes to its end when it opens and when its END changes: a new line, or the line at the end getting what it is drawn from (a card is drawn once its rows have come, so the newest card must be in view).
+    // An answer that lands under its question, in the middle of the thread, changes nothing at the end and leaves the reader where they are (owner, 2026-11-11: it "跳过了所有消息").
+    else if (scrolledTo.current !== endKey) { element.scrollTop = element.scrollHeight; scrolledTo.current = endKey; }
+  }, [messages, cards, open, earlier, endKey]);
 
   const read = useCallback(async (snapshot, { before } = {}) => {
     if (!snapshot?.sessionId || !actions.readConversation) return;
@@ -208,6 +230,13 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
       const combined = [...current, ...found];
       return [...new Map(combined.map((message) => [message.id, message])).values()].sort((a, b) => a.id - b.id);
     });
+    const wanted = found.filter((message) => (message.role === 'card' || message.role === 'group') && !cardsAsked.current.has(message.commandId)).map((message) => message.commandId);
+    if (wanted.length) {
+      for (const id of wanted) cardsAsked.current.add(id);
+      request('assistant/cards', { ids: wanted }).then((answer) => {
+        if (alive.current && answer?.outcome === 'success') setCards((current) => ({ ...current, ...answer.cards }));
+      }).catch(() => { for (const id of wanted) cardsAsked.current.delete(id); });
+    }
     if (before !== undefined || oldest.current === null) {
       oldest.current = page.records?.[0]?.event?.seq ?? found[0]?.id ?? oldest.current;
       setHasMore(page.hasMore === true);
@@ -220,7 +249,17 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
     }
     if (last && last.id > newestReply.current) notify.current = false;
     if (last) newestReply.current = Math.max(newestReply.current, last.id);
-  }, [actions]);
+  }, [actions, request]);
+
+  // What was hidden (here or on the phone) is read when the window opens, so that the lines the phone hid are gone here too.
+  useEffect(() => {
+    if (!open || !conversation?.sessionId) return undefined;
+    let active = true;
+    request('assistant/hidden').then((answer) => {
+      if (active && answer?.outcome === 'success' && Array.isArray(answer.seqs)) setHidden((current) => new Set([...current, ...answer.seqs]));
+    }).catch(() => { /* the lines show until the next read of the list */ });
+    return () => { active = false; };
+  }, [open, conversation?.sessionId, request]);
 
   const ensure = useCallback(async () => {
     if (!started.current) {
@@ -273,6 +312,76 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
     return () => { active = false; clearTimeout(timer); };
   }, [open, conversation?.sessionId, ensure, read, request, settings.enabled, suppressed]);
 
+  // A quick button: the plugin makes the card as a command of the conversation (no model turn) and it comes into the thread like any event; it is read at once, not at the next poll.
+  const sendCard = useCallback(async (kind) => {
+    if (quickBusy) return;
+    setQuickBusy(kind);
+    setProblem('');
+    setNotice('');
+    try {
+      const ready = await ensure();
+      // A tap that would only repeat the card the thread ends with makes no new one (owner, 2026-11-10): the plugin compares the lists and says `unchanged`; that card is in view then.
+      const since = repeatableCard(visibleMessages, kind);
+      const made = await request('assistant/card', since ? { kind, since } : { kind });
+      if (made.outcome !== 'success') throw new Error(made.message || P.failed);
+      if (made.unchanged) { if (list.current) list.current.scrollTop = list.current.scrollHeight; return; }
+      const value = await request('assistant/state');
+      await read(value.conversation?.sessionId ? value.conversation : ready);
+    } catch { if (alive.current) setProblem(P.failed); }
+    finally { if (alive.current) setQuickBusy(''); }
+  }, [ensure, visibleMessages, quickBusy, read, request]);
+
+  // 信息 and 定时任务 have no card: they go to their pages (owner, 2026-11-10). On the desktop that is 嘟嘟's panel, with the tasks window or the dashboard (where the Collector is) in front.
+  const goTo = useCallback((kind) => {
+    if (kind === 'task') requestTask(true); else requestDashboard();
+    try { actions?.openPanel?.(); } catch { /* the page takes the request when it next shows */ }
+    setOpen(false);
+  }, [actions]);
+
+  // 删除 hides a line from this thread, nothing more (owner, 2026-11-10: "删除只是在会话界面删除这个消息，实际是没有删除"). The plugin keeps the list, and the phone's thread hides the same lines.
+  const hideMessage = useCallback(async (message) => {
+    setHidden((current) => new Set(current).add(message.id));
+    try {
+      const done = await request('assistant/hide', { seqs: [message.id] });
+      if (done?.outcome !== 'success') throw new Error(done?.message);
+    } catch {
+      if (!alive.current) return;
+      setHidden((current) => { const next = new Set(current); next.delete(message.id); return next; });
+      setProblem(T.toast.failed);
+    }
+  }, [request]);
+
+  // 回复: the issue's @ goes into the box, in front of what is written or in place of the @ that starts it (only a leading @ routes a message), the issue's title follows it in grey until the first letter,
+  // and the caret is behind the @.
+  const replyTo = useCallback((issue) => {
+    if (!issue || (issue.id == null && !issue.ref)) return;
+    const next = replyDraft(draft, issue);
+    setDraft(next);
+    setReplyHint(issue.title ? { draft: next, title: issue.title } : null);
+    setSendProblem('');
+    requestAnimationFrame(() => {
+      const element = input.current;
+      if (!element) return;
+      element.focus();
+      element.setSelectionRange(next.length, next.length);
+    });
+  }, [draft]);
+
+  // 打开会话: the issue's own conversation in DSH, one to one, as its page opens it; this window closes as it does for the page.
+  const openIssueSession = useCallback(async (issue) => {
+    try {
+      const target = await request('issues/resume', { id: issue.id });
+      if (!target?.sessionId || !['success', 'no_op'].includes(target.outcome)) throw new Error(target?.message || P.failed);
+      await actions.openSession?.(target);
+      if (alive.current) setOpen(false);
+    } catch { if (alive.current) setProblem(P.failed); }
+  }, [actions, request]);
+
+  const copyText = useCallback((text) => { void navigator.clipboard?.writeText(text).catch(() => { /* nothing was put on the clipboard; there is no word for it and the line stays as it was */ }); }, []);
+
+  // A picture that has loaded makes the thread longer: the end of it stays in view unless the owner is reading the earlier part.
+  const stickToEnd = useCallback(() => { if (!earlier && list.current) list.current.scrollTop = list.current.scrollHeight; }, [earlier]);
+
   const send = useCallback(async (text) => {
     const attached = draftItems.current;
     if ((!text.trim() && !attached.length) || !actions.sendConversation || sendingNow.current) return;
@@ -287,8 +396,9 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
       if (addressed) {
         if (addressed.error) { setSendProblem(T.detail.messageErrors[addressed.error]); return; }
         const recipient = relayRecipient;
+        // `chat`: the line comes into this thread (and the issue's answer after it), the group chat of the owner's design (host/assistant/home/group.mjs).
         const message = {
-          id: addressed.id, text: addressed.body,
+          id: addressed.id, text: addressed.body, chat: true,
           ...(recipient && issueAddress(recipient).toLowerCase() === addressed.id.toLowerCase() ? { session: recipient.session } : {}),
         };
         if (failedRelay.current?.id === addressed.id && failedRelay.current.text === addressed.body && failedRelay.current.attachments === attached) {
@@ -305,7 +415,12 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
         }
         if (alive.current) {
           failedRelay.current = null;
-          setDraft(''); setBubble(''); setNotice(`✓ @${issueAddress(result.issue)} · ${result.issue.title}`);
+          setDraft(''); setBubble('');
+          // The line is in the thread now, with its tick under it, so the one-line receipt ("✓ @ID · title") is gone; the thread is read at once rather than at the next poll.
+          void ensure().then(async (ready) => {
+            const value = await request('assistant/state');
+            await read(value.conversation?.sessionId ? value.conversation : ready);
+          }).catch(() => { /* the next poll reads it */ });
           for (const item of attached) if (item.url) URL.revokeObjectURL(item.url);
           draftItems.current = []; setDrafts([]);
         }
@@ -330,7 +445,7 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
       if (alive.current) setSendProblem(T.activity.notDelivered(error.message || T.shell.unavailable));
     }
     finally { sendingNow.current = false; if (alive.current) setSending(false); }
-  }, [actions, ensure, request, closeSuggestions, relayRecipient]);
+  }, [actions, ensure, read, request, closeSuggestions, relayRecipient]);
 
   useEffect(() => { contextOn.current = context; }, [context]);
   useLayoutEffect(() => { line.current?.style.setProperty('--token', context && token.current ? `${token.current.offsetWidth + 6}px` : '0px'); }, [context, open]);
@@ -495,8 +610,15 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
   if (!settings.enabled || suppressed) return null;
   const today = new Date().toDateString();
   const began = turnStart(messages); // when the work now going on began, for the running line
-  const older = messages.filter((message) => new Date(message.at).toDateString() !== today);
-  const current = messages.filter((message) => new Date(message.at).toDateString() === today);
+  const older = visibleMessages.filter((message) => new Date(message.at).toDateString() !== today);
+  const current = visibleMessages.filter((message) => new Date(message.at).toDateString() === today);
+  // The issues that have not answered the owner yet have their dots right under the line the owner wrote to them, in its place, so that what the owner writes after it covers them (owner, 2026-11-11: "应该在原位吧，
+  // 我新发的消息可以把它慢慢覆盖"); one whose line the owner hid is not waited for on screen. A line that is not in the thread as it shows now (an earlier day, folded away) leaves its dots at the end, so they are not lost.
+  const waiting = waitingLines(messages, cards).filter(({ commandId }) => { const line = messages.find((one) => one.commandId === commandId); return !line || !hidden.has(line.id); });
+  const waitingOf = new Map(waiting.map((one) => [one.commandId, one]));
+  const shown = new Set((earlier ? [...older, ...current] : current).map((message) => message.commandId));
+  const strays = waiting.filter(({ commandId }) => !shown.has(commandId));
+  const waitingRow = ({ commandId, line }) => <div key={`waiting:${commandId}`} className="dudu-pet-row"><WaitingMessage line={line} onOpenIssue={openCardIssue} /></div>;
   const loadEarlier = async () => {
     if (paging.current || !hasMore) return;
     paging.current = true;
@@ -508,17 +630,48 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
     setEarlier(!earlier);
     if (!earlier) await loadEarlier();
   };
-  const renderMessage = (message) => <div key={message.id} className={`dudu-pet-message dudu-pet-message--${message.role}`}>
-    {message.role === 'action' ? <><Check className="size-3.5 shrink-0" aria-hidden="true" /><span className="text-muted-foreground">{P.actions[message.action]}</span><span>{message.widget ? T.widgets.titles[message.widget] ?? message.widget : message.text}</span></> : <>
+  // A Todo row opens its issue the way a reminder does: the page takes the request when it is showing, or when it next shows.
+  const openCardIssue = (row) => {
+    requestIssue(row.id);
+    try { actions?.openPanel?.(); } catch { /* the page takes the request when it next shows */ }
+    setOpen(false);
+  };
+  // A line of the thread is a row: the right-click menu is on the row (回复 where an issue can be answered, 复制 where there are words, 删除 always), and the row is tinted while the menu is open.
+  const renderMessage = (message) => {
+    if (message.role === 'card') {
+      const card = cards[message.commandId];
+      return card ? <MessageRow key={message.id} onDelete={() => void hideMessage(message)}>
+        <div className="dudu-pet-message dudu-pet-message--card"><CardMessage card={card} onOpenIssue={openCardIssue} onReply={replyTo} onOpenSession={openIssueSession} /></div>
+      </MessageRow> : null;
+    }
+    if (message.role === 'group') {
+      const line = cards[message.commandId];
+      // `end` is the silent mark that an answer will not come: it only stops the dots.
+      if (line?.kind !== 'at' && line?.kind !== 'reply' && line?.kind !== 'task') return null;
+      // A task's line (the result of a run of a task of 嘟嘟) is no issue's: it has no issue, so no 回复.
+      const row = <MessageRow key={message.id} onCopy={lineText(line) ? () => copyText(lineText(line)) : undefined} onReply={line.issue?.id != null ? () => replyTo(line.issue) : undefined} onDelete={() => void hideMessage(message)}>
+        {line.kind === 'at' ? <AtMessage line={line} /> : line.kind === 'task' ? <TaskMessage line={line} /> : <GuestMessage line={line} onOpenIssue={openCardIssue} />}
+      </MessageRow>;
+      const dots = line.kind === 'at' ? waitingOf.get(message.commandId) : undefined;
+      return dots ? <Fragment key={message.id}>{row}{waitingRow(dots)}</Fragment> : row;
+    }
+    return <MessageRow key={message.id} onCopy={message.role !== 'action' && message.text?.trim() ? () => copyText(message.text) : undefined} onDelete={() => void hideMessage(message)}>
+    <div className={`dudu-pet-message dudu-pet-message--${message.role}`}>
+    {message.role === 'action' ? message.task ? <>
+      <Check className="size-3.5 shrink-0" aria-hidden="true" />
+      <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="shrink-0 text-muted-foreground">{P.actions[message.action]}</span><span className="truncate">{message.text}</span>
+        <Button variant="ghost" size="icon-xs" className="ml-auto" aria-label={T.tasks.title} onClick={() => { requestTask(message.task.id); actions.openPanel?.(); setOpen(false); }}><ArrowUpRight /></Button>
+      </div><div className="mt-1 flex items-center gap-2 text-muted-foreground"><span className="truncate">{scheduleLabel(message.task.schedule)}</span><AgentLogo agent={message.task.agent} /><span>{taskAgentName(message.task.agent)}</span></div></div>
+    </> : <><Check className="size-3.5 shrink-0" aria-hidden="true" /><span className="text-muted-foreground">{P.actions[message.action]}</span><span>{message.widget ? T.widgets.titles[message.widget] ?? message.widget : message.text}</span></> : <>
       {message.files?.map((file, index) => <span key={`${file.attachmentId}:${index}`} className="dudu-pet-message-file" title={file.name}>
         <FileText className="size-4 shrink-0" aria-hidden="true" /><span className="min-w-0 truncate">{file.name}</span><span className="shrink-0 text-muted-foreground">{formatBytes(file.bytes)}</span>
       </span>)}
-      {message.images?.map((attachment, index) => <ConversationImage key={`${attachment.attachmentId}:${index}`} attachment={attachment} sessionId={conversation?.sessionId} actions={actions} onLoad={() => {
-        if (!earlier && list.current) list.current.scrollTop = list.current.scrollHeight;
-      }} />)}
+      {message.images?.map((attachment, index) => <ConversationImage key={`${attachment.attachmentId}:${index}`} attachment={attachment} sessionId={conversation?.sessionId} actions={actions} onLoad={stickToEnd} />)}
       {message.text}
     </>}
-  </div>;
+  </div>
+    </MessageRow>;
+  };
   return (
     <div className="dudu-pet-dock" ref={dock}>
       {open && (
@@ -530,15 +683,22 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
               <Button variant="ghost" size="icon-sm" aria-label={P.close} onClick={() => { setOpen(false); button.current?.focus(); }}><X /></Button>
             </div>
           </header>
+          {/* The thread and, floating over its bottom, the quick buttons of the chat: they stay while something is being written (taking them away on the first letter made the thread jump by their height, and putting
+              them back covered its last lines: owner, 2026-11-10, "我在这里输入的时候，上面的这一排图标就不见了 … 显示也很突兀") and are glass, as the phone's are, not white buttons in a row of their own that cut the
+              thread off (owner, 2026-11-11: "使用和手机一样的悬浮按钮吧，而不是背景白色"; design B, the clearer glass). They are outside the log: a live region holds messages, not buttons. */}
+          <div className="dudu-pet-stage">
           <div className="dudu-pet-messages" ref={list} role="log" aria-live="polite" aria-relevant="additions text">
             <div className="dudu-pet-thread">
             {earlier && hasMore && <Button variant="ghost" size="sm" onClick={loadEarlier}>{T.detail.loadEarlier}</Button>}
             {earlier && older.map(renderMessage)}
             <div className="dudu-pet-day">{T.today}</div>
             {current.map(renderMessage)}
+            {strays.map(waitingRow)}
             {(conversation?.running || compacting) && <RunningStatus since={compacting ? undefined : began} />}
             {notice && <div className="dudu-pet-day" role="status">{notice}</div>}
             </div>
+          </div>
+          <QuickChips busy={quickBusy} disabled={sending} onPick={(kind) => void sendCard(kind)} onGo={goTo} />
           </div>
           {(sendProblem || problem) && <div role="alert" className="dudu-pet-error">
               <AlertCircle className="size-3.5 shrink-0" aria-hidden="true" />
@@ -578,6 +738,7 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
               {context && !draft && whereLabel(where) && <span className="dudu-pet-where" aria-hidden="true">{whereLabel(where)}</span>}
               <div className="dudu-pet-mirror" ref={mirror} aria-hidden="true">
                 {marked.map((part, index) => (part.mark ? <span key={index} className="dudu-pet-mark">{part.text}</span> : part.text))}{draft.endsWith('\n') ? '\n' : ''}
+                {replyHint?.draft === draft && <span className="dudu-pet-hint">{replyHint.title}</span>}
               </div>
               <textarea ref={input} rows={1} value={draft} onChange={(event) => { setDraft(event.target.value); suggestions.inspect(event.target); }}
                 onScroll={(event) => { if (mirror.current) mirror.current.scrollTop = event.currentTarget.scrollTop; }}
@@ -618,7 +779,6 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
           </>}
         </div>
       )}
-      {reminders.reminder && <Reminder reminder={reminders.reminder} more={reminders.more} onClose={reminders.close} onOpen={reminders.open} />}
       {listening && <><i className="dudu-pet-ring" aria-hidden="true" /><i className="dudu-pet-ring dudu-pet-ring--second" aria-hidden="true" /></>}
       <ContextMenu open={menuOpen} onOpenChange={setMenuOpen}>
         <ContextMenuTrigger asChild>

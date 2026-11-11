@@ -15,9 +15,22 @@ export class OarResident {
     this.available = true;
     this.idle = false;
     const dormant = new Set(observedSubagents.map((task) => task.taskId));
+    const commands = new Set();
     this.unsubscribe = session.rawEvents((record) => {
       this.seq = record.seq;
-      for (const event of record.kind === 'frame' ? record.body?.events ?? [] : []) {
+      const events = record.kind === 'frame' ? record.body?.events ?? [] : [];
+      // Codex announces commands before they yield a background terminal. Observe the native list during that
+      // interval too: waiting for the first known task would postpone discovery until the root turn ended.
+      let commandEnded = false;
+      if (session.backgroundTasks && (record.sessionId === undefined || record.sessionId === session.id)
+        && (record.agentPath?.length ?? 0) === 0) {
+        for (const event of events) {
+          if (event.kind === 'tool_call_started' && event.tool === 'commandExecution') commands.add(event.callId);
+          if (event.kind === 'tool_call_ended' && commands.delete(event.callId)) commandEnded = true;
+          if (event.kind === 'turn_ended') commands.clear();
+        }
+      }
+      for (const event of events) {
         if (!['task_started', 'task_updated', 'task_ended'].includes(event.kind) || !dormant.delete(event.taskId)) continue;
         if (event.kind === 'task_started') {
           const tasks = new Map(this.state.tasks);
@@ -28,8 +41,15 @@ export class OarResident {
       const before = this.state.tasks;
       this.state = reduceTaskState(this.state, { ...record, sessionId: record.sessionId ?? session.id, agentPath: record.agentPath ?? [] });
       if (record.kind === 'response' && record.body?.kind === 'exited') this.available = false;
-      if (before !== this.state.tasks || record.kind === 'frame' && record.body?.events?.some((event) => event.kind === 'tool_call_progress')) this.report(record);
-      if (this.backgroundActive && !this.timer) this.timer = setInterval(() => { void this.refresh(); }, 750);
+      if (before !== this.state.tasks || events.some((event) => event.kind === 'tool_call_progress')) this.report(record);
+      const polling = this.available && (this.backgroundActive || commands.size > 0);
+      if (polling && !this.timer) this.timer = setInterval(() => { void this.refresh(); }, 750);
+      if (!polling && this.timer) {
+        clearInterval(this.timer);
+        this.timer = undefined;
+      }
+      // A fast yield may precede the first poll. Check once at the tool boundary before stopping discovery.
+      if (commandEnded) void this.refresh();
       if (this.idle && !this.backgroundActive) this.release();
     });
   }

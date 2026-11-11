@@ -23,6 +23,66 @@ test('session history uses the new query service with its receiver and normalize
   assert.equal(result.inheritedEventCount, 0);
 });
 
+test('immutable observations share complete history without detached replay copies and release their lease', async () => {
+  const message = Object.freeze({ content: Object.freeze([{ type: 'text', text: 'tool output' }]) });
+  const snapshot = Object.freeze([
+    ...events,
+    Object.freeze({ seq: 1, type: 'tool/result', data: Object.freeze({ message }), time: 1001 }),
+  ]);
+  const signal = new AbortController().signal;
+  let disposed = 0;
+  const query = {
+    async observeSession(id: string, options: unknown) {
+      assert.equal(this, query);
+      assert.equal(id, 'session-1');
+      assert.deepEqual(options, { signal, projectionMode: 'none' });
+      return { header, inheritedEventCount: 1, events: snapshot, [Symbol.dispose]() { disposed++; } };
+    },
+    readSession() { assert.fail('a mirror step must not deep-copy and replay the entire history'); },
+  };
+  assert.equal(canReadSessionHistory({ query: { observeSession: query.observeSession } }), true);
+  const result = await readSessionHistory({ query }, 'session-1', signal);
+  assert.equal(result.events, snapshot);
+  assert.equal(result.events[1].data.message, message);
+  assert.equal(result.meta, header);
+  assert.equal(result.header, header);
+  assert.equal(result.session, header);
+  assert.equal(result.inheritedEventCount, 1);
+  assert.equal(disposed, 1);
+});
+
+test('failed observations propagate their error, and reading their events always releases the lease', async () => {
+  const failure = new Error('corrupt history');
+  let disposed = 0;
+  const query = {
+    observeSession: async () => ({
+      header,
+      get events() { throw failure; },
+      [Symbol.dispose]() { disposed++; },
+    }),
+    readSession() { assert.fail('a failed observation must not start another complete read'); },
+  };
+  await assert.rejects(readSessionHistory({ query }, 'session-1'), (error) => error === failure);
+  assert.equal(disposed, 1);
+  query.observeSession = async () => { throw failure; };
+  await assert.rejects(readSessionHistory({ query }, 'session-1'), (error) => error === failure);
+});
+
+test('cancelling an observation stops waiting and releases a lease that arrives after cancellation', async () => {
+  const pending = Promise.withResolvers<unknown>();
+  const abort = new AbortController();
+  let disposed = 0;
+  const reading = readSessionHistory({
+    query: { observeSession: () => pending.promise },
+  }, 'session-1', abort.signal);
+  const reason = new Error('cancelled');
+  abort.abort(reason);
+  await assert.rejects(reading, (error) => error === reason);
+  pending.resolve({ header, events, [Symbol.dispose]() { disposed++; } });
+  await pending.promise;
+  assert.equal(disposed, 1);
+});
+
 for (const field of ['meta', 'header']) test(`session history falls back to legacy inspect and preserves its ${field} header`, async () => {
   const signal = new AbortController().signal;
   const controller = {

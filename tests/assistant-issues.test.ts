@@ -251,10 +251,10 @@ test('grouping by status, priority, agent and agent state, in their fixed orders
   assert.deepEqual(summary('priority'), [['urgent', 1, [2]], ['high', 1, [1]], ['medium', 2, [4, 5]], ['low', 1, [3]], ['none', 1, [6]]]);
   assert.deepEqual(summary('agent'), [['claude', 2, [2, 1]], ['codex', 2, [4, 3]], [null, 2, [5, 6]]]);
   // Review questions do not make an idle worker blocked.
-  assert.deepEqual(summary('agentState'), [['working', 1, [2]], ['blocked', 1, [3]], ['idle', 2, [1, 4]], ['unassigned', 2, [5, 6]]]);
+  assert.deepEqual(summary('agentState'), [['blocked', 1, [3]], ['working', 1, [2]], ['idle', 2, [1, 4]], ['unassigned', 2, [5, 6]]]);
   s.states.set('codex:finished', 'finished');
   s.add({ title: 'turn finished', agent: 'codex', session: 'codex:finished' }); // 9, workflow still Todo
-  assert.deepEqual(summary('agentState'), [['working', 1, [2]], ['blocked', 2, [3, 9]], ['idle', 2, [1, 4]], ['unassigned', 2, [5, 6]]], 'a finished turn is the boss\'s turn, as a question is');
+  assert.deepEqual(summary('agentState'), [['blocked', 2, [3, 9]], ['working', 1, [2]], ['idle', 2, [1, 4]], ['unassigned', 2, [5, 6]]], 'a finished turn is the boss\'s turn, as a question is');
   const nested = s.issues.list({ group: 'status', subGroup: 'agentState' }).groups.find((group: any) => group.key === 'todo');
   assert.deepEqual(nested.groups.map((group: any) => group.key), ['blocked', 'idle', 'unassigned']);
 });
@@ -598,7 +598,7 @@ test('counts() agree with the rows after a long random run of changes, undos inc
 
 const PRIORITY_ORDER = ['urgent', 'high', 'medium', 'low', 'none'];
 const STATUS_ORDER = ['in_progress', 'in_review', 'todo', 'backlog', 'done', 'canceled'];
-const AGENT_STATE_ORDER = ['working', 'blocked', 'idle', 'unassigned'];
+const AGENT_STATE_ORDER = ['blocked', 'working', 'idle', 'unassigned'];
 const SOURCE_ORDER = ['owner', 'dudu', 'connector', 'session'];
 const isFinishedStatus = (status: string) => status === 'done' || status === 'canceled';
 const compare = (a: number, b: number) => (a < b ? -1 : a > b ? 1 : 0);

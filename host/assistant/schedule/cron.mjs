@@ -1,5 +1,5 @@
 // The only file that imports croner, so that scripts/package-desktop.mjs bundles it ('assistant/schedule/cron.mjs'): the installed
-// plugin has no node_modules of its own. Five fields only, in the computer's own time zone.
+// plugin has no node_modules of its own. Collectors use the computer's time zone; user tasks supply their own IANA zone.
 import { Cron } from 'croner';
 
 /** A problem with a five-field expression as a short sentence, or null when it is fine. */
@@ -16,7 +16,12 @@ export function cronProblem(expression) {
 }
 
 /** The first time after `after` (ms) that the expression names, in ms; null when there is none. */
-export function nextCron(expression, after) {
-  const next = new Cron(String(expression).trim().split(/\s+/).join(' ')).nextRun(new Date(after));
+export function nextCron(expression, after, timezone) {
+  const next = new Cron(String(expression).trim().split(/\s+/).join(' '), timezone ? { timezone } : {}).nextRun(new Date(after));
   return next ? next.getTime() : null;
+}
+
+/** A user task's wall-clock date, interpreted in its own IANA time zone. No timer is started. */
+export function onceAt(localTime, timezone) {
+  return new Cron(localTime, { timezone }).getOnce()?.getTime() ?? null;
 }

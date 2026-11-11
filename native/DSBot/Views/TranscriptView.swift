@@ -64,16 +64,7 @@ private struct UserBubbleRow: View {
                 .messageActions(text: "", isUser: true, seq: row.seq)
             }
             if !row.text.isEmpty {
-                Text(row.text)
-                    .font(.system(size: 16))
-                    .lineSpacing(3)
-                    .foregroundStyle(DSBotStyle.chatInk)
-                    .textSelection(.disabled)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(DSBotStyle.chatBubble, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .messageActions(text: row.text, isUser: true, seq: row.seq)
-                    .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in width * 0.82 }
+                UserMessageBubble(text: row.text, seq: row.seq)
             }
             if row.attachments.contains(where: { $0.kind != "image" }) {
                 HStack(spacing: 6) {
@@ -99,6 +90,30 @@ private struct UserBubbleRow: View {
     }
 }
 
+struct UserMessageBubble: View {
+    let text: String
+    var seq: Double?
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 17))
+            .lineSpacing(6)
+            .foregroundStyle(DSBotStyle.chatInk)
+            .textSelection(.disabled)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(
+                DSBotStyle.chatBubble,
+                in: UnevenRoundedRectangle(
+                    topLeadingRadius: 24, bottomLeadingRadius: 24,
+                    bottomTrailingRadius: 4, topTrailingRadius: 24, style: .continuous
+                )
+            )
+            .messageActions(text: text, isUser: true, seq: seq)
+            .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in width * 0.82 }
+    }
+}
+
 // MARK: - Turn
 
 private struct TurnRowView: View {
@@ -115,6 +130,8 @@ private struct TurnRowView: View {
     }
 
     private var showsHeader: Bool { row.summaryTitle != nil }
+    /// What 删除 hides of 嘟嘟's turn: every message of it (the steps and the answer), so that no half of it is left in the thread.
+    private var lineSequences: [Double] { Array(Set(Array(row.messageSequences.values) + (row.answerSeq.map { [$0] } ?? []))) }
     private var bodyVisible: Bool { !row.isLastFragment || row.outcome == .running || row.staysOpen || processOpen }
 
     var body: some View {
@@ -135,13 +152,13 @@ private struct TurnRowView: View {
             if let answer = row.answer {
                 MessageMarkdown(text: answer, allowsTextSelection: false, sourceSequence: row.answerSeq)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .messageActions(text: answer, seq: row.answerSeq)
+                    .messageActions(text: answer, seq: row.answerSeq, seqs: lineSequences)
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("chat.message.\(row.answerID ?? row.id)")
             }
             ForEach(row.notices) { TurnNoticeView(notice: $0) }
             if row.changesSeq != nil || row.files.contains(where: { $0.kind == "presented" }) {
-                TurnFilesView(files: row.files, changesSeq: row.changesSeq)
+                TurnFilesView(files: row.files, changesSeq: row.changesSeq, changesSummary: row.changesSummary)
             }
             if row.isLastFragment && row.outcome == .running && showsRunningStatus {
                 RunningStatusView(startedAt: row.startedAt)
@@ -416,7 +433,16 @@ private struct CommandRowView: View {
     private var isExpandable: Bool { row.detail != nil }
 
     var body: some View {
-        if let detail = row.detail {
+        if row.group != nil {
+            // A line of 嘟嘟's group chat: the owner's @ message to an issue, its answer, the dots while it is on its way.
+            GroupLineView(row: row)
+                .padding(.vertical, 2)
+        } else if let card = row.card {
+            // A card of 嘟嘟's chat (a quick button's), not a command line.
+            QuickCardView(card: card, seq: row.seq)
+                .padding(.vertical, 4)
+                .accessibilityIdentifier("chat.command.\(row.id)")
+        } else if let detail = row.detail {
             VStack(alignment: .leading, spacing: 4) {
                 Button {
                     withAnimation(.easeOut(duration: 0.18)) { open.toggle() }

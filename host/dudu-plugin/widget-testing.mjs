@@ -6,7 +6,7 @@ export function exampleData(at = new Date(2026, 9, 31, 12).getTime()) {
   ];
   return {
     issues: { outcome: 'success', items, total: items.length, nextCursor: null, groups: [], counts: { active: 2, backlog: 0, all: 2 }, facets: {} },
-    quota: { providers: [{ id: 'claude', name: 'Claude', plan: 'Max', state: 'ok', windows: [{ key: 'five_hour', label: '5 小时', used: 0.74, resetsAt: at + 7200000, core: true }, { key: 'seven_day', label: '每周', used: 0.31, resetsAt: at + 3 * 86400000, core: true }] }] },
+    quota: { refreshing: false, readAt: at, providers: [{ id: 'claude', agent: 'claude', name: 'Claude', plan: 'Max', readAt: at, windows: [{ key: 'five_hour', label: '5 小时', used: 0.74, resetsAt: at + 7200000, core: true }, { key: 'seven_day', label: '每周', used: 0.31, resetsAt: at + 3 * 86400000, core: true }] }] },
     inputs: { outcome: 'success', createdToday: 2, collectors: [{ id: 'example', name: 'Example', readToday: 12, createdToday: 2, lastRead: { at, ok: true, items: 12, created: 2 } }], connectors: [{ id: 'example', name: 'Example', readToday: 12, createdToday: 2, lastRead: { at, ok: true, items: 12, created: 2 } }] },
     sessions: { outcome: 'success', sessions: [{ key: 'claude:example', id: 'example', provider: 'claude', title: '准备续费资料', updatedAt: at, evidence: { text: '正在检查附件。' } }], indexing: { running: false } },
   };

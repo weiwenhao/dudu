@@ -30,6 +30,19 @@ export function addressedMessage(text) {
   return body ? { id: match[1], body } : { error: 'empty_request' };
 }
 
+// What the box holds after the owner chose to answer an issue (回复 in the menu of a message, or on an opened row of the todo card): its @ in front of what is written, or in place of the @ that starts it
+// (only a leading @ routes a message).
+const LEADING_ADDRESS = /^(\s*)@(?:#?[1-9]\d{0,14}|[A-Za-z]{1,3}-[1-9]\d{0,14})(?=\s|$)/u;
+export function replyDraft(draft, issue) {
+  const name = issueAddress(issue);
+  const found = LEADING_ADDRESS.exec(draft);
+  if (found) {
+    const rest = draft.slice(found[0].length);
+    return `${found[1]}@${name}${rest === '' ? ' ' : rest}`;
+  }
+  return draft ? `@${name} ${draft}` : `@${name} `;
+}
+
 /**
  * The words of a draft that DSH's own box shows in blue: the @address at the start (the only place it routes) and the /name of a skill
  * that DSH lists for the conversation. Everything else stays plain; the parts always join back into the draft.

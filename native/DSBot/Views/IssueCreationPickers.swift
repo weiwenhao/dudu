@@ -168,6 +168,7 @@ struct IssueLabelsPicker: View {
     @Binding var selected: Set<Int>
     @ObservedObject var board: BoardModel
     @ObservedObject var store: DSBotStore
+    var onSave: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var naming: String?
@@ -181,7 +182,9 @@ struct IssueLabelsPicker: View {
         page
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") { dismiss() }.disabled(busy)
+                    Button("保存") {
+                        if let onSave { onSave() } else { dismiss() }
+                    }.disabled(busy)
                 }
             }
             .navigationBarBackButtonHidden(busy)

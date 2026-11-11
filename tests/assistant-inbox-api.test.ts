@@ -22,6 +22,34 @@ function world(t: any, options: any = {}) {
 }
 
 const ids = (answer: any) => answer.items.map((item: any) => item.title);
+const later = () => new Promise((resolve) => setImmediate(resolve));
+
+test('more context for a record starts at once and runs in the background: the record says it is being completed, then it has grown, or says why it could not', async (t) => {
+  let finish: (answer: any) => void = () => {};
+  const asked: number[] = [];
+  const { api, ingest } = world(t, { fill: (id: number) => { asked.push(id); return new Promise((resolve) => { finish = resolve; }); } });
+  const [row] = ingest('lark', [raw('a')]);
+  const status = () => (api.execute('get', { id: row.id }) as any).record;
+  assert.deepEqual(api.execute('complete', { id: row.id }), { outcome: 'success', started: true });
+  assert.deepEqual(api.execute('complete', { id: row.id }), { outcome: 'success', started: true }, 'asked again while it runs, nothing starts twice');
+  await later();
+  assert.deepEqual(asked, [row.id]);
+  assert.equal(status().completing, true);
+  finish({ outcome: 'error', message: 'The thread could not be read.' });
+  await later();
+  assert.deepEqual([status().completing, status().completeError], [false, 'The thread could not be read.']);
+  assert.equal((api.execute('complete', { id: row.id }) as any).started, true);
+  assert.deepEqual([status().completing, status().completeError], [true, null], 'a new try starts clean');
+  await later(); // the work is asked for a moment after the answer
+  finish({ outcome: 'success', added: 3 });
+  await later();
+  assert.deepEqual([status().completing, status().completeError], [false, null]);
+  assert.equal((api.execute('complete', { id: 9999 }) as any).code, 'unknown_record');
+  assert.equal((api.execute('complete', {}) as any).outcome, 'needs_clarification');
+  const bare = world(t);
+  const [other] = bare.ingest('lark', [raw('b')]);
+  assert.equal((bare.api.execute('complete', { id: other.id }) as any).code, 'unavailable');
+});
 
 test('the tabs: waiting rows (judged or not) are To do, a row with an issue is Done, an ignored one is Ignored', (t) => {
   const { issues, inbox, api, ingest } = world(t);
@@ -158,4 +186,53 @@ test('a record that became part of an issue cannot be deleted or handled, and a 
   const after = inbox.ingest('lark', talk('第一句\n第二句\n第三句'));
   assert.equal(after.updated.length, 0, 'a deleted row is not woken by new talk');
   assert.equal(after.added.length, 1, 'new talk is a new row');
+});
+
+test('owner marks read only summaries, without loading message bodies or scanning nearby thread records', (t) => {
+  const { inbox, api, ingest } = world(t);
+  const rows = ingest('mail', [raw('a', { thread: 'room' }), raw('b', { thread: 'room' })]);
+  const detail = inbox.get(rows[0].id);
+  assert.equal(detail.record.text, 'a 的原文');
+  assert.equal(detail.thread.length, 1, 'the normal detail read keeps its thread');
+  const summary = inbox.get(rows[0].id, { summary: true });
+  assert.equal(Object.hasOwn(summary.record, 'text'), false);
+  assert.deepEqual(summary.thread, []);
+
+  const get = inbox.get;
+  const reads: any[] = [];
+  inbox.get = (id: number, options: any) => {
+    assert.equal(options?.summary, true, 'a mark must not load full details');
+    reads.push(id);
+    return get(id, options);
+  };
+  const ids = rows.map((record: any) => record.id);
+  for (const action of ['done', 'delete', 'restore', 'restore', 'ignore', 'restore']) {
+    reads.length = 0;
+    const result = api.execute(action, { ids });
+    assert.equal(result.outcome, 'success');
+    assert.equal(result.changed, 2);
+    assert.equal(reads.length, 3, 'validate each id, then read only the single response card');
+    assert.equal(Object.hasOwn(result.record, 'text'), false);
+  }
+});
+
+test('a removed collector takes with it what the owner never dealt with; what they marked or made an issue of, and other collectors\' rows, stay', (t) => {
+  const { issues, inbox, api, ingest } = world(t);
+  const [open1, open2, handled, ignored, linked, deleted] = ingest('mail', [raw('open1'), raw('open2'), raw('handled'), raw('ignored'), raw('linked'), raw('deleted')]);
+  const [other] = ingest('lark', [raw('other')]);
+  assert.equal(api.execute('done', { id: handled.id }).outcome, 'success');
+  assert.equal(api.execute('ignore', { id: ignored.id }).outcome, 'success');
+  assert.equal(api.execute('delete', { id: deleted.id }).outcome, 'success');
+  const issue = issues.add({ title: '核对', source: 'connector', sourceRef: 'mail:linked' }, { actor: 'dudu' }).issue;
+  inbox.judge(linked.id, { verdict: 'issue', issueId: issue.id, reason: 'x' });
+  assert.equal(inbox.search('open1', { connector: 'mail' }).length, 1);
+
+  assert.equal(inbox.dropUntouched('mail'), 2, 'the two nobody touched');
+  assert.equal(inbox.get(open1.id), null);
+  assert.equal(inbox.get(open2.id), null);
+  assert.deepEqual(inbox.search('open1', { connector: 'mail' }), [], 'and they are not found by search either');
+  for (const kept of [handled, ignored, linked, other]) assert.ok(inbox.get(kept.id), `row ${kept.id} stays`);
+  assert.deepEqual(ids(api.execute('list', { tab: 'done' })).sort(), ['来信 handled', '来信 linked']);
+  assert.equal(inbox.dropUntouched('mail'), 0, 'a second time changes nothing');
+  assert.equal(inbox.dropUntouched('nothing'), 0);
 });

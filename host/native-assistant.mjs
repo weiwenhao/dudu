@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
 
 export const NATIVE_ASSISTANT_METHODS = Object.freeze([
-  'assistant.skills', 'assistant.recipients', 'assistant.forward',
+  'assistant.skills', 'assistant.recipients', 'assistant.forward', 'assistant.card', 'assistant.hide',
 ]);
+
+// The quick buttons of the chat: what a card can list. The card itself comes back in the thread, as the command's two events (assistant/home/cards.mjs).
+const CARD_KINDS = new Set(['todo', 'info', 'task']);
 
 // These are the desktop assistant's own actions, reached only through authenticated native RPC.
 // No caller-selected route, arbitrary command or general DSH proxy is exposed.
@@ -66,8 +69,9 @@ export function createNativeAssistant({ assistant, remote, fail, attachments, fi
           content.push({ type: 'file', receiptId: uploaded.receiptId });
         }
       }
+      // Written in 嘟嘟's chat: the line comes into that thread too, and its answer after it (home/group.mjs).
       return result(await assistant.issues('forward', {
-        id: params.id, text: params.text, ...(session === undefined ? {} : { session }),
+        id: params.id, text: params.text, chat: true, ...(session === undefined ? {} : { session }),
         attachments: content, ...(params.retryEntry === undefined ? {} : { retryEntry: params.retryEntry }),
       }));
     })().finally(() => { entry.settled = true; });
@@ -103,6 +107,26 @@ export function createNativeAssistant({ assistant, remote, fail, attachments, fi
           };
         }
         case 'assistant.forward': return forward(params);
+        case 'assistant.card': {
+          if (!CARD_KINDS.has(params.kind)) fail('BAD_REQUEST');
+          // `since`: the card the phone sees at the end of the thread (nothing but cards after it); a tap that would only repeat it makes nothing new.
+          if (params.since != null && (typeof params.since !== 'string' || !params.since || params.since.length > 128)) fail('BAD_REQUEST');
+          if (typeof assistant.card !== 'function') fail('UNSUPPORTED');
+          const made = await assistant.card(params.kind, params.since ?? undefined);
+          return {
+            outcome: made?.outcome ?? 'error',
+            ...(made?.code ? { code: made.code } : {}),
+            ...(typeof made?.commandId === 'string' ? { commandId: made.commandId } : {}),
+            ...(made?.unchanged === true ? { unchanged: true } : {}),
+          };
+        }
+        case 'assistant.hide': {
+          // Lines of the thread, by the sequence number of their event: only what the interface shows is hidden (the session's log and what 嘟嘟 was told stay).
+          if (!Array.isArray(params.seqs) || !params.seqs.length || params.seqs.length > 50 || !params.seqs.every((seq) => Number.isSafeInteger(seq) && seq >= 0)) fail('BAD_REQUEST');
+          if (typeof assistant.hide !== 'function') fail('UNSUPPORTED');
+          const hidden = await assistant.hide(params.seqs);
+          return { outcome: hidden?.outcome ?? 'error' };
+        }
         default: fail('METHOD_NOT_ALLOWED');
       }
     },

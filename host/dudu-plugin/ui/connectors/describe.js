@@ -31,7 +31,8 @@ export function describeState(state, line) {
   if (!state) return { line };
   switch (state.status) {
     case 'needs-auth': return { line, tone: 'wait', words: T.settings.connectors.needsAuth, verb: 'authorize' };
-    case 'waiting': return { line, spin: true, words: P.state.waiting, verb: 'cancel' };
+    // A sign-in by device code shows the code to enter in the browser in place of the grey line: it is what the owner needs, not an explanation.
+    case 'waiting': return { line: state.code || line, spin: true, words: P.state.waiting, verb: 'cancel' };
     case 'needs-login': return { line: state.login ? P.state.login(state.login) : line, tone: 'wait', words: P.state.needsLogin, verb: 'retry' };
     case 'missing': return { line: state.command ? P.state.notFound(state.command, state.install) : line, bad: Boolean(state.command), tone: 'bad', words: P.state.missing, verb: 'retry' };
     case 'error': return { line, tone: 'bad', words: errorWords(state.message), verb: 'retry' };

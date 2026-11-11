@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { GridStack } from 'gridstack';
 import { Check, Minus, Plus, RotateCcw } from 'lucide-react';
 import { Button } from '../components/button.jsx';
-import { useToast } from '../components/toast.jsx';
+import { useToast, useToastAbove } from '../components/toast.jsx';
 import { cn } from '../lib/cn.js';
 import { isTyping } from '../lib/typing.js';
 import { T } from '../strings.js';
@@ -67,7 +67,7 @@ const sourceOf = (type) => (type.includes('.') ? type.slice(0, type.indexOf('.')
  *
  * `registry` is the list of widget declarations with their `Component`; `services` is what widgets may read (issues and so on).
  */
-export function Dashboard({ request, registry, onSettings, onSessions }) {
+export function Dashboard({ request, registry, onSettings, onSessions, onTasks }) {
   const api = useMemo(() => dashboardApi(request), [request]);
   const toast = useToast();
   const byType = useMemo(() => Object.fromEntries(registry.map((widget) => [widget.id, widget])), [registry]);
@@ -79,6 +79,7 @@ export function Dashboard({ request, registry, onSettings, onSessions }) {
   const [hosts, setHosts] = useState({}); // id -> the element a widget renders into
   const [status, setStatus] = useState('loading');
   const [editing, setEditing] = useState(false);
+  useToastAbove(editing); // the edit-layout toolbar stands at the bottom: the toasts stay above it while it does
   const [adding, setAdding] = useState(false);
   const [moving, setMoving] = useState(false);
   const [gesturing, setGesturing] = useState(false);
@@ -478,7 +479,7 @@ export function Dashboard({ request, registry, onSettings, onSessions }) {
 
   return (
     <section aria-label={D.board} className="relative flex h-full min-h-0 flex-col">
-      <Entry editing={editing} onSettings={onSettings} onEdit={() => setEditing(true)} onSessions={onSessions} />
+      <Entry request={request} editing={editing} onSettings={onSettings} onEdit={() => setEditing(true)} onSessions={onSessions} onTasks={onTasks} />
       {editing && (
           <div role="toolbar" aria-label={D.editLayout} className="absolute bottom-5 left-1/2 z-50 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-2 rounded-full border border-border/50 bg-popover px-3 py-2 text-popover-foreground shadow-lg">
             <Button variant="outline" size="sm" className="rounded-full px-3.5" onClick={() => setAdding(true)}><Plus />{D.addWidget}</Button>

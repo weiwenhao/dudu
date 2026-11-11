@@ -7,6 +7,9 @@ struct ChatView: View {
     @ObservedObject var store: DSBotStore
     var isOverlayOpen = false
     var historyTopInset: CGFloat = 0
+    var isPageTransitioning = false
+    var presentationRequest: UUID?
+    var onPresentationLayout: (UUID, DraftTarget?) -> Bool = { _, _ in false }
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var speechCapture = NativeSpeechCapture()
@@ -24,6 +27,12 @@ struct ChatView: View {
     @State private var followsLatestMessage = true
     @State private var awayFromLatest = false
     @State private var latestJump = 0
+    /// The owner asked for a card (待办): while it is set, a card that ends the thread is shown from its top (`ConversationHistoryView.cardFromTop`).
+    @State private var cardFromTop = false
+    /// The command of the card the owner asked for, until it is in the thread and the chat has gone to it (owner, 2026-11-11: "窗口会自动向下滑到底部呀，不应该让我手动点一下回到底部").
+    @State private var cardToReveal: String?
+    @State private var transitionHistory: HistoryPresentation?
+    @State private var presentationFrame = PagePresentationFrame()
     @State private var historyFailure: String?
     @State private var historyRequestID: UUID?
     @State private var isVoiceMode = false
@@ -53,13 +62,20 @@ struct ChatView: View {
     @StateObject private var assistantCompletion = AssistantCompletions()
     @State private var editorSelection: ComposerSelection?
     @State private var assistantContextOn = false
+    /// The quick button of 嘟嘟's chat whose card is on its way.
+    @State private var quickCardBusy: QuickCardKind?
+    /// What 回复 put in the box and the title of the issue it is for: the title shows in grey after it for as long as nothing else is written.
+    @State private var replyGhost: (draft: String, title: String)?
+    @Environment(\.openIssueConversation) private var openIssueConversation
+    @Environment(\.openQuickPage) private var openQuickPage
     /// Only Dudu's pending files need their bytes again: @issue stages them on that issue's session.
     @State private var assistantFileData: [String: Data] = [:]
 
     var body: some View {
         messageHistory
             .environment(\.conversationAccess, conversationAccess)
-            .environment(\.conversationMarkdown, store.conversationMarkdown)
+            .environment(\.groupChat, groupChat)
+            .environment(\.conversationMarkdown, transitionHistory?.markdown ?? store.conversationMarkdown)
             .background(DSBotStyle.canvas)
             .coordinateSpace(name: "dsbot.chat")
             .sheet(item: $attachmentSheetRequest, onDismiss: handleAttachmentSheetDismiss) { request in
@@ -152,6 +168,7 @@ struct ChatView: View {
             }
         }
         .onChange(of: draftTarget) { _, _ in
+            if transitionHistory?.target != draftTarget { transitionHistory = nil }
             assistantCompletion.reset()
             editorSelection = nil
             assistantContextOn = false
@@ -164,10 +181,21 @@ struct ChatView: View {
             queueEditorError = nil
             followsLatestMessage = true
             awayFromLatest = false
+            cardFromTop = false
+            cardToReveal = nil
             historyFailure = nil
             historyRequestID = nil
         }
+        .onChange(of: isPageTransitioning) { _, moving in
+            // Keep the page's laid-out messages while it moves; the watch continues refreshing.
+            if !moving {
+                transitionHistory = nil
+            } else if transitionHistory == nil {
+                transitionHistory = currentHistoryPresentation
+            }
+        }
         .onDisappear {
+            presentationFrame.cancel()
             assistantCompletion.close()
             saveDraft()
             cancelVoiceCapture()
@@ -210,12 +238,46 @@ struct ChatView: View {
         .onChange(of: store.goal?.id) { _, _ in
             goalEditor = nil
         }
+        // The card the owner asked for comes with the thread's next snapshot when the answer was first: go to it then.
+        .onChange(of: store.contentRevision) { _, _ in
+            if cardToReveal != nil { revealCardIfPresent() }
+        }
         .onChange(of: isOverlayOpen) { _, isOpen in
             guard isOpen else { return }
             assistantCompletion.close()
             composerFocused = false
             cancelVoiceCapture()
         }
+        #if DEBUG && targetEnvironment(simulator)
+        // `-dsbot-review-tap-chip todo,task,info`: the simulator has no finger, so the review taps these quick buttons of 嘟嘟's chat one after the other (through the buttons' own handler).
+        .task(id: store.isAssistantConversation) {
+            let arguments = ProcessInfo.processInfo.arguments
+            guard store.isAssistantConversation, let index = arguments.firstIndex(of: "-dsbot-review-tap-chip"), index + 1 < arguments.count else { return }
+            for name in arguments[index + 1].split(separator: ",") {
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
+                // 待办 sends its card; 信息 and 定时任务 open their pages (what the buttons do).
+                if let kind = QuickCardKind(rawValue: String(name)) { kind == .todo ? sendQuickCard(kind) : openQuickPage(kind) }
+            }
+        }
+        // `-dsbot-review-reply DUD-9` (with `-dsbot-review-reply-title <title>`), `-dsbot-review-hide 101` and `-dsbot-review-tap-avatar DUD-9`: what 回复 in the menu, 删除 in the menu and a tap on an issue's picture do (the simulator has no finger).
+        .task(id: store.isAssistantConversation) {
+            let arguments = ProcessInfo.processInfo.arguments
+            func value(_ flag: String) -> String? { arguments.firstIndex(of: flag).flatMap { $0 + 1 < arguments.count ? arguments[$0 + 1] : nil } }
+            guard store.isAssistantConversation, let group = groupChat else { return }
+            if let ref = value("-dsbot-review-reply") {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                group.reply(GroupIssue(id: 1, ref: ref, title: value("-dsbot-review-reply-title") ?? "", agent: nil))
+            }
+            if let seq = value("-dsbot-review-hide").flatMap(Double.init) {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                group.hide([seq])
+            }
+            if let ref = value("-dsbot-review-tap-avatar") {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                group.openIssue(GroupIssue(id: 1, ref: ref, title: "", agent: nil))
+            }
+        }
+        #endif
     }
 
     private var hasConversationContent: Bool {
@@ -299,20 +361,45 @@ struct ChatView: View {
         compressedPhotoBytes = preparedPhotos.reduce(0) { $0 + $1.compressedBytes }
     }
 
+    private struct HistoryPresentation {
+        let items: [ConversationHistoryItem]
+        let target: DraftTarget?
+        let canLoadAttachments: Bool
+        let markdown: ConversationMarkdown
+        let showsEmptyState: Bool
+        let showsLoadingState: Bool
+    }
+
+    private var currentHistoryPresentation: HistoryPresentation {
+        HistoryPresentation(
+            items: historyItems, target: draftTarget, canLoadAttachments: store.canReadConversation,
+            markdown: store.conversationMarkdown, showsEmptyState: showsEmptyState,
+            showsLoadingState: showsLoadingState
+        )
+    }
+
+    private struct PresentationLayout: Equatable {
+        let request: UUID?
+        let target: DraftTarget?
+        let size: CGSize
+    }
+
     private var messageHistory: some View {
-        let items = historyItems
-        let target = draftTarget
-        let canLoadAttachments = store.canReadConversation
-        let emptyStateVisible = showsEmptyState
-        let loadingStateVisible = showsLoadingState
+        let presentation = transitionHistory ?? currentHistoryPresentation
+        let items = presentation.items
+        let target = presentation.target
+        let canLoadAttachments = presentation.canLoadAttachments
+        let emptyStateVisible = presentation.showsEmptyState
+        let loadingStateVisible = presentation.showsLoadingState
         let access = conversationAccess
         return ZStack(alignment: .bottom) {
             ConversationHistoryView(
                 items: items, target: target,
                 topInset: historyTopInset + 7, bottomInset: chromeHeight + 11,
                 canLoadAttachments: canLoadAttachments, keyboardVisible: keyboardVisible,
-                isCovered: isOverlayOpen, followsLatest: $followsLatestMessage,
-                awayFromLatest: $awayFromLatest, jumpToken: latestJump,
+                isCovered: isOverlayOpen, isPreparingForPresentation: presentationRequest != nil,
+                followsLatest: $followsLatestMessage,
+                awayFromLatest: $awayFromLatest, jumpToken: latestJump, cardFromTop: $cardFromTop,
                 onReachedStart: {
                     if let target { loadEarlierHistory(target: target) }
                 }
@@ -322,8 +409,20 @@ struct ChatView: View {
                     .environment(\.conversationIsCovered, isOverlayOpen)
                     .tint(DSBotStyle.ink)
             }
+            .transaction { transaction in
+                if isPageTransitioning { transaction.animation = nil }
+            }
             .id(target)
+        }
+        .modifier(DSBotScrollEdgeBar(edge: .bottom, underlapsBar: true, showsEffect: false) {
             bottomChrome()
+        })
+        .overlay(alignment: .bottom) {
+            // The jump button must not extend the native bottom edge into readable history.
+            latestButton()
+                .padding(.bottom, chromeHeight + 2 + taskOverlayHeight + goalOverlayHeight + queueOverlayHeight)
+                .animation(.easeOut(duration: 0.18), value: taskOverlayHeight)
+                .animation(.easeOut(duration: 0.18), value: goalOverlayHeight)
         }
         .overlay {
             if emptyStateVisible {
@@ -339,6 +438,21 @@ struct ChatView: View {
                     .allowsHitTesting(false)
                     .transition(.opacity)
             }
+        }
+        .background {
+            Color.clear
+                .onGeometryChange(for: PresentationLayout.self) { geometry in
+                    PresentationLayout(request: presentationRequest, target: target, size: geometry.size)
+                } action: { layout in
+                    presentationFrame.cancel()
+                    guard let request = layout.request, layout.size.width > 0, layout.size.height > 0 else { return }
+                    presentationFrame.afterLayout {
+                        let prepared = currentHistoryPresentation
+                        if onPresentationLayout(request, layout.target) { transitionHistory = prepared }
+                    }
+                }
+                // Re-arm the layout notification even when reopening the same retained conversation.
+                .id(presentationRequest)
         }
     }
 
@@ -527,8 +641,8 @@ struct ChatView: View {
 
     // MARK: Bottom chrome
 
-    /// Everything that floats above the history: the jump-to-latest button, approvals,
-    /// photo chips and the glass composer. The history scrolls beneath it behind a progressive blur.
+    /// Approvals, photo chips and the glass composer float above history.
+    /// The bottom backdrop starts at the composer's own upper edge.
     private func bottomChrome() -> some View {
         let gap = composerFocused ? DSBotLayout.composerKeyboardGap : DSBotLayout.composerBottomMargin
         return VStack(spacing: 8) {
@@ -544,30 +658,34 @@ struct ChatView: View {
                 if assistantCompletion.query != nil, !isVoiceMode, !isOverlayOpen {
                     AssistantSuggestions(completion: assistantCompletion, onSelect: chooseAssistantCompletion)
                 }
+                quickChips
                 composerCapsule
+                    .background(alignment: .top) {
+                        if DSBotScrollEdges.usesSystemEffect {
+                            DSBotComposerBackdrop(bottomGap: gap)
+                        }
+                    }
             }
             .background {
-                if store.goal != nil || !store.displayedQueuedMessages.isEmpty {
+                if !DSBotScrollEdges.usesSystemEffect,
+                   store.goal != nil || !store.displayedQueuedMessages.isEmpty {
                     DSBotPanelBackdrop()
                         .padding(.top, -goalOverlayHeight - queueOverlayHeight)
                         .animation(.easeOut(duration: 0.18), value: goalOverlayHeight)
                 }
             }
         }
-        .overlay(alignment: .top) {
-            latestButton()
-                .offset(y: -52 - taskOverlayHeight - goalOverlayHeight - queueOverlayHeight)
-                .animation(.easeOut(duration: 0.18), value: taskOverlayHeight)
-                .animation(.easeOut(duration: 0.18), value: goalOverlayHeight)
-        }
         .padding(.horizontal, DSBotLayout.composerSideMargin)
         .padding(.top, 6)
         .padding(.bottom, gap)
+        .animation(.easeOut(duration: 0.18), value: showsQuickChips)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
             if abs(chromeHeight - height) > 0.5 { chromeHeight = height }
         }
         .background(alignment: .bottom) {
-            bottomEdge(height: composerHeight + gap + 8)
+            if !DSBotScrollEdges.usesSystemEffect {
+                bottomEdge(height: composerHeight + gap)
+            }
         }
     }
 
@@ -593,6 +711,8 @@ struct ChatView: View {
         let shows = awayFromLatest && !followsLatestMessage
         return Button {
             DSBotLog.record("chat.latest")
+            // Coming back from reading above is the end of the thread, also when a tall card ends it.
+            cardFromTop = false
             latestJump &+= 1
         } label: {
             DSBotIcon(.down, size: 20)
@@ -702,6 +822,95 @@ struct ChatView: View {
         guard let end = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
         let visible = KeyboardAvoidance.isVisible(endFrameMinY: end.minY, screenHeight: DSBotLayout.screenHeight)
         if keyboardVisible != visible { keyboardVisible = visible }
+    }
+
+    // MARK: The thread of 嘟嘟's chat is a group chat
+
+    /// What the lines of the thread can do (回复, 删除, a tap on a picture), only in 嘟嘟's own conversation. An answer puts the issue's @ in front of what is written, or in place of the one that starts it.
+    private var groupChat: GroupChatContext? {
+        guard store.isAssistantConversation else { return nil }
+        return GroupChatContext(
+            reply: { issue in
+                let next = GroupChat.replyDraft(draftBinding.wrappedValue, to: issue)
+                draftBinding.wrappedValue = next
+                replyGhost = issue.title.isEmpty ? nil : (next, issue.title)
+                // The caret goes behind the `@ID ` (the box keeps the old place of the caret when its text is set from outside: an empty box would leave it in front).
+                editorSelection = ComposerSelection(range: NSRange(location: (next as NSString).length, length: 0))
+                composerFocused = true
+            },
+            hide: { seqs in Task { await store.assistantHide(seqs) } },
+            openIssue: { issue in if let id = issue.id { openIssueConversation(id) } }
+        )
+    }
+
+    // MARK: Quick buttons of 嘟嘟's chat
+
+    /// 待办, 信息 and 定时任务 above the input of 嘟嘟's conversation (owner, 2026-11-10). A tap makes 嘟嘟 send that card into the thread. They stay while something is typed (the owner: "我一发消息，待办那个按钮就没了"),
+    /// and give way to whatever else stands in their place (the owner: "排队时或者其他有占用这里的都隐藏吧"): a queued message, the goal bar, DSH's task list, an approval, a picture or file waiting in the box,
+    /// the list of candidates, an upload, voice, or a goal command being written.
+    private var showsQuickChips: Bool {
+        store.isAssistantConversation && composerIntent == .message && !isVoiceMode && assistantCompletion.query == nil && !bottomChromeIsOccupied
+    }
+
+    private var bottomChromeIsOccupied: Bool {
+        if !store.displayedQueuedMessages.isEmpty || store.goal != nil { return true }
+        if store.selectedSession != nil, !store.isChoosingWorkspace, !store.todos.isEmpty { return true }
+        if store.transcript == nil, let sessionID = store.selectedSession?.id, store.approvals.contains(where: { $0.sessionId == sessionID }) { return true }
+        return !preparedPhotos.isEmpty || !preparedFiles.isEmpty || uploadingFileName != nil
+    }
+
+    @ViewBuilder
+    private var quickChips: some View {
+        if showsQuickChips {
+            QuickChipsRow(busy: quickCardBusy, onPick: sendQuickCard, onOpen: openQuickPage)
+                .disabled(store.isSending)
+                .transition(.opacity)
+        }
+    }
+
+    private func sendQuickCard(_ kind: QuickCardKind) {
+        guard quickCardBusy == nil, !store.isSending else { return }
+        // The spinner shows before the request goes (a button answers within 200 ms), and nothing else can be tapped meanwhile.
+        quickCardBusy = kind
+        // The owner asked for this card: the chat goes to it by itself and shows it from its top (owner, 2026-11-11: "窗口会自动向下滑到底部呀，不应该让我手动点一下回到底部"). From now on a card that ends the thread is
+        // followed by its top, until the owner takes the chat in hand.
+        cardFromTop = true
+        cardToReveal = nil
+        // A tap that would only repeat the card the thread ends with makes no new one (owner, 2026-11-10: "连点就发一张"): the plugin compares the lists and says `unchanged`.
+        let since = QuickCard.repeatable(in: store.displayedTranscriptRows, kind: kind)
+        Task {
+            let answer = await store.assistantCard(kind, since: since)
+            quickCardBusy = nil
+            switch answer {
+            case let .made(commandId), let .unchanged(commandId):
+                // The card is the command's entry of the thread: it may be there already (the answer came last) or arrive with the next snapshot (`revealCardIfPresent`, on every change of the thread).
+                // An older plugin that names no command: bring the end of the thread into view, as the jump button does.
+                if let commandId = commandId ?? since {
+                    cardToReveal = commandId
+                    revealCardIfPresent()
+                } else {
+                    latestJump &+= 1
+                }
+            case .failed:
+                cardFromTop = false
+            }
+        }
+    }
+
+    /// Goes to the card the owner asked for once it is in the thread: the chat slides to it, as the jump button does to the latest, and shows it from its top while it is taller than the screen.
+    private func revealCardIfPresent() {
+        guard let commandId = cardToReveal else { return }
+        // The owner took the chat in hand since the tap (a drag put `cardFromTop` down): a card that arrives now does not pull the page out from under their finger.
+        guard cardFromTop else {
+            cardToReveal = nil
+            return
+        }
+        guard store.displayedTranscriptRows.contains(where: { row in
+            if case let .command(command) = row { return command.commandId == commandId }
+            return false
+        }) else { return }
+        cardToReveal = nil
+        latestJump &+= 1
     }
 
     // MARK: Project and mode above the composer
@@ -1028,6 +1237,7 @@ struct ChatView: View {
                 text: draftBinding, isFocused: $composerFocused, placeholder: placeholder,
                 selectionRequest: editorSelection,
                 highlights: store.isAssistantConversation ? AssistantCompletion.highlights(draft, skills: assistantCompletion.skills) : [],
+                ghost: replyGhost.flatMap { $0.draft == draft ? $0.title : nil },
                 completionActive: assistantCompletion.query != nil,
                 onEditingChange: { edit in
                     guard store.isAssistantConversation else { return }
@@ -1525,6 +1735,7 @@ struct ChatView: View {
     }
 
     private func followSentMessage() {
+        cardFromTop = false
         followsLatestMessage = true
         latestJump &+= 1
     }
@@ -1673,9 +1884,19 @@ private struct ChatMessageRow: View, Equatable {
         lhs.message == rhs.message
     }
 
+    @ViewBuilder
     var body: some View {
+        if message.role == "user" {
+            UserMessageBubble(text: message.text)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .accessibilityIdentifier("chat.message.\(message.id)")
+        } else {
+            agentMessage
+        }
+    }
+
+    private var agentMessage: some View {
         HStack(alignment: .top) {
-            if message.role == "user" { Spacer(minLength: 40) }
             VStack(alignment: .leading, spacing: 6) {
                 if message.role == "notice" {
                     Text(message.text)
@@ -1729,16 +1950,9 @@ private struct ChatMessageRow: View, Equatable {
                     }
                 }
             }
-            .padding(message.role == "user" ? 12 : 0)
-            .background(
-                message.role == "user"
-                    ? Color(red: 237.0 / 255, green: 243.0 / 255, blue: 1)
-                    : Color.clear,
-                in: RoundedRectangle(cornerRadius: 17, style: .continuous)
-            )
-            if message.role != "user" { Spacer(minLength: 18) }
+            Spacer(minLength: 18)
         }
-        .frame(maxWidth: .infinity, alignment: message.role == "user" ? .trailing : .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("chat.message.\(message.id)")
     }
 

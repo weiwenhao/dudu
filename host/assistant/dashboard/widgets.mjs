@@ -23,7 +23,8 @@ export const MAX_COLUMNS = COLUMNS;
 export const MAX_Y = 1000;
 export const NEEDS = ['issues', 'quota', 'inputs', 'sessions', 'network'];
 export const WIDGET_API = 1;
-export const REMOVED_WIDGETS = Object.freeze(['overview', 'upcoming', 'stuck', 'inputs', 'sessions']);
+// Quota left the dashboard on 2026-11-11 (owner: "我们自己的小组件里边的余额组件也可以删掉了"): it is an icon in the header now, and a saved layout that still has the widget loses it.
+export const REMOVED_WIDGETS = Object.freeze(['overview', 'upcoming', 'stuck', 'inputs', 'sessions', 'quota']);
 
 const declare = (id, label, description, min, size, needs) => Object.freeze({
   id, label, description, min: Object.freeze({ w: min[0], h: min[1] }), size: Object.freeze({ w: size[0], h: size[1] }), needs: Object.freeze(needs),
@@ -32,7 +33,6 @@ const declare = (id, label, description, min, size, needs) => Object.freeze({
 // The table in 4.1. The names are the doc's; the one-line descriptions are for the add list and are NEW wording for the owner to review.
 export const BUILT_IN_WIDGETS = Object.freeze([
   declare('issues', 'Issues', 'Every issue, as a list or a board', [6, 3], [FILL, FILL], ['issues']), // NEW description
-  declare('quota', 'Quota', 'Subscription usage, one line per agent', [3, 2], [3, 2], ['quota']), // NEW description
   declare('office', 'Office', 'Each active issue as someone at a desk', [5, 3], [5, 3], ['issues']), // NEW description
   declare('collector', 'Collector', 'What the connectors collected, to share, make issues of or ignore', [4, 3], [6, 5], ['inputs']), // NEW description (2026-11-05: 6 columns, 5 rows is the owner's size)
 ]);

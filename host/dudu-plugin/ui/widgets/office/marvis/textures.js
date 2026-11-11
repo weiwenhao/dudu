@@ -22,7 +22,7 @@ const SHEET_WIDTH = 2048; // how wide a packed sheet of frames is made at most
 // (Chrome's memory dump, 2026-11-04).
 const FURNITURE_HEIGHT = 1100;
 const GAP = 2; // clear space round every frame of a packed sheet, as the atlas has: the card blends the edge of a picture with what is next to it (and clamps at the sheet's edge)
-const CHAIRS = ['chair.png', 'chair_boss.png']; // the atlas's frames that stay (the desks' chairs are drawn over the people); the rest is drawn once
+const CHAIRS = ['chair.png']; // the atlas's frames that stay (the desks' chairs are drawn over the people); the rest is drawn once
 const FLAT_MODULES = ['pingpong', 'ps5', 'balcony', 'door', 'sleep']; // the modules that never move: drawn once, with the atlas
 
 const canBitmap = (url) => typeof createImageBitmap === 'function' && typeof url === 'string' && /^data:[^,;]*;base64,/.test(url);
@@ -126,7 +126,7 @@ async function loadSheet(texture, sheet) {
 
 const destroySheet = (spritesheet) => spritesheet.destroy(true);
 const destroyTexture = (texture) => texture.destroy(true);
-/** Where a frame is in its sheet. (A frame the packer turned a quarter round, like the boss's chair, is stored `h` wide and `w` high; its entry keeps `w` and `h` as they are.) */
+/** Where a frame is in its sheet. (A frame the packer turned a quarter round is stored `h` wide and `w` high; its entry keeps `w` and `h` as they are.) */
 const rectOf = (frame) => (frame.rotated
   ? { x: frame.frame.x, y: frame.frame.y, w: frame.frame.h, h: frame.frame.w }
   : { x: frame.frame.x, y: frame.frame.y, w: frame.frame.w, h: frame.frame.h });

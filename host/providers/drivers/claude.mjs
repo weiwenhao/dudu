@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { harnessError } from '../harness-bridge.mjs';
 import { OarNormalizer, createOarProvider } from '../oar.mjs';
 import { claudeRuntime } from '../oar-runtimes.mjs';
+import { readClaudeQuota } from '../quota/claude.mjs';
 import { CLAUDE_TOOLS, fallbackSpec } from './claude-tools.mjs';
 
 // Claude Code through OAR. The `claude` installed on this computer, with this user's login, settings, skills and MCP
@@ -54,6 +55,8 @@ export function createClaudeProvider({ runtime = claudeRuntime, registry } = {})
     fallbackModels: FALLBACK_MODELS,
     // The child must not believe it runs inside another harness. OAR already drops Claude's own markers.
     scrub: { patterns: [/^(ORCA_|HERDR_)/] },
+    // How much of the account's plan is left (the quota panel asks only the providers that are found and enabled, and only when a person asks).
+    quota: readClaudeQuota,
     // Use native permission evaluation; an explicit read-only envelope also removes writing tools.
     session: ({ permission, signal }) => ({
       ...(signal ? { openSignal: signal } : {}),

@@ -158,6 +158,12 @@ const MIGRATIONS = [
   migrateLabels,
   migrateLinks,
   migrateInboxMarks,
+  `
+  ALTER TABLE issue_statuses ADD COLUMN icon_progress REAL
+    CHECK (icon_progress IS NULL OR (category = 'started' AND icon_progress IN (0, 0.25, 0.5, 0.75, 1)));
+  UPDATE issue_statuses SET icon_progress = CASE WHEN type = 'in_review' THEN 0.75 ELSE 0.5 END
+    WHERE category = 'started';
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

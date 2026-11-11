@@ -22,6 +22,8 @@
     <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>CADisableMinimumFrameDurationOnPhone</key>
+    <true/>
     <key>NSCameraUsageDescription</key>
     <string>拍摄对话图片，或扫描电脑上的 Dudu 配对二维码。</string>
     <key>NSLocalNetworkUsageDescription</key>

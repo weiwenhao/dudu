@@ -75,6 +75,7 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
           : Object.hasOwn(changes, 'dueAt') ? changes.dueAt == null ? T.toast.dueRemoved : T.toast.dueSet : T.toast.updated(1);
         toast({ message, action: undoable({ eventId: result.eventId }) });
       } else if (result.outcome !== 'no_op') toast({ message: T.toast.failed });
+      return result; // The title editor closes only after the store accepts the change.
     } catch { toast({ message: T.toast.failed }); } finally { refresh(); }
   }, [request, patch, refresh, toast, undoable, changeStatus]);
   // A card dropped on a lane: it is in the lane at once, and the lane's value is its (the status, the priority, the agent state).
