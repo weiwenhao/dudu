@@ -160,8 +160,4 @@ Bug 和建议也可以直接提 Issue。
 
 ## 许可证
 
-[MIT](LICENSE) © weiwenhao。`packages/oar-adapter` 沿用上游 OAR 的 Apache-2.0。第三方代码和素材的声明在 [NOTICE.md](NOTICE.md)；服务图标是各自所有者的商标。
-
-## 致谢
-
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（MIT）、OAR、shadcn/ui、Radix、Tailwind CSS、gridstack、Lucide、swift-markdown-ui；办公室场景参考了 [winterBI/marvis-office](https://github.com/winterBI/marvis-office)；连接器的登录取自 Cline，并参考了 OpenClaw 和 opencode，「粘贴任何 MCP 配置」取自 Hermes Agent。
+[MIT](LICENSE)

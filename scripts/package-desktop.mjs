@@ -67,8 +67,6 @@ noticeBlocks.push(`Hermes Agent - the paste-anything MCP parser of the connector
 if (noticeBlocks.length) {
   await writeFile(join(runtime, 'THIRD_PARTY_NOTICES.txt'), `This plugin bundles the following packages.\n\n${[...new Set(noticeBlocks)].join('\n----------------------------------------\n\n')}`);
 }
-// The MIT notice has to be in every copy of the plugin.
-await copyFile(join(root, 'LICENSE'), join(runtime, 'LICENSE'));
 if ([...copied].some((file) => /(?:^|\/)(?:relay\.mjs|mobile-adapter)/.test(file))) {
   throw new Error('The native desktop package must not include the old web relay.');
 }
