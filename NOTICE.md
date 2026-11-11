@@ -66,7 +66,6 @@ SOFTWARE.
 
 连接器的 OAuth 登录取自 Cline，并参考了 OpenClaw 和 opencode；「粘贴任何 MCP 配置」的解析取自 Hermes Agent；Claude、OpenAI、DeepSeek 的图标来自 Lobe Icons。各自的来源、取了哪些文件和协议原文在 [licenses/](licenses/)。
 
-## 不在 MIT 范围内的素材
+## 服务图标
 
-- **办公室场景**：`host/dudu-plugin/ui/widgets/office/marvis/` 里的场景和图集取自 [winterBI/marvis-office](https://github.com/winterBI/marvis-office)，那个仓库没有声明协议，所以这一部分不在本项目的 MIT 授权里；来源和取了什么见该目录的 [SOURCE.md](host/dudu-plugin/ui/widgets/office/marvis/SOURCE.md)。
-- **服务图标**：信息收集器里各个服务的图标，来源和协议见 [NOTICE.md](host/dudu-plugin/ui/connectors/icons/NOTICE.md)；这些名字和图标是各自所有者的商标，只用来认出是哪个服务。
+信息收集器里各个服务的图标，来源和协议见 [NOTICE.md](host/dudu-plugin/ui/connectors/icons/NOTICE.md)；这些名字和图标是各自所有者的商标，只用来认出是哪个服务。
