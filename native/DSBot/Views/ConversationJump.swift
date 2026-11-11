@@ -161,6 +161,17 @@ final class ScrollMetrics {
         }
     }
 
+    /// Whether the latest row is out of the reach of a single command: it is not built, and the row before it is not built either. Only a built row has a place of its own, and
+    /// the one right after it; a row further off is where the lazy stack's estimate puts it, and that estimate follows whichever rows happen to be built (device log of
+    /// 2026-11-12 00:40:41: 18 571 → 42 351 pt within 55 ms of a send, nothing built where the viewport was, and the way out was the first row: the top of the thread).
+    /// Such a row is reached by walking, as the jump does, row after row from what is built. False while a jump is on its way, and when nothing at all is built.
+    func needsWalk(to latestID: String, itemIDs: [String]) -> Bool {
+        guard let scrollView, jumpStartedAt == nil else { return false }
+        let built = Set(rowFrames(in: scrollView).map(\.id))
+        guard !built.isEmpty, !built.contains(latestID), let index = itemIDs.lastIndex(of: latestID), index > 0 else { return false }
+        return !built.contains(itemIDs[index - 1])
+    }
+
     private func rowFrames(in scrollView: UIScrollView) -> [HistoryRowFrame] {
         rows.compactMap { id, marker in
             guard let view = marker.view, view.isDescendant(of: scrollView) else { return nil }

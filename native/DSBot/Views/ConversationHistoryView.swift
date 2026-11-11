@@ -295,6 +295,12 @@ struct ConversationHistoryView<Content: View>: View {
         guard canPositionHistory else { return }
         // An animation can outlive the snapshot that started it.
         guard let id = metrics.latestID ?? items.last?.id else { return }
+        // A latest row that has no place of its own yet (`needsWalk`) is not jumped to: the jump goes to the stack's estimate of it. Walk there, as the jump button does.
+        if reason == "layout", metrics.needsWalk(to: id, itemIDs: items.map(\.id)) {
+            metrics.recordFollowing(reason: "layout.walk", targetID: id, messageCount: items.count)
+            jumpToLatest(proxy)
+            return
+        }
         let target = metrics.followingTarget(latestID: id, firstID: items.first?.id)
         metrics.recordFollowing(
             reason: target.isRecovery ? "\(reason).recover" : reason, targetID: target.id, messageCount: items.count
