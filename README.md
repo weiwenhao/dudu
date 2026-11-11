@@ -17,13 +17,13 @@
 
 <br>
 
-<img src="docs/images/hero.png" width="900" alt="DSH 里的 Dudu：左边是看板，分成「需要你」「工作中」，右边是办公室，右下角的小宠物是和 Dudu 说话的地方">
+<img src="docs/images/hero.png" width="900" alt="DSH 里的 Dudu：左边是看板，分成「需要你」「工作中」「未分配」，右边上面是办公室、下面是信息收集器，右下角的小宠物是和 Dudu 说话的地方">
 
-<sub>电脑上：DSH 里的 Dudu。左边是看板，右边是办公室，右下角的小宠物是和 Dudu 说话的地方。</sub>
+<sub>电脑上：DSH 里的 Dudu。左边是看板，右边上面是办公室、下面是信息收集器，右下角的小宠物是和 Dudu 说话的地方。</sub>
 
-<img src="docs/images/phone.png" width="900" alt="手机上的 Dudu，从左到右：看板；对话；对话里点「+」弹出的菜单">
+<img src="docs/images/phone.png" width="900" alt="手机上的 Dudu，从左到右：看板；对话；对话里点「+」弹出的菜单；任务">
 
-<sub>手机上：看板；对话（用 @事项编号 把话带给它的 Agent，太长的回复会折起来）；对话里点「+」弹出的菜单。</sub>
+<sub>手机上：看板；对话（用 @事项编号 把话带给它的 Agent，太长的回复会折起来）；对话里点「+」弹出的菜单；任务。</sub>
 
 </div>
 
