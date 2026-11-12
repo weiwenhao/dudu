@@ -191,7 +191,7 @@ DSH 没有删除会话的功能，只有归档，归档的会话不会丢：在�
 
 ## 构建 iPhone App
 
-需要 Xcode、XcodeGen、Node.js 22.18 或更新版本，以及能为目标手机签名的
+需要 Xcode、XcodeGen、Node.js 24 或更新版本，以及能为目标手机签名的
 Apple 开发者账号。构建目标为 iOS 18 或更新版本。
 
 ```sh
