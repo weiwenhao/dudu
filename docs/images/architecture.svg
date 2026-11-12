@@ -5,26 +5,26 @@
 <text x="358" y="72" font-size="16" font-weight="600" fill="#61666b">DSH Desktop · dudu 插件（端口 3170）</text>
 <rect x="358" y="100" width="244" height="132" rx="14" fill="#eef3ff" stroke="#4176E6" stroke-width="1.5"/>
 <text x="480.0" y="160.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">Dudu 的库</text>
-<text x="480.0" y="186.0" text-anchor="middle" font-size="14" fill="#61666b">SQLite：事项 · 记录 · 任务 · 版面</text>
+<text x="480.0" y="186.0" text-anchor="middle" font-size="14" fill="#61666b">SQLite：Issue · 记录 · 定时任务</text>
 <rect x="618" y="100" width="244" height="132" rx="14" fill="#ffffff" stroke="#d9dde3" stroke-width="1.5"/>
 <text x="740.0" y="160.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">Dudu 的界面</text>
 <text x="740.0" y="186.0" text-anchor="middle" font-size="14" fill="#61666b">React：仪表盘 · 看板 · 办公室 · 对话</text>
 <rect x="358" y="256" width="244" height="132" rx="14" fill="#ffffff" stroke="#d9dde3" stroke-width="1.5"/>
-<text x="480.0" y="316.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">手机接口</text>
+<text x="480.0" y="316.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">iPhone App 接口</text>
 <text x="480.0" y="342.0" text-anchor="middle" font-size="14" fill="#61666b">鉴权 HTTP API · 事件长轮询</text>
 <rect x="618" y="256" width="244" height="132" rx="14" fill="#ffffff" stroke="#d9dde3" stroke-width="1.5"/>
-<text x="740.0" y="316.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">供应商</text>
+<text x="740.0" y="316.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">Agent 接入</text>
 <text x="740.0" y="342.0" text-anchor="middle" font-size="14" fill="#61666b">经 OAR 接 Claude Code、Codex</text>
 <rect x="358" y="412" width="504" height="68" rx="14" fill="#ffffff" stroke="#d9dde3" stroke-width="1.5"/>
 <text x="610.0" y="452.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">DSH 自己的会话、工具、技能和 MCP</text>
 <rect x="40" y="100" width="220" height="132" rx="14" fill="#ffffff" stroke="#d9dde3" stroke-width="1.5"/>
-<text x="150.0" y="160.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">外面的信息</text>
-<text x="150.0" y="186.0" text-anchor="middle" font-size="14" fill="#61666b">邮件 · 聊天 · 工单 ……</text>
+<text x="150.0" y="160.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">外部来源</text>
+<text x="150.0" y="186.0" text-anchor="middle" font-size="14" fill="#61666b">邮箱 · GitHub · 飞书 ……</text>
 <rect x="40" y="256" width="220" height="132" rx="14" fill="#ffffff" stroke="#d9dde3" stroke-width="1.5"/>
 <text x="150.0" y="316.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">iPhone App</text>
 <text x="150.0" y="342.0" text-anchor="middle" font-size="14" fill="#61666b">SwiftUI 原生</text>
 <line x1="260" y1="166" x2="356" y2="166" stroke="#4176E6" stroke-width="2" marker-end="url(#a)"/>
-<text x="308" y="140" text-anchor="middle" font-size="14" fill="#61666b">连接器</text><text x="308" y="157" text-anchor="middle" font-size="14" fill="#61666b">+ 收集器</text>
+<text x="308" y="140" text-anchor="middle" font-size="14" fill="#61666b">读取</text><text x="308" y="157" text-anchor="middle" font-size="14" fill="#61666b">信息收集器</text>
 <line x1="260" y1="322" x2="356" y2="322" stroke="#4176E6" stroke-width="2" marker-end="url(#a)"/>
 <text x="308" y="296" text-anchor="middle" font-size="14" fill="#61666b">配对认证</text><text x="308" y="313" text-anchor="middle" font-size="14" fill="#61666b">HTTP / HTTPS</text>
 <rect x="960" y="96" width="200" height="76" rx="14" fill="#ffffff" stroke="#d9dde3" stroke-width="1.5"/>
