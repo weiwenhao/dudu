@@ -19,7 +19,7 @@
 <text x="610.0" y="452.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">DSH 自己的会话、工具、技能和 MCP</text>
 <rect x="40" y="100" width="220" height="132" rx="14" fill="#ffffff" stroke="#d9dde3" stroke-width="1.5"/>
 <text x="150.0" y="160.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">外部来源</text>
-<text x="150.0" y="186.0" text-anchor="middle" font-size="14" fill="#61666b">邮箱 · GitHub · 飞书 ……</text>
+<text x="150.0" y="186.0" text-anchor="middle" font-size="14" fill="#61666b">飞书 · Notion · Linear ……</text>
 <rect x="40" y="256" width="220" height="132" rx="14" fill="#ffffff" stroke="#d9dde3" stroke-width="1.5"/>
 <text x="150.0" y="316.0" text-anchor="middle" font-size="19" font-weight="600" fill="#0f1115">iPhone App</text>
 <text x="150.0" y="342.0" text-anchor="middle" font-size="14" fill="#61666b">SwiftUI 原生</text>
