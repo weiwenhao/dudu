@@ -1,11 +1,8 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-wide-dark.png">
-  <img src="docs/images/logo-wide.png" width="300" alt="Dudu">
-</picture>
+<img src="docs/images/logo-wide.png" width="300" alt="Dudu">
 
-### 基于 DSH 打造的多 Agent 协作的工作效率助手
+### 基于 Issue 的多 Agent 高效协作助手
 
 Dudu 是 DeepSeek Harness（DSH）的插件，另有配套的 iPhone App。它把交给 Claude Code、Codex、DeepSeek 的工作整理成事项，在一块看板上按状态分组显示。
 
@@ -45,18 +42,13 @@ Dudu 是 DeepSeek Harness（DSH）的插件，另有配套的 iPhone App。它�
 <table>
 <tr><td width="110" nowrap><b>收集信息</b></td><td>从邮箱、GitHub、飞书等来源读取信息：用一段说明写清去哪里读，或使用 DSH 里已连接的 MCP 服务，再设定读什么、多久读一次。读到的内容放进「信息收集器」，逐条处理：忽略、转给某个事项，或新建事项。</td></tr>
 <tr><td width="110" nowrap><b>事项和看板</b></td><td>状态、优先级、所属项目、标签、子事项、截止日期，与 Linear、GitHub 的 Issue 类似。支持列表和看板两种视图；右键可以修改状态、优先级、标签、截止日期，把事项交给 Agent，或复制编号。</td></tr>
+<tr><td width="110" nowrap><b>办公室</b></td><td>仪表盘上的小组件，与看板对应：工作中的 Agent 坐在工位上，等你处理的和空闲的在休息区活动，长时间无人处理、进程已关闭的躺在床上睡觉。</td></tr>
 <tr><td width="110" nowrap><b>Agent 执行</b></td><td>由本机的 Claude Code、Codex 和 DSH 自带的 DeepSeek 执行。会话是它们自己的真实会话，也可以在终端里用 <code>claude --resume</code>、<code>codex resume</code> 接着对话。</td></tr>
 <tr><td width="110" nowrap><b>对话</b></td><td>Dudu 只有一个对话，桌面端是右下角的小宠物（界面里叫「嘟嘟」）。写「<code>@事项编号</code> 加一句话」，这句话会发给对应事项的 Agent，回复也出现在同一个对话里。过长的回复会折叠，点「展开」查看全文。</td></tr>
 <tr><td width="110" nowrap><b>定时任务</b></td><td>按计划自动执行：每天、每周、每月、固定间隔、仅一次，或自定义 cron。Dudu 自己也可以作为执行者，结果发到对话里。</td></tr>
 <tr><td width="110" nowrap><b>额度</b></td><td>点右上角的额度图标，查看 Claude、ChatGPT 的订阅额度和 DeepSeek 的账户余额。只在点击时查询；读取不到的来源不显示。</td></tr>
 <tr><td width="110" nowrap><b>手机 App</b></td><td>原生 SwiftUI 的 iPhone App，不是网页套壳。包含看板、对话、信息收集器、定时任务和额度，支持语音输入，可以发送图片和文件。</td></tr>
 </table>
-
-## 办公室
-
-<p align="center"><img src="docs/images/office.png" width="640" alt="办公室：左侧的睡眠区里两个人躺在床上，其余的人有的坐在工位上，有的在打乒乓球"></p>
-
-仪表盘上的小组件，与看板对应：工作中的 Agent 坐在工位上，等你处理的和空闲的在休息区活动，长时间无人处理、进程已关闭的躺在床上睡觉。
 
 ## 快速开始
 
