@@ -14,11 +14,7 @@ Dudu 是 DeepSeek 开源的 Agent 应用 [DeepSeek Harness](https://github.com/d
 
 <img src="docs/images/hero.png" width="900" alt="桌面端截图">
 
-<sub>桌面端（在 DSH 里）：仪表盘上有三个小组件，左侧是看板，右侧上方是办公室，下方是信息收集器；右下角蓝色的「嘟嘟」是对话入口。</sub>
-
 <img src="docs/images/phone.png" width="900" alt="iPhone App 截图">
-
-<sub>iPhone App，从左到右：看板；对话；对话里点「+」弹出的菜单；定时任务。</sub>
 
 </div>
 
@@ -69,17 +65,9 @@ npm run desktop:update       # 打包、装进 DSH Desktop 并让它重新加载
 
 在「嘟嘟」页面点「新建事项」，填写标题，选一个项目，再选 Agent，点创建。Agent 开始执行，状态显示在看板上。
 
-## 安装 iPhone App（可选）
+**3. 连接 iPhone App（可选）**
 
-需要 Xcode 27 或更新版本（iOS SDK 27）、XcodeGen，一台已在 Xcode 里与这台 Mac 配对的 iPhone，以及能为它签名的 Apple 开发者账号；最低支持 iOS 18。目前没有 TestFlight 和 App Store 版本，需要自行编译。
-
-先把 `native/project.yml` 里的 `DEVELOPMENT_TEAM` 和 `PRODUCT_BUNDLE_IDENTIFIER` 改成你自己的，再运行：
-
-```sh
-npm run native:install       # 构建并覆盖安装到 iPhone；连着多台设备时加 -- --device <设备名或标识>
-```
-
-然后在「嘟嘟」页面点右上角的设置，进入「手机控制」，填写电脑名称，点「生成二维码」，用 iPhone App 扫描。用内网地址连接时，手机和电脑要在同一个内网里；第一个连接地址由电脑当前的内网 IP 自动生成。详见[手机连接](docs/phone-connection.md)。
+iPhone App 需要 iOS 18 或更新版本。在「嘟嘟」页面点右上角的设置，进入「手机控制」，填写电脑名称，点「生成二维码」，用 iPhone App 扫描。用内网地址连接时，手机和电脑要在同一个内网里；第一个连接地址由电脑当前的内网 IP 自动生成。详见[手机连接](docs/phone-connection.md)。
 
 ## 功能
 
@@ -150,7 +138,7 @@ Agent 在自己的会话里处理 Issue。Claude Code 和 Codex 的会话由它�
 npm run typecheck
 npm test               # 单元测试，很快；只保留关键用例：数据安全、鉴权、进程间约定、状态和分配规则
 npm run test:e2e       # 端到端：把插件装进一个独立的 dsh web，用 Chrome 驱动；较慢，需要 dsh 命令（或用 DUDU_E2E_DSH 指定）和 Chrome
-npm run native:build   # 构建 iPhone App，检查它能否编译
+npm run native:build   # 检查 iPhone App 能否编译
 ```
 
 界面外观（尺寸、间距、文字、动画）不写自动化测试，由人工检查。
@@ -177,9 +165,18 @@ npm run native:build   # 构建 iPhone App，检查它能否编译
 
 </details>
 
-## 社区
+## 友链
 
-使用交流和问题讨论：[LINUX DO](https://linux.do/)、[V2EX](https://www.v2ex.com/)。
+<table>
+<tr>
+<td width="200" align="center"><a href="https://linux.do/"><img src="docs/images/friend-linuxdo.png" height="56" alt="LINUX DO"></a></td>
+<td><b><a href="https://linux.do/">LINUX DO</a></b>：「新的理想型社区」，社区文化是真诚、友善、团结、专业。</td>
+</tr>
+<tr>
+<td width="200" align="center"><a href="https://www.v2ex.com/"><img src="docs/images/friend-v2ex.png" height="56" alt="V2EX"></a></td>
+<td><b><a href="https://www.v2ex.com/">V2EX</a></b>：创意工作者的社区，讨论编程、设计、硬件、游戏等话题。</td>
+</tr>
+</table>
 
 ## 许可证
 
