@@ -1,6 +1,6 @@
 {
   "name": "dudu",
-  "version": "0.4.0",
+  "version": "0.1.0-beta",
   "type": "module",
   "main": "./index.mjs",
   "exports": {
