@@ -14,6 +14,8 @@ Dudu 是 DeepSeek 开源的 Agent 应用 [DeepSeek Harness](https://github.com/d
 
 <img src="docs/images/hero.png" width="900" alt="桌面端截图">
 
+<img src="docs/images/dashboard.png" width="900" alt="仪表盘截图：小组件可以拖动、调整大小">
+
 <img src="docs/images/phone.png" width="900" alt="iPhone App 截图">
 
 </div>
