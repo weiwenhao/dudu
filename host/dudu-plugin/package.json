@@ -21,7 +21,7 @@
     "./widget.css": "./widget.css",
     "./package.json": "./package.json"
   },
-  "description": "基于 Issue 的多 Agent 高效协作助手",
+  "description": "基于 DSH 的多 Agent 高效协作助手",
   "icon": "./icon.png",
   "license": "MIT",
   "files": ["index.mjs", "client.js", "widget.mjs", "widget.d.ts", "widget-ui.mjs", "widget-ui.d.ts", "widget-testing.mjs", "widget-testing.d.ts", "widget.css", "icon.png", "cordis.patch.yml", "dist/"],

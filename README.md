@@ -2,7 +2,7 @@
 
 <img src="docs/images/logo-wide.png" width="300" alt="Dudu">
 
-### 基于 Issue 的多 Agent 高效协作助手
+### 基于 DSH 的多 Agent 高效协作助手
 
 Dudu 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的插件，另有配套的 iPhone App，用 Issue 管理交给 Claude Code、Codex 和 DeepSeek 的工作。DSH 是 DeepSeek 开源的 Agent 应用。Dudu 处于早期阶段，界面和接口还会变化。
 
