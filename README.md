@@ -8,7 +8,7 @@ Dudu 是 DeepSeek 开源的 Agent 应用 [DeepSeek Harness](https://github.com/d
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) ![macOS · iOS](https://img.shields.io/badge/macOS%20%C2%B7%20iOS-000000?style=flat-square&logo=apple&logoColor=white) ![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2024-339933?style=flat-square&logo=node.js&logoColor=white) ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-0.2.2--rc.1-4D6BFE?style=flat-square)
 
-**[快速开始](#快速开始)** &nbsp;·&nbsp; **[功能](#功能)** &nbsp;·&nbsp; **[文档](#文档)**
+**[快速开始](#快速开始)** &nbsp;·&nbsp; **[功能](#功能)** &nbsp;·&nbsp; **[文档](#文档)** &nbsp;·&nbsp; **[App Store][app-store]**
 
 <br>
 
@@ -65,9 +65,9 @@ npm run desktop:update       # 打包、装进 DSH Desktop 并让它重新加载
 
 在「嘟嘟」页面点「新建事项」，填写标题，选一个项目，再选 Agent，点创建。Agent 开始执行，状态显示在看板上。
 
-**3. 连接 iPhone App（可选）**
+**3. 安装并连接 iPhone App（可选）**
 
-iPhone App 需要 iOS 18 或更新版本。在「嘟嘟」页面点右上角的设置，进入「手机控制」，填写电脑名称，点「生成二维码」，用 iPhone App 扫描。用内网地址连接时，手机和电脑要在同一个内网里；第一个连接地址由电脑当前的内网 IP 自动生成。详见[手机连接](docs/phone-connection.md)。
+从 [App Store][app-store] 安装 iPhone App，需要 iOS 18 或更新版本。在「嘟嘟」页面点右上角的设置，进入「手机控制」，填写电脑名称，点「生成二维码」，用 iPhone App 扫描。用内网地址连接时，手机和电脑要在同一个内网里；第一个连接地址由电脑当前的内网 IP 自动生成。详见[手机连接](docs/phone-connection.md)。
 
 ## 功能
 
@@ -181,3 +181,5 @@ npm run native:build   # 检查 iPhone App 能否编译
 ## 许可证
 
 [MIT](LICENSE)
+
+[app-store]: https://apps.apple.com/app/idXXXXXXXXXX
