@@ -28,19 +28,19 @@ Dudu 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（D
 
 1. **一件事一个 Issue。** Issue 的结构和布局参照 Linear：状态、优先级、标签、列表和看板。把它交给一个 Agent（Claude Code、Codex 或 DeepSeek），它在自己的 DSH 会话里、在你的项目文件夹里干活。
 2. **一块看板看全部。** Issue 按 Agent 的状态分组，「需要你」排在最前：Agent 提了问题、出了错、被停止，或这一轮做完了。后面是「工作中」「空闲中」「未分配」。
-3. **决定权在你。** Dudu 不会自己建 Issue，也不会自己改状态。Agent 由你选；在对话里让 Dudu 新建 Issue 时，它按你写的分配规则选。
+3. **决定权在你。** Issue 由你新建，Agent 由你选，状态由你改。在对话里让 Dudu 新建 Issue 时，它按你写的分配规则选 Agent。
 
 界面里，Issue 叫「事项」，Agent 叫「智能体」，信息收集器叫「信息」，定时任务叫「任务」。
 
 ## 功能
 
 - **Agent**：Claude Code、Codex 和 DeepSeek。Claude Code 和 Codex 用的是你电脑上装好的程序，沿用你的登录、设置、skills 和 MCP。电脑上已有的会话可以导入，或「接管」成 Issue。
-- **终端**：Claude Code、Codex 的会话可以从它的 Issue 里复制接续命令，在终端里接着用。不要同时在 DSH 和终端里往同一个会话写。
+- **终端**：Claude Code、Codex 的会话可以从它的 Issue 里复制接续命令，在终端里接着用。一个会话同一时间只在一个地方用，DSH 里或终端里。
 - **手机 App**：同一块看板，带语音输入。
 - **信息收集器**：由 DSH 里的模型按你设的频率读飞书、Notion、Linear 等，所以每次收集都会花 token。每条信息可以新建成 Issue、发给某个 Agent，或忽略。
 - **对话**：让 Dudu 新建 Issue，或用 `@` 把话发给某个 Issue 的 Agent。点页面右下角的蓝色小图标打开。
 - **定时任务**：按计划运行一条提示词。
-- **额度**：Claude、ChatGPT 和 DeepSeek 还剩多少。点右上角的「额度」图标才会读取。
+- **额度**：点右上角的「额度」图标，查看 Claude、ChatGPT 和 DeepSeek 还剩多少。
 - **办公室**：每个进行中的 Issue 是一个小人：工作中在工位，等你或空闲在休息区，睡着了在床上。
 - **仪表盘**：每个小组件都可以拖动、调整大小。
 
@@ -87,8 +87,8 @@ npm run desktop:update       # 打包、装进 DSH Desktop 并让它重新加载
 
 - **手动配对。** 配对码只在你点「生成二维码」时生成，10 分钟有效，每台手机可以单独撤销。
 - **App 只能访问 Dudu 自己的页面和接口**，且要先配对，凭据只放在 `Authorization` 请求头里。内网地址用 HTTP，不加密；经 TLS 反向代理或隧道连接时，中转服务器能看到解密后的流量，这不是端到端加密。
-- **Agent 默认以完全访问权限运行**（任意文件、任意命令）：Dudu 的对话、收集和定时任务，以及交给 Codex、DeepSeek 的 Issue。交给 Claude Code 的 Issue 使用 Claude 自己的权限设置。DSH 里没有审批提问：Claude Code 需要确认的操作会被拒绝，Codex 不询问。
-- **数据留在你的电脑上**（`~/.dsh/dudu/`），发给模型的内容发往你自己配置的模型提供方。Dudu 没有自己的云端服务。
+- **Agent 默认以完全访问权限运行**（任意文件、任意命令）：Dudu 的对话、收集和定时任务，以及交给 Codex、DeepSeek 的 Issue。交给 Claude Code 的 Issue 使用 Claude 自己的权限设置。
+- **数据留在你的电脑上**（`~/.dsh/dudu/`），发给模型的内容发往你自己配置的模型提供方。
 
 ## 文档
 

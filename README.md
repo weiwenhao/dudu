@@ -28,17 +28,17 @@ With several agents running, you open each session to find out who finished, who
 
 1. **One task, one Issue.** Issues are laid out like Linear's: statuses, priorities, labels, a list and a board. Hand one to an Agent (Claude Code, Codex or DeepSeek) and it works in its own DSH session, in your project folder.
 2. **One board.** Issues are grouped by the Agent's state, and **Needs you** comes first: the Agent asked a question, failed, was stopped or finished its turn. Then Working, Idle and Unassigned.
-3. **You decide.** Dudu never creates an Issue or changes a status on its own. You pick the Agent; when you ask Dudu in chat to create an Issue, it picks by the assignment rules you wrote.
+3. **You decide.** You create the Issues, pick the Agent and set the status. When you ask Dudu in chat to create an Issue, it picks the Agent by the assignment rules you wrote.
 
 ## Features
 
 - **Agents**: Claude Code, Codex and DeepSeek. Claude Code and Codex run as the programs installed on your computer, with your login, settings, skills and MCP servers. Import the sessions you already have, or take one over as an Issue.
-- **Terminal**: copy a Claude Code or Codex session's resume command from its Issue and continue in a terminal. Do not write to one session from DSH and the terminal at the same time.
+- **Terminal**: copy a Claude Code or Codex session's resume command from its Issue and continue in a terminal. Use a session in one place at a time, DSH or the terminal.
 - **Mobile app**: the same board in your pocket, with voice input.
 - **Collector**: a DSH model reads Lark, Notion, Linear and more on a schedule you set, so each collection costs tokens. Each item can become an Issue, go to an Agent as a message, or be ignored.
 - **Chat**: ask Dudu to create an Issue, or type `@` to message an Issue's Agent. Open it from the blue icon at the bottom right.
 - **Scheduled tasks**: run a prompt on a schedule.
-- **Quota**: what is left on Claude, ChatGPT and DeepSeek. Nothing is read until you click the Quota icon at the top right.
+- **Quota**: click the Quota icon at the top right to see what is left on Claude, ChatGPT and DeepSeek.
 - **Office**: every active Issue is a little person, at a desk when working, in the lounge when waiting, in bed when asleep.
 - **Dashboard**: drag and resize every widget.
 
@@ -85,8 +85,8 @@ Install it from the [App Store][app-store] (iOS 18 or later; the interface is in
 
 - **Pairing is manual.** A code appears only when you click "Generate QR code", lasts 10 minutes, and each phone can be revoked.
 - **The app reaches only Dudu's own pages and APIs**, after pairing, with the credential in the `Authorization` header. A LAN address is plain HTTP; over a TLS proxy or tunnel the relay can read the traffic, so it is not end-to-end encrypted.
-- **Agents run with full access** (any file, any command) for Dudu's chat, collection and scheduled tasks, and for Issues handed to Codex or DeepSeek. Claude Code Issues use Claude's own permission settings. DSH shows no approval prompts: what Claude Code would ask about is refused, and Codex never asks.
-- **Your data stays on your computer** (`~/.dsh/dudu/`). What goes to a model goes to the provider you configured. Dudu has no cloud service.
+- **Agents run with full access** (any file, any command) for Dudu's chat, collection and scheduled tasks, and for Issues handed to Codex or DeepSeek. Claude Code Issues use Claude's own permission settings.
+- **Your data stays on your computer** (`~/.dsh/dudu/`). What goes to a model goes to the provider you configured.
 
 ## Docs
 
