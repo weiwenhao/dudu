@@ -4,26 +4,21 @@
 
 ### 基于 DSH 的多 Agent 高效协作助手
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) ![macOS · iOS](https://img.shields.io/badge/macOS%20%C2%B7%20iOS-000000?style=flat-square&logo=apple&logoColor=white) ![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2024-339933?style=flat-square&logo=node.js&logoColor=white) ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-0.2.2--rc.1-4D6BFE?style=flat-square)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) ![version](https://img.shields.io/badge/version-0.1.0%20beta-orange?style=flat-square) ![macOS · iOS](https://img.shields.io/badge/macOS%20%C2%B7%20iOS-000000?style=flat-square&logo=apple&logoColor=white) ![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2024-339933?style=flat-square&logo=node.js&logoColor=white) ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-0.2.2--rc.1-4D6BFE?style=flat-square)
 
-[功能](#功能) • [快速开始](#快速开始) • [使用](#使用) • [整体结构](#整体结构) • [文档](#文档) • [App Store][app-store]
+如果 Dudu 对你有用，欢迎在 GitHub 上点个 Star。
 
-<br>
+[概览](#概览) • [功能](#功能) • [快速开始](#快速开始) • [使用](#使用) • [安全](#安全) • [文档和资源](#文档和资源) • [App Store][app-store]
 
-<img src="docs/images/hero.png" width="900" alt="桌面端截图">
-
-<img src="docs/images/dashboard.png" width="900" alt="仪表盘截图：小组件可以拖动、调整大小">
-
-<img src="docs/images/phone.png" width="900" alt="iPhone App 截图">
+<img src="docs/images/hero.png" width="900" alt="Dudu 在 DSH 里的桌面端：左边是看板，右上是办公室，右下是信息，右下角的蓝色小图标是对话入口">
 
 </div>
 
-<br>
-
-Dudu 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的插件，另有配套的 iPhone App，用 Issue 管理交给 Claude Code、Codex 和 DeepSeek 的工作。DSH 是 DeepSeek 开源的 Agent 应用。
+Dudu 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的插件，另有配套的 iPhone App，用 Issue 管理交给 Claude Code、Codex 和 DeepSeek 的工作。目前是 0.1.0 beta，界面和接口还会变化。
 
 > [!NOTE]
-> Dudu 目前是 0.1.0 beta，界面和接口还会变化。
+> **DSH 是什么？**<br>
+> DeepSeek Harness 是 DeepSeek 开源的 Agent 应用，自己的定位是「Everything is a Plugin」（一切皆插件）。Dudu 是装在它里面的一个插件。
 
 ## 概览
 
@@ -43,6 +38,16 @@ Dudu 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（D
 
 界面文字跟随 DSH 的语言设置，本文引用的是中文界面。信息收集器在界面里叫「信息」，定时任务叫「任务」。
 
+Dudu 运行在你电脑上的 DSH Desktop 里，由这几部分组成：
+
+<div align="center">
+  <img src="docs/images/architecture.svg" alt="整体结构：iPhone App 经带鉴权的 HTTP/HTTPS 连到 DSH Desktop 里的 dudu 插件；插件里有 Dudu 的库、界面、iPhone App 接口和 Agent 接入；Claude Code 和 Codex 经 OAR 接入，DeepSeek 用 DSH 自带的会话；飞书、Notion、Linear 等外部来源由信息收集器读取" width="880">
+</div>
+
+- Issue、收集到的信息和定时任务保存在本机的 SQLite 和文件中，默认在 `~/.dsh/dudu/`。发给模型的内容，发往你自己配置的模型提供方。
+- Claude Code 和 Codex 通过 [OAR](https://www.npmjs.com/package/@botiverse/oar)（控制命令行 Agent 的库）接入 DSH；DeepSeek 使用 DSH 自带的会话。
+- iPhone App 经带鉴权的 HTTP/HTTPS 直连电脑，实时更新使用 HTTP 长轮询。Dudu 没有自己的云端服务。
+
 ## 功能
 
 - **Issue 和看板**：状态、优先级、所属项目、标签、子 Issue、截止日期，用法和 Linear 的 Issue 相近。
@@ -58,7 +63,7 @@ Dudu 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（D
 
 ## 快速开始
 
-环境要求：
+### 环境要求
 
 - macOS 13 或更新，Apple 芯片。
 - DSH Desktop（在 0.2.2-rc.1 上测试过，见[兼容性审计（英文）](docs/dsh-0.2.2-compatibility.md)），可从 [DSH 主页](https://deepseek.com/harness)下载。
@@ -110,19 +115,25 @@ Issue 默认按 Agent 的状态分成四组：
 - 「空闲中」：Agent 没在做事，也没在等你。
 - 「未分配」：还没有交给 Agent。
 
+小组件都可以拖动、调整大小：点右上角的「编辑版面」进入编辑状态，底部的「添加小组件」可以加回小组件，「恢复默认」回到默认版面。下图里，左边的「看板」用了看板布局，右边的「信息」正在调整大小，蓝框和「6×4」是它新的尺寸（6 列 × 4 行）。
+
+<div align="center">
+  <img src="docs/images/dashboard.png" alt="仪表盘的编辑状态：左边的看板用了看板布局，右边的信息小组件正在调整大小，蓝框和「6×4」是它的新尺寸" width="900">
+</div>
+
 ### 收集信息
 
 1. 在设置里添加连接器，说明怎么连上一个服务。内置目录有飞书、Google 日历和云端硬盘、Notion、Linear、Atlassian 等，也可以添加自定义连接器。
 2. 建一个收集器，通过这个连接器读取，设定读什么、多久读一次。每次读取会调用一次模型。
 3. 读回来的内容出现在「信息」小组件里。逐条处理：分享到某个 Issue 的会话（发给它的 Agent）、新建 Issue、标为已处理、忽略或删除。
 
-## 整体结构
+### iPhone App
 
-<p align="center"><img src="docs/images/architecture.svg" width="900" alt="整体结构图"></p>
+首页是看板，侧栏里依次是嘟嘟（对话）、看板、信息、任务。下图从左到右：看板；对话；对话里点「+」弹出的菜单；任务。
 
-- Issue、收集到的信息和定时任务保存在本机的 SQLite 和文件中，默认在 `~/.dsh/dudu/`。发给模型的内容，发往你自己配置的模型提供方。
-- Claude Code 和 Codex 通过 [OAR](https://www.npmjs.com/package/@botiverse/oar)（控制命令行 Agent 的库）接入 DSH；DeepSeek 使用 DSH 自带的会话。
-- iPhone App 经带鉴权的 HTTP/HTTPS 直连电脑，实时更新使用 HTTP 长轮询。Dudu 没有自己的云端服务。
+<div align="center">
+  <img src="docs/images/phone.png" alt="iPhone App，从左到右：看板；对话；对话里点「+」弹出的菜单；任务" width="900">
+</div>
 
 ## 安全
 
@@ -130,19 +141,6 @@ Issue 默认按 Agent 的状态分成四组：
 - iPhone App 只能访问 Dudu 插件自己提供的页面和接口，每次都要先配对：没有匿名页面，也不能借它访问任意网址或调用 DSH 的任意功能。配对凭据只放在 `Authorization` 请求头里，不出现在网页脚本和 URL 中。
 - 内网地址使用 HTTP，传输不加密。通过 TLS 反向代理或隧道（HTTPS）连接时，中转服务器能看到解密后的流量，这不是端到端加密。
 - 默认以完全访问权限（可以读写任意文件、执行任意命令）运行的有：Dudu 的对话、收集和定时任务，以及交给 Codex、DeepSeek 的 Issue。交给 Claude Code 的 Issue 使用 Claude 自己的权限设置。DSH 里不会弹出 Agent 的审批提问：Claude Code 需要确认的操作会被拒绝，Codex 不询问。
-
-## 文档
-
-| 内容 | 文档 |
-| --- | --- |
-| 设计文档：产品、架构、界面、接口（很长，含决策记录） | [docs/assistant.md](docs/assistant.md) |
-| 连接手机、安装 App、配对 | [docs/phone-connection.md](docs/phone-connection.md) |
-| 在 DSH 里使用 Claude Code 和 Codex | [docs/providers.md](docs/providers.md) |
-| 定时任务 | [docs/scheduled-tasks.md](docs/scheduled-tasks.md) |
-| Issue 接口 | [docs/issues-api.md](docs/issues-api.md) |
-| 为 Dudu 编写小组件 | [examples/dudu-widget](examples/dudu-widget) |
-| 开发约定（写给编码 Agent 的，其中的签名和测试审批流程是作者自己的工作方式） | [AGENTS.md](AGENTS.md)、[native/AGENTS.md](native/AGENTS.md) |
-| Bug 和建议 | [GitHub Issues](https://github.com/weiwenhao/dudu/issues) |
 
 ## 开发
 
@@ -167,6 +165,28 @@ npm run test:e2e       # 端到端，较慢；需要 dsh 命令（或设 DUDU_E2
 | `App.tsx`、`index.ts`、`src/`、`host/plugin/`、`plugins/`、`assets/`、`app.json`、`eas.json` | 旧的 Expo 原型，仅作参考；运行时不用，但 `npm install` 和 `npm run typecheck` 还会处理其中一部分 |
 
 </details>
+
+## 文档和资源
+
+| 内容 | 文档 |
+| --- | --- |
+| 设计文档：产品、架构、界面、接口（很长，含决策记录） | [docs/assistant.md](docs/assistant.md) |
+| 连接手机、安装 App、配对 | [docs/phone-connection.md](docs/phone-connection.md) |
+| 在 DSH 里使用 Claude Code 和 Codex | [docs/providers.md](docs/providers.md) |
+| 定时任务 | [docs/scheduled-tasks.md](docs/scheduled-tasks.md) |
+| Issue 接口 | [docs/issues-api.md](docs/issues-api.md) |
+| 为 Dudu 编写小组件 | [examples/dudu-widget](examples/dudu-widget) |
+| 开发约定（写给编码 Agent 的，其中的签名和测试审批流程是作者自己的工作方式） | [AGENTS.md](AGENTS.md)、[native/AGENTS.md](native/AGENTS.md) |
+
+相关链接：
+
+- [DeepSeek Harness 主页](https://deepseek.com/harness)：下载 DSH Desktop。
+- [DeepSeek Harness 源码](https://github.com/deepseek-ai/deepseek-harness)。
+- [OAR](https://www.npmjs.com/package/@botiverse/oar)：Dudu 用它接入 Claude Code 和 Codex。
+
+## 获取帮助
+
+遇到问题或有建议，请到 [GitHub Issues](https://github.com/weiwenhao/dudu/issues) 提。
 
 ## 友链
 
