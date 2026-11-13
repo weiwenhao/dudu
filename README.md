@@ -2,203 +2,203 @@
 
 <img src="docs/images/logo-wide.png" width="300" alt="Dudu">
 
-### 基于 DSH 的多 Agent 高效协作助手
+### An efficient multi-agent collaboration assistant built on DSH
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) ![version](https://img.shields.io/badge/version-0.1.0%20beta-orange?style=flat-square) ![macOS · iOS](https://img.shields.io/badge/macOS%20%C2%B7%20iOS-000000?style=flat-square&logo=apple&logoColor=white) ![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2024-339933?style=flat-square&logo=node.js&logoColor=white) ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-0.2.2--rc.1-4D6BFE?style=flat-square)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) ![version](https://img.shields.io/badge/version-0.1.0%20beta-orange?style=flat-square) ![macOS](https://img.shields.io/badge/macOS-000000?style=flat-square&logo=apple&logoColor=white) ![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2024-339933?style=flat-square&logo=node.js&logoColor=white) ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-0.2.2--rc.1-4D6BFE?style=flat-square)
 
-如果 Dudu 对你有用，欢迎在 GitHub 上点个 Star。
+If Dudu is useful to you, a star on GitHub helps others find it.
 
-[概览](#概览) • [功能](#功能) • [快速开始](#快速开始) • [使用](#使用) • [安全](#安全) • [文档和资源](#文档和资源) • [App Store][app-store]
+[Overview](#overview) • [Features](#features) • [Quick start](#quick-start) • [Usage](#usage) • [Security](#security) • [Docs and resources](#docs-and-resources) • [App Store][app-store] • **English** · [简体中文](README.zh-CN.md)
 
-<img src="docs/images/hero.png" width="900" alt="Dudu 在 DSH 里的桌面端：左边是看板，右上是办公室，右下是信息，右下角的蓝色小图标是对话入口">
+<img src="docs/images/hero.png" width="900" alt="Dudu inside DSH Desktop (Chinese interface): the Issues widget on the left, the Office on the top right and the Collector on the bottom right; the small blue icon at the bottom right opens the chat">
 
 </div>
 
-Dudu 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的插件，另有配套的 iPhone App，用 Issue 管理交给 Claude Code、Codex 和 DeepSeek 的工作。目前是 0.1.0 beta，界面和接口还会变化。
+Dudu is a plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH), with a companion mobile app. It manages the work you hand to Claude Code, Codex and DeepSeek as Issues. It is at 0.1.0 beta, so the interface and APIs will still change.
 
 > [!NOTE]
-> **DSH 是什么？**<br>
-> DeepSeek Harness 是 DeepSeek 开源的 Agent 应用，自己的定位是「Everything is a Plugin」（一切皆插件）。Dudu 是装在它里面的一个插件。
+> **What is DSH?**<br>
+> DeepSeek Harness is an open-source agent app from DeepSeek. Its own tagline is "Everything is a Plugin". Dudu is one of the plugins that run inside it.
 
-## 概览
+## Overview
 
-同时使用几个 Agent 时，每个会话各自独立，进度和问题只能逐个打开查看。Dudu 把它们集中到一块看板上：
+When you run several agents at once, each session stands alone, and progress and questions can only be read by opening the sessions one by one. Dudu puts them on one board:
 
-- 一项工作对应一个 Issue，交给一个 Agent 处理。会话关闭或更换后，Issue 和它的活动记录仍然保留。
-- 看板按 Agent 的状态分组，Agent 在等你的 Issue 排在最前。
-- 决定权在你：Dudu 不会自己把收集到的信息变成 Issue，也不会自己改 Issue 的状态。Agent 由你选；让 Dudu 在对话里新建 Issue 时，它按你在设置里写的分配规则选。
+- One piece of work is one Issue, handed to one Agent. The Issue and its activity log stay even when the session is closed or replaced.
+- The board groups Issues by the Agent's state, and the Issues whose Agent is waiting for you come first.
+- You decide. Dudu never turns collected information into an Issue on its own and never changes an Issue's status on its own. You pick the Agent; when you ask Dudu in chat to create an Issue, it picks one by the assignment rules you wrote in Settings.
 
-文中的名词：
+Terms used here:
 
-- **Issue**：一项要交给 Agent 的工作，界面里叫「事项」。
-- **Agent**：Claude Code、Codex 或 DSH 自带的 DeepSeek，界面里叫「智能体」，Codex 显示为 ChatGPT。
-- **会话**：Agent 处理 Issue 时使用的会话，在 DSH 侧栏里也能看到。
-- **项目**：对应 DSH 侧栏里的「工作区」，是一个文件夹。交给 Agent 之前要先给 Issue 选项目，Agent 在这个文件夹里工作。
-- **嘟嘟**：Dudu 在界面里的中文名。DSH 侧栏里的「嘟嘟」打开 Dudu 的页面（仪表盘）；页面右下角的蓝色小图标（设置里叫「宠物」）打开和 Dudu 的对话，对话只有一个。
+- **Issue**: a piece of work to hand to an Agent.
+- **Agent**: Claude Code, Codex, or DeepSeek (DSH's own). The interface shows Codex as ChatGPT.
+- **Session**: the session an Agent uses to work on an Issue. You can also see it in DSH's sidebar.
+- **Project**: a DSH workspace, which is a folder. An Issue needs a project before it can be handed to an Agent, and the Agent works in that folder.
+- **Dudu**: the "Dudu" entry in DSH's sidebar opens Dudu's page (the dashboard). The small blue icon at the bottom right of that page (called "Pet" in Settings) opens your chat with Dudu. There is only one chat.
 
-界面文字跟随 DSH 的语言设置，本文引用的是中文界面。信息收集器在界面里叫「信息」，定时任务叫「任务」。
+The desktop interface follows DSH's language setting, and this README uses the English one.
 
-Dudu 运行在你电脑上的 DSH Desktop 里，由这几部分组成：
+Dudu runs inside DSH Desktop on your computer:
 
-<div align="center">
-  <img src="docs/images/architecture.svg" alt="整体结构：iPhone App 经带鉴权的 HTTP/HTTPS 连到 DSH Desktop 里的 dudu 插件；插件里有 Dudu 的库、界面、iPhone App 接口和 Agent 接入；Claude Code 和 Codex 经 OAR 接入，DeepSeek 用 DSH 自带的会话；飞书、Notion、Linear 等外部来源由信息收集器读取" width="880">
-</div>
+- Issues, collected information and scheduled tasks are stored on your computer in SQLite and files, by default in `~/.dsh/dudu/`. What is sent to a model goes to the model provider you configured.
+- Claude Code and Codex are connected to DSH through [OAR](https://www.npmjs.com/package/@botiverse/oar), a library that drives command-line agents. DeepSeek uses DSH's own sessions.
+- The mobile app connects straight to your computer over authenticated HTTP/HTTPS and gets live updates by long polling. Dudu has no cloud service of its own.
 
-- Issue、收集到的信息和定时任务保存在本机的 SQLite 和文件中，默认在 `~/.dsh/dudu/`。发给模型的内容，发往你自己配置的模型提供方。
-- Claude Code 和 Codex 通过 [OAR](https://www.npmjs.com/package/@botiverse/oar)（控制命令行 Agent 的库）接入 DSH；DeepSeek 使用 DSH 自带的会话。
-- iPhone App 经带鉴权的 HTTP/HTTPS 直连电脑，实时更新使用 HTTP 长轮询。Dudu 没有自己的云端服务。
+## Features
 
-## 功能
+- **Issues and board**: status, priority, project, labels, sub-issues and due date, much like Linear's issues.
+- **Several agents**: hand each Issue to Claude Code, Codex or DeepSeek. Claude Code and Codex keep their sessions themselves, so you can also continue them in a terminal with `claude --resume` or `codex resume`.
+- **Session import and takeover**: search the Claude Code and Codex sessions already on your computer from the Sessions icon at the top right, import them into DSH, or "Take over" a session so that Dudu creates an Issue for it.
+- **Collector**: reads outside services such as Lark, Notion and Linear on a schedule through connectors. You handle what it brings back one item at a time.
+- **Office**: each Issue that is in Todo, In Progress or In Review and has an Agent is a small person in the office, and where they sit shows the Agent's state: at a desk when working, in the lounge when waiting for you or idle, in bed when in deep sleep (the process has shut down).
+- **Chat**: type `@` to send a message to the Agent of an Issue, and its reply shows up in the chat. Dudu has its own memory, rules and skills, managed in Settings.
+- **Scheduled tasks**: run a prompt on a schedule: daily, weekly, monthly, at a fixed interval, once, or with a custom cron expression. Claude Code, Codex, DeepSeek or Dudu itself can run it, and when Dudu runs it the result shows up in the chat. The interface calls them "Tasks".
+- **Quota**: click the quota icon at the top right to see your Claude and ChatGPT (Codex) subscription quota and your DeepSeek balance. It looks only when you click, and a source it cannot read is not shown.
+- **Draggable dashboard**: the Issues, Collector and Office widgets can be dragged and resized.
+- **Mobile app**: the board, chat, Collector, tasks and quota, with voice input and sending images and files.
 
-- **Issue 和看板**：状态、优先级、所属项目、标签、子 Issue、截止日期，用法和 Linear 的 Issue 相近。
-- **多个 Agent**：每个 Issue 交给 Claude Code、Codex 或 DeepSeek。Claude Code 和 Codex 的会话由它们自己保存，也可以在终端里用 `claude --resume`、`codex resume` 继续。
-- **会话导入和接管**：电脑上已有的 Claude Code、Codex 会话，可以在右上角的「会话」图标里搜索，导入 DSH，也可以「接管」，让 Dudu 为它建一个 Issue。
-- **信息收集器**：通过连接器定时读取飞书、Notion、Linear 等外部服务，读回来的信息由你逐条处理。
-- **办公室**：状态为待办、处理中或待审核并且已交给 Agent 的 Issue，每个是办公室里的一个小人，位置对应 Agent 的状态：工作中的在工位上，等你处理的和空闲的在休息区，进入深度睡眠（进程已关闭）的在床上。
-- **对话**：用 `@` 把话发给某个 Issue 的 Agent，回复也出现在对话里。Dudu 有自己的记忆、规则和技能，在设置里管理。
-- **定时任务**：按计划运行一条提示词：每天、每周、每月、固定间隔、仅一次，或自定义 cron。由 Claude Code、Codex、DeepSeek 或 Dudu 自己执行；Dudu 自己执行的任务，结果显示在对话里。
-- **额度**：点右上角的额度图标，查看 Claude、ChatGPT（Codex）的订阅额度和 DeepSeek 的账户余额。只在点击时查询，读取不到的来源不显示。
-- **可拖动的仪表盘**：看板、信息和办公室是三个小组件，可以拖动，也可以调整大小。
-- **iPhone App**：原生 SwiftUI。首页是看板，另有对话、信息收集器、定时任务和额度，支持语音输入，可以发送图片和文件。
+## Quick start
 
-## 快速开始
+### Requirements
 
-### 环境要求
-
-- macOS 13 或更新，Apple 芯片。
-- DSH Desktop（在 0.2.2-rc.1 上测试过，见[兼容性审计（英文）](docs/dsh-0.2.2-compatibility.md)），可从 [DSH 主页](https://deepseek.com/harness)下载。
-- Node.js 24 或更新版本和 Git（`npm install` 会构建 OAR 适配层）。
-- 要用 Claude Code 或 Codex，需要它们已安装并登录。
+- macOS 13 or later, Apple silicon.
+- DSH Desktop (tested on 0.2.2-rc.1, see the [compatibility audit](docs/dsh-0.2.2-compatibility.md)), downloadable from the [DSH site](https://deepseek.com/harness).
+- Node.js 24 or later and Git (`npm install` builds the OAR adapter).
+- Claude Code or Codex installed and signed in, if you want to use them.
 
 > [!IMPORTANT]
-> DSH 里要先配置好模型：Dudu 的对话和 DeepSeek Agent 使用它。
+> Set up a model in DSH first: Dudu's chat and the DeepSeek Agent use it.
 
-### 1. 安装插件
+### 1. Install the plugin
 
 ```sh
 git clone https://github.com/weiwenhao/dudu.git
 cd dudu
 npm install
-npm run desktop:update       # 打包、装进 DSH Desktop 并让它重新加载
+npm run desktop:update       # package, install into DSH Desktop and reload it
 ```
 
-`desktop:update` 只支持 macOS，需要 DSH Desktop 装在 `/Applications` 里并且至少启动过一次；失败时日志在 `.local/desktop-updates/`。不用脚本时，运行 `npm run package:desktop`，再把生成的 `.local/release/dudu-<版本>.tgz` 在 DSH Desktop 的「插件」里安装。
+`desktop:update` works on macOS only, and needs DSH Desktop installed in `/Applications` and started at least once. If it fails, the log is in `.local/desktop-updates/`. Without the script, run `npm run package:desktop` and install the resulting `.local/release/dudu-<version>.tgz` from DSH Desktop's Plugins page.
 
-装好后，在 DSH 左侧栏打开「嘟嘟」。
+Then open "Dudu" in DSH's left sidebar.
 
-### 2. 创建第一个 Issue
+### 2. Create your first Issue
 
-在「嘟嘟」页面点「新建事项」，填写标题，选一个项目和一个智能体，点「创建事项」。Agent 开始执行，状态显示在看板上。
+On the Dudu page click "New issue", enter a title, pick a project and an Agent, and click "Create issue". The Agent starts working and its state shows on the board.
 
-### 3. 连接 iPhone App（可选）
+### 3. Connect the mobile app (optional)
 
-从 [App Store][app-store] 安装 iPhone App，需要 iOS 18 或更新版本。然后：
+Install the app from the [App Store][app-store] (iOS 18 or later; its interface is currently in Chinese). Then:
 
-1. 在「嘟嘟」页面点右上角的设置，进入「手机控制」。
-2. 填写电脑名称。第一个连接地址由电脑当前的内网 IP 自动生成。
-3. 在这个地址旁点「生成二维码」，用 iPhone App 扫描。
+1. On the Dudu page click the settings icon at the top right and open "Phone control".
+2. Enter a computer name. The first connection address is generated from your computer's current LAN IP.
+3. Next to that address click "Generate QR code" and scan it with the app.
 
-用内网地址连接时，手机和电脑要在同一个内网里。详见[手机连接](docs/phone-connection.md)。
+When you connect over a LAN address, the phone and the computer must be on the same network. See [connecting the app](docs/phone-connection.md) (Chinese).
 
-## 使用
+## Usage
 
-### 看板
+### Issues board
 
-「看板」小组件默认显示「进行中」页签：待办、处理中和待审核的 Issue。另有「待规划」和「全部事项」页签，布局可以选列表或看板。
+The Issues widget opens on the Active tab, which shows Issues that are Todo, In Progress or In Review. There are also Backlog and All issues tabs, and the layout can be a list or a board.
 
-状态默认有待规划、待办、处理中、待审核、已完成和已取消，由你手动修改，不随 Agent 的运行变化。右键可以修改状态、优先级、标签和截止日期，把 Issue 交给 Agent，或复制编号。
+Statuses default to Backlog, Todo, In Progress, In Review, Done and Canceled. You change them by hand, and they do not follow what the Agent is doing. Right-click an Issue to change its status, priority, labels and due date, hand it to an Agent, or copy its ID.
 
-Issue 默认按 Agent 的状态分成四组：
+Issues are grouped by Agent state by default:
 
-- 「需要你」：Agent 提出问题、出错、停止或完成一轮回答。
-- 「工作中」：Agent 正在处理。
-- 「空闲中」：Agent 没在做事，也没在等你。
-- 「未分配」：还没有交给 Agent。
+- **Needs you**: the Agent asked a question, failed, stopped or finished a turn.
+- **Working**: the Agent is working on it.
+- **Idle**: the Agent is neither working nor waiting for you.
+- **Unassigned**: not handed to an Agent yet.
 
-小组件都可以拖动、调整大小：点右上角的「编辑版面」进入编辑状态，底部的「添加小组件」可以加回小组件，「恢复默认」回到默认版面。下图里，左边的「看板」用了看板布局，右边的「信息」正在调整大小，蓝框和「6×4」是它新的尺寸（6 列 × 4 行）。
-
-<div align="center">
-  <img src="docs/images/dashboard.png" alt="仪表盘的编辑状态：左边的看板用了看板布局，右边的信息小组件正在调整大小，蓝框和「6×4」是它的新尺寸" width="900">
-</div>
-
-### 收集信息
-
-1. 在设置里添加连接器，说明怎么连上一个服务。内置目录有飞书、Google 日历和云端硬盘、Notion、Linear、Atlassian 等，也可以添加自定义连接器。
-2. 建一个收集器，通过这个连接器读取，设定读什么、多久读一次。每次读取会调用一次模型。
-3. 读回来的内容出现在「信息」小组件里。逐条处理：分享到某个 Issue 的会话（发给它的 Agent）、新建 Issue、标为已处理、忽略或删除。
-
-### iPhone App
-
-首页是看板，侧栏里依次是嘟嘟（对话）、看板、信息、任务。下图从左到右：看板；对话；对话里点「+」弹出的菜单；任务。
+The widgets can be dragged and resized: click "Edit layout" at the top right, and at the bottom "Add widget" brings a widget back and "Restore default" returns to the default layout. In the screenshot below (Chinese interface) the Issues widget on the left uses the board layout, and the Collector widget on the right is being resized: the blue frame and "6×4" are its new size, 6 columns by 4 rows.
 
 <div align="center">
-  <img src="docs/images/phone.png" alt="iPhone App，从左到右：看板；对话；对话里点「+」弹出的菜单；任务" width="900">
+  <img src="docs/images/dashboard.png" alt="The dashboard in edit mode (Chinese interface): the Issues widget on the left uses the board layout, the Collector widget on the right is being resized, and the blue frame and 6×4 show its new size" width="900">
 </div>
 
-## 安全
+### Collecting information
 
-- 配对码只在你点「生成二维码」时生成，10 分钟有效，每台手机可以单独撤销。安装插件和保存连接地址都不会自动生成配对码。
-- iPhone App 只能访问 Dudu 插件自己提供的页面和接口，每次都要先配对：没有匿名页面，也不能借它访问任意网址或调用 DSH 的任意功能。配对凭据只放在 `Authorization` 请求头里，不出现在网页脚本和 URL 中。
-- 内网地址使用 HTTP，传输不加密。通过 TLS 反向代理或隧道（HTTPS）连接时，中转服务器能看到解密后的流量，这不是端到端加密。
-- 默认以完全访问权限（可以读写任意文件、执行任意命令）运行的有：Dudu 的对话、收集和定时任务，以及交给 Codex、DeepSeek 的 Issue。交给 Claude Code 的 Issue 使用 Claude 自己的权限设置。DSH 里不会弹出 Agent 的审批提问：Claude Code 需要确认的操作会被拒绝，Codex 不询问。
+1. In Settings add a connector, which says how to reach a service. The built-in catalog has Lark (listed as 飞书), Google Calendar and Drive, Notion, Linear, Atlassian and more, and you can add your own.
+2. Create a collector that reads through that connector, and set what to read and how often. Every read calls a model.
+3. What it brings back appears in the Collector widget. Handle each item: share it to an Issue's session (it goes to that Issue's Agent), create an Issue from it, mark it Handled, ignore it, or delete it.
 
-## 开发
+### Mobile app
+
+The app opens on the board, and its sidebar lists the chat with Dudu, the board, the collector and tasks. The screenshot shows, from left to right: the board; the chat; the menu that opens from "+" in the chat; tasks.
+
+<div align="center">
+  <img src="docs/images/phone.png" alt="The mobile app, from left to right: the board; the chat; the menu that opens from + in the chat; tasks" width="900">
+</div>
+
+## Security
+
+- A pairing code is generated only when you click "Generate QR code". It is valid for 10 minutes, and each phone can be revoked separately. Installing the plugin or saving a connection address never generates one.
+- The app can only reach pages and endpoints that the Dudu plugin itself serves, and only after pairing: there are no anonymous pages, no way to fetch arbitrary URLs through it, and no way to call arbitrary DSH functions. The pairing credential travels only in the `Authorization` header, never in page scripts or URLs.
+- A LAN address uses plain HTTP, so the traffic is not encrypted. Over a TLS reverse proxy or tunnel (HTTPS) the relay server can see the decrypted traffic, so this is not end-to-end encryption.
+- These run with full access by default (they can read and write any file and run any command): Dudu's chat, collection and scheduled tasks, and Issues handed to Codex or DeepSeek. Issues handed to Claude Code use Claude's own permission settings. DSH shows no approval prompts for agents: an action Claude Code needs to confirm is refused, and Codex does not ask.
+
+## Development
 
 ```sh
 npm run typecheck
-npm test               # 单元测试，很快
-npm run test:e2e       # 端到端，较慢；需要 dsh 命令（或设 DUDU_E2E_DSH）和 Chrome
+npm test               # unit tests, fast
+npm run test:e2e       # end to end, slower; needs the dsh command (or set DUDU_E2E_DSH) and Chrome
 ```
 
 <details>
-<summary>目录</summary>
+<summary>Directory layout</summary>
 
-| 位置 | 用途 |
+| Path | What it holds |
 | --- | --- |
-| `host/dudu-plugin/` | DSH 插件入口，以及 Dudu 页面的 React 界面（`ui/`，shadcn/ui + Tailwind） |
-| `host/assistant/` | Dudu 的核心库：Issue、收集器、连接器、分配、定时任务、仪表盘版面、对话 |
-| `host/providers/` | 接入 Claude Code、Codex（基于 OAR）、读取额度、读取已有会话 |
-| `host/native-*.mjs` | iPhone App 用的接口：鉴权 HTTP API、页面会话、事件长轮询 |
-| `native/` | iPhone App（SwiftUI，工程由 `native/project.yml` 经 XcodeGen 生成） |
-| `packages/oar-adapter/` | 对 OAR 的适配和补丁 |
-| `tests/` | 单元测试；`tests/e2e/` 是真实 DSH 里的端到端测试 |
-| `App.tsx`、`index.ts`、`src/`、`host/plugin/`、`plugins/`、`assets/`、`app.json`、`eas.json` | 旧的 Expo 原型，仅作参考；运行时不用，但 `npm install` 和 `npm run typecheck` 还会处理其中一部分 |
+| `host/dudu-plugin/` | The DSH plugin entry and the React interface of Dudu's page (`ui/`, shadcn/ui + Tailwind) |
+| `host/assistant/` | Dudu's core library: Issues, collectors, connectors, assignment, scheduled tasks, dashboard layout, chat |
+| `host/providers/` | Claude Code and Codex integration (through OAR), quota reading, reading existing sessions |
+| `host/native-*.mjs` | The interface the mobile app uses: authenticated HTTP API, page sessions, event long polling |
+| `native/` | The mobile app's iOS project (SwiftUI, generated from `native/project.yml` with XcodeGen) |
+| `packages/oar-adapter/` | Adapter and patches for OAR |
+| `tests/` | Unit tests; `tests/e2e/` holds the end-to-end tests that run in a real DSH |
+| `App.tsx`, `index.ts`, `src/`, `host/plugin/`, `plugins/`, `assets/`, `app.json`, `eas.json` | The old Expo prototype, kept for reference. It is not used at run time, but `npm install` and `npm run typecheck` still process part of it |
 
 </details>
 
-## 文档和资源
+## Docs and resources
 
-| 内容 | 文档 |
+| Topic | Doc |
 | --- | --- |
-| 设计文档：产品、架构、界面、接口（很长，含决策记录） | [docs/assistant.md](docs/assistant.md) |
-| 连接手机、安装 App、配对 | [docs/phone-connection.md](docs/phone-connection.md) |
-| 在 DSH 里使用 Claude Code 和 Codex | [docs/providers.md](docs/providers.md) |
-| 定时任务 | [docs/scheduled-tasks.md](docs/scheduled-tasks.md) |
-| Issue 接口 | [docs/issues-api.md](docs/issues-api.md) |
-| 为 Dudu 编写小组件 | [examples/dudu-widget](examples/dudu-widget) |
-| 开发约定（写给编码 Agent 的，其中的签名和测试审批流程是作者自己的工作方式） | [AGENTS.md](AGENTS.md)、[native/AGENTS.md](native/AGENTS.md) |
+| Design document: product, structure, interface, APIs (long, includes the decision history; Chinese) | [docs/assistant.md](docs/assistant.md) |
+| Connecting the mobile app: install, pair (Chinese) | [docs/phone-connection.md](docs/phone-connection.md) |
+| Claude Code and Codex inside DSH (Chinese) | [docs/providers.md](docs/providers.md) |
+| Scheduled tasks (Chinese) | [docs/scheduled-tasks.md](docs/scheduled-tasks.md) |
+| Issue API (Chinese) | [docs/issues-api.md](docs/issues-api.md) |
+| Writing a widget for Dudu | [examples/dudu-widget](examples/dudu-widget) |
+| Development conventions (written for coding agents; the signing and test-approval steps are the author's own workflow) | [AGENTS.md](AGENTS.md), [native/AGENTS.md](native/AGENTS.md) |
 
-相关链接：
+Related links:
 
-- [DeepSeek Harness 主页](https://deepseek.com/harness)：下载 DSH Desktop。
-- [DeepSeek Harness 源码](https://github.com/deepseek-ai/deepseek-harness)。
-- [OAR](https://www.npmjs.com/package/@botiverse/oar)：Dudu 用它接入 Claude Code 和 Codex。
+- [DeepSeek Harness site](https://deepseek.com/harness): download DSH Desktop.
+- [DeepSeek Harness source](https://github.com/deepseek-ai/deepseek-harness).
+- [OAR](https://www.npmjs.com/package/@botiverse/oar): what Dudu uses to connect Claude Code and Codex.
 
-## 获取帮助
+## Getting help
 
-遇到问题或有建议，请到 [GitHub Issues](https://github.com/weiwenhao/dudu/issues) 提。
+For bugs and ideas, open an issue on [GitHub Issues](https://github.com/weiwenhao/dudu/issues).
 
-## 友链
+## Friend links
 
 <table>
 <tr>
 <td width="200" align="center"><a href="https://linux.do/"><img src="docs/images/friend-linuxdo.png" height="56" alt="LINUX DO"></a></td>
-<td><b><a href="https://linux.do/">LINUX DO</a></b>：「新的理想型社区」，社区文化是真诚、友善、团结、专业。</td>
+<td><b><a href="https://linux.do/">LINUX DO</a></b>: "Where possible begins."</td>
 </tr>
 <tr>
 <td width="200" align="center"><a href="https://www.v2ex.com/"><img src="docs/images/friend-v2ex.png" height="56" alt="V2EX"></a></td>
-<td><b><a href="https://www.v2ex.com/">V2EX</a></b>：创意工作者的社区，讨论编程、设计、硬件、游戏等话题。</td>
+<td><b><a href="https://www.v2ex.com/">V2EX</a></b>: a community of creative workers, talking about programming, design, hardware, games and more.</td>
 </tr>
 </table>
+
+## License
+
+[MIT](LICENSE)
 
 [app-store]: https://apps.apple.com/app/idXXXXXXXXXX
