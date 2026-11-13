@@ -26,31 +26,32 @@ Dudu is a plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-
 
 With several agents running, you open each session to find out who finished, who is stuck and who is asking you something. Dudu puts that on one board:
 
-1. **One task, one Issue.** Hand an Issue to an Agent (Claude Code, Codex or DeepSeek). It works in its own session, in your project folder.
-2. **One board.** Issues are grouped by the Agent's state: **Needs you**, Working, Idle, Unassigned. What waits for you is on top.
+1. **One task, one Issue.** Issues are laid out like Linear's: statuses, priorities, labels, a list and a board. Hand one to an Agent (Claude Code, Codex or DeepSeek) and it works in its own DSH session, in your project folder.
+2. **One board.** Issues are grouped by the Agent's state, and **Needs you** comes first: the Agent asked a question, failed, was stopped or finished its turn. Then Working, Idle and Unassigned.
 3. **You decide.** Dudu never creates an Issue or changes a status on its own. You pick the Agent; when you ask Dudu in chat to create an Issue, it picks by the assignment rules you wrote.
 
 ## Features
 
-- **Agents**: Claude Code, Codex and DeepSeek. Import or take over the sessions you already have.
-- **Collector**: reads Lark, Notion, Linear and more on a schedule. Each item becomes an Issue, a message to an Agent, or nothing.
-- **Chat**: type `@` to message an Issue's Agent.
+- **Agents**: Claude Code, Codex and DeepSeek. Claude Code and Codex run as the programs installed on your computer, with your login, settings, skills and MCP servers. Import the sessions you already have, or take one over as an Issue.
+- **Terminal**: copy a Claude Code or Codex session's resume command from its Issue and continue in a terminal. Do not write to one session from DSH and the terminal at the same time.
+- **Mobile app**: the same board in your pocket, with voice input.
+- **Collector**: a DSH model reads Lark, Notion, Linear and more on a schedule you set, so each collection costs tokens. Each item can become an Issue, go to an Agent as a message, or be ignored.
+- **Chat**: ask Dudu to create an Issue, or type `@` to message an Issue's Agent. Open it from the blue icon at the bottom right.
 - **Scheduled tasks**: run a prompt on a schedule.
-- **Quota**: Claude, ChatGPT and DeepSeek in one click.
+- **Quota**: what is left on Claude, ChatGPT and DeepSeek. Nothing is read until you click the Quota icon at the top right.
 - **Office**: every active Issue is a little person, at a desk when working, in the lounge when waiting, in bed when asleep.
 - **Dashboard**: drag and resize every widget.
-- **Mobile app**: the same board in your pocket, with voice input.
-
-**Dashboard.** Drag and resize widgets from "Edit layout" at the top right. Here the Issues widget uses the board layout and the Collector is being resized (Chinese interface).
-
-<div align="center">
-  <img src="docs/images/dashboard.png" alt="The dashboard in edit mode (Chinese interface): the Issues widget on the left uses the board layout, the Collector widget on the right is being resized, and the blue frame and 6×4 show its new size" width="900">
-</div>
 
 **Mobile app.** From left to right: the board, the chat, the chat's "+" menu, tasks.
 
 <div align="center">
   <img src="docs/images/phone.png" alt="The mobile app, from left to right: the board; the chat; the menu that opens from + in the chat; tasks" width="900">
+</div>
+
+**Dashboard.** Drag and resize widgets from "Edit layout" at the top right. Here the Issues widget uses the board layout and the Collector is being resized (Chinese interface).
+
+<div align="center">
+  <img src="docs/images/dashboard.png" alt="The dashboard in edit mode (Chinese interface): the Issues widget on the left uses the board layout, the Collector widget on the right is being resized, and the blue frame and 6×4 show its new size" width="900">
 </div>
 
 ## Quick start
@@ -78,7 +79,7 @@ On the Dudu page click "New issue", enter a title, pick a project (a DSH workspa
 
 ### 3. Connect the mobile app (optional)
 
-Install it from the [App Store][app-store] (iOS 18 or later; the interface is in Chinese for now). On the Dudu page click the settings icon at the top right, open "Phone control", enter a computer name, click "Generate QR code" and scan it with the app. On a LAN address the phone and the computer must be on the same network. More: [phone-connection.md](docs/phone-connection.md) (Chinese).
+Install it from the [App Store][app-store] (iOS 18 or later; the interface is in Chinese for now). On the Dudu page click the settings icon at the top right, open "Phone control", enter a computer name, click "Generate QR code" and scan it with the app. A LAN address works only while the phone and the computer are on the same network. To use the app elsewhere, put your own HTTPS reverse proxy or tunnel in front of port 3170, then under "Connection addresses" click "Add address" and choose "Public address"; the app tries the LAN address first. DSH Desktop and the tunnel must keep running on the computer. More: [phone-connection.md](docs/phone-connection.md) (Chinese).
 
 ## Security
 

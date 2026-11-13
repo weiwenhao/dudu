@@ -26,33 +26,34 @@ Dudu 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（D
 
 同时跑几个 Agent，要一个个点开会话，才知道谁做完了、谁卡住了、谁在问你。Dudu 把这些放到一块看板上：
 
-1. **一件事一个 Issue。** 把 Issue 交给一个 Agent（Claude Code、Codex 或 DeepSeek），它在自己的会话里、在你的项目文件夹里干活。
-2. **一块看板看全部。** Issue 按 Agent 的状态分成「需要你」「工作中」「空闲中」「未分配」，等你处理的排在最前。
+1. **一件事一个 Issue。** Issue 的结构和布局参照 Linear：状态、优先级、标签、列表和看板。把它交给一个 Agent（Claude Code、Codex 或 DeepSeek），它在自己的 DSH 会话里、在你的项目文件夹里干活。
+2. **一块看板看全部。** Issue 按 Agent 的状态分组，「需要你」排在最前：Agent 提了问题、出了错、被停止，或这一轮做完了。后面是「工作中」「空闲中」「未分配」。
 3. **决定权在你。** Dudu 不会自己建 Issue，也不会自己改状态。Agent 由你选；在对话里让 Dudu 新建 Issue 时，它按你写的分配规则选。
 
 界面里，Issue 叫「事项」，Agent 叫「智能体」，信息收集器叫「信息」，定时任务叫「任务」。
 
 ## 功能
 
-- **Agent**：Claude Code、Codex 和 DeepSeek。电脑上已有的会话可以导入，或「接管」。
-- **信息收集器**：定时读飞书、Notion、Linear 等。每条信息可以新建成 Issue、发给某个 Agent，或忽略。
-- **对话**：用 `@` 把话发给某个 Issue 的 Agent。点页面右下角的蓝色小图标打开。
+- **Agent**：Claude Code、Codex 和 DeepSeek。Claude Code 和 Codex 用的是你电脑上装好的程序，沿用你的登录、设置、skills 和 MCP。电脑上已有的会话可以导入，或「接管」成 Issue。
+- **终端**：Claude Code、Codex 的会话可以从它的 Issue 里复制接续命令，在终端里接着用。不要同时在 DSH 和终端里往同一个会话写。
+- **手机 App**：同一块看板，带语音输入。
+- **信息收集器**：由 DSH 里的模型按你设的频率读飞书、Notion、Linear 等，所以每次收集都会花 token。每条信息可以新建成 Issue、发给某个 Agent，或忽略。
+- **对话**：让 Dudu 新建 Issue，或用 `@` 把话发给某个 Issue 的 Agent。点页面右下角的蓝色小图标打开。
 - **定时任务**：按计划运行一条提示词。
-- **额度**：Claude、ChatGPT 和 DeepSeek 的额度，点一下查看。
+- **额度**：Claude、ChatGPT 和 DeepSeek 还剩多少。点右上角的「额度」图标才会读取。
 - **办公室**：每个进行中的 Issue 是一个小人：工作中在工位，等你或空闲在休息区，睡着了在床上。
 - **仪表盘**：每个小组件都可以拖动、调整大小。
-- **手机 App**：同一块看板，带语音输入。
-
-**仪表盘。** 点右上角的「编辑版面」拖动、调整小组件。下图里，左边的看板用了看板布局，右边的「信息」正在调整大小。
-
-<div align="center">
-  <img src="docs/images/dashboard.png" alt="仪表盘的编辑状态：左边的看板用了看板布局，右边的信息小组件正在调整大小，蓝框和「6×4」是它的新尺寸" width="900">
-</div>
 
 **手机 App。** 从左到右：看板、对话、对话里「+」弹出的菜单、任务。
 
 <div align="center">
   <img src="docs/images/phone.png" alt="手机 App，从左到右：看板；对话；对话里点「+」弹出的菜单；任务" width="900">
+</div>
+
+**仪表盘。** 点右上角的「编辑版面」拖动、调整小组件。下图里，左边的看板用了看板布局，右边的「信息」正在调整大小。
+
+<div align="center">
+  <img src="docs/images/dashboard.png" alt="仪表盘的编辑状态：左边的看板用了看板布局，右边的信息小组件正在调整大小，蓝框和「6×4」是它的新尺寸" width="900">
 </div>
 
 ## 快速开始
@@ -80,7 +81,7 @@ npm run desktop:update       # 打包、装进 DSH Desktop 并让它重新加载
 
 ### 3. 连接手机 App（可选）
 
-从 [App Store][app-store] 安装（需要 iOS 18 或更新版本）。在「嘟嘟」页面点右上角的设置，进入「手机控制」，填写电脑名称，点「生成二维码」，用 App 扫描。用内网地址时，手机和电脑要在同一个内网里。详见[手机连接](docs/phone-connection.md)。
+从 [App Store][app-store] 安装（需要 iOS 18 或更新版本）。在「嘟嘟」页面点右上角的设置，进入「手机控制」，填写电脑名称，点「生成二维码」，用 App 扫描。内网地址只在手机和电脑处于同一个内网时能用。要在外面用，自己配一个 HTTPS 反向代理或隧道指向 3170 端口，然后在「连接地址」里点「添加地址」，选「公网地址」；App 会先试内网地址。电脑上的 DSH Desktop 和隧道要一直开着。详见[手机连接](docs/phone-connection.md)。
 
 ## 安全
 
