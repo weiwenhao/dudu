@@ -13,7 +13,7 @@
 
 [工作方式](#工作方式) • [功能](#功能) • [快速开始](#快速开始) • [安全](#安全) • [文档](#文档) • [App Store][app-store] • [English](README.md) · **简体中文**
 
-<img src="docs/images/hero.png" width="900" alt="Dudu 在 DSH 里的桌面端：左边是看板，右上是办公室，右下是信息，右下角的蓝色小图标是对话入口">
+<img src="docs/images/hero.zh-CN.png" width="900" alt="Dudu 在 DSH 里的桌面端：左边是看板，右上是办公室，右下是信息，右下角的蓝色小图标是对话入口">
 
 </div>
 
@@ -53,7 +53,7 @@ Dudu 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（D
 **仪表盘。** 点右上角的「编辑版面」拖动、调整小组件。下图里，左边的看板用了看板布局，右边的「信息」正在调整大小。
 
 <div align="center">
-  <img src="docs/images/dashboard.png" alt="仪表盘的编辑状态：左边的看板用了看板布局，右边的信息小组件正在调整大小，蓝框和「6×4」是它的新尺寸" width="900">
+  <img src="docs/images/dashboard.zh-CN.png" alt="仪表盘的编辑状态：左边的看板用了看板布局，右边的信息小组件正在调整大小，蓝框和「6×4」是它的新尺寸" width="900">
 </div>
 
 ## 快速开始

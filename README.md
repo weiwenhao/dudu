@@ -13,7 +13,7 @@ If Dudu is useful to you, a star on GitHub helps others find it.
 
 [How it works](#how-it-works) • [Features](#features) • [Quick start](#quick-start) • [Security](#security) • [Docs](#docs) • [App Store][app-store] • **English** · [简体中文](README.zh-CN.md)
 
-<img src="docs/images/hero.png" width="900" alt="Dudu inside DSH Desktop (Chinese interface): the Issues widget on the left, the Office on the top right and the Collector on the bottom right; the small blue icon at the bottom right opens the chat">
+<img src="docs/images/hero.en.png" width="900" alt="Dudu inside DSH Desktop: the Issues widget on the left, the Office on the top right and the Collector on the bottom right; the small blue icon at the bottom right opens the chat">
 
 </div>
 
@@ -42,16 +42,16 @@ With several agents running, you open each session to find out who finished, who
 - **Office**: every active Issue is a little person, at a desk when working, in the lounge when waiting, in bed when asleep.
 - **Dashboard**: drag and resize every widget.
 
-**Mobile app.** From left to right: the board, the chat, the chat's "+" menu, tasks.
+**Mobile app.** From left to right: the board, the chat, the chat's "+" menu, tasks (Chinese interface).
 
 <div align="center">
-  <img src="docs/images/phone.png" alt="The mobile app, from left to right: the board; the chat; the menu that opens from + in the chat; tasks" width="900">
+  <img src="docs/images/phone.png" alt="The mobile app (Chinese interface), from left to right: the board; the chat; the menu that opens from + in the chat; tasks" width="900">
 </div>
 
-**Dashboard.** Drag and resize widgets from "Edit layout" at the top right. Here the Issues widget uses the board layout and the Collector is being resized (Chinese interface).
+**Dashboard.** Drag and resize widgets from "Edit layout" at the top right. Here the Issues widget uses the board layout and the Collector is being resized.
 
 <div align="center">
-  <img src="docs/images/dashboard.png" alt="The dashboard in edit mode (Chinese interface): the Issues widget on the left uses the board layout, the Collector widget on the right is being resized, and the blue frame and 6×4 show its new size" width="900">
+  <img src="docs/images/dashboard.en.png" alt="The dashboard in edit mode: the Issues widget on the left uses the board layout, the Collector widget on the right is being resized, and the blue frame and 6×4 show its new size" width="900">
 </div>
 
 ## Quick start
