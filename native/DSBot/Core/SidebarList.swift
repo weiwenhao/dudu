@@ -117,7 +117,7 @@ enum SidebarList {
         // Conversations that belong to no registered workspace come last, as DSH's "Ungrouped".
         if let loose = byWorkspace[SidebarGroup.ungroupedID], !loose.isEmpty {
             result.append(SidebarGroup(
-                id: SidebarGroup.ungroupedID, title: "未分组", workspaceId: nil,
+                id: SidebarGroup.ungroupedID, title: L10n.text("未分组"), workspaceId: nil,
                 sessions: ordered(loose)
             ))
         }

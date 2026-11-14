@@ -53,7 +53,6 @@ test('every section of 嘟嘟\'s settings is a page the phone draws, from the ac
   const rows = general.sections.flatMap((one: any) => one.rows);
   assert.deepEqual(rows.find((one: any) => one.id === 'model').options.map((one: any) => one.title), ['M1', 'M2']);
   assert.equal(rows.find((one: any) => one.id === 'deepSleep').on, true);
-  assert.ok(rows.find((one: any) => one.id === 'tidy').button, 'the last tidy can be undone');
 });
 
 test('what the person changes goes back as the desktop\'s own action, and the page is read again', async () => {
@@ -74,8 +73,6 @@ test('what the person changes goes back as the desktop\'s own action, and the pa
   assert.deepEqual(asked.find(([action]) => action === 'collectors/update')?.[1], { id: 'k1', name: '飞书', connector: 'c1', frequency: '6h', prompt: '收消息' });
   const removed = await settings.dispatch('settings.act', { section: 'collectors', name: 'remove', args: { id: 'k1' } });
   assert.match(removed.toast.message, /飞书/);
-  await settings.dispatch('settings.act', { section: 'connectors', name: 'undo', args: { token: 'undo-token' } });
-  assert.deepEqual(asked.find(([action]) => action === 'connectors/undo')?.[1], { token: 'undo-token' });
   const skillRemoval = await settings.dispatch('settings.act', { section: 'skills', name: 'remove', args: { name: 'lark-reply' } });
   assert.equal(skillRemoval.back, false, 'removing from the list must refresh that list instead of popping a page that is not open');
   assert.ok(skillRemoval.page);
@@ -125,4 +122,8 @@ test('native connector forms recognize without adding, keep secrets out of descr
   });
   assert.deepEqual(asked.find(([action]) => action === 'connectors/update')?.[1], { id: 'custom', name: 'Renamed' },
     'a name-only edit must not replace the redacted address and discard its saved secret');
+  // A connector is not disconnected without asking (it has no undo since 2026-11-12), and the answer says so to the page.
+  const detail = (await settings.dispatch('settings.page', { section: 'connectors', target: 'connector:custom' })).page;
+  const disconnect = detail.sections.flatMap((section: any) => section.rows).find((row: any) => row.id === 'disconnect');
+  assert.deepEqual(disconnect.button.confirm, { title: '将要删除', message: 'Sample', button: '删除' });
 });

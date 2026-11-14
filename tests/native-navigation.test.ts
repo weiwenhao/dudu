@@ -64,7 +64,7 @@ test('the snapshot is validated, ordered and routed: known entries open natively
 
   assert.deepEqual(lists.sidebar.map((item) => [item.id, item.open]), [
     ['plugins', { web: { page: 'plugins' } }],
-    ['schedules', { native: 'schedule', web: { page: 'panel', target: 'schedules' } }],
+    ['schedules', { web: { page: 'panel', target: 'schedules' } }],
     ['insight', { web: { page: 'panel', target: 'insight' } }],
   ]);
   assert.equal(lists.sidebar[1].source, '@deepseek-ai/dsh-client-ui-schedule');
@@ -72,9 +72,9 @@ test('the snapshot is validated, ordered and routed: known entries open natively
 
   assert.deepEqual(lists.views.map((item) => [item.id, item.open]), [
     ['chat', { native: 'chat' }],
-    ['trajectory', { web: { page: 'trace' } }],
-    ['context', { web: { page: 'context' } }],
-    ['fleet', { web: { page: 'team' } }],
+    ['trajectory', { web: { page: 'trace', target: 'trajectory' } }],
+    ['context', { web: { page: 'context', target: 'context' } }],
+    ['fleet', { web: { page: 'team', target: 'fleet' } }],
     ['notes', { web: { page: 'view', target: 'notes' } }],
   ]);
 
@@ -96,9 +96,9 @@ test('a tab is recognised by its title when the plugin names its id differently'
     ],
   });
   assert.deepEqual(lists?.views.map((item) => item.open), [
-    { web: { page: 'context' } },
-    { web: { page: 'team' } },
-    { web: { page: 'team' } },
+    { web: { page: 'context', target: 'abc' } },
+    { web: { page: 'team', target: 'def' } },
+    { web: { page: 'team', target: 'ghi' } },
   ]);
 });
 
@@ -350,9 +350,9 @@ test('the plugin adds native primary routes and grouped settings ahead of regist
     ['dudu.conversation', 'assistant'], ['dudu.board', 'board'], ['dudu.collector', 'collector'], ['dudu.tasks', 'schedule'],
   ]);
   assert.deepEqual(sidebar.slice(4).map((item: any) => item.id), ['plugins', 'schedules', 'insight']);
-  // The fourth permanent row names the tasks page; DSH's own schedule entry keeps the old list.
+  // Dudu's tasks stay native; DSH's schedule panel uses DSH's actual UI.
   assert.deepEqual(sidebar.find((item: any) => item.id === 'dudu.tasks')?.open, { native: 'schedule', target: 'dudu-tasks' });
-  assert.equal(sidebar.find((item: any) => item.id === 'schedules')?.open.target, undefined);
+  assert.deepEqual(sidebar.find((item: any) => item.id === 'schedules')?.open, { web: { page: 'panel', target: 'schedules' } });
   assert.ok(sidebar.slice(1, 4).every((item: any) => sanitizeIcon(item.icon) !== undefined), 'native route icons pass the same validation as registry icons');
   const own = settings.filter((item: any) => item.group === 'dudu');
   assert.deepEqual(own.map((item: any) => item.id), ['dudu.general', 'dudu.statuses', 'dudu.connectors', 'dudu.collectors', 'dudu.rules', 'dudu.memory', 'dudu.skills', 'dudu.dsh']);

@@ -337,6 +337,15 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   let unsubscribe = () => {};
   let stopping;
   let heldStep;
+  let yieldedStep = false;
+  const yieldForInput = () => {
+    if (finished || !held || foreground || yieldedStep) return;
+    // DSH claims next-step input only after the current adapter stream returns. Release this step, while
+    // retaining the native turn/process for its background notifications and the next admitted input.
+    events.push(heldStep ?? { type: 'step-end', reason: 'stop' });
+    heldStep = undefined;
+    yieldedStep = true;
+  };
   async function close({ preserveBackground = false } = {}) {
     if (!finished) events.push({ type: 'turn-end', ok: false, error: harnessError('The turn was interrupted.', 'ABORTED') });
     finished = true;
@@ -406,6 +415,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
       if (event.type !== 'turn-end') { events.push(event); continue; }
       if (event.ok && (waiting.size > 0 || hasWork())) {
         held = event;
+        yieldedStep = false;
         if (hasWork()) setForeground(false);
         clearTimeout(holdTimer);
         holdTimer = hasWork() ? undefined : setTimeout(release, followUpMs);
@@ -487,6 +497,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     get backgroundActive() { return resident.backgroundActive; },
     nativeSessionId: session.id,
     events: drain(events),
+    yieldForInput,
     // A DSH turn held for native background work can have an idle root. OAR owns the prompt/steer race there.
     async pushUserMessage(content, images, { onInput } = {}) {
       const continuing = Boolean(held) || hasWork();
@@ -514,7 +525,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
  * A harness provider on an OAR runtime. `session` returns what is specific to the harness in the options of one OAR
  * session (environment, tool limits, launch arguments) from the DSH access mode.
  */
-export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, quota, backgroundTasks = true }) {
+export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, quota, childUsage, backgroundTasks = true }) {
   const known = new Set(tools.map((tool) => tool.name));
   const environment = (extra) => ({ ...scrubbedEnvironment(scrub.patterns, scrub), ...extra });
 
@@ -566,6 +577,7 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
       return {
         id, name, route: id, tools,
         normalizer: () => normalizer({ name, login }),
+        childUsage,
         configuration: typeof active.configuration === 'function'
           ? (options = {}) => active.configuration(installation, { ...options, env: environment() })
           : undefined,

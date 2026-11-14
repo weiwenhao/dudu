@@ -61,10 +61,10 @@ struct BoardGroup: Codable, Identifiable, Equatable, Sendable {
 
     static func title(for key: String) -> String {
         switch key {
-        case "blocked": return "需要你"
-        case "working": return "工作中"
-        case "idle": return "空闲中"
-        default: return "未分配"
+        case "blocked": return L10n.text("需要你")
+        case "working": return L10n.text("工作中")
+        case "idle": return L10n.text("空闲中")
+        default: return L10n.text("未分配")
         }
     }
 }
@@ -75,9 +75,9 @@ enum BoardTab: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .active: return "进行中"
-        case .backlog: return "待规划"
-        case .all: return "全部事项"
+        case .active: return L10n.text("进行中")
+        case .backlog: return L10n.text("待规划")
+        case .all: return L10n.text("全部事项")
         }
     }
 }
@@ -262,7 +262,7 @@ final class BoardModel: ObservableObject {
         } catch {
             guard !Task.isCancelled, computer == store.activeComputer?.id, connection == store.connectionRevision else { return }
             DSBotLog.networkFailure("issue.delete.fail", error: error)
-            report?(DSBotToastMessage(text: "更改没能保存", kind: .error))
+            report?(DSBotToastMessage(text: L10n.text("更改没能保存"), kind: .error))
         }
     }
 
@@ -413,9 +413,9 @@ enum CollectorTab: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .todo: return "待处理"
-        case .done: return "已处理"
-        case .ignored: return "已忽略"
+        case .todo: return L10n.text("待处理")
+        case .done: return L10n.text("已处理")
+        case .ignored: return L10n.text("已忽略")
         }
     }
 }
@@ -471,10 +471,10 @@ enum CollectorMark: String, Sendable {
 
     var toast: String {
         switch self {
-        case .ignore: return "已忽略"
-        case .done: return "已处理"
-        case .delete: return "已删除"
-        case .restore: return "已恢复"
+        case .ignore: return L10n.text("已忽略")
+        case .done: return L10n.text("已处理")
+        case .delete: return L10n.text("已删除")
+        case .restore: return L10n.text("已恢复")
         }
     }
 }
@@ -510,13 +510,14 @@ final class CollectorModel: ObservableObject {
     @Published private(set) var totals: [CollectorTab: Int] = [:]
     @Published private(set) var states: [CollectorTab: BoardModel.LoadState] = [:]
     @Published private(set) var isLoadingMore = false
+    @Published private(set) var changing: Set<Int> = []
     @Published var isSelecting = false
     @Published private(set) var selection: Set<Int> = []
     /// The records whose context the collector's session is completing and which this phone waits for: their button shows it, and cannot be pressed again.
     @Published private(set) var completing: Set<Int> = []
     /// Why a completion failed, in the plugin's own words ("" when it gave none): the record in full says it, or the page when that record is not open.
     @Published private(set) var completionProblems: [Int: String] = [:]
-    /// The result of the last action, for the toast the page shows (with an undo, where there is one).
+    /// The result of the last action, for the toast the page shows.
     var report: ((DSBotToastMessage) -> Void)?
 
     private var cursors: [CollectorTab: String] = [:]
@@ -537,6 +538,7 @@ final class CollectorModel: ObservableObject {
         totals = [:]
         states = [:]
         cursors = [:]
+        changing = []
         tab = .todo
         stopSelecting()
         // The completions that were being waited for ran on the other computer.
@@ -575,9 +577,12 @@ final class CollectorModel: ObservableObject {
         refreshing.insert(target)
         defer { refreshing.remove(target) }
         if itemsByTab[target] == nil { states[target] = .loading }
+        let computer = store.activeComputer?.id
+        let connection = store.connectionRevision
         do {
             let value = try await store.request("inbox.list", ["tab": .string(target.rawValue)])
             let answer = try await json.decode(CollectorAnswer.self, from: value)
+            guard !Task.isCancelled, computer == store.activeComputer?.id, connection == store.connectionRevision else { return }
             guard answer.outcome == "success" else { throw DSBotFailure.protocolError }
             let fresh = answer.items ?? []
             if itemsByTab[target] != fresh { itemsByTab[target] = fresh }
@@ -586,6 +591,7 @@ final class CollectorModel: ObservableObject {
             states[target] = .loaded
             if target == tab { selection = selection.intersection(Set(fresh.map(\.id))) }
         } catch {
+            guard !Task.isCancelled, computer == store.activeComputer?.id, connection == store.connectionRevision else { return }
             DSBotLog.networkFailure("inbox.load.fail", error: error)
             if itemsByTab[target] == nil { states[target] = .failed }
         }
@@ -703,30 +709,27 @@ final class CollectorModel: ObservableObject {
         }
     }
 
-    /// A mark on one or several records, with one undo for all of them.
-    func mark(_ action: CollectorMark, _ records: [CollectorRecord], using store: DSBotStore) async {
+    /// A mark on one or several records. No undo (owner, 2026-11-12): a restore is the way back for a row put aside or handled, and a delete is for a row that is wrong.
+    @discardableResult
+    func mark(_ action: CollectorMark, _ records: [CollectorRecord], using store: DSBotStore) async -> Bool {
         let ids = records.map(\.id)
-        guard !ids.isEmpty else { return }
+        guard !ids.isEmpty, changing.isDisjoint(with: ids) else { return false }
+        let computer = store.activeComputer?.id
+        changing.formUnion(ids)
+        defer { if computer == store.activeComputer?.id { changing.subtract(ids) } }
         let from = tab
         guard await send(action, ids: ids, using: store) else {
-            report?(DSBotToastMessage(text: "更改没能保存", kind: .error))
-            return
+            report?(DSBotToastMessage(text: L10n.text("更改没能保存"), kind: .error))
+            return false
         }
+        guard computer == store.activeComputer?.id else { return false }
         // They leave the list at once; the plugin's answer, a moment later, is what stays.
         itemsByTab[from] = (itemsByTab[from] ?? []).filter { !ids.contains($0.id) }
         stopSelecting()
-        let back: CollectorMark = action == .restore ? (from == .done ? .done : .ignore) : .restore
-        report?(DSBotToastMessage(text: action.toast, kind: .success, action: DSBotToastAction(title: "撤销") { [weak self] in
-            guard let self else { return }
-            Task { @MainActor in
-                if await self.send(back, ids: ids, using: store) {
-                    await self.refresh(from, using: store)
-                    await self.refreshCount(using: store)
-                }
-            }
-        }))
+        report?(DSBotToastMessage(text: action.toast, kind: .success))
         await refresh(from, using: store)
         await refreshCount(using: store)
+        return true
     }
 
     private func send(_ action: CollectorMark, ids: [Int], using store: DSBotStore) async -> Bool {
@@ -743,24 +746,32 @@ final class CollectorModel: ObservableObject {
     }
 
     /// Records shared to an issue (a note in its activity) or to the session of one (a message to its agent).
-    func share(_ records: [CollectorRecord], to issue: BoardIssue, session: Bool, using store: DSBotStore) async {
+    @discardableResult
+    func share(_ records: [CollectorRecord], to issue: BoardIssue, session: Bool, using store: DSBotStore) async -> Bool {
         let ids = records.map(\.id)
+        guard !ids.isEmpty, changing.isDisjoint(with: ids) else { return false }
+        let computer = store.activeComputer?.id
+        changing.formUnion(ids)
+        defer { if computer == store.activeComputer?.id { changing.subtract(ids) } }
         var params: [String: JSONValue] = ["ids": .array(ids.map { .number(Double($0)) }), "issue": .number(Double(issue.id))]
         if session { params["to"] = .string("session") }
         do {
             let value = try await store.request("inbox.share", params)
             let answer = try await json.decode(CollectorAnswer.self, from: value)
+            guard computer == store.activeComputer?.id else { return false }
             guard answer.outcome == "success" || answer.outcome == "no_op" else {
-                report?(DSBotToastMessage(text: "更改没能保存", kind: .error))
-                return
+                report?(DSBotToastMessage(text: L10n.text("更改没能保存"), kind: .error))
+                return false
             }
             stopSelecting()
-            report?(DSBotToastMessage(text: session ? "已分享到 \(issue.reference) 的会话" : "已分享到 \(issue.reference)", kind: .success))
+            report?(DSBotToastMessage(text: session ? L10n.text("已分享到 {0} 的会话", "\(issue.reference)") : L10n.text("已分享到 {0}", "\(issue.reference)"), kind: .success))
             await refresh(tab, using: store)
             await refreshCount(using: store)
+            return true
         } catch {
             DSBotLog.networkFailure("inbox.share.fail", error: error)
-            report?(DSBotToastMessage(text: "更改没能保存", kind: .error))
+            report?(DSBotToastMessage(text: L10n.text("更改没能保存"), kind: .error))
+            return false
         }
     }
 }

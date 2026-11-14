@@ -154,6 +154,7 @@ final class EmbeddedHTTPPageClient: @unchecked Sendable {
         request.httpMethod = "POST"
         request.httpBody = body
         request.httpShouldHandleCookies = false
+        request.setValue(L10n.acceptLanguage, forHTTPHeaderField: "Accept-Language")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         return request
     }

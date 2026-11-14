@@ -4,7 +4,7 @@ const POLL_MS = 5000;
 
 /**
  * One issue with its log (newest first, a page at a time), refreshed in place while the page is visible. Changes go through
- * `change(patch)`, `assign(agent)`, `snooze(until)`, `addNote(text)`, `reply(text)` and `undo(target)`; each answers with the store's
+ * `change(patch)`, `assign(agent)`, `snooze(until)`, `addNote(text)` and `reply(text)`; each answers with the store's
  * result when it has taken the change, and then reloads.
  */
 export function useIssue(request, id) {
@@ -39,7 +39,7 @@ export function useIssue(request, id) {
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', poll); sequence.current++; };
   }, [id, load]);
 
-  // Every change answers with the store's result (its `eventId` is what Undo is given) and then reloads, so the page shows what the store has.
+  // Every change answers with the store's result and then reloads, so the page shows what the store has.
   const send = useCallback(async (action, body) => { try { return await request(action, { id, ...body }); } finally { load(); } }, [id, load, request]);
   const show = useCallback((changes) => setState((previous) => (previous.issue ? { ...previous, issue: { ...previous.issue, ...changes } } : previous)), []); // at once; the reload corrects it
   const change = useCallback((patch) => { show(patch); return send('issues/update', { patch }); }, [send, show]);
@@ -48,7 +48,6 @@ export function useIssue(request, id) {
   const addNote = useCallback((text) => send('issues/log', { kind: 'note', text }), [send]);
   const reply = useCallback((text) => send('issues/reply', { text }), [send]);
   const message = useCallback((text, options) => send('issues/message', { text, ...options }), [send]);
-  const undo = useCallback((target) => send('issues/undo', { target }), [send]);
   const loadEarlier = useCallback(() => { if (state.nextLogCursor) load(state.nextLogCursor); }, [load, state.nextLogCursor]);
-  return { ...state, change, assign, snooze, addNote, reply, message, undo, loadEarlier, reload: load };
+  return { ...state, change, assign, snooze, addNote, reply, message, loadEarlier, reload: load };
 }

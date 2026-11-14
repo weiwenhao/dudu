@@ -92,13 +92,15 @@ function FormatBar({ editor }) {
   );
 }
 
-/** The "/" menu under the caret. */
+/** The "/" menu under the caret, or over it where the window has no room below (a long description scrolled to its end sits low in the window). */
 function SlashMenu({ slash, index }) {
   const container = usePortalContainer();
   const rect = slash?.clientRect?.();
   if (!slash || !rect || !container || !slash.items.length) return null;
+  const height = slash.items.length * 32 + 10; // the rows are h-8, the box has 4px of padding and a border
+  const top = rect.bottom + 6 + height <= window.innerHeight - 8 || rect.top - 6 - height < 8 ? rect.bottom + 6 : rect.top - 6 - height;
   return createPortal(
-    <div role="listbox" aria-label={T.richText.menu} data-rich-slash-menu="" style={{ position: 'fixed', left: rect.left, top: rect.bottom + 6 }}
+    <div role="listbox" aria-label={T.richText.menu} data-rich-slash-menu="" style={{ position: 'fixed', left: rect.left, top }}
       className="z-[1000] w-[220px] rounded-lg border bg-popover p-1 text-popover-foreground shadow-md">
       {slash.items.map((block, position) => <button key={block.key} type="button" role="option" aria-selected={position === index} onMouseDown={(event) => event.preventDefault()} onClick={() => slash.command(block)}
         className={cn('flex h-8 w-full items-center rounded-md px-2 text-left text-sm outline-none hover:bg-accent', position === index && 'bg-accent')}>{T.richText.blocks[block.key]}</button>)}

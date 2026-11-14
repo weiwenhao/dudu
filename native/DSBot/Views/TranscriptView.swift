@@ -222,7 +222,7 @@ private struct ProcessHeader: View {
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .accessibilityIdentifier("chat.process.header")
-        .accessibilityValue(isOpen ? "已展开" : "已收起")
+        .accessibilityValue(isOpen ? L10n.text("已展开") : L10n.text("已收起"))
     }
 }
 
@@ -282,7 +282,7 @@ private struct ProcessGroupView: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("chat.process.group")
-            .accessibilityValue(open ? "已展开" : "已收起")
+            .accessibilityValue(open ? L10n.text("已展开") : L10n.text("已收起"))
 
             if open {
                 VStack(alignment: .leading, spacing: 6) {
@@ -318,7 +318,7 @@ private struct ThoughtRow: View {
             } label: {
                 HStack(spacing: 6) {
                     DSBotIcon(.think, size: 16, scalesStroke: true)
-                    Text("思考")
+                    Text(L10n.text("思考"))
                         .font(.system(size: 15))
                     if !expanded, !thought.summary.isEmpty {
                         Separator()
@@ -451,7 +451,7 @@ private struct CommandRowView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("chat.command.header")
-                .accessibilityValue(open ? "已展开" : "已收起")
+                .accessibilityValue(open ? L10n.text("已展开") : L10n.text("已收起"))
                 if open {
                     // DSH renders the compaction summary as quiet Markdown, indented under the title.
                     MessageMarkdown(text: detail, compact: true)
@@ -571,13 +571,13 @@ struct RunningStatusView: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("深度求索中")
+        .accessibilityLabel(L10n.text("深度求索中"))
         .accessibilityIdentifier("chat.running")
     }
 
     private func label(at date: Date) -> String {
-        guard let startedAt else { return "深度求索中 ···" }
+        guard let startedAt else { return L10n.text("深度求索中 ···") }
         let elapsed = max(1_000, date.timeIntervalSince1970 * 1_000 - startedAt)
-        return "深度求索中，用时 \(TranscriptTitles.duration(milliseconds: elapsed)) ···"
+        return L10n.text("深度求索中，用时 {0} ···", "\(TranscriptTitles.duration(milliseconds: elapsed))")
     }
 }

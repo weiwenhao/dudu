@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { gzip } from 'node:zlib';
+import { nativeText, resolveNativeLocale, withNativeLocale } from './native-locale.mjs';
 
 const OPEN_PATH = '/dsbot/web/open';
 const PAGE_PREFIX = '/dsbot/ui/';
@@ -226,7 +227,8 @@ export function createWebPageHttp({
       if (closed || response.destroyed) throw new PageHttpError(503, 'UPSTREAM_UNAVAILABLE');
       openingDevice = deviceId;
       deviceOpens.set(deviceId, (deviceOpens.get(deviceId) ?? 0) + 1);
-      connection = { authenticated: true, deviceId, closed: false };
+      connection = { authenticated: true, deviceId, closed: false,
+        locale: resolveNativeLocale(request.headers['accept-language']) };
       let cancel;
       const cancelled = new Promise((_, reject) => { cancel = reject; });
       opening = { connection, cancel };
@@ -275,6 +277,7 @@ export function createWebPageHttp({
     async handle(request, response) {
       const raw = request.url ?? '';
       if (raw !== OPEN_PATH && !raw.startsWith(`${OPEN_PATH}?`) && !raw.startsWith(PAGE_PREFIX)) return false;
+      let language = request.headers['accept-language'];
       try {
         if (closed) throw new PageHttpError(503, 'UPSTREAM_UNAVAILABLE');
         if (raw === OPEN_PATH) {
@@ -290,6 +293,7 @@ export function createWebPageHttp({
         if (!session || !timingSafeEqual(digest(cookie), session.cookieHash)) {
           throw new PageHttpError(401, 'AUTH_FAILED');
         }
+        language = session.connection.locale;
         requireSameOrigin(request);
         if (session.inflight >= maxInflightPerPage) throw new PageHttpError(429, 'LIMIT_EXCEEDED');
         touch(session);
@@ -310,7 +314,8 @@ export function createWebPageHttp({
               || Array.isArray(call.params) || Object.hasOwn(call.params, 'id')) {
               throw new PageHttpError(400, 'BAD_REQUEST');
             }
-            const value = await pages.dispatch(call.method, { ...call.params, id: session.id }, session.connection);
+            const value = await withNativeLocale(session.connection.locale,
+              () => pages.dispatch(call.method, { ...call.params, id: session.id }, session.connection));
             responseJSON(response, 200, value);
             if (call.method === 'web.close') {
               session.responses.delete(response);
@@ -324,7 +329,7 @@ export function createWebPageHttp({
             releaseBody = reserveBody(request, session.connection.deviceId);
             const body = await readJSON(request, MAX_BODY_BYTES, bodyTimeoutMs);
             if (session.connection.closed) throw new PageHttpError(410, 'NOT_FOUND');
-            const answer = await duduPages.call(action, body);
+            const answer = await withNativeLocale(session.connection.locale, () => duduPages.call(action, body));
             responseJSON(response, answer.status, answer.body);
           } else {
             if (request.method !== 'GET') throw new PageHttpError(404, 'NOT_FOUND');
@@ -368,7 +373,9 @@ export function createWebPageHttp({
         const status = error instanceof PageHttpError ? error.status
           : { BAD_REQUEST: 400, NOT_FOUND: 404, LIMIT_EXCEEDED: 413 }[code] ?? 503;
         if (!request.complete && !response.headersSent) response.setHeader('connection', 'close');
-        responseJSON(response, status, { error: { code, message: status === 401 ? '请重新连接电脑。' : '页面请求未能完成。' } });
+        withNativeLocale(language, () => responseJSON(response, status, {
+          error: { code, message: status === 401 ? nativeText('请重新连接电脑。') : nativeText('页面请求未能完成。') },
+        }));
       }
       return true;
     },

@@ -109,24 +109,24 @@ struct SidebarView: View {
         .onChange(of: groupingRaw) { _, grouping in
             DSBotLog.record("sidebar.grouping", state: grouping)
         }
-        .alert("重命名会话", isPresented: Binding(
+        .alert(L10n.text("重命名会话"), isPresented: Binding(
             get: { renamingSession != nil }, set: { if !$0 { renamingSession = nil } }
         )) {
-            TextField("会话名称", text: $sessionTitle)
-            Button("取消", role: .cancel) { renamingSession = nil }
-            Button("重命名") {
+            TextField(L10n.text("会话名称"), text: $sessionTitle)
+            Button(L10n.text("取消"), role: .cancel) { renamingSession = nil }
+            Button(L10n.text("重命名")) {
                 guard let id = renamingSession?.id else { return }
                 let title = sessionTitle
                 renamingSession = nil
                 Task { await store.renameSession(id, to: title) }
             }
         }
-        .alert("重命名工作区", isPresented: Binding(
+        .alert(L10n.text("重命名工作区"), isPresented: Binding(
             get: { renaming != nil }, set: { if !$0 { renaming = nil } }
         )) {
-            TextField("工作区名称", text: $renameText)
-            Button("取消", role: .cancel) { renaming = nil }
-            Button("重命名") {
+            TextField(L10n.text("工作区名称"), text: $renameText)
+            Button(L10n.text("取消"), role: .cancel) { renaming = nil }
+            Button(L10n.text("重命名")) {
                 guard let workspaceId = renaming?.workspaceId else { return }
                 let title = renameText
                 renaming = nil
@@ -134,30 +134,30 @@ struct SidebarView: View {
             }
         }
         .alert(
-            deleting.map { "删除工作区「\($0.title)」？" } ?? "删除工作区",
+            deleting.map { L10n.text("删除工作区「{0}」？", "\($0.title)") } ?? L10n.text("删除工作区"),
             isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
         ) {
-            Button("取消", role: .cancel) { deleting = nil }
-            Button("删除", role: .destructive) {
+            Button(L10n.text("取消"), role: .cancel) { deleting = nil }
+            Button(L10n.text("删除"), role: .destructive) {
                 guard let workspaceId = deleting?.workspaceId else { return }
                 deleting = nil
                 Task { await store.deleteWorkspace(workspaceId) }
             }
         } message: {
-            Text("只移除工作区的登记。目录和其中的会话都会保留，会话会显示在「未分组」下。")
+            Text(L10n.text("只移除工作区的登记。目录和其中的会话都会保留，会话会显示在「未分组」下。"))
         }
         .alert(
-            "已归档的会话",
+            L10n.text("已归档的会话"),
             isPresented: Binding(get: { archivedChoice != nil }, set: { if !$0 { archivedChoice = nil } })
         ) {
-            Button("取消", role: .cancel) { archivedChoice = nil }
-            Button("取消归档") {
+            Button(L10n.text("取消"), role: .cancel) { archivedChoice = nil }
+            Button(L10n.text("取消归档")) {
                 guard let session = archivedChoice else { return }
                 archivedChoice = nil
                 Task { await store.unarchiveSession(session.id) }
             }
         } message: {
-            Text("取消归档后才能打开。")
+            Text(L10n.text("取消归档后才能打开。"))
         }
     }
 
@@ -191,7 +191,7 @@ struct SidebarView: View {
                     .contentShape(Circle())
             }
             .buttonStyle(DSBotGlassButtonStyle())
-            .accessibilityLabel("新建会话")
+            .accessibilityLabel(L10n.text("新建会话"))
             .accessibilityIdentifier("session.new")
         }
         .frame(height: 44)
@@ -210,7 +210,7 @@ struct SidebarView: View {
         Button(action: onSearch) {
             HStack(spacing: 10) {
                 DSBotIcon(.search, size: 18)
-                Text("搜索对话内容…")
+                Text(L10n.text("搜索对话内容…"))
                     .font(.system(size: 14))
                 Spacer(minLength: 0)
             }
@@ -242,7 +242,7 @@ struct SidebarView: View {
                     HStack(spacing: 12) {
                         DSBotIcon(.options, size: 20)
                             .frame(width: 24, height: 24)
-                        Text("查看更多")
+                        Text(L10n.text("查看更多"))
                     }
                 }
                 .disclosureGroupStyle(SidebarNavigationDisclosureStyle())
@@ -263,8 +263,8 @@ struct SidebarView: View {
     /// Say why DSH's entries are missing instead of listing a guess at them.
     private var navigationHint: String? {
         switch store.navigationAvailability {
-        case .unsupported: return "电脑上的 Dudu 插件需要更新后，这里才会显示 DSH 的入口。"
-        case .waiting: return "打开一次电脑上的 DSH 窗口后，这里会显示 DSH 的入口。"
+        case .unsupported: return L10n.text("电脑上的 Dudu 插件需要更新后，这里才会显示 DSH 的入口。")
+        case .waiting: return L10n.text("打开一次电脑上的 DSH 窗口后，这里会显示 DSH 的入口。")
         case .unknown, .ready: return nil
         }
     }
@@ -291,7 +291,7 @@ struct SidebarView: View {
                         .foregroundStyle(DSBotStyle.muted)
                         .monospacedDigit()
                         .padding(.trailing, 2)
-                        .accessibilityLabel(item.target == .tasks ? "\(count) 个任务" : "\(count) 条")
+                        .accessibilityLabel(item.target == .tasks ? L10n.plural("\(count) 个任务") : L10n.plural("\(count) 条"))
                 }
             }
             .font(.system(size: 16, weight: .medium))
@@ -326,7 +326,7 @@ struct SidebarView: View {
 
     private func glyph(for item: NavigationItem) -> DSBotGlyph {
         switch item.target {
-        case .schedule, .tasks: return .schedule
+        case .tasks: return .schedule
         case .files: return .folder
         case .collector: return .inbox
         case .web(.plugins, _): return .plugins
@@ -346,7 +346,7 @@ struct SidebarView: View {
         let entries = self.entries
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(options.grouping == .flat ? "会话" : "工作区")
+                Text(options.grouping == .flat ? L10n.text("会话") : L10n.text("工作区"))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(DSBotStyle.muted)
                 Spacer()
@@ -360,7 +360,7 @@ struct SidebarView: View {
                     ProgressView()
                         .controlSize(.small)
                         .tint(DSBotStyle.muted)
-                    Text("正在加载会话")
+                    Text(L10n.text("正在加载会话"))
                         .font(.system(size: 12))
                         .foregroundStyle(DSBotStyle.muted)
                     Spacer(minLength: 0)
@@ -377,7 +377,7 @@ struct SidebarView: View {
                         .foregroundStyle(DSBotStyle.muted)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("重试") {
+                    Button(L10n.text("重试")) {
                         Task { await store.refreshSessions() }
                     }
                     .font(.system(size: 12, weight: .medium))
@@ -413,23 +413,23 @@ struct SidebarView: View {
     }
 
     private var emptyListText: String {
-        return options.archive == .only ? "暂无已归档会话" : "暂无会话"
+        return options.archive == .only ? L10n.text("暂无已归档会话") : L10n.text("暂无会话")
     }
 
     /// DSH's 视图选项: how conversations are grouped, and which archived ones show.
     private var viewOptionsMenu: some View {
         Menu {
-            Section("分组方式") {
-                Picker("分组方式", selection: $groupingRaw) {
-                    Text("按工作区").tag(SidebarGrouping.workspace.rawValue)
-                    Text("单列表").tag(SidebarGrouping.flat.rawValue)
+            Section(L10n.text("分组方式")) {
+                Picker(L10n.text("分组方式"), selection: $groupingRaw) {
+                    Text(L10n.text("按工作区")).tag(SidebarGrouping.workspace.rawValue)
+                    Text(L10n.text("单列表")).tag(SidebarGrouping.flat.rawValue)
                 }
             }
-            Section("筛选会话") {
-                Picker("筛选会话", selection: $archiveRaw) {
-                    Text("隐藏已归档").tag(SidebarArchiveFilter.hide.rawValue)
-                    Text("全部对话（显示已归档）").tag(SidebarArchiveFilter.all.rawValue)
-                    Text("仅显示已归档").tag(SidebarArchiveFilter.only.rawValue)
+            Section(L10n.text("筛选会话")) {
+                Picker(L10n.text("筛选会话"), selection: $archiveRaw) {
+                    Text(L10n.text("隐藏已归档")).tag(SidebarArchiveFilter.hide.rawValue)
+                    Text(L10n.text("全部对话（显示已归档）")).tag(SidebarArchiveFilter.all.rawValue)
+                    Text(L10n.text("仅显示已归档")).tag(SidebarArchiveFilter.only.rawValue)
                 }
             }
         } label: {
@@ -439,7 +439,7 @@ struct SidebarView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(DSBotIconButtonStyle())
-        .accessibilityLabel("会话视图选项")
+        .accessibilityLabel(L10n.text("会话视图选项"))
         .accessibilityIdentifier("sidebar.sort")
     }
 
@@ -503,7 +503,7 @@ struct SidebarView: View {
                 HStack(spacing: 9) {
                     DSBotIcon(.computer, size: 20)
                         .foregroundStyle(DSBotStyle.muted)
-                    Text(store.activeComputer?.name ?? "选择电脑")
+                    Text(store.activeComputer?.name ?? L10n.text("选择电脑"))
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(DSBotStyle.ink)
                         .lineLimit(1)
@@ -517,7 +517,7 @@ struct SidebarView: View {
                 .contentShape(Capsule())
             }
             .buttonStyle(DSBotGlassCapsuleButtonStyle())
-            .accessibilityLabel("电脑连接")
+            .accessibilityLabel(L10n.text("电脑连接"))
             .accessibilityIdentifier("computers.open")
 
             Spacer(minLength: 0)
@@ -529,7 +529,7 @@ struct SidebarView: View {
                     .contentShape(Circle())
             }
             .buttonStyle(DSBotGlassButtonStyle())
-            .accessibilityLabel("设置")
+            .accessibilityLabel(L10n.text("设置"))
             .accessibilityIdentifier("settings.open")
         }
         .padding(.trailing, SidebarMetrics.trailing)
@@ -627,15 +627,15 @@ private struct SidebarGroupHeader: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(DSBotQuietPressStyle())
-            .accessibilityLabel("\(group.title)，\(isCollapsed ? "已折叠" : "已展开")")
-            .accessibilityHint("点按折叠或展开")
+            .accessibilityLabel(L10n.text("{0}，{1}", "\(group.title)", "\(isCollapsed ? L10n.text("已折叠") : L10n.text("已展开"))"))
+            .accessibilityHint(L10n.text("点按折叠或展开"))
             .accessibilityIdentifier("sidebar.group.\(group.id)")
 
             if group.workspaceId != nil {
                 Menu {
-                    Button("新建会话", action: onCreate)
-                    Button("重命名", action: onRename)
-                    Button("删除工作区", role: .destructive, action: onDelete)
+                    Button(L10n.text("新建会话"), action: onCreate)
+                    Button(L10n.text("重命名"), action: onRename)
+                    Button(L10n.text("删除工作区"), role: .destructive, action: onDelete)
                 } label: {
                     DSBotIcon(.options, size: 20)
                         .foregroundStyle(DSBotStyle.muted)
@@ -643,7 +643,7 @@ private struct SidebarGroupHeader: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(DSBotIconButtonStyle())
-                .accessibilityLabel("\(group.title) 的更多操作")
+                .accessibilityLabel(L10n.text("{0} 的更多操作", "\(group.title)"))
                 .accessibilityIdentifier("sidebar.group.menu.\(group.id)")
             }
         }
@@ -667,7 +667,7 @@ private struct SidebarSessionRow: View, Equatable {
         lhs.session == rhs.session && lhs.selectedSessionID == rhs.selectedSessionID
     }
 
-    private var title: String { session.title.isEmpty ? "新会话" : session.title }
+    private var title: String { session.title.isEmpty ? L10n.text("新会话") : session.title }
     private var isPinned: Bool { session.pinned == true && session.archived != true }
 
     var body: some View {
@@ -697,7 +697,7 @@ private struct SidebarSessionRow: View, Equatable {
                         .foregroundStyle(DSBotStyle.muted)
                         .frame(width: DSBotLayout.actionColumnWidth, alignment: .center)
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("已置顶")
+                        .accessibilityLabel(L10n.text("已置顶"))
                         .accessibilityIdentifier("session.pin.\(session.id)")
                 } else {
                     Text(relativeTime(session.updatedAt))
@@ -718,23 +718,23 @@ private struct SidebarSessionRow: View, Equatable {
         }
         .buttonStyle(DSBotRowButtonStyle())
         .accessibilityIdentifier("session.select.\(session.id)")
-        .accessibilityHint(session.archived == true ? "已归档，取消归档后才能打开" : "")
+        .accessibilityHint(session.archived == true ? L10n.text("已归档，取消归档后才能打开") : "")
         // Press and hold: the row lifts as a card above the rest and the menu opens under it. DSH has no
         // way to delete a conversation, only to archive it, which is what the last action does.
         .contextMenu {
             if session.archived == true {
                 Button(action: onUnarchive) {
-                    DSBotLabel("取消归档", icon: .archiveRestore)
+                    DSBotLabel(L10n.text("取消归档"), icon: .archiveRestore)
                 }
             } else {
                 Button(action: onRename) {
-                    DSBotLabel("重命名", icon: .editLine)
+                    DSBotLabel(L10n.text("重命名"), icon: .editLine)
                 }
                 Button(action: onTogglePin) {
-                    DSBotLabel(session.pinned == true ? "取消置顶" : "置顶", image: DSBotPinGlyph.menuImage)
+                    DSBotLabel(session.pinned == true ? L10n.text("取消置顶") : L10n.text("置顶"), image: DSBotPinGlyph.menuImage)
                 }
                 Button(action: onArchive) {
-                    DSBotLabel("归档", icon: .archive)
+                    DSBotLabel(L10n.text("归档"), icon: .archive)
                 }
             }
         } preview: {
@@ -764,10 +764,10 @@ struct SidebarSessionCard: View {
 func relativeTime(_ milliseconds: Double) -> String {
     let date = Date(timeIntervalSince1970: milliseconds / 1_000)
     let seconds = max(0, Date().timeIntervalSince(date))
-    if seconds < 60 { return "刚刚" }
-    if seconds < 3_600 { return "\(Int(seconds / 60))分钟" }
-    if seconds < 86_400 { return "\(Int(seconds / 3_600))小时" }
-    if seconds < 172_800 { return "昨天" }
+    if seconds < 60 { return L10n.text("刚刚") }
+    if seconds < 3_600 { return L10n.text("{0}分钟", "\(Int(seconds / 60))") }
+    if seconds < 86_400 { return L10n.text("{0}小时", "\(Int(seconds / 3_600))") }
+    if seconds < 172_800 { return L10n.text("昨天") }
     return SidebarDateFormatter.shared.string(from: date)
 }
 
@@ -775,8 +775,8 @@ func relativeTime(_ milliseconds: Double) -> String {
 private enum SidebarDateFormatter {
     static let shared: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日"
+        formatter.locale = L10n.locale
+        formatter.setLocalizedDateFormatFromTemplate("MMMd")
         return formatter
     }()
 }

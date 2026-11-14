@@ -5,7 +5,11 @@
 //
 //   ingest(connector, records, { runId })  records from normalizeRecords. One row per (connector, source id, version); a row that is there
 //                                          already is only counted. A conversation (`record.conversation`) whose row is still waiting (not ignored,
-//                                          not shared) takes the messages it did not have, instead of a second row. -> { added: [row], updated: [row], seen }
+//                                          not shared) takes the messages it did not have, instead of a second row. A record that says `update` is an item given again to
+//                                          change what the inbox kept of it: the fields it gives replace the row's (the newest row of that item's id that is not deleted, else the
+//                                          newest of the conversation it is in, `thread:<thread>`), whatever its state; the owner's marks, its issue and its number stay, no row
+//                                          is made, and one that would change nothing is only counted. -> { added: [row], updated: [row], seen, missed } (`missed`: updates for an
+//                                          item the inbox does not have)
 //   pending(connector, limit)              the rows not yet judged, oldest first, each with `known` (what is already known of its source id
 //                                          and its thread: { issueId, verdict } | null)
 //   judge(id, { verdict: 'issue' | 'note' | 'ignore', issueId, reason })   the one judgement a row gets
@@ -165,14 +169,58 @@ export function createInbox(db, { now = Date.now } = {}) {
   };
   const indexed = (record) => [segment(record.title), segment(record.text), segment(record.author)];
 
+  /**
+   * An item given again with `update` (see `ingest`): the row it changes is the newest one of that item's id that is not deleted, else the newest of its conversation (`thread:<thread>`). Returns the row after the change, 'same' when nothing differs, or null when
+   * the inbox has no such item. A row whose text was cleared (`prune`) keeps it cleared: only the fields that are not text change.
+   */
+  function change(connector, record) {
+    const find = (sourceId) => sql(`SELECT ${COLUMNS} FROM inbox_records WHERE connector = ? AND deleted_at IS NULL AND source_id = ? ORDER BY id DESC LIMIT 1`).get(connector, sourceId);
+    const row = find(record.sourceId) ?? (record.thread ? find(`thread:${record.thread}`) : undefined); // the item's own id first, else the conversation it is in
+    if (!row) return null;
+    const { changes } = record;
+    const set = [];
+    const values = [];
+    const put = (column, value, before) => {
+      if (value === undefined || value === before) return false;
+      set.push(`${column} = ?`);
+      values.push(value);
+      return true;
+    };
+    const titled = put('title', changes.title, row.title);
+    const named = put('author', changes.author, row.author);
+    put('url', changes.url, row.url);
+    put('at', changes.at, row.at);
+    put('more', changes.more, row.more);
+    let worded = false;
+    if (!row.cleared) {
+      worded = put('text', changes.text, row.text);
+      if (worded) put('truncated', record.truncated ? 1 : 0, row.truncated);
+      put('context', changes.context ? JSON.stringify(changes.context) : undefined, row.context);
+    }
+    if (!set.length) return 'same';
+    sql(`UPDATE inbox_records SET ${set.join(', ')} WHERE id = ?`).run(...values, row.id);
+    if (titled || named || worded) {
+      const kept = sql('SELECT title, text, author FROM inbox_records WHERE id = ?').get(row.id);
+      sql('DELETE FROM inbox_fts WHERE rowid = ?').run(row.id);
+      sql('INSERT INTO inbox_fts (rowid, title, text, author) VALUES (?,?,?,?)').run(row.id, ...indexed(kept));
+    }
+    return view(sql(`SELECT ${COLUMNS} FROM inbox_records WHERE id = ?`).get(row.id));
+  }
+
   function ingest(connector, records, { runId = null } = {}) {
     const added = [];
     const updated = [];
+    const changes = [];
     let seen = 0;
+    let missed = 0;
     const at = now();
     const signal = (value) => (value === true ? 1 : value === false ? 0 : null);
     transaction(() => {
       for (const record of records) {
+        if (record.update) {
+          changes.push(record);
+          continue;
+        }
         // Looked up first: an insert that is ignored would still use up a record number (AUTOINCREMENT), and the numbers are what the model answers with.
         if (sql('SELECT 1 FROM inbox_records WHERE connector = ? AND source_id = ? AND version = ?').get(connector, record.sourceId, record.version)) {
           seen++;
@@ -206,11 +254,23 @@ export function createInbox(db, { now = Date.now } = {}) {
         sql('INSERT INTO inbox_fts (rowid, title, text, author) VALUES (?,?,?,?)').run(id, ...indexed(record));
         added.push(view(sql(`SELECT ${COLUMNS} FROM inbox_records WHERE id = ?`).get(id)));
       }
+      // Last, so that an answer that brings the talk of a thread and also says what changed of its item ends with what it said of the item.
+      for (const record of changes) {
+        const done = change(connector, record);
+        if (done === null) missed++;
+        else if (done === 'same') seen++;
+        else {
+          // a row the talk went on in a moment ago is one row that changed, not two
+          const place = updated.findIndex((row) => row.id === done.id);
+          if (place >= 0) updated[place] = done;
+          else updated.push(done);
+        }
+      }
       // More waiting than there is room for: the oldest are given up, so that a model that is down for a week does not make a backlog.
       const extra = sql(`SELECT COUNT(*) AS n FROM inbox_records WHERE connector = ? AND state = 'new' AND ${OPEN}`).get(connector).n - MAX_PENDING;
       if (extra > 0) sql(`UPDATE inbox_records SET state = 'dropped', judged_at = ? WHERE id IN (SELECT id FROM inbox_records WHERE connector = ? AND state = 'new' AND ${OPEN} ORDER BY id LIMIT ?)`).run(at, connector, extra);
     });
-    return { added, updated, seen };
+    return { added, updated, seen, missed };
   }
 
   /**
@@ -218,7 +278,8 @@ export function createInbox(db, { now = Date.now } = {}) {
    * of their times and each once; for any other row, the context the session read becomes its `context`. It is that row, whatever its state: nothing is added and no row is made.
    * `records` come from normalizeRecords. -> { outcome, added }
    */
-  function addContext(id, records) {
+  function addContext(id, given) {
+    const records = given.filter((record) => !record.update); // an answer that says `update` is not what was asked for
     const row = sql(`SELECT ${COLUMNS} FROM inbox_records WHERE id = ? AND deleted_at IS NULL`).get(id);
     if (!row) return { outcome: 'needs_clarification', code: 'unknown_record', message: 'There is no record with that number.' };
     let added = 0;

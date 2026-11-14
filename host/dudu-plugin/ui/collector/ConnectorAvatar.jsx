@@ -21,9 +21,8 @@ export function initialOf(name) {
  * through, or a service its name says: Lark, Stripe, QQ, WeChat and so on; `host/assistant/connectors/brands.mjs`), and otherwise the first letter of the collector's name
  * on a soft colour its name picks. `icon` is the card's `connectorIcon`.
  */
-export function ConnectorAvatar({ icon, name, size = 28 }) {
+export function ConnectorAvatar({ icon, name, size = 28, radius = Math.round(size * 0.29) }) {
   const known = ICONS[icon];
-  const radius = Math.round(size * 0.29);
   if (known?.src) return <Tile icon={known} size={size} radius={radius} />;
   const tone = toneOf(name);
   return (

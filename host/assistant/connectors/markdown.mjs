@@ -14,7 +14,7 @@
 // own, examples inside code fences or comments. Reading never changes it, and a change to one connector rewrites only
 // the lines that belong to that change, so the owner's text survives it byte for byte (line endings and a leading BOM
 // included). A section that cannot be used is skipped with a diagnostic { id?, line, reason } and the rest load.
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { chmodSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { ID, normalizeConfig } from './schema.mjs';
@@ -22,8 +22,6 @@ import { TEXT } from './text.mjs';
 
 export const MAX_BYTES = 1_000_000;
 const METAKEY = /(?:^|\|)\s*id\s*:/i;
-
-export const digestOf = (text) => createHash('sha256').update(text).digest('hex').slice(0, 16);
 
 const startsEntry = (lines, i) => /^ {0,3}##[ \t]+\S/.test(lines[i]) && lines.slice(i + 1, i + 4).some((line) => /^ {0,3}<!--.*\bid\s*:/i.test(line));
 
@@ -172,9 +170,6 @@ export const renderEntry = ({ id, name, enabled, source, since, description, con
 
 const assemble = (parsed, lines) => parsed.bom + lines.join(parsed.eol);
 
-// The section of an entry as the file has it, for the undo journal.
-export const sectionOf = (parsed, entry) => parsed.lines.slice(entry.start, entry.end).join(parsed.eol);
-
 // Sets `key: value` inside the metadata comment where it is, or adds it before the end of the comment.
 export function setMeta(line, key, value) {
   const found = /^(\s*<!--)(.*?)(-->\s*)$/.exec(line);
@@ -196,13 +191,6 @@ export function editEntry(parsed, entry, { name, description, config, meta = {} 
   if (keys.length) edits.push({ from: entry.metaIndex, to: entry.metaIndex + 1, lines: [keys.reduce((line, key) => setMeta(line, key, meta[key]), lines[entry.metaIndex])] });
   if (name !== undefined) edits.push({ from: entry.start, to: entry.start + 1, lines: [`## ${name}`] });
   for (const edit of edits.sort((a, b) => b.from - a.from)) lines.splice(edit.from, edit.to - edit.from, ...edit.lines);
-  return assemble(parsed, lines);
-}
-
-// Replaces the lines of an entry's section with other lines (the undo of a change).
-export function replaceSection(parsed, entry, sectionText) {
-  const lines = [...parsed.lines];
-  lines.splice(entry.start, entry.end - entry.start, ...sectionText.split(parsed.eol));
   return assemble(parsed, lines);
 }
 

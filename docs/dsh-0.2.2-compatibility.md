@@ -14,6 +14,74 @@ therefore also compares the earlier `0.2.1-rc.5` baseline. This is an audit of
 Dudu's integration boundaries, not a claim that every new DSH feature is a
 new native iPhone feature.
 
+## Follow-up: 0.2.2-rc.2 and rc.3 (2026-11-14)
+
+This follow-up compares the previously audited rc.1 source with
+`dsh-v0.2.2-rc.2` (`ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c`) and
+`dsh-v0.2.2-rc.3` (`38a6a5c965aa99ab525161efb7cc5cf1fe62fced`).
+It covers the intervening changes, rather than treating all changes since
+rc.1 as new in rc.3.
+
+Primary sources:
+
+- [rc.3 release](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.3)
+- [Subagent catalog schemas](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/packages/subagent/subagent/src/catalog.ts)
+- [Agent registry](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/packages/core/agent/src/index.ts)
+- [Subagent action and owned footer](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/packages/client/ui-subagent/src/client/index.ts)
+- [Team board registration](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/packages/client/ui-agent-team/src/client/mount.ts)
+- [Slot registration contract](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/packages/client/ui-slots/src/index.ts)
+- [Window drag-region migration](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/docs/upgrade-guide/v0.2.2-rc.1/window-drag-regions/guide.zh.md)
+
+| Boundary | Adaptation |
+| --- | --- |
+| Team no longer supplies `agentTeam.members` | Native conversation metadata and Team navigation share a catalog reader. It prefers matching `subagentCatalog` fields and also reads legacy rosters. Named and nested children retain their actual parent and mode. |
+| Parent-owned discovery replaces runtime parent ownership | Native harness mirrors restore from the published child catalog and reuse persisted child IDs. `parentAgent` is supplied only to older registries exposing `isOwnedBy`; current DSH receives neither that option nor an invented replacement. No new `team/member` event is emitted. |
+| Missing mirror history | A published child whose history cannot be read is not recreated as a fresh session. Failed restoration cannot replay its accounted usage or publish a replacement child. |
+| Versioned catalog schemas | The local native mirror keeps the valid v0 `one-shot` catalog shape and existing v3 descriptor. Catalog v3 requires a name and accepts only `continuable` or `external`; blindly changing the catalog version would invalidate one-shot discovery. |
+| Team board moved inside the subagent action | The issue conversation mirrors the host action's owned child slots under private names, preserving its component, injection, locale, store and registration metadata. Host `renderSlot` calls are remapped, and footer registrations follow host unload/reload. Both normal and aside navigation pass through the exact host address. |
+| Subagent menu portal | The issue header identifies the current menu by `data-subagent-panel`, retaining the old selector as a fallback, so the entire host panel can use the existing modal overlay layer. |
+| Embedded Team page authorization | Nested discovery learns each edge only from its admitted parent's projection. Partial Team updates retain the catalog. Unrelated projections and external provider IDs grant no new local-session access; requests must use a learned parent-child edge. The existing RPC allowlist and HTTP transport remain in place. |
+| macOS overlay drag regions | Dialog overlays/content, popovers, context menus and the pet's visible rectangles declare `data-window-drag-exclude`. Existing dimensions, spacing, styles, labels and controls are retained. |
+| Anchored menus | Dudu does not import the removed `useAnchoredPosition` or `getAnchorRect`. Its existing inline menu anchors remain supported, so no replacement menu implementation is introduced. |
+| rc.3 chat import and extension slots | DeepSeek chat import is a separate experimental upstream feature. The added sidebar session action and workspace picker extension points do not replace Dudu's current integration, so this follow-up adds no import flow or new native UI. |
+
+The supplier selector already reuses `AgentLogo` for its current provider
+(scheme A). This follow-up does not replace that implementation or introduce
+new App wording. The current OAR adapter and its pinned official runtime are
+also unchanged by this compatibility work.
+
+### Verification for this follow-up only
+
+- Twelve selected unit/contract tests passed: catalog-only restoration and
+  usage accounting, missing history, native child watch/pagination, nested
+  Team navigation, page authorization/event scoping, and built-client slot
+  composition including footer unload/reload. These use simulated process
+  boundaries; they start no DSH, model, browser or native harness process.
+- `npm run lint` and `npm run typecheck` passed. Focused ESLint of the changed
+  host/client/test files passed with three existing warnings: the unused
+  `libraryEntry` helper and two pre-existing `Array<T>` declarations.
+- `npm run package:desktop` passed, including OAR preparation checks, client
+  and phone-page compilation, and importing the packaged plugin outside the
+  source repository. The output is
+  `.local/release/dudu-desktop-0.1.0-beta.zip`. It contains the workspace's
+  other current work as well as this adaptation.
+- No full suite, end-to-end test, real DSH, browser scene, Desktop install,
+  restart or physical-phone check ran in this follow-up. No SwiftUI source
+  changed. The older verification records below belong to their stated dates.
+
+Logs and the task-specific baseline are under
+`.local/qa/dsh-rc3-2026-11-14/`; the final checks are `unit-final.log`,
+`lint-final.log`, `lint-focused-final.log`, `typecheck-final.log` and
+`package.log`.
+
+The remaining integration check would use an isolated rc.3 `dsh web` with its
+own `DSH_HOME` and `HOME`: open the issue conversation's native subagent menu
+and Team footer, expand a nested child, navigate normally and aside, and
+switch the supplier selector. macOS window dragging requires a separate
+Desktop-specific check with the overlays over the titlebar. These rendered
+and interactive behaviors, including physical iPhone/WKWebView behavior,
+remain unverified in this follow-up.
+
 ## Host interfaces
 
 | Change | Dudu adaptation |

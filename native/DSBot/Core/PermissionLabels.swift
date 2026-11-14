@@ -22,8 +22,8 @@ enum PermissionLabels {
 
     /// The same rule for a bare id and name, for lists that are not `Choice`s (the phone's settings).
     static func name(id: String, name: String) -> String {
-        if let label = builtIn[id], name == id || name == label.english {
-            return label.zh
+        if let label = builtIn[id], name == id || name == label.english || name == label.zh {
+            return L10n.text(label.zh)
         }
         if name.range(of: #"^[a-z0-9]+(-[a-z0-9]+)*$"#, options: .regularExpression) != nil {
             return name.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }
@@ -43,15 +43,15 @@ enum PermissionLabels {
         switch presetID {
         case "danger-full-access":
             return Confirmation(
-                title: "确认启用完全权限？",
-                message: "启用完全权限后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。",
-                action: "启用完全权限"
+                title: L10n.text("确认启用完全权限？"),
+                message: L10n.text("启用完全权限后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。"),
+                action: L10n.text("启用完全权限")
             )
         case "auto":
             return Confirmation(
-                title: "确认启用自动审查（实验）？",
-                message: "自动审查不使用沙箱。每次原生工具调用和 PTC 内层调用前，都会由与当前 agent 相同的模型进行审查；审查拒绝的调用由你批准或拒绝。此功能仍属实验性，可能误放行或误拒绝，并会消耗额外 token。",
-                action: "启用自动审查"
+                title: L10n.text("确认启用自动审查（实验）？"),
+                message: L10n.text("自动审查不使用沙箱。每次原生工具调用和 PTC 内层调用前，都会由与当前 agent 相同的模型进行审查；审查拒绝的调用由你批准或拒绝。此功能仍属实验性，可能误放行或误拒绝，并会消耗额外 token。"),
+                action: L10n.text("启用自动审查")
             )
         default:
             return nil

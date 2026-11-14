@@ -305,6 +305,11 @@ window.__ModuleLoader__.load({
       };
       const entriesOf = (name) => { const list = ctx.slots?.entries?.(name); return Array.isArray(list) ? list : undefined; };
       const source = (entry) => (typeof entry?.registrant === 'string' ? entry.registrant : undefined);
+      const translatedLabel = (options, fallback) => {
+        const title = label(options, fallback);
+        const titles = ui?.navigationLabelTranslations?.(ctx.locale, options, title);
+        return { title, ...(titles ? { titles } : {}) };
+      };
 
       // Each collector returns undefined when its registry cannot be read, so the host keeps what it had.
       const collectSidebar = () => {
@@ -312,7 +317,7 @@ window.__ModuleLoader__.load({
         if (!Array.isArray(entries)) return undefined;
         return entries.filter((entry) => entry?.options?.id !== undefined).map((entry) => ({
           id: String(entry.options.id),
-          title: label(entry.options, String(entry.options.id)),
+          ...translatedLabel(entry.options, String(entry.options.id)),
           order: entry.options.order ?? 0,
           source: source(entry),
           icon: renderIcon(entry.component, { size: 20, active: false }),
@@ -328,7 +333,7 @@ window.__ModuleLoader__.load({
           .filter((entry) => entry?.options?.id !== undefined && (developer || entry.options.id !== 'trajectory'))
           .map((entry) => ({
             id: String(entry.options.id),
-            title: label(entry.options, String(entry.options.id)),
+            ...translatedLabel(entry.options, String(entry.options.id)),
             order: entry.options.order ?? 0,
             source: source(entry),
           }));
@@ -339,7 +344,7 @@ window.__ModuleLoader__.load({
         return entries.filter((entry) => entry?.options?.id !== undefined).map((entry) => {
           const id = String(entry.options.id);
           return {
-            id, title: label(entry.options, id), order: entry.options.order ?? 0, source: source(entry),
+            id, ...translatedLabel(entry.options, id), order: entry.options.order ?? 0, source: source(entry),
             icon: renderIcon(primitives?.[SETTINGS_ICONS[id] ?? DEFAULT_SETTINGS_ICON], { size: 20 }),
           };
         });
@@ -954,6 +959,9 @@ window.__ModuleLoader__.load({
       name: 'dudu-sessions',
       inject: ['slots', 'layout', 'uiWorkspace', 'sessions', 'remote', 'remote.session', 'remote.skills', 'modelDirectories'],
       apply(ctx) {
+        ctx.effect(() => ui?.installCollectorNotifications({
+          onOpen: () => { ui.openDashboard(); ctx.layout.selectPanel(PANEL_ID); },
+        }));
         // The host Team action assumes its own continuable workers. Native CLI children are observation-only.
         ctx.effect(() => {
           const service = ctx.uiWorkspace;

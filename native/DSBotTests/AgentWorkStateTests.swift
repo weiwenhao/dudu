@@ -22,7 +22,7 @@ final class AgentWorkStateTests: XCTestCase {
         let json = #"{"id":"s1","title":"t","workspaceId":"w","workspaceName":"w","updatedAt":1,"status":"idle","agent":"claude","agentState":"done"}"#
         let session = try JSONDecoder().decode(SessionSummary.self, from: Data(json.utf8))
         XCTAssertEqual(session.agentState, .blocked)
-        XCTAssertEqual(AgentWorkState.blocked.name, "需要你")
+        XCTAssertEqual(AgentWorkState.blocked.name, L10n.text("需要你"))
     }
 
     func testAFinishedRunIsToldFromAQuestionByTheAvatarsMark() throws {

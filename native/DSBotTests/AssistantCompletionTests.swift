@@ -29,4 +29,47 @@ final class AssistantCompletionTests: XCTestCase {
         XCTAssertNil(AssistantCompletion.query(.init(text: "/tmp/file", selection: NSRange(location: 9, length: 0))))
         XCTAssertEqual(AssistantCompletion.address("@#7 hello"), .init(id: "#7", body: "hello"))
     }
+
+    func testDeletingACompletedAddressNeverReopensSuggestions() {
+        // A selection callback can precede the changed text when its trailing space is deleted.
+        XCTAssertNil(AssistantCompletion.query(.init(
+            text: "@DUD-7 ", selection: NSRange(location: 6, length: 0), isDeleting: true
+        )))
+        var text = "@DUD-7"
+        repeat {
+            let edit = ComposerEditingState(
+                text: text, selection: NSRange(location: text.utf16.count, length: 0), isDeleting: true
+            )
+            XCTAssertNil(AssistantCompletion.query(edit))
+            // A duplicate selection/text callback must not undo deletion suppression.
+            XCTAssertNil(AssistantCompletion.query(edit))
+            text.removeLast()
+        } while !text.isEmpty
+        // Typing a fresh @, or deliberately tapping into an address, can open suggestions again.
+        XCTAssertNotNil(AssistantCompletion.query(.init(text: "@", selection: NSRange(location: 1, length: 0))))
+        XCTAssertNotNil(AssistantCompletion.query(.init(text: "@DUD", selection: NSRange(location: 4, length: 0))))
+    }
+
+    func testDeletingAnOpenQueryContinuesOnlyItsOwnToken() throws {
+        let query = try XCTUnwrap(AssistantCompletion.query(.init(
+            text: "@DUD-7", selection: NSRange(location: 6, length: 0)
+        )))
+        let edit = ComposerEditingState(
+            text: "@DUD-", selection: NSRange(location: 5, length: 0), isDeleting: true
+        )
+        let shortened = try XCTUnwrap(AssistantCompletion.query(edit, continuing: query))
+        XCTAssertEqual(shortened.text, "DUD-")
+        XCTAssertTrue(shortened.continues(query))
+        XCTAssertEqual(AssistantCompletion.query(edit, continuing: shortened), shortened)
+
+        let skill = try XCTUnwrap(AssistantCompletion.query(.init(
+            text: "@DUD-7 /lark", selection: NSRange(location: 12, length: 0)
+        )))
+        XCTAssertNil(AssistantCompletion.query(.init(
+            text: "@DUD-7", selection: NSRange(location: 6, length: 0), isDeleting: true
+        ), continuing: skill))
+        XCTAssertNil(AssistantCompletion.query(.init(
+            text: "/lark", selection: NSRange(location: 5, length: 0), isDeleting: true
+        ), continuing: skill))
+    }
 }

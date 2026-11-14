@@ -14,14 +14,14 @@
 //
 //   withDeepSleep(snapshot, key, asleep)  what the DSH sidebar and the phone are told of a session: its snapshot, plus `deepSleep: true` when `asleep(key)` says its crescent is to be drawn
 //                (the caller says so for every agent in deep sleep, whatever its mark: the crescent is drawn over the corner and the mark itself is left as it is, so it shows again on waking)
-import { ENDED_STATES } from '../sessions/deep-sleep.mjs';
+import { hasEndedTurn } from '../sessions/deep-sleep.mjs';
 
 /**
  * What the DSH sidebar and the phone are told of a session: its snapshot, and `deepSleep: true` when `asleep(key)` says so (it is the crescent of an agent in deep sleep).
  * Only a session whose turn has ended can sleep, so only those are looked up: most of the sessions in a list are not an issue's, and cost nothing.
  */
 export function withDeepSleep(snapshot, key, asleep) {
-  if (!snapshot || !ENDED_STATES.includes(snapshot.state)) return snapshot;
+  if (!snapshot || !hasEndedTurn(snapshot.state, snapshot.turnActive)) return snapshot;
   return asleep(key) ? { ...snapshot, deepSleep: true } : snapshot;
 }
 

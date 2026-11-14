@@ -11,6 +11,8 @@ enum DSBotGlyph: CaseIterable {
     case goal, plan, compact, attach
     case think, browse, code, globe, question, pause, play, trash, editLine, mode, sliders
     case archive, archiveRestore, info
+    /// The settings' 隐私政策 and 版本信息 rows (owner, 2026-11-12); 关于 is `info`.
+    case privacy, version
     case inbox, selectRows, shareToIssue, shareToSession, hide, restore, openLink, selectAll, listTodo, zap, reply
     case issueProject, issueLabel, dueDate, issueStatus, issuePriority
     /// Fill in the context of a collected record (the desktop's `RefreshCw`, in its record menu and the row's buttons; the owner, 2026-11-11: "刷新图标吧").
@@ -19,6 +21,8 @@ enum DSBotGlyph: CaseIterable {
     case quota
     /// The desktop's icons of an agent state, before the name of a group of the board (`AgentStateIcon`).
     case stateIdle, stateWorking, stateBlocked, stateUnassigned
+    /// The square Stop in the approved background-job detail.
+    case jobStop
 
     var lucide: LucideIconName {
         switch self {
@@ -86,6 +90,8 @@ enum DSBotGlyph: CaseIterable {
         case .archive: return .archive
         case .archiveRestore: return .archiveRestore
         case .info: return .info
+        case .privacy: return .lock
+        case .version: return .tag
         case .inbox: return .inbox
         case .listTodo: return .listTodo
         case .zap: return .zap
@@ -107,6 +113,7 @@ enum DSBotGlyph: CaseIterable {
         case .stateWorking: return .loaderCircle
         case .stateBlocked: return .octagonPause
         case .stateUnassigned: return .user
+        case .jobStop: return .square
         }
     }
 

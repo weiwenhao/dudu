@@ -28,7 +28,7 @@ struct ComputerListView: View {
                             DSBotIcon(.reconnect)
                                 .foregroundStyle(DSBotStyle.ink)
                                 .frame(width: 28)
-                            Text(store.status == .connecting ? "正在连接…" : "重新连接")
+                            Text(store.status == .connecting ? L10n.text("正在连接…") : L10n.text("重新连接"))
                                 .font(.system(size: 15, weight: .medium))
                                 .foregroundStyle(DSBotStyle.ink)
                             Spacer()
@@ -59,7 +59,7 @@ struct ComputerListView: View {
                         DSBotIcon(.add)
                             .foregroundStyle(DSBotStyle.ink)
                             .frame(width: 28)
-                        Text("添加电脑")
+                        Text(L10n.text("添加电脑"))
                             .font(.system(size: 15, weight: .medium))
                             .foregroundStyle(DSBotStyle.ink)
                         Spacer()
@@ -94,11 +94,11 @@ struct ComputerListView: View {
                     DSBotIcon(onClose == nil ? .back : .close, size: 20)
                         .foregroundStyle(DSBotStyle.ink)
                 }
-                .accessibilityLabel(onClose == nil ? "返回" : "关闭电脑连接")
+                .accessibilityLabel(onClose == nil ? L10n.text("返回") : L10n.text("关闭电脑连接"))
                 .accessibilityIdentifier("computers.close")
             }
             ToolbarItem(placement: .principal) {
-                Text("电脑连接")
+                Text(L10n.text("电脑连接"))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(DSBotStyle.ink)
             }
@@ -145,7 +145,7 @@ struct ComputerListView: View {
             VStack(spacing: 6) {
                 Image(systemName: "trash")
                     .font(.system(size: 20, weight: .regular))
-                Text("删除")
+                Text(L10n.text("删除"))
                     .font(.system(size: 12, weight: .medium))
             }
             .foregroundStyle(.white)
@@ -167,7 +167,7 @@ struct ComputerListView: View {
         }
         .buttonStyle(.plain)
         .zIndex(2)
-        .accessibilityLabel("删除")
+        .accessibilityLabel(L10n.text("删除"))
         .accessibilityIdentifier("computer.delete.\(computer.id)")
     }
 
@@ -263,7 +263,7 @@ struct ComputerListView: View {
                       .contentShape(Rectangle())
               }
               .buttonStyle(.plain)
-              .accessibilityLabel("\(computer.name) 的连接详情")
+              .accessibilityLabel(L10n.text("{0} 的连接详情", "\(computer.name)"))
               .accessibilityIdentifier("computer.info.\(computer.id)")
               .padding(.trailing, 8)
             }
@@ -272,7 +272,7 @@ struct ComputerListView: View {
 
     private func subtitle(for computer: Computer) -> String {
         computer.id == store.activeComputer?.id && store.status == .connected
-            ? "已连接 · \(computer.shortAddress)" : computer.shortAddress
+            ? L10n.text("已连接 · {0}", "\(computer.shortAddress)") : computer.shortAddress
     }
 
     private func remove(_ computer: Computer) {
@@ -329,7 +329,7 @@ private final class ComputerRowTouchTarget: UIView {
         pan.delegate = swipeDelegate
         addGestureRecognizer(pan)
         accessibilityCustomActions = [
-            UIAccessibilityCustomAction(name: "删除", target: self, selector: #selector(deleteRow))
+            UIAccessibilityCustomAction(name: L10n.text("删除"), target: self, selector: #selector(deleteRow))
         ]
     }
 

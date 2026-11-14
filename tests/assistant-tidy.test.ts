@@ -22,7 +22,7 @@ function world(t: any, answer = { changes: [] } as any) {
   return { issues, issue, tidy, answer, rules, calls: () => calls };
 }
 
-test('issue tidy previews without writing, applies once as dudu, and undoes the group', async (t) => {
+test('issue tidy previews without writing and applies once as dudu', async (t) => {
   const w = world(t, { changes: [{ id: 1, patch: { brief: '等法务确认' }, reason: '法务还没回' }] });
   const plan = await w.tidy.run();
   assert.equal(plan.preview, true);
@@ -32,10 +32,6 @@ test('issue tidy previews without writing, applies once as dudu, and undoes the 
   assert.equal(w.issues.get(1).issue.brief, '等法务确认');
   assert.equal(w.issues.events({ issueId: 1 }).events[0].actor, 'dudu');
   assert.equal((await w.tidy.run({ token: plan.token })).outcome, 'needs_clarification');
-  assert.equal(w.tidy.undo().outcome, 'success');
-  assert.equal(w.issues.get(1).issue.brief, '等确认');
-  await w.tidy.run({ automatic: true });
-  assert.equal(w.calls(), 1, 'undo is respected until the input changes');
 });
 
 test('the owner can edit while a tidy preview waits; the edited issue is skipped', async (t) => {

@@ -152,8 +152,8 @@ function ConversationGroup({ request, actions, onChanged }) {
   );
 }
 
-/** What the page's Export gives: every issue, its log, sessions and changes as one file (the store's own export); and the last tidy. */
-function IssuesGroup({ request, state, reload, phone = false }) {
+/** What the page's Export gives: every issue, its log, sessions and changes as one file (the store's own export); and the last tidy (when it ran). */
+function IssuesGroup({ request, state, phone = false }) {
   const [problem, setProblem] = useState('');
   const download = async () => {
     setProblem('');
@@ -170,16 +170,7 @@ function IssuesGroup({ request, state, reload, phone = false }) {
   const tidy = state?.lastIssueTidy;
   return (
     <Group title={G.issues}>
-      <Row title={G.lastTidy} meta={tidy ? formatDateTime(tidy.at) : G.noTidy}>
-        {tidy?.groupId && <ActionButton onClick={async () => {
-          setProblem('');
-          try {
-            const result = await request('issues/tidy-undo');
-            if (!['success', 'no_op'].includes(result.outcome)) throw new Error();
-            reload?.();
-          } catch { setProblem(T.toast.failed); }
-        }}>{G.undoTidy}</ActionButton>}
-      </Row>
+      <Row title={G.lastTidy} meta={tidy ? formatDateTime(tidy.at) : G.noTidy} />
       {!phone && (
         <Row title={G.exportIssues}>
           <ActionButton aria-label={G.exportIssues} onClick={download}>{G.export}</ActionButton>
@@ -205,7 +196,7 @@ export function GeneralSection({ request, actions = {}, onChanged }) {
       )}</Loading>
       <ConversationGroup request={request} actions={actions} onChanged={onChanged} />
       {!phone && <PetGroup request={request} onChanged={onChanged} />}
-      <IssuesGroup request={request} state={state.value} reload={state.reload} phone={phone} />
+      <IssuesGroup request={request} state={state.value} phone={phone} />
     </Page>
   );
 }

@@ -6,6 +6,8 @@
 //   duduPages.document({ target })   -> { html, resource }   the page of one section, and the files it loads (its script and stylesheet only)
 //   duduPages.allowed(action)        -> boolean               whether a page of this kind may ask the plugin for it
 //   duduPages.call(action, body)     -> { status, body }      the plugin's own answer to it (`call` is the plugin's, the desktop interface's: POST /api/dudu/<action>)
+import { nativeLocale, resolveNativeLocale } from './native-locale.mjs';
+
 export const DUDU_PAGE_SECTIONS = Object.freeze(['general', 'statuses', 'connectors', 'collectors', 'rules', 'memory', 'skills']);
 
 // What the settings pages use: 嘟嘟's settings, the workflow statuses, the connectors, the collectors, the rules, the memory and the skills. Nothing of pairing (a page never gets
@@ -13,7 +15,7 @@ export const DUDU_PAGE_SECTIONS = Object.freeze(['general', 'statuses', 'connect
 const ACTIONS = Object.freeze([
   /^assistant\/(?:settings|conversation-settings|state)$/u,
   /^dispatch\/state$/u,
-  /^issues\/(?:statuses|status-add|status-update|status-remove|status-order|tidy-undo)$/u,
+  /^issues\/(?:statuses|status-add|status-update|status-remove|status-order)$/u,
   /^(?:connectors|collectors|rules|memory|skills)\/[a-z][a-z-]{0,39}$/u,
 ]);
 
@@ -24,13 +26,13 @@ const FILES = Object.freeze({
   '/settings.css': 'text/css; charset=utf-8',
 });
 
-const page = (section) => `<!doctype html>
-<html lang="zh-CN">
+const page = (section, locale) => `<!doctype html>
+<html lang="${locale}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light">
-<title>嘟嘟</title>
+<title>${locale === 'en' ? 'Dudu' : '嘟嘟'}</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="settings.css">
 <style>
@@ -43,7 +45,7 @@ body { -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent;
 </head>
 <body>
 <div id="root"></div>
-<script>window.__DUDU_PHONE__ = ${JSON.stringify({ section })}</script>
+<script>window.__DUDU_PHONE__ = ${JSON.stringify({ section, locale })}</script>
 <script src="settings.js"></script>
 </body>
 </html>
@@ -59,10 +61,10 @@ export function createDuduPages({ assets, call }) {
       if (!allowedAction(action)) return { status: 404, body: { error: 'Not found' } };
       return call(action, body);
     },
-    document({ target }) {
+    document({ target, locale = nativeLocale() }) {
       if (!DUDU_PAGE_SECTIONS.includes(target)) throw new Error('Unknown page.');
       return {
-        html: page(target),
+        html: page(target, resolveNativeLocale(locale)),
         async resource(path) {
           const mimeType = FILES[String(path).split('?')[0]];
           if (!mimeType) throw new Error('Not a file of this page.');

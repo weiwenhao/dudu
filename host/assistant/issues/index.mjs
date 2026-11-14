@@ -1,6 +1,6 @@
 // The issues store (issues.db): the one unit of work in 嘟嘟, see docs/assistant.md 3.2.
 //
-//   const issues = createIssues({ file, now = Date.now, sessionState = () => null, sessionSince, sessionBases, sessionHandledAt, deepSleepMs = 30 min, deepSleepOn = () => true, actor = 'owner' });
+//   const issues = createIssues({ file, now = Date.now, sessionState = () => null, sessionSince, sessionBases, sessionHandledAt, sessionTurnActive, deepSleepMs = 30 min, deepSleepOn = () => true, actor = 'owner' });
 //   sessionBases(key)   optional: every `state@since` the session reads as from the places it is read from; a boss's word on an agent holds while ANY of them is the one it was given on
 //
 // createIssues throws SchemaTooNew (code 'SCHEMA_TOO_NEW') when the file was written by a newer app; the file is left
@@ -22,8 +22,6 @@
 //   add(fields, meta) / update(id, patch, meta) / assign(id, { agent, session, ...meta }) / snooze(id, until, meta)
 //   complete(id, { outcome, ...meta }) / cancel(id, { reason, ...meta }) / log(id, { kind, text, data, ...meta })
 //                           meta = { actor, reason, groupId }; every successful change returns { issue, eventId }
-//   undo(target)            target: nothing (the latest change), an event id, { eventId } or { groupId } (plus actor, reason);
-//                           -> { issue, issues, skipped: [{ eventId, issueId, reason }], kept: [{ eventId, issueId, fields }] }
 //   search(q, { limit, tab }), counts(), events({ issueId, limit, cursor }), export(), close()
 //   inbox                   the records the connectors collected (../inbox/store.mjs): they live in this file and are linked to the issues they became
 //
@@ -339,7 +337,6 @@ const isFinished = (status) => status === 'done' || status === 'canceled';
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const json = (value) => (value == null ? null : JSON.stringify(value));
 const parseJson = (value) => (value == null ? null : JSON.parse(value));
-const pick = (object, keys) => Object.fromEntries(keys.map((key) => [key, object[key]]));
 const lastParagraph = (value) => (value ?? '').replace(/\r\n?/g, '\n').trim().split(/\n[ \t]*\n/).at(-1).trim();
 
 function diff(current, next) {
@@ -364,7 +361,7 @@ function logEntries(before, after, next, reason, finished = isFinished) {
   return entries;
 }
 
-export function createIssues({ file, now = Date.now, sessionState = () => null, sessionSince = () => null, sessionBases = null, sessionHandledAt = () => null, deepSleepMs = DEEP_SLEEP_MS, deepSleepOn = () => true, actor: defaultActor = OWNER }) {
+export function createIssues({ file, now = Date.now, sessionState = () => null, sessionSince = () => null, sessionBases = null, sessionHandledAt = () => null, sessionTurnActive = () => null, deepSleepMs = DEEP_SLEEP_MS, deepSleepOn = () => true, actor: defaultActor = OWNER }) {
   if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(file);
   try {
@@ -446,9 +443,16 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
       return null;
     }
   }
+  function turnActiveOf(session) {
+    try {
+      return (session && sessionTurnActive(session)) ?? null;
+    } catch {
+      return null;
+    }
+  }
   const deepSleepOf = (row) => Boolean(deepSleepOn() && row.agent && row.session && inDeepSleep({
     key: row.session, state: stateOf(row.session), agentMark: agentMarkOf(row.session, row.agent_state, row.agent_state_basis),
-    handledAt: handledAtOf(row.session), now: now(), afterMs: deepSleepMs,
+    handledAt: handledAtOf(row.session), turnActive: turnActiveOf(row.session), now: now(), afterMs: deepSleepMs,
   }));
 
   // What the session was doing when the boss spoke: its state and since when. The boss's word holds while that is still true.
@@ -466,7 +470,7 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
   // The boss's word (`override`) holds until the session's state changes, and never over live work. The mark is the state as an avatar's corner
   // shows it: a finished run ("done") is the state "blocked", told from a question or a failure; the boss's word is never a finished run.
   const agentMarkOf = (session, override, basis) => {
-    // A session that waits for the boss and that nobody has handled for a day is Idle by itself (owner, 2026-11-07: "超过 24 小时没有处理的会话也自动进入到空闲中");
+    // A session that waits for the boss and that nobody has handled for 72 hours is Idle by itself (owner, 2026-11-07: "超过 24 小时没有处理的会话也自动进入到空闲中"; 2026-11-14: 72 hours);
     // before that, no time makes an agent idle: that is a session that really is idle, or the boss's word. A stopped or interrupted turn needs the owner.
     const fact = agedMark(agentMarkForSession(stateOf(session)), handledAtOf(session), now());
     if (!override || fact === 'working') return fact;
@@ -572,10 +576,10 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
     };
   }
 
-  // --- writing: every change is one transaction that also leaves an event (for undo) and, for some kinds, a log entry
-  function addEvent(ctx, action, issueId, before, after, undoes = null) {
-    const { lastInsertRowid } = stmt('INSERT INTO issue_events (at, actor, action, issue_id, before, after, reason, group_id, undoes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(ctx.at, ctx.actor, action, issueId, json(before), json(after), ctx.reason, ctx.groupId, undoes);
+  // --- writing: every change is one transaction that also leaves an event and, for some kinds, a log entry (the `undoes` and `undone_by` columns are what the undo of before 2026-11-12 wrote: nothing writes them now)
+  function addEvent(ctx, action, issueId, before, after) {
+    const { lastInsertRowid } = stmt('INSERT INTO issue_events (at, actor, action, issue_id, before, after, reason, group_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(ctx.at, ctx.actor, action, issueId, json(before), json(after), ctx.reason, ctx.groupId);
     committedChanges.push({ id: Number(lastInsertRowid), issueId, action, before, after, actor: ctx.actor, at: ctx.at });
     return Number(lastInsertRowid);
   }
@@ -758,67 +762,6 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
       stmt('UPDATE issues SET updated_at = ? WHERE id = ?').run(ctx.at, id);
       const eventId = addEvent(ctx, 'log', id, null, { logId });
       return success({ issue: toIssue(loadRow(id)), entry: { id: logId, at: ctx.at, actor: ctx.actor, ...entry }, eventId });
-    });
-  }
-
-  // --- undo: put `before` back for the fields nobody touched since; later edits are never overwritten
-  function eventsToUndo(target) {
-    const { eventId, groupId } = target !== null && typeof target === 'object' ? target : { eventId: target };
-    const inGroup = (group) => stmt('SELECT * FROM issue_events WHERE group_id = ? ORDER BY id DESC').all(group);
-    if (groupId) return inGroup(check('groupId', text(100, true), groupId));
-    const seed = eventId == null
-      ? stmt("SELECT * FROM issue_events WHERE before IS NOT NULL AND undone_by IS NULL AND action != 'undo' ORDER BY id DESC LIMIT 1").get()
-      : stmt('SELECT * FROM issue_events WHERE id = ?').get(check('eventId', integer(1, Number.MAX_SAFE_INTEGER), eventId));
-    if (!seed && eventId != null) throw new Missing(`There is no event ${eventId}.`);
-    if (!seed) return [];
-    return seed.group_id ? inGroup(seed.group_id) : [seed];
-  }
-
-  function refusalFor(event) {
-    if (event.undone_by) return 'it was already undone';
-    if (event.action === 'undo') return 'an undo cannot be undone; make the change again';
-    if (event.before === null) return event.action === 'add' ? 'an added issue stays; cancel it instead' : 'a log entry stays';
-    return null;
-  }
-
-  function restore(event, ctx) {
-    const row = stmt('SELECT * FROM issues WHERE id = ?').get(event.issue_id);
-    if (!row) return { skipped: 'the issue is gone' };
-    const current = fieldsOf(row);
-    const before = JSON.parse(event.before);
-    const after = JSON.parse(event.after);
-    const untouched = Object.keys(before).filter((key) => same(current[key], after[key]) && !(current.agent && ['agent', 'project', 'session'].includes(key)));
-    if (!untouched.length) return { skipped: current.agent && Object.keys(before).some((key) => ['agent', 'project', 'session'].includes(key)) ? 'the assignment is locked' : 'it was changed again since' };
-    const restored = pick(before, untouched);
-    if (restored.status && workflow.get(restored.status)?.archived) restored.status = workflow.forType(workflow.type(restored.status));
-    const next = { ...current, ...restored };
-    updateRow(row.id, restored, ctx.at);
-    if (['title', 'brief', 'outcome'].some((key) => key in restored)) reindex(row.id, next);
-    if ('session' in restored) trackSessions(row.id, next, ctx.at);
-    const undoId = addEvent(ctx, 'undo', row.id, pick(current, untouched), restored, event.id);
-    stmt('UPDATE issue_events SET undone_by = ? WHERE id = ?').run(undoId, event.id);
-    for (const entry of logEntries(current, restored, next, ctx.reason, isFinished)) addLog(row.id, ctx, entry);
-    return { issue: toIssue(loadRow(row.id)), kept: Object.keys(before).filter((key) => !untouched.includes(key)) };
-  }
-
-  function undo(target) {
-    const ctx = context(target !== null && typeof target === 'object' ? target : {});
-    return write(() => {
-      const events = eventsToUndo(target);
-      if (!events.length) return noOp('There is nothing to undo.');
-      const issues = [];
-      const skipped = [];
-      const kept = [];
-      for (const event of events) {
-        const refusal = refusalFor(event);
-        if (refusal && events.length === 1) throw new Invalid(`Event ${event.id} cannot be undone: ${refusal}.`, 'Make the change you want as a new change.');
-        const outcome = refusal ? { skipped: refusal } : restore(event, ctx);
-        if (!outcome.issue) skipped.push({ eventId: event.id, issueId: event.issue_id, reason: outcome.skipped });
-        else issues.push(outcome.issue);
-        if (outcome.kept?.length) kept.push({ eventId: event.id, issueId: event.issue_id, fields: outcome.kept });
-      }
-      if (!issues.length) return noOp('Nothing could be undone.', { skipped });
-      return success({ issue: issues.at(-1), issues, skipped, kept });
     });
   }
 
@@ -1197,7 +1140,6 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
     cancel: guarded(cancel),
     search: guarded(search),
     counts,
-    undo: guarded(undo),
     forget: guarded(forget),
     events: guarded(events),
     export: exportAll,

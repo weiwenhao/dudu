@@ -76,25 +76,25 @@ extension ConversationPerformance {
     var metrics: [Metric] {
         var values: [Metric] = []
         if let turns = stats["turns"], let steps = stats["steps"] {
-            values.append(Metric(label: "会话统计", value: "\(Int(turns)) 轮 \(Int(steps)) 步"))
+            values.append(Metric(label: L10n.text("会话统计"), value: L10n.text("{0} 轮 {1} 步", "\(Int(turns))", "\(Int(steps))")))
         }
-        for (key, label) in [("llmMs", "模型用时"), ("toolMs", "工具调用用时")] {
+        for (key, label) in [("llmMs", L10n.text("模型用时")), ("toolMs", L10n.text("工具调用用时"))] {
             if let value = stats[key] { values.append(Metric(label: label, value: TranscriptTitles.duration(milliseconds: value))) }
         }
         if let count = stats["ttftSteps"], count > 0, let time = stats["ttftMs"] {
-            values.append(Metric(label: "首 token 平均（TTFT）", value: String(format: "%.2f 秒", time / count / 1000)))
+            values.append(Metric(label: L10n.text("首 token 平均（TTFT）"), value: String(format: L10n.text("%.2f 秒"), time / count / 1000)))
         }
         if let time = stats["decodeMs"], time > 0, let tokens = stats["decodeTokens"] {
-            values.append(Metric(label: "输出速度（TPS）", value: String(format: "%.1f tok/s", tokens * 1000 / time)))
+            values.append(Metric(label: L10n.text("输出速度（TPS）"), value: String(format: "%.1f tok/s", tokens * 1000 / time)))
         }
         return values
     }
 
     var tokenMetrics: [Metric] {
         let labels = [
-            ("uncachedInputTokens", "未缓存输入"), ("cacheReadTokens", "缓存读取"),
-            ("cacheWriteTokens", "缓存写入"), ("outputTokens", "输出"), ("reasoningTokens", "推理"),
-            ("totalTokens", "Token 用量")
+            ("uncachedInputTokens", L10n.text("未缓存输入")), ("cacheReadTokens", L10n.text("缓存读取")),
+            ("cacheWriteTokens", L10n.text("缓存写入")), ("outputTokens", L10n.text("输出")), ("reasoningTokens", L10n.text("推理")),
+            ("totalTokens", L10n.text("Token 用量"))
         ]
         var values = labels.compactMap { key, label -> Metric? in
             guard let value = usage[key] else { return nil }
@@ -102,7 +102,7 @@ extension ConversationPerformance {
         }
         let prompt = (usage["uncachedInputTokens"] ?? 0) + (usage["cacheReadTokens"] ?? 0) + (usage["cacheWriteTokens"] ?? 0)
         if prompt > 0, let read = usage["cacheReadTokens"] {
-            values.insert(Metric(label: "缓存命中", value: String(format: "%.1f%%", read / prompt * 100)), at: 0)
+            values.insert(Metric(label: L10n.text("缓存命中"), value: String(format: "%.1f%%", read / prompt * 100)), at: 0)
         }
         return values
     }

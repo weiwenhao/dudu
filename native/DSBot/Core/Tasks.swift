@@ -19,11 +19,11 @@ struct TaskSchedule: Codable, Equatable, Sendable {
     /// The seven kinds in the desktop's order, and its words for them.
     static let kinds = ["daily", "workdays", "weekly", "monthly", "interval", "once", "cron"]
     private static let kindNames = [
-        "daily": "每天", "workdays": "周一至周五", "weekly": "每周", "monthly": "每月", "interval": "间隔", "once": "仅一次", "cron": "Cron",
+        "daily": L10n.text("每天"), "workdays": L10n.text("周一至周五"), "weekly": L10n.text("每周"), "monthly": L10n.text("每月"), "interval": L10n.text("间隔"), "once": L10n.text("仅一次"), "cron": "Cron",
     ]
     static func kindName(_ kind: String) -> String { kindNames[kind] ?? kind }
     /// Sunday is 0, as in the plugin; the desktop's buttons start on Monday.
-    private static let weekdayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+    private static let weekdayNames = [L10n.text("周日"), L10n.text("周一"), L10n.text("周二"), L10n.text("周三"), L10n.text("周四"), L10n.text("周五"), L10n.text("周六")]
     static let weekdayOrder = [1, 2, 3, 4, 5, 6, 0]
     static func weekdayName(_ day: Int) -> String { weekdayNames[((day % 7) + 7) % 7] }
 
@@ -32,7 +32,7 @@ struct TaskSchedule: Codable, Equatable, Sendable {
         let base = Self.kindNames[kind]
         if kind == "interval" {
             let amount = minutes.map { $0.rounded() == $0 ? String(Int($0)) : String($0) } ?? ""
-            return "\(base ?? "") \(amount)分"
+            return L10n.text("{0} {1}分", "\(base ?? "")", "\(amount)")
         }
         if kind == "cron" { return expression ?? "" }
         var parts: [String] = []
@@ -48,28 +48,21 @@ struct TaskSchedule: Codable, Equatable, Sendable {
 
     /// Chinese list of names: 周一和周三, 周一、周三和周五 (what `Intl.ListFormat` gives the desktop).
     static func list(_ items: [String]) -> String {
-        switch items.count {
-        case 0: return ""
-        case 1: return items[0]
-        default: return items.dropLast().joined(separator: "、") + "和" + items[items.count - 1]
-        }
+        L10n.list(items)
     }
 
     /// The line under a task's name: the rule, then 下次运行 and its time in the task's own time zone (only for a task that has a next run).
     func line(nextRunAt: Double?) -> String {
         var parts: [String] = []
         if !label.isEmpty { parts.append(label) }
-        if let nextRunAt { parts.append("下次运行 \(Self.stamp(nextRunAt, timezone: timezone))") }
+        if let nextRunAt { parts.append(L10n.text("下次运行 {0}", "\(Self.stamp(nextRunAt, timezone: timezone))")) }
         return parts.joined(separator: " · ")
     }
 
     /// `11月10日 18:00`, the desktop's `stamp` in Chinese.
     static func stamp(_ milliseconds: Double, timezone: String?) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = timezone.flatMap(TimeZone.init(identifier:)) ?? .current
-        formatter.dateFormat = "M月d日 HH:mm"
-        return formatter.string(from: Date(timeIntervalSince1970: milliseconds / 1_000))
+        L10n.date(Date(timeIntervalSince1970: milliseconds / 1_000), template: "MMMdHHmm",
+                  timezone: timezone.flatMap(TimeZone.init(identifier:)) ?? .current)
     }
 
     /// `Asia/Shanghai · UTC+8`, as the desktop's time zone list writes them.
@@ -156,7 +149,7 @@ enum TaskAgent: Equatable, Sendable {
     /// The name the app writes for it: 嘟嘟, and the agents' own.
     var name: String {
         switch self {
-        case .dudu: return "嘟嘟"
+        case .dudu: return L10n.text("嘟嘟")
         case .agent(let agent): return agent.name
         }
     }
@@ -185,7 +178,7 @@ struct TaskTarget: Codable, Equatable, Sendable {
     var sessionId: String?
 
     static let modes = ["reuse", "new", "existing"]
-    private static let names = ["reuse": "新建对话并复用", "new": "每次新建对话", "existing": "已有会话"]
+    private static let names = ["reuse": L10n.text("新建对话并复用"), "new": L10n.text("每次新建对话"), "existing": L10n.text("已有会话")]
     static func name(_ mode: String) -> String { names[mode] ?? mode }
 
     /// The choices of the 执行位置 list of whoever does the task. 嘟嘟 makes a conversation of its own for a run and has none that is named, so it has two, the one it starts from first (as the approved drawing
@@ -222,9 +215,9 @@ struct ScheduledTask: Codable, Identifiable, Equatable, Sendable {
     var statusText: String { Self.statusName(status) }
     static func statusName(_ status: String) -> String {
         switch status {
-        case "active": return "已开启"
-        case "paused": return "已暂停"
-        default: return "已结束"
+        case "active": return L10n.text("已开启")
+        case "paused": return L10n.text("已暂停")
+        default: return L10n.text("已结束")
         }
     }
 
@@ -246,10 +239,10 @@ struct TaskRun: Codable, Identifiable, Equatable, Sendable {
 
     var statusText: String {
         switch status {
-        case "delivered": return "已投递"
-        case "delivering": return "正在投递"
-        case "failed": return "投递失败"
-        default: return "待确认"
+        case "delivered": return L10n.text("已投递")
+        case "delivering": return L10n.text("正在投递")
+        case "failed": return L10n.text("投递失败")
+        default: return L10n.text("待确认")
         }
     }
 }
@@ -372,10 +365,10 @@ enum TaskTab: String, CaseIterable, Identifiable, Sendable {
     var status: String? { self == .all ? nil : rawValue }
     var title: String {
         switch self {
-        case .all: return "全部"
-        case .active: return "已开启"
-        case .paused: return "已暂停"
-        case .ended: return "已结束"
+        case .all: return L10n.text("全部")
+        case .active: return L10n.text("已开启")
+        case .paused: return L10n.text("已暂停")
+        case .ended: return L10n.text("已结束")
         }
     }
 }
@@ -412,7 +405,7 @@ final class TasksModel: ObservableObject {
     @Published private(set) var busy: Set<String> = []
     /// The root's "+" asks for the editor of a new task; the page presents it.
     @Published var isMaking = false
-    /// The result of the last action, for the toast the page shows (with an undo, where there is one).
+    /// The result of the last action, for the toast the page shows.
     var report: ((DSBotToastMessage) -> Void)?
 
     private let json = DSBotJSON()
@@ -443,13 +436,17 @@ final class TasksModel: ObservableObject {
         refreshing = true
         defer { refreshing = false }
         if tasks.isEmpty, state != .loaded { state = .loading }
+        let computer = store.activeComputer?.id
+        let connection = store.connectionRevision
         do {
             let value = try await store.request("tasks.list", [:])
             let answer = try await json.decode(TasksAnswer.self, from: value)
+            guard !Task.isCancelled, computer == store.activeComputer?.id, connection == store.connectionRevision else { return }
             guard answer.outcome == "success", let fresh = answer.tasks else { throw DSBotFailure.protocolError }
             if tasks != fresh { tasks = fresh }
             state = .loaded
         } catch {
+            guard !Task.isCancelled, computer == store.activeComputer?.id, connection == store.connectionRevision else { return }
             DSBotLog.networkFailure("tasks.list.fail", error: error)
             if tasks.isEmpty { state = .failed }
         }
@@ -509,33 +506,29 @@ final class TasksModel: ObservableObject {
         }
     }
 
-    /// Pause, resume, run now, copy or delete one task. The toast says what was done; a pause and a resume have an undo.
+    /// Pause, resume, run now, copy or delete one task. The toast says what was done.
     @discardableResult
     func act(_ action: TaskAction, _ task: ScheduledTask, using store: DSBotStore) async -> Bool {
         guard !busy.contains(task.id) else { return false }
         busy.insert(task.id)
         defer { busy.remove(task.id) }
         let written = await write("tasks.\(action.rawValue)", ["id": .string(task.id), "revision": .number(Double(task.revision))], using: store)
-        guard case .ok(let made) = written else {
+        guard case .ok = written else {
             if action == .delete, case .failed(let code) = written, code == "not_found" { tasks.removeAll { $0.id == task.id } }
-            report?(DSBotToastMessage(text: "更改没能保存", kind: .error))
+            report?(DSBotToastMessage(text: L10n.text("更改没能保存"), kind: .error))
             await refresh(using: store)
             return false
         }
         switch action {
         case .pause, .resume:
-            let back: TaskAction = action == .pause ? .resume : .pause
-            report?(DSBotToastMessage(text: action == .pause ? "已暂停任务" : "已恢复任务", kind: .success, action: DSBotToastAction(title: "撤销") { [weak self] in
-                guard let self, let made else { return }
-                Task { @MainActor in await self.act(back, made, using: store) }
-            }))
+            report?(DSBotToastMessage(text: action == .pause ? L10n.text("已暂停任务") : L10n.text("已恢复任务"), kind: .success))
         case .run:
-            report?(DSBotToastMessage(text: "正在投递", kind: .success))
+            report?(DSBotToastMessage(text: L10n.text("正在投递"), kind: .success))
         case .duplicate:
-            report?(DSBotToastMessage(text: "已复制任务", kind: .success))
+            report?(DSBotToastMessage(text: L10n.text("已复制任务"), kind: .success))
         case .delete:
             tasks.removeAll { $0.id == task.id }
-            report?(DSBotToastMessage(text: "已删除任务", kind: .success))
+            report?(DSBotToastMessage(text: L10n.text("已删除任务"), kind: .success))
         }
         await refresh(using: store)
         return true

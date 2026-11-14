@@ -140,7 +140,8 @@ export function CollectorWidget({ request, openIssue }) {
   }, [request]);
   const ok = (result) => ['success', 'no_op'].includes(result?.outcome);
   const actions = useMemo(() => {
-    // One mark (ignore, restore) on one or several records, with one Undo for all of them.
+    // One mark (ignore, restore, handled, delete) on one or several records, and a line at the bottom that says so. No Undo (owner, 2026-11-12): Restore is the way back for a row put aside or
+    // handled, and a delete is for a row that is wrong (the message is still where it came from).
     const saveMark = async (action, records) => {
       const change = beginMark(action, records);
       if (!change) return null;
@@ -152,9 +153,8 @@ export function CollectorWidget({ request, openIssue }) {
       if (!saved) { toast({ message: T.toast.failed }); return null; }
       return change.records;
     };
-    const mark = async (action, back, records, message) => {
-      const saved = await saveMark(action, records);
-      if (saved) toast({ message, action: { label: T.toast.undo, run: () => saveMark(back, saved) } });
+    const mark = async (action, records, message) => {
+      if (await saveMark(action, records)) toast({ message });
     };
     // One or several records shared to the session of an issue (a message to its agent). Sharing to the issue itself is gone from this widget (owner, 2026-11-10).
     const shareTo = async (records, issue) => {
@@ -166,16 +166,16 @@ export function CollectorWidget({ request, openIssue }) {
     return {
       openSource: (record) => window.open(record.url, '_blank', 'noopener,noreferrer'),
       openIssue: (record) => { if (record.issue) openIssue?.(record.issue.id); },
-      ignore: (record) => mark('inbox/ignore', 'inbox/restore', [record], T.collector.toast.ignored),
-      // Restore takes the mark off; its Undo puts the same mark back (a row handled on its own, or put aside).
-      restore: (record) => mark('inbox/restore', tab === 'done' ? 'inbox/done' : 'inbox/ignore', [record], T.collector.toast.restored),
-      ignoreMany: (records) => mark('inbox/ignore', 'inbox/restore', records, T.collector.toast.ignored),
-      restoreMany: (records) => mark('inbox/restore', tab === 'done' ? 'inbox/done' : 'inbox/ignore', records, T.collector.toast.restored),
-      // Handled on their own (no issue needed), or wrong: Undo is Restore, which brings a deleted row back to the tab it was in.
-      done: (record) => mark('inbox/done', 'inbox/restore', [record], T.collector.toast.done),
-      doneMany: (records) => mark('inbox/done', 'inbox/restore', records, T.collector.toast.done),
-      remove: (record) => mark('inbox/delete', 'inbox/restore', [record], T.collector.toast.deleted),
-      removeMany: (records) => mark('inbox/delete', 'inbox/restore', records, T.collector.toast.deleted),
+      ignore: (record) => mark('inbox/ignore', [record], T.collector.toast.ignored),
+      // Restore takes the mark off.
+      restore: (record) => mark('inbox/restore', [record], T.collector.toast.restored),
+      ignoreMany: (records) => mark('inbox/ignore', records, T.collector.toast.ignored),
+      restoreMany: (records) => mark('inbox/restore', records, T.collector.toast.restored),
+      // Handled on their own (no issue needed), or wrong.
+      done: (record) => mark('inbox/done', [record], T.collector.toast.done),
+      doneMany: (records) => mark('inbox/done', records, T.collector.toast.done),
+      remove: (record) => mark('inbox/delete', [record], T.collector.toast.deleted),
+      removeMany: (records) => mark('inbox/delete', records, T.collector.toast.deleted),
       shareSession: (record, issue) => shareTo([record], issue),
       shareSessionMany: (records, issue) => shareTo(records, issue),
       // Fill in context (completion.js): `complete` has the collector's session read the conversation around the record; `follow` waits for one that is running already.
@@ -187,7 +187,7 @@ export function CollectorWidget({ request, openIssue }) {
         if (found) setCreating({ record, draft: found }); else toast({ message: T.toast.failed });
       },
     };
-  }, [beginMark, call, followCompletion, openIssue, refresh, startCompletion, tab, toast]);
+  }, [beginMark, call, followCompletion, openIssue, refresh, startCompletion, toast]);
 
   return (
     <section ref={root} aria-label={T.widgets.titles.collector} className="@container relative flex h-full min-h-0 flex-col"

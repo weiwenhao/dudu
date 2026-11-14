@@ -117,15 +117,18 @@ type Tab = { label: string; selected: boolean };
 function createRouteHarness({
   page, services = {}, views = [], tabs = [] as Tab[], content = false, rightbar = false,
   groups = [] as unknown[], toolbarButtons = [] as unknown[],
+  settingsSections = () => [] as any[], settingsDialog = null as any,
+  overflow = false,
 } = {}) {
   let now = 0;
   const listeners: Record<string, Array<(event: { detail?: unknown }) => void>> = {};
   let onMutation: ((records: unknown[]) => void) | undefined;
   let readyCount = 0;
+  const categories: Array<Array<{ id: string; label: string }>> = [];
   const timers: Array<() => void> = [];
   const state = {
     content, rightbar,
-    tabs, focused: null as unknown, appended: [] as any[],
+    tabs, focused: null as unknown, appended: [] as any[], moreExpanded: false, menuOpens: 0,
   };
   const rightbarNode = {
     contains: () => false,
@@ -151,6 +154,14 @@ function createRouteHarness({
     getAttribute: (name: string) => name === 'aria-selected' ? String(tab.selected) : null,
     click() { for (const other of state.tabs) other.selected = other === tab; },
   }));
+  const more = {
+    disabled: false,
+    getAttribute: (name: string) => name === 'aria-expanded' ? String(state.moreExpanded) : null,
+    click() {
+      state.moreExpanded = !state.moreExpanded;
+      if (state.moreExpanded) state.menuOpens += 1;
+    },
+  };
   const ui = {
     ctx: {
       get: (name: string) => {
@@ -159,7 +170,8 @@ function createRouteHarness({
           ? { active: () => ({ id: 'active-tab' }), ...value }
           : value ?? null;
       },
-      slots: { entries: (name: string) => name === 'conversation.view' ? views : [] },
+      slots: { entries: (name: string) => name === 'conversation.view' ? views
+        : name === 'settings.section' ? settingsSections() : [] },
     },
   };
   const document = {
@@ -171,6 +183,10 @@ function createRouteHarness({
     get activeElement() { return state.focused; },
     createElement: element,
     querySelector(selector: string) {
+      if (selector === '[data-shortcut-modal="settings"]') return settingsDialog;
+      if (overflow && selector === '[data-slot="conversation.header"] [data-conversation-tabs]') {
+        return { parentElement: { querySelector: () => more } };
+      }
       if (selector === '[data-conversation-content]') return state.content ? {} : null;
       if (selector === '[data-dsbot-rightbar]') return state.rightbar ? rightbarNode : null;
       if (selector.includes('> header [class*="_toolbar"]')) {
@@ -179,7 +195,17 @@ function createRouteHarness({
       return null;
     },
     querySelectorAll(selector: string) {
-      if (selector.includes('role="tab"')) return tabNodes();
+      if (selector.includes('role="tab"')) return overflow ? [] : tabNodes();
+      if (selector === '[role="menuitem"]' && state.moreExpanded) {
+        return state.tabs.map((tab) => ({
+          innerText: tab.label,
+          getAttribute: (name: string) => name === 'aria-current' && tab.selected ? 'page' : null,
+          click() {
+            for (const other of state.tabs) other.selected = other === tab;
+            state.moreExpanded = false;
+          },
+        }));
+      }
       if (selector.includes('[role="group"]')) return groups;
       return [];
     },
@@ -194,7 +220,10 @@ function createRouteHarness({
   const window = {
     __DSBOT_PAGE__: page,
     __DSBOT_APP_UI__: ui,
-    __DSBOT_NATIVE__: { ready() { readyCount += 1; }, fail() {} },
+    __DSBOT_NATIVE__: {
+      ready() { readyCount += 1; }, fail() {},
+      settingsCategories(value: Array<{ id: string; label: string }>) { categories.push(value); },
+    },
     addEventListener(name: string, listener: (event: { detail?: unknown }) => void) {
       (listeners[name] ??= []).push(listener);
     },
@@ -211,6 +240,7 @@ function createRouteHarness({
   const settle = async () => { for (let index = 0; index < 12; index += 1) await Promise.resolve(); };
   return {
     state,
+    categories,
     get readyCount() { return readyCount; },
     get dataset() { return document.documentElement.dataset; },
     get rootAttributes() { return rootAttributes; },
@@ -277,4 +307,80 @@ test('a conversation view from another plugin is opened in its session and picke
   assert.equal(harness.readyCount, 0, 'and it has not stopped changing');
   await harness.step(600, { mutate: false });
   assert.equal(harness.readyCount, 1);
+});
+
+test('specialized conversation routes use registered IDs and localized labels, including older catalogs', async () => {
+  for (const [kind, id, label] of [
+    ['trace', 'trajectory', 'Trajectoire'], ['context', 'dsh-context', 'コンテキスト'],
+    ['team', 'fleet', 'Équipe'], ['tools', 'tools', 'Werkzeuge'],
+  ]) {
+    for (const named of [true, false]) {
+      const tabs = [{ label: 'Chat', selected: true }, { label, selected: false }];
+      const harness = createRouteHarness({
+        page: { kind, sessionId: 'session-1', ...(named && kind !== 'tools' ? { target: id } : {}) },
+        services: { uiWorkspace: { async openSession() {} } },
+        views: [{ options: { id, label: () => label } }], tabs, content: true,
+      });
+      await harness.settle();
+      assert.equal(tabs[1].selected, true, `${kind}, named=${named}`);
+      await harness.step(600, { mutate: false });
+      assert.equal(harness.readyCount, 1, `${kind}, named=${named}`);
+    }
+  }
+});
+
+test('settings select the registry ID despite duplicate labels and clear a removed registry', async () => {
+  let entries = ['account', 'models'].map((id) => ({ options: { id, label: () => 'Settings' } }));
+  let selected = 'account';
+  let clicked = false;
+  const buttons = ['account', 'models'].map((id) => ({
+    innerText: 'Settings', getAttribute: (name: string) => name === 'aria-current' && selected === id ? 'true' : null,
+    click() { clicked = true; selected = id; },
+  }));
+  const dialog = {
+    querySelector(selector: string) { return selector === '[data-dsbot-settings-body]' ? {} : null; },
+    querySelectorAll: () => buttons,
+  };
+  const harness = createRouteHarness({
+    page: { kind: 'settings', target: 'models' },
+    services: { slots: { entries: () => [{ store: { create: () => ({
+      actions: { openSection(id: string) { selected = id; } },
+    }) } }] } },
+    settingsSections: () => entries, settingsDialog: dialog,
+  });
+  await harness.settle();
+  assert.equal(selected, 'models');
+  assert.equal(clicked, false, 'a matching label is not a section identity');
+  assert.equal(harness.readyCount, 1);
+  assert.equal(harness.categories.at(-1)?.length, 2);
+
+  entries = [];
+  harness.fire('dsbot:settings-select', null);
+  await harness.step(0);
+  assert.equal(harness.categories.at(-1)?.length, 0, 'unloaded sections must disappear on the phone');
+
+  const hiddenOnly = createRouteHarness({
+    page: { kind: 'settings' }, settingsDialog: dialog,
+    settingsSections: () => [{ options: { id: 'general', label: () => 'General' } }],
+  });
+  await hiddenOnly.settle();
+  assert.equal(hiddenOnly.categories.at(-1)?.length, 0);
+  assert.equal(hiddenOnly.readyCount, 1, 'a loaded registry with no phone sections is not still loading');
+});
+
+test('a registered view folded into More is selected once and waits for its content to settle', async () => {
+  const tabs = [{ label: 'Chat', selected: true }, { label: 'Équipe', selected: false }];
+  const harness = createRouteHarness({
+    page: { kind: 'team', target: 'fleet', sessionId: 'session-1' },
+    services: { uiWorkspace: { async openSession() {} } },
+    views: [{ options: { id: 'fleet', label: () => 'Équipe' } }],
+    tabs, content: true, overflow: true,
+  });
+  await harness.settle();
+  await harness.step(600, { mutate: false });
+  assert.equal(tabs[1].selected, true);
+  assert.equal(harness.readyCount, 0, 'clicking the menu does not make the previous view ready');
+  await harness.step(600, { mutate: false });
+  assert.equal(harness.readyCount, 1);
+  assert.equal(harness.state.menuOpens, 1, 'do not reopen More after selecting the view');
 });

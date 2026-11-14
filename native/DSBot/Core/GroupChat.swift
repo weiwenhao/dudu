@@ -27,6 +27,12 @@ struct GroupTask: Codable, Equatable, Hashable, Sendable {
     var title: String
 }
 
+/// The current visible text of an answer, carried on its @ line until the final reply is committed.
+struct GroupLiveReply: Codable, Equatable, Sendable {
+    var text: String
+    var at: Double
+}
+
 /// One line of the group chat as the plugin kept it.
 struct GroupLine: Codable, Equatable, Sendable {
     var kind: GroupLineKind
@@ -43,8 +49,9 @@ struct GroupLine: Codable, Equatable, Sendable {
     var task: GroupTask?
     /// Only a `task` line: false when the run failed, and then `text` is the reason (the plugin's own words, which may be English).
     var ok: Bool?
+    var liveReply: GroupLiveReply? = nil
 
-    private enum CodingKeys: String, CodingKey { case kind, issue, text, at, to, answer, files, task, ok }
+    private enum CodingKeys: String, CodingKey { case kind, issue, text, at, to, answer, files, task, ok, liveReply }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -61,19 +68,20 @@ struct GroupLine: Codable, Equatable, Sendable {
         files = try container.decodeIfPresent(Int.self, forKey: .files)
         task = try container.decodeIfPresent(GroupTask.self, forKey: .task)
         ok = try container.decodeIfPresent(Bool.self, forKey: .ok)
+        liveReply = try container.decodeIfPresent(GroupLiveReply.self, forKey: .liveReply)
     }
 
     /// Whether the owner can answer the line by writing to its issue. A `task` line is 嘟嘟's own words: there is no issue to write to.
     var isAnswerable: Bool { kind != .end && kind != .task && issue.id != nil }
 
     /// The word put in front of the reason of a run that failed (new, 2026-11-11, awaiting the owner's review; English: "Run failed").
-    static let runFailed = "运行失败"
+    static let runFailed = L10n.text("运行失败")
 
     /// What a `task` line says under the task's name: the result, or for a run that failed the word 运行失败, a colon and the reason.
     var taskText: String {
         let said = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard ok == false else { return said }
-        return said.isEmpty ? Self.runFailed : "\(Self.runFailed)：\(said)"
+        return said.isEmpty ? Self.runFailed : L10n.text("{0}：{1}", "\(Self.runFailed)", "\(said)")
     }
 }
 
@@ -154,7 +162,7 @@ enum GroupChat {
         return lines.joined(separator: " ")
     }
 
-    /// The lines whose answer is still on its way: an `at` line that no `reply` or `end` names, and that is not older than `waitLimit`.
+    /// The lines whose answer is still on its way: an `at` line that no `reply` or `end` names, and that is not older than `waitLimit` or carries live text.
     static func waiting(in rows: [TranscriptRow], now: Double) -> [CommandRow] {
         var answered = Set<String>()
         for case let .command(row) in rows {
@@ -163,7 +171,7 @@ enum GroupChat {
         return rows.compactMap { row -> CommandRow? in
             guard case let .command(command) = row, !command.isTyping, let line = command.group, line.kind == .at,
                   let id = command.commandId, !answered.contains(id) else { return nil }
-            if let at = line.at, now - at > waitLimit { return nil }
+            if line.liveReply?.text.isEmpty != false, let at = line.at, now - at > waitLimit { return nil }
             return command
         }
     }
@@ -181,7 +189,9 @@ enum GroupChat {
         for (index, row) in rows.enumerated() {
             guard case let .command(command) = row, let line = command.group, line.kind == .reply || line.kind == .end,
                   let to = line.to, asked.contains(to) else { continue }
-            under[to, default: []].append(row)
+            var placed = command
+            if line.kind == .reply, under[to, default: []].isEmpty { placed.id = "answer:\(to)" }
+            under[to, default: []].append(.command(placed))
             moved.insert(index)
         }
         guard !moved.isEmpty else { return rows }

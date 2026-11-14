@@ -43,7 +43,6 @@ const view = object({
   limit: { type: 'integer', minimum: 1, maximum: 200 }, cursor: nullable(text), groupFilter: nullable(object({ key: nullable(text), subKey: nullable(text) }, ['key'])),
 });
 const meta = { reason: { ...text, maxLength: 2000 }, groupId: nullable(text) };
-const target = { anyOf: [{ type: 'integer', minimum: 1 }, object({ eventId: { type: 'integer', minimum: 1 }, groupId: text })] };
 const promptAttachment = { anyOf: [
   object({ type: { const: 'image' }, mediaType: choice(['image/png', 'image/jpeg', 'image/webp', 'image/gif']), data: { ...text, minLength: 1 }, name: text }, ['type', 'mediaType', 'data']),
   object({ type: { const: 'file' }, receiptId: { ...text, pattern: '^[\\x21-\\x7e]{1,512}$' } }, ['type', 'receiptId']),
@@ -75,7 +74,7 @@ export const ISSUE_REQUESTS = {
   complete: object({ id: ISSUE_ID, outcome: text, ...meta }, ['id']),
   cancel: object({ id: ISSUE_ID, ...meta }, ['id']),
   snooze: object({ id: ISSUE_ID, until: nullable(time), ...meta }, ['id', 'until']),
-  undo: object({ target }), resume: object({ id: ISSUE_ID, session: text }),
+  resume: object({ id: ISSUE_ID, session: text }),
   forget: object({ id: ISSUE_ID, token: text }, ['id']),
   delete: object({ id: ISSUE_ID, token: text }, ['id']),
   session: object({ id: ISSUE_ID }, ['id']),

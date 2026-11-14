@@ -120,7 +120,7 @@ const en = {
   bulk: { toolbar: 'Bulk actions', selected: (count) => `${count} selected`, clear: 'Clear selection', select: (label) => `Select ${label}`, selectAll: 'Select all' },
   // NEW: what the bar at the bottom says after a change, with its Undo.
   toast: {
-    undo: 'Undo', markedDone: 'Marked as Done', status: (name) => `Status set to ${name}`, priority: (name) => `Priority set to ${name}`,
+    markedDone: 'Marked as Done', status: (name) => `Status set to ${name}`, priority: (name) => `Priority set to ${name}`,
     dueSet: 'Due date set', dueRemoved: 'Due date removed', assigned: (name) => `Assigned to ${name}`, unassigned: 'Agent removed',
     updated: (count) => (count === 1 ? 'Updated 1 issue' : `Updated ${count} issues`), copied: (text) => `Copied ${text}`,
     snoozed: 'Snoozed', snoozeCleared: 'Snooze cleared', failed: 'Could not save the change',
@@ -241,6 +241,8 @@ const en = {
   settings: {
     title: 'Dudu settings', openFolder: 'Open project folder', failed: 'Could not load this page', retry: 'Retry', unavailable: 'The project folder could not be opened.',
     nav: { general: 'General', statuses: 'Status', connectors: 'Connectors', collectors: 'Collectors', rules: 'Rules', memory: 'Memory', skills: 'Skills', providers: 'Providers', phone: 'Phone control' }, // NEW: the two existing DSH sections embedded here
+    // The same words as forgetting a memory (`memory.willDelete`, `cancel`, `confirmForget`): the window that asks before a connector or a collector is deleted.
+    confirmDelete: { title: 'This will be deleted', cancel: 'Cancel', delete: 'Delete' },
     // NEW: Linear-style workflow settings; exact wording awaits owner review.
     statuses: {
       title: 'Status', name: 'Name', description: 'Description', color: 'Color', create: 'Create', add: (category) => `Add status to ${category}`,
@@ -259,7 +261,7 @@ const en = {
       issues: 'Issues', exportIssues: 'Export issues', export: 'Export', exportFailed: 'Could not export the issues',
       // NEW: General controls for the conversation and the existing pet settings.
       pet: 'Pet', showPet: 'Show pet', doubleSpace: 'Double Space to open conversation', holdSpace: 'Hold Space for voice input',
-      model: 'Model', changeModel: 'Change in DSH', lastTidy: 'Last tidy', noTidy: 'Not tidied yet', undoTidy: 'Undo tidy',
+      model: 'Model', changeModel: 'Change in DSH', lastTidy: 'Last tidy', noTidy: 'Not tidied yet',
       deepSleep: 'Deep sleep', // NEW (2026-11-05): the owner's word 深度睡眠, a switch in the Issues card; the English name awaits review
     },
     // NEW (2026-11-05): a connector is how to reach a service (a Prompt, or an MCP server); what to collect and how often are the collector's.
@@ -267,11 +269,11 @@ const en = {
     connectors: {
       name: 'Name', kind: { prompt: 'Prompt', mcp: 'MCP' }, needsAuth: 'Needs authorization',
       inUse: (names) => `Collectors still use it: ${names.join(', ')}`,
-      empty: 'No connectors', remove: 'Remove', removeOf: (name) => `Remove ${name}`, removed: (name) => `Removed ${name}`, undo: 'Undo',
+      empty: 'No connectors', remove: 'Remove', removeOf: (name) => `Remove ${name}`,
     },
     // NEW (2026-11-06): the connectors page redrawn after Claude's and Muse's. The words are the owner's table in docs/issues-ui-wording.md ("2026-11-06 连接器页重画"); English awaits review.
     connectorsPage: {
-      addCustom: 'Add custom connector', search: 'Search', back: 'Back',
+      addCustom: 'Add custom connector', addLabel: 'Connector', search: 'Search', back: 'Back',
       views: { available: 'Available', connected: 'Connected' },
       groups: { here: 'This computer', work: 'Work', projects: 'Projects', dev: 'Development', web: 'Web' }, // NEW: Projects and Web (the owner's list of 2026-11-06)
       connect: 'Connect', authorize: 'Authorize', disconnect: 'Disconnect',
@@ -304,7 +306,7 @@ const en = {
         '0 9 * * *': 'Every day at 09:00', '0 9 * * 1-5': 'Monday to Friday at 09:00', '0 9-18 * * 1-5': 'Monday to Friday, every hour 9–18',
       },
       last: { done: (when, added) => (added > 0 ? `Last ${when} · ${added} new` : `Last ${when} · nothing new`), failed: (when) => `Last ${when} · failed` },
-      addedByDudu: 'Added by Dudu', removeOf: (name) => `Remove ${name}`, removed: (name) => `Removed ${name}`, undo: 'Undo',
+      addedByDudu: 'Added by Dudu', removeOf: (name) => `Remove ${name}`,
     },
     rules: {
       open: 'Open', empty: 'Empty', missing: 'Not found',
@@ -315,7 +317,7 @@ const en = {
     },
     memory: {
       search: 'Search records', count: (n) => n === 1 ? '1 record' : `${n} records`, editOf: (text) => `Edit: ${text}`, forgetOf: (text) => `Forget: ${text}`, empty: 'Nothing is remembered yet', edit: 'Edit', save: 'Save', cancel: 'Cancel', forget: 'Forget', willDelete: 'This will be deleted',
-      confirmForget: 'Delete', since: (date) => `Since ${date}`, superseded: 'Superseded', reviews: 'Tidy runs', noReviews: 'No tidy runs yet', undo: 'Undo',
+      confirmForget: 'Delete', since: (date) => `Since ${date}`, superseded: 'Superseded', reviews: 'Tidy runs', noReviews: 'No tidy runs yet',
       scope: 'This removes local memory and its references. DSH source messages and model history stay.', // NEW
       summary: (counts) => {
         const updated = (counts.refine ?? 0) + (counts.supersede ?? 0) + (counts.corroborate ?? 0);
@@ -460,7 +462,7 @@ const zh = {
   newIssue: { title: '新建事项', description: '填写标题，可补充描述。', titlePlaceholder: '事项标题', briefPlaceholder: '添加描述…', cancel: '取消', create: '创建事项', failed: '事项没能创建' },
   bulk: { toolbar: '批量操作', selected: (n) => `已选 ${n} 条`, clear: '取消选择', select: (label) => `选择 ${label}`, selectAll: '全选' },
   toast: {
-    undo: '撤销', markedDone: '已标记为完成', status: (name) => `状态已改为${name}`, priority: (name) => `优先级已改为${name}`,
+    markedDone: '已标记为完成', status: (name) => `状态已改为${name}`, priority: (name) => `优先级已改为${name}`,
     dueSet: '已设置截止日期', dueRemoved: '已移除截止日期', assigned: (name) => `已交给 ${name}`, unassigned: '已移除智能体',
     updated: (n) => `已更新 ${n} 条事项`, copied: (text) => `已复制 ${text}`, snoozed: '已设为稍后提醒', snoozeCleared: '已取消稍后提醒',
     failed: '更改没能保存', region: '通知',
@@ -557,6 +559,8 @@ const zh = {
   settings: {
     title: '嘟嘟设置', openFolder: '打开项目文件夹', failed: '这一页没能加载', retry: '重试', unavailable: '项目文件夹没能打开。',
     nav: { general: '通用', statuses: '状态', connectors: '连接器', collectors: '收集器', rules: '规则', memory: '记忆', skills: '技能', phone: '手机控制', providers: '供应商' },
+    // 和忘记一条记忆用的同一套字（`memory.willDelete`、`cancel`、`confirmForget`）：删连接器和收集器之前问的那个窗口。
+    confirmDelete: { title: '将要删除', cancel: '取消', delete: '删除' },
     // NEW: reviewed together with the English workflow settings above.
     statuses: {
       title: '状态', name: '名称', description: '描述', color: '颜色', create: '创建', add: (category) => `在${category}中添加状态`,
@@ -571,16 +575,16 @@ const zh = {
     },
     general: { folder: '项目文件夹', isDefault: '默认', change: '更改', path: '文件夹路径', moveFiles: '把文件移过去', save: '保存', cancel: '取消',
       issues: '事项', exportIssues: '导出事项', export: '导出', exportFailed: '事项没能导出', pet: '宠物', showPet: '显示宠物', doubleSpace: '双击空格打开对话', holdSpace: '长按空格语音输入',
-      model: '模型', changeModel: '在 DSH 里更换', lastTidy: '最近一次整理', noTidy: '还没有整理过', undoTidy: '撤销整理', deepSleep: '深度睡眠' },
+      model: '模型', changeModel: '在 DSH 里更换', lastTidy: '最近一次整理', noTidy: '还没有整理过', deepSleep: '深度睡眠' },
     // NEW (2026-11-05，主人看过图): 连接器只管怎么连上一个服务（Prompt 或 MCP）；收集什么、多久一次是收集器的。
     // 第一版连接器页剩下的字，是重画的页（下面的 connectorsPage）和别的页还在用的。
     connectors: { name: '名称', empty: '没有连接器', remove: '删除',
       kind: { prompt: 'Prompt', mcp: 'MCP' }, needsAuth: '需要授权',
       inUse: (names) => `还有收集器在用它：${names.join('、')}`,
-      removed: (name) => `已删除 ${name}`, undo: '撤销', removeOf: (name) => `删除：${name}` },
+      removeOf: (name) => `删除：${name}` },
     // NEW (2026-11-06)：连接器页照 Claude 和 Muse 重画。字是 docs/issues-ui-wording.md “2026-11-06 连接器页重画”里主人的表；没列在表里的标了 NEW。
     connectorsPage: {
-      addCustom: '添加自定义连接器', search: '搜索', back: '返回',
+      addCustom: '添加自定义连接器', addLabel: '连接器', search: '搜索', back: '返回',
       views: { available: '可用', connected: '已连接' },
       groups: { here: '这台电脑', work: '办公', projects: '项目', dev: '开发', web: '网页' }, // NEW: 项目、网页（主人 2026-11-06 点头的那份清单里的组名）
       connect: '连接', authorize: '授权', disconnect: '断开',
@@ -609,7 +613,7 @@ const zh = {
         '0 9 * * *': '每天 09:00', '0 9 * * 1-5': '周一至周五 09:00', '0 9-18 * * 1-5': '周一至周五 9 至 18 点每小时',
       },
       last: { done: (when, added) => (added > 0 ? `上次 ${when} · 新增 ${added} 条` : `上次 ${when} · 没有新的`), failed: (when) => `上次 ${when} · 读取失败` },
-      addedByDudu: '嘟嘟添加', removed: (name) => `已删除 ${name}`, undo: '撤销', removeOf: (name) => `删除：${name}` },
+      addedByDudu: '嘟嘟添加', removeOf: (name) => `删除：${name}` },
     rules: {
       open: '打开', empty: '空', missing: '未找到',
       files: {
@@ -618,7 +622,7 @@ const zh = {
       },
     },
     memory: { search: '搜索记录', count: (n) => `${n} 条`, editOf: (text) => `编辑：${text}`, forgetOf: (text) => `忘记：${text}`, empty: '还没有记住的事', edit: '编辑', save: '保存', cancel: '取消',
-      forget: '忘记', willDelete: '将要删除', confirmForget: '删除', since: (date) => `自 ${date}`, superseded: '已替代', reviews: '整理记录', noReviews: '还没有整理记录', undo: '撤销',
+      forget: '忘记', willDelete: '将要删除', confirmForget: '删除', since: (date) => `自 ${date}`, superseded: '已替代', reviews: '整理记录', noReviews: '还没有整理记录',
       scope: '会删除本地记忆和相关引用。DSH 来源消息和模型历史会保留。',
       summary: (counts) => {
         const updated = (counts.refine ?? 0) + (counts.supersede ?? 0) + (counts.corroborate ?? 0);
@@ -725,7 +729,7 @@ zh.diagnostics = Object.fromEntries(diagnostics.map(([key, , value]) => [key, va
 // NEW: these are the connector library's own validation messages, not output from an external program.
 const connectorErrors = [
   'fileError', 'unexpected', 'busy', 'unclosedFence', 'noFolder', 'noConnector', 'broken', 'exists', 'notDudu', 'isOn',
-  'changedSince', 'badTicks', 'noUndo', 'undoChanged', 'undoBack', 'unknownOperation', 'isOff', 'needsReview', 'notRead',
+  'changedSince', 'badTicks', 'unknownOperation', 'isOff', 'needsReview', 'notRead',
   'notReadable', 'noDsh', 'noDshServer', 'outputCut', 'argObject', 'argUnknown', 'argMissing', 'argType', 'argLong',
   'argControl', 'argDash', 'notFound', 'cannotRun', 'exited', 'killed', 'timedOut', 'toolError', 'cannotConnect', 'signIn',
   'closed', 'unreachable', 'unsupported', 'noSecret', 'noEnv', 'original', 'originalBad', 'vars', 'sse', 'cannotReadConfig', 'tooMany',
@@ -809,9 +813,6 @@ zh.connectorDiagnostics = {
     isOn: (id) => `“${id}”已开启，请先关闭再修改配置。`,
     changedSince: (id) => `“${id}”已变动，请重新查看后再开启。`,
     badTicks: 'tools 须为工具名称列表；null 表示使用默认值。',
-    noUndo: '这次操作已无法撤销。',
-    undoChanged: (id) => `“${id}”后来有改动，没有撤销。`,
-    undoBack: (id) => `“${id}”已重新出现，没有撤销。`,
     unknownOperation: (name) => `已开启的连接器中没有操作“${name}”。`,
     isOff: (id) => `连接器“${id}”已关闭，请在连接器页开启。`,
     needsReview: (id) => `“${id}”的原始配置有变动，请查看后重新开启。`,

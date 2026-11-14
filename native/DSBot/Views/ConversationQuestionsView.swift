@@ -21,7 +21,7 @@ struct ConversationQuestionsView: View {
             Button { expanded.toggle() } label: {
                 HStack(spacing: 8) {
                     DSBotIcon(.question, size: 16, scalesStroke: true)
-                    Text(question?.header ?? "等待你的操作").font(.system(size: 14, weight: .medium))
+                    Text(question?.header ?? L10n.text("等待你的操作")).font(.system(size: 14, weight: .medium))
                     Spacer()
                     Text("\(index + 1)/\(batch.questions.count)").font(.system(size: 12)).monospacedDigit()
                     DSBotIcon(.down, size: 14, scalesStroke: true).rotationEffect(.degrees(expanded ? 180 : 0))
@@ -35,7 +35,7 @@ struct ConversationQuestionsView: View {
                     MessageMarkdown(text: detail, compact: true)
                 }
                 if batch.state == "continued" {
-                    Text("已继续工作，仍可回答").font(.system(size: 12)).foregroundStyle(DSBotStyle.chatSecondary)
+                    Text(L10n.text("已继续工作，仍可回答")).font(.system(size: 12)).foregroundStyle(DSBotStyle.chatSecondary)
                 }
                 ForEach(question.options, id: \.label) { option in
                     Button { toggle(option.label, question: question) } label: {
@@ -59,7 +59,7 @@ struct ConversationQuestionsView: View {
                     .accessibilityIdentifier("question.option.\(question.id).\(option.label)")
                     .accessibilityAddTraits((selections[question.id] ?? []).contains(option.label) ? .isSelected : [])
                 }
-                TextField("输入你的答案", text: Binding(
+                TextField(L10n.text("输入你的答案"), text: Binding(
                     get: { custom[question.id] ?? "" },
                     set: {
                         custom[question.id] = $0
@@ -75,11 +75,11 @@ struct ConversationQuestionsView: View {
                 if let failure { ConversationFailureView(message: failure) }
                 HStack {
                     if index > 0 {
-                        answerAction("上一题") { index -= 1; failure = nil }
+                        answerAction(L10n.text("上一题")) { index -= 1; failure = nil }
                     }
                     Spacer()
-                    answerAction("跳过") { advance(skipping: true) }
-                    answerAction(index == batch.questions.count - 1 ? "提交" : "下一题") { advance(skipping: false) }
+                    answerAction(L10n.text("跳过")) { advance(skipping: true) }
+                    answerAction(index == batch.questions.count - 1 ? L10n.text("提交") : L10n.text("下一题")) { advance(skipping: false) }
                         .fontWeight(.medium)
                         .accessibilityIdentifier("question.submit")
                     if submitting { ProgressView().controlSize(.small) }
@@ -129,7 +129,7 @@ struct ConversationQuestionsView: View {
             custom[question.id] = ""
         } else if (selections[question.id] ?? []).isEmpty,
                   (custom[question.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            failure = "请选择一个选项或填写自定义答案。"
+            failure = L10n.text("请选择一个选项或填写自定义答案。")
             return
         }
         completed.insert(question.id)
@@ -137,7 +137,7 @@ struct ConversationQuestionsView: View {
         if index + 1 < batch.questions.count { index += 1; return }
         if let missing = batch.questions.firstIndex(where: { !completed.contains($0.id) }) {
             index = missing
-            failure = "请先完成这道问题。"
+            failure = L10n.text("请先完成这道问题。")
             return
         }
         let answers = batch.questions.map { question in

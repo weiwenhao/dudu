@@ -36,7 +36,7 @@ struct ConversationFailureView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(message).foregroundStyle(DSBotStyle.chatError).textSelection(.enabled)
-            if let retry { Button("重试", action: retry) }
+            if let retry { Button(L10n.text("重试"), action: retry) }
         }
         .font(.system(size: 14))
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -49,11 +49,11 @@ struct TurnNoticeView: View {
 
     private var failure: String {
         switch notice.code {
-        case "AUTH": return "API 密钥无效"
-        case "ACCOUNT_SIGNED_OUT": return "任务已因退出 DeepSeek 登录而停止。"
-        case "INTERRUPTED": return "DSH 进程在本轮完成前退出（例如被强制结束、崩溃或关闭超时），重新启动后本轮已中止。未完成的工具调用结果未知。"
-        case "ACCOUNT_SIGN_IN_REQUIRED": return "请先登录 DeepSeek，并确认请求地址支持账号认证。"
-        case "QUOTA", "ACCOUNT_QUOTA": return "当前请求的额度已用尽"
+        case "AUTH": return L10n.text("API 密钥无效")
+        case "ACCOUNT_SIGNED_OUT": return L10n.text("任务已因退出 DeepSeek 登录而停止。")
+        case "INTERRUPTED": return L10n.text("DSH 进程在本轮完成前退出（例如被强制结束、崩溃或关闭超时），重新启动后本轮已中止。未完成的工具调用结果未知。")
+        case "ACCOUNT_SIGN_IN_REQUIRED": return L10n.text("请先登录 DeepSeek，并确认请求地址支持账号认证。")
+        case "QUOTA", "ACCOUNT_QUOTA": return L10n.text("当前请求的额度已用尽")
         default: return notice.message
         }
     }
@@ -72,8 +72,8 @@ struct TurnNoticeView: View {
             if notice.kind == "retry" {
                 DisclosureGroup(isExpanded: $expanded) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("重试延迟：\(Int(notice.delayMs ?? 0)) ms")
-                        Text("失败原因：\(failure)").textSelection(.enabled)
+                        Text(L10n.text("重试延迟：{0} ms", "\(Int(notice.delayMs ?? 0))"))
+                        Text(L10n.text("失败原因：{0}", "\(failure)")).textSelection(.enabled)
                         if let code = failureCode { Text(code).font(.system(.caption, design: .monospaced)) }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -88,12 +88,12 @@ struct TurnNoticeView: View {
                 }
             } else if notice.kind == "max-tokens" {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("已达到输出 token 上限").foregroundStyle(.orange)
-                    Text("回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。")
+                    Text(L10n.text("已达到输出 token 上限")).foregroundStyle(.orange)
+                    Text(L10n.text("回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。"))
                 }
             } else {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(["INTERRUPTED", "ACCOUNT_SIGNED_OUT"].contains(notice.code ?? "") ? "任务已停止" : "本轮运行失败")
+                    Text(["INTERRUPTED", "ACCOUNT_SIGNED_OUT"].contains(notice.code ?? "") ? L10n.text("任务已停止") : L10n.text("本轮运行失败"))
                         .foregroundStyle(DSBotStyle.chatError)
                     Text(failure).textSelection(.enabled)
                     if let code = failureCode {
@@ -110,11 +110,11 @@ struct TurnNoticeView: View {
     private func retryTitle(at date: Date) -> String {
         let title: String
         switch notice.state {
-        case "cancelled": title = "模型请求重试已取消"
-        case "started": title = "已重试模型请求"
-        default: title = "正在重试模型请求"
+        case "cancelled": title = L10n.text("模型请求重试已取消")
+        case "started": title = L10n.text("已重试模型请求")
+        default: title = L10n.text("正在重试模型请求")
         }
-        let attempt = "\(title)（\(notice.retry ?? 1)/\(notice.maximum.map(String.init) ?? "∞")）"
+        let attempt = L10n.text("{0}（{1}/{2}）", "\(title)", "\(notice.retry ?? 1)", "\(notice.maximum.map(String.init) ?? "∞")")
         guard notice.state == "scheduled" else { return attempt }
         let delay = notice.delayMs ?? 0
         let remaining = (notice.time ?? date.timeIntervalSince1970 * 1000) + delay - date.timeIntervalSince1970 * 1000
@@ -145,9 +145,9 @@ struct ConversationToolSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     if let detail {
-                        textSection("输入", text: input, page: detail.input, field: "input")
-                        textSection("输出", text: output, page: detail.output, field: "output")
-                        if !metadata.isEmpty { textSection("元数据", text: metadata, page: detail.metadata, field: "metadata") }
+                        textSection(L10n.text("输入"), text: input, page: detail.input, field: "input")
+                        textSection(L10n.text("输出"), text: output, page: detail.output, field: "output")
+                        if !metadata.isEmpty { textSection(L10n.text("元数据"), text: metadata, page: detail.metadata, field: "metadata") }
                         ForEach(detail.images, id: \.id) { image in
                             if let access {
                                 ConversationImageThumbnail(
@@ -164,7 +164,7 @@ struct ConversationToolSheet: View {
             }
             .navigationTitle(call.name)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.text("完成")) { dismiss() } } }
         }
         .task { await load() }
     }
@@ -182,7 +182,7 @@ struct ConversationToolSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let offset = page.nextOffset {
-                Button("加载更多") { Task { await load(field: field, offset: offset) } }
+                Button(L10n.text("加载更多")) { Task { await load(field: field, offset: offset) } }
                     .disabled(loading)
                     .accessibilityIdentifier("tool.more.\(field)")
             }
@@ -292,7 +292,7 @@ struct ConversationDiffContent: View {
                         .frame(width: 32, height: 32)
                         .contentShape(Circle())
                 }
-                .accessibilityLabel("关闭")
+                .accessibilityLabel(L10n.text("关闭"))
                 .accessibilityIdentifier("changes.diff.close")
             }
         }
@@ -302,18 +302,18 @@ struct ConversationDiffContent: View {
     private var diffContent: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             if let diff {
-                if diff.kind == "binary" { Text("二进制文件，无法显示改动").padding() }
-                else if diff.kind == "oversized" { Text("文件过大，无法显示改动").padding() }
+                if diff.kind == "binary" { Text(L10n.text("二进制文件，无法显示改动")).padding() }
+                else if diff.kind == "oversized" { Text(L10n.text("文件过大，无法显示改动")).padding() }
                 else {
-                    if diff.coarse == true { Text("逐行对比超时，按整个文件替换显示").padding() }
-                    if diff.before == false { Text("本轮新建的文件").padding() }
-                    if diff.after == false { Text("本轮删除的文件").padding() }
+                    if diff.coarse == true { Text(L10n.text("逐行对比超时，按整个文件替换显示")).padding() }
+                    if diff.before == false { Text(L10n.text("本轮新建的文件")).padding() }
+                    if diff.after == false { Text(L10n.text("本轮删除的文件")).padding() }
                     if let layout {
                         ForEach(layout.rows) { row in
                             diffRow(row, layout: layout)
                         }
                     }
-                    if diff.hunks?.isEmpty == true { Text("两侧内容相同").padding() }
+                    if diff.hunks?.isEmpty == true { Text(L10n.text("两侧内容相同")).padding() }
                 }
             }
             if loading { ProgressView().padding() }

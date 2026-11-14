@@ -57,6 +57,25 @@ struct SessionSummary: Codable, Identifiable, Sendable, Equatable {
     var agentFinished: Bool?
     /// The agent is in deep sleep: idle, and nobody has handled it for half an hour (the plugin says so; absent from one that does not, and when it is awake). The avatar's grey crescent takes the place of the idle ring.
     var deepSleep: Bool?
+    /// A child history must retain DSH's parent address, including across cache restoration.
+    var subagent: SubagentHistoryAddress? = nil
+}
+
+struct SubagentHistoryAddress: Codable, Sendable, Equatable {
+    var parentSessionId: String
+    var mode: String
+
+    var json: JSONValue {
+        .object(["parentSessionId": .string(parentSessionId), "mode": .string(mode)])
+    }
+}
+
+extension SessionSummary {
+    var historyParameters: [String: JSONValue] {
+        var parameters: [String: JSONValue] = ["id": .string(id)]
+        if let subagent { parameters["subagent"] = subagent.json }
+        return parameters
+    }
 }
 
 /// An agent of an issue or a session: the id the plugin names it by (`claude`, `codex`, `pi`, `deepseek`, and whatever it adds next). It is not a closed list: an id the app does not know
@@ -113,9 +132,9 @@ enum AgentWorkState: String, Codable, Sendable {
 
     var name: String {
         switch self {
-        case .idle: return "空闲中"
-        case .working: return "工作中"
-        case .blocked: return "需要你"
+        case .idle: return L10n.text("空闲中")
+        case .working: return L10n.text("工作中")
+        case .blocked: return L10n.text("需要你")
         }
     }
 }
@@ -493,19 +512,19 @@ enum DSBotFailure: Error, LocalizedError, Sendable, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .invalidLink: return "配对链接无效"
-        case .insecurePublicConnection: return "公网地址请使用 HTTPS"
-        case .missingCredential: return "请粘贴电脑生成的完整配对链接"
-        case .identityMismatch: return "配对信息与电脑不匹配，请重新配对"
-        case .connectionFailed: return "无法连接，请检查电脑和网络"
-        case .routesUnavailable(let onlyLAN): return onlyLAN ? "无法连接内网地址" : "内网和公网都无法连接"
-        case .timedOut: return "连接超时"
-        case .resultUnknown: return "请求可能已在电脑执行，请查看会话状态后再操作。"
-        case .disconnected: return "连接已断开"
-        case .protocolError: return "电脑返回了无法识别的数据。"
-        case .storage: return "安全存储暂时不可用。"
-        case .unsupportedRequest: return "暂不支持此操作。"
-        case .switchedComputer: return "电脑已切换，请重试。"
+        case .invalidLink: return L10n.text("配对链接无效")
+        case .insecurePublicConnection: return L10n.text("公网地址请使用 HTTPS")
+        case .missingCredential: return L10n.text("请粘贴电脑生成的完整配对链接")
+        case .identityMismatch: return L10n.text("配对信息与电脑不匹配，请重新配对")
+        case .connectionFailed: return L10n.text("无法连接，请检查电脑和网络")
+        case .routesUnavailable(let onlyLAN): return onlyLAN ? L10n.text("无法连接内网地址") : L10n.text("内网和公网都无法连接")
+        case .timedOut: return L10n.text("连接超时")
+        case .resultUnknown: return L10n.text("请求可能已在电脑执行，请查看会话状态后再操作。")
+        case .disconnected: return L10n.text("连接已断开")
+        case .protocolError: return L10n.text("电脑返回了无法识别的数据。")
+        case .storage: return L10n.text("安全存储暂时不可用。")
+        case .unsupportedRequest: return L10n.text("暂不支持此操作。")
+        case .switchedComputer: return L10n.text("电脑已切换，请重试。")
         case let .remote(code): return Self.message(for: code)
         }
     }
@@ -520,15 +539,15 @@ enum DSBotFailure: Error, LocalizedError, Sendable, Equatable {
 
     private static func message(for code: String) -> String {
         switch code {
-        case "UNAUTHORIZED", "AUTH_FAILED": return "配对已失效，请生成新配对码"
-        case "AUTH_REQUIRED": return "请更新电脑端的 Dudu 插件"
-        case "METHOD_NOT_ALLOWED": return "请更新电脑端的手机控制插件"
-        case "UNSUPPORTED": return "暂不支持此操作。"
-        case "NOT_FOUND": return "请求的会话或资源已不存在。"
-        case "INVALID_ARGUMENT", "BAD_REQUEST": return "请求内容无效，请检查后重试。"
-        case "FORBIDDEN": return "电脑拒绝了此操作。"
-        case "BUSY": return "电脑正在处理其他操作，请稍后重试。"
-        default: return "电脑暂时无法完成请求。"
+        case "UNAUTHORIZED", "AUTH_FAILED": return L10n.text("配对已失效，请生成新配对码")
+        case "AUTH_REQUIRED": return L10n.text("请更新电脑端的 Dudu 插件")
+        case "METHOD_NOT_ALLOWED": return L10n.text("请更新电脑端的手机控制插件")
+        case "UNSUPPORTED": return L10n.text("暂不支持此操作。")
+        case "NOT_FOUND": return L10n.text("请求的会话或资源已不存在。")
+        case "INVALID_ARGUMENT", "BAD_REQUEST": return L10n.text("请求内容无效，请检查后重试。")
+        case "FORBIDDEN": return L10n.text("电脑拒绝了此操作。")
+        case "BUSY": return L10n.text("电脑正在处理其他操作，请稍后重试。")
+        default: return L10n.text("电脑暂时无法完成请求。")
         }
     }
 }

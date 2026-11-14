@@ -27,10 +27,10 @@ struct PhotoAttachmentPreview: View {
                     .contentShape(AttachmentTile.shape)
             }
             .buttonStyle(DSBotQuietPressStyle())
-            .accessibilityLabel("预览照片")
+            .accessibilityLabel(L10n.text("预览照片"))
             .accessibilityIdentifier("photo.preview.\(photo.id)")
 
-            AttachmentRemoveBadge(label: "移除照片", identifier: "photo.remove.\(photo.id)", action: onRemove)
+            AttachmentRemoveBadge(label: L10n.text("移除照片"), identifier: "photo.remove.\(photo.id)", action: onRemove)
         }
         .frame(width: AttachmentTile.size, height: AttachmentTile.size)
         .fullScreenCover(isPresented: $isPreviewPresented) {
@@ -163,7 +163,7 @@ struct PhotoAttachmentFullScreenPreview: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(DSBotGlassButtonStyle())
-                .accessibilityLabel("关闭照片预览")
+                .accessibilityLabel(L10n.text("关闭照片预览"))
                 .accessibilityIdentifier("photo.preview.close")
 
                 Spacer()
@@ -185,7 +185,7 @@ struct PhotoAttachmentFullScreenPreview: View {
                 .buttonStyle(DSBotGlassButtonStyle())
                 .disabled(imageToSave == nil || isSaving)
                 .opacity(imageToSave == nil ? 0.45 : 1)
-                .accessibilityLabel("下载")
+                .accessibilityLabel(L10n.text("下载"))
                 .accessibilityIdentifier(saveControlIdentifier)
             }
             .padding(.horizontal, 14)
@@ -275,7 +275,7 @@ private struct PhotoZoomingScrollView: UIViewRepresentable {
         let imageView = UIImageView(image: image)
         imageView.contentMode = .scaleAspectFit
         imageView.isAccessibilityElement = true
-        imageView.accessibilityLabel = "预览照片"
+        imageView.accessibilityLabel = L10n.text("预览照片")
         imageView.frame = .zero
         scrollView.addSubview(imageView)
         context.coordinator.imageView = imageView

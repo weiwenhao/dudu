@@ -161,7 +161,6 @@ export function openAssistant({ dshHome, stateFolder, env = process.env, llm = n
     'memory/update': ({ id, ...patch }) => need(memory) ?? memory.update(id, patch),
     'memory/forget': (body) => need(memory) ?? memory.forget(body),
     'memory/reviews': (body) => need(memory) ?? memory.reviews(body),
-    'memory/undo': ({ id }) => need(memory) ?? memory.undoReview(id),
     'skills/list': () => need(memory) ?? memory.skills.list(),
     'skills/read': ({ name }) => need(memory) ?? memory.skills.read(name),
     'skills/remove': ({ name }) => need(memory) ?? memory.skills.remove(name),
@@ -182,7 +181,6 @@ export function openAssistant({ dshHome, stateFolder, env = process.env, llm = n
     'connectors/add': ({ text, name, token, env: values }) => need(connections) ?? connections.add({ text, name, token, env: values }),
     'connectors/update': ({ id, name, text, token }) => need(connections) ?? connections.update({ id, name, text, token }),
     'connectors/remove': ({ id }) => need(connections) ?? connections.remove(id),
-    'connectors/undo': ({ token }) => need(connectors) ?? connectors.owner.undo(token),
     // A collector reads through one connector: what to collect, and how often.
     'collectors/list': () => {
       const listed = need(collectors) ?? collectors.owner.list();
@@ -190,10 +188,9 @@ export function openAssistant({ dshHome, stateFolder, env = process.env, llm = n
       const known = new Map((connectors?.owner.list().connectors ?? []).map((entry) => [entry.id, entry]));
       return { ...listed, collectors: listed.collectors.map((entry) => ({ ...entry, connectorName: known.get(entry.connector)?.name ?? '', connectorKind: known.get(entry.connector)?.kind ?? '' })) };
     },
-    'collectors/add': ({ name, connector, prompt, frequency }) => need(collectors) ?? collectors.owner.add({ name, connector, prompt, ...(frequency ? { frequency } : {}) }),
-    'collectors/update': ({ id, name, connector, prompt, frequency }) => need(collectors) ?? collectors.owner.update(id, { name, connector, prompt, ...(frequency !== undefined ? { frequency } : {}) }),
+    'collectors/add': ({ name, connector, prompt, frequency, notify }) => need(collectors) ?? collectors.owner.add({ name, connector, prompt, ...(frequency ? { frequency } : {}), ...(notify !== undefined ? { notify } : {}) }),
+    'collectors/update': ({ id, name, connector, prompt, frequency, notify }) => need(collectors) ?? collectors.owner.update(id, { name, connector, prompt, ...(frequency !== undefined ? { frequency } : {}), ...(notify !== undefined ? { notify } : {}) }),
     'collectors/remove': ({ id }) => need(collectors) ?? collectors.owner.remove(id),
-    'collectors/undo': ({ token }) => need(collectors) ?? collectors.owner.undo(token),
   };
 
   return {

@@ -9,6 +9,7 @@ struct ComposerEditingState: Equatable {
     var text: String
     var selection: NSRange
     var isComposing = false
+    var isDeleting = false
 }
 
 struct ComposerSelection: Equatable {
@@ -22,6 +23,10 @@ enum AssistantCompletion {
         var kind: Kind
         var text: String
         var range: NSRange
+
+        func continues(_ previous: Query?) -> Bool {
+            previous?.kind == kind && previous?.range.location == range.location
+        }
     }
     struct Address: Equatable {
         var id: String
@@ -29,7 +34,7 @@ enum AssistantCompletion {
     }
 
     /// Cursor coordinates are UTF-16, exactly like UITextView. Marked Chinese input is left alone.
-    static func query(_ edit: ComposerEditingState) -> Query? {
+    static func query(_ edit: ComposerEditingState, continuing previous: Query? = nil) -> Query? {
         let source = edit.text as NSString
         guard !edit.isComposing, edit.selection.length == 0,
               edit.selection.location >= 0, edit.selection.location <= source.length else { return nil }
@@ -38,8 +43,10 @@ enum AssistantCompletion {
             guard let expression = try? NSRegularExpression(pattern: pattern),
                   let match = expression.firstMatch(in: prefix, range: NSRange(location: 0, length: (prefix as NSString).length)) else { continue }
             let word = match.range(at: 1)
-            return Query(kind: kind, text: (prefix as NSString).substring(with: word),
-                         range: NSRange(location: word.location - 1, length: word.length + 1))
+            let next = Query(kind: kind, text: (prefix as NSString).substring(with: word),
+                             range: NSRange(location: word.location - 1, length: word.length + 1))
+            // Backspace may filter an open list, but removing a completed token must not open one.
+            return edit.isDeleting && !next.continues(previous) ? nil : next
         }
         return nil
     }

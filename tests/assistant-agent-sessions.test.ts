@@ -132,6 +132,62 @@ test('a queued DSH turn resumes working without another loop status event; repla
   assert.equal(sessions.stateOf('dsh:s1'), 'finished', 'imported boundaries without a running Agent are history');
 });
 
+test('DSH streams only the current attempt body to text listeners without changing state or activity', async (t) => {
+  const listeners = new Map<string, (...args: any[]) => void>();
+  const agent = { session: { id: 's1' }, status: 'running' };
+  const dsh = createDshSessions({
+    agents: new Map([['s1', agent]]),
+    sessionController: { inspect: async () => ({ events: [] }) },
+    on: (name: string, listener: (...args: any[]) => void) => {
+      listeners.set(name, listener);
+      return () => listeners.delete(name);
+    },
+  });
+  let clock = 1_000;
+  const sessions = createAgentSessions({ dsh, now: () => clock, log: quiet });
+  t.after(async () => { sessions.dispose(); await dsh.close(); });
+  await sessions.adopt('dsh:s1', { agent: 'claude' });
+  const original = sessions.snapshotOf('dsh:s1');
+  const texts: string[] = [];
+  const states: unknown[] = [];
+  sessions.onText(({ text }) => texts.push(text));
+  sessions.onChange((change) => states.push(change));
+  const frame = (value: Record<string, unknown>, source = agent) => listeners.get('agent/assistant-stream')!({ agent: source, frame: value });
+  frame({ type: 'start', attemptId: 'a', revision: 1 });
+  let index = 0;
+  const chunk = (value: Record<string, unknown>) => frame({ type: 'chunk', attemptId: 'a', revision: index + 2, index: index++, chunk: value });
+  clock = 9_000;
+  chunk({ type: 'block-start', index: 0, blockType: 'reasoning' });
+  chunk({ type: 'reasoning-delta', index: 0, text: 'private reasoning' });
+  chunk({ type: 'tool-call-delta', index: 1, argumentsDelta: 'private tool arguments' });
+  chunk({ type: 'block-start', index: 2, blockType: 'text' });
+  chunk({ type: 'text-chunks', index: 2, texts: ['结论：', '先用'] });
+  frame({ type: 'chunk', attemptId: 'old', revision: 100, index, chunk: { type: 'text-delta', index: 2, text: 'wrong attempt' } });
+  frame({ type: 'end', attemptId: 'old', revision: 101, outcome: { kind: 'abandoned' } });
+  chunk({ type: 'text-delta', index: 2, text: ' SQLite。' });
+  assert.deepEqual(texts, ['结论：先用', '结论：先用 SQLite。']);
+  listeners.get('session/event')!({ id: 's1' }, {
+    type: 'assistant/message', data: { message: { content: [{ type: 'tool-call', name: 'read' }] } },
+  });
+  assert.equal(texts.at(-1), '结论：先用 SQLite。', 'a tool-only message leaves the visible answer alone');
+  chunk({ type: 'block-end', index: 2, block: { type: 'text', text: '结论：先用 SQLite。' } });
+  chunk({ type: 'block-start', index: 3, blockType: 'text' });
+  chunk({ type: 'text-delta', index: 3, text: '第二段。' });
+  assert.equal(texts.at(-1), '结论：先用 SQLite。\n第二段。', 'text blocks keep the same boundary as the durable answer');
+  assert.equal(sessions.snapshotOf('dsh:s1').ending, '', 'transient output is not a completed answer');
+  assert.equal(sessions.snapshotOf('dsh:s1').lastActivityAt, original.lastActivityAt);
+  assert.deepEqual(states, []);
+  frame({ type: 'end', attemptId: 'a', revision: index + 2, outcome: { kind: 'abandoned' } });
+  assert.equal(texts.at(-1), '');
+  frame({ type: 'start', attemptId: 'b', revision: 11 }, { session: { id: 'unowned' }, status: 'running' });
+  assert.equal(texts.at(-1), '');
+  listeners.get('session/event')!({ id: 's1' }, {
+    type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '最终回答' }] } },
+  });
+  assert.equal(texts.at(-1), '最终回答');
+  assert.equal(sessions.snapshotOf('dsh:s1').ending, '最终回答');
+});
+
 test('what DSH says again is not activity: only a change of the state moves a session\'s last activity (a session nobody touched must not look just used)', async () => {
   const world = fakeDsh();
   let clock = 1_000;

@@ -183,13 +183,16 @@ test('a tool still waiting when the harness stops fails, and a failed turn reach
   handle.push({ type: 'step-end' });
   await first;
   const waiting = bridge.runOf('s1')!.waitTool('t1');
+  handle.push({ type: 'usage', usage: { inputTokens: 10, outputTokens: 4, totalTokens: 14 } });
   handle.push({ type: 'turn-end', ok: false, error: harnessError('Not logged in', 'AUTH') });
   await assert.rejects(waiting, /ended before the tool finished/);
 
   const next = collect(adapter.stream({
     sessionId: 's1', messages: [user('u1', 'go'), assistant(['t1'], { nativeSessionId: 'native-1' }), tool('t1', 'x')],
   }));
-  assert.deepEqual(finishOf(await next).reason, { kind: 'error', failure: { code: 'AUTH', message: 'Not logged in' } });
+  const chunks = await next;
+  assert.deepEqual(chunks.find(chunk => chunk.type === 'usage')?.usage, { inputTokens: 10, outputTokens: 4, totalTokens: 14 });
+  assert.deepEqual(finishOf(chunks).reason, { kind: 'error', failure: { code: 'AUTH', message: 'Not logged in' } });
 });
 
 test('a step that needs a harness run that is gone fails instead of starting another run for the same prompt', async () => {
@@ -280,12 +283,18 @@ test('input admitted after the native answer resumes the same session once inste
 test('deep sleep lets go of a run whose turn has ended and never of one that works; the next turn starts a harness again on the same native session', async () => {
   const { driver, bridge, adapter } = setup();
   const run = await bridge.begin('s1', { prompts: [user('u1', 'work')], link: { nativeSessionId: 'native-9' } });
+  assert.equal(bridge.hasActiveWork('s1'), true);
   assert.equal(await bridge.release('s1'), false, 'it works');
   assert.equal(bridge.runOf('s1'), run);
   assert.equal(driver.handles[0].closed, 0);
   driver.handles[0].push({ type: 'turn-end', ok: true });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(run.finished, true);
+  driver.handles[0].backgroundActive = true;
+  assert.equal(bridge.hasActiveWork('s1'), true, 'a finished foreground turn can still own background work');
+  assert.equal(await bridge.release('s1'), false, 'that background work keeps its native process');
+  driver.handles[0].backgroundActive = false;
+  assert.equal(bridge.hasActiveWork('s1'), false);
 
   assert.equal(await bridge.release('s1'), true, 'the turn has ended');
   assert.equal(bridge.runOf('s1'), undefined, 'the run, with what it kept of the turn, is gone');

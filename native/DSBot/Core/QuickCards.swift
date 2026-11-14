@@ -1,10 +1,7 @@
 import Foundation
 
-// The quick buttons above the input of 嘟嘟's chat and the cards they send (owner, 2026-11-10; the plugin: `host/assistant/home/cards.mjs`, the desktop: `ui/pet/QuickCards.jsx`).
-//
-// A tap asks the plugin to make 嘟嘟 send a card into the conversation (`assistant.card`). The card comes back as an entry of the thread, like any other message: the plugin keeps the rows
-// under the id of the command that made it, and its bridge attaches them to that command's entry of the transcript (`card`). The rows are a snapshot of the moment of the tap, and they are
-// the app's own: a todo is a board row, a piece of information is a collector row, a task has the words the desktop's task pages use. Only the rows of a todo card open something.
+// Shared kinds for the three native shortcuts, and the retained transcript cards of older conversations.
+// New shortcut taps open AssistantQuickSheet (owner, 2026-11-13); historical cards remain readable.
 
 enum QuickCardKind: String, CaseIterable, Identifiable, Codable, Sendable {
     case todo, info, task
@@ -14,18 +11,18 @@ enum QuickCardKind: String, CaseIterable, Identifiable, Codable, Sendable {
     /// The desktop's words for the three: the status 待办, the Collector's name 信息 and 任务 (`T.status.todo`, `T.widgets.titles.collector`, `T.tasks.title`).
     var title: String {
         switch self {
-        case .todo: return "待办"
-        case .info: return "信息"
-        case .task: return "任务"
+        case .todo: return L10n.text("待办")
+        case .info: return L10n.text("信息")
+        case .task: return L10n.text("任务")
         }
     }
 
     /// What an empty card says at the right of its title: the board's and the Collector's own words, and 没有任务 (it was 没有定时任务, approved by the owner on 2026-11-10; 定时任务 became 任务 on 2026-11-11: `docs/issues-ui-wording.md`).
     var emptyText: String {
         switch self {
-        case .todo: return "没有事项"
-        case .info: return "没有信息"
-        case .task: return "没有任务"
+        case .todo: return L10n.text("没有事项")
+        case .info: return L10n.text("没有信息")
+        case .task: return L10n.text("没有任务")
         }
     }
 }
@@ -44,7 +41,7 @@ struct QuickCardTask: Codable, Identifiable, Equatable, Sendable {
     var taskAgent: TaskAgent? { agent.flatMap(TaskAgent.init(id:)) }
     var isPaused: Bool { status == "paused" }
     /// 已开启 / 已暂停, the desktop's words for a task's state.
-    var statusText: String { isPaused ? "已暂停" : "已开启" }
+    var statusText: String { isPaused ? L10n.text("已暂停") : L10n.text("已开启") }
 
     /// The line under the title: the rule, then 下次运行 and its time in the task's own time zone (`TaskRow`, `ui/pet/QuickCards.jsx`).
     var line: String { schedule?.line(nextRunAt: nextRunAt) ?? "" }
@@ -106,27 +103,6 @@ struct QuickCard: Codable, Equatable, Sendable {
         case .task: try container.encode(tasks, forKey: .rows)
         }
     }
-}
-
-extension QuickCard {
-    /// The card that a tap of `kind` would only repeat (owner, 2026-11-10: "连点就发一张，如果都一样的话，就去个重"): the newest of its kind with nothing after it in the thread but other cards. The plugin
-    /// compares the lists; a conversation since then (a message, a reply, a command line) makes the next card a new one even when the list is the same, so this is nil.
-    static func repeatable(in rows: [TranscriptRow], kind: QuickCardKind) -> String? {
-        for row in rows.reversed() {
-            guard case let .command(command) = row, let card = command.card else { return nil }
-            if card.kind == kind { return command.commandId }
-        }
-        return nil
-    }
-}
-
-/// What the plugin said to a tap on a quick button.
-enum QuickCardAnswer: Equatable, Sendable {
-    /// A new card is in the thread (it arrives with the conversation's next snapshot, or has already): the command that made it, which names its entry.
-    case made(commandId: String?)
-    /// The list is the same as the card at the end of the thread (`commandId`), so nothing was made.
-    case unchanged(commandId: String?)
-    case failed
 }
 
 /// What a command's entry of the transcript carries for a card. A card this app cannot read (a newer plugin's) is no card: the command keeps its plain row and the conversation still opens.

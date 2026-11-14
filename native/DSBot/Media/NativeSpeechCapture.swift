@@ -89,7 +89,7 @@ final class NativeSpeechCapture: ObservableObject {
         }
         guard generation == token else { return }
         guard speechStatus == .authorized else {
-            notice = "请允许语音识别权限。"
+            notice = L10n.text("请允许语音识别权限。")
             DSBotLog.record("voice.capture.denied", state: "speech")
             return
         }
@@ -102,7 +102,7 @@ final class NativeSpeechCapture: ObservableObject {
         }
         guard generation == token else { return }
         guard microphoneGranted else {
-            notice = "请允许麦克风权限。"
+            notice = L10n.text("请允许麦克风权限。")
             DSBotLog.record("voice.capture.denied", state: "microphone")
             return
         }
@@ -112,14 +112,14 @@ final class NativeSpeechCapture: ObservableObject {
         guard let prepared = await recognizer().value else {
             preparedRecognizer = nil
             guard generation == token else { return }
-            notice = "语音识别暂不可用。"
+            notice = L10n.text("语音识别暂不可用。")
             DSBotLog.record("voice.capture.unavailable")
             return
         }
         guard generation == token else { return }
         let recognizer = prepared.recognizer
         guard recognizer.isAvailable else {
-            notice = "语音识别暂不可用。"
+            notice = L10n.text("语音识别暂不可用。")
             DSBotLog.record("voice.capture.unavailable")
             return
         }
@@ -180,7 +180,7 @@ final class NativeSpeechCapture: ObservableObject {
             guard generation == token else { return }
             audioCapture.stop()
             request = nil
-            notice = "语音识别暂不可用。"
+            notice = L10n.text("语音识别暂不可用。")
             DSBotLog.record(
                 "voice.capture.failed",
                 elapsedMs: (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000

@@ -185,20 +185,24 @@ test('omits only the HMR module entry while preserving batches and other entries
 
 test('wraps known UI registrations after the bootstrap installs the live loader', async (t) => {
   const { frontend } = await fixture(t);
-  const document = await frontend.document({ kind: 'plugins' });
+  const document = await frontend.document({ kind: 'plugins', locale: 'en' });
   const queuePath = internalPath(document.html, 'client-module-queue.js');
   const queueScript = bytes((await document.resource(queuePath)).data).toString('utf8');
   const events = [];
   const window = { dispatchEvent: (event) => events.push(event) };
-  runInNewContext(queueScript, {
+  const sandbox = {
     window,
+    document: { documentElement: { lang: '' } },
     CustomEvent: class CustomEvent {
       constructor(type, init) {
         this.type = type;
         this.detail = init?.detail;
       }
     },
-  });
+  };
+  runInNewContext(queueScript, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(await sandbox.__DSH_LOCALE__.read())),
+    { languages: ['en'], preference: 'en' });
 
   const loader = window.__ModuleLoader__;
   const layoutId = '@deepseek-ai/dsh-client-ui-layout';
@@ -266,6 +270,20 @@ test('wraps known UI registrations after the bootstrap installs the live loader'
   const ordinaryRegistration = { id: 'ordinary-module', factory() {} };
   loader.load(ordinaryRegistration);
   assert.strictEqual(liveRegistrations[2], ordinaryRegistration);
+
+  const desktopPreference = { preference: 'zh' };
+  const localeContext = { configForms: { get: () => desktopPreference } };
+  loader.load({
+    id: '@deepseek-ai/dsh-client-locale',
+    factory: () => ({
+      apply(ctx) {
+        assert.equal(ctx.configForms.get('locale'), undefined);
+        assert.strictEqual(ctx.configForms.get('models'), desktopPreference);
+      },
+    }),
+  });
+  liveRegistrations[3].factory().apply(localeContext);
+  assert.deepEqual(desktopPreference, { preference: 'zh' });
 });
 
 test('removes only the known eager expression compiler and fails closed if invoked', async (t) => {

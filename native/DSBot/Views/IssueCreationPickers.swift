@@ -71,8 +71,8 @@ struct IssueProjectPicker: View {
     }
 
     var body: some View {
-        IssueChoiceList(title: "项目") {
-            IssueChoiceRow(title: "无项目", selected: selected == nil) {
+        IssueChoiceList(title: L10n.text("项目")) {
+            IssueChoiceRow(title: L10n.text("无项目"), selected: selected == nil) {
                 DSBotIcon(.issueProject, size: 18, scalesStroke: true)
             } action: { onSelect(nil) }
             ForEach(shown) { project in
@@ -81,13 +81,13 @@ struct IssueProjectPicker: View {
                 } action: { onSelect(project) }
             }
             if projects.isEmpty {
-                Text("还没有项目").font(.system(size: 14)).foregroundStyle(DSBotStyle.muted).padding(20)
+                Text(L10n.text("还没有项目")).font(.system(size: 14)).foregroundStyle(DSBotStyle.muted).padding(20)
             }
             Divider().padding(.leading, 16)
             NavigationLink(value: IssueCreationPicker.newProject) {
                 HStack(spacing: 12) {
                     DSBotIcon(.plus, size: 18)
-                    Text("新建项目").font(.system(size: 15))
+                    Text(L10n.text("新建项目")).font(.system(size: 15))
                     Spacer()
                 }
                 .foregroundStyle(DSBotStyle.ink)
@@ -96,7 +96,7 @@ struct IssueProjectPicker: View {
             }
             .buttonStyle(DSBotRowButtonStyle())
         }
-        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "选择项目")
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: L10n.text("选择项目"))
     }
 }
 
@@ -111,16 +111,16 @@ struct IssueProjectCreatePage: View {
     @State private var failed = false
 
     var body: some View {
-        IssueChoiceList(title: "新建项目") {
+        IssueChoiceList(title: L10n.text("新建项目")) {
             VStack(alignment: .leading, spacing: 16) {
-                field("项目名称", value: $name)
+                field(L10n.text("项目名称"), value: $name)
                 Divider()
-                field("项目文件夹", value: $path)
+                field(L10n.text("项目文件夹"), value: $path)
                 Divider()
-                Toggle("文件夹不存在时创建", isOn: $createDirectory)
+                Toggle(L10n.text("文件夹不存在时创建"), isOn: $createDirectory)
                     .font(.system(size: 15))
                 if failed {
-                    Text("项目文件夹没能打开，请检查路径，或勾选创建文件夹。")
+                    Text(L10n.text("项目文件夹没能打开，请检查路径，或勾选创建文件夹。"))
                         .font(.system(size: 13))
                         .foregroundStyle(DSBotStyle.chatError)
                 }
@@ -131,10 +131,10 @@ struct IssueProjectCreatePage: View {
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button(action: submit) {
-                    if busy { ProgressView() } else { Text("新建项目") }
+                    if busy { ProgressView() } else { Text(L10n.text("新建项目")) }
                 }
                 .disabled(busy || path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.status != .connected)
-                .accessibilityLabel("新建项目")
+                .accessibilityLabel(L10n.text("新建项目"))
             }
         }
         .navigationBarBackButtonHidden(busy)
@@ -182,7 +182,7 @@ struct IssueLabelsPicker: View {
         page
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") {
+                    Button(L10n.text("保存")) {
                         if let onSave { onSave() } else { dismiss() }
                     }.disabled(busy)
                 }
@@ -194,7 +194,7 @@ struct IssueLabelsPicker: View {
     @ViewBuilder
     private var page: some View {
         if let naming {
-            IssueChoiceList(title: "选择标签颜色") {
+            IssueChoiceList(title: L10n.text("选择标签颜色")) {
                 if busy {
                     ProgressView().tint(DSBotStyle.muted).padding(24)
                 } else {
@@ -204,15 +204,15 @@ struct IssueLabelsPicker: View {
                         } action: { create(naming, color: color.id) }
                     }
                 }
-                if failed { Text("标签没能创建").font(.system(size: 13)).foregroundStyle(DSBotStyle.chatError).padding(16) }
+                if failed { Text(L10n.text("标签没能创建")).font(.system(size: 13)).foregroundStyle(DSBotStyle.chatError).padding(16) }
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { self.naming = nil; failed = false }.disabled(busy)
+                    Button(L10n.text("取消")) { self.naming = nil; failed = false }.disabled(busy)
                 }
             }
         } else {
-            IssueChoiceList(title: "标签") {
+            IssueChoiceList(title: L10n.text("标签")) {
                 ForEach(shown) { label in
                     IssueChoiceRow(title: label.name, selected: selected.contains(label.id)) {
                         Circle().fill(IssueLabelPalette.color(label.color)).frame(width: 10, height: 10)
@@ -221,15 +221,15 @@ struct IssueLabelsPicker: View {
                     }
                 }
                 if labels.isEmpty && typed.isEmpty {
-                    Text("还没有标签").font(.system(size: 14)).foregroundStyle(DSBotStyle.muted).padding(20)
+                    Text(L10n.text("还没有标签")).font(.system(size: 14)).foregroundStyle(DSBotStyle.muted).padding(20)
                 }
                 if !typed.isEmpty && !labels.contains(where: { $0.name.localizedCaseInsensitiveCompare(typed) == .orderedSame }) {
-                    IssueChoiceRow(title: "新建标签：“\(typed)”") {
+                    IssueChoiceRow(title: L10n.text("新建标签：“{0}”", "\(typed)")) {
                         DSBotIcon(.plus, size: 18)
                     } action: { naming = typed; failed = false }
                 }
             }
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "修改或添加标签…")
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: L10n.text("修改或添加标签…"))
         }
     }
 
@@ -263,26 +263,26 @@ struct IssueDuePicker: View {
     }
 
     var body: some View {
-        IssueChoiceList(title: "截止日期") {
+        IssueChoiceList(title: L10n.text("截止日期")) {
             ForEach(presets, id: \.title) { preset in
                 IssueChoiceRow(title: preset.title, subtitle: preset.date.formatted(.dateTime.month().day())) {
                     DSBotIcon(.dueDate, size: 18, scalesStroke: true)
                 } action: { onSelect(Self.atNoon(preset.date)) }
             }
             Divider().padding(.horizontal, 16)
-            DatePicker("截止日期", selection: $date, displayedComponents: .date)
+            DatePicker(L10n.text("截止日期"), selection: $date, displayedComponents: .date)
                 .datePickerStyle(.graphical)
                 .padding(8)
             if dueAt != nil {
                 Divider().padding(.horizontal, 16)
-                IssueChoiceRow(title: "移除截止日期") {
+                IssueChoiceRow(title: L10n.text("移除截止日期")) {
                     DSBotIcon(.remove, size: 18, scalesStroke: true)
                 } action: { onSelect(nil) }
             }
         }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("保存") { onSelect(Self.atNoon(date)) }
+                Button(L10n.text("保存")) { onSelect(Self.atNoon(date)) }
             }
         }
     }
@@ -291,7 +291,7 @@ struct IssueDuePicker: View {
         let calendar = Calendar.current
         let now = Date()
         let friday = (6 - calendar.component(.weekday, from: now) + 7) % 7
-        return [("明天", 1), ("本周结束", friday), ("一周后", 7)].compactMap { title, days in
+        return [(L10n.text("明天"), 1), (L10n.text("本周结束"), friday), (L10n.text("一周后"), 7)].compactMap { title, days in
             calendar.date(byAdding: .day, value: days, to: now).map { (title, $0) }
         }
     }
@@ -312,18 +312,18 @@ struct IssueParentPicker: View {
     @State private var retry = 0
 
     var body: some View {
-        IssueChoiceList(title: "父事项") {
+        IssueChoiceList(title: L10n.text("父事项")) {
             if loading {
                 ProgressView().tint(DSBotStyle.muted).padding(24)
             } else if failed {
                 HStack(spacing: 12) {
-                    Text("事项没能加载").foregroundStyle(DSBotStyle.muted)
-                    Button("重试") { loading = true; retry += 1 }
+                    Text(L10n.text("事项没能加载")).foregroundStyle(DSBotStyle.muted)
+                    Button(L10n.text("重试")) { loading = true; retry += 1 }
                 }
                 .font(.system(size: 14))
                 .padding(20)
             } else if items.isEmpty {
-                Text("没有找到事项").font(.system(size: 14)).foregroundStyle(DSBotStyle.muted).padding(20)
+                Text(L10n.text("没有找到事项")).font(.system(size: 14)).foregroundStyle(DSBotStyle.muted).padding(20)
             } else {
                 ForEach(items) { issue in
                     IssueChoiceRow(title: issue.title, subtitle: issue.ref) {
@@ -332,7 +332,7 @@ struct IssueParentPicker: View {
                 }
             }
         }
-        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索事项…")
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: L10n.text("搜索事项…"))
         .task(id: "\(query)/\(store.connectionRevision)/\(store.status)/\(retry)") {
             loading = true
             failed = false

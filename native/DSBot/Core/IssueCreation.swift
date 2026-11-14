@@ -12,12 +12,12 @@ struct IssueWorkflowStatus: Decodable, Identifiable, Equatable, Sendable {
 
     static func title(for type: String) -> String {
         switch type {
-        case "backlog": return "待规划"
-        case "todo": return "待办"
-        case "in_progress": return "处理中"
-        case "in_review": return "待审核"
-        case "done": return "已完成"
-        case "canceled": return "已取消"
+        case "backlog": return L10n.text("待规划")
+        case "todo": return L10n.text("待办")
+        case "in_progress": return L10n.text("处理中")
+        case "in_review": return L10n.text("待审核")
+        case "done": return L10n.text("已完成")
+        case "canceled": return L10n.text("已取消")
         default: return type
         }
     }
@@ -29,11 +29,11 @@ enum IssuePriority: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .none: return "无优先级"
-        case .urgent: return "紧急"
-        case .high: return "高"
-        case .medium: return "中"
-        case .low: return "低"
+        case .none: return L10n.text("无优先级")
+        case .urgent: return L10n.text("紧急")
+        case .high: return L10n.text("高")
+        case .medium: return L10n.text("中")
+        case .low: return L10n.text("低")
         }
     }
 }

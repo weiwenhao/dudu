@@ -142,20 +142,6 @@ export function createIssueTidy({ issues, llm, rules, file, now = Date.now }) {
       }).catch((error) => ({ outcome: 'error', message: `The tidy failed: ${redact(error.message)}` })).finally(() => { running = null; });
       return running;
     },
-    undo() {
-      if (running) return { outcome: 'no_op', message: 'Wait until the tidy finishes.' };
-      if (!last?.groupId) return { outcome: 'no_op', message: 'No tidy to undo.' };
-      const result = issues.undo({ groupId: last.groupId });
-      if (result.outcome === 'success' || result.outcome === 'no_op') {
-        const processed = { ...last.processed };
-        for (const id of last.changed) {
-          const issue = issues.get(id, { logLimit: 1 }).issue;
-          if (issue) processed[id] = stampOf(issue);
-        }
-        save({ ...last, groupId: null, undoneAt: now(), processed });
-      }
-      return result;
-    },
     async close() { closed = true; stop.abort(); await running; },
   };
 }

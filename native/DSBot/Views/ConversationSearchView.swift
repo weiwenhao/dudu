@@ -35,7 +35,7 @@ struct ConversationSearchView: View {
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(DSBotQuietPressStyle())
-                            .accessibilityLabel("重试")
+                            .accessibilityLabel(L10n.text("重试"))
                             .accessibilityIdentifier("search.retry")
                         }
                         .padding(.horizontal, 24)
@@ -49,7 +49,7 @@ struct ConversationSearchView: View {
                             .padding(24)
                     } else if !search.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                               search.results.isEmpty, search.error == nil {
-                        Text("没有匹配的会话")
+                        Text(L10n.text("没有匹配的会话"))
                             .font(.system(size: 13))
                             .foregroundStyle(DSBotStyle.muted)
                             .padding(24)
@@ -92,13 +92,13 @@ struct ConversationSearchView: View {
                     .contentShape(Circle())
             }
             .buttonStyle(DSBotGlassButtonStyle())
-            .accessibilityLabel("返回")
+            .accessibilityLabel(L10n.text("返回"))
             .accessibilityIdentifier("search.back")
 
             HStack(spacing: 10) {
                 DSBotIcon(.search, size: 18)
                     .foregroundStyle(DSBotStyle.muted)
-                TextField("搜索对话内容…", text: $search.query)
+                TextField(L10n.text("搜索对话内容…"), text: $search.query)
                     .font(.system(size: 15))
                     .textFieldStyle(.plain)
                     .autocorrectionDisabled()
@@ -118,7 +118,7 @@ struct ConversationSearchView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("清除搜索")
+                    .accessibilityLabel(L10n.text("清除搜索"))
                     .accessibilityIdentifier("search.clear")
                 }
             }

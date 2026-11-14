@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createNativeAssistant } from '../host/native-assistant.mjs';
 
-function harness(overrides = {}) {
+function harness(overrides = {}, readSession?) {
   const calls = [];
   const assistant = {
     state: () => ({ sessionId: 'dudu-owned' }),
@@ -28,6 +28,7 @@ function harness(overrides = {}) {
     fail: (code) => { throw Object.assign(new Error(code), { code }); },
     attachments: (items) => (items ?? []).map((item) => ({ type: 'image', ...item })),
     fileBytes: (data) => Buffer.from(data ?? '', 'base64'),
+    readSession,
   });
   return { bridge, calls };
 }
@@ -40,6 +41,47 @@ test('assistant completions are scoped to the fixed session and use DSH skills a
   const result = await bridge.dispatch('assistant.recipients', { sessionId: 'dudu-owned', q: 'DUD' });
   assert.deepEqual(result.items[0].project, { name: 'dudu' });
   assert.equal(calls.some(([method]) => method === 'session/prompt'), false);
+});
+
+test('quick-sheet lists are read-only, bounded to the assistant, and pass their paging cursor without a card command', async () => {
+  const reads: unknown[] = [];
+  const { bridge, calls } = harness({ todos: async (cursor) => {
+    reads.push(cursor);
+    return { rows: [{ id: 7, title: 'Waiting' }], total: 31, nextCursor: cursor ? null : 'page-2' };
+  } });
+  await assert.rejects(bridge.dispatch('assistant.todos', { sessionId: 'other' }), { code: 'NOT_FOUND' });
+  await assert.rejects(bridge.dispatch('assistant.todos', { sessionId: 'dudu-owned', cursor: {} }), { code: 'BAD_REQUEST' });
+  assert.equal((await bridge.dispatch('assistant.todos', { sessionId: 'dudu-owned' })).nextCursor, 'page-2');
+  assert.equal((await bridge.dispatch('assistant.todos', { sessionId: 'dudu-owned', cursor: 'page-2' })).nextCursor, null);
+  assert.deepEqual(reads, [undefined, 'page-2']);
+  assert.deepEqual(calls, [], 'a read executes no DSH command, prompt or issue mutation');
+});
+
+test('expanded todo reads cannot replace the recipient or expose unrelated detail', async () => {
+  const reads: string[] = [];
+  const { bridge, calls } = harness({ issues: async (action, body) => {
+    calls.push([action, body]);
+    if (action === 'get') return { outcome: 'success', issue: { id: 7, session: 'dsh:agent' } };
+    return { outcome: 'success' };
+  } }, async (id) => {
+    reads.push(id);
+    return {
+      session: { id }, messages: [{ id: 'u', role: 'user', text: 'hello' }, { id: 'a', role: 'assistant', text: 'answer' }, { id: 't', role: 'tool', text: 'private' }],
+      queuedMessages: [], approvals: ['private'], trace: ['private'],
+    };
+  });
+  const params = { sessionId: 'dudu-owned', id: 7, session: 'dsh:agent' };
+  await assert.rejects(bridge.dispatch('assistant.reply.read', { ...params, session: 'dsh:elsewhere' }), { code: 'NOT_FOUND' });
+  await assert.rejects(bridge.dispatch('assistant.reply.read', { ...params, sessionId: 'elsewhere' }), { code: 'NOT_FOUND' });
+  assert.deepEqual(reads, []);
+  assert.deepEqual(await bridge.dispatch('assistant.reply.read', params), {
+    session: { id: 'agent' }, messages: [{ id: 'u', role: 'user', text: 'hello' }, { id: 'a', role: 'assistant', text: 'answer' }], queuedMessages: [], acceptedRequestIds: [], canceledRequestIds: [],
+  });
+  assert.deepEqual(reads, ['agent']);
+  await assert.rejects(bridge.dispatch('assistant.reply', {
+    sessionId: 'dudu-owned', id: '#7', session: 'dsh:agent', text: 'hello', requestId: 'no-direct-reply',
+  }), { code: 'METHOD_NOT_ALLOWED' });
+  assert.equal(calls.some(([action]) => ['forward', 'resume', 'session/prompt'].includes(action)), false);
 });
 
 test('assistant forwarding stages files on the recipient and deduplicates an outstanding delivery', async () => {

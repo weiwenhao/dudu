@@ -128,7 +128,7 @@ struct ComposerAttachmentSheet: View {
                 onClose()
                 Task { await store.configure(permissionId: id) }
             }
-            Button("取消", role: .cancel) {}
+            Button(L10n.text("取消"), role: .cancel) {}
         } message: { confirmation in
             Text(confirmation.message)
         }
@@ -170,17 +170,17 @@ struct ComposerAttachmentSheet: View {
             .buttonStyle(.plain)
             .padding(.leading, 32)
             .padding(.top, 10)
-            .accessibilityLabel("返回")
+            .accessibilityLabel(L10n.text("返回"))
             .accessibilityIdentifier("composer.sheet.back")
         }
     }
 
     private var pageTitle: String {
         switch page {
-        case .root: return "添加"
-        case .models, .modelSettings: return "模型"
-        case .efforts: return "推理等级"
-        case .permissions: return "权限"
+        case .root: return L10n.text("添加")
+        case .models, .modelSettings: return L10n.text("模型")
+        case .efforts: return L10n.text("推理等级")
+        case .permissions: return L10n.text("权限")
         }
     }
 
@@ -196,7 +196,7 @@ struct ComposerAttachmentSheet: View {
                 if !store.isAssistantConversation {
                     goalAndPlanCard.padding(.top, Layout.tileGap)
                 }
-                sectionTitle("指令")
+                sectionTitle(L10n.text("指令"))
                 commandCard
             }
         case .models:
@@ -205,11 +205,11 @@ struct ComposerAttachmentSheet: View {
             VStack(alignment: .leading, spacing: 0) {
                 modelList(closesOnSelection: false)
                 if !store.currentEfforts.isEmpty {
-                    sectionTitle("推理等级")
+                    sectionTitle(L10n.text("推理等级"))
                     choiceList(
                         store.currentEfforts.map { ($0.id, $0.name) },
                         selected: store.effectiveEffort,
-                        empty: "当前模型未提供推理等级",
+                        empty: L10n.text("当前模型未提供推理等级"),
                         identifierPrefix: "composer.effort."
                     ) { id in
                         DSBotLog.record("effort.select")
@@ -221,7 +221,7 @@ struct ComposerAttachmentSheet: View {
             choiceList(
                 store.currentEfforts.map { ($0.id, $0.name) },
                 selected: store.effectiveEffort,
-                empty: "当前模型未提供推理等级",
+                empty: L10n.text("当前模型未提供推理等级"),
                 identifierPrefix: "composer.effort."
             ) { id in
                 DSBotLog.record("effort.select")
@@ -232,7 +232,7 @@ struct ComposerAttachmentSheet: View {
             choiceList(
                 store.permissions.map { ($0.id, $0.name) },
                 selected: store.selectedPermissionId,
-                empty: "暂无权限选项",
+                empty: L10n.text("暂无权限选项"),
                 identifierPrefix: "composer.permission."
             ) { id in
                 // Presets that run with fewer confirmations ask first, as DSH does.
@@ -250,8 +250,8 @@ struct ComposerAttachmentSheet: View {
 
     private var tileRow: some View {
         HStack(spacing: Layout.tileSpacing) {
-            tile(.image, label: "照片", identifier: "composer.photos", isEnabled: canAddPhotos, action: onAddPhotos)
-            tile(.attach, label: "文件", identifier: "composer.files", isEnabled: canAddFiles, action: onAddFiles)
+            tile(.image, label: L10n.text("照片"), identifier: "composer.photos", isEnabled: canAddPhotos, action: onAddPhotos)
+            tile(.attach, label: L10n.text("文件"), identifier: "composer.files", isEnabled: canAddFiles, action: onAddFiles)
         }
     }
 
@@ -278,12 +278,12 @@ struct ComposerAttachmentSheet: View {
     private var goalAndPlanCard: some View {
         VStack(spacing: 0) {
             commandRow(
-                icon: .goal, title: "目标",
+                icon: .goal, title: L10n.text("目标"),
                 showsChevron: false, identifier: "composer.goal", isEnabled: true
             ) { onGoal() }
             separator
             commandRow(
-                icon: .plan, title: store.planMode ? "退出计划模式" : "计划",
+                icon: .plan, title: store.planMode ? L10n.text("退出计划模式") : L10n.text("计划"),
                 showsChevron: false, isSelected: store.planMode,
                 identifier: "composer.plan", isEnabled: !store.isChangingPlanMode
             ) { onPlan() }
@@ -294,25 +294,25 @@ struct ComposerAttachmentSheet: View {
     private var commandCard: some View {
         VStack(spacing: 0) {
             commandRow(
-                icon: .compact, title: "压缩",
+                icon: .compact, title: L10n.text("压缩"),
                 showsChevron: false, identifier: "composer.compact", isEnabled: !isTaskRunning
             ) { onCompact() }
             separator
             commandRow(
-                icon: .permission, title: "权限",
+                icon: .permission, title: L10n.text("权限"),
                 value: selectedName(store.permissions.map { ($0.id, $0.name) }, store.selectedPermissionId),
                 identifier: "composer.menu.permission", isEnabled: !store.permissions.isEmpty
             ) { page = .permissions }
             separator
             commandRow(
-                icon: .model, title: "模型",
+                icon: .model, title: L10n.text("模型"),
                 value: store.currentModelName,
                 identifier: "composer.menu.model", isEnabled: !store.models.isEmpty
             ) { page = .models }
             if !store.currentEfforts.isEmpty {
                 separator
                 commandRow(
-                    icon: .think, title: "推理等级",
+                    icon: .think, title: L10n.text("推理等级"),
                     value: store.effortName,
                     identifier: "composer.menu.effort", isEnabled: true
                 ) { page = .efforts }
@@ -320,7 +320,7 @@ struct ComposerAttachmentSheet: View {
             if isTaskRunning {
                 separator
                 commandRow(
-                    icon: .stop, title: "停止任务", showsChevron: false,
+                    icon: .stop, title: L10n.text("停止任务"), showsChevron: false,
                     identifier: "composer.stop", isEnabled: true
                 ) {
                     DSBotLog.record("session.stop")
@@ -421,7 +421,7 @@ struct ComposerAttachmentSheet: View {
         choiceList(
             models.map { ($0.id, $0.name) },
             selected: store.selectedModelId,
-            empty: "暂无可选模型",
+            empty: L10n.text("暂无可选模型"),
             identifierPrefix: "composer.model."
         ) { id in
             DSBotLog.record("model.select")

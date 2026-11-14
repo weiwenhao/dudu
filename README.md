@@ -4,14 +4,14 @@
 
 ### An efficient multi-agent collaboration assistant built on DSH
 
-**Run many Claude Code, Codex and DeepSeek tasks at once and see which one is waiting for you.**<br>
+**Run many Claude Code, Codex, Pi and DeepSeek tasks at once and see which one is waiting for you.**<br>
 Every task is an Issue on one board, on your desktop and on your phone.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) ![version](https://img.shields.io/badge/version-0.1.0%20beta-orange?style=flat-square) ![macOS](https://img.shields.io/badge/macOS-000000?style=flat-square&logo=apple&logoColor=white) ![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2024-339933?style=flat-square&logo=node.js&logoColor=white) ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-0.2.2--rc.1-4D6BFE?style=flat-square)
 
 If Dudu is useful to you, a star on GitHub helps others find it.
 
-[How it works](#how-it-works) • [Features](#features) • [Quick start](#quick-start) • [Security](#security) • [Docs](#docs) • [App Store][app-store] • **English** · [简体中文](README.zh-CN.md)
+[Features](#features) • [Quick start](#quick-start) • [Docs](#docs) • [App Store][app-store] • **English** · [简体中文](README.zh-CN.md)
 
 <img src="docs/images/hero.en.png" width="900" alt="Dudu inside DSH Desktop: the Issues widget on the left, the Office on the top right and the Collector on the bottom right; the small blue icon at the bottom right opens the chat">
 
@@ -22,17 +22,10 @@ Dudu is a plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-
 > [!NOTE]
 > **What is DSH?** An open-source agent app from DeepSeek whose motto is "Everything is a Plugin". Dudu is one of its plugins, so you need DSH Desktop first.
 
-## How it works
-
-With several agents running, you open each session to find out who finished, who is stuck and who is asking you something. Dudu puts that on one board:
-
-1. **One task, one Issue.** Issues are laid out like Linear's: statuses, priorities, labels, a list and a board. Hand one to an Agent (Claude Code, Codex or DeepSeek) and it works in its own DSH session, in your project folder.
-2. **One board.** Issues are grouped by the Agent's state, and **Needs you** comes first: the Agent asked a question, failed, was stopped or finished its turn. Then Working, Idle and Unassigned.
-3. **You decide.** You create the Issues, pick the Agent and set the status. When you ask Dudu in chat to create an Issue, it picks the Agent by the assignment rules you wrote.
-
 ## Features
 
-- **Agents**: Claude Code, Codex and DeepSeek. Claude Code and Codex run as the programs installed on your computer, with your login, settings, skills and MCP servers. Import the sessions you already have, or take one over as an Issue.
+- **Board**: every task is an Issue, with statuses, priorities and labels, as a list or a board like Linear's. Issues are grouped by the Agent's state, **Needs you** first.
+- **Agents**: Claude Code, Codex, Pi and DeepSeek. Claude Code and Codex run as the programs installed on your computer, with your login, settings, skills and MCP servers; Pi runs the installed `pi` (1.4.0 or later). Import the Claude Code and Codex sessions you already have, or take one over as an Issue.
 - **Terminal**: copy a Claude Code or Codex session's resume command from its Issue and continue in a terminal. Use a session in one place at a time, DSH or the terminal.
 - **Mobile app**: the same board in your pocket, with voice input.
 - **Collector**: a DSH model reads Lark, Notion, Linear and more on a schedule you set, so each collection costs tokens. Each item can become an Issue, go to an Agent as a message, or be ignored.
@@ -42,10 +35,10 @@ With several agents running, you open each session to find out who finished, who
 - **Office**: every active Issue is a little person, at a desk when working, in the lounge when waiting, in bed when asleep.
 - **Dashboard**: drag and resize every widget.
 
-**Mobile app.** From left to right: the board, the chat, the chat's "+" menu, tasks (Chinese interface).
+**Mobile app.** From left to right: the board, the chat, the chat's "+" menu, tasks.
 
 <div align="center">
-  <img src="docs/images/phone.png" alt="The mobile app (Chinese interface), from left to right: the board; the chat; the menu that opens from + in the chat; tasks" width="900">
+  <img src="docs/images/phone.en.png" alt="The mobile app, from left to right: the board; the chat; the menu that opens from + in the chat; tasks" width="900">
 </div>
 
 **Dashboard.** Drag and resize widgets from "Edit layout" at the top right. Here the Issues widget uses the board layout and the Collector is being resized.
@@ -60,7 +53,7 @@ You need:
 
 - macOS 13 or later on Apple silicon, with [DSH Desktop](https://deepseek.com/harness) (tested on 0.2.2-rc.1, see the [compatibility audit](docs/dsh-0.2.2-compatibility.md)) and a model set up in it
 - Node.js 24 or later and Git
-- Claude Code or Codex, installed and signed in, if you want to use them
+- Claude Code, Codex or Pi, installed and signed in, if you want to use them
 
 ### 1. Install the plugin
 
@@ -77,16 +70,13 @@ Then open "Dudu" in DSH's left sidebar. `desktop:update` needs DSH Desktop in `/
 
 On the Dudu page click "New issue", enter a title, pick a project (a DSH workspace folder) and an Agent, and click "Create issue".
 
-### 3. Connect the mobile app (optional)
+### 3. Follow it on the board
 
-Install it from the [App Store][app-store] (iOS 18 or later; the interface is in Chinese for now). On the Dudu page click the settings icon at the top right, open "Phone control", enter a computer name, click "Generate QR code" and scan it with the app. A LAN address works only while the phone and the computer are on the same network. To use the app elsewhere, put your own HTTPS reverse proxy or tunnel in front of port 3170, then under "Connection addresses" click "Add address" and choose "Public address"; the app tries the LAN address first. DSH Desktop and the tunnel must keep running on the computer. More: [phone-connection.md](docs/phone-connection.md) (Chinese).
+The Issue starts in **Working**. When the Agent asks a question, fails, is stopped or finishes its turn, the Issue moves to **Needs you**, at the top: open it, answer, or set the status yourself.
 
-## Security
+### 4. Connect the mobile app (optional)
 
-- **Pairing is manual.** A code appears only when you click "Generate QR code", lasts 10 minutes, and each phone can be revoked.
-- **The app reaches only Dudu's own pages and APIs**, after pairing, with the credential in the `Authorization` header. A LAN address is plain HTTP; over a TLS proxy or tunnel the relay can read the traffic, so it is not end-to-end encrypted.
-- **Agents run with full access** (any file, any command) for Dudu's chat, collection and scheduled tasks, and for Issues handed to Codex or DeepSeek. Claude Code Issues use Claude's own permission settings.
-- **Your data stays on your computer** (`~/.dsh/dudu/`). What goes to a model goes to the provider you configured.
+Install it from the [App Store][app-store] (iOS 18 or later; English and Chinese, following the phone's language). On the Dudu page click the settings icon at the top right, open "Phone control", enter a computer name, click "Generate QR code" and scan it with the app. A LAN address works only while the phone and the computer are on the same network. To use the app elsewhere, put your own HTTPS reverse proxy or tunnel in front of port 3170, then under "Connection addresses" click "Add address" and choose "Public address"; the app tries the LAN address first. DSH Desktop and the tunnel must keep running on the computer. More: [phone-connection.md](docs/phone-connection.md) (Chinese).
 
 ## Docs
 
@@ -94,7 +84,7 @@ Install it from the [App Store][app-store] (iOS 18 or later; the interface is in
 | :-- | :-- |
 | **[Design](docs/assistant.md)** | Product, structure, interface, APIs. Long, with the decision history (Chinese) |
 | **[Mobile app](docs/phone-connection.md)** | Install and pair (Chinese) |
-| **[Claude Code and Codex](docs/providers.md)** | How they run inside DSH (Chinese) |
+| **[Claude Code, Codex and Pi](docs/providers.md)** | How they run inside DSH (Chinese) |
 | **[Scheduled tasks](docs/scheduled-tasks.md)** | (Chinese) |
 | **[Issue API](docs/issues-api.md)** | (Chinese) |
 | **[Widgets](examples/dudu-widget)** | Write a widget for Dudu |
@@ -109,7 +99,7 @@ npm test               # unit tests, fast
 npm run test:e2e       # end to end, slower; needs the dsh command (or set DUDU_E2E_DSH) and Chrome
 ```
 
-## Friend links
+## Recommended sites
 
 <table>
 <tr>

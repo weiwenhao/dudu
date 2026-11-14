@@ -44,7 +44,7 @@ struct PairingView: View {
                 Spacer(minLength: 30)
                 DuduLogo(size: 72)
                     .padding(.bottom, 22)
-                Text("连接电脑上的 DSH")
+                Text(L10n.text("连接电脑上的 DSH"))
                     .font(.system(size: 23, weight: .semibold))
                     .foregroundStyle(DSBotStyle.ink)
                     .padding(.bottom, 7)
@@ -55,7 +55,7 @@ struct PairingView: View {
                     DSBotLog.record("pairing.scan")
                     isScannerPresented = true
                 } label: {
-                    DSBotLabel("扫描配对码", icon: .scan)
+                    DSBotLabel(L10n.text("扫描配对码"), icon: .scan)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity, minHeight: 50)
@@ -74,7 +74,7 @@ struct PairingView: View {
                         errorMessage = nil
                         DSBotLog.record("pairing.manual")
                     } label: {
-                        Text("粘贴配对链接")
+                        Text(L10n.text("粘贴配对链接"))
                             .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(DSBotStyle.ink)
                             .frame(maxWidth: .infinity, minHeight: 44)
@@ -99,18 +99,18 @@ struct PairingView: View {
             .scrollDismissesKeyboard(.interactively)
         }
         .background(DSBotStyle.sheet.ignoresSafeArea())
-        .navigationTitle(embeddedInSettings ? "添加电脑" : "")
+        .navigationTitle(embeddedInSettings ? L10n.text("添加电脑") : "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if embeddedInSettings && showsCancelButton {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("取消") { dismiss() }
+                    Button(L10n.text("取消")) { dismiss() }
                         .foregroundStyle(DSBotStyle.ink)
                 }
             }
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("完成") { activeField = nil }
+                Button(L10n.text("完成")) { activeField = nil }
             }
         }
         .fullScreenCover(isPresented: $isScannerPresented) {
@@ -133,10 +133,10 @@ struct PairingView: View {
     private var manualForm: some View {
         VStack(alignment: .leading, spacing: 15) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("配对链接")
+                Text(L10n.text("配对链接"))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(DSBotStyle.ink)
-                TextField("粘贴电脑生成的完整链接", text: $link, axis: .vertical)
+                TextField(L10n.text("粘贴电脑生成的完整链接"), text: $link, axis: .vertical)
                     .focused($activeField, equals: .link)
                     .font(.system(size: 15))
                     .textInputAutocapitalization(.never)
@@ -151,10 +151,10 @@ struct PairingView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("电脑名称")
+                Text(L10n.text("电脑名称"))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(DSBotStyle.ink)
-                TextField("选填", text: $computerName)
+                TextField(L10n.text("选填"), text: $computerName)
                     .focused($activeField, equals: .name)
                     .submitLabel(.done)
                     .onSubmit { activeField = nil }
@@ -179,7 +179,7 @@ struct PairingView: View {
             } label: {
                 HStack(spacing: 9) {
                     if isPairing { ProgressView().tint(.white) }
-                    Text("添加并连接")
+                    Text(L10n.text("添加并连接"))
                         .font(.system(size: 15, weight: .semibold))
                 }
                 .foregroundStyle(.white)
@@ -199,7 +199,7 @@ struct PairingView: View {
         guard !isPairing else { return }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            errorMessage = "请输入配对链接"
+            errorMessage = L10n.text("请输入配对链接")
             return
         }
 

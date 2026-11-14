@@ -95,7 +95,8 @@ export function createConnections({
     const onThisComputer = [
       ...catalog.here.filter((item) => !connected.has(item.id)).map(view),
       ...(await found().catch(() => [])).filter((server) => !entries().some((entry) => entry.spec && same(entry.spec, server.spec)))
-        .map((server) => ({ id: server.id, name: server.name, line: server.line, icon: server.spec.url ? 'plug' : 'terminal', how: 'local' })),
+        // the logo of the service its name says, as the connector it becomes will have (`list`), so that a row does not change its picture when it is connected
+        .map((server) => ({ id: server.id, name: server.name, line: server.line, icon: brandOf(server.name) ?? (server.spec.url ? 'plug' : 'terminal'), how: 'local' })),
     ];
     const groups = onThisComputer.length ? [{ id: 'here', items: onThisComputer }] : [];
     for (const id of catalog.groups) {

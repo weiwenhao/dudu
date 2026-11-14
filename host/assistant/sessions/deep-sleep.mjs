@@ -12,9 +12,11 @@ export const DEEP_SLEEP_MS = 30 * 60_000; // an idle agent's wait
 export const WAIT_FACTOR = Object.freeze({ idle: 1, done: 2 });
 export const waitFor = (agentMark, afterMs = DEEP_SLEEP_MS) => afterMs * (WAIT_FACTOR[agentMark] ?? 1);
 
-// A turn that ended has nothing running. `waiting_owner` is not one of them: it is a turn that is alive and waits for its answer.
+// A historical question also reads `waiting_owner` after its process has gone. Only an explicit live observation that its turn is
+// inactive allows that state to sleep; a real question/approval, background work and unknown liveness keep it awake.
 export const ENDED_STATES = Object.freeze(['finished', 'idle', 'error', 'stopped']);
 const ENDED = new Set(ENDED_STATES);
+export const hasEndedTurn = (state, turnActive) => turnActive !== true && (ENDED.has(state) || (state === 'waiting_owner' && turnActive === false));
 
 // The marks that may sleep: an idle agent, and a run that finished and waits for a look (the green check; owner, 2026-11-07: "在需要我的阶段，只要不是红点，都可以进入
 // 深度睡眠"). A red dot (a question, an approval, a failure, a stop) is the owner's to answer: it never sleeps, however long.
@@ -29,10 +31,11 @@ export function handledAtOf(snapshot) {
 /**
  * Whether the agent of a session is in deep sleep: its mark may sleep (idle, or a finished run: an agent that asks, fails or was stopped is not, nor is one
  * that works), its session is a DSH one (the kind 嘟嘟 started or took over: a conversation in somebody's terminal is not 嘟嘟's to put to sleep or to start
- * again), its turn has ended, and the wait of its mark has passed since it was handled (`handledAt`, ms; unknown is not asleep: it is never guessed). `afterMs`
- * is an idle agent's wait; a finished run's is twice that (`waitFor`).
+ * again), its turn has ended, and the wait of its mark has passed since it was handled (`handledAt`, ms; unknown is not asleep: it is never guessed).
+ * `turnActive` distinguishes a historical question from an actual waiting turn; true protects work in every state, and unknown never permits a waiting turn
+ * to sleep. `afterMs` is an idle agent's wait; a finished run's is twice that (`waitFor`).
  */
-export function inDeepSleep({ key, state, agentMark, handledAt, now = Date.now(), afterMs = DEEP_SLEEP_MS }) {
+export function inDeepSleep({ key, state, agentMark, handledAt, turnActive = null, now = Date.now(), afterMs = DEEP_SLEEP_MS }) {
   if (!/^dsh:./s.test(String(key ?? ''))) return false;
-  return SLEEPING_MARKS.includes(agentMark) && ENDED.has(state) && Number.isFinite(handledAt) && now - handledAt >= waitFor(agentMark, afterMs);
+  return SLEEPING_MARKS.includes(agentMark) && hasEndedTurn(state, turnActive) && Number.isFinite(handledAt) && now - handledAt >= waitFor(agentMark, afterMs);
 }

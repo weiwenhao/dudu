@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 export const NATIVE_ASSISTANT_METHODS = Object.freeze([
   'assistant.skills', 'assistant.recipients', 'assistant.forward', 'assistant.card', 'assistant.hide',
+  'assistant.todos', 'assistant.reply.read', 'assistant.reply.image',
 ]);
 
 // The quick buttons of the chat: what a card can list. The card itself comes back in the thread, as the command's two events (assistant/home/cards.mjs).
@@ -9,7 +10,7 @@ const CARD_KINDS = new Set(['todo', 'info', 'task']);
 
 // These are the desktop assistant's own actions, reached only through authenticated native RPC.
 // No caller-selected route, arbitrary command or general DSH proxy is exposed.
-export function createNativeAssistant({ assistant, remote, fail, attachments, fileBytes }) {
+export function createNativeAssistant({ assistant, remote, fail, attachments, fileBytes, readSession, readImage }) {
   const deliveries = new Map();
   const isSession = (id) => typeof id === 'string' && id.length > 0 && assistant?.state?.()?.sessionId === id;
   const requireSession = (id) => {
@@ -101,6 +102,36 @@ export function createNativeAssistant({ assistant, remote, fail, attachments, fi
           };
         }
         case 'assistant.forward': return forward(params);
+        case 'assistant.todos': {
+          if (params.cursor !== undefined && (typeof params.cursor !== 'string' || !params.cursor || params.cursor.length > 200)) fail('BAD_REQUEST');
+          if (typeof assistant.todos !== 'function') fail('UNSUPPORTED');
+          const list = await assistant.todos(params.cursor);
+          if (!Array.isArray(list?.rows)) fail('UPSTREAM_UNAVAILABLE');
+          return { outcome: 'success', total: list.total, rows: list.rows, nextCursor: list.nextCursor ?? null };
+        }
+        case 'assistant.reply.read':
+        case 'assistant.reply.image': {
+          // A sheet may read only the issue/session pair it opened. It neither changes the selected session nor replaces its watch.
+          if (!Number.isSafeInteger(params.id) || params.id < 1 || typeof params.session !== 'string'
+            || !/^dsh:.{1,256}$/u.test(params.session)) fail('BAD_REQUEST');
+          const found = await assistant.issues('get', { id: params.id, logLimit: 1 });
+          if (found?.outcome !== 'success' || found.issue?.session !== params.session) fail('NOT_FOUND');
+          const readingImage = method === 'assistant.reply.image';
+          const read = readingImage ? readImage : readSession;
+          if (typeof read !== 'function') fail('UNSUPPORTED');
+          const detail = await read(params.session.slice(4), {
+            attachmentId: params.attachmentId, seq: params.seq, source: params.source,
+          });
+          const current = await assistant.issues('get', { id: params.id, logLimit: 1 });
+          if (current?.outcome !== 'success' || current.issue?.session !== params.session) fail('NOT_FOUND');
+          if (readingImage) return detail;
+          return {
+            session: detail.session, messages: detail.messages.filter((message) => ['user', 'assistant'].includes(message.role)),
+            queuedMessages: detail.queuedMessages,
+            acceptedRequestIds: detail.acceptedRequestIds ?? [],
+            canceledRequestIds: detail.canceledRequestIds ?? [],
+          };
+        }
         case 'assistant.card': {
           if (!CARD_KINDS.has(params.kind)) fail('BAD_REQUEST');
           // `since`: the card the phone sees at the end of the thread (nothing but cards after it); a tap that would only repeat it makes nothing new.

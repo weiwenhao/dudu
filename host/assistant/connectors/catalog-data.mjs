@@ -42,7 +42,7 @@ export default {
     // permission to use it.
     { id: 'ego', name: 'ego', group: 'web', icon: 'browser', line: '用你已经登录好的浏览器打开网页', how: 'cli',
       command: 'ego-browser', status: ['--version'], install: 'https://lite.ego.app/',
-      prompt: '用 ego-browser 技能，通过我已经登录好的浏览器打开网页，只读，不登录、不发帖、不点赞。' },
+      prompt: '用 ego-browser 技能，通过我已经登录好的浏览器打开网页。' },
   ],
   here: [],
 };

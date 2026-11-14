@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { AsyncQueue } from './async.mjs';
 import { createHarnessAdapter, HarnessBridge, harnessError } from './harness-bridge.mjs';
 import { createMirrorTool, createMirrorTools } from './mirror-tools.mjs';
+import { inclusiveUsage, usageDelta } from './usage.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex').slice(0, 24);
 const text = (value) => typeof value === 'string' ? value : '';
@@ -44,7 +45,10 @@ export function createHarnessTeams({ host, driver, log = console }) {
   bridge.onUnknownTool = (id, name) => {
     const child = children.get(id);
     const spec = driver.fallbackTool?.(name);
-    if (child?.handle && spec) child.disposers.push(child.handle.agent.ctx.tools.register(createMirrorTool({ bridge, spec })));
+    if (child?.handle && spec && !child.tools.has(name)) {
+      child.disposers.push(child.handle.agent.ctx.tools.register(createMirrorTool({ bridge, spec })));
+      child.tools.add(name);
+    }
   };
   const unregister = host.llm.registerAdapter([route], createHarnessAdapter(bridge));
   const observers = new Set();
@@ -55,6 +59,7 @@ export function createHarnessTeams({ host, driver, log = console }) {
     const calls = new Map();
     const inputs = new Map();
     const unmatched = [];
+    const usageReader = driver.childUsage?.();
     let tail = Promise.resolve();
     let ending;
     let root;
@@ -64,7 +69,8 @@ export function createHarnessTeams({ host, driver, log = console }) {
     };
     const memberFor = (id) => ownEvents(parent.session).findLast((event) => event.type === 'team/member'
       && event.data.teamId === parent.id && event.data.member.id === id)?.data.member;
-    const appendMember = (member) => parent.session.append('team/member', { version: 2, teamId: parent.id, member });
+    const catalogFor = (id) => ownEvents(parent.session).findLast((event) => event.type === 'subagent/catalog'
+      && event.data.childId === id)?.data;
     const matches = (child, record) => child.nativeSession
       ? record.sessionId === child.nativeSession
       : record.sessionId === child.origin && JSON.stringify(record.agentPath ?? []) === JSON.stringify(child.path);
@@ -79,7 +85,7 @@ export function createHarnessTeams({ host, driver, log = console }) {
         origin: record.sessionId, path: [...(record.agentPath ?? []), event.toolCallId || event.taskId],
         name: text(call.name) || label.split('/').at(-1) || event.taskId, label, prompt: text(call.prompt),
         model: parent.session.requestHeader?.()?.config?.model || parent.options?.model || 'default',
-        status: 'stopped', settled: true, disposers: [],
+        status: 'stopped', settled: true, disposers: [], tools: new Set(),
         facts: {
           sessionId: record.sessionId, agentPath: record.agentPath ?? [], taskId: event.taskId,
           ...(event.childSessionId ? { childSessionId: event.childSessionId } : {}),
@@ -89,8 +95,6 @@ export function createHarnessTeams({ host, driver, log = console }) {
       };
       const member = memberFor(id);
       if (member) { child.name = member.name; child.label = member.description || label; }
-      else if (ownEvents(parent.session).some((event) => event.type === 'team/member'
-        && event.data.teamId === parent.id && event.data.member.name === child.name)) child.name += `-${id.slice(-6)}`;
       tasks.set(key, child);
       children.set(id, child);
       return child;
@@ -99,11 +103,15 @@ export function createHarnessTeams({ host, driver, log = console }) {
       if (typeof fact?.sessionId !== 'string' || typeof fact.taskId !== 'string'
         || !Array.isArray(fact.agentPath) || !fact.agentPath.every((part) => typeof part === 'string')) continue;
       const child = remember(fact, fact);
-      // A saved relationship alone must not create a teammate, start a turn or change a task.
-      if (!memberFor(child.id)) { tasks.delete(keyOf(fact, fact.taskId)); children.delete(child.id); }
+      // Restore only a published child. Facts alone cannot create a session or start work.
+      if (!catalogFor(child.id) && memberFor(child.id)?.phase !== 'active') {
+        tasks.delete(keyOf(fact, fact.taskId));
+        children.delete(child.id);
+      }
     }
 
     async function publishTask(child) {
+      if (!catalogFor(child.id)) return;
       const history = ownEvents(parent.session).filter((event) => event.type === 'team/task' && event.data.teamId === parent.id);
       const previous = history.findLast((event) => event.data.task.ownerId === child.id)?.data.task;
       const nextNumber = Math.max(0, ...history.map((event) => Number(/^task-(\d+)$/.exec(event.data.task.id)?.[1] ?? 0))) + 1;
@@ -128,14 +136,16 @@ export function createHarnessTeams({ host, driver, log = console }) {
       child.summary = undefined;
       child.error = undefined;
       if (!child.handle) {
-        const member = memberFor(child.id);
-        if (member?.phase === 'failed') throw new Error(member.error);
-        if (!member) appendMember({
-          id: child.id, name: child.name, description: child.label, provider: route, context: 'fresh', phase: 'provisioning',
-        });
-        const stored = member ? await host.eventsOf(child.id) : undefined;
-        const options = { parentAgent: parent, agentOptions: { provider: route, model: child.model } };
         try {
+          const published = catalogFor(child.id) || memberFor(child.id)?.phase === 'active';
+          const stored = published ? await host.eventsOf(child.id) : undefined;
+          // Never replace a published child's missing history with a fresh session.
+          if (published && !stored) throw harnessError('The harness is no longer running this turn. Send the message again.', 'HARNESS_LOST');
+          const options = {
+            // The old registry owned children through this option. New DSH owns its subagent tree separately.
+            ...(typeof host.agents.isOwnedBy === 'function' ? { parentAgent: parent } : {}),
+            agentOptions: { provider: route, model: child.model },
+          };
           child.handle = stored
             ? await host.agents.resume({ ...options, resumeSessionId: child.id })
             : await host.agents.create({
@@ -143,33 +153,69 @@ export function createHarnessTeams({ host, driver, log = console }) {
               meta: { cwd: parent.session.header.cwd, parentSession: parent.id, origin: 'subagent',
                 delegationDepth: (parent.session.header.delegationDepth ?? 0) + 1 },
             });
+          child.disposers = createMirrorTools({ bridge }).map((definition) => {
+            const dispose = child.handle.agent.ctx.tools.register(definition);
+            child.tools.add(definition.name);
+            return dispose;
+          });
+          if (!catalogFor(child.id)) {
+            // Catalog v0 remains the host's valid local one-shot shape; v3 names only continuable/external children.
+            parent.session.append('subagent/catalog', {
+              version: 0, childId: child.id, childCreatedAt: child.handle.agent.session.header.createdAt,
+              mode: 'one-shot', label: child.label,
+            });
+          }
         } catch (error) {
-          const current = memberFor(child.id);
-          if (current?.phase === 'provisioning') appendMember({ ...current, phase: 'failed', error: error.message });
+          child.status = 'failed';
+          child.error = error.message;
+          child.settled = true;
+          child.channel.close();
           throw error;
         }
-        child.disposers = createMirrorTools({ bridge }).map((definition) => child.handle.agent.ctx.tools.register(definition));
-        if (!member) {
-          parent.session.append('subagent/catalog', {
-            version: 0, childId: child.id, childCreatedAt: child.handle.agent.session.header.createdAt,
-            mode: 'one-shot', label: child.label,
-          });
-        }
-        if (member?.phase !== 'active') appendMember({ ...memberFor(child.id), phase: 'active' });
       }
+      const saved = host.tokenUsageOf?.(child.handle.agent.session);
+      if (saved) {
+        child.accounted = inclusiveUsage({
+          input: saved.uncachedInputTokens + saved.cacheReadTokens + saved.cacheWriteTokens,
+          output: saved.outputTokens, cacheRead: saved.cacheReadTokens, cacheWrite: saved.cacheWriteTokens,
+        });
+      } else child.accounted ??= {};
       child.handle.agent.followup({
         id: randomUUID(), role: 'user', content: [{ type: 'text', text: child.prompt || child.label }],
         source: { kind: 'dudu-native-subagent', provider: driver.id, nativeSessionId: child.nativeId },
       });
     }
 
-    function feed(child, record) {
+    function accountUsage(child, usage) {
+      if (!usage || child.settled) return;
+      const delta = usageDelta(usage, child.accounted);
+      // A delayed or repeated snapshot must not lower the baseline and recharge the same tokens later.
+      for (const [key, value] of Object.entries(usage)) child.accounted[key] = Math.max(child.accounted[key] ?? 0, value);
+      if (Object.values(delta).some((value) => value > 0)) child.channel.push({ type: 'usage', usage: delta });
+    }
+
+    async function sampleUsage(child, record, readTranscript) {
+      // Codex reports a child's lifetime counters on that child's thread, never on its parent's task notification.
+      if (!usageReader && record && matches(child, record)) {
+        for (const event of record.body?.events ?? []) {
+          if (event.kind === 'usage') accountUsage(child, inclusiveUsage(event.usage?.total ?? event.usage?.tokens));
+        }
+      }
+      if (usageReader && readTranscript) {
+        try { accountUsage(child, await usageReader.read({ sessionId: child.origin, taskId: child.nativeId })); }
+        catch (error) { log.warn?.(`[dudu] Could not read native subagent usage: ${error.message}`); }
+      }
+    }
+
+    async function feed(child, record) {
       if (child.settled) return;
       const before = record.body?.events ?? [];
-      // Root accounting already includes native children where the CLI reports it; never charge their tokens twice.
+      // Child counters outlive mirror turns. Account against the saved DSH total, independently of the root's own total.
       const normalized = child.normalizer.feed({
         ...record, agentPath: [], body: { ...record.body, events: before.filter((event) => event.kind !== 'usage') },
       });
+      await sampleUsage(child, record, child.normalizer.isMessageEnd?.(record)
+        || normalized.some((event) => ['step-end', 'turn-end', 'tool-result'].includes(event.type)));
       for (const event of normalized) {
         if (event.type === 'text-delta') child.hasText = true;
         if (event.type === 'turn-end' && event.error?.code === 'ABORTED') child.handle?.agent.cancel({ kind: 'parent' });
@@ -178,13 +224,14 @@ export function createHarnessTeams({ host, driver, log = console }) {
       }
     }
 
-    async function settle(child, { status, summary, error }) {
+    async function settle(child, { status, summary, error }, record) {
       child.status = status;
       child.summary = summary;
       child.error = error;
       if (!child.settled) {
-        if (summary && !child.hasText) feed(child, { kind: 'frame', body: { events: [{ kind: 'text_delta', text: summary }] } });
-        feed(child, { kind: 'frame', body: { events: [{
+        await sampleUsage(child, record, true);
+        if (summary && !child.hasText) await feed(child, { kind: 'frame', body: { events: [{ kind: 'text_delta', text: summary }] } });
+        await feed(child, { kind: 'frame', body: { events: [{
           kind: 'turn_ended', outcome: status === 'completed' ? { kind: 'completed' }
             : ['stopped', 'paused', 'pending'].includes(status) ? { kind: 'aborted' } : { kind: 'failed', failure: 'unknown', reason: error || summary || status },
         }] } });
@@ -227,7 +274,7 @@ export function createHarnessTeams({ host, driver, log = console }) {
           child.status = 'running';
           await activate(child);
           for (let i = 0; i < unmatched.length;) {
-            if (matches(child, unmatched[i])) feed(child, unmatched.splice(i, 1)[0]);
+            if (matches(child, unmatched[i])) await feed(child, unmatched.splice(i, 1)[0]);
             else i++;
           }
           await publishTask(child);
@@ -241,15 +288,15 @@ export function createHarnessTeams({ host, driver, log = console }) {
               }
               await activate(child);
             }
-            else if (['completed', 'failed', 'stopped'].includes(event.status)) await settle(child, event);
+            else if (['completed', 'failed', 'stopped'].includes(event.status)) await settle(child, event, record);
           }
           if (event.error) child.error = event.error;
           await publishTask(child);
-        } else if (child && event.kind === 'task_ended') await settle(child, event);
+        } else if (child && event.kind === 'task_ended') await settle(child, event, record);
       }
       if (record.sessionId !== root || (record.agentPath?.length ?? 0) > 0) {
         const child = [...tasks.values()].find((candidate) => matches(candidate, record));
-        if (child) feed(child, record);
+        if (child) await feed(child, record);
         else if (unmatched.length < 1024) unmatched.push(record);
       }
     }
@@ -279,6 +326,7 @@ export function createHarnessTeams({ host, driver, log = console }) {
             }
           }));
           observers.delete(observer);
+          usageReader?.close();
           for (const result of results) if (result.status === 'rejected') log.warn?.(`[dudu] Could not release a native subagent view: ${result.reason.message}`);
           await host.flushSession(parent.session);
         });

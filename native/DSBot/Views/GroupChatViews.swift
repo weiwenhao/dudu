@@ -4,9 +4,16 @@ import UIKit
 // 嘟嘟's conversation as a group chat (owner, 2026-11-10; `Core/GroupChat.swift`, the drawings: `.local/designs/group-chat-2026-11-10/`).
 //
 // A line of an issue is a bubble on the left with its agent's logo for the picture, its ID for the name and its title after the time for the signature; the owner's own @ line is a bubble on the
-// right, as every message of theirs is, with a tick under it; while an answer is on its way the issue has three dots. Pulling a bubble to the right brings the circle with the reply arrow
+// right, as every message of theirs is; while an answer is on its way the issue has three dots. Pulling an agent's bubble to the right brings the circle with the reply arrow
 // (measured from the owner's own recording, `swipe.png`); a long press brings the menu of the thread: 回复, 复制, 删除. The result of a scheduled task that 嘟嘟 did itself is 嘟嘟's own words, not a bubble
 // (`GroupTaskLine`): nothing to answer, so its menu is 复制 and 删除.
+
+/// Delivered after a quick sheet has closed, to the still-mounted assistant composer.
+struct GroupReplyRequest: Identifiable {
+    let id = UUID()
+    let target: DraftTarget
+    let issue: GroupIssue
+}
 
 /// What the thread of 嘟嘟's chat can do for its lines; set by the chat, read by the rows and by the long-press menu.
 struct GroupChatContext {
@@ -45,7 +52,7 @@ extension EnvironmentValues {
         set { self[OpenIssueConversationKey.self] = newValue }
     }
 
-    /// 信息 and 定时任务 above the input jump to their pages instead of sending a card (owner, 2026-11-10: "信息和定时任务不用卡片了，直接跳转到对应的会话窗口吧"); set by the root.
+    /// The three quick entries open the approved native bottom sheets; set by the root.
     var openQuickPage: (QuickCardKind) -> Void {
         get { self[OpenQuickPageKey.self] }
         set { self[OpenQuickPageKey.self] = newValue }
@@ -69,7 +76,7 @@ struct GroupLineView: View {
                 GroupTaskLine(line: line, seq: row.seq)
                     .accessibilityIdentifier("chat.group.task.\(row.commandId ?? row.id)")
             } else {
-                GroupGuestBubble(line: line, seq: row.seq)
+                GroupGuestBubble(line: line, seq: row.seq, isRunning: row.isRunning)
                     .accessibilityIdentifier("chat.group.reply.\(row.commandId ?? row.id)")
             }
         }
@@ -80,7 +87,6 @@ struct GroupLineView: View {
 private struct GroupAtBubble: View {
     let line: GroupLine
     let seq: Double?
-    @Environment(\.groupChat) private var group
 
     private var text: AttributedString {
         var token = AttributedString("@\(line.issue.name)")
@@ -107,31 +113,25 @@ private struct GroupAtBubble: View {
             )
             .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in width * 0.82 }
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .swipeToReply(enabled: group != nil) { group?.reply(line.issue) }
     }
 }
 
-/// The answer of an issue's agent: its logo, its ID, the time and its title; the bubble is white with a hairline edge, as a card is. A long answer is cut at eight lines the way Lark cuts one (owner, 2026-11-11, from a
-/// Lark screenshot): the last lines fade into the white and a white capsule, 展开, sits over the fade; opened it grows where it stands and a capsule, 收起, ends it. Only the capsule changes it (a tap on the words does
-/// nothing, so a tap that only stops a scroll opens nothing), and closing it first puts its top back in view: a reader deep inside a tall answer would otherwise be left under a row that shrank by thousands of points,
-/// with nothing built there (a white window).
+/// The answer of an issue's agent: its logo, its ID, the time and its title; the bubble is white with a hairline edge, as a card is.
+/// Only answers longer than 1,000 characters fold (owner, 2026-11-13). A larger version of the existing capsule expands them once.
+/// Only the capsule opens it; tapping the words does nothing, and expansion issues no scroll command.
 private struct GroupGuestBubble: View {
     let line: GroupLine
     let seq: Double?
+    let isRunning: Bool
     @Environment(\.groupChat) private var group
     @State private var expanded = false
-    /// The height the answer has when it is shown whole (measured, so that it is cut by how tall it is and not by how many words it has).
-    @State private var fullHeight: CGFloat = 0
 
     /// Eight lines of the answer's 23pt line.
     private static let clampedHeight: CGFloat = 184
-    /// An answer only a little taller than the cut is shown whole: a capsule to save two lines is worse than the two lines.
-    private static let foldsAbove: CGFloat = 244
     private var text: String { line.text ?? "" }
-    private var isLong: Bool { fullHeight > Self.foldsAbove }
+    /// Stop counting at the threshold, including for very long answers. Swift characters keep Chinese and composed emoji intact.
+    private var isLong: Bool { !text.dropFirst(1_000).isEmpty }
     private var isClosed: Bool { isLong && !expanded }
-    /// Cut now: closed and long, or not measured yet (a short answer is no taller than the cut, so cutting it changes nothing).
-    private var isCut: Bool { !expanded && (fullHeight == 0 || isLong) }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -169,7 +169,7 @@ private struct GroupGuestBubble: View {
         .buttonStyle(.plain)
         .frame(width: 26, height: 26)
         .accessibilityLabel("\(line.issue.name)")
-        .accessibilityHint("打开会话")
+        .accessibilityHint(L10n.text("打开会话"))
         .accessibilityIdentifier("chat.group.avatar.\(line.issue.name)")
     }
 
@@ -195,21 +195,22 @@ private struct GroupGuestBubble: View {
         .frame(height: 26, alignment: .leading)
     }
 
-    private func toggle() {
+    private func expand() {
+        guard !expanded else { return }
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
-        withTransaction(transaction) { expanded.toggle() }
+        withTransaction(transaction) { expanded = true }
+        DSBotLog.record("chat.group.fold", state: "expanded")
     }
 
     private var bubble: some View {
         let shape = UnevenRoundedRectangle(topLeadingRadius: 4, bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: 18, style: .continuous)
-        return VStack(spacing: 0) {
+        return VStack(alignment: .leading, spacing: 0) {
             // The line's own sequence number is what lets a picture in the answer be fetched (`session.attachment` names the line that grants it); without it the pictures stay grey boxes marked 图片 (owner, 2026-11-11).
             MessageMarkdown(text: text, allowsTextSelection: false, sourceSequence: seq)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }
-                .frame(maxHeight: isCut ? Self.clampedHeight : nil, alignment: .top)
+                .frame(maxHeight: isClosed ? Self.clampedHeight : nil, alignment: .top)
                 .clipped()
                 .overlay(alignment: .bottom) {
                     if isClosed {
@@ -220,10 +221,13 @@ private struct GroupGuestBubble: View {
                     }
                 }
                 .overlay(alignment: .bottom) {
-                    if isClosed { FoldCapsule(title: "展开", action: toggle).padding(.bottom, -2) }
+                    if isClosed { FoldCapsule(action: expand).padding(.bottom, -2) }
                 }
-            if isLong && expanded {
-                FoldCapsule(title: "收起", action: toggle).padding(.top, 2)
+            if isRunning {
+                // The run can still be using tools after its latest text; keep its dots outside the fold.
+                GroupReplyDots()
+                    .frame(height: 14)
+                    .padding(.top, 8)
             }
         }
         .padding(.horizontal, 14)
@@ -235,18 +239,17 @@ private struct GroupGuestBubble: View {
     }
 }
 
-/// The small white capsule of a long answer, as Lark draws it: the word alone on white with a hairline edge and a soft shadow, 28pt high, in a 44pt touch area.
+/// The owner's existing white capsule, enlarged from 28pt to 36pt with 16pt text and a 52pt touch area (2026-11-13).
 private struct FoldCapsule: View {
-    let title: String
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(.system(size: 14))
+            Text(L10n.text("展开"))
+                .font(.system(size: 16))
                 .foregroundStyle(DSBotStyle.chatInk)
-                .padding(.horizontal, 16)
-                .frame(height: 28)
+                .padding(.horizontal, 20)
+                .frame(height: 36)
                 .background(Color.white, in: Capsule())
                 .overlay(Capsule().strokeBorder(Color.black.opacity(0.08), lineWidth: 0.75))
                 .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
@@ -305,8 +308,6 @@ private struct GroupTaskLine: View {
 /// The dots of an issue that has been written to and has not answered yet.
 private struct GroupTypingBubble: View {
     let issue: GroupIssue
-    @State private var phase = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -326,15 +327,7 @@ private struct GroupTypingBubble: View {
                         .lineLimit(1)
                 }
                 .frame(height: 26, alignment: .leading)
-                HStack(spacing: 6) {
-                    ForEach(0..<3, id: \.self) { index in
-                        Circle()
-                            .fill(DSBotStyle.muted)
-                            .frame(width: 6, height: 6)
-                            .opacity(reduceMotion ? 0.7 : (phase ? 1 : 0.35))
-                            .animation(reduceMotion ? nil : .easeInOut(duration: 0.6).repeatForever(autoreverses: true).delay(Double(index) * 0.2), value: phase)
-                    }
-                }
+                GroupReplyDots()
                 .padding(.horizontal, 14)
                 .frame(height: 34)
                 .background(
@@ -349,23 +342,58 @@ private struct GroupTypingBubble: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onAppear { phase = true }
     }
 }
 
-// MARK: - Pull to the right to answer
+/// Shared by the empty waiting bubble and a reply whose run has not ended.
+private struct GroupReplyDots: View {
+    @State private var phase = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.conversationIsCovered) private var covered
+    @Environment(\.scenePhase) private var scenePhase
+
+    private var animates: Bool { !reduceMotion && !covered && scenePhase == .active }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(DSBotStyle.muted)
+                    .frame(width: 6, height: 6)
+                    .opacity(animates ? (phase ? 1 : 0.35) : 0.7)
+                    .animation(animates ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true).delay(Double(index) * 0.2) : nil, value: phase)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onChange(of: animates, initial: true) { _, active in phase = active }
+    }
+}
+
+// MARK: - Shared reply gesture and feedback
+
+enum ReplySwipeDirection {
+    case left, right
+
+    var sign: CGFloat { self == .right ? 1 : -1 }
+    var alignment: Alignment { self == .right ? .leading : .trailing }
+}
 
 extension View {
     /// Pulling a message to the right shows the circle with the reply arrow and, past the threshold, answers it: the owner's own recording of the thread of a chat app, measured frame by frame
     /// (`.local/designs/group-chat-2026-11-10/swipe.png`): the row follows the finger one to one up to 88pt; the circle is 32pt, centred where the picture of the row is, white with a hairline
     /// until 76pt and then flat grey, popping to 37pt and back with a ring that spreads to 63pt; on release the circle fades and the row is back in about 0.17 seconds, with no bounce.
-    func swipeToReply(enabled: Bool = true, initialPull: CGFloat = 0, onReply: @escaping () -> Void) -> some View {
-        modifier(SwipeToReply(enabled: enabled, initialPull: initialPull, onReply: onReply))
+    func swipeToReply(
+        enabled: Bool = true, direction: ReplySwipeDirection = .right,
+        initialPull: CGFloat = 0, onReply: @escaping () -> Void
+    ) -> some View {
+        modifier(SwipeToReply(enabled: enabled, direction: direction, initialPull: initialPull, onReply: onReply))
     }
 }
 
 private struct SwipeToReply: ViewModifier {
     let enabled: Bool
+    let direction: ReplySwipeDirection
     var initialPull: CGFloat = 0
     let onReply: () -> Void
     @State private var pull: CGFloat = 0
@@ -373,6 +401,7 @@ private struct SwipeToReply: ViewModifier {
     @State private var pop = false
     @State private var ripple = false
     @State private var fading = false
+    @State private var feedbackTask: Task<Void, Never>?
 
     private static let maxPull: CGFloat = 88
     private static let threshold: CGFloat = 76
@@ -380,15 +409,16 @@ private struct SwipeToReply: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .offset(x: pull)
-            .background(alignment: .leading) { replyCircle }
-            .simultaneousGesture(gesture, including: enabled ? .all : .subviews)
+            .offset(x: direction.sign * pull)
+            .background(alignment: direction.alignment) { replyCircle }
+            .gesture(ReplyPanGesture(enabled: enabled, direction: direction, onChanged: updatePull, onEnded: finishPull))
             .task {
                 // `-dsbot-review-swipe-pull 76` shows the row pulled that far (the simulator has no finger).
                 guard initialPull > 0 else { return }
                 pull = min(initialPull, Self.maxPull)
                 active = pull >= Self.threshold
             }
+            .onDisappear { finishPull(false) }
     }
 
     /// 0 at the start of the pull, 1 when the circle is all there (60pt).
@@ -411,45 +441,143 @@ private struct SwipeToReply: ViewModifier {
         }
         .frame(width: Self.circle, height: Self.circle)
         // The picture of a row is 26 wide: the circle is centred on it.
-        .offset(x: -3 - (1 - shown) * 14, y: 0)
+        .offset(x: direction.sign * (-3 - (1 - shown) * 14), y: 0)
         .opacity(fading ? 0 : Double(shown))
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 
-    private var gesture: some Gesture {
-        DragGesture(minimumDistance: 14)
-            .onChanged { value in
-                // Only a pull that is to the right and mostly sideways is ours; a scroll is not.
-                guard value.translation.width > 0, value.translation.width > abs(value.translation.height) * 1.5 || pull > 0 else { return }
-                fading = false
-                var transaction = Transaction()
-                transaction.animation = nil
-                withTransaction(transaction) { pull = min(value.translation.width, Self.maxPull) }
-                if pull >= Self.threshold, !active {
-                    active = true
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.spring(response: 0.16, dampingFraction: 0.55)) { pop = true }
-                    Task { @MainActor in
-                        // The ripple spreads from the circle's own size: it is set after the circle has taken its grey.
-                        try? await Task.sleep(nanoseconds: 16_000_000)
-                        if active { withAnimation(.easeOut(duration: 0.15)) { ripple = true } }
-                        try? await Task.sleep(nanoseconds: 80_000_000)
-                        withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) { pop = false }
-                    }
-                } else if pull < Self.threshold, active {
-                    active = false
-                    ripple = false
+    private func updatePull(_ distance: CGFloat) {
+        fading = false
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) { pull = min(max(0, distance), Self.maxPull) }
+        if pull >= Self.threshold, !active {
+            active = true
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.spring(response: 0.16, dampingFraction: 0.55)) { pop = true }
+            feedbackTask?.cancel()
+            feedbackTask = Task { @MainActor in
+                do {
+                    // The ripple spreads from the circle's own size after the circle has taken its grey.
+                    try await Task.sleep(nanoseconds: 16_000_000)
+                    guard active else { return }
+                    withAnimation(.easeOut(duration: 0.15)) { ripple = true }
+                    try await Task.sleep(nanoseconds: 80_000_000)
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) { pop = false }
+                } catch {}
+            }
+        } else if pull < Self.threshold, active {
+            feedbackTask?.cancel()
+            active = false
+            ripple = false
+            pop = false
+        }
+    }
+
+    private func finishPull(_ completed: Bool) {
+        let answered = completed && active
+        feedbackTask?.cancel()
+        feedbackTask = nil
+        withAnimation(.easeOut(duration: 0.1)) { fading = true }
+        withAnimation(.spring(response: 0.2, dampingFraction: 1)) { pull = 0 }
+        active = false
+        ripple = false
+        pop = false
+        if answered { onReply() }
+    }
+}
+
+/// Reject vertical movement and the direction opposite to this reply before recognition.
+/// A tall expanded answer can fill the viewport; its reply recognizer must leave that whole area available to the history's native scroll.
+private struct ReplyPanGesture: UIGestureRecognizerRepresentable {
+    let enabled: Bool
+    let direction: ReplySwipeDirection
+    let onChanged: (CGFloat) -> Void
+    let onEnded: (Bool) -> Void
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator(direction: direction) }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.maximumNumberOfTouches = 1
+        pan.delaysTouchesBegan = false
+        pan.delaysTouchesEnded = false
+        pan.delegate = context.coordinator
+        pan.isEnabled = enabled
+        return pan
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        context.coordinator.direction = direction
+        recognizer.isEnabled = enabled
+    }
+
+    func handleUIGestureRecognizerAction(_ pan: UIPanGestureRecognizer, context: Context) {
+        // Window coordinates do not move with the bubble's offset.
+        let translation = pan.translation(in: nil)
+        switch pan.state {
+        case .began:
+            context.coordinator.isTracking = true
+            DSBotLog.record("chat.reply.begin")
+            onChanged(direction.sign * translation.x)
+        case .changed:
+            onChanged(direction.sign * translation.x)
+        case .ended, .cancelled, .failed:
+            guard context.coordinator.isTracking else { return }
+            context.coordinator.isTracking = false
+            let completed = pan.state == .ended
+            DSBotLog.record(
+                "chat.reply.end", geometry: ["dragX": translation.x, "dragY": translation.y],
+                state: completed ? "ended" : "cancelled"
+            )
+            if completed { onChanged(direction.sign * translation.x) }
+            onEnded(completed)
+        default:
+            break
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var isTracking = false
+        var direction: ReplySwipeDirection
+
+        init(direction: ReplySwipeDirection) {
+            self.direction = direction
+            super.init()
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            let velocity = pan.velocity(in: nil)
+            let accepted = direction.sign * velocity.x > abs(velocity.y) * 1.5
+            if !accepted {
+                DSBotLog.record(
+                    "chat.reply.reject", geometry: ["dragVelocityX": velocity.x, "dragVelocityY": velocity.y],
+                    state: "direction"
+                )
+            }
+            return accepted
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            // Code blocks and tables have their own horizontal scrolling. Let a touch starting inside them stay there.
+            var current = touch.view
+            while let view = current, view !== gestureRecognizer.view {
+                if let scroll = view as? UIScrollView {
+                    let width = scroll.bounds.width - scroll.adjustedContentInset.left - scroll.adjustedContentInset.right
+                    if scroll.isScrollEnabled && scroll.contentSize.width > width + 1 { return false }
                 }
+                current = view.superview
             }
-            .onEnded { _ in
-                let answered = active
-                withAnimation(.easeOut(duration: 0.1)) { fading = true }
-                withAnimation(.spring(response: 0.2, dampingFraction: 1)) { pull = 0 }
-                active = false
-                ripple = false
-                pop = false
-                if answered { onReply() }
-            }
+            return true
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            otherGestureRecognizer.view is UIScrollView
+        }
     }
 }

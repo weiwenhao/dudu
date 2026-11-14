@@ -52,19 +52,15 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   const list = useIssueList(request, query);
   const { patch, move, refresh } = list;
 
-  // Every change says so at the bottom, with Undo; the store keeps what it needs to put it back (an event, or a group of them).
-  const undoable = useCallback((target) => ({
-    label: T.toast.undo,
-    run: async () => { try { await request('issues/undo', { target }); } finally { refresh(); } },
-  }), [request, refresh]);
+  // Every change says so at the bottom.
   const changeStatus = useCallback(async (issue, status) => {
     if (status === issue.status) return;
     patch(issue.id, { status });
     try {
       const result = await request('issues/update', { id: issue.id, patch: { status } });
-      if (result?.outcome === 'success') toast({ message: statusType(status) === 'done' ? T.toast.markedDone : T.toast.status(statusLabel(status)), action: undoable({ eventId: result.eventId }) });
+      if (result?.outcome === 'success') toast({ message: statusType(status) === 'done' ? T.toast.markedDone : T.toast.status(statusLabel(status)) });
     } catch { toast({ message: T.toast.failed }); } finally { refresh(); }
-  }, [request, patch, refresh, toast, undoable]);
+  }, [request, patch, refresh, toast]);
   const changeProperty = useCallback(async (issue, changes) => {
     if (changes.status) return changeStatus(issue, changes.status);
     patch(issue.id, changes.labels ? { ...changes, labels: labelStore.resolve(changes.labels) } : changes); // the labels the page shows are not the ids it sends
@@ -73,11 +69,11 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
       if (result.outcome === 'success') {
         const message = changes.priority ? T.toast.priority(T.priority[changes.priority])
           : Object.hasOwn(changes, 'dueAt') ? changes.dueAt == null ? T.toast.dueRemoved : T.toast.dueSet : T.toast.updated(1);
-        toast({ message, action: undoable({ eventId: result.eventId }) });
+        toast({ message });
       } else if (result.outcome !== 'no_op') toast({ message: T.toast.failed });
       return result; // The title editor closes only after the store accepts the change.
     } catch { toast({ message: T.toast.failed }); } finally { refresh(); }
-  }, [request, patch, refresh, toast, undoable, changeStatus]);
+  }, [request, patch, refresh, toast, changeStatus]);
   // A card dropped on a lane: it is in the lane at once, and the lane's value is its (the status, the priority, the agent state).
   const moveCard = useCallback((issue, field, key) => {
     if (issue[field] === key) return undefined;
@@ -98,12 +94,12 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   const assignCard = useCallback(async (issue, agent, project) => {
     try {
       const result = await request('issues/assign', { id: issue.id, agent, project });
-      if (result.outcome === 'success') toast({ message: T.toast.assigned(AGENT_NAMES[agent]), action: undoable({ eventId: result.eventId }) });
+      if (result.outcome === 'success') toast({ message: T.toast.assigned(AGENT_NAMES[agent]) });
       else if (result.outcome !== 'no_op') toast({ message: T.toast.failed });
     } catch { toast({ message: T.toast.failed }); } finally { refresh(); }
-  }, [request, refresh, toast, undoable]);
+  }, [request, refresh, toast]);
 
-  // Ticked rows: what they are, and what a bulk change does to them all in one group, so one Undo puts them all back.
+  // Ticked rows: what they are, and what a bulk change does to them all, in one group (the store logs them together).
   const [selected, setSelected] = useState(() => new Set());
   const [deleting, setDeleting] = useState(null);
   const selectedIssues = (list.groups ? allItems(list.groups) : list.items).filter((issue) => selected.has(issue.id));
@@ -122,9 +118,9 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
     for (const id of ids) patch(id, change);
     try {
       await Promise.all(ids.map((id) => call(id, groupId)));
-      toast({ message: T.toast.updated(ids.length), action: undoable({ groupId }) });
+      toast({ message: T.toast.updated(ids.length) });
     } catch { toast({ message: T.toast.failed }); } finally { refresh(); }
-  }, [selected, patch, refresh, toast, undoable]);
+  }, [selected, patch, refresh, toast]);
 
   // What a row shows: the person's Display properties, minus what the grouping already says (a Project group needs no
   // Project chip on its rows; a Status group still keeps the status icon).

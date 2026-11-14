@@ -1,7 +1,7 @@
 import { Loader2 } from 'lucide-react';
 import { cn } from '../lib/cn.js';
 import { ActionButton } from '../settings/kit.jsx';
-import { Tile } from './Tile.jsx';
+import { ConnectorMark } from './ConnectorMark.jsx';
 
 /** The state of a connector in its row: a spinner while it waits, otherwise a dot (amber: it needs something from you, red: it did not work) and the words. */
 function State({ tone, spin, words }) {
@@ -21,7 +21,7 @@ function State({ tone, spin, words }) {
 export function ConnectorRow({ icon, name, line, bad, state, verb, busy, onOpen }) {
   const head = (
     <>
-      <Tile icon={icon} />
+      <ConnectorMark icon={icon} name={name} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">{name}</div>
         <div className={cn('truncate text-xs/[18px]', bad ? 'text-danger-foreground' : 'text-muted-foreground')}>{line}</div>

@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import { diagnostic, T } from '../strings.js';
+import { ConfirmDelete } from '../settings/ConfirmDelete.jsx';
 import { Field, Group, IconAction, Page, PrimaryButton, Problem, QuietButton, Row, TextField, useFocusAfterRefusal } from '../settings/kit.jsx';
-import { iconFor } from './icons.js';
-import { Tile } from './Tile.jsx';
+import { ConnectorMark } from './ConnectorMark.jsx';
 
 const P = T.settings.connectorsPage;
 const C = T.settings.connectors;
@@ -24,6 +24,7 @@ export function ConnectorDetail({ connector, request, onBack, onSaved, onDisconn
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState(''); // why a change was not saved
   const [guard, setGuard] = useState(''); // why it was not disconnected
+  const [asking, setAsking] = useState(false); // the window that asks before the connector goes
   useFocusAfterRefusal(form, problem, busy);
 
   const { about = {} } = connector;
@@ -44,6 +45,13 @@ export function ConnectorDetail({ connector, request, onBack, onSaved, onDisconn
     } catch { setProblem(T.toast.failed); }
     finally { setBusy(false); }
   };
+  // A connector that collectors read through says so at once; the window asks only when it can really go (the plugin still refuses if one was added meanwhile).
+  const openAsk = () => {
+    const users = connector.usedBy ?? [];
+    if (users.length) { setGuard(C.inUse(users.map((user) => user.name))); return; }
+    setGuard('');
+    setAsking(true);
+  };
   const disconnect = async () => {
     setBusy(true);
     setGuard('');
@@ -51,9 +59,9 @@ export function ConnectorDetail({ connector, request, onBack, onSaved, onDisconn
       const result = await request('connectors/remove', { id: connector.id });
       if (result.code === 'in_use') { setGuard(C.inUse(result.collectors ?? [])); return; }
       if (!['success', 'no_op'].includes(result.outcome)) { setGuard(diagnostic(result.message) ?? T.toast.failed); return; }
-      onDisconnected({ name: connector.name, token: result.undo });
+      onDisconnected();
     } catch { setGuard(T.toast.failed); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setAsking(false); }
   };
 
   return (
@@ -70,7 +78,7 @@ export function ConnectorDetail({ connector, request, onBack, onSaved, onDisconn
       <Group label={connector.name}>
         <Row block>
           <div className="flex items-center gap-3">
-            <Tile icon={iconFor(connector.icon, about.kind === 'remote' ? 'remote' : 'local')} size={48} />
+            <ConnectorMark icon={connector.icon} name={connector.name} size={48} />
             <div className="min-w-0">
               <div className="truncate text-sm font-medium">{connector.name}</div>
               {connector.line && <div className="text-xs/[18px] text-muted-foreground [overflow-wrap:anywhere]">{connector.line}</div>}
@@ -104,7 +112,7 @@ export function ConnectorDetail({ connector, request, onBack, onSaved, onDisconn
       <Group label={P.disconnect}>
         <Row block>
           <button
-            type="button" disabled={busy} onClick={disconnect}
+            type="button" disabled={busy} onClick={openAsk}
             className="rounded-md text-left text-sm text-danger-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
           >
             {P.disconnect}
@@ -112,6 +120,7 @@ export function ConnectorDetail({ connector, request, onBack, onSaved, onDisconn
           <Problem className="mt-2">{guard}</Problem>
         </Row>
       </Group>
+      {asking && <ConfirmDelete name={connector.name} busy={busy} onConfirm={disconnect} onClose={() => setAsking(false)} />}
     </Page>
   );
 }

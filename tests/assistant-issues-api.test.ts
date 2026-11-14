@@ -17,7 +17,7 @@ function setup() {
 test('every action of the page is served and nothing else', async () => {
   const { call, close } = setup();
   try {
-    assert.deepEqual([...ISSUE_ACTIONS].sort(), ['add', 'assign', 'cancel', 'complete', 'counts', 'delete', 'events', 'export', 'facets', 'forget', 'forward', 'get', 'label-add', 'label-remove', 'label-update', 'labels', 'link-add', 'link-remove', 'list', 'log', 'message', 'office', 'recipients', 'reply', 'resume', 'schema', 'search', 'session', 'snooze', 'source', 'status-add', 'status-order', 'status-remove', 'status-update', 'statuses', 'undo', 'update']);
+    assert.deepEqual([...ISSUE_ACTIONS].sort(), ['add', 'assign', 'cancel', 'complete', 'counts', 'delete', 'events', 'export', 'facets', 'forget', 'forward', 'get', 'label-add', 'label-remove', 'label-update', 'labels', 'link-add', 'link-remove', 'list', 'log', 'message', 'office', 'recipients', 'reply', 'resume', 'schema', 'search', 'session', 'snooze', 'source', 'status-add', 'status-order', 'status-remove', 'status-update', 'statuses', 'update']);
     assert.equal((await call('nope', {})).status, 404);
     assert.equal((await call('constructor', {})).status, 404, 'an action name is never looked up on the object prototype');
   } finally { close(); }
@@ -36,9 +36,8 @@ test('the authenticated schema describes every command and both callers use thei
     const made = await dudu.execute('add', { fields: { title: '统一接口', project: { name: 'App', path: '/work/app' }, agent: 'claude' }, actor: 'owner' });
     assert.equal(given[0].id, made.issue.id);
     const changed = await dudu.execute('update', { id: made.issue.ref, patch: { priority: 'high' }, actor: 'owner' });
-    const undone = await dudu.execute('undo', { target: { eventId: changed.eventId, actor: 'owner' } });
-    assert.equal(undone.outcome, 'success');
-    assert.equal(issues.get(made.issue.id).issue.priority, 'none');
+    assert.equal(changed.outcome, 'success');
+    assert.equal(issues.get(made.issue.id).issue.priority, 'high');
     assert.ok(issues.events({ issueId: made.issue.id }).events.every((event: any) => event.actor === 'dudu'));
     const owner = await call('update', { id: made.issue.id, patch: { priority: 'low' }, actor: 'dudu' });
     assert.equal(owner.body.outcome, 'success');

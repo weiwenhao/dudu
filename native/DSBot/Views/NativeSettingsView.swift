@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import LucideSwift
 
 /// 嘟嘟's own settings, drawn by the app (owner, 2026-11-07: "嘟嘟自己的设置不用 webview 用原生实现"): the page the plugin describes, in the settings' look (white cards on the
 /// canvas), one page over another. Its header (back, title and save) is the host's native toolbar.
@@ -81,7 +82,7 @@ private struct SettingsPageView: View {
         page
             .alert(confirmTitle, isPresented: confirmShown, presenting: confirming) { pending in
                 Button(pending.confirm.button, role: .destructive) { perform(pending.act, value: pending.value) }
-                Button("取消", role: .cancel) {}
+                Button(L10n.text("取消"), role: .cancel) {}
             } message: { pending in
                 if let message = pending.confirm.message { Text(message) }
             }
@@ -145,10 +146,10 @@ private struct SettingsPageView: View {
                 .padding(.top, 80)
         case .failed:
             VStack(spacing: 14) {
-                Text("这一页没能加载")
+                Text(L10n.text("这一页没能加载"))
                     .font(.system(size: 15))
                     .foregroundStyle(DSBotStyle.muted)
-                Button("重试") { Task { await model.load(using: store) } }
+                Button(L10n.text("重试")) { Task { await model.load(using: store) } }
                     .font(.system(size: 15, weight: .medium))
                     .buttonStyle(DSBotGlassCapsuleButtonStyle())
                     .padding(.horizontal, 20)
@@ -246,7 +247,20 @@ private struct SettingsPageView: View {
 
     @ViewBuilder
     private func textRow(_ row: SettingsItem) -> some View {
-        if let to = row.to {
+        if let notification = row.notification, let to = row.to {
+            HStack(spacing: 0) {
+                Button { navigator.open(to) } label: { textRowLabel(row) }
+                    .buttonStyle(DSBotRowButtonStyle())
+                notificationButton(notification, rowID: row.id)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DSBotStyle.muted.opacity(0.7))
+                    .padding(.leading, 4)
+                    .padding(.trailing, 16)
+                    .accessibilityHidden(true)
+            }
+            .background(Color.white)
+        } else if let to = row.to {
             Button { navigator.open(to) } label: { textRowLabel(row) }
                 .buttonStyle(DSBotRowButtonStyle())
         } else {
@@ -286,7 +300,7 @@ private struct SettingsPageView: View {
             if let button = row.button {
                 capsule(button)
             }
-            if row.to != nil {
+            if row.to != nil && row.notification == nil {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(DSBotStyle.muted.opacity(0.7))
@@ -300,6 +314,32 @@ private struct SettingsPageView: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: row.button == nil ? .combine : .contain)
         .accessibilityIdentifier("settings.row.\(row.id)")
+    }
+
+    private func notificationButton(_ notification: SettingsNotification, rowID: String) -> some View {
+        let on = switches[rowID] ?? notification.on
+        return Button {
+            switches[rowID] = !on
+            perform(notification.act, value: !on ? "true" : "false")
+        } label: {
+            Group {
+                if model.busy && switches[rowID] != nil {
+                    ProgressView().tint(DSBotStyle.muted)
+                } else {
+                    LucideIcon(on ? .bell : .bellOff, size: 18, strokeWidth: 2, absoluteStrokeWidth: false)
+                        .frame(width: 18, height: 18)
+                        .foregroundStyle(on ? DSBotStyle.ink : DSBotStyle.muted)
+                }
+            }
+            .frame(width: 32, height: 32)
+            .background(on ? DSBotStyle.selected : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(model.busy || store.status != .connected)
+        .accessibilityLabel(notification.title)
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 
     private func actionRow(_ row: SettingsItem) -> some View {
@@ -475,10 +515,10 @@ private struct SettingsPageView: View {
         VStack(spacing: 12) {
             ForEach(environmentRows, id: \.self) { id in
                 HStack(spacing: 8) {
-                    TextField("变量名", text: fieldBinding("envName\(id)"))
+                    TextField(L10n.text("变量名"), text: fieldBinding("envName\(id)"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    SecureField("值", text: fieldBinding("envValue\(id)"))
+                    SecureField(L10n.text("值"), text: fieldBinding("envValue\(id)"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Button {
@@ -491,7 +531,7 @@ private struct SettingsPageView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("删除")
+                    .accessibilityLabel(L10n.text("删除"))
                 }
                 .font(.system(size: 14, design: .monospaced))
             }
@@ -531,9 +571,7 @@ private struct SettingsPageView: View {
     private func perform(_ act: SettingsAct, value: String? = nil) {
         Task {
             DSBotLog.record("settings.act")
-            if await model.act(act, value: value, using: store, report: report, refreshAfterUndo: {
-                if let current = navigator.current, current.id != model.id { await current.load(using: store) }
-            }), navigator.current?.id == model.id {
+            if await model.act(act, value: value, using: store, report: report), navigator.current?.id == model.id {
                 navigator.pop()
             }
         }
@@ -549,14 +587,17 @@ private struct SettingsPageView: View {
     }
 
     private static func symbol(for item: SettingsSwipe) -> String {
-        switch item.title {
-        case "删除", "忘记": return "trash"
-        case "设为默认": return "star"
-        case "上移": return "arrow.up"
-        case "下移": return "arrow.down"
-        case "授权": return "key"
-        case "重试": return "arrow.clockwise"
-        case "取消": return "xmark"
+        switch item.act.name {
+        case "remove", "forget": return "trash"
+        case "default": return "star"
+        case "move": return (item.act.args?["direction"]?.numberValue ?? 1) < 0 ? "arrow.up" : "arrow.down"
+        case "verb":
+            switch item.act.args?["verb"]?.stringValue {
+            case "authorize": return "key"
+            case "retry": return "arrow.clockwise"
+            case "cancel": return "xmark"
+            default: return "ellipsis"
+            }
         default: return item.role == "destructive" ? "trash" : "ellipsis"
         }
     }

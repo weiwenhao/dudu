@@ -40,14 +40,15 @@ final class AssistantCompletions: ObservableObject {
         if target != currentTarget { reset(); target = currentTarget }
         editing = edit
         guard enabled, store.isAssistantConversation, edit != dismissed,
-              let next = AssistantCompletion.query(edit) else { clear(); return }
+              let next = AssistantCompletion.query(edit, continuing: query) else { clear(); return }
         guard next != query else { return }
+        let continuing = next.continues(query)
         task?.cancel()
         revision &+= 1
         let currentRevision = revision
         query = next
         selected = 0
-        candidates = []
+        if !continuing { candidates = [] }
         if next.kind == .skill, loadedSkills {
             candidates = AssistantCompletion.rank(skills, query: next.text).map(Candidate.skill)
             status = .ready
@@ -71,6 +72,7 @@ final class AssistantCompletions: ObservableObject {
                 status = .ready
             } catch {
                 guard currentRevision == revision, !Task.isCancelled else { return }
+                candidates = []
                 status = .failed
             }
         }

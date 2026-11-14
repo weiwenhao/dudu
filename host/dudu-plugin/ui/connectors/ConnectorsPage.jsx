@@ -3,12 +3,11 @@ import { Plus, Search } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { cn } from '../lib/cn.js';
 import { diagnostic, T } from '../strings.js';
-import { ActionButton, Empty, Field, Group, Loading, Page, Problem, QuietButton } from '../settings/kit.jsx';
+import { ActionButton, Empty, Field, Group, Loading, Page, Problem } from '../settings/kit.jsx';
 import { ConnectorDetail } from './ConnectorDetail.jsx';
 import { ConnectorRow } from './ConnectorRow.jsx';
 import { CustomConnector } from './CustomConnector.jsx';
 import { aboutLine, describeState } from './describe.js';
-import { iconFor } from './icons.js';
 import { useConnectors } from './use-connectors.js';
 
 const P = T.settings.connectorsPage;
@@ -52,7 +51,6 @@ export function ConnectorsPage({ request }) {
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState(null);
   const [adding, setAdding] = useState(false);
-  const [removed, setRemoved] = useState(null);
   const [problem, setProblem] = useState('');
   const [busy, setBusy] = useState(() => new Set()); // the ids a call is out about
   const [trying, setTrying] = useState([]); // { id, connectorId, groupId, index, item }: the items connected from here that have not got there
@@ -96,17 +94,8 @@ export function ConnectorsPage({ request }) {
     await connectors.reload();
     hold(item.id, false);
   };
-  const undo = async () => {
-    setProblem('');
-    try {
-      const answer = await request('connectors/undo', { token: removed.token });
-      if (answer.outcome !== 'success') { setProblem(T.toast.failed); return; }
-      setRemoved(null);
-      void connectors.reload();
-    } catch { setProblem(T.toast.failed); }
-  };
   const verbOf = (shown, id) => (shown.verb ? { label: verbLabel(shown.verb), run: () => act(id, `connectors/${shown.verb}`) } : null);
-  const begin = (next) => { setProblem(''); setRemoved(null); next(); };
+  const begin = (next) => { setProblem(''); next(); };
 
   const wrap = (node) => <div className="@container">{node}</div>;
   if (adding) {
@@ -122,7 +111,7 @@ export function ConnectorsPage({ request }) {
     return wrap(
       <ConnectorDetail
         connector={opened} request={request} onBack={() => setOpenId(null)} onSaved={connectors.reload}
-        onDisconnected={(gone) => { setOpenId(null); setRemoved(gone); void connectors.reload(); }}
+        onDisconnected={() => { setOpenId(null); void connectors.reload(); }}
       />,
     );
   }
@@ -155,7 +144,7 @@ export function ConnectorsPage({ request }) {
   );
   const add = (
     <ActionButton aria-label={P.addCustom} title={P.addCustom} onClick={() => begin(() => setAdding(true))}>
-      <Plus aria-hidden="true" /><span className="@max-[480px]:hidden">{P.addCustom}</span>
+      <Plus aria-hidden="true" /><span className="@max-[480px]:hidden">{P.addLabel}</span>
     </ActionButton>
   );
 
@@ -163,12 +152,6 @@ export function ConnectorsPage({ request }) {
     <Page title={T.settings.nav.connectors} action={<>{search}{add}</>}>
       <Loading state={connectors} rows={3}>{() => (
         <>
-          {removed && (
-            <div role="status" className="flex items-center gap-2 rounded-[14px] bg-muted py-1 pr-1.5 pl-4 text-sm">
-              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{C.removed(removed.name)}</span>
-              {removed.token && <QuietButton onClick={undo}>{C.undo}</QuietButton>}
-            </div>
-          )}
           <Problem>{problem}</Problem>
           <Views value={view} count={connected.length} onChange={setView} />
           {view === 'available' ? (
@@ -181,7 +164,7 @@ export function ConnectorsPage({ request }) {
                     const id = item.trying?.connectorId ?? item.id;
                     return (
                       <ConnectorRow
-                        key={item.id} icon={iconFor(item.icon, groupId === 'here' ? 'local' : 'remote')} name={item.name} line={shown.line} bad={shown.bad} state={stateOf(shown)}
+                        key={item.id} icon={item.icon} name={item.name} line={shown.line} bad={shown.bad} state={stateOf(shown)}
                         verb={verbOf(shown, id) ?? { label: P.connect, run: () => connect({ item, index, groupId }) }} busy={busy.has(item.id) || busy.has(id)}
                       />
                     );
@@ -194,7 +177,7 @@ export function ConnectorsPage({ request }) {
               <ul>
                 {connectedRows.map(({ connector, shown }) => (
                   <ConnectorRow
-                    key={connector.id} icon={iconFor(connector.icon, connector.about?.kind === 'remote' ? 'remote' : 'local')} name={connector.name}
+                    key={connector.id} icon={connector.icon} name={connector.name}
                     line={shown.line} bad={shown.bad} state={stateOf(shown)} verb={verbOf(shown, connector.id)} busy={busy.has(connector.id)}
                     onOpen={() => begin(() => setOpenId(connector.id))}
                   />

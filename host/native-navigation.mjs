@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DUDU_ICONS } from './native-navigation-icons.mjs';
+import { nativeLocale, nativeText } from './native-locale.mjs';
 
 /**
  * Navigation for the phone: the sidebar panels, conversation views and settings
@@ -140,16 +141,15 @@ const TEAM_TITLE = /^(?:编队|团队|team|fleet)$/iu;
 function sidebarRoute(item) {
   switch (item.id) {
     case 'plugins': return web('plugins');
-    case 'schedules': return { native: 'schedule', ...web('panel', item.id) };
     default: return web('panel', item.id);
   }
 }
 
 function viewRoute(item) {
   if (item.id === 'chat') return { native: 'chat' };
-  if (item.id === 'trajectory') return web('trace');
-  if (CONTEXT_VIEW.test(item.id) || CONTEXT_TITLE.test(item.title)) return web('context');
-  if (TEAM_VIEW.test(item.id) || TEAM_TITLE.test(item.title)) return web('team');
+  if (item.id === 'trajectory') return web('trace', item.id);
+  if (CONTEXT_VIEW.test(item.id) || CONTEXT_TITLE.test(item.title)) return web('context', item.id);
+  if (TEAM_VIEW.test(item.id) || TEAM_TITLE.test(item.title)) return web('team', item.id);
   return web('view', item.id);
 }
 
@@ -179,7 +179,15 @@ function common(raw, id = cleanId(raw.id)) {
   const title = cleanText(raw.title, 80);
   if (!id || !title) return undefined;
   const source = cleanText(raw.source, 128);
-  return { id, title, order: finite(raw.order, 1e6) ? raw.order : 0, ...(source ? { source } : {}) };
+  const titles = {};
+  if (record(raw.titles)) {
+    for (const language of ['zh', 'en']) {
+      const value = cleanText(raw.titles[language], 80);
+      if (value) titles[language] = value;
+    }
+  }
+  return { id, title, order: finite(raw.order, 1e6) ? raw.order : 0, ...(source ? { source } : {}),
+    ...(Object.keys(titles).length ? { titles } : {}) };
 }
 
 /** Panels the phone cannot open: the 嘟嘟 page browses the sessions of the harnesses on the desktop, and only DSH's own window has it. */
@@ -257,8 +265,7 @@ const DUDU_SIDEBAR = Object.freeze([
   // The board remains the start page; it is not the parent of the other sidebar entries.
   Object.freeze({ id: 'dudu.board', title: '看板', order: -999, group: 'primary', icon: DUDU_ICONS.board, open: { native: 'board' }, source: 'dudu' }),
   Object.freeze({ id: 'dudu.collector', title: '信息', order: -998, group: 'primary', icon: DUDU_ICONS.information, open: { native: 'collector' }, source: 'dudu' }),
-  // The fourth permanent row (owner, 2026-11-10: "侧边栏选 b"), with the number of enabled tasks behind it. `target` tells a phone that has the tasks page to draw that one; a phone that does not
-  // (and DSH's own `schedules` entry, which has no `target`) shows the old schedule list, as before.
+  // Only Dudu's own task entry uses this native screen; DSH panels retain their registered web route.
   Object.freeze({ id: 'dudu.tasks', title: '任务', order: -997, group: 'primary', icon: DUDU_ICONS.tasks, open: { native: 'schedule', target: 'dudu-tasks' }, source: 'dudu' }),
 ]);
 
@@ -310,13 +317,19 @@ export async function createNavigationStore({ folder, now = Date.now } = {}) {
   return {
     /** What the phone receives: what DSH reported, with what 嘟嘟 adds in front. */
     get() {
+      const owned = (entry) => ({ ...entry, title: nativeText(entry.title) });
+      const registered = (entry) => {
+        const { titles, ...item } = entry;
+        return { ...item, title: titles?.[nativeLocale() === 'en' ? 'en' : 'zh'] ?? item.title };
+      };
       return {
         schemaVersion: NAVIGATION_SCHEMA_VERSION,
         available: updatedAt > 0,
         updatedAt,
         ...current,
-        sidebar: [...DUDU_SIDEBAR, ...current.sidebar],
-        settings: [...DUDU_SETTINGS, ...current.settings],
+        sidebar: [...DUDU_SIDEBAR.map(owned), ...current.sidebar.map(registered)],
+        views: current.views.map(registered),
+        settings: [...DUDU_SETTINGS.map(owned), ...current.settings.map(registered)],
       };
     },
     /** A snapshot read from DSH's registries; returns whether anything changed. */

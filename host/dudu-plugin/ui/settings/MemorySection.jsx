@@ -4,7 +4,7 @@ import { Badge } from '../components/badge.jsx';
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '../components/dialog.jsx';
 import { when } from '../issues/activity.js';
 import { T } from '../strings.js';
-import { ActionButton, DangerButton, Empty, Field, Group, IconAction, Loading, Page, PrimaryButton, Problem, QuietButton, Row, TextField } from './kit.jsx';
+import { DangerButton, Empty, Field, Group, IconAction, Loading, Page, PrimaryButton, Problem, QuietButton, Row, TextField } from './kit.jsx';
 import { useLoaded } from './use-loaded.js';
 
 const M = T.settings.memory;
@@ -90,12 +90,11 @@ function Record({ request, record, reload }) {
   );
 }
 
-/** Everything remembered: the entries of USER.md and MEMORY.md (search, edit, forget with a preview), and the tidy runs, each undoable. */
+/** Everything remembered: the entries of USER.md and MEMORY.md (search, edit, forget with a preview), and the tidy runs. */
 export function MemorySection({ request }) {
   const [query, setQuery] = useState('');
   const records = useLoaded(request, 'memory/records', query.trim() ? { q: query.trim() } : {});
   const reviews = useLoaded(request, 'memory/reviews', { limit: 10 });
-  const [problem, setProblem] = useState('');
   const search = (
     <div className="relative">
       <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
@@ -119,19 +118,8 @@ export function MemorySection({ request }) {
             {!value.reviews?.length
               ? <Row title={<span className="font-normal text-muted-foreground">{M.noReviews}</span>} />
               : <ul>{value.reviews.map((review) => (
-                <Row as="li" key={review.id} title={<span className="font-normal">{M.summary(review.summary ?? {})}</span>} meta={review.at ? when(review.at) : ''}>
-                  {!review.undone && <ActionButton onClick={async () => {
-                    setProblem('');
-                    try {
-                      const result = await request('memory/undo', { id: review.id });
-                      if (result.outcome && !['success', 'no_op'].includes(result.outcome)) throw new Error();
-                      reviews.reload();
-                      records.reload();
-                    } catch { setProblem(T.toast.failed); }
-                  }}>{M.undo}</ActionButton>}
-                </Row>
+                <Row as="li" key={review.id} title={<span className="font-normal">{M.summary(review.summary ?? {})}</span>} meta={review.at ? when(review.at) : ''} />
               ))}</ul>}
-            {problem && <Row block><Problem>{problem}</Problem></Row>}
           </Group>
         )}
       </Loading>

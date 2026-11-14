@@ -11,7 +11,6 @@ private struct CatalogResult: Decodable, Sendable {
 
 private struct AssistantSkillsResult: Decodable, Sendable { var skills: [AssistantSkill] }
 private struct AssistantRecipientsResult: Decodable, Sendable { var outcome: String; var items: [AssistantRecipient] }
-private struct AssistantCardResult: Decodable, Sendable { var outcome: String; var code: String?; var unchanged: Bool?; var commandId: String? }
 
 @MainActor
 final class DSBotStore: ObservableObject {
@@ -112,6 +111,7 @@ final class DSBotStore: ObservableObject {
     private let client: any DSBotTransport
     private let conversationStorage: any DSBotConversationStorage
     private let networkMonitor: (any ConnectionNetworkMonitoring)?
+    private let beforeRemovingComputer: ((Computer, DSBotStore) async -> Void)?
     private var networkChangeTask: Task<Void, Never>?
     private let conversationImages = ConversationImageCache()
     private var conversationComputerID: String?
@@ -149,7 +149,8 @@ final class DSBotStore: ObservableObject {
     convenience init() {
         self.init(
             repository: ComputerRepository(), client: DSBotHTTPClient(),
-            conversationStorage: FileConversationStorage(), networkMonitor: ConnectionNetworkMonitor()
+            conversationStorage: FileConversationStorage(), networkMonitor: ConnectionNetworkMonitor(),
+            beforeRemovingComputer: { computer, store in await AppNotifications.shared.unregister(computer, using: store) }
         )
     }
 
@@ -157,12 +158,14 @@ final class DSBotStore: ObservableObject {
         repository: any DSBotComputerStorage,
         client: any DSBotTransport,
         conversationStorage: any DSBotConversationStorage = MemoryConversationStorage(),
-        networkMonitor: (any ConnectionNetworkMonitoring)? = nil
+        networkMonitor: (any ConnectionNetworkMonitoring)? = nil,
+        beforeRemovingComputer: ((Computer, DSBotStore) async -> Void)? = nil
     ) {
         self.repository = repository
         self.client = client
         self.conversationStorage = conversationStorage
         self.networkMonitor = networkMonitor
+        self.beforeRemovingComputer = beforeRemovingComputer
         self.networkMonitor?.start { [weak self] in
             Task { @MainActor [weak self] in self?.networkPathChanged() }
         }
@@ -371,6 +374,8 @@ final class DSBotStore: ObservableObject {
         var releaseOnExit = true
         defer { if releaseOnExit { releaseOperation() } }
         guard isForeground, removalLifecycle == lifecycleGeneration else { return }
+        await beforeRemovingComputer?(computer, self)
+        guard isForeground, removalLifecycle == lifecycleGeneration else { return }
         let wasActive = computer.id == activeComputer?.id
         let currentGeneration = wasActive ? nextGeneration() : generation
         if wasActive {
@@ -478,30 +483,6 @@ final class DSBotStore: ObservableObject {
         guard target == sessionSelectionGeneration else { throw DSBotFailure.switchedComputer }
         guard result.outcome == "success" else { throw DSBotFailure.remote("UPSTREAM_UNAVAILABLE") }
         return result.items
-    }
-
-    /// A quick button of 嘟嘟's chat: the plugin makes 嘟嘟 send the card into this conversation, and it arrives like any entry of the thread (`QuickCard`). `since` names the card at the end of the
-    /// thread that a repeat would only copy (`QuickCard.repeatable`): when the list is the same the plugin makes nothing and says so. A failure is said in the app's ordinary words (the plugin out
-    /// of date, the computer out of reach).
-    @discardableResult
-    func assistantCard(_ kind: QuickCardKind, since: String? = nil) async -> QuickCardAnswer {
-        guard let session = selectedSession, isAssistantConversation else { return .failed }
-        let currentGeneration = generation
-        let target = sessionSelectionGeneration
-        do {
-            var params: [String: JSONValue] = ["sessionId": .string(session.id), "kind": .string(kind.rawValue)]
-            if let since { params["since"] = .string(since) }
-            let value = try await request("assistant.card", params)
-            let result = try await json.decode(AssistantCardResult.self, from: value)
-            guard currentGeneration == generation, target == sessionSelectionGeneration else { return .failed }
-            guard result.outcome == "success" else { throw DSBotFailure.remote(result.code ?? "UPSTREAM_UNAVAILABLE") }
-            return result.unchanged == true ? .unchanged(commandId: result.commandId) : .made(commandId: result.commandId)
-        } catch {
-            if currentGeneration == generation, target == sessionSelectionGeneration {
-                self.error = featureMessage(for: error)
-            }
-            return .failed
-        }
     }
 
     /// The owner's 删除 on lines of 嘟嘟's thread (owner, 2026-11-10: "删除只是在会话界面删除这个消息，实际是没有删除"): the plugin keeps which lines are hidden, and nothing else is removed (the session's log
@@ -693,9 +674,10 @@ final class DSBotStore: ObservableObject {
         scheduleConversationSave()
         do {
             // session.watch replaces the prior watch without waiting for its stream to close.
-            let result = try await request("session.watch", [
-                "id": .string(session.id), "watchId": .string(watchID), "transcript": .bool(true)
-            ])
+            var parameters = session.historyParameters
+            parameters["watchId"] = .string(watchID)
+            parameters["transcript"] = .bool(true)
+            let result = try await request("session.watch", parameters)
             guard currentGeneration == generation,
                   currentSelection == sessionSelectionGeneration else { return }
             let detail = try await json.decode(SessionDetail.self, from: result)
@@ -1216,9 +1198,11 @@ final class DSBotStore: ObservableObject {
         currentWatchID = watchID
         let openingSnapshotVersion = snapshotVersion
         do {
-            let result = try await request("session.watch", [
-                "id": .string(sessionID), "watchId": .string(watchID), "transcript": .bool(true)
-            ])
+            guard let session = selectedSession, session.id == sessionID else { return }
+            var parameters = session.historyParameters
+            parameters["watchId"] = .string(watchID)
+            parameters["transcript"] = .bool(true)
+            let result = try await request("session.watch", parameters)
             let detail = try await json.decode(SessionDetail.self, from: result)
             guard currentGeneration == generation, currentSelection == sessionSelectionGeneration,
                   currentWatchID == watchID, selectedSession?.id == sessionID else { return }
@@ -1273,7 +1257,7 @@ final class DSBotStore: ObservableObject {
     private func featureMessage(for error: Error) -> String {
         if case let .remote(code) = safeFailure(for: error),
            ["UNSUPPORTED", "METHOD_NOT_ALLOWED"].contains(code) {
-            return "请先在电脑上更新 Dudu 插件，再使用此功能。"
+            return L10n.text("请先在电脑上更新 Dudu 插件，再使用此功能。")
         }
         return safeMessage(for: error)
     }
@@ -1750,7 +1734,8 @@ final class DSBotStore: ObservableObject {
         await sessionListLoad
         guard currentGeneration == generation else { return }
         if initialSelection == sessionSelectionGeneration, !isChoosingWorkspace,
-           let target = sessions.first(where: { $0.id == selectedSession?.id }) ?? selectedSession ?? sessions.first {
+           let target = selectedSession?.subagent != nil ? selectedSession
+                : sessions.first(where: { $0.id == selectedSession?.id }) ?? selectedSession ?? sessions.first {
             openedSessionID = target.id
             await selectSession(target)
         }
@@ -2113,7 +2098,7 @@ final class DSBotStore: ObservableObject {
         workspaces = snapshot.workspaces
         models = snapshot.models
         providers = snapshot.providers ?? []
-        permissions = snapshot.permissions
+        permissions = snapshot.permissions.map(PermissionLabels.localized)
         presets = snapshot.presets
         let pendingDraftTargets = Set(submittedDrafts.map(\.target))
         messageDrafts = messageDrafts.filter { $0.key.computerID != computer.id || pendingDraftTargets.contains($0.key) }

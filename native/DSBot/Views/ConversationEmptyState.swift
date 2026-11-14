@@ -6,7 +6,7 @@ struct ConversationEmptyState: View {
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             DuduLogo(size: 44)
-            Text("探索未至之境")
+            Text(L10n.text("探索未至之境"))
                 .font(.system(size: 26, weight: .medium))
                 .foregroundStyle(DSBotStyle.chatInk)
                 .lineLimit(1)
@@ -14,7 +14,7 @@ struct ConversationEmptyState: View {
         }
         .padding(.horizontal, 24)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("探索未至之境")
+        .accessibilityLabel(L10n.text("探索未至之境"))
         .accessibilityIdentifier("chat.empty")
     }
 }
@@ -26,12 +26,12 @@ struct ConversationLoadingState: View {
         VStack(spacing: 12) {
             ProgressView()
                 .tint(DSBotStyle.muted)
-            Text("正在连接…")
+            Text(L10n.text("正在连接…"))
                 .font(.system(size: 14))
                 .foregroundStyle(DSBotStyle.muted)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("正在连接")
+        .accessibilityLabel(L10n.text("正在连接"))
         .accessibilityIdentifier("chat.loading")
     }
 }

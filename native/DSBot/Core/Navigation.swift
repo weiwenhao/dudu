@@ -148,8 +148,6 @@ enum NavigationTarget: Equatable, Sendable {
     /// 嘟嘟's own configuration, drawn in SwiftUI.
     case duduSettings(section: String)
     case files
-    /// DSH's own schedule list (what an older plugin and DSH's `schedules` entry open).
-    case schedule
     /// 嘟嘟's scheduled tasks, the fourth permanent row (owner, 2026-11-10): the plugin's `dudu.tasks` entry says `target: dudu-tasks`.
     case tasks
     case web(page: EmbeddedDSHPage, target: String?)
@@ -165,7 +163,7 @@ enum NavigationTarget: Equatable, Sendable {
             case "dsh-settings": self = .dshSettings; return
             case "dudu-settings": self = .duduSettings(section: open.target ?? open.web?.target ?? "general"); return
             case "files": self = .files; return
-            case "schedule": self = open.target == "dudu-tasks" ? .tasks : .schedule; return
+            case "schedule" where open.target == "dudu-tasks": self = .tasks; return
             default: break // A screen this build does not have: fall back to the page DSH has for it.
             }
         }

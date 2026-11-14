@@ -52,7 +52,7 @@ export function createRecordMarks() {
         },
       };
     },
-    // Only a read that starts after a mutation settles can reconcile it. Identity also protects newer marks and Undo.
+    // Only a read that starts after a mutation settles can reconcile it. Identity also protects newer marks.
     beforeRead: () => new Map([...entries].filter(([, change]) => !change.pending)),
     acceptRead(read) {
       const next = new Map(entries);

@@ -4,9 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createAgentSessions } from '../host/assistant/home/agent-sessions.mjs';
+import { createAssignment } from '../host/assistant/home/assign.mjs';
 import { createDeepSleep, withDeepSleep } from '../host/assistant/home/deep-sleep.mjs';
 import { createIssues } from '../host/assistant/issues/index.mjs';
 import { DEEP_SLEEP_MS, handledAtOf, inDeepSleep, waitFor } from '../host/assistant/sessions/deep-sleep.mjs';
+import { createSessions } from '../host/assistant/sessions/index.mjs';
 import { fakeDsh } from './fake-dsh.mjs';
 
 // Deep sleep (docs/assistant.md 3.4): an agent that is idle, or whose run finished and waits for a look (its turn has ended, and it is not one that asks,
@@ -53,6 +55,86 @@ test('a session was last handled when its state began, when it last did anything
   assert.equal(handledAtOf({ stateSince: undefined, lastActivityAt: 0, touchedAt: undefined }), 0);
   assert.equal(handledAtOf({}), null);
   assert.equal(handledAtOf(null), null);
+});
+
+test('a historical question can sleep only with confirmed inactive work; live work and unknown liveness stay awake', () => {
+  const base = { key: 'dsh:old-question', state: 'waiting_owner', agentMark: 'idle', handledAt: 0, now: 60 * MINUTE };
+  assert.equal(inDeepSleep({ ...base, turnActive: false }), true, 'an idle mark over a question left in the transcript');
+  assert.equal(inDeepSleep({ ...base, turnActive: false, now: 29 * MINUTE }), false, 'the ordinary idle wait still applies');
+  for (const turnActive of [true, null, undefined]) {
+    assert.equal(inDeepSleep({ ...base, turnActive }), false, `active or not yet read: ${turnActive}`);
+  }
+  for (const agentMark of ['working', 'blocked']) {
+    assert.equal(inDeepSleep({ ...base, turnActive: false, agentMark }), false, 'the owner has not put the question aside');
+  }
+  for (const state of ['idle', 'finished', 'error', 'stopped', 'running']) {
+    assert.equal(inDeepSleep({ ...base, state, turnActive: true }), false, `${state}: live work always prevents sleep`);
+  }
+  assert.equal(inDeepSleep({ ...base, state: 'running', turnActive: false }), false, 'a stale inactive observation cannot hide a running state');
+});
+
+test('closed and aged issues sleep over historical questions without changing history; native dialogs and DSH waiters stay awake', async () => {
+  let clock = 1_800_000_000_000;
+  const facts = ['closed', 'aged', 'dialog'].map((id) => ({
+    id, updatedAt: clock - 80 * 60 * MINUTE, lastActivityAt: clock - 80 * 60 * MINUTE,
+    process: null as any, tail: { last: 'answer', at: clock - 80 * 60 * MINUTE, ending: 'Continue with this?', turnEnded: true },
+  }));
+  const native = createSessions({
+    file: ':memory:', intervals: false, now: () => clock, pinned: () => true,
+    readers: { claude: { scan: async () => facts } }, links: { get: (_provider: string, id: string) => id },
+  });
+  const world = fakeDsh({ turns: new Map([['closed', { last: 'answer', at: facts[0].lastActivityAt }]]) });
+  const sessions = createAgentSessions({ dsh: world.dsh, log: quiet, now: () => clock });
+  let assignment: any;
+  const background = new Set<string>();
+  const issues = createIssues({
+    file: ':memory:', now: () => clock,
+    sessionState: (key: string) => assignment.sessionState(key),
+    sessionSince: (key: string) => assignment.sessionSince(key),
+    sessionBases: (key: string) => assignment.sessionBases(key),
+    sessionHandledAt: (key: string) => assignment.sessionHandledAt(key),
+    sessionTurnActive: (key: string) => background.has(key) || assignment.sessionTurnActive?.(key),
+  });
+  assignment = createAssignment({ issues, agentSessions: sessions, snapshotOf: native.snapshotOf, log: quiet });
+  try {
+    await native.poll();
+    const add = (key: string) => issues.add({ title: key, project: { name: 'work', path: '/work' }, agent: 'claude', session: `dsh:${key}` }).issue;
+    const closed = add('closed');
+    issues.update(closed.id, { status: 'done', agentState: 'idle' });
+    const aged = add('aged');
+    const dialog = add('dialog');
+    const get = (id: number) => issues.get(id).issue;
+    const unchanged = [get(closed.id).status, get(closed.id).updatedAt, get(closed.id).ask];
+    assert.equal(get(closed.id).deepSleep, true, 'completed HOU-9 shape: an old question and the owner\'s idle mark');
+    assert.equal(get(aged.id).deepSleep, true, 'HOU-4 / AIP-1 shape: the question aged into Idle');
+    assert.equal(native.snapshotOf('dsh:closed')!.state, 'waiting_owner', 'the historical question remains resumable');
+    assert.equal(withDeepSleep(assignment.snapshotOf('dsh:closed'), 'dsh:closed', () => get(closed.id).deepSleep).deepSleep, true, 'sidebar and phone agree with the issue');
+
+    facts[2].process = { status: 'waiting', since: facts[2].lastActivityAt, waitingFor: 'dialog open' };
+    await native.poll();
+    assert.equal(get(dialog.id).deepSleep, undefined, 'a real native dialog stays alive even after three days');
+    background.add('dsh:aged');
+    assert.equal(get(aged.id).deepSleep, undefined, 'a retained native background task prevents sleep too');
+    background.clear();
+    assert.deepEqual([get(closed.id).status, get(closed.id).updatedAt, get(closed.id).ask], unchanged, 'sleep computation never changes the issue or its workflow');
+
+    await assignment.onResume(get(closed.id));
+    assert.equal(sessions.snapshotOf('dsh:closed')?.touchedAt, clock, 'opening a completed issue not restored after restart is handling it too');
+    assert.equal(get(closed.id).deepSleep, undefined, 'opening it wakes it immediately');
+    clock += 30 * MINUTE;
+    assert.equal(get(closed.id).deepSleep, true, 'the same historical question sleeps again after the ordinary idle wait');
+    const waiter = world.say.ask('closed', 'Approve this?', undefined, 'approval')!;
+    issues.update(closed.id, { agentState: 'idle' });
+    clock += 80 * 60 * MINUTE;
+    assert.equal(get(closed.id).deepSleep, undefined, 'an actual DSH approval still waits, whatever the idle mark and age');
+    assert.equal(withDeepSleep(assignment.snapshotOf('dsh:closed'), 'dsh:closed', () => true).deepSleep, undefined, 'the live waiter also protects the sidebar');
+    waiter.close();
+  } finally {
+    await assignment.dispose();
+    sessions.dispose();
+    await native.dispose();
+    issues.close();
+  }
 });
 
 test('the owner starting, speaking to or opening a session is what keeps it awake; adopting one after a restart is not', async () => {

@@ -5,6 +5,8 @@ struct MessageMarkdown: View {
     let text: String
     /// Smaller, quieter text for secondary content such as a compaction summary.
     var compact = false
+    /// The approved full-width text in a quick-sheet todo, unchanged when clipped or expanded.
+    var todo = false
     var allowsTextSelection = true
     var sourceSequence: Double?
     @Environment(\.conversationMarkdown) private var prepared
@@ -32,7 +34,7 @@ struct MessageMarkdown: View {
             if let parsed = prepared.content(for: text) ?? MessageMarkdownCache.cachedContent(for: text) ??
                 (parsed?.text == text ? parsed?.content : nil) {
                 Markdown(parsed)
-                    .markdownTheme(compact ? .dsbotCompact : .dsbot)
+                    .markdownTheme(todo ? .dsbotTodo : compact ? .dsbotCompact : .dsbot)
                     .markdownImageProvider(MessageImageProvider(sequence: sourceSequence))
                     .markdownInlineImageProvider(MessageInlineImageProvider(sequence: sourceSequence, access: access))
             } else {
@@ -96,6 +98,18 @@ private final class MessageMarkdownMemory: @unchecked Sendable {
 }
 
 private extension Theme {
+    static let dsbotTodo = Theme.dsbot
+        .text {
+            FontSize(15)
+            ForegroundColor(DSBotStyle.ink)
+        }
+        .paragraph { configuration in
+            configuration.label
+                .fixedSize(horizontal: false, vertical: true)
+                .relativeLineSpacing(.em(0.4))
+                .markdownMargin(top: 0, bottom: 12)
+        }
+
     /// The message theme at secondary-text size, used for a compaction summary.
     static let dsbotCompact = Theme.dsbot
         .text {
@@ -230,13 +244,13 @@ private struct MessageImage: View {
     var body: some View {
         if let url, let sequence, let access {
             ConversationImageThumbnail(
-                attachment: TranscriptAttachment(kind: "markdown", name: "图片", id: url.absoluteString, seq: sequence),
+                attachment: TranscriptAttachment(kind: "markdown", name: L10n.text("图片"), id: url.absoluteString, seq: sequence),
                 target: access.target, canLoadAttachment: access.connected,
                 identifier: "chat.markdown.image.\(Int(sequence))", loadImage: access.loadImage,
                 alignment: .leading
             )
         } else {
-            DSBotLabel("图片", icon: .camera)
+            DSBotLabel(L10n.text("图片"), icon: .camera)
                 .font(.system(size: 13))
                 .foregroundStyle(DSBotStyle.muted)
                 .padding(12)

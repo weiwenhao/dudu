@@ -16,12 +16,12 @@ struct ComputerConnectionView: View {
                 VStack(spacing: 22) {
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 12) {
-                            Text("连接状态")
+                            Text(L10n.text("连接状态"))
                             Spacer(minLength: 8)
                             connectionState(computer).fixedSize()
                         }
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("连接状态")
+                            Text(L10n.text("连接状态"))
                             connectionState(computer)
                         }
                     }
@@ -32,7 +32,7 @@ struct ComputerConnectionView: View {
                     .accessibilityIdentifier("computer.connection.state")
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("连接地址")
+                        Text(L10n.text("连接地址"))
                             .font(.system(size: 12))
                             .foregroundStyle(DSBotStyle.muted)
                             .padding(.leading, 16)
@@ -63,7 +63,7 @@ struct ComputerConnectionView: View {
                     } label: {
                         HStack(spacing: 12) {
                             DSBotIcon(.reconnect, size: 22)
-                            Text(status == .connecting ? "正在连接…" : "重新连接")
+                            Text(status == .connecting ? L10n.text("正在连接…") : L10n.text("重新连接"))
                             Spacer()
                             if status == .connecting {
                                 ProgressView().controlSize(.small).tint(DSBotStyle.muted)
@@ -94,13 +94,13 @@ struct ComputerConnectionView: View {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button { dismiss() } label: { DSBotIcon(.back, size: 20) }
-                    .accessibilityLabel("返回电脑连接")
+                    .accessibilityLabel(L10n.text("返回电脑连接"))
             }
             ToolbarItem(placement: .principal) {
                 Text(computer?.name ?? "").font(.system(size: 16, weight: .semibold))
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button("编辑") { isEditing = true }
+                Button(L10n.text("编辑")) { isEditing = true }
                     .disabled(computer == nil || status == .connecting)
                     .accessibilityIdentifier("computer.connection.edit")
             }
@@ -116,8 +116,8 @@ struct ComputerConnectionView: View {
                 Circle().fill(status == .connected ? Color.green : DSBotStyle.muted).frame(width: 6, height: 6)
                     .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
             }
-            Text(status == .connected ? "已连接 · \(computer.shortAddress)"
-                 : status == .connecting ? "正在连接…" : "未连接")
+            Text(status == .connected ? L10n.text("已连接 · {0}", "\(computer.shortAddress)")
+                 : status == .connecting ? L10n.text("正在连接…") : L10n.text("未连接"))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .font(.system(size: 13))
@@ -127,10 +127,10 @@ struct ComputerConnectionView: View {
     private func addressRow(_ route: ConnectionAddress, computer: Computer) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(route.kind == .lan ? "内网地址" : "公网地址")
+                Text(route.kind == .lan ? L10n.text("内网地址") : L10n.text("公网地址"))
                 Spacer(minLength: 8)
                 if status == .connected, route.url == computer.displayAddress.trimmingCharacters(in: CharacterSet(charactersIn: "/")) {
-                    Text("使用中").font(.system(size: 12))
+                    Text(L10n.text("使用中")).font(.system(size: 12))
                         .accessibilityIdentifier("computer.connection.in-use")
                 }
             }
@@ -173,9 +173,9 @@ private struct ConnectionAddressEditor: View {
                     VStack(spacing: 0) {
                         ForEach($drafts) { $draft in
                             VStack(alignment: .leading, spacing: 8) {
-                                Text(draft.kind == .lan ? "内网地址" : "公网地址")
+                                Text(draft.kind == .lan ? L10n.text("内网地址") : L10n.text("公网地址"))
                                     .font(.system(size: 13)).foregroundStyle(DSBotStyle.muted)
-                                TextField("选填", text: $draft.value)
+                                TextField(L10n.text("选填"), text: $draft.value)
                                     .font(.system(size: 16))
                                     .textInputAutocapitalization(.never)
                                     .autocorrectionDisabled()
@@ -200,13 +200,13 @@ private struct ConnectionAddressEditor: View {
             .background(DSBotStyle.settingsBackground.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("取消") { dismiss() }.disabled(saving) }
-                ToolbarItem(placement: .principal) { Text("编辑").font(.system(size: 16, weight: .semibold)) }
+                ToolbarItem(placement: .topBarLeading) { Button(L10n.text("取消")) { dismiss() }.disabled(saving) }
+                ToolbarItem(placement: .principal) { Text(L10n.text("编辑")).font(.system(size: 16, weight: .semibold)) }
                 ToolbarItem(placement: .topBarTrailing) {
                     if saving {
                         ProgressView().controlSize(.small).tint(DSBotStyle.muted)
                     } else {
-                        Button("保存", action: save).accessibilityIdentifier("computer.edit.save")
+                        Button(L10n.text("保存"), action: save).accessibilityIdentifier("computer.edit.save")
                     }
                 }
             }
@@ -214,7 +214,7 @@ private struct ConnectionAddressEditor: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .interactiveDismissDisabled(saving)
-        .accessibilityLabel("编辑连接地址")
+        .accessibilityLabel(L10n.text("编辑连接地址"))
     }
 
     private func save() {

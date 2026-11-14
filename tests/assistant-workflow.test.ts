@@ -152,7 +152,7 @@ test('custom workflow groups, filters, counts and status order agree across keys
   assert.deepEqual(issues.list({ group: 'status' }).groups.map((group: any) => group.key), [...statuses].reverse().concat('todo'));
 });
 
-test('custom completed and canceled statuses keep terminal bookkeeping, outcome guards and undo', (t) => {
+test('custom completed and canceled statuses keep terminal bookkeeping and outcome guards', (t) => {
   const { issues, addStatus } = world(t);
   const done = addStatus('Accepted', 'completed');
   const canceled = addStatus('Declined', 'canceled');
@@ -165,10 +165,9 @@ test('custom completed and canceled statuses keep terminal bookkeeping, outcome 
   assert.equal(issues.list().total, 0);
   assert.equal(issues.list({ tab: 'all' }).total, 1);
   assert.equal(issues.counts().active, 0);
-  const restored = issues.undo(move.eventId).issue;
-  assert.equal(restored.status, 'todo');
-  assert.equal(restored.resolvedAt, null);
-  assert.equal(restored.ask, 'A real question');
+  const reopened = issues.update(issue.id, { status: 'todo' }).issue;
+  assert.equal(reopened.status, 'todo');
+  assert.equal(reopened.resolvedAt, null);
   assert.equal(issues.update(issue.id, { status: canceled.id, outcome: 'No longer required' }, { actor: 'dudu' }).issue.statusType, 'canceled');
   assert.equal(issues.counts().byStatus[canceled.id], 1);
   assert.equal(issues.statusUpdate(done.id, { isDefault: true }).code, 'invalid_status');
@@ -179,7 +178,7 @@ test('custom completed and canceled statuses keep terminal bookkeeping, outcome 
   assert.equal(moved.outcome, 'Accepted by boss');
 });
 
-test('deleting a used status moves issues atomically, retains history and never restores an archived choice', (t) => {
+test('deleting a used status moves issues atomically and retains history', (t) => {
   const { issues, addStatus } = world(t);
   const status = addStatus('Queued', 'unstarted');
   issues.statusUpdate('todo', { isDefault: true });
@@ -200,7 +199,6 @@ test('deleting a used status moves issues atomically, retains history and never 
   assert.equal(definitions.find((entry: any) => entry.id === status.id).isDefault, true);
   const move = issues.events({ issueId: first.id }).events[0];
   assert.deepEqual([move.before.status, move.after.status], ['todo', status.id]);
-  assert.equal(issues.undo(move.id).issue.status, status.id);
   assert.equal(issues.add({ title: 'Automatic intake', status: 'todo' }, { actor: 'dudu' }).issue.status, status.id);
   assert.equal(issues.update(first.id, { status: 'todo' }, { actor: 'dudu' }).issue.status, status.id);
   assert.equal(issues.statusRemove(status.id, 'todo').code, 'last_status');

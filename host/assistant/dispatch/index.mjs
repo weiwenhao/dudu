@@ -1,6 +1,6 @@
 // 嘟嘟's dispatch: from what comes in to who does it (docs/assistant.md 1.2, 3.1 "收进来", 3.3).
 //
-//   const dispatch = createDispatch({ issues, collectors, collect, rules, llm, agents, now = Date.now, file, limits });
+//   const dispatch = createDispatch({ issues, collectors, collect, onCollected, rules, llm, agents, now = Date.now, file, limits });
 //
 //   issues      createIssues(...): the inbox of collected records lives in it, and the issues that `assign` hands out
 //   collectors  createCollectors(...), or a function giving the current registry after a folder move. Dispatch only lists them, each with the
@@ -8,6 +8,7 @@
 //   collect     async (collector, { signal, since }) -> { outcome, records }. Reads through an isolated DSH collection session using
 //               installed tools and skills (or the one MCP server of an MCP connector); it never executes launch configuration from a registry.
 //               `records` are the raw records the session wrote (inbox/records.mjs checks them).
+//   onCollected (collector, records) -> void. Live notification of successfully stored new/changed records, using the current collector settings.
 //   rules       () -> { rules: { 'ASSIGN.md': text | null } } (memory.rules; sync or async), read on every call
 //   llm         async (messages: [{ role: 'system' | 'user', content }], { signal }) -> string. Used by `assign` only, one call per assignment. Called
 //               with an AbortSignal that fires after 60 seconds (and when dispatch is disposed): a model that does not answer by then is given up on
@@ -68,7 +69,7 @@ const isFinished = (status) => status === 'done' || status === 'canceled';
 class ModelError extends Error {}
 class Stopped extends Error {}
 
-export function createDispatch({ issues, collectors = null, collect = null, rules = null, llm = null, agents = null, now = Date.now, file, limits = {} } = {}) {
+export function createDispatch({ issues, collectors = null, collect = null, onCollected = null, rules = null, llm = null, agents = null, now = Date.now, file, limits = {} } = {}) {
   if (!issues || typeof issues.add !== 'function' || !issues.inbox) throw new TypeError('createDispatch needs the issues store, with its inbox.');
   const { inbox } = issues;
   if (typeof file !== 'string' || !file) throw new TypeError('createDispatch needs the file to keep the intake state in (intake.json).');
@@ -178,7 +179,7 @@ export function createDispatch({ issues, collectors = null, collect = null, rule
 
     const normalized = normalizeRecords(read.records, { now });
     const stored = inbox.ingest(view.id, normalized.records, { runId });
-    // A conversation that went on in a row that was waiting is something new as much as a row that is added.
+    // A conversation that went on in a row that was waiting is something new as much as a row that is added, and so is a row the collector changed (`update`: an alert that is over).
     const fresh = stored.added.length + stored.updated.length;
 
     const empty = read.records.length === 0;
@@ -186,9 +187,15 @@ export function createDispatch({ issues, collectors = null, collect = null, rule
     const summary = {
       status: empty ? 'empty' : unchanged ? 'unchanged' : 'read',
       added: fresh, seen: stored.seen,
+      ...(stored.updated.length ? { updated: stored.updated.length } : {}),
+      ...(stored.missed ? { unmatched: stored.missed } : {}),
       ...(normalized.rejected.length || normalized.dropped ? { notCollected: normalized.rejected.map(({ index, id, message }) => ({ index, id: safe(id, 40), message: safe(message, 200) })), dropped: normalized.dropped } : {}),
     };
     end({ ok: true, added: fresh, seen: stored.seen, rejected: normalized.rejected.length + normalized.dropped, created: 0, error: null, me: read.me ?? null });
+    if (fresh && onCollected) {
+      try { onCollected(current, [...stored.added, ...stored.updated]); }
+      catch { /* A failed notification does not undo a completed collection. */ }
+    }
     return { op: { ...op, ...summary }, items: fresh, added: fresh };
   }
 

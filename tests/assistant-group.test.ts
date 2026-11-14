@@ -13,11 +13,17 @@ const KEY = 'dsh:abc';
 
 function setup(over: { say?: (kind: string, record: Record<string, unknown>) => Promise<string>; file?: string } = {}) {
   const listeners = new Set<(change: unknown) => void>();
+  const textListeners = new Set<(change: unknown) => void>();
   const said: [string, Record<string, unknown>][] = [];
-  const say = over.say ?? (async (kind: string, record: Record<string, unknown>) => { said.push([kind, record]); return `c${said.length}`; });
-  const group = createGroup({ file: over.file, sessions: () => ({ onChange: (cb: (change: unknown) => void) => { listeners.add(cb); return () => listeners.delete(cb); } }), say, now: () => 1000, log: { warn() {} } });
-  const emit = (from: string | null, to: string, snapshot: Record<string, unknown> = {}) => { for (const cb of [...listeners]) cb({ key: KEY, from, to, snapshot }); };
-  return { group, said, emit };
+  let group;
+  const say = over.say ?? (async (kind: string, record: Record<string, unknown>) => { said.push([kind, record]); const id = `c${said.length}`; group.put(id, record); return id; });
+  group = createGroup({ file: over.file, sessions: () => ({
+    onChange: (cb: (change: unknown) => void) => { listeners.add(cb); return () => listeners.delete(cb); },
+    onText: (cb: (change: unknown) => void) => { textListeners.add(cb); return () => textListeners.delete(cb); },
+  }), say, now: () => 1000, log: { warn() {} } });
+  const emit = (from: string | null, to: string, snapshot: Record<string, unknown> = {}, key = KEY) => { for (const cb of [...listeners]) cb({ key, from, to, snapshot }); };
+  const text = (value: string, key = KEY) => { for (const cb of [...textListeners]) cb({ key, text: value }); };
+  return { group, said, emit, text };
 }
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -60,6 +66,101 @@ test('a turn that was running when the line was sent is not its answer: the next
   await flush();
   assert.equal(said.length, 2);
   assert.equal(said[1][1].text, 'the answer to the line');
+});
+
+test('reply text updates the waiting line in memory, then commits one final answer without changing the owner line', async () => {
+  const { group, said, emit, text } = setup();
+  await group.sent(group.expect(KEY), { issue, text: '结论了吗' });
+  const ownerLine = group.get('c1');
+  const changes: string[] = [];
+  const release = group.onChange((id: string) => changes.push(id));
+  text('the preceding turn');
+  assert.equal(group.get('c1').liveReply, undefined);
+  emit('idle', 'running');
+  text('another issue', 'dsh:other');
+  text('结论：');
+  assert.deepEqual(group.get('c1').liveReply, { text: '结论：', at: 1000 });
+  const revision = group.revision();
+  text('结论：');
+  assert.equal(group.revision(), revision, 'an unchanged preview does not trigger another publish');
+  text('结论：先用 SQLite。');
+  assert.equal(group.get('c1').liveReply.text, '结论：先用 SQLite。');
+  emit('running', 'running', { ending: '结论：先用 SQLite。' });
+  assert.equal(group.waiting(), 1, 'tools or a completed text chunk do not finish the forwarded run');
+  assert.equal(group.get('c1').liveReply.text, '结论：先用 SQLite。');
+  assert.equal(said.length, 1, 'deltas append no session commands');
+  assert.equal(group.material().length, 1, 'an unfinished reply is not committed prompt material');
+  assert.equal(ownerLine.liveReply, undefined, 'the durable owner record is untouched');
+  emit('running', 'finished', { ending: '结论：先用 SQLite。' });
+  await flush();
+  assert.deepEqual(said.map(([kind]) => kind), ['at', 'reply']);
+  assert.equal(group.get('c2').text, '结论：先用 SQLite。');
+  assert.equal(group.get('c1').liveReply, undefined);
+  assert.equal(group.waiting(), 0);
+  assert.ok(changes.includes('c1'));
+  release();
+  group.dispose();
+});
+
+test('abandoned text clears the preview; stopped text is kept and a question replaces the provisional answer', async () => {
+  for (const outcome of ['stopped', 'waiting_owner']) {
+    const { group, said, emit, text } = setup();
+    await group.sent(group.expect(KEY), { issue, text: 'x' });
+    emit('idle', 'running');
+    text('discarded attempt');
+    text('');
+    assert.equal(group.get('c1').liveReply, undefined);
+    text('partial answer');
+    emit('running', outcome, { pending: { text: 'which one?' } });
+    await flush();
+    assert.equal(said.length, 2);
+    assert.equal(said[1][0], 'reply');
+    assert.equal(said[1][1].text, outcome === 'stopped' ? 'partial answer' : 'which one?');
+    assert.equal(group.get('c1').liveReply, undefined);
+    group.dispose();
+  }
+});
+
+test('a fast stream waits for its owner line to be recorded and concurrent issue replies keep their own text', async () => {
+  let release: () => void = () => {};
+  const said: [string, Record<string, unknown>][] = [];
+  const { group, emit, text } = setup({
+    say: async (kind, record) => {
+      said.push([kind, record]);
+      const id = `c${said.length}`;
+      if (id === 'c1') await new Promise<void>((resolve) => { release = resolve; });
+      group.put(id, record);
+      return id;
+    },
+  });
+  const sent = group.sent(group.expect(KEY), { issue, text: 'first' });
+  emit('idle', 'running');
+  text('fast reply');
+  assert.deepEqual(said.map(([kind]) => kind), ['at']);
+  release();
+  await sent;
+  assert.equal(group.get('c1').liveReply.text, 'fast reply');
+  const other = 'dsh:other';
+  await group.sent(group.expect(other), { issue: { ...issue, id: 10, ref: 'DUD-10' }, text: 'second' });
+  text('only the first reply changes');
+  text('not started yet', other);
+  assert.equal(group.get('c1').liveReply.text, 'only the first reply changes');
+  assert.equal(group.get('c2').liveReply, undefined);
+  emit('idle', 'running', {}, other);
+  text('the second reply', other);
+  assert.equal(group.get('c1').liveReply.text, 'only the first reply changes');
+  assert.equal(group.get('c2').liveReply.text, 'the second reply');
+  emit('running', 'finished', { ending: 'only the first reply changes' });
+  await flush();
+  assert.equal(group.get('c3').to, 'c1');
+  assert.equal(group.get('c2').liveReply.text, 'the second reply');
+  assert.equal(group.waiting(), 1, 'the other issue is still awaited');
+  emit('running', 'finished', { ending: 'the second reply' }, other);
+  await flush();
+  assert.equal(group.get('c4').to, 'c2');
+  assert.equal(group.get('c4').text, 'the second reply');
+  assert.equal(group.waiting(), 0);
+  group.dispose();
 });
 
 test('a turn that stops to ask is answered with its question; one that fails, is stopped or says nothing leaves a silent mark', async () => {

@@ -527,7 +527,7 @@ test('forget previews first, then deletes the turns, the entries, the flow, the 
 
 // --- tidy -------------------------------------------------------------------------------------------------------------
 
-test('tidy: stage, gate, merge, write a review, undo it', async (t) => {
+test('tidy: stage, gate, merge, write a review', async (t) => {
   const model = scripted();
   const w = world({ llm: model.llm });
   t.after(w.cleanup);
@@ -601,19 +601,12 @@ test('tidy: stage, gate, merge, write a review, undo it', async (t) => {
   assert.deepEqual(after.entries.map((e) => [e.id, e.status]), [['u1', 'superseded'], ['u2', 'active'], ['u3', 'active']]);
   assert.deepEqual([after.entries[0].text, after.entries[0].src], ['周报周五下午发', ['turn:1', 'turn:3']]);
   assert.deepEqual(ok(memory.records({ file: 'USER', status: 'active' })).records.filter((r: any) => r.text.startsWith('周报')).map((r: any) => r.text), ['周报周四发']);
-  const undone = ok(memory.undoReview(superseded.review));
-  assert.deepEqual([undone.reverted, undone.skipped], [2, []]);
-  assert.equal(w.read('USER.md'), beforeSupersede);
-  assert.match(w.read('reviews/2026-10-31.md'), /已撤销 \d\d:\d\d/);
-  assert.match(w.read('memory/2026-10-31.md'), /撤销 r2026/);
-  assert.equal(memory.undoReview(superseded.review).outcome, 'no_op');
-  assert.equal(memory.undoReview('r-nope').outcome, 'error');
-  assert.equal(memory.undoReview(undefined).outcome, 'error');
-  assert.equal((await memory.tidy({ apply: true })).outcome, 'no_op'); // what was undone is not proposed again from the same turns
-  // The reviews, newest first; the undone one says so.
-  assert.deepEqual(ok(memory.reviews()).reviews.map((r: any) => [r.id, r.undone !== null]), [[superseded.review, true], [once.review, false], [promoted.review, false]]);
+  w.write('USER.md', beforeSupersede); // the owner puts the file back as it was: the next part goes on from there
+  assert.equal((await memory.tidy({ apply: true })).outcome, 'no_op'); // nothing new since: no tidy
+  // The reviews, newest first.
+  assert.deepEqual(ok(memory.reviews()).reviews.map((r: any) => [r.id, r.undone !== null]), [[superseded.review, false], [once.review, false], [promoted.review, false]]);
 
-  // Corroborate, refine and a question in one run; undo reverts the two changes.
+  // Corroborate, refine and a question in one run.
   const repeat = ok(memory.capture({ role: 'owner', text: '周报还是周五下午发，别忘了。' }));
   const finer = ok(memory.capture({ role: 'owner', text: '记一下：每周一早上先看待办，再回消息。' }));
   model.next({ notes: [
@@ -621,29 +614,11 @@ test('tidy: stage, gate, merge, write a review, undo it', async (t) => {
     { relation: 'refine', target: 'u2', text: '每周一早上先看待办，再回消息', src: [finer.id], explicit: true },
     { relation: 'ask', target: 'u1', question: '周报是周五还是周四发？', src: [repeat.id] },
   ] });
-  const beforeMulti = w.read('USER.md');
   const multi = ok(await memory.tidy({ apply: true }));
   assert.deepEqual([multi.summary.corroborate, multi.summary.refine, multi.summary.questions], [1, 1, 1]);
   const afterMulti = parseCurated(w.read('USER.md')).entries;
   assert.deepEqual([afterMulti[0].src, afterMulti[1].text], [['turn:1', 'turn:3', `turn:${repeat.id}`], '每周一早上先看待办，再回消息']);
   assert.match(w.read('reviews/2026-10-31.md'), /待确认：周报是周五还是周四发？/); // an unclear conflict is asked, not decided
-  assert.equal(ok(memory.undoReview(multi.review)).reverted, 2);
-  assert.equal(w.read('USER.md'), beforeMulti);
-
-  // The owner edits an entry in an editor after a tidy: undo leaves that one alone and says so.
-  const printer = ok(memory.capture({ role: 'owner', text: '记一下：打印机在三楼。' }));
-  const key = ok(memory.capture({ role: 'owner', text: '记一下：会议室钥匙在前台。' }));
-  model.next({ notes: [
-    { relation: 'new', file: 'MEMORY', text: '打印机在三楼', src: [printer.id], explicit: true },
-    { relation: 'new', file: 'MEMORY', text: '会议室钥匙在前台', src: [key.id], explicit: true },
-  ] });
-  const pair = ok(await memory.tidy({ apply: true }));
-  w.write('MEMORY.md', w.read('MEMORY.md').replace('打印机在三楼', '打印机在三楼（东侧）'));
-  const partial = ok(memory.undoReview(pair.review));
-  assert.equal(partial.reverted, 1);
-  assert.deepEqual(partial.skipped, [{ id: 'm1', reason: 'the entry was edited since' }]);
-  assert.match(w.read('MEMORY.md'), /打印机在三楼（东侧）/);
-  assert.doesNotMatch(w.read('MEMORY.md'), /会议室钥匙/);
 
   // One tidy at a time.
   let release: any;
@@ -699,7 +674,7 @@ test('tidy: a skill needs the owner in two conversations; failures, limits and a
   for (const name of ['../AGENTS', '..', 'nope', '']) assert.notEqual(memory.skills.read(name).outcome, 'success', name);
   assert.equal(memory.skills.remove('nope').outcome, 'no_op');
   assert.equal(memory.skills.remove('../AGENTS.md').outcome, 'no_op');
-  assert.equal(ok(memory.undoReview(made.review)).reverted, 1);
+  ok(memory.skills.remove('morning-calendar'));
   assert.equal(w.exists('skills/morning-calendar'), false);
   // Text only, a name that is a name, a skill that exists already: refused, not staged.
   const k3 = ok(memory.capture({ role: 'owner', text: '日历连接器的办法：用日历命令，只读。' }));

@@ -75,7 +75,8 @@ struct TaskSummaryRow: View {
 struct TasksView: View {
     /// What the page's reading is for: whether the computer is there to ask.
     struct TasksLoad: Hashable {
-        var connected: Bool
+        var connection: Int
+        var active: Bool
     }
 
     @ObservedObject var model: TasksModel
@@ -84,7 +85,10 @@ struct TasksView: View {
     let topInset: CGFloat
     /// Open a conversation (the one a task's runs go to).
     let onOpenSession: (String) -> Void
+    var quickSheet: AssistantQuickSheetState? = nil
 
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var opened: ScheduledTask?
     @State private var editing: ScheduledTask?
     @State private var deleting: ScheduledTask?
@@ -92,15 +96,22 @@ struct TasksView: View {
     @State private var revealed: String?
 
     var body: some View {
-        VStack(spacing: 0) {
-            GlassTabs(tabs: TaskTab.allCases, title: \.title, selection: model.tab, identifier: "tasks.tab", onSelect: model.select)
-            content
+        Group {
+            if let quickSheet {
+                quickPage(quickSheet)
+            } else {
+                VStack(spacing: 0) {
+                    GlassTabs(tabs: TaskTab.allCases, title: \.title, selection: model.tab, identifier: "tasks.tab", onSelect: model.select)
+                    content
+                }
+                .padding(.top, topInset + 10)
+            }
         }
-        .padding(.top, topInset + 10)
         .background(DSBotStyle.canvas)
         .accessibilityIdentifier("tasks.page")
         // Read when the page is shown and when the computer connects; the next runs move on by themselves, so it is read again while the page stays.
-        .task(id: TasksLoad(connected: store.status == .connected)) {
+        .task(id: TasksLoad(connection: store.connectionRevision, active: scenePhase == .active && store.status == .connected)) {
+            guard scenePhase == .active, store.status == .connected else { return }
             await model.refresh(using: store)
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
@@ -118,9 +129,9 @@ struct TasksView: View {
             TaskEditorSheet(model: model, store: store, task: task)
         }
         .confirmationDialog(
-            "删除任务", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible, presenting: deleting
+            L10n.text("删除任务"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible, presenting: deleting
         ) { task in
-            Button("删除任务", role: .destructive) { Task { await model.act(.delete, task, using: store) } }
+            Button(L10n.text("删除任务"), role: .destructive) { Task { await model.act(.delete, task, using: store) } }
         } message: { task in
             Text(task.title)
         }
@@ -150,6 +161,64 @@ struct TasksView: View {
         #endif
     }
 
+    private func quickPage(_ sheet: AssistantQuickSheetState) -> some View {
+        QuickSheetNavigation(state: sheet) { quickContent($0) }
+    }
+
+    private func quickContent(_ sheet: AssistantQuickSheetState) -> some View {
+        ZStack {
+            QuickSheetPage(
+                title: L10n.text("任务"), count: model.state == .loaded ? model.items.count : nil,
+                onClose: { dismiss() }, active: sheet.task == nil,
+                scrollID: Binding(get: { sheet.scrollID }, set: { sheet.scrollID = $0 })
+            ) {
+                Button { model.isMaking = true } label: {
+                    DSBotIcon(.plus, size: 14)
+                        .foregroundStyle(DSBotStyle.chatSecondary)
+                        .frame(width: 28, height: 28)
+                        .background(DSBotStyle.selected, in: Circle())
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(DSBotQuietPressStyle())
+                .accessibilityLabel(L10n.text("新建任务"))
+            } filters: {
+                GlassTabs(tabs: TaskTab.allCases, title: \.title, selection: model.tab, identifier: "tasks.tab", onSelect: model.select)
+                    .padding(.bottom, 14)
+            } content: {
+                if model.state == .loaded, !model.items.isEmpty {
+                    VStack(spacing: 0) {
+                        ForEach(model.items) { task in
+                            SwipeActionRow(actions: swipeActions(for: task), isRevealed: revealed == task.id, onReveal: { revealed = $0 ? task.id : nil }) {
+                                Button { tap(task) } label: { row(task) }
+                                    .buttonStyle(DSBotRowButtonStyle())
+                                    .contextMenu { rowMenu(for: task) } preview: { TaskRowCard(task: task) }
+                            }
+                            .id(task.id)
+                            if task.id != model.items.last?.id { Divider().padding(.leading, 52).padding(.trailing, 16) }
+                        }
+                    }
+                    .scrollTargetLayout()
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                } else {
+                    content.frame(minHeight: 82)
+                }
+            } footer: {}
+            .opacity(sheet.task == nil ? 1 : 0)
+            .allowsHitTesting(sheet.task == nil)
+            .accessibilityHidden(sheet.task != nil)
+
+            if let task = sheet.task {
+                TaskSheet(
+                    initial: task, model: model, store: store, onOpenSession: onOpenSession,
+                    quickNavigation: QuickDetailNavigation(back: { sheet.task = nil }, close: { dismiss() })
+                )
+                .id(task.id)
+            }
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
         switch model.state {
@@ -160,10 +229,10 @@ struct TasksView: View {
                 .accessibilityIdentifier("tasks.loading")
         case .failed:
             VStack(spacing: 14) {
-                Text("任务没能加载")
+                Text(L10n.text("任务没能加载"))
                     .font(.system(size: 15))
                     .foregroundStyle(DSBotStyle.muted)
-                Button("重试") { Task { await model.refresh(using: store) } }
+                Button(L10n.text("重试")) { Task { await model.refresh(using: store) } }
                     .font(.system(size: 15, weight: .medium))
                     .buttonStyle(DSBotGlassCapsuleButtonStyle())
                     .padding(.horizontal, 20)
@@ -172,7 +241,7 @@ struct TasksView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .loaded:
             if model.items.isEmpty {
-                Text("没有任务")
+                Text(L10n.text("没有任务"))
                     .font(.system(size: 15))
                     .foregroundStyle(DSBotStyle.muted)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -225,7 +294,7 @@ struct TasksView: View {
         if revealed != nil {
             revealed = nil
         } else {
-            opened = task
+            if let quickSheet { quickSheet.task = task } else { opened = task }
         }
     }
 
@@ -238,10 +307,10 @@ struct TasksView: View {
     /// that is over. Run now, copy and edit are also in the menu of a press and hold, and in the task in full.
     private func swipeActions(for task: ScheduledTask) -> [SwipeAction] {
         guard !model.busy.contains(task.id) else { return [] }
-        let pause = SwipeAction(id: "pause", title: "暂停任务", symbol: "pause", color: SwipeAction.grey) { act(.pause, task) }
-        let resume = SwipeAction(id: "resume", title: "恢复任务", symbol: "play", color: DSBotStyle.blue) { act(.resume, task) }
-        let run = SwipeAction(id: "run", title: "立即执行", symbol: "bolt.fill", color: DSBotStyle.blue) { act(.run, task) }
-        let delete = SwipeAction(id: "delete", title: "删除任务", symbol: "trash", color: SwipeAction.red) { revealed = nil; deleting = task }
+        let pause = SwipeAction(id: "pause", title: L10n.text("暂停任务"), symbol: "pause", color: SwipeAction.grey) { act(.pause, task) }
+        let resume = SwipeAction(id: "resume", title: L10n.text("恢复任务"), symbol: "play", color: DSBotStyle.blue) { act(.resume, task) }
+        let run = SwipeAction(id: "run", title: L10n.text("立即执行"), symbol: "bolt.fill", color: DSBotStyle.blue) { act(.run, task) }
+        let delete = SwipeAction(id: "delete", title: L10n.text("删除任务"), symbol: "trash", color: SwipeAction.red) { revealed = nil; deleting = task }
         switch task.status {
         case "active": return [pause, run, delete]
         case "paused": return [resume, delete]
@@ -253,14 +322,14 @@ struct TasksView: View {
     @ViewBuilder
     private func rowMenu(for task: ScheduledTask) -> some View {
         if task.status == "active" {
-            Button { act(.pause, task) } label: { DSBotLabel("暂停任务", icon: .pause) }
+            Button { act(.pause, task) } label: { DSBotLabel(L10n.text("暂停任务"), icon: .pause) }
         } else if task.status == "paused" {
-            Button { act(.resume, task) } label: { DSBotLabel("恢复任务", icon: .play) }
+            Button { act(.resume, task) } label: { DSBotLabel(L10n.text("恢复任务"), icon: .play) }
         }
-        Button { act(.run, task) } label: { DSBotLabel("立即执行", icon: .zap) }
-        Button { act(.duplicate, task) } label: { DSBotLabel("复制任务", icon: .copy) }
-        Button { editing = task } label: { DSBotLabel("编辑", icon: .editLine) }
-        Button(role: .destructive) { deleting = task } label: { DSBotLabel("删除任务", icon: .trash) }
+        Button { act(.run, task) } label: { DSBotLabel(L10n.text("立即执行"), icon: .zap) }
+        Button { act(.duplicate, task) } label: { DSBotLabel(L10n.text("复制任务"), icon: .copy) }
+        Button { editing = task } label: { DSBotLabel(L10n.text("编辑"), icon: .editLine) }
+        Button(role: .destructive) { deleting = task } label: { DSBotLabel(L10n.text("删除任务"), icon: .trash) }
     }
 }
 

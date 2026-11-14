@@ -30,7 +30,8 @@
 // they are not a success: wrong input never throws. Keys are 'claude:<id>', 'codex:<id>', 'dsh:<id>'.
 //
 //   snapshots({ state, provider, limit })  -> { outcome, snapshots, total, sources, polledAt, store }
-//       snapshots: [{ key, provider, id, dshSessionId, title, cwd, state, stateSince, lastActivityAt, excerpt (<= 300), pending }],
+//       snapshots: [{ key, provider, id, dshSessionId, title, cwd, state, stateSince, lastActivityAt, excerpt (<= 300), pending, turnActive? }],
+//       turnActive is a live observation, not persisted: before the first read after a restart it is unknown.
 //       the most recently active first; sources: { claude: 'ok' | 'pending' | 'error: ...', codex, dsh } for the readers given
 //   stateOf(key)   -> the state or null; synchronous: it is the `sessionState` hook of createIssues as it is
 //   snapshotOf(key) -> the current snapshot or null, resolving native/DSH aliases as stateOf does
@@ -291,6 +292,9 @@ export function createSessions({
       stateSince: verdict.stateSince ?? (before?.state === verdict.state ? before.stateSince : facts.updatedAt ?? at),
       lastActivityAt: activity.length ? Math.max(...activity) : facts.updatedAt ?? 0,
       excerpt: oneLine(facts.excerpt || dsh?.excerpt || '', EXCERPT_CHARS), pending: verdict.pending,
+      // A transcript question is resumable history, not evidence of a process waiting on a dialog. Preserve that distinction
+      // separately from `state`; live work is never inferred from the cached SQLite row after a restart.
+      turnActive: Boolean(dsh?.running || dsh?.pending || verdict.state === 'running' || (provider === 'claude' && facts.process?.status === 'waiting')),
     };
   }
 

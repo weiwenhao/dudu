@@ -1,15 +1,39 @@
-import { useRef, useState } from 'react';
-import { ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Bell, BellOff, ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
+import { allowCollectorNotifications } from '../collector/notifications.js';
 import { Badge } from '../components/badge.jsx';
 import { Command, CommandItem, CommandList } from '../components/command.jsx';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
 import { diagnostic, T } from '../strings.js';
 import { describeFrequency, lastLine, PRESET_VALUES } from './frequency.js';
+import { ConfirmDelete } from './ConfirmDelete.jsx';
 import { ActionButton, Choice, Empty, Field, Group, IconAction, Loading, Page, PrimaryButton, Problem, QuietButton, Row, TextField, useFocusAfterRefusal } from './kit.jsx';
 import { useLoaded } from './use-loaded.js';
 
 const C = T.settings.collectors;
 const G = T.settings.general;
+
+/** The approved direct toggle: the icon changes immediately; the form has no notification fields. */
+function CollectorNotification({ collector, disabled, onChange }) {
+  const [enabled, setEnabled] = useState(collector.notify === true);
+  const [pending, setPending] = useState(false);
+  useEffect(() => { setEnabled(collector.notify === true); }, [collector.notify]);
+  const Icon = enabled ? Bell : BellOff;
+  return (
+    <IconAction
+      label={T.toast.region} aria-pressed={enabled} aria-busy={pending}
+      disabled={disabled || pending}
+      className={enabled ? 'bg-accent text-foreground' : 'text-muted-foreground/60'}
+      onClick={async () => {
+        const next = !enabled;
+        setEnabled(next);
+        setPending(true);
+        try { if (!await onChange(collector, next)) setEnabled(!next); }
+        finally { setPending(false); }
+      }}
+    ><Icon aria-hidden="true" /></IconAction>
+  );
+}
 
 /** How often: a field to write 30m, 2h, 1d or cron in, and under its chevron the common ones, which fill it in. */
 function FrequencyField({ value, onChange, disabled }) {
@@ -84,15 +108,36 @@ function CollectorForm({ collector, connectors, busy, problem, onSave, onCancel 
 }
 
 /** What 嘟嘟 collects, and when, as COLLECTORS.md keeps it: the owner adds, changes and removes the collectors here. */
-export function CollectorsSection({ request }) {
+export function CollectorsSection({ request, actions = {} }) {
   const state = useLoaded(request, 'collectors/list');
   const access = useLoaded(request, 'connectors/list'); // the connectors a collector can read through
   const collected = useLoaded(request, 'dispatch/state'); // when each collector last ran, and what it brought
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [removed, setRemoved] = useState(null);
+  const [asking, setAsking] = useState(null); // the collector the window that asks before deleting is about
   const [problem, setProblem] = useState('');
   const [busy, setBusy] = useState(null);
+
+  const changeNotifications = async (collector, notify) => {
+    setBusy(collector.id);
+    setProblem('');
+    try {
+      if (notify && !await allowCollectorNotifications()) {
+        setProblem(T.toast.failed);
+        return false;
+      }
+      const result = await request('collectors/update', { id: collector.id, notify });
+      if (!['success', 'no_op'].includes(result.outcome)) {
+        setProblem(diagnostic(result.message) ?? T.toast.failed);
+        return false;
+      }
+      state.update((value) => ({ ...value, collectors: value.collectors.map((entry) => entry.id === collector.id ? { ...entry, notify } : entry) }));
+      return true;
+    } catch {
+      setProblem(T.toast.failed);
+      return false;
+    } finally { setBusy(null); }
+  };
 
   const save = async (fields) => {
     setBusy('save');
@@ -109,21 +154,11 @@ export function CollectorsSection({ request }) {
     try {
       const result = await request('collectors/remove', { id: collector.id });
       if (!['success', 'no_op'].includes(result.outcome)) { setProblem(T.toast.failed); return; }
-      setRemoved({ name: collector.name, token: result.undo });
       state.reload();
     } catch { setProblem(T.toast.failed); }
-    finally { setBusy(null); }
+    finally { setBusy(null); setAsking(null); }
   };
-  const undo = async () => {
-    setProblem('');
-    try {
-      const result = await request('collectors/undo', { token: removed.token });
-      if (result.outcome !== 'success') { setProblem(T.toast.failed); return; }
-      setRemoved(null);
-      state.reload();
-    } catch { setProblem(T.toast.failed); }
-  };
-  const begin = (id) => { setProblem(''); setRemoved(null); setAdding(id === null); setEditing(id); };
+  const begin = (id) => { setProblem(''); setAdding(id === null); setEditing(id); };
 
   const connectors = access.value?.connectors ?? [];
   // A collector needs a connector to read through: with none, there is nothing to add yet.
@@ -135,12 +170,6 @@ export function CollectorsSection({ request }) {
         const reads = new Map((collected.value?.collectors ?? []).map((entry) => [entry.id, entry.lastRead]));
         return (
           <>
-            {removed && (
-              <div role="status" className="flex items-center gap-2 rounded-[14px] bg-muted py-1 pr-1.5 pl-4 text-sm">
-                <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{C.removed(removed.name)}</span>
-                {removed.token && <QuietButton onClick={undo}>{C.undo}</QuietButton>}
-              </div>
-            )}
             {adding && (
               <Group title={C.add}><Row block><CollectorForm connectors={connectors} busy={busy === 'save'} problem={problem} onSave={save} onCancel={() => { setAdding(false); setProblem(''); }} /></Row></Group>
             )}
@@ -164,8 +193,9 @@ export function CollectorsSection({ request }) {
                       )}
                     >
                       <span className="max-w-[200px] truncate text-xs text-muted-foreground" title={collector.frequency ?? undefined}>{describeFrequency(collector.frequency)}</span>
+                      {!actions.phone && <CollectorNotification collector={collector} disabled={busy !== null} onChange={changeNotifications} />}
                       <IconAction label={T.settings.memory.editOf(collector.name)} disabled={busy !== null} onClick={() => begin(collector.id)}><Pencil aria-hidden="true" /></IconAction>
-                      <IconAction label={C.removeOf(collector.name)} disabled={busy !== null} onClick={() => remove(collector)}><Trash2 aria-hidden="true" /></IconAction>
+                      <IconAction label={C.removeOf(collector.name)} disabled={busy !== null} onClick={() => setAsking(collector)}><Trash2 aria-hidden="true" /></IconAction>
                     </Row>
                   ))}
                 </ul>
@@ -174,6 +204,7 @@ export function CollectorsSection({ request }) {
           </>
         );
       }}</Loading>
+      {asking && <ConfirmDelete name={asking.name} busy={busy !== null} onConfirm={() => remove(asking)} onClose={() => setAsking(null)} />}
     </Page>
   );
 }

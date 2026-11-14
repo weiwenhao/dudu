@@ -142,9 +142,9 @@ final class CoreConnectionTests: XCTestCase {
     func testMissingDesktopMethodExplainsPluginUpdateWithoutInvalidatingPairing() {
         let failure = DSBotFailure.remoteCode("METHOD_NOT_ALLOWED")
 
-        XCTAssertEqual(failure.localizedDescription, "请更新电脑端的手机控制插件")
+        XCTAssertEqual(failure.localizedDescription, L10n.text("请更新电脑端的手机控制插件"))
         XCTAssertFalse(failure.requiresNewPairing)
-        XCTAssertEqual(DSBotFailure.remote("UNSUPPORTED").localizedDescription, "暂不支持此操作。")
+        XCTAssertEqual(DSBotFailure.remote("UNSUPPORTED").localizedDescription, L10n.text("暂不支持此操作。"))
     }
 
     func testMultiAddressPairingKeepsOneCredentialAndCanSelectEitherOrigin() throws {

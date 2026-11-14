@@ -17,7 +17,7 @@ struct WorkPanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                DSBotLabel("文件", icon: .folder)
+                DSBotLabel(L10n.text("文件"), icon: .folder)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(DSBotStyle.ink)
                     .padding(.horizontal, 10)
@@ -35,7 +35,7 @@ struct WorkPanelView: View {
                 }
                 .buttonStyle(DSBotIconButtonStyle())
                 .disabled(isLoading)
-                .accessibilityLabel("刷新文件")
+                .accessibilityLabel(L10n.text("刷新文件"))
                 .accessibilityIdentifier("files.refresh")
             }
             .padding(.leading, 14)
@@ -54,10 +54,10 @@ struct WorkPanelView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(DSBotIconButtonStyle())
-                    .accessibilityLabel("返回上一级")
+                    .accessibilityLabel(L10n.text("返回上一级"))
                     .accessibilityIdentifier("files.parent")
                 }
-                Text(path.isEmpty ? (directory?.name ?? store.selectedSession?.workspaceName ?? "项目") : path)
+                Text(path.isEmpty ? (directory?.name ?? store.selectedSession?.workspaceName ?? L10n.text("项目")) : path)
                     .font(.system(size: 12))
                     .foregroundStyle(DSBotStyle.muted)
                     .lineLimit(1)
@@ -100,7 +100,7 @@ struct WorkPanelView: View {
                     .font(.system(size: 13))
                     .foregroundStyle(DSBotStyle.muted)
                     .multilineTextAlignment(.center)
-                Button("重试") { Task { await loadDirectory() } }
+                Button(L10n.text("重试")) { Task { await loadDirectory() } }
                     .font(.system(size: 14, weight: .medium))
                     .frame(minHeight: 44)
             }
@@ -143,13 +143,13 @@ struct WorkPanelView: View {
                         .accessibilityIdentifier("file.entry.\(entry.path)")
                     }
                     if directory?.entries.isEmpty == true {
-                        Text("暂无文件")
+                        Text(L10n.text("暂无文件"))
                             .font(.system(size: 13))
                             .foregroundStyle(DSBotStyle.muted)
                             .padding(20)
                     }
                     if directory?.truncated == true {
-                        Text("文件过多，仅显示前 500 项")
+                        Text(L10n.text("文件过多，仅显示前 500 项"))
                             .font(.system(size: 12))
                             .foregroundStyle(DSBotStyle.muted)
                             .padding(16)
@@ -169,7 +169,7 @@ struct WorkPanelView: View {
         error = nil
         defer { if loadID == id { isLoading = false } }
         guard store.selectedSession != nil else {
-            error = "打开会话后查看项目文件"
+            error = L10n.text("打开会话后查看项目文件")
             return
         }
         do {
@@ -205,7 +205,7 @@ private struct ProjectFilePreview: View {
                             .textSelection(.enabled)
                             .fixedSize(horizontal: true, vertical: true)
                         if content.truncated {
-                            Text("文件较大，仅显示开头部分")
+                            Text(L10n.text("文件较大，仅显示开头部分"))
                                 .font(.system(size: 12))
                                 .foregroundStyle(DSBotStyle.muted)
                         }
@@ -231,7 +231,7 @@ private struct ProjectFilePreview: View {
                 Button { dismiss() } label: {
                     DSBotIcon(.close, size: 20).frame(width: 36, height: 36)
                 }
-                .accessibilityLabel("关闭文件")
+                .accessibilityLabel(L10n.text("关闭文件"))
                 .accessibilityIdentifier("files.preview.close")
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -243,7 +243,7 @@ private struct ProjectFilePreview: View {
                     } label: {
                         DSBotIcon(copied ? .check : .copy, size: 20).frame(width: 36, height: 36)
                     }
-                    .accessibilityLabel("复制文件内容")
+                    .accessibilityLabel(L10n.text("复制文件内容"))
                 }
             }
         }

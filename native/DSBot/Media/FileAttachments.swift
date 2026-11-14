@@ -33,9 +33,9 @@ enum FileAttachments {
 
     static func message(for error: Error) -> String {
         switch error as? LoadError {
-        case .tooLarge: return "文件超过 16 MB，无法发送"
-        case .empty: return "这个文件是空的"
-        default: return "无法读取这个文件"
+        case .tooLarge: return L10n.text("文件超过 16 MB，无法发送")
+        case .empty: return L10n.text("这个文件是空的")
+        default: return L10n.text("无法读取这个文件")
         }
     }
 

@@ -7,7 +7,7 @@ const row = (id: number, extra: any = {}) => ({ id, connector: 'mail', connector
 const page = (items: any[], nextCursor: string | null = null) => ({ items, nextCursor });
 const shown = (marks: any, value: any, tab = 'todo', filter = {}) => applyRecordMarks(value, marks.getSnapshot(), { tab, filter }, NOW).items;
 
-test('a mark updates before saving, survives an older read, and Undo survives the read started before it', () => {
+test('a mark updates before saving, survives an older read, and a restore survives the read started before it', () => {
   const marks = createRecordMarks();
   const a = row(1);
   const beforeClick = marks.beforeRead();
@@ -22,11 +22,11 @@ test('a mark updates before saving, survives an older read, and Undo survives th
   assert.deepEqual(shown(marks, page([a])), [], 'a response already on its way cannot put the row back');
 
   const afterSave = marks.beforeRead();
-  const undo = marks.begin('inbox/restore', change.records)!;
-  assert.deepEqual(shown(marks, page([])), [a], 'Undo puts the row back before its save');
+  const restoring = marks.begin('inbox/restore', change.records)!;
+  assert.deepEqual(shown(marks, page([])), [a], 'a restore puts the row back before its save');
   marks.acceptRead(afterSave);
-  assert.deepEqual(shown(marks, page([])), [a], 'the first save\'s refresh does not erase Undo');
-  undo.settle(true, a);
+  assert.deepEqual(shown(marks, page([])), [a], 'the first save\'s refresh does not erase the restore');
+  restoring.settle(true, a);
   marks.acceptRead(marks.beforeRead());
   assert.equal(marks.getSnapshot().size, 0, 'a read after saving reconciles the overlay');
 });
@@ -42,10 +42,10 @@ test('failed marks restore just their own rows, preserving another click and new
   const deleting = marks.begin('inbox/delete', [a, c])!;
   deleting.settle(true, a); // The public card intentionally has no deleted flag.
   for (const tab of ['todo', 'done', 'ignored']) assert.deepEqual(shown(marks, page([a, c]), tab).filter((record: any) => record.id !== b.id), []);
-  const undo = marks.begin('inbox/restore', deleting.records)!;
+  const restoring = marks.begin('inbox/restore', deleting.records)!;
   assert.deepEqual(shown(marks, page([])), [a, c]);
-  undo.settle(false);
-  assert.deepEqual(shown(marks, page([])), [], 'failed Undo restores the deleted state');
+  restoring.settle(false);
+  assert.deepEqual(shown(marks, page([])), [], 'a failed restore leaves the deleted state');
 });
 
 test('optimistic moves respect the active tab, filters and loaded page, including deletion from ignored', () => {

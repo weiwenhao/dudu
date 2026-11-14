@@ -90,9 +90,9 @@ struct IssuePriorityIcon: View {
 
 enum IssueLabelPalette {
     static let colors: [(id: String, title: String, hex: String)] = [
-        ("grey", "灰色", "bec2c8"), ("darkGrey", "深灰", "95a2b3"), ("purple", "紫色", "5e6ad2"),
-        ("teal", "青色", "26b5ce"), ("green", "绿色", "4cb782"), ("yellow", "黄色", "f2c94c"),
-        ("orange", "橙色", "f2994a"), ("pink", "粉色", "f7c8c1"), ("red", "红色", "eb5757"),
+        ("grey", L10n.text("灰色"), "bec2c8"), ("darkGrey", L10n.text("深灰"), "95a2b3"), ("purple", L10n.text("紫色"), "5e6ad2"),
+        ("teal", L10n.text("青色"), "26b5ce"), ("green", L10n.text("绿色"), "4cb782"), ("yellow", L10n.text("黄色"), "f2c94c"),
+        ("orange", L10n.text("橙色"), "f2994a"), ("pink", L10n.text("粉色"), "f7c8c1"), ("red", L10n.text("红色"), "eb5757"),
     ]
 
     static func color(_ name: String) -> Color {

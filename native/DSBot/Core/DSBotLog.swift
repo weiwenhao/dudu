@@ -15,6 +15,7 @@ enum DSBotLog {
         "session.search", "session.queue.update", "session.page", "session.tool",
         "session.changes", "session.diff", "session.file", "session.fork",
         "session.performance", "session.attachment", "question.answer",
+        "session.team", "session.jobs", "session.job.output", "session.job.stop",
         "board.list", "issue.get", "issue.open", "issue.pick", "issue.create", "issue.update", "issue.assign",
         "inbox.list", "inbox.get", "inbox.mark", "inbox.share", "inbox.complete"
     ]
@@ -29,8 +30,9 @@ enum DSBotLog {
         "bottomY", "viewportHeight", "lastRowHeight", "contentHeight", "contentOffset", "topInset", "bottomInset",
         "latestTopY", "latestBottomY", "latestRowHeight",
         "longestFrameMs",
-        // where a tap or a hold was on the screen (points) and how big the screen is: `UserActionRecorder`
-        "tapX", "tapY", "screenWidth", "screenHeight"
+        // Touch geometry only, never content or conversation identity. Drags record one release, not every frame.
+        "tapX", "tapY", "screenWidth", "screenHeight",
+        "dragX", "dragY", "dragTravel", "dragVelocityX", "dragVelocityY"
     ]
 
     static func networkFailure(

@@ -13,7 +13,7 @@ export const PopoverContent = React.forwardRef(function PopoverContent({ classNa
   return (
     <PopoverPrimitive.Portal container={container}>
       <PopoverPrimitive.Content
-        ref={ref} data-slot="popover-content" align={align} sideOffset={sideOffset}
+        ref={ref} data-slot="popover-content" data-window-drag-exclude align={align} sideOffset={sideOffset}
         className={cn('z-[1000] rounded-xl border bg-popover p-1.5 text-popover-foreground shadow-lg outline-hidden', className)}
         {...props}
       />

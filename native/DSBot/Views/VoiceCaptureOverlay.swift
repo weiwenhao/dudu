@@ -151,7 +151,7 @@ struct VoiceCaptureOverlay: View {
                             .padding(.horizontal, 28)
                             .padding(.bottom, 20)
                     }
-                    Text(isCancelling ? "松手取消" : (isFinishing ? "正在识别…" : "松手发送，上移取消"))
+                    Text(isCancelling ? L10n.text("松手取消") : (isFinishing ? L10n.text("正在识别…") : L10n.text("松手发送，上移取消")))
                         .font(.system(size: 13, weight: .medium))
                         .frame(height: Anchor.hintLineHeight)
                         .opacity(isCancelling ? 1 : 0.78)

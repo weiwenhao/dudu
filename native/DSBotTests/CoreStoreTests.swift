@@ -1497,7 +1497,7 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertEqual(outcome?.isError, true)
         XCTAssertEqual(
             CommandText.message(for: .compact, argument: nil, outcome: try XCTUnwrap(outcome)),
-            "当前无法压缩，请等会话空闲后再试"
+            L10n.text("当前无法压缩，请等会话空闲后再试")
         )
         XCTAssertNil(store.error, "A refusal is the caller's message to show, not a transport failure.")
     }
@@ -1511,14 +1511,14 @@ final class CoreStoreTests: XCTestCase {
 
         let outcome = await store.runCommand(.compact)
         XCTAssertNil(outcome)
-        XCTAssertEqual(store.error, "请先在电脑上更新 dsbot 插件，再使用此功能。")
+        XCTAssertEqual(store.error, L10n.text("请先在电脑上更新 Dudu 插件，再使用此功能。"))
 
         store.error = nil
         do {
             _ = try await store.uploadFile(name: "notes.txt", data: Data("abc".utf8))
             XCTFail("An old plugin cannot stage files")
         } catch {
-            XCTAssertEqual(store.error, "请先在电脑上更新 dsbot 插件，再使用此功能。")
+            XCTAssertEqual(store.error, L10n.text("请先在电脑上更新 Dudu 插件，再使用此功能。"))
         }
     }
 
@@ -1555,7 +1555,7 @@ final class CoreStoreTests: XCTestCase {
 
         XCTAssertEqual(store.transcriptRows.map(\.id), ["user:u1", "turn:turn-1"])
         XCTAssertEqual(store.goal?.phase, "paused")
-        XCTAssertEqual(store.goal?.title, "已暂停的目标")
+        XCTAssertEqual(store.goal?.title, L10n.text("已暂停的目标"))
         XCTAssertTrue(store.planMode)
         XCTAssertGreaterThan(store.contentRevision, revision)
 
@@ -1591,7 +1591,7 @@ final class CoreStoreTests: XCTestCase {
         let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
         await store.start()
 
-        XCTAssertEqual(store.permissions.map(\.name), ["仅可查看", "完全权限"])
+        XCTAssertEqual(store.permissions.map(\.name), [L10n.text("仅可查看"), L10n.text("完全权限")])
         XCTAssertEqual(store.models.first?.efforts?.map(\.id), ["high", "max"])
         XCTAssertEqual(store.presets.map(\.id), ["standard", "minimal"])
         XCTAssertEqual(store.currentPreset?.id, "standard", "The host default shows until the session names a mode.")
@@ -1860,7 +1860,7 @@ final class CoreStoreTests: XCTestCase {
         await transport.failNextRequest("session.archive", with: .remote("METHOD_NOT_ALLOWED"))
         let archived = await store.archiveSession("a")
         XCTAssertFalse(archived)
-        XCTAssertEqual(store.error, "请先在电脑上更新 dsbot 插件，再使用此功能。")
+        XCTAssertEqual(store.error, L10n.text("请先在电脑上更新 Dudu 插件，再使用此功能。"))
     }
 
     private func session(_ id: String) -> SessionSummary {

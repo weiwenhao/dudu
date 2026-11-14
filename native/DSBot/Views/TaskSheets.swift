@@ -54,6 +54,7 @@ struct TaskSheet: View {
     @ObservedObject var model: TasksModel
     @ObservedObject var store: DSBotStore
     let onOpenSession: (String) -> Void
+    var quickNavigation: QuickDetailNavigation? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var runs: [TaskRun] = []
@@ -62,6 +63,7 @@ struct TaskSheet: View {
     @State private var loadingMore = false
     @State private var editing = false
     @State private var confirmingDelete = false
+    @State private var activeAction: TaskAction?
 
     private static let on = Color(red: 0x17 / 255, green: 0x7a / 255, blue: 0x3c / 255)
 
@@ -70,48 +72,88 @@ struct TaskSheet: View {
     private var linkedSession: SessionSummary? { task.linkedSessionId.flatMap { id in store.sessions.first { $0.id == id } } }
 
     var body: some View {
+        Group {
+            if let quickNavigation {
+                QuickSheetPage(
+                    title: L10n.text("任务"), onBack: quickNavigation.back, onClose: quickNavigation.close,
+                    allowsExpansion: true
+                ) {
+                    Button { editing = true } label: {
+                        DSBotIcon(.editLine, size: 14)
+                            .foregroundStyle(DSBotStyle.chatSecondary)
+                            .frame(width: 28, height: 28)
+                            .background(DSBotStyle.selected, in: Circle())
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(DSBotQuietPressStyle())
+                    .accessibilityLabel(L10n.text("编辑"))
+                } filters: {} content: {
+                    sections.padding(.top, 14)
+                } footer: {
+                    GlassActionBar(items: barItems).padding(.bottom, GlassActionBar.bottomGap)
+                }
+            } else {
+                standalone
+            }
+        }
+        .accessibilityIdentifier("task.sheet")
+        .task(id: "\(task.lastRun?.id ?? "")/\(task.revision)") { await loadRuns() }
+        .sheet(isPresented: $editing) {
+            TaskEditorSheet(model: model, store: store, task: task)
+        }
+        .confirmationDialog(L10n.text("删除任务"), isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button(L10n.text("删除任务"), role: .destructive) {
+                act(.delete)
+            }
+        } message: {
+            Text(task.title)
+        }
+    }
+
+    private var sections: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            titleBlock
+            TaskSection(title: L10n.text("规则")) { TaskValueRows(rows: ruleRows) }
+            TaskSection(title: L10n.text("自动化任务内容")) {
+                Text(task.prompt)
+                    .font(.system(size: 15))
+                    .foregroundStyle(DSBotStyle.ink)
+                    .lineSpacing(4)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+            }
+            if !runs.isEmpty || historyFailed { TaskSection(title: L10n.text("任务运行记录")) { history } }
+            if let session = linkedSession {
+                TaskSection(title: L10n.text("关联会话")) {
+                    Button {
+                        if quickNavigation == nil { dismiss() }
+                        onOpenSession(session.id)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Text(session.title)
+                                .font(.system(size: 15))
+                                .foregroundStyle(DSBotStyle.ink)
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            DSBotIcon(.right, size: 16).foregroundStyle(DSBotStyle.muted)
+                        }
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 52)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(DSBotRowButtonStyle())
+                    .accessibilityIdentifier("task.session")
+                }
+            }
+        }
+    }
+
+    private var standalone: some View {
         ZStack(alignment: .top) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    titleBlock
-                    TaskSection(title: "规则") {
-                        TaskValueRows(rows: ruleRows)
-                    }
-                    TaskSection(title: "自动化任务内容") {
-                        Text(task.prompt)
-                            .font(.system(size: 15))
-                            .foregroundStyle(DSBotStyle.ink)
-                            .lineSpacing(4)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(16)
-                    }
-                    if !runs.isEmpty || historyFailed {
-                        TaskSection(title: "任务运行记录") { history }
-                    }
-                    if let session = linkedSession {
-                        TaskSection(title: "关联会话") {
-                            Button {
-                                dismiss()
-                                onOpenSession(session.id)
-                            } label: {
-                                HStack(spacing: 12) {
-                                    Text(session.title)
-                                        .font(.system(size: 15))
-                                        .foregroundStyle(DSBotStyle.ink)
-                                        .lineLimit(1)
-                                    Spacer(minLength: 8)
-                                    DSBotIcon(.right, size: 16).foregroundStyle(DSBotStyle.muted)
-                                }
-                                .padding(.horizontal, 16)
-                                .frame(minHeight: 52)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(DSBotRowButtonStyle())
-                            .accessibilityIdentifier("task.session")
-                        }
-                    }
-                }
+                sections
                 .padding(.horizontal, 18)
                 .padding(.top, 84)
                 .padding(.bottom, DSBotScrollEdges.usesSystemEffect ? 100 - GlassActionBar.reservedHeight : 100)
@@ -127,19 +169,10 @@ struct TaskSheet: View {
         .presentationDragIndicator(.hidden)
         .presentationCornerRadius(32)
         .presentationBackground(DSBotStyle.settingsBackground)
-        .accessibilityIdentifier("task.sheet")
-        // A run, a pause or an edit is a change of the task: its deliveries are read again.
-        .task(id: "\(task.lastRun?.id ?? "")/\(task.revision)") { await loadRuns() }
-        .sheet(isPresented: $editing) {
-            TaskEditorSheet(model: model, store: store, task: task)
-        }
-        .confirmationDialog("删除任务", isPresented: $confirmingDelete, titleVisibility: .visible) {
-            Button("删除任务", role: .destructive) {
-                Task { if await model.act(.delete, task, using: store) { dismiss() } }
-            }
-        } message: {
-            Text(task.title)
-        }
+    }
+
+    private func finish() {
+        if let quickNavigation { quickNavigation.back() } else { dismiss() }
     }
 
     private var titleBlock: some View {
@@ -166,14 +199,14 @@ struct TaskSheet: View {
     private var ruleRows: [(String, String)] {
         let next = task.isActive ? task.nextRunAt.map { TaskSchedule.stamp($0, timezone: task.schedule.timezone) } ?? "—" : "—"
         var rows = [
-            ("运行时间", task.schedule.label),
-            ("时区", task.schedule.timezone.map(TaskSchedule.timezoneLabel) ?? "—"),
-            ("下次运行", next),
-            ("执行位置", TaskTarget.name(task.target.mode)),
+            (L10n.text("运行时间"), task.schedule.label),
+            (L10n.text("时区"), task.schedule.timezone.map(TaskSchedule.timezoneLabel) ?? "—"),
+            (L10n.text("下次运行"), next),
+            (L10n.text("执行位置"), TaskTarget.name(task.target.mode)),
         ]
-        if let project = task.project { rows.append(("关联工作区", project.name)) }
-        rows.append(("供应商", task.taskAgent?.name ?? task.agent))
-        rows.append(("模型", task.model ?? "默认模型"))
+        if let project = task.project { rows.append((L10n.text("关联工作区"), project.name)) }
+        rows.append((L10n.text("供应商"), task.taskAgent?.name ?? task.agent))
+        rows.append((L10n.text("模型"), task.model ?? L10n.text("默认模型")))
         return rows
     }
 
@@ -184,7 +217,7 @@ struct TaskSheet: View {
                 runRow(run)
             }
             if historyFailed {
-                Text("任务没能加载")
+                Text(L10n.text("任务没能加载"))
                     .font(.system(size: 14))
                     .foregroundStyle(DSBotStyle.muted)
                     .frame(maxWidth: .infinity)
@@ -196,7 +229,7 @@ struct TaskSheet: View {
                     Task { await loadMore() }
                 } label: {
                     Group {
-                        if loadingMore { ProgressView().tint(DSBotStyle.muted) } else { Text("加载更多") }
+                        if loadingMore { ProgressView().tint(DSBotStyle.muted) } else { Text(L10n.text("加载更多")) }
                     }
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(DSBotStyle.ink)
@@ -221,7 +254,7 @@ struct TaskSheet: View {
         }()
         return Button {
             if let session {
-                dismiss()
+                if quickNavigation == nil { dismiss() }
                 onOpenSession(session.id)
             }
         } label: {
@@ -279,7 +312,7 @@ struct TaskSheet: View {
                     .contentShape(Circle())
             }
             .buttonStyle(DSBotGlassButtonStyle())
-            .accessibilityLabel("关闭")
+            .accessibilityLabel(L10n.text("关闭"))
             .accessibilityIdentifier("task.close")
             Spacer(minLength: 0)
             Button { editing = true } label: {
@@ -289,7 +322,7 @@ struct TaskSheet: View {
                     .contentShape(Circle())
             }
             .buttonStyle(DSBotGlassButtonStyle())
-            .accessibilityLabel("编辑")
+            .accessibilityLabel(L10n.text("编辑"))
             .accessibilityIdentifier("task.edit")
         }
         .padding(.horizontal, 20)
@@ -300,16 +333,24 @@ struct TaskSheet: View {
     private var barItems: [GlassActionBar.Item] {
         var items: [GlassActionBar.Item] = []
         switch task.status {
-        case "active": items.append(.init(id: "pause", title: "暂停任务", glyph: .pause) { Task { await model.act(.pause, task, using: store) } })
-        case "paused": items.append(.init(id: "resume", title: "恢复任务", glyph: .play) { Task { await model.act(.resume, task, using: store) } })
+        case "active": items.append(.init(id: "pause", title: L10n.text("暂停任务"), glyph: .pause) { act(.pause) })
+        case "paused": items.append(.init(id: "resume", title: L10n.text("恢复任务"), glyph: .play) { act(.resume) })
         default: break
         }
-        items.append(.init(id: "run", title: "立即执行", glyph: .zap) { Task { await model.act(.run, task, using: store) } })
-        items.append(.init(id: "duplicate", title: "复制任务", glyph: .copy) {
-            Task { if await model.act(.duplicate, task, using: store) { dismiss() } }
-        })
-        items.append(.init(id: "delete", title: "删除任务", glyph: .trash) { confirmingDelete = true })
-        return model.busy.contains(task.id) ? items.map { $0.disabled() } : items
+        items.append(.init(id: "run", title: L10n.text("立即执行"), glyph: .zap) { act(.run) })
+        items.append(.init(id: "duplicate", title: L10n.text("复制任务"), glyph: .copy) { act(.duplicate) })
+        items.append(.init(id: "delete", title: L10n.text("删除任务"), glyph: .trash) { confirmingDelete = true })
+        return model.busy.contains(task.id) || activeAction != nil
+            ? items.map { $0.id == activeAction?.rawValue ? $0.busy(true) : $0.disabled() } : items
+    }
+
+    private func act(_ action: TaskAction) {
+        guard activeAction == nil else { return }
+        activeAction = action
+        Task {
+            defer { activeAction = nil }
+            if await model.act(action, task, using: store), action == .duplicate || action == .delete { finish() }
+        }
     }
 }
 
@@ -428,7 +469,7 @@ struct TaskEditorSheet: View {
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    TextField("自动化任务名称", text: $draft.title, axis: .vertical)
+                    TextField(L10n.text("自动化任务名称"), text: $draft.title, axis: .vertical)
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(DSBotStyle.chatInk)
                         .lineLimit(1...4)
@@ -437,7 +478,7 @@ struct TaskEditorSheet: View {
                         .padding(.vertical, 12)
                         .background(DSBotStyle.sheet, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .accessibilityIdentifier("taskeditor.title")
-                    TextField("自动化任务内容", text: $draft.prompt, axis: .vertical)
+                    TextField(L10n.text("自动化任务内容"), text: $draft.prompt, axis: .vertical)
                         .font(.system(size: 16))
                         .foregroundStyle(DSBotStyle.chatInk)
                         .lineLimit(4...10)
@@ -449,8 +490,8 @@ struct TaskEditorSheet: View {
                         timing
                     } else if optionsFailed {
                         HStack(spacing: 12) {
-                            Text("任务没能加载").foregroundStyle(DSBotStyle.muted)
-                            Button("重试") {
+                            Text(L10n.text("任务没能加载")).foregroundStyle(DSBotStyle.muted)
+                            Button(L10n.text("重试")) {
                                 optionsFailed = false
                                 Task { await loadOptions() }
                             }
@@ -461,7 +502,7 @@ struct TaskEditorSheet: View {
                     }
                     if let failure {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("更改没能保存")
+                            Text(L10n.text("更改没能保存"))
                                 .font(.system(size: 13))
                                 .foregroundStyle(DSBotStyle.chatError)
                             if !failure.isEmpty {
@@ -476,11 +517,11 @@ struct TaskEditorSheet: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(DSBotStyle.canvas)
-            .navigationTitle(task == nil ? "新建任务" : "编辑")
+            .navigationTitle(task == nil ? L10n.text("新建任务") : L10n.text("编辑"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
+                    Button(L10n.text("取消")) {
                         if isDirty { confirmingDiscard = true } else { dismiss() }
                     }
                     .disabled(isSaving)
@@ -490,7 +531,7 @@ struct TaskEditorSheet: View {
                     Button {
                         save()
                     } label: {
-                        if isSaving { ProgressView() } else { Text("保存") }
+                        if isSaving { ProgressView() } else { Text(L10n.text("保存")) }
                     }
                     .disabled(!canSave)
                     .accessibilityIdentifier("taskeditor.save")
@@ -503,9 +544,9 @@ struct TaskEditorSheet: View {
         .presentationDetents([.large])
         .presentationCornerRadius(32)
         .interactiveDismissDisabled(isSaving || isDirty)
-        .confirmationDialog("有未保存的修改", isPresented: $confirmingDiscard, titleVisibility: .visible) {
-            Button("放弃", role: .destructive) { dismiss() }
-            Button("保存修改") { save() }
+        .confirmationDialog(L10n.text("有未保存的修改"), isPresented: $confirmingDiscard, titleVisibility: .visible) {
+            Button(L10n.text("放弃"), role: .destructive) { dismiss() }
+            Button(L10n.text("保存修改")) { save() }
                 .disabled(!canSave)
         }
         .task { if task == nil { titleFocused = true } }
@@ -534,11 +575,11 @@ struct TaskEditorSheet: View {
             chip(provider?.name ?? TaskAgent(id: draft.agent)?.name ?? draft.agent, identifier: "provider", picker: .provider) {
                 if let agent = TaskAgent(id: draft.agent) { TaskAgentLogo(agent: agent, size: 16) } else { DSBotIcon(.model, size: 16, scalesStroke: true) }
             }
-            chip(draft.model ?? "默认模型", identifier: "model", picker: .model) {
+            chip(draft.model ?? L10n.text("默认模型"), identifier: "model", picker: .model) {
                 DSBotIcon(.model, size: 16, scalesStroke: true)
             }
             if !draft.isDudu {
-                chip(draft.project?.name ?? "关联工作区", identifier: "workspace", picker: .workspace) {
+                chip(draft.project?.name ?? L10n.text("关联工作区"), identifier: "workspace", picker: .workspace) {
                     DSBotIcon(.workspace, size: 16, scalesStroke: true)
                 }
             }
@@ -546,7 +587,7 @@ struct TaskEditorSheet: View {
                 DSBotIcon(.message, size: 16, scalesStroke: true)
             }
             if draft.target.mode == "existing" {
-                chip(sessionTitle ?? "关联会话", identifier: "session", picker: .session) {
+                chip(sessionTitle ?? L10n.text("关联会话"), identifier: "session", picker: .session) {
                     DSBotIcon(.queue, size: 16, scalesStroke: true)
                 }
             }
@@ -581,7 +622,7 @@ struct TaskEditorSheet: View {
     /// The rule in one card: the kind, then what the kind needs (a time, a date, the days of the week, a day of the month, the minutes, an expression), and the time zone.
     private var timing: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("运行时间")
+            Text(L10n.text("运行时间"))
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(DSBotStyle.chatSecondary)
                 .padding(.leading, 4)
@@ -632,9 +673,9 @@ struct TaskEditorSheet: View {
     }
 
     private var kindRow: some View {
-        ruleRow("规则") {
+        ruleRow(L10n.text("规则")) {
             Menu {
-                Picker("规则", selection: Binding(
+                Picker(L10n.text("规则"), selection: Binding(
                     get: { draft.schedule.kind },
                     set: { kind in
                         if kind != draft.schedule.kind { draft.schedule = TaskSchedule.starting(kind, from: draft.schedule) }
@@ -693,25 +734,25 @@ struct TaskEditorSheet: View {
     }
 
     private var timeRow: some View {
-        ruleRow("运行时间") {
-            DatePicker("运行时间", selection: timeBinding, displayedComponents: .hourAndMinute)
+        ruleRow(L10n.text("运行时间")) {
+            DatePicker(L10n.text("运行时间"), selection: timeBinding, displayedComponents: .hourAndMinute)
                 .labelsHidden()
                 .accessibilityIdentifier("taskeditor.time")
         }
     }
 
     private var dateRow: some View {
-        ruleRow("仅一次") {
-            DatePicker("仅一次", selection: dateBinding, displayedComponents: .date)
+        ruleRow(L10n.text("仅一次")) {
+            DatePicker(L10n.text("仅一次"), selection: dateBinding, displayedComponents: .date)
                 .labelsHidden()
                 .accessibilityIdentifier("taskeditor.date")
         }
     }
 
     private var dayRow: some View {
-        ruleRow("每月") {
+        ruleRow(L10n.text("每月")) {
             Menu {
-                Picker("每月", selection: Binding(get: { draft.schedule.day ?? 1 }, set: { draft.schedule.day = $0 })) {
+                Picker(L10n.text("每月"), selection: Binding(get: { draft.schedule.day ?? 1 }, set: { draft.schedule.day = $0 })) {
                     ForEach(1...31, id: \.self) { Text("\($0)").tag($0) }
                 }
                 .pickerStyle(.inline)
@@ -733,7 +774,7 @@ struct TaskEditorSheet: View {
 
     private var weekdaysRow: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("每周")
+            Text(L10n.text("每周"))
                 .font(.system(size: 15))
                 .foregroundStyle(DSBotStyle.ink)
             HStack(spacing: 6) {
@@ -764,7 +805,7 @@ struct TaskEditorSheet: View {
     }
 
     private var minutesRow: some View {
-        ruleRow("间隔") {
+        ruleRow(L10n.text("间隔")) {
             HStack(spacing: 6) {
                 TextField("", value: Binding(
                     get: { Int(draft.schedule.minutes ?? 60) },
@@ -774,7 +815,7 @@ struct TaskEditorSheet: View {
                     .multilineTextAlignment(.trailing)
                     .frame(width: 80)
                     .accessibilityIdentifier("taskeditor.minutes")
-                Text("分").foregroundStyle(DSBotStyle.muted)
+                Text(L10n.text("分")).foregroundStyle(DSBotStyle.muted)
             }
             .font(.system(size: 15))
         }
@@ -793,7 +834,7 @@ struct TaskEditorSheet: View {
 
     private var timezoneRow: some View {
         Button { choose(.timezone) } label: {
-            ruleRow("时区") {
+            ruleRow(L10n.text("时区")) {
                 HStack(spacing: 6) {
                     Text(draft.schedule.timezone.map(TaskSchedule.timezoneLabel) ?? "")
                         .lineLimit(1)
@@ -816,7 +857,7 @@ struct TaskEditorSheet: View {
         switch picker {
         case .provider:
             TaskChoicePage(
-                title: "供应商",
+                title: L10n.text("供应商"),
                 choices: (options?.providers ?? []).map { TaskChoice(id: $0.id, title: $0.name, agent: $0.taskAgent, isDisabled: !$0.available) },
                 selected: draft.agent
             ) { id in
@@ -827,21 +868,21 @@ struct TaskEditorSheet: View {
             let known = provider?.models ?? []
             let models = [draft.model].compactMap { $0 }.filter { !known.contains($0) } + known
             TaskChoicePage(
-                title: "模型",
-                choices: [TaskChoice(id: "", title: "默认模型")] + models.map { TaskChoice(id: $0, title: $0) },
+                title: L10n.text("模型"),
+                choices: [TaskChoice(id: "", title: L10n.text("默认模型"))] + models.map { TaskChoice(id: $0, title: $0) },
                 selected: draft.model ?? "",
-                searchPrompt: "模型"
+                searchPrompt: L10n.text("模型")
             ) { id in
                 draft.model = id.isEmpty ? nil : id
                 path.removeLast()
             }
         case .workspace:
             TaskChoicePage(
-                title: "关联工作区",
+                title: L10n.text("关联工作区"),
                 choices: (options?.projects ?? []).map { TaskChoice(id: $0.path, title: $0.name, subtitle: $0.path, glyph: .workspace) },
                 selected: draft.project?.path,
-                searchPrompt: "关联工作区",
-                emptyText: "没有可用的工作区"
+                searchPrompt: L10n.text("关联工作区"),
+                emptyText: L10n.text("没有可用的工作区")
             ) { id in
                 if let project = options?.projects.first(where: { $0.path == id }) {
                     if project.path != draft.project?.path, draft.target.mode == "existing" { draft.target.sessionId = nil }
@@ -851,7 +892,7 @@ struct TaskEditorSheet: View {
             }
         case .target:
             TaskChoicePage(
-                title: "执行位置",
+                title: L10n.text("执行位置"),
                 choices: TaskTarget.choices(for: draft.agent).map { TaskChoice(id: $0, title: TaskTarget.name($0), glyph: .message) },
                 selected: draft.target.mode
             ) { id in
@@ -862,11 +903,11 @@ struct TaskEditorSheet: View {
             let workspace = draft.project?.workspaceId
             let rows = (sessions ?? []).filter { $0.workspaceId == workspace }
             TaskChoicePage(
-                title: "关联会话",
+                title: L10n.text("关联会话"),
                 choices: rows.map { TaskChoice(id: $0.id, title: $0.title, glyph: .queue) },
                 selected: draft.target.sessionId,
-                searchPrompt: "关联会话",
-                emptyText: sessions == nil ? (sessionsFailed ? "任务没能加载" : "") : "没有可用的会话"
+                searchPrompt: L10n.text("关联会话"),
+                emptyText: sessions == nil ? (sessionsFailed ? L10n.text("任务没能加载") : "") : L10n.text("没有可用的会话")
             ) { id in
                 draft.target.sessionId = id
                 path.removeLast()
@@ -874,10 +915,10 @@ struct TaskEditorSheet: View {
         case .timezone:
             let zones = Array(Set([draft.schedule.timezone, options?.timezone].compactMap { $0 } + TimeZone.knownTimeZoneIdentifiers)).sorted()
             TaskChoicePage(
-                title: "时区",
+                title: L10n.text("时区"),
                 choices: zones.map { TaskChoice(id: $0, title: TaskSchedule.timezoneLabel($0)) },
                 selected: draft.schedule.timezone,
-                searchPrompt: "时区"
+                searchPrompt: L10n.text("时区")
             ) { id in
                 draft.schedule.timezone = id
                 path.removeLast()
@@ -940,7 +981,7 @@ struct TaskEditorSheet: View {
             isSaving = false
             switch result {
             case .saved:
-                model.report?(DSBotToastMessage(text: task == nil ? "已创建任务" : "已更新任务", kind: .success))
+                model.report?(DSBotToastMessage(text: task == nil ? L10n.text("已创建任务") : L10n.text("已更新任务"), kind: .success))
                 original = draft
                 dismiss()
             case .failed(let code):

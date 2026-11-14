@@ -6,14 +6,14 @@ enum IssueQuickAction: String, CaseIterable, Identifiable, Hashable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .status: return "状态"
-        case .priority: return "优先级"
-        case .agent: return "智能体"
-        case .agentState: return "智能体状态"
-        case .due: return "截止日期"
-        case .labels: return "标签"
-        case .project: return "项目"
-        case .subIssue: return "添加子事项"
+        case .status: return L10n.text("状态")
+        case .priority: return L10n.text("优先级")
+        case .agent: return L10n.text("智能体")
+        case .agentState: return L10n.text("智能体状态")
+        case .due: return L10n.text("截止日期")
+        case .labels: return L10n.text("标签")
+        case .project: return L10n.text("项目")
+        case .subIssue: return L10n.text("添加子事项")
         }
     }
     var glyph: DSBotGlyph {
@@ -92,7 +92,7 @@ struct IssueActionsSheet: View {
                                 DSBotIcon(rootAction == nil ? .close : .back, size: rootAction == nil ? 18 : 20)
                             }
                             .disabled(saving)
-                            .accessibilityLabel(rootAction == nil ? "关闭" : "返回")
+                            .accessibilityLabel(rootAction == nil ? L10n.text("关闭") : L10n.text("返回"))
                         }
                     }
                 }
@@ -108,7 +108,7 @@ struct IssueActionsSheet: View {
         }
         .safeAreaInset(edge: .bottom) {
             if saveFailed {
-                Text("更改没能保存")
+                Text(L10n.text("更改没能保存"))
                     .font(.system(size: 13))
                     .foregroundStyle(DSBotStyle.chatError)
                     .padding(16)
@@ -129,10 +129,10 @@ struct IssueActionsSheet: View {
     @ViewBuilder
     private func page(_ action: IssueQuickAction?) -> some View {
         if loading || loadFailed {
-            IssueChoiceList(title: action?.title ?? "更多") {
+            IssueChoiceList(title: action?.title ?? L10n.text("更多")) {
                 if loadFailed {
-                    Text("事项没能加载").font(.system(size: 14)).foregroundStyle(DSBotStyle.muted).padding(16)
-                    Button("重试") { Task { await load() } }.padding(16)
+                    Text(L10n.text("事项没能加载")).font(.system(size: 14)).foregroundStyle(DSBotStyle.muted).padding(16)
+                    Button(L10n.text("重试")) { Task { await load() } }.padding(16)
                 } else { ProgressView().tint(DSBotStyle.muted).padding(24) }
             }
         } else if let action {
@@ -144,7 +144,7 @@ struct IssueActionsSheet: View {
     }
 
     private var menu: some View {
-        IssueChoiceList(title: "更多") {
+        IssueChoiceList(title: L10n.text("更多")) {
             ForEach(IssueQuickAction.allCases) { action in
                 if action == .subIssue { Divider().padding(.leading, 16) }
                 Button {
@@ -217,7 +217,7 @@ struct IssueActionsSheet: View {
     @ViewBuilder
     private var agentChoices: some View {
         if let project = assignmentProject, let folder = project.path, !folder.isEmpty {
-            IssueChoiceList(title: "智能体") {
+            IssueChoiceList(title: L10n.text("智能体")) {
                 ForEach(store.agentChoices(keeping: issue.sessionAgent), id: \.rawValue) { agent in
                     IssueChoiceRow(title: agent.name) { AgentLogo(agent: agent, size: 20) } action: {
                         perform { await board.assign(issue, agent: agent, project: project, using: store) }

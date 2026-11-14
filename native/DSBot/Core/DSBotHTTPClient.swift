@@ -344,6 +344,7 @@ actor DSBotHTTPClient: DSBotTransport {
                                  timeoutInterval: route.kind == .lan ? 2 : 5)
         request.httpMethod = "POST"
         request.httpShouldHandleCookies = false
+        request.setValue(L10n.acceptLanguage, forHTTPHeaderField: "Accept-Language")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(HTTPRouteProbe(nonce: nonce, deviceId: deviceId))
         // This request intentionally has no Authorization header, pairing token or URL query.
@@ -554,6 +555,7 @@ actor DSBotHTTPClient: DSBotTransport {
         request.httpMethod = "POST"
         request.httpShouldHandleCookies = false
         request.setValue("Bearer \(endpoint.token)", forHTTPHeaderField: "Authorization")
+        request.setValue(L10n.acceptLanguage, forHTTPHeaderField: "Accept-Language")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let body {
             request.httpBody = body

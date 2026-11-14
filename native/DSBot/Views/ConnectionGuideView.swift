@@ -31,13 +31,13 @@ struct ConnectionGuideView: View {
                         DuduLogo(size: 76)
 
                         VStack(spacing: 12) {
-                            Text("连接电脑上的 DSH")
+                            Text(L10n.text("连接电脑上的 DSH"))
                                 .font(.system(size: 29, weight: .medium))
                                 .tracking(-0.7)
                                 .foregroundStyle(DSBotStyle.ink)
                                 .multilineTextAlignment(.center)
 
-                            Text("在电脑的「设置 → 手机控制」中生成配对码")
+                            Text(L10n.text("在电脑的「设置 → 手机控制」中生成配对码"))
                                 .font(.system(size: 14))
                                 .foregroundStyle(DSBotStyle.muted)
                                 .multilineTextAlignment(.center)
@@ -70,7 +70,7 @@ struct ConnectionGuideView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(DSBotRowButtonStyle())
-                            .accessibilityLabel("选择电脑，当前为\(computer.name)")
+                            .accessibilityLabel(L10n.text("选择电脑，当前为{0}", "\(computer.name)"))
                             .accessibilityIdentifier("connection.computers")
                         }
 
@@ -78,7 +78,7 @@ struct ConnectionGuideView: View {
                             if isConnecting {
                                 HStack(spacing: 9) {
                                     ProgressView().controlSize(.small)
-                                    Text("正在连接…")
+                                    Text(L10n.text("正在连接…"))
                                         .font(.system(size: 14))
                                 }
                                 .foregroundStyle(DSBotStyle.muted)
@@ -106,7 +106,7 @@ struct ConnectionGuideView: View {
                                 }
                             } label: {
                                 DSBotLabel(
-                                    showsRetry ? "重新连接" : (needsNewPairing ? "重新扫码配对" : "扫描配对码"),
+                                    showsRetry ? L10n.text("重新连接") : (needsNewPairing ? L10n.text("重新扫码配对") : L10n.text("扫描配对码")),
                                     icon: showsRetry ? .reconnect : .scan
                                 )
                                 .font(.system(size: 16, weight: .semibold))
@@ -121,7 +121,7 @@ struct ConnectionGuideView: View {
                             .accessibilityIdentifier(showsRetry ? "connection.retry" : "pairing.scan")
 
                             Button(action: onManualEntry) {
-                                Text("粘贴配对链接")
+                                Text(L10n.text("粘贴配对链接"))
                                     .font(.system(size: 15, weight: .medium))
                                     .foregroundStyle(DSBotStyle.ink)
                                     .frame(maxWidth: .infinity, minHeight: 48)
@@ -163,7 +163,7 @@ struct ConnectionGuideView: View {
     private var connectionMessage: String? {
         switch store.connectionFailure {
         case .remote("AUTH_FAILED"), .remote("UNAUTHORIZED"):
-            return "配对已失效"
+            return L10n.text("配对已失效")
         default:
             return store.connectionFailure?.localizedDescription
         }

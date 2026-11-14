@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-/** One call to the plugin, made when the page opens and again whenever `reload()` is called: `{ status, value, reload }`. */
+/** One call on opening or `reload()`; `update()` keeps a confirmed write in the local value without another read. */
 export function useLoaded(request, action, body = {}) {
   const key = JSON.stringify([action, body]);
   const [state, setState] = useState({ key, status: 'loading', value: null });
@@ -14,5 +14,6 @@ export function useLoaded(request, action, body = {}) {
     return () => { alive = false; };
   }, [key, round, request]); // eslint-disable-line react-hooks/exhaustive-deps -- `body` is represented by `key`
   const reload = useCallback(() => setRound((n) => n + 1), []);
-  return { ...(state.key === key ? state : { status: 'loading', value: null }), reload };
+  const update = useCallback((change) => setState((previous) => previous.value ? { ...previous, value: change(previous.value) } : previous), []);
+  return { ...(state.key === key ? state : { status: 'loading', value: null }), reload, update };
 }

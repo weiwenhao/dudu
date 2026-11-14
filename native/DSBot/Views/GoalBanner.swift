@@ -57,22 +57,22 @@ struct GoalBanner: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(goal.title)，\(goal.objective)")
+            .accessibilityLabel(L10n.text("{0}，{1}", "\(goal.title)", "\(goal.objective)"))
             .accessibilityIdentifier("goal.banner")
 
             Menu {
                 Button {
                     onPauseResume()
                 } label: {
-                    Label(goal.isPaused ? "恢复目标" : "暂停目标", systemImage: goal.isPaused ? "play.circle" : "pause.circle")
+                    Label(goal.isPaused ? L10n.text("恢复目标") : L10n.text("暂停目标"), systemImage: goal.isPaused ? "play.circle" : "pause.circle")
                 }
                 .accessibilityIdentifier("goal.toggle")
                 Button(action: onEdit) {
-                    Label("编辑目标", systemImage: "square.and.pencil")
+                    Label(L10n.text("编辑目标"), systemImage: "square.and.pencil")
                 }
                 .accessibilityIdentifier("goal.edit")
                 Button(role: .destructive, action: onClear) {
-                    Label("清除目标", systemImage: "trash")
+                    Label(L10n.text("清除目标"), systemImage: "trash")
                 }
                 .accessibilityIdentifier("goal.clear")
             } label: {
@@ -92,7 +92,7 @@ struct GoalBanner: View {
             // The menu's own icons take the ink, like every other icon.
             .tint(DSBotStyle.ink)
             .disabled(isWorking)
-            .accessibilityLabel("目标操作")
+            .accessibilityLabel(L10n.text("目标操作"))
             .accessibilityIdentifier("goal.menu")
         }
         .background(DSBotStyle.chatPanel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -127,7 +127,7 @@ struct GoalEditorSheet: View {
                     .background(DSBotStyle.sheet, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .focused($isFocused)
                     .disabled(isSaving)
-                    .accessibilityLabel("目标")
+                    .accessibilityLabel(L10n.text("目标"))
                     .accessibilityIdentifier("goal.editor.text")
                 if let error {
                     Text(error)
@@ -138,11 +138,11 @@ struct GoalEditorSheet: View {
             }
             .padding(20)
             .background(DSBotStyle.canvas)
-            .navigationTitle("编辑")
+            .navigationTitle(L10n.text("编辑"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消", action: onClose)
+                    Button(L10n.text("取消"), action: onClose)
                         .disabled(isSaving)
                         .accessibilityIdentifier("goal.editor.cancel")
                 }
@@ -153,11 +153,11 @@ struct GoalEditorSheet: View {
                         if isSaving {
                             ProgressView()
                         } else {
-                            Text("保存")
+                            Text(L10n.text("保存"))
                         }
                     }
                     .disabled(isSaving || objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityLabel("保存")
+                    .accessibilityLabel(L10n.text("保存"))
                     .accessibilityIdentifier("goal.editor.save")
                 }
             }

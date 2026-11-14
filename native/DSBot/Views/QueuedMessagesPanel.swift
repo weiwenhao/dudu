@@ -38,7 +38,7 @@ struct QueuedMessagesPanel: View {
                 } label: {
                     HStack(spacing: 8) {
                         DSBotIcon(.queue, size: 16, scalesStroke: true)
-                        Text("\(messages.count) 条排队消息").font(.system(size: 14))
+                        Text(L10n.plural("\(messages.count) 条排队消息")).font(.system(size: 14))
                         Spacer(minLength: 0)
                         DSBotIcon(.down, size: 16, scalesStroke: true)
                             .rotationEffect(.degrees(expanded ? 180 : 0))
@@ -121,7 +121,7 @@ struct QueuedMessagesPanel: View {
                     .contentShape(Rectangle())
             }
             .disabled(!message.editable || message.isSubmissionEcho)
-            .accessibilityLabel("编辑排队消息")
+            .accessibilityLabel(L10n.text("编辑排队消息"))
             .accessibilityIdentifier("queue.edit.\(message.id)")
             Button { onRemove(message) } label: {
                 QueueActionLabel(
@@ -130,7 +130,7 @@ struct QueuedMessagesPanel: View {
                 )
             }
             .disabled(message.isSubmissionEcho)
-            .accessibilityLabel("删除排队消息")
+            .accessibilityLabel(L10n.text("删除排队消息"))
             .accessibilityIdentifier("queue.remove.\(message.id)")
             Button { onSteer(message) } label: {
                 QueueActionLabel(
@@ -140,7 +140,7 @@ struct QueuedMessagesPanel: View {
                 .opacity(isRunning ? 1 : 0.35)
             }
             .disabled(!isRunning || message.isSubmissionEcho)
-            .accessibilityLabel("插话发送")
+            .accessibilityLabel(L10n.text("插话发送"))
             .accessibilityIdentifier("queue.steer.\(message.id)")
         }
         .foregroundStyle(DSBotStyle.chatSecondary)
@@ -266,11 +266,11 @@ struct QueuedMessageEditor: View {
             }
             .padding(20)
             .background(DSBotStyle.canvas)
-            .navigationTitle("编辑")
+            .navigationTitle(L10n.text("编辑"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消", action: onCancel)
+                    Button(L10n.text("取消"), action: onCancel)
                         .disabled(isSaving)
                         .accessibilityIdentifier("queue.editor.cancel")
                 }
@@ -282,11 +282,11 @@ struct QueuedMessageEditor: View {
                             ProgressView()
                                 .accessibilityIdentifier("queue.editor.saving")
                         } else {
-                            Text("保存")
+                            Text(L10n.text("保存"))
                         }
                     }
                     .disabled(isSaving || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityLabel("保存")
+                    .accessibilityLabel(L10n.text("保存"))
                     .accessibilityIdentifier("queue.editor.save")
                 }
             }

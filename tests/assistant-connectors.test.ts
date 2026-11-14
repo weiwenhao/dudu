@@ -30,7 +30,7 @@ test('a connector is a Prompt or an MCP server, saved with its kind, and has no 
   const text = w.read();
   assert.match(text, /## 飞书\n<!-- id: lark \| source: dudu \| kind: prompt -->\n\n用 lark CLI 读，我已经登录好了。\n/);
   assert.match(text, /## Notion\n<!-- id: notion \| source: owner \| kind: mcp \| via: notion -->\n\n```json\n\{"url":"https:\/\/mcp\.notion\.com\/mcp"\}\n```\n/);
-  assert.deepEqual(Object.keys(w.owner).sort(), ['add', 'list', 'remove', 'undo', 'update'], 'the owner can read, add, edit, remove and undo; there is no switch and no way to run anything');
+  assert.deepEqual(Object.keys(w.owner).sort(), ['add', 'list', 'remove', 'update'], 'the owner can read, add, edit and remove; there is no switch and no way to run anything');
   for (const method of ['call', 'test', 'tick', 'discover', 'enable', 'disable', 'notes']) assert.equal(w[method as keyof typeof w], undefined);
   for (const extra of [{ command: 'anything' }, { frequency: '15m' }, { notes: 'x' }]) {
     assert.equal(w.dudu.register({ name: 'bad', prompt: 'read', ...extra }).outcome, 'needs_clarification', JSON.stringify(extra));
@@ -89,14 +89,12 @@ test('a connector that collectors read through is not removed, and the answer na
   assert.equal(w.read(), kept, 'nothing was written');
   const removed: any = w.owner.remove('spare');
   assert.equal(removed.outcome, 'success');
-  assert.equal(w.owner.undo(removed.undo).outcome, 'success');
-  assert.equal(w.read(), kept);
   users.delete('lark');
   assert.equal(w.owner.remove('lark').outcome, 'success', 'once nothing reads through it, it goes');
   assert.equal(w.owner.remove('lark').outcome, 'no_op');
 });
 
-test('the owner prose, fenced examples and other sections survive edits, deletion and undo exactly', async (t) => {
+test('the owner prose, fenced examples and other sections survive edits and deletion exactly', async (t) => {
   const before = '﻿# 来源\r\n\r\n主人的介绍。\r\n\r\n~~~markdown\r\n## 这不是来源\r\n~~~\r\n\r\n## 飞书\r\n<!-- id: lark | source: owner | kind: prompt -->\r\n看需要我处理的消息。\r\n\r\n### 细节\r\n只看最近一周。\r\n\r\n## 日历\r\n<!-- id: calendar | kind: prompt -->\r\n看明天的安排。\r\n';
   const w = world(t, before);
   assert.deepEqual(w.owner.list().connectors.map((s: any) => s.id), ['lark', 'calendar']);
@@ -104,14 +102,13 @@ test('the owner prose, fenced examples and other sections survive edits, deletio
   assert.equal(deleted.outcome, 'success');
   assert.ok(w.read().startsWith(before.slice(0, before.indexOf('## 飞书'))));
   assert.ok(w.read().endsWith(before.slice(before.indexOf('## 日历'))));
-  assert.equal(w.owner.undo(deleted.undo).outcome, 'success');
-  assert.equal(w.read(), before);
+  writeFileSync(w.file, before); // back as it was, for the edit
   const update = w.dudu.update('lark', { prompt: '只读项目群里等我的请求。' });
   assert.equal(update.outcome, 'success');
   assert.equal(w.owner.list().connectors[0].source, 'owner');
   assert.equal(w.owner.list().connectors[0].prompt, '只读项目群里等我的请求。');
-  assert.equal(w.owner.undo(update.undo).outcome, 'success');
-  assert.equal(w.read(), before);
+  assert.ok(w.read().startsWith(before.slice(0, before.indexOf('## 飞书'))));
+  assert.ok(w.read().endsWith(before.slice(before.indexOf('## 日历'))));
 });
 
 test('simple Markdown entries need no metadata; stable ids survive a restart; an entry that does not say its kind is a Prompt', async (t) => {
@@ -179,13 +176,11 @@ test('the entry reader says what a metadata line holds: kind, server, connector 
   ]);
 });
 
-test('undo never overwrites an intervening owner edit, and closed registries do not mutate files', async (t) => {
+test('closed registries do not mutate files', async (t) => {
   const w = world(t);
-  const added = w.dudu.register({ id: 'mail', name: 'Mail', prompt: 'Read incoming requests.' });
+  w.dudu.register({ id: 'mail', name: 'Mail', prompt: 'Read incoming requests.' });
   writeFileSync(w.file, w.read() + '\nOwner edit.\n');
   const expected = w.read();
-  assert.equal(w.owner.undo(added.undo).outcome, 'needs_clarification');
-  assert.equal(w.read(), expected);
   await w.close();
   assert.equal(w.owner.remove('mail').outcome, 'error');
   assert.equal(w.read(), expected);
@@ -211,8 +206,6 @@ test('the owner types a connector into the settings page: it is saved as theirs,
   assert.equal(handed.outcome, 'success');
   assert.equal(w.owner.list().connectors[0].source, 'dudu', 'whose it was does not change when it is edited');
   assert.equal(w.owner.update(lark.id, { name: '飞书消息', prompt: '只读项目群里等我的请求。' }).outcome, 'no_op', 'saving what is already there changes nothing');
-  assert.equal(w.owner.undo(edited.undo).outcome, 'needs_clarification', 'an undo does not undo past a later edit');
-  assert.equal(w.owner.undo(handed.undo).outcome, 'success');
 
   // What cannot be saved says why (the page shows the reason in the owner's language), and nothing is written.
   const text = w.read();

@@ -23,6 +23,12 @@ struct SettingsButton: Codable, Equatable, Sendable {
     var confirm: SettingsConfirm?
 }
 
+struct SettingsNotification: Codable, Equatable, Sendable {
+    var title: String
+    var on: Bool
+    var act: SettingsAct
+}
+
 struct SettingsSwipe: Codable, Equatable, Sendable, Identifiable {
     var title: String
     var act: SettingsAct
@@ -63,6 +69,7 @@ struct SettingsItem: Codable, Equatable, Sendable, Identifiable {
     var multiline: Bool?
     var secret: Bool?
     var button: SettingsButton?
+    var notification: SettingsNotification?
     var to: SettingsLocation?
     var swipe: [SettingsSwipe]?
     var act: SettingsAct?
@@ -71,7 +78,7 @@ struct SettingsItem: Codable, Equatable, Sendable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case rawID = "id"
-        case kind, title, subtitle, detail, mono, tone, color, icon, on, options, selected, key, value, placeholder, multiline, secret, button, to, swipe, act
+        case kind, title, subtitle, detail, mono, tone, color, icon, on, options, selected, key, value, placeholder, multiline, secret, button, notification, to, swipe, act
     }
 }
 
@@ -99,7 +106,6 @@ struct SettingsPage: Codable, Equatable, Sendable {
 
 struct SettingsToast: Codable, Equatable, Sendable {
     var message: String
-    var undo: SettingsAct?
 }
 
 struct SettingsAnswer: Codable, Sendable {
@@ -239,15 +245,14 @@ final class SettingsPageModel: ObservableObject, Identifiable {
             guard !Task.isCancelled, previewID == readID, revision == readRevision,
                   computerID == store.activeComputer?.id, connection == store.connectionRevision else { return }
             DSBotLog.networkFailure("settings.preview.fail", error: error)
-            problem = "更改没能保存"
+            problem = L10n.text("更改没能保存")
         }
     }
 
     /// Do what a row, a swipe or the save button asks. Returns whether to go back, and says what the plugin said.
     func act(
         _ act: SettingsAct, value: String? = nil, form: Bool = false,
-        using store: DSBotStore, report: @escaping SettingsReport,
-        refreshAfterUndo: (@MainActor () async -> Void)? = nil
+        using store: DSBotStore, report: @escaping SettingsReport
     ) async -> Bool {
         guard !busy, !form || canSave, computerID != nil, computerID == store.activeComputer?.id else { return false }
         busy = true
@@ -262,34 +267,27 @@ final class SettingsPageModel: ObservableObject, Identifiable {
         if let value { request["value"] = .string(value) }
         if form { request["values"] = .object(values.mapValues { .string($0) }) }
         do {
+            if location.section == "collectors", act.name == "notify", value == "true" {
+                guard await AppNotifications.shared.authorize(),
+                      computerID == store.activeComputer?.id, connection == store.connectionRevision else { return false }
+            }
             // A first local MCP launch may spend the desktop's 60-second budget installing dependencies.
             let timeout: UInt64 = location.section == "connectors" && act.name == "add" ? 120 : 30
             let reply = try await store.request("settings.act", request, timeoutSeconds: timeout)
             let answer = try await json.decode(SettingsAnswer.self, from: reply)
             guard computerID == store.activeComputer?.id, connection == store.connectionRevision else { return false }
             guard answer.outcome == "success" else {
-                let words = answer.message ?? "更改没能保存"
+                let words = answer.message ?? L10n.text("更改没能保存")
                 if form { problem = words } else { report(DSBotToastMessage(text: words, kind: .error)) }
                 return false
             }
-            if let toast = answer.toast {
-                let undo = toast.undo.map { undoAct in
-                    DSBotToastAction(title: "撤销") {
-                        guard self.computerID == store.activeComputer?.id else { return }
-                        Task {
-                            _ = await self.act(undoAct, using: store, report: report)
-                            await refreshAfterUndo?()
-                        }
-                    }
-                }
-                report(DSBotToastMessage(text: toast.message, kind: .success, action: undo))
-            }
+            if let toast = answer.toast { report(DSBotToastMessage(text: toast.message, kind: .success)) }
             if let page = answer.page { apply(page) }
             return answer.back == true
         } catch {
             guard computerID == store.activeComputer?.id, connection == store.connectionRevision else { return false }
             DSBotLog.networkFailure("settings.act.fail", error: error)
-            if form { problem = "更改没能保存" } else { report(DSBotToastMessage(text: "更改没能保存", kind: .error)) }
+            if form { problem = L10n.text("更改没能保存") } else { report(DSBotToastMessage(text: L10n.text("更改没能保存"), kind: .error)) }
             return false
         }
     }
@@ -305,7 +303,7 @@ final class SettingsNavigator: ObservableObject {
     private var currentChanges: AnyCancellable?
 
     private static let sectionTitles = [
-        "general": "通用", "statuses": "状态", "connectors": "连接器", "collectors": "收集器", "rules": "规则", "memory": "记忆", "skills": "技能",
+        "general": L10n.text("通用"), "statuses": L10n.text("状态"), "connectors": L10n.text("连接器"), "collectors": L10n.text("收集器"), "rules": L10n.text("规则"), "memory": L10n.text("记忆"), "skills": L10n.text("技能"),
     ]
 
     var current: SettingsPageModel? { pages.last }

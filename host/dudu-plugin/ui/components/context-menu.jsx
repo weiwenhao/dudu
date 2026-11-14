@@ -14,14 +14,14 @@ const row = 'relative flex h-8 cursor-default items-center gap-2 rounded-md px-2
 export const ContextMenuContent = React.forwardRef(function ContextMenuContent({ className, ...props }, ref) {
   const container = usePortalContainer();
   return <Primitive.Portal container={container}>
-    <Primitive.Content ref={ref} data-slot="context-menu-content" collisionPadding={8} className={cn(panel, 'w-[180px]', className)} {...props} />
+    <Primitive.Content ref={ref} data-slot="context-menu-content" data-window-drag-exclude collisionPadding={8} className={cn(panel, 'w-[180px]', className)} {...props} />
   </Primitive.Portal>;
 });
 
 export const ContextMenuSubContent = React.forwardRef(function ContextMenuSubContent({ className, ...props }, ref) {
   const container = usePortalContainer();
   return <Primitive.Portal container={container}>
-    <Primitive.SubContent ref={ref} data-slot="context-menu-sub-content" sideOffset={2} alignOffset={-6}
+    <Primitive.SubContent ref={ref} data-slot="context-menu-sub-content" data-window-drag-exclude sideOffset={2} alignOffset={-6}
       collisionPadding={8} className={cn(panel, 'w-[232px]', className)} {...props} />
   </Primitive.Portal>;
 });

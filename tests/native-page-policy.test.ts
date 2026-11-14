@@ -171,6 +171,38 @@ test('team pages can address only subagents learned from the parent session', ()
   assert.equal(invoke(pageFor('trace'), 'session/page', request('child-1')), false);
 });
 
+test('nested catalogs grant only their exact parent-child edges and ignore unrelated projections', () => {
+  const page = pageFor('team');
+  const request = (parentSessionId, childSessionId) => ({
+    request: { address: { kind: 'subagent', parentSessionId, childSessionId, mode: 'continuable' }, throughSeq: 5 },
+  });
+  const projections = {
+    [parentSession]: { values: {
+      agentTeam: { enabled: true, tasks: [] },
+      subagentCatalog: [
+        { id: 'child', name: 'reviewer', mode: 'continuable' },
+        { id: 'external-id', name: 'native-worker', mode: 'external' },
+      ],
+    } },
+    child: { values: { subagentCatalog: [{ id: 'nested', name: 'checker', mode: 'continuable' }] } },
+    unrelated: { values: { subagentCatalog: [{ id: 'foreign', mode: 'continuable' }] } },
+  };
+  const baseline = pageStreamItem(page, 'session/control', { type: 'baseline', value: { projections } });
+  assert.deepEqual(Object.keys(baseline.value.projections), [parentSession, 'child']);
+  assert.equal(invoke(page, 'session/page', request(parentSession, 'child')), true);
+  assert.equal(invoke(page, 'session/page', request('child', 'nested')), true);
+  for (const [parent, child] of [[parentSession, 'nested'], ['child', 'child'], ['unrelated', 'foreign'], [parentSession, 'foreign'], [parentSession, 'external-id']]) {
+    assert.equal(invoke(page, 'session/page', request(parent, child)), false);
+  }
+  assert.equal(invoke(page, 'session/projections', { request: { sessionId: 'external-id' } }), false, 'external provider identities do not authorize local DSH sessions');
+  acceptPageResult(page, 'session/projections', { values: { subagentCatalog: [{ id: 'foreign' }] } }, { request: { sessionId: 'unrelated' } });
+  assert.equal(page.sessionIds.has('foreign'), false);
+  pageStreamItem(page, 'session/control', { type: 'projection', sessionId: 'child', key: 'agentTeam', value: { enabled: true, tasks: [] } });
+  assert.equal(invoke(page, 'session/page', request('child', 'nested')), true, 'a task-board update cannot discard the child catalog');
+  pageStreamItem(page, 'session/control', { type: 'projection', sessionId: 'child', key: 'subagentCatalog', value: [] });
+  assert.equal(invoke(page, 'session/page', request('child', 'nested')), false);
+});
+
 test('dsh-context reads are page-kind and session scoped with fixed arguments', () => {
   const context = pageFor('context');
   assert.equal(invoke(context, 'dshContext/detail', { sessionId: parentSession }), true);

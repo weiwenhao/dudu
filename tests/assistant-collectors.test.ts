@@ -34,13 +34,13 @@ test('a collector is a name, a connector, what to collect and how often', (t) =>
   const mine: any = w.collectors.dudu.register({ id: 'alerts', name: '告警群', connector: 'lark', prompt: '看 Platform Alerts 里没恢复的告警。' });
   assert.deepEqual(w.collectors.owner.list(), {
     outcome: 'success', diagnostics: [], collectors: [
-      { id: 'at-me', name: '飞书 @我', connector: 'lark', prompt: '收集 @ 我的消息。', frequency: '15m', source: 'owner' },
-      { id: 'alerts', name: '告警群', connector: 'lark', prompt: '看 Platform Alerts 里没恢复的告警。', frequency: null, source: 'dudu' },
+      { id: 'at-me', name: '飞书 @我', connector: 'lark', prompt: '收集 @ 我的消息。', frequency: '15m', notify: false, source: 'owner' },
+      { id: 'alerts', name: '告警群', connector: 'lark', prompt: '看 Platform Alerts 里没恢复的告警。', frequency: null, notify: false, source: 'dudu' },
     ],
   });
   assert.equal(mine.outcome, 'success');
   assert.match(w.read(), /## 飞书 @我\n<!-- id: at-me \| source: owner \| connector: lark \| every: 15m -->\n\n收集 @ 我的消息。\n/);
-  assert.deepEqual(Object.keys(w.collectors.owner).sort(), ['add', 'list', 'remove', 'undo', 'update']);
+  assert.deepEqual(Object.keys(w.collectors.owner).sort(), ['add', 'list', 'remove', 'update']);
   assert.deepEqual(Object.keys(w.collectors).sort(), ['close', 'dudu', 'owner', 'resolve']);
 
   // what a collection needs: the collector with the connector it reads through
@@ -81,7 +81,7 @@ test('what cannot be saved says why: the connector has to exist, the text has to
   assert.equal(w.collectors.owner.update('a', { name: '甲甲' }).outcome, 'success');
 });
 
-test('removing, undoing and the owner\'s own text in the file: nothing but the entry changes, and an undo never overwrites a later edit', (t) => {
+test('removing and the owner\'s own text in the file: nothing but the entry changes', (t) => {
   const prose = '# 收集器\n\n主人的介绍。\n\n~~~markdown\n## 这不是收集器\n~~~\n\n';
   const w = world(t, { collectors: `${prose}## 飞书\n<!-- id: lark | connector: acc -->\n看需要我处理的消息。\n\n### 细节\n只看最近一周。\n\n## 日历\n<!-- id: cal | connector: acc -->\n看明天的安排。\n` });
   w.connectors.owner.add({ id: 'acc', name: '工具', prompt: '用已有的工具读。' });
@@ -90,13 +90,27 @@ test('removing, undoing and the owner\'s own text in the file: nothing but the e
   const removed: any = w.collectors.owner.remove('lark');
   assert.equal(removed.outcome, 'success');
   assert.ok(w.read().startsWith(prose) && w.read().endsWith(before.slice(before.indexOf('## 日历'))));
-  assert.equal(w.collectors.owner.undo(removed.undo).outcome, 'success');
-  assert.equal(w.read(), before);
-  const edited: any = w.collectors.owner.update('cal', { prompt: '看后天的安排。' });
+  w.collectors.owner.update('cal', { prompt: '看后天的安排。' });
   writeFileSync(w.file, `${w.read()}\n主人又写了一行。\n`);
-  assert.equal(w.collectors.owner.undo(edited.undo).outcome, 'needs_clarification');
   assert.match(w.read(), /主人又写了一行。/);
   assert.equal(w.collectors.owner.remove('nothing').outcome, 'no_op');
+});
+
+test('notification opt-in persists, survives other edits and defaults off for existing collectors', async (t) => {
+  const w = world(t, { collectors: '# 收集器\r\n\r\n主人的说明。\r\n\r\n## 飞书\r\n<!-- id: at-me | connector: lark -->\r\n收集 @ 我的消息。\r\n' });
+  w.connectors.owner.add({ id: 'lark', name: '飞书', prompt: '用已有工具读。' });
+  assert.equal((w.collectors.owner.list() as any).collectors[0].notify, false);
+  assert.equal(w.collectors.owner.update('at-me', { notify: true }).outcome, 'success');
+  assert.match(w.read(), /connector: lark \| notify: true -->\r\n/);
+  assert.ok(w.read().startsWith('# 收集器\r\n\r\n主人的说明。\r\n\r\n'));
+  w.collectors.owner.update('at-me', { name: '飞书 @我', frequency: '15m' });
+  const reopened = createCollectors({ file: w.file, connectors: () => w.connectors });
+  t.after(() => reopened.close());
+  const saved = (reopened.resolve() as any).collectors[0];
+  assert.deepEqual([saved.name, saved.frequency, saved.notify], ['飞书 @我', '15m', true]);
+  assert.equal(reopened.owner.update('at-me', { notify: false }).outcome, 'success');
+  assert.equal((w.collectors.owner.list() as any).collectors[0].notify, false);
+  assert.ok(!w.read().includes('notify:'));
 });
 
 // ---------------------------------------------------------------- the split of an old registry
@@ -194,7 +208,7 @@ test('the page asks for the connectors and the collectors through the assistant:
   t.after(async () => { await assistant.close(); rmSync(dir, { recursive: true, force: true }); });
   assert.equal(assistant.folder, home);
   const call = async (name: string, body: object = {}) => (await assistant.handle(name, new Request('http://page.test/', { method: 'POST', body: JSON.stringify(body) }))).json();
-  for (const path of ['connectors/catalog', 'connectors/list', 'connectors/connect', 'connectors/authorize', 'connectors/retry', 'connectors/cancel', 'connectors/recognize', 'connectors/add', 'connectors/update', 'connectors/remove', 'connectors/undo', 'collectors/list', 'collectors/add', 'collectors/update', 'collectors/remove', 'collectors/undo']) assert.ok(assistant.paths.includes(path), path);
+  for (const path of ['connectors/catalog', 'connectors/list', 'connectors/connect', 'connectors/authorize', 'connectors/retry', 'connectors/cancel', 'connectors/recognize', 'connectors/add', 'connectors/update', 'connectors/remove', 'collectors/list', 'collectors/add', 'collectors/update', 'collectors/remove']) assert.ok(assistant.paths.includes(path), path);
 
   // opened, the old folder was split: the collector has the old id, and says which connector it reads through
   const collectors = await call('collectors/list');
@@ -224,10 +238,13 @@ test('the page asks for the connectors and the collectors through the assistant:
   const again = (await call('collectors/list')).collectors.find((item: any) => item.id === added.collector.id);
   assert.deepEqual([again.prompt, again.frequency], ['看我被 @ 的评论和指给我的页面。', '2h']);
   assert.equal(Object.hasOwn(again, 'notes'), false, 'a collector has no notes: what it is told is what the owner wrote');
+  assert.equal((await call('collectors/update', { id: added.collector.id, notify: true })).outcome, 'success');
+  const notifying = (await call('collectors/list')).collectors.find((item: any) => item.id === added.collector.id);
+  assert.deepEqual([notifying.notify, notifying.name, notifying.frequency], [true, 'Notion 评论', '2h'], 'the direct toggle changes only the preference');
   assert.equal((await call('collectors/remove', { id: added.collector.id })).outcome, 'success');
   assert.equal((await call('connectors/remove', { id: notion.id })).outcome, 'success', 'once nothing reads through it, it goes');
   assert.equal((await call('collectors/list', {})).collectors.length, 2);
-  assert.deepEqual(assistant.connectors && Object.keys(assistant.connectors.owner).sort(), ['add', 'list', 'remove', 'undo', 'update']);
+  assert.deepEqual(assistant.connectors && Object.keys(assistant.connectors.owner).sort(), ['add', 'list', 'remove', 'update']);
   assert.ok(assistant.collectors);
 });
 

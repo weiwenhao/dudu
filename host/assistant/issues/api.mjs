@@ -3,7 +3,7 @@
 // only when the body is not JSON, the action is unknown, or the database does.
 //
 // The page is the owner: every change it makes is written as the owner, whatever `actor` the body says. It may send `reason`
-// and `groupId` (several changes undone together).
+// and `groupId` (several changes logged together).
 //
 // The plugin hooks into three actions, each optional (`createIssuesApi({ issues, onReply, onAssign, onResume })`): a hook never fails
 // the change that was made, a failure of it is only reported on the console.
@@ -198,7 +198,6 @@ const CALLS = {
     catch { return { outcome: 'error', code: 'session_cleanup_failed' }; }
     return issues.forget(id, { token, allowActive: true });
   },
-  undo: (issues, { target }, scope) => issues.undo({ ...(target && typeof target === 'object' ? target : { eventId: target }), actor: scope.actor }),
   forget: async (issues, { id, token }, { onForget }) => {
     const before = token ? issues.get(id, { logLimit: 1 }).issue : null;
     const result = issues.forget(id, { token });

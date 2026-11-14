@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createProviders } from '../host/providers/index.mjs';
 import { AsyncQueue } from '../host/providers/async.mjs';
+import { OarNormalizer, startOarRun } from '../host/providers/oar.mjs';
 
 function fakeHost() {
   const handlers = new Map<string, Set<Function>>();
@@ -205,6 +206,122 @@ test('disposing an agent removes its tools and stops its harness run', async (t)
   assert.equal(agent.tools.size, 0);
 });
 
+test('next-step input releases a native background wait so DSH can claim and deliver it once', async t => {
+  const flush = () => new Promise<void>(resolve => setImmediate(resolve));
+  const user = (id: string, text: string) => ({ id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] });
+  for (const timing of ['before-root-end', 'after-root-end']) {
+    const folder = await mkdtemp(join(tmpdir(), 'dudu-background-input-'));
+    t.after(() => rm(folder, { recursive: true, force: true }));
+    const host = fakeHost();
+    const agent = host.addAgent('background-session', 'fake');
+    agent.inbox = { nextStep: [], nextTurn: [] };
+    const original = user('first', 'Start monitoring.');
+    const followup = user('second', 'How is it going?');
+    const another = user('third', 'Has it finished?');
+    const events: any[] = [{ type: 'turn/start', data: { turn: 1 } }, { type: 'user/message', data: original }];
+    host.eventsOf = async () => events;
+    const provider = fakeProvider();
+    const providers = await createProviders({ host, providers: [provider], folder, log: { warn() {} } });
+    t.after(() => providers.close());
+    const observers = new Set<Function>();
+    let seq = 0;
+    let starts = 0;
+    let disposed = 0;
+    const delivered: string[] = [];
+    const inputArrived = Promise.withResolvers<void>();
+    const emit = (nativeEvents: any[]) => {
+      for (const observer of observers) observer({
+        kind: 'frame', seq: ++seq, sessionId: 'native-monitor', agentPath: [], body: { events: nativeEvents },
+      });
+    };
+    const session = {
+      id: 'native-monitor',
+      rawEvents(observer: Function) { observers.add(observer); return () => observers.delete(observer); },
+      async prompt() {
+        emit([{ kind: 'task_started', taskId: 'monitor', taskType: 'shell', background: true },
+          { kind: 'text_delta', text: 'Monitoring.' }]);
+        return { kind: 'accepted' };
+      },
+      async deliver(text: string, options: any) {
+        delivered.push(text);
+        emit([{ kind: 'turn_active' }, { kind: 'user_message', inputId: options.inputId }]);
+        if (delivered.length === 2) inputArrived.resolve();
+        return { landed: 'prompted', result: { kind: 'accepted' } };
+      },
+      abort: async () => ({ kind: 'accepted' }),
+      async dispose() { disposed++; },
+    };
+    provider.created[0].start = (options: any) => {
+      starts++;
+      return startOarRun({
+        runtime: { session: async () => session }, installation: {}, sessionOptions: {},
+        normalizer: new OarNormalizer({ name: 'Fake', login: '' }), name: 'Fake', queuesSteer: true,
+        ...options,
+      });
+    };
+    const adapter = host.adapters.get('fake');
+    const firstStream = adapter.stream({ sessionId: agent.id, messages: [original] });
+    const firstChunks: any[] = [(await firstStream.next()).value];
+    let firstFinished = false;
+    const first = (async () => {
+      for await (const chunk of firstStream) firstChunks.push(chunk);
+      firstFinished = true;
+    })();
+    const enqueue = () => {
+      agent.inbox.nextStep.push(followup, another);
+      host.emit('session/event', agent.session, {
+        type: 'agent/inbox/spliced', data: { target: 'next-step', inserted: [followup, another] },
+      });
+    };
+    // Session events carry the session identity, as the real host does.
+    agent.session.id = agent.id;
+    if (timing === 'before-root-end') enqueue();
+    emit([{ kind: 'turn_ended', outcome: { kind: 'completed' } }]);
+    await flush();
+    assert.equal(disposed, 0);
+    if (timing === 'after-root-end') {
+      assert.equal(firstFinished, false, 'without input, keep listening for native completion notifications');
+      agent.inbox.nextTurn.push(user('queued', 'A later turn.'));
+      host.emit('session/event', agent.session, {
+        type: 'agent/inbox/spliced', data: { target: 'next-turn', inserted: agent.inbox.nextTurn },
+      });
+      await flush();
+      assert.equal(firstFinished, false, 'the deliberately queued turn must keep its existing semantics');
+      enqueue();
+    }
+    await flush();
+    assert.equal(firstFinished, true, `${timing}: DSH must receive its step boundary before it can claim new input`);
+    await first;
+    assert.equal(firstChunks.at(-1).reason.kind, 'stop');
+    assert.equal(firstChunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join(''), 'Monitoring.');
+    assert.equal(delivered.length, 0, 'inbox insertion alone must not bypass DSH admission');
+
+    const answer = { role: 'assistant', content: [{ type: 'text', text: 'Monitoring.' }],
+      source: { kind: 'model', provider: 'fake', replayState: { nativeSessionId: session.id } } };
+    // DSH owns this claim and durable user/message; the plugin only releases its waiting step.
+    agent.inbox.nextStep.splice(0);
+    events.push({ type: 'assistant/message', data: { message: answer } },
+      { type: 'user/message', data: followup }, { type: 'user/message', data: another });
+    const next = (async () => {
+      const chunks: any[] = [];
+      for await (const chunk of adapter.stream({ sessionId: agent.id, messages: [original, answer, followup, another] })) chunks.push(chunk);
+      return chunks;
+    })();
+    await inputArrived.promise;
+    assert.deepEqual(delivered, ['How is it going?', 'Has it finished?']);
+    assert.equal(starts, 1, 'new input reuses the process that owns the live monitor');
+    assert.equal(disposed, 0, 'delivering input must not stop background work');
+    emit([{ kind: 'task_ended', taskId: 'monitor', status: 'completed' },
+      { kind: 'text_delta', text: 'It is done.' }, { kind: 'turn_ended', outcome: { kind: 'completed' } }]);
+    const nextChunks = await next;
+    assert.equal(nextChunks.at(-1).reason.kind, 'stop');
+    assert.equal(nextChunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join(''), 'It is done.');
+    assert.equal(starts, 1);
+    assert.deepEqual(delivered, ['How is it going?', 'Has it finished?']);
+    await providers.close();
+  }
+});
+
 test('provider shutdown releases a live writer before an unfinished refresh and waits for its actual exit', { timeout: 10_000 }, async (t) => {
   const { host, provider, providers } = await setup(t);
   const agent = host.addAgent('s1', 'fake');
@@ -328,11 +445,12 @@ test('foreground HTTP observation follows the current run without changing execu
   host.emit('agent/created', { agent });
   const events = new AsyncQueue();
   const started = Promise.withResolvers<void>();
+  const observing = Promise.withResolvers<void>();
   provider.created[0].start = async () => {
     started.resolve();
     return {
       nativeSessionId: 'native-live',
-      events: { async *[Symbol.asyncIterator]() { for (;;) { const next = await events.next(); if (next.done) return; yield next.value; } } },
+      events: { async *[Symbol.asyncIterator]() { observing.resolve(); for (;;) { const next = await events.next(); if (next.done) return; yield next.value; } } },
       close() { events.push({ type: 'turn-end', ok: true }); events.close(); },
     };
   };
@@ -341,7 +459,9 @@ test('foreground HTTP observation follows the current run without changing execu
   });
   const reading = stream.next();
   await started.promise;
-  await new Promise(resolve => setImmediate(resolve));
+  await observing.promise;
+  assert.equal(providers.hasActiveWork(agent.id), true);
+  assert.equal(providers.hasActiveWork('another'), false, 'work is scoped to its own session');
   const read = (body: unknown) => providers.handle('foreground', new Request('http://x/api/dudu/providers/foreground', {
     method: 'POST', body: JSON.stringify(body),
   }));
@@ -349,6 +469,7 @@ test('foreground HTTP observation follows the current run without changing execu
   const idle = read({ sessionId: agent.id, after: false });
   events.push({ type: 'foreground-state', active: false });
   assert.deepEqual(await (await idle).json(), { backgroundOnly: true });
+  assert.equal(providers.hasActiveWork(agent.id), true, 'yielding the foreground does not make background work asleep');
   assert.deepEqual(await (await read({ sessionId: 'another' })).json(), { backgroundOnly: false });
   const resumed = read({ sessionId: agent.id, after: true });
   events.push({ type: 'foreground-state', active: true });
@@ -358,6 +479,7 @@ test('foreground HTTP observation follows the current run without changing execu
   await new Promise(resolve => setImmediate(resolve));
   const closing = read({ sessionId: agent.id, after: true });
   await providers.close();
+  assert.equal(providers.hasActiveWork(agent.id), false);
   assert.deepEqual(await (await closing).json(), { backgroundOnly: false });
   await reading;
 });

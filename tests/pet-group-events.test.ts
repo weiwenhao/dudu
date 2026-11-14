@@ -44,6 +44,8 @@ test('an @ line waits for its answer until a reply or an end names it, or fiftee
   const ended = lines({ ...known, e: { kind: 'end', to: 'b', issue: { id: 2 } } });
   assert.deepEqual(waitingLines(messages, ended, now), [], 'an end stops the dots as an answer does');
   assert.deepEqual(waitingLines([...messages, { id: 2, at: 1, role: 'card', commandId: 'a' }], known, now).length, 1, 'cards are never waited for');
+  const streaming = lines({ ...known, old: { ...known.old, liveReply: { text: 'Still answering', at: now } } });
+  assert.deepEqual(waitingLines(messages, streaming, now).map((one: any) => one.commandId), ['b', 'old'], 'a live answer remains visible even after a long turn');
 });
 
 test('what a message says as one quiet line: the marks of markdown are left out and the lines are run together', () => {

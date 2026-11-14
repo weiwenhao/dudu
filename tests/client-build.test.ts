@@ -69,7 +69,22 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
     inject: { toggleSidebar: () => nativeCalls.push('sidebar'), startSession: () => nativeCalls.push('session') },
     component: (props: Record<string, unknown>) => require('react').createElement('host-controls', props),
   };
-  const registrations: Array<{ options: Record<string, any>; component: any }> = [];
+  const footerSlot = 'conversation.session.header.actions.subagent.footer';
+  const nativeCatalog = {
+    options: { id: 'subagent-catalog', order: 10 },
+    children: { [footerSlot]: { kind: 'list', scope: 'session' } },
+    locale: 'subagent', registrant: 'dsh-subagent',
+    inject: () => ({}),
+    component: () => null,
+  };
+  const nativeTeam = {
+    options: { id: 'agent-team' }, locale: 'agent-team',
+    store: { getSnapshot: () => ({}), subscribe: () => () => {} },
+    inject: () => ({}), component: () => null,
+  };
+  let teamEntries = [nativeTeam];
+  const slotListeners = new Map<string, Set<() => void>>();
+  const registrations: { options: Record<string, any>; component: any }[] = [];
   const ctx: Record<string, unknown> = {
     locale: { getLocale: () => ({ active: 'en' }), subscribe: () => () => {} },
     effect: (work: () => unknown) => { const dispose = work(); if (typeof dispose === 'function') disposers.push(dispose as () => void); },
@@ -81,7 +96,15 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
         if (options.name === 'main') main = component;
         return () => { const index = registrations.indexOf(entry); if (index >= 0) registrations.splice(index, 1); };
       },
-      entries: (name: string) => name === 'shell.leading' ? [nativeLeading] : [], entriesOfSlot: () => [], subscribe: () => () => {},
+      entries: (name: string) => name === 'shell.leading' ? [nativeLeading]
+        : name === 'conversation.session.header.actions' ? [nativeCatalog]
+          : name === footerSlot ? teamEntries : [],
+      entriesOfSlot: () => [],
+      subscribe: (name: string, listener: () => void) => {
+        if (!slotListeners.has(name)) slotListeners.set(name, new Set());
+        slotListeners.get(name)!.add(listener);
+        return () => { slotListeners.get(name)!.delete(listener); };
+      },
     },
     plugin: (child: { name?: string; apply: (ctx: unknown) => void }) => {
       if (child.name === 'dudu-sessions') child.apply({
@@ -136,7 +159,49 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
     native.props.toggleSidebar();
     native.props.startSession();
     assert.deepEqual(nativeCalls, ['sidebar', 'session']);
+    // The issue modal must retain the host's separate subagent catalog and pass its exact address to the host opener.
+    const catalog = registrations.find(({ options }) => options.name === 'dudu.issue.header.actions' && options.id === 'subagent-catalog');
+    assert.ok(catalog, 'the native subagent catalog is available in the retained conversation, as it is in the main conversation');
+    assert.equal(catalog.options.inject, nativeCatalog.inject);
+    assert.equal(catalog.options.locale, nativeCatalog.locale);
+    assert.equal(catalog.options.registrant, nativeCatalog.registrant);
+    const childrenOpened: unknown[] = [];
+    let modalCloses = 0;
+    const rendered: unknown[] = [];
+    const action = catalog.component({
+      sessionId: 'cached',
+      openChild: (address: unknown) => childrenOpened.push(address),
+      openChildAside: (address: unknown) => childrenOpened.push(address),
+      onNavigate: () => modalCloses++,
+      renderSlot: (...args: unknown[]) => rendered.push(args),
+    });
+    assert.equal(action.props.NativeAction, nativeCatalog.component);
+    const childAddress = { parentSessionId: 'cached', childSessionId: 'native-child', mode: 'external' };
+    action.props.openChild(childAddress);
+    assert.deepEqual(childrenOpened, [childAddress]);
+    assert.equal(childrenOpened[0], childAddress, 'preserve the host catalog address, including the native child mode');
+    assert.equal(modalCloses, 1, 'opening a child leaves the modal so it does not cover the child conversation');
+    action.props.openChildAside(childAddress);
+    assert.equal(childrenOpened[1], childAddress, 'opening beside the conversation retains the exact host address too');
+    assert.equal(modalCloses, 2);
+    const privateFooter = Object.keys(catalog.options.children)[0];
+    assert.notEqual(privateFooter, footerSlot, 'the clone cannot redeclare the host-owned child slot');
+    assert.deepEqual(catalog.options.children[privateFooter], nativeCatalog.children[footerSlot]);
+    const team = registrations.find(({ options }) => options.name === privateFooter && options.id === 'agent-team');
+    assert.ok(team, 'the current Team board follows its host catalog into the issue conversation');
+    assert.equal(team.options.inject, nativeTeam.inject);
+    assert.equal(team.options.locale, nativeTeam.locale);
+    assert.equal(team.options.store, nativeTeam.store);
+    action.props.renderSlot(footerSlot, { sessionId: 'cached' });
+    assert.deepEqual(rendered, [[privateFooter, { sessionId: 'cached' }]]);
+    teamEntries = [];
+    for (const listener of slotListeners.get(footerSlot) ?? []) listener();
+    assert.ok(!registrations.includes(team), 'unloading the host footer also removes the issue copy');
+    teamEntries = [nativeTeam];
+    for (const listener of slotListeners.get(footerSlot) ?? []) listener();
+    assert.equal(registrations.filter(({ options }) => options.name === privateFooter).length, 1, 'reloading the footer creates exactly one copy');
   } finally {
     for (const dispose of disposers) dispose();
   }
+  assert.equal(slotListeners.get(footerSlot)?.size, 0, 'disposing the panel releases the child-slot subscription');
 });

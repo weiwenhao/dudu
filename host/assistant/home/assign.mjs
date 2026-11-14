@@ -7,7 +7,7 @@
 //
 //   accessOf(issue)   -> { access?, model?, problem? }   what ASSIGN.md says; with nothing said the session is read-only (3.3)
 //
-//   sessionState(key)        for createIssues({ sessionState }); sessionSince(key) for its `sessionSince`, sessionBases(key) for its `sessionBases`, sessionHandledAt(key) for its `sessionHandledAt`
+//   sessionState(key)        for createIssues({ sessionState }); sessionSince, sessionBases, sessionHandledAt and sessionTurnActive for its corresponding hooks
 //   onAssign(issue)          for createIssuesApi({ onAssign }): starts the session of an issue that was just given an agent
 //   onReply(issue, text)     for createIssuesApi({ onReply }): hands the owner's answer to the issue's session
 //   onResume(issue)          for createIssuesApi({ onResume }): puts a closed session back in DSH's sidebar
@@ -65,9 +65,15 @@ export function createAssignment({ issues, agentSessions, snapshotOf = () => nul
   // agent state and deep sleep must not change with it: the word holds on ANY of the two (`sessionBases`), and whoever handled the session last, in either place, handled it.
   const sources = (key) => [agentSessions.snapshotOf(key), snapshotOf(key)].filter(Boolean);
   const sessionBases = (key) => sources(key).map((snapshot) => `${snapshot.state ?? ''}@${snapshot.stateSince ?? ''}`);
-  const sessionHandledAt = (key) => { // when anybody last did anything with it: deep sleep, and a day nobody has (Idle by itself)
+  const sessionHandledAt = (key) => { // when anybody last did anything with it: deep sleep, and 72 hours nobody has (Idle by itself)
     const times = sources(key).map(handledAtOf).filter(Number.isFinite);
     return times.length ? Math.max(...times) : null;
+  };
+  const sessionTurnActive = (key) => {
+    const flags = sources(key).map((snapshot) => snapshot.state === 'running' ? true
+      : snapshot.turnActive ?? (snapshot.state === 'waiting_owner' ? null : false));
+    if (flags.includes(true)) return true; // neither a newer transcript nor a manual idle mark hides live work
+    return !flags.length || flags.includes(null) ? null : false; // a cached question has not been checked for liveness yet
   };
   const serialized = (id, work) => {
     const run = (tails.get(id) ?? Promise.resolve()).then(work, work);
@@ -137,7 +143,7 @@ export function createAssignment({ issues, agentSessions, snapshotOf = () => nul
     let cwd;
     try { cwd = issue.project?.path; } catch (error) { return refuse(issue, error.message); }
     if (!cwd) return refuse(issue, '这个 issue 没有项目目录');
-    const text = firstMessage({ issue, issues });
+    const text = firstMessage({ issue });
     const started = await agentSessions.start({ issue, agent, firstMessage: text, cwd, access, model: said.model });
     if (started.outcome !== 'success') return refuse(issue, started.message, started);
 
@@ -255,7 +261,7 @@ export function createAssignment({ issues, agentSessions, snapshotOf = () => nul
   }
 
   return {
-    sessionState, sessionSince, sessionBases, sessionHandledAt, snapshotOf: sessionSnapshot,
+    sessionState, sessionSince, sessionBases, sessionHandledAt, sessionTurnActive, snapshotOf: sessionSnapshot,
     onAssign, onReply, onResume, start, setAccess, closeFor, restore, adopt,
     forward: (issue, text, attachments = []) => agentSessions.send(issue.session, text, { direct: true, attachments }),
     suspend(issue) {

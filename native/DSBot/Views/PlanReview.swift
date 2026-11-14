@@ -28,14 +28,14 @@ struct PlanReviewCard: View {
                 } else {
                     Circle().fill(DSBotStyle.chatWarning).frame(width: 8, height: 8)
                 }
-                Text("计划待审")
+                Text(L10n.text("计划待审"))
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(DSBotStyle.chatWarning)
                 Spacer(minLength: 8)
                 if approval.detail?.isEmpty == false {
                     Button(action: onOpenFull) {
                         HStack(spacing: 2) {
-                            Text("查看全文")
+                            Text(L10n.text("查看全文"))
                             DSBotIcon(.right, size: 14)
                         }
                         .font(.system(size: 15))
@@ -71,7 +71,7 @@ struct PlanReviewCard: View {
             HStack(spacing: 10) {
                 Spacer(minLength: 0)
                 Button(action: onRevise) {
-                    Text("要求修改")
+                    Text(L10n.text("要求修改"))
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(DSBotStyle.chatInk)
                         .padding(.horizontal, 20)
@@ -87,7 +87,7 @@ struct PlanReviewCard: View {
                 .disabled(isResponding)
                 .accessibilityIdentifier("plan.revise")
                 Button(action: onApprove) {
-                    Text("同意执行")
+                    Text(L10n.text("同意执行"))
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 22)
@@ -122,11 +122,11 @@ struct PlanFullSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("计划")
+                Text(L10n.text("计划"))
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(Color(white: 0.4))
                 Spacer()
-                Button("完成", action: onClose)
+                Button(L10n.text("完成"), action: onClose)
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(DSBotStyle.ink)
                     .accessibilityIdentifier("plan.full.close")

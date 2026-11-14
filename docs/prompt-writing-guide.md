@@ -96,7 +96,7 @@ await applyIfStillCurrentAndAllowed(proposal);
 | 采集 | 来源 Prompt、已存在事项、外部材料 | 提议新增、更新或忽略，避免重复 |
 | 记忆 | boss 的原话、来源及相关已有记录 | 按现有记忆规则捕获、召回和整理 |
 
-Worker 的首条消息目前只取任务标题与描述，见 [`first-message.mjs`](../host/assistant/home/first-message.mjs)。不添加事项管理流程、“所有者答复”或由 Worker 回报状态的要求。boss 的 @ 消息按现有转发机制原样发送。
+Worker 的首条消息目前只取任务标题与描述，没有描述就只有标题，子事项也一样，不带父事项和同级的子事项（2026-11-14 的实际失败：子事项没写描述，父事项的描述贴在它下面，智能体做了父事项的活），见 [`first-message.mjs`](../host/assistant/home/first-message.mjs)。不添加事项管理流程、“所有者答复”或由 Worker 回报状态的要求。boss 的 @ 消息按现有转发机制原样发送。
 
 事项 status 由主人手动管理，与 Agent 状态独立；分配、运行、停止、等待输入、失败和恢复都不自动移动事项。Agent 状态和实际问题按会话事实同步，停止后不自动读对话、调用模型或追加进展备注（主人 2026-11-05 决定）。实现见 [`assign.mjs`](../host/assistant/home/assign.mjs) 和 [`conversation.mjs`](../host/assistant/home/conversation.mjs)。
 

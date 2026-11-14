@@ -134,7 +134,15 @@ struct EmbeddedPageView: View {
     }
 
     private var location: String {
-        "\(store.activeComputer?.id ?? "")/\(store.connectionRevision)/\(store.status.rawValue)/\(page.rawValue)/\(target ?? "")/\(sessionID ?? "")/\(retry + retryToken)"
+        EmbeddedPageRoute(page: page, target: target, sessionID: sessionID).location(
+            computerID: store.activeComputer?.id, revision: store.connectionRevision,
+            status: store.status.rawValue, retry: retry + retryToken
+        )
+    }
+
+    @MainActor
+    static func preload(session: EmbeddedPageSession, page: EmbeddedDSHPage, viewport: CGSize) {
+        EmbeddedWebSurface.preload(session: session, page: page, viewport: viewport)
     }
 
     private var isCurrentPage: Bool {
@@ -173,7 +181,7 @@ struct EmbeddedPageView: View {
                                 .font(.system(size: 14))
                                 .foregroundStyle(DSBotStyle.muted)
                                 .multilineTextAlignment(.center)
-                            Button("重试") { retry += 1 }
+                            Button(L10n.text("重试")) { retry += 1 }
                                 .font(.system(size: 14, weight: .medium))
                                 .frame(minHeight: 44)
                                 .accessibilityIdentifier("embedded.retry")
@@ -185,8 +193,8 @@ struct EmbeddedPageView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("embedded.\(page.rawValue)")
         .task(id: location) {
-            // A page the pool kept is still loaded for this very location: nothing to open.
-            if session.isPooled, session.hasPage, session.location == location,
+            // A retained or still-preparing page already owns this open operation.
+            if session.isPooled, session.location == location,
                session.isCurrent, session.error == nil {
                 return
             }
@@ -227,32 +235,58 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
             context.coordinator.load(session, in: kept)
             return kept
         }
+        let view = Self.makeWebView(coordinator: context.coordinator)
+        updateVisibility(in: view)
+        context.coordinator.load(session, in: view)
+        return view
+    }
+
+    @MainActor
+    static func preload(session: EmbeddedPageSession, page: EmbeddedDSHPage, viewport: CGSize) {
+        guard session.hasPage else { return }
+        if let kept = session.surfaceHost as? Coordinator, !kept.isDestroyed { return }
+        let coordinator = Coordinator(session: session, page: page)
+        session.surfaceHost = coordinator
+        let view = makeWebView(coordinator: coordinator)
+        view.frame = CGRect(origin: .zero, size: viewport)
+        view.isHidden = true
+        view.isUserInteractionEnabled = false
+        view.accessibilityElementsHidden = true
+        coordinator.load(session, in: view)
+    }
+
+    @MainActor
+    private static func makeWebView(coordinator: Coordinator) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
+        // Off-window preparation must finish even after the document's load event.
+        configuration.preferences.inactiveSchedulingPolicy = .none
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.mediaTypesRequiringUserActionForPlayback = .all
         configuration.userContentController.addScriptMessageHandler(
-            context.coordinator, contentWorld: .page, name: "dsbot"
+            coordinator, contentWorld: .page, name: "dsbot"
         )
-        configuration.setURLSchemeHandler(context.coordinator, forURLScheme: "dsbot-ui")
+        configuration.setURLSchemeHandler(coordinator, forURLScheme: "dsbot-ui")
         let view = WKWebView(frame: .zero, configuration: configuration)
-        view.navigationDelegate = context.coordinator
-        view.uiDelegate = context.coordinator
+        view.navigationDelegate = coordinator
+        view.uiDelegate = coordinator
         view.isOpaque = false
         view.backgroundColor = .white
         view.scrollView.backgroundColor = .white
         view.scrollView.contentInsetAdjustmentBehavior = .never
         view.scrollView.bounces = false
+        if #available(iOS 26.0, *) {
+            // This page has no bottom native controls; DSH owns its content to the lower edge.
+            view.scrollView.bottomEdgeEffect.isHidden = true
+        }
         view.allowsBackForwardNavigationGestures = false
         view.allowsLinkPreview = false
-        updateVisibility(in: view)
         DSBotLog.record("web.view.mount")
-        context.coordinator.webView = view
-        session.teardownSurface = { [weak view, weak coordinator = context.coordinator] in
+        coordinator.webView = view
+        coordinator.session.teardownSurface = { [weak view, weak coordinator] in
             guard let view, let coordinator else { return }
             Self.destroy(view, coordinator: coordinator)
         }
-        context.coordinator.load(session, in: view)
         return view
     }
 
@@ -265,6 +299,7 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
     }
 
     private func updateVisibility(in view: WKWebView) {
+        view.configuration.preferences.inactiveSchedulingPolicy = session.isLoading || isVisible ? .none : .throttle
         view.isHidden = !isVisible
         view.isUserInteractionEnabled = isInteractive
         view.accessibilityElementsHidden = !isInteractive
@@ -272,7 +307,13 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
 
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
         // A pooled page that is still open keeps its web view for the next visit.
-        if coordinator.keepsPageAlive { return }
+        if coordinator.keepsPageAlive {
+            view.isHidden = true
+            view.isUserInteractionEnabled = false
+            view.accessibilityElementsHidden = true
+            coordinator.updateVisibility(false, in: view)
+            return
+        }
         destroy(view, coordinator: coordinator)
     }
 
@@ -291,7 +332,7 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKURLSchemeHandler, WKScriptMessageHandlerWithReply {
-        private let session: EmbeddedPageSession
+        let session: EmbeddedPageSession
         private let page: EmbeddedDSHPage
         /// The web view this coordinator drives; a pooled page keeps it between visits.
         var webView: WKWebView?
@@ -379,6 +420,7 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
         func updateVisibility(_ isVisible: Bool, in view: WKWebView) {
             guard loadedID == session.pageID, !session.isLoading, session.error == nil,
                   lastVisibility != isVisible else { return }
+            view.configuration.preferences.inactiveSchedulingPolicy = isVisible ? .none : .throttle
             lastVisibility = isVisible
             if isVisible { didDispatchSettingsSelection = false }
             view.evaluateJavaScript("window.dispatchEvent(new CustomEvent('dsbot:visibility',{detail:\(isVisible)}));")
@@ -587,6 +629,7 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
                     case "ready":
                         session.ready()
                         replyHandler("true", nil)
+                        if let view = webView { updateVisibility(!view.isHidden, in: view) }
                     case "interaction":
                         guard let params = call.params, params.count == 1,
                               let action = params["action"]?.stringValue,

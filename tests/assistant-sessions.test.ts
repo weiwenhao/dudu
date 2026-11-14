@@ -226,9 +226,11 @@ test('Claude: every state rule, over a Claude Code home on disk (registry status
     assert.deepEqual([snapshot.state, snapshot.stateSince, snapshot.pending], item.expect, item.name);
     assert.equal(sessions.stateOf(snapshot.key), snapshot.state, `stateOf agrees: ${item.name}`);
   }
+  assert.deepEqual([1, 2, 3, 4, 6, 9].map((n) => found[id(n)].turnActive), [true, true, true, true, false, false],
+    'registry work and dialogs are live; questions left in a completed turn are history');
   // The rest of the snapshot, as docs/assistant.md 3.4 shapes it.
   const done = found[id(8)];
-  assert.deepEqual(Object.keys(done), ['key', 'provider', 'id', 'dshSessionId', 'title', 'cwd', 'state', 'stateSince', 'lastActivityAt', 'excerpt', 'pending', 'agentState']);
+  assert.deepEqual(Object.keys(done), ['key', 'provider', 'id', 'dshSessionId', 'title', 'cwd', 'state', 'stateSince', 'lastActivityAt', 'excerpt', 'pending', 'turnActive', 'agentState']);
   assert.equal(done.agentState, 'blocked', 'a finished run is the boss\'s turn');
   assert.deepEqual([done.key, done.provider, done.dshSessionId, done.title, done.cwd, done.excerpt, done.lastActivityAt], [`claude:${id(8)}`, 'claude', null, 'Build repair', '/work/app', 'Done. The build passes.', recent]);
   const long = found[id(20)];
@@ -722,11 +724,13 @@ test('a restart keeps what the index knew of a session that DSH and its harness 
   const first = createSessions({ readers: { claude: { scan: async () => facts, live: async () => facts } }, links, now, file, intervals: false });
   await first.poll();
   assert.equal(first.stateOf('dsh:dsh-1'), 'finished', 'one session, asked by either key');
+  assert.equal(first.snapshotOf('dsh:dsh-1')?.turnActive, false);
   await first.dispose();
   // the next run, before anything has been read: DSH's key finds the session's snapshot all the same (it used to find nothing until the read was done, and the issue held by it
   // read as something else for that long, and again when the read ended)
   const second = createSessions({ readers: {}, links, now, file, intervals: false });
   assert.equal(second.stateOf('dsh:dsh-1'), 'finished');
+  assert.equal(second.snapshotOf('dsh:dsh-1')?.turnActive, undefined, 'process liveness is never restored from SQLite');
   assert.deepEqual([second.snapshotOf('dsh:dsh-1')?.key, second.snapshotOf('dsh:dsh-1')?.stateSince], [`claude:abc`, T0]);
   await second.dispose();
 });

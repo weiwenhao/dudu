@@ -167,7 +167,7 @@ struct DrawerBackdrop: View {
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
-        .accessibilityLabel("关闭侧边栏")
+        .accessibilityLabel(L10n.text("关闭侧边栏"))
         .accessibilityIdentifier("sidebar.backdrop")
         .modifier(DrawerDragGesture(
             motion: motion, opening: false, width: width, animation: animation,

@@ -93,8 +93,8 @@ function makeHarness({
       }
       return {};
     },
-    async open(_channel, endpoint) {
-      if (streams[endpoint]) return streams[endpoint]();
+    async open(_channel, endpoint, ...args) {
+      if (streams[endpoint]) return streams[endpoint](...args);
       if (endpoint === 'workspace/follow') {
         return iterable([{ type: 'baseline', value: workspaces }]);
       }
@@ -137,6 +137,55 @@ test('a message to the assistant goes out as it is: a page that an older phone s
   await bridge.dispatch('session.send', { id: 'dudu-owned', text: 'plain' }, {});
   await bridge.dispatch('session.send', { id: 'normal', text: 'ordinary' }, {});
   assert.equal(calls.filter(({ endpoint }) => endpoint === 'session/prompt').length, 4);
+});
+
+test('a quick-sheet reply read closes its own source and preserves the main conversation watch and request identities', async () => {
+  let closed = 0;
+  let opened = 0;
+  const data = Buffer.from('reply-image').toString('base64');
+  const { bridge } = makeHarness({
+    rows: [{ sessionId: 'session-1', title: 'Recipient', status: 'idle', updatedAt: 123, providerId: 'claude' }],
+    assistant: {
+      state: () => ({ sessionId: 'dudu-owned' }),
+      issues: async () => ({ outcome: 'success', issue: { id: 7, session: 'dsh:session-1' } }),
+    },
+    streams: {
+      'session/follow': () => {
+        opened++;
+        const source = iterable([{
+          type: 'snapshot', cursor: 3, hasMore: false, projections: { values: {} },
+          records: [
+            surface('user/message', 1, 1, { id: 'owner', source: { kind: 'user', rpcId: 'sheet-request' }, content: [
+              { type: 'text', text: 'hello' }, { type: 'image', mediaType: 'image/png', data, name: 'reply.png' },
+            ] }),
+            eventMessage('answer', 2, 'received'),
+            surface('user/message', 3, 3, { id: 'file-only', source: { kind: 'user', rpcId: 'file-request' }, content: [
+              { type: 'file', name: 'report.txt' },
+            ] }),
+          ],
+        }]);
+        return { ...source, dispose: async () => { closed += 1; await source.dispose(); } };
+      },
+    },
+  });
+  const connection = { selectedSessionId: 'dudu-owned', nativeWatchID: 'main-watch' };
+  const value = await bridge.dispatch('assistant.reply.read', {
+    sessionId: 'dudu-owned', id: 7, session: 'dsh:session-1',
+  }, connection);
+  assert.deepEqual(connection, { selectedSessionId: 'dudu-owned', nativeWatchID: 'main-watch' });
+  assert.equal(closed, 1);
+  assert.deepEqual(value.acceptedRequestIds, ['sheet-request', 'file-request']);
+  assert.deepEqual(value.messages.map((message) => message.text), ['hello', 'received', '']);
+  assert.deepEqual(value.messages[0].attachments, [{ kind: 'image', name: 'reply.png', id: 'owner:1', seq: 1 }]);
+  assert.deepEqual(value.messages[2].attachments, [{ kind: 'file', name: 'report.txt' }]);
+  assert.equal(JSON.stringify(value).includes(data), false, 'snapshots contain references only');
+  assert.equal('approvals' in value || 'trace' in value || 'team' in value, false);
+  const params = { sessionId: 'dudu-owned', id: 7, session: 'dsh:session-1', attachmentId: 'owner:1' };
+  assert.deepEqual(await bridge.dispatch('assistant.reply.image', params, connection), { mediaType: 'image/png', data });
+  await assert.rejects(bridge.dispatch('assistant.reply.image', { ...params, session: 'dsh:other' }, connection), { code: 'NOT_FOUND' });
+  await assert.rejects(bridge.dispatch('assistant.reply.image', { ...params, attachmentId: '/private/file.png' }, connection), { code: 'NOT_FOUND' });
+  assert.equal(closed, opened, 'all short-lived sources close, including failed image reads');
+  assert.deepEqual(connection, { selectedSessionId: 'dudu-owned', nativeWatchID: 'main-watch' });
 });
 
 test('the phone asks for the quota the way the desktop icon does: the sheet opening is the ask, nothing else is accepted, and what the plugin has kept comes back with the outcome', async () => {
@@ -260,6 +309,16 @@ test('Typert adapter uses the owner peer and only invokes named allowlisted endp
   assert.deepEqual(invocations.at(-1), {
     namespace: 'skills', method: 'list', args: { request: { sessionId: 'dudu-owned' } }, peer, signal: undefined,
   });
+  for (const method of ['list', 'follow', 'kill']) {
+    const request = { sessionId: 'session-1', ...(method === 'list' ? {} : { jobId: 'job-1' }) };
+    if (method === 'kill') await rpc.call('/api', `job/${method}`, request);
+    else await rpc.open('/api', `job/${method}`, request);
+    assert.deepEqual((method === 'kill' ? invocations : streams).at(-1), {
+      namespace: 'job', method, args: { request }, peer, signal: undefined,
+    });
+  }
+  await rpc.call('/api', 'session/state', { sessionId: 'child' });
+  assert.deepEqual(invocations.at(-1).args, { request: { sessionId: 'child' } });
   await assert.rejects(rpc.call('/api', 'arbitrary/execute'), { code: 'UNSUPPORTED' });
   assert.throws(() => createTypertRpcAdapter({
     gateway,
@@ -723,6 +782,43 @@ function attachmentConnection() {
   };
 }
 
+test('native child history keeps its canonical parent address through watch and pagination', async () => {
+  const followRequests = [];
+  const childValues = {
+    subagent: { mode: 'one-shot' }, modelSelection: { next: { provider: 'claude', model: 'sonnet' } },
+    agentTeam: { enabled: true, tasks: [] },
+    subagentCatalog: [{ id: 'grandchild', label: 'Nested research', name: 'researcher', mode: 'one-shot' }],
+  };
+  const snapshot = { type: 'snapshot', cursor: 2, hasMore: true, records: [eventMessage('child-message', 2, 'child reply')], projections: { values: childValues } };
+  const { bridge, calls } = makeHarness({
+    rows: [
+      { sessionId: 'parent', title: 'Parent', updatedAt: 1, running: false },
+      { sessionId: 'child', title: 'Child', updatedAt: 2, running: false },
+    ],
+    responses: {
+      'session/projections': ({ sessionId }) => ({ values: sessionId === 'parent'
+        ? { subagentCatalog: [{ id: 'child', label: 'Child', mode: 'one-shot' }] } : childValues }),
+      'session/page': { records: [eventMessage('older-child-message', 1, 'older reply')], hasMore: false },
+    },
+    streams: { 'session/follow': (request) => { followRequests.push(request); return iterable([snapshot], 0, true); } },
+  });
+  const connection = attachmentConnection();
+  const descriptor = { parentSessionId: 'parent', mode: 'continuable' };
+  try {
+    const watched = await bridge.dispatch('session.watch', { id: 'child', subagent: descriptor, transcript: true }, connection, { watchGeneration: 1 });
+    assert.deepEqual(watched.session.subagent, { parentSessionId: 'parent', mode: 'one-shot' });
+    assert.deepEqual(watched.team, [{ id: 'grandchild', name: 'Nested research', subtitle: '', enabled: true, detail: '' }]);
+    const address = { kind: 'subagent', parentSessionId: 'parent', childSessionId: 'child', mode: 'one-shot' };
+    assert.deepEqual(followRequests[0].address, address);
+    await bridge.dispatch('session.page', { id: 'child', throughSeq: 2, beforeSeq: 2 }, connection);
+    assert.deepEqual(calls.find(({ endpoint }) => endpoint === 'session/page')?.args[0].address, address);
+    const reopened = await bridge.dispatch('session.open', { id: 'child', subagent: descriptor, transcript: true }, connection);
+    assert.deepEqual(reopened.session.subagent, watched.session.subagent);
+    assert.deepEqual(followRequests[1].address, address);
+    await assert.rejects(bridge.dispatch('session.open', { id: 'child', subagent: { parentSessionId: 'wrong' } }, connection), { code: 'NOT_FOUND' });
+  } finally { await connection.stopWatch(); }
+});
+
 function controlledStream(frames = []) {
   const buffered = [...frames];
   let pending;
@@ -1059,7 +1155,7 @@ test('native sidebar and search return cold list hints without waiting for per-s
   }));
   const { bridge, calls } = makeHarness({
     rows,
-    sessionActivity: () => ({ agent: 'codex', title: 'Indexed conversation', state: 'finished', lastActivityAt: Date.now() - 60_000 }), // handled a minute ago: a finished run unhandled for a day reads Idle (2026-11-07)
+    sessionActivity: () => ({ agent: 'codex', title: 'Indexed conversation', state: 'finished', lastActivityAt: Date.now() - 60_000 }), // handled a minute ago: a finished run unhandled for 72 hours reads Idle (2026-11-07, 72 hours since 2026-11-14)
     responses: {
       'session/projections': () => pending,
       'session/search': { items: [{ sessionId: 'cold-1', snippet: 'Matching text' }] },
@@ -1156,6 +1252,50 @@ test('a line of the group chat is its command in the thread with what it said at
   assert.equal(mine.some((entry: any) => entry.commandId === 'cmd-card'), false, 'the card that was hidden is not in the thread');
   const another = await watch('some-other-session');
   assert.equal(another.some((entry: any) => entry.commandId === 'cmd-card'), true, 'what is hidden in the assistant\'s thread is not hidden anywhere else');
+});
+
+test('group reply deltas publish through the current native watch without adding transcript events, and cancel releases the subscription', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let line: Record<string, unknown> = { v: 1, kind: 'at', issue: { id: 9, ref: 'DUD-9', title: 'x', agent: 'claude' }, text: 'Continue', at: 5 };
+  let changed: () => void = () => {};
+  let released = false;
+  const records = [
+    surface('command/run', 1, 100, { commandId: 'cmd-at', name: 'dudu-say', args: 'at abc', source: { kind: 'user' } }),
+    surface('command/done', 2, 110, { commandId: 'cmd-at', kind: 'success', text: '@DUD-9 Continue' }),
+  ];
+  const { bridge } = makeHarness({
+    snapshot: { type: 'snapshot', records, cursor: 2, hasMore: false, projections: { values: {} } },
+    assistant: {
+      state: () => ({ sessionId: 'session-1' }),
+      groupOf: (id: string) => id === 'cmd-at' ? line : null,
+      onGroupChange: (listener: () => void) => { changed = listener; return () => { released = true; }; },
+    },
+  });
+  const connection = attachmentConnection();
+  const events: { topic: string; payload: any }[] = [];
+  connection.sendEvent = (topic: string, payload: unknown) => events.push({ topic, payload });
+  t.after(() => connection.stopWatch());
+  const watchId = '9b7c23d6-8c61-44ac-849b-6300d21ea063';
+  const initial = await bridge.dispatch('session.watch', { id: 'session-1', watchId, transcript: true }, connection, { watchGeneration: 1 });
+  line = { ...line, liveReply: { text: 'First', at: 120 } };
+  changed();
+  line = { ...line, liveReply: { text: 'First words', at: 120 } };
+  changed();
+  t.mock.timers.tick(100);
+  assert.equal(events.length, 1, 'text deltas use the existing 100 ms publication throttle');
+  assert.equal(events[0].topic, 'session.snapshot');
+  const detail = events[0].payload;
+  assert.equal(detail.watchId, watchId);
+  assert.equal(detail.session.id, initial.session.id);
+  assert.equal(detail.transcript.throughSeq, initial.transcript.throughSeq);
+  assert.equal(detail.transcript.entries.length, initial.transcript.entries.length);
+  assert.deepEqual(detail.transcript.entries[0].group.liveReply, { text: 'First words', at: 120 });
+  changed(); // A pending publication is cancelled with its watch.
+  await connection.stopWatch();
+  assert.equal(released, true);
+  changed(); // Even an already queued callback cannot publish on a later watch.
+  t.mock.timers.tick(100);
+  assert.equal(events.length, 1);
 });
 
 test('a quick button\'s card is its command in the thread with what it listed attached; any other command, an unknown card and a failed one stay plain', async () => {

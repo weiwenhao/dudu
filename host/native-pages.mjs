@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
+import { nativeLocale } from './native-locale.mjs';
 import {
   initializePagePolicy, allowPageCall, acceptPageResult, pageStreamItem,
 } from './native-page-policy.mjs';
@@ -18,7 +19,7 @@ const PAGE_KINDS = new Set(['plugins', 'trace', 'context', 'team', 'tools', 'set
 // Pages that belong to one conversation, and pages named by an id DSH registered (see native-navigation).
 const SESSION_PAGE_KINDS = new Set(['trace', 'context', 'team', 'tools', 'view']);
 const TARGET_REQUIRED = new Set(['panel', 'view', 'dudu']);
-const TARGET_ALLOWED = new Set(['panel', 'view', 'settings', 'dudu']);
+const TARGET_ALLOWED = new Set(['panel', 'view', 'trace', 'context', 'team', 'settings', 'dudu']);
 const TARGET_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,255}$/u;
 const PAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_PAGES = 8;
@@ -161,7 +162,8 @@ export function createNativePages({
     initializePagePolicy(page);
     pages.set(page.id, page);
     try {
-      const descriptor = { kind: page.kind, sessionId: page.sessionId, ...(page.kind === 'dudu' ? { target: page.target } : {}) };
+      const descriptor = { kind: page.kind, sessionId: page.sessionId,
+        locale: connection.locale ?? nativeLocale(), ...(page.kind === 'dudu' ? { target: page.target } : {}) };
       if (httpBasePath) Object.assign(descriptor, { transport: 'http', basePath: httpBasePath });
       const document = await frontend.document(descriptor);
       if (page.closed || connection.closed || disconnected.has(connection)) fail('NOT_FOUND');

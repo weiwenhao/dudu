@@ -90,7 +90,7 @@ struct AgentAvatar: View {
                 }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(agent.name) · \(sleeping ? "深度睡眠" : state.name)")
+            .accessibilityLabel("\(agent.name) · \(sleeping ? L10n.text("深度睡眠") : state.name)")
     }
 
     @ViewBuilder

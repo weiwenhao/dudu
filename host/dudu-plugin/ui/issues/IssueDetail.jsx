@@ -124,7 +124,7 @@ const firstLink = (text) => /https?:\/\/\S+/.exec(text ?? '')?.[0] ?? null;
  * left; Properties (status, priority, agent, due date) and Project on the right. `ids` is the list the person came from.
  */
 export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSession, previewSession }) {
-  const { status, issue, log, activeQuestion, nextLogCursor, change, assign, message, undo, loadEarlier, reload } = useIssue(request, id);
+  const { status, issue, log, activeQuestion, nextLogCursor, change, assign, message, loadEarlier, reload } = useIssue(request, id);
   const toast = useToast();
   const [opening, setOpening] = useState(false);
   const openConversation = async () => {
@@ -148,9 +148,9 @@ export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSessio
   }, [id, issue?.source, issue?.sourceRef, request]);
   const origin = found?.id === id ? found.source : null;
   const now = Date.now();
-  // Every change on this page says so at the bottom, with Undo for that one change.
+  // Every change on this page says so at the bottom.
   const done = (result, message) => {
-    if (result?.outcome === 'success' && result.eventId) toast({ message, action: { label: T.toast.undo, run: () => undo({ eventId: result.eventId }) } });
+    if (result?.outcome === 'success' && result.eventId) toast({ message });
     else if (result && result.outcome !== 'no_op') toast({ message: T.toast.failed });
   };
   const copyId = async () => {

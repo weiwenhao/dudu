@@ -71,8 +71,11 @@ export function createCards({ file, issues = () => null, inbox = () => null, tas
    * each with the latest message of its session when there is one (`latest`: who said it, what, when; latest.mjs). The sessions that have nothing kept yet are read once, for a moment at most: the row of one
    * that is not read in time is just without it.
    */
-  async function todo() {
-    const answer = await ask(issues, 'list', { tab: 'active', filter: { agentState: ['blocked'] }, order: 'priority', limit: MAX_TODO });
+  async function todo(cursor) {
+    const answer = await ask(issues, 'list', {
+      tab: 'active', filter: { agentState: ['blocked'] }, order: 'priority', limit: MAX_TODO,
+      ...(cursor ? { cursor } : {}),
+    });
     const items = (answer.items ?? []).slice(0, MAX_TODO);
     await latest?.ensure(items.map((item) => sessionIdOf(item.session)).filter(Boolean));
     const rows = items.map((item) => {
@@ -80,7 +83,10 @@ export function createCards({ file, issues = () => null, inbox = () => null, tas
       const said = latest?.get(sessionIdOf(item.session));
       return said ? { ...row, latest: { who: said.who, text: said.text, at: said.at } } : row;
     });
-    return { total: Number.isSafeInteger(answer.total) ? answer.total : rows.length, rows };
+    return {
+      total: Number.isSafeInteger(answer.total) ? answer.total : rows.length, rows,
+      ...(typeof answer.nextCursor === 'string' && answer.nextCursor ? { nextCursor: answer.nextCursor } : {}),
+    };
   }
 
   /** The records still to be handled, as the Collector lists them. */
@@ -162,6 +168,8 @@ export function createCards({ file, issues = () => null, inbox = () => null, tas
 
   return {
     build, put, get, repeats,
+    // The phone's sheet reads the same list without executing a command or keeping a card in the thread.
+    todos: todo,
     /** Several at once, by command id, for a page that has just read some of the thread: the ones that are known. */
     many(ids) {
       const found = {};

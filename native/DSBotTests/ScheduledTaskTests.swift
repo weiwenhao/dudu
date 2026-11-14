@@ -64,7 +64,7 @@ final class ScheduledTaskTests: XCTestCase {
 
         // A run that failed says so in front of the reason, which is the plugin's own text.
         let failed = try XCTUnwrap(slot(#"{"v":1,"kind":"task","task":{"id":"t1","title":"每日热点新闻"},"text":"Claude is not logged in.","at":1760000000000,"ok":false}"#))
-        XCTAssertEqual(failed.taskText, "运行失败：Claude is not logged in.")
+        XCTAssertEqual(failed.taskText, L10n.text("{0}：{1}", GroupLine.runFailed, "Claude is not logged in."))
 
         // It is no line that waits for an answer; the other kinds still need their issue, or the thread keeps the command's plain row.
         let row = TranscriptRow.command(CommandRow(

@@ -3,7 +3,12 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key>
-    <string>zh_CN</string>
+    <string>zh-Hans</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>zh-Hans</string>
+        <string>en</string>
+    </array>
     <key>CFBundleDisplayName</key>
     <string>Dudu</string>
     <key>CFBundleExecutable</key>
@@ -20,6 +25,10 @@
     <string>$(MARKETING_VERSION)</string>
     <key>CFBundleVersion</key>
     <string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+    <key>DuduAPNSEnvironment</key>
+    <string>$(DUDU_APNS_ENVIRONMENT)</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>CADisableMinimumFrameDurationOnPhone</key>

@@ -17,9 +17,9 @@ enum TodoSummary {
         let active = todos.filter(\.isInProgress).count
         let pending = todos.count - done - active
         return [
-            done > 0 ? "\(done) 已完成" : nil,
-            active > 0 ? "\(active) 进行中" : nil,
-            pending > 0 ? "\(pending) 待处理" : nil
+            done > 0 ? L10n.text("{0} 已完成", "\(done)") : nil,
+            active > 0 ? L10n.text("{0} 进行中", "\(active)") : nil,
+            pending > 0 ? L10n.text("{0} 待处理", "\(pending)") : nil
         ].compactMap { $0 }.joined(separator: " · ")
     }
 }

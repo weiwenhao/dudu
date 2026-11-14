@@ -317,7 +317,7 @@ final class EmbeddedPageSession: ObservableObject {
             return
         } catch {
             guard openID == operation else { return }
-            self.error = (error as? DSBotFailure)?.localizedDescription ?? "页面未能打开"
+            self.error = (error as? DSBotFailure)?.localizedDescription ?? L10n.text("页面未能打开")
             isLoading = false
             DSBotLog.record("web.page.fail", level: "warn", elapsedMs: elapsedSinceOpen, state: page.rawValue)
             openStartedAt = nil
@@ -399,7 +399,7 @@ final class EmbeddedPageSession: ObservableObject {
         readyTimeout?.cancel()
         readyTimeout = nil
         isLoading = false
-        error = "页面未能打开"
+        error = L10n.text("页面未能打开")
         DSBotLog.record("web.page.fail", level: "warn", elapsedMs: elapsedSinceOpen, state: page?.rawValue)
         openStartedAt = nil
 #if DEBUG && targetEnvironment(simulator)

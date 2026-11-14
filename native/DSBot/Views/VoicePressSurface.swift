@@ -38,7 +38,7 @@ struct VoicePressSurface: UIViewRepresentable {
             super.init(frame: .zero)
             isMultipleTouchEnabled = false
             isAccessibilityElement = true
-            accessibilityLabel = "按住说话，上滑取消"
+            accessibilityLabel = L10n.text("按住说话，上滑取消")
             accessibilityTraits = .button
             accessibilityIdentifier = "composer.hold"
             backgroundColor = .clear

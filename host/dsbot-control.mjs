@@ -9,6 +9,7 @@ import { createNativeServer, localAddress, probeNativeAddress, equalProof } from
 import { connectionAddress, connectionKind, createPairingStore } from './pairing-devices.mjs';
 import { renderPairingSvg } from './qr.mjs';
 import { createWebPageHttp } from './web-page-http.mjs';
+import { createNativeNotifications } from './native-notifications.mjs';
 
 const MAX_ADDRESSES = 32;
 const DEFAULT_PORT = 3170;
@@ -27,6 +28,9 @@ export async function createDsbotControl({
   assistant,
   board,
   duduPages,
+  collectorNotifications,
+  collectorNotificationsEnabled,
+  runRequest,
   dispatch: injectedDispatch,
   port = DEFAULT_PORT,
   host = '0.0.0.0',
@@ -77,13 +81,17 @@ export async function createDsbotControl({
   }
   const devices = await createPairingStore({ folder, legacySecureCookie, legacyKeyPath });
   const navigation = await createNavigationStore({ folder });
+  let notifications;
   let bridge;
   let httpPages;
   let dispatch;
   let settings = { name: hostname().slice(0, 80) || 'DSH', addresses: [] };
   let server;
   try {
-    bridge = injectedDispatch ? undefined : createNativeBridge({ rpc, pages, navigation, conversationReads, questionBridge, sessionActivity, sessionSearch, assistantConversation, assistant, board, duduPages });
+    notifications = await createNativeNotifications({
+      folder, devices, source: collectorNotifications, enabled: collectorNotificationsEnabled,
+    });
+    bridge = injectedDispatch ? undefined : createNativeBridge({ rpc, pages, navigation, conversationReads, questionBridge, sessionActivity, sessionSearch, assistantConversation, assistant, board, duduPages, notifications });
     dispatch = injectedDispatch ?? bridge.dispatch;
     httpPages = typeof pages?.openHttp === 'function'
       ? createWebPageHttp({ pages, pairingStore: devices, duduPages }) : undefined;
@@ -95,10 +103,12 @@ export async function createDsbotControl({
       dispatch,
       onDisconnect: bridge?.closeConnection,
       httpHandler: httpPages?.handle,
+      runRequest,
       capabilities: bridge ? ['web.pages', ...(httpPages ? ['web.http'] : [])] : [],
     });
   } catch (error) {
     await httpPages?.close();
+    await notifications?.close();
     await devices.close();
     throw error;
   }
@@ -117,6 +127,7 @@ export async function createDsbotControl({
     }
   } catch (error) {
     await httpPages?.close();
+    await notifications.close();
     await server.close();
     await devices.close();
     throw error;
@@ -132,6 +143,7 @@ export async function createDsbotControl({
     try { await persistSettings(settings); }
     catch (error) {
       await httpPages?.close();
+      await notifications.close();
       await server.close();
       await devices.close();
       throw error;
@@ -234,6 +246,7 @@ export async function createDsbotControl({
     async close() {
       await saving;
       try {
+        await notifications.close();
         await httpPages?.close();
         await server.close();
       }

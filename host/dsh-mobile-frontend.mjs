@@ -3,6 +3,8 @@ import { readFile, readdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { MOBILE_PAGE_CSS, MOBILE_PAGE_SCRIPT } from './mobile-page-adapter.mjs';
+import { resolveNativeLocale } from './native-locale.mjs';
+import { mobileLocaleContext } from './mobile-page-locale.mjs';
 
 const APP_ASAR = 'app.asar';
 const FRONTEND_PACKAGE = '@deepseek-ai/dsh-web-frontend/package.json';
@@ -227,8 +229,16 @@ function graphResourcePolicy(graph) {
   };
 }
 
-function bootQueueScript() {
+function bootQueueScript(locale) {
   return `(()=>{
+const phoneLocale=${safeJSON(locale)};
+const localeModuleID="@deepseek-ai/dsh-client-locale";
+const isolateLocaleContext=${mobileLocaleContext.toString()};
+globalThis.__DSH_LOCALE__={
+  read:async()=>({languages:[phoneLocale],preference:phoneLocale==="en"?"en":"zh"}),
+  onChange:()=>{}
+};
+document.documentElement.lang=phoneLocale;
 const pendingQueue=[];
 const appUIModuleIDs=new Set([
   "@deepseek-ai/dsh-client-ui-settings-general",
@@ -256,14 +266,15 @@ function wrapAppUIExports(moduleID,exports){
   const originalApply=exports.apply;
   if(originalApply.__dsbotAppUIWrapped)return exports;
   const wrappedApply=function(ctx,...args){
+    if(moduleID===localeModuleID)ctx=isolateLocaleContext(ctx);
     const result=originalApply.apply(this,[ctx,...args]);
     if(result&&typeof result.then==="function"){
       return result.then(value=>{
-        exposeAppUI(moduleID,ctx);
+        if(appUIModuleIDs.has(moduleID))exposeAppUI(moduleID,ctx);
         return value;
       });
     }
-    exposeAppUI(moduleID,ctx);
+    if(appUIModuleIDs.has(moduleID))exposeAppUI(moduleID,ctx);
     return result;
   };
   Object.defineProperty(wrappedApply,"__dsbotAppUIWrapped",{value:true});
@@ -291,7 +302,7 @@ function wrapAppUIExports(moduleID,exports){
   return Object.create(Object.getPrototypeOf(exports),descriptors);
 }
 function wrapAppUIRegistration(registration){
-  if(!registration||!appUIModuleIDs.has(registration.id)
+  if(!registration||(!appUIModuleIDs.has(registration.id)&&registration.id!==localeModuleID)
     ||typeof registration.factory!=="function"
     ||registration.factory.__dsbotAppUIWrapped)return registration;
   const moduleID=registration.id;
@@ -353,8 +364,8 @@ window.__ModuleLoader__=loader;
 })()`;
 }
 
-function createBootResources(graph, addResource) {
-  const queue = Buffer.from(bootQueueScript(), 'utf8');
+function createBootResources(graph, addResource, locale) {
+  const queue = Buffer.from(bootQueueScript(locale), 'utf8');
   const graphScript = Buffer.from(
     `window.__DSH_BOOT__=${safeJSON(graph)};`,
     'utf8',
@@ -620,7 +631,7 @@ export function createDshMobileFrontend({
   }
 
   return Object.freeze({
-    async document({ kind, sessionId, transport, basePath } = {}) {
+    async document({ kind, sessionId, transport, basePath, locale } = {}) {
       if (!['plugins', 'trace', 'context', 'team', 'tools', 'settings', 'panel', 'view'].includes(kind)) {
         throw new TypeError('Unsupported DSH mobile page kind.');
       }
@@ -668,10 +679,7 @@ export function createDshMobileFrontend({
       const mobileCSS = addResource(
         'mobile-page.css',
         'text/css; charset=utf-8',
-        Buffer.from(
-          `${MOBILE_PAGE_CSS}\nhtml,body{font-family:"PingFang SC",-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif!important}`,
-          'utf8',
-        ),
+        Buffer.from(MOBILE_PAGE_CSS, 'utf8'),
       );
       const mobileScript = addResource(
         'mobile-page.js',
@@ -679,7 +687,7 @@ export function createDshMobileFrontend({
         Buffer.from(MOBILE_PAGE_SCRIPT, 'utf8'),
       );
       const pageGraph = graphForDocument(graph, basePath);
-      const boot = createBootResources(pageGraph, addResource);
+      const boot = createBootResources(pageGraph, addResource, resolveNativeLocale(locale));
       const extraScripts = [];
       const extraStyles = [];
       for (const injection of normalizedInjections) {

@@ -18,12 +18,8 @@ extension EnvironmentValues {
 
 // MARK: - Buttons
 
-/// The row of buttons above the input. The one whose card is on its way shows a spinner, and nothing else can be tapped meanwhile.
+/// All three entries present their native sheet immediately, before reading its list.
 struct QuickChipsRow: View {
-    let busy: QuickCardKind?
-    /// 待办: 嘟嘟 sends the card.
-    let onPick: (QuickCardKind) -> Void
-    /// 信息 and 定时任务: their pages open (owner, 2026-11-10); they carry the small › that says so.
     let onOpen: (QuickCardKind) -> Void
 
     var body: some View {
@@ -31,12 +27,10 @@ struct QuickChipsRow: View {
         DSBotGlassGroup(spacing: 8) {
             HStack(spacing: 8) {
                 ForEach(QuickCardKind.allCases) { kind in
-                    Button { kind == .todo ? onPick(kind) : onOpen(kind) } label: {
-                        QuickChipLabel(kind: kind, isBusy: busy == kind)
+                    Button { onOpen(kind) } label: {
+                        QuickChipLabel(kind: kind)
                     }
                     .buttonStyle(DSBotQuietPressStyle())
-                    .disabled(busy != nil)
-                    .opacity(busy != nil && busy != kind ? 0.5 : 1)
                     .accessibilityLabel(kind.title)
                     .accessibilityAddTraits(.isButton)
                     .accessibilityIdentifier("quick.chip.\(kind.rawValue)")
@@ -51,33 +45,18 @@ struct QuickChipsRow: View {
 
 private struct QuickChipLabel: View {
     let kind: QuickCardKind
-    let isBusy: Bool
 
     private static let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
 
     var body: some View {
         HStack(spacing: 6) {
-            if isBusy {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.75)
-                    .tint(DSBotStyle.ink)
-                    .frame(width: 15, height: 15)
-            } else {
-                DSBotIcon(kind.glyph, size: 15, strokeWidth: 1.8, scalesStroke: true)
-            }
+            DSBotIcon(kind.glyph, size: 15, strokeWidth: 1.8, scalesStroke: true)
             Text(kind.title)
                 .font(.system(size: 14, weight: .medium))
                 .lineLimit(1)
-            if kind != .todo {
-                DSBotIcon(.right, size: 14, scalesStroke: true)
-                    .foregroundStyle(Color(red: 0x9a / 255, green: 0x9d / 255, blue: 0xa3 / 255))
-                    .padding(.leading, -2)
-            }
         }
         .foregroundStyle(DSBotStyle.ink)
-        .padding(.leading, 11)
-        .padding(.trailing, kind == .todo ? 11 : 8)
+        .padding(.horizontal, 11)
         .frame(height: 32)
         .dsbotGlass(in: Self.shape)
         .contentShape(Self.shape)

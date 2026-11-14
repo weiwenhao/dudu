@@ -6,7 +6,7 @@ import { redact } from '../memory/secrets.mjs';
  * COLLECTORS.md: a section is `## name`, a metadata comment (`<!-- id: x | source: owner | kind: mcp | server: notion | connector: lark | every: 15m -->`)
  * and the text under it. Each entry carries what either file may say: kind ('prompt' or 'mcp'; `kinded` is false for an entry that does not say,
  * which is how an entry written before connectors and collectors were told apart is recognised), server, connector (the id a collector reads
- * through) and frequency.
+ * through), frequency, and the collector's notification opt-in.
  */
 export function parseSources(text) {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
@@ -70,6 +70,7 @@ export function parseSources(text) {
     }
     entries.push({
       id, name: redact(heading.name), description: redact(description), prompt: redact(description), source: pairs.get('source') === 'dudu' ? 'dudu' : 'owner', frequency,
+      notify: pairs.get('notify') === 'true',
       kinded: pairs.has('kind'), kind: pairs.get('kind') === 'mcp' ? 'mcp' : 'prompt', server: pairs.get('server') ?? '', connector: pairs.get('connector') ?? '',
       via: pairs.get('via') ?? '', spec,
       start: heading.start, end, line: heading.start + 1,

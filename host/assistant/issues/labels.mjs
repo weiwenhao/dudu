@@ -1,6 +1,6 @@
 // Labels (owner, 2026-11-05: "reference Linear's issue labels"): a name and a colour, shared by all issues, any number on an issue. An issue keeps the ids
 // of its labels (`issues.label_ids`, a JSON list, null for none), so a label that is renamed or recoloured changes everywhere at once and an issue's labels
-// are written, undone and compared like any other field. Parents are here too: `issues.parent_id` (a sub-issue's parent).
+// are written and compared like any other field. Parents are here too: `issues.parent_id` (a sub-issue's parent).
 
 /** Linear's nine label colours, by name; the page draws them (ui/issues/labels.js). */
 export const LABEL_COLORS = ['grey', 'darkGrey', 'purple', 'teal', 'green', 'yellow', 'orange', 'pink', 'red'];

@@ -4,12 +4,12 @@
 //
 //   const collectors = createCollectors({ file, connectors, onRemoved })     connectors() -> the connectors registry (connectors/index.mjs) | null;
 //                                                                  onRemoved(id) is called once a collector was removed (by the owner or by 嘟嘟), to clear what it brought
-//   collectors.owner.list() / add(input) / update(id, patch) / remove(id) / undo(token)     the owner's, from the settings page
-//   collectors.dudu.list() / register(input) / update / remove / undo                       the same, as 嘟嘟's tools call them
+//   collectors.owner.list() / add(input) / update(id, patch) / remove(id)     the owner's, from the settings page
+//   collectors.dudu.list() / register(input) / update / remove                the same, as 嘟嘟's tools call them
 //   collectors.resolve()      -> { outcome, collectors: [{ ...collector, via: connector | null }] }    what a collection needs: the connector it reads through
 //   collectors.close()
 //
-// A collector is { id, name, connector, prompt, frequency, source: 'owner' | 'dudu' }: `prompt` says what to collect (the connector says how to
+// A collector is { id, name, connector, prompt, frequency, notify, source: 'owner' | 'dudu' }: `prompt` says what to collect (the connector says how to
 // get in), `frequency` is text such as 15m, 2h, 1d or a cron expression, empty for the default. Every answer is
 // { outcome: 'success' | 'no_op' | 'needs_clarification' | 'error', ... }.
 import { randomBytes } from 'node:crypto';
@@ -23,16 +23,14 @@ const plain = (value) => value && typeof value === 'object' && !Array.isArray(va
 const MESSAGES = {
   changed: 'The collectors changed. Read them again before editing.',
   unreadable: 'The collectors could not be read or saved.',
-  undone: 'That undo is no longer available.',
-  undoChanged: 'The collectors changed after that edit.',
 };
-const KEYS = ['name', 'connector', 'prompt', 'frequency'];
+const KEYS = ['name', 'connector', 'prompt', 'frequency', 'notify'];
 
-const view = ({ id, name, connector, prompt, frequency, source }) => ({ id, name, connector, prompt, frequency: frequency ?? null, source });
+const view = ({ id, name, connector, prompt, frequency, notify, source }) => ({ id, name, connector, prompt, frequency: frequency ?? null, notify: notify === true, source });
 
 export function createCollectors({ file, connectors = () => null, onRemoved = null }) {
   const entries = createEntriesFile({ file, messages: MESSAGES });
-  const meta = (entry) => `<!-- id: ${entry.id} | source: ${entry.source} | connector: ${entry.connector}${entry.frequency ? ` | ${/^\d+[mhd]$/.test(entry.frequency) ? 'every' : 'cron'}: ${entry.frequency}` : ''} -->`;
+  const meta = (entry) => `<!-- id: ${entry.id} | source: ${entry.source} | connector: ${entry.connector}${entry.frequency ? ` | ${/^\d+[mhd]$/.test(entry.frequency) ? 'every' : 'cron'}: ${entry.frequency}` : ''}${entry.notify ? ' | notify: true' : ''} -->`;
   const render = (entry, eol) => [`## ${entry.name}`, meta(entry), '', entry.prompt, ''].join(eol);
 
   // How often: text such as 15m, or a cron expression; empty means the default. -> { frequency } | { problem }
@@ -52,7 +50,7 @@ export function createCollectors({ file, connectors = () => null, onRemoved = nu
 
   // The fields of a collector as they would be saved, or the reason they cannot be: { fields } | { problem }. `how` is what frequencyOf said of the
   // frequency, or { frequency } as it already is in the file (a bad one there does not stop the owner renaming the collector).
-  function check({ name, connector, prompt }, how) {
+  function check({ name, connector, prompt, notify }, how) {
     name = String(name ?? '').trim();
     prompt = String(prompt ?? '').trim();
     if (!name || name.length > 200 || /[\r\n<>]/.test(name)) return { problem: wrong('Give the collector a short name.') };
@@ -65,7 +63,7 @@ export function createCollectors({ file, connectors = () => null, onRemoved = nu
     if (/^ {0,3}##?\s/m.test(prompt)) return { problem: wrong('A line of the text cannot start with # or ## (it would be read as a heading).') };
     if (findSecret(name) || findSecret(prompt)) return { problem: wrong('Keep credentials in the existing tools, not in the collector.') };
     if (how.problem) return { problem: wrong(how.problem) };
-    return { fields: { name, connector, prompt, frequency: how.frequency } };
+    return { fields: { name, connector, prompt, frequency: how.frequency, notify: notify === true } };
   }
 
   const list = entries.guard(() => {
@@ -105,7 +103,7 @@ export function createCollectors({ file, connectors = () => null, onRemoved = nu
     const entry = read.parsed.entries.find((item) => item.id === id);
     if (!entry) return wrong('This collector no longer exists.');
     const checked = check(
-      { name: patch.name ?? entry.name, connector: patch.connector ?? entry.connector, prompt: patch.prompt ?? entry.prompt },
+      { name: patch.name ?? entry.name, connector: patch.connector ?? entry.connector, prompt: patch.prompt ?? entry.prompt, notify: patch.notify ?? entry.notify },
       'frequency' in patch ? frequencyOf(patch.frequency) : { frequency: entry.frequency ?? null },
     );
     if (checked.problem) return checked.problem;
@@ -119,14 +117,14 @@ export function createCollectors({ file, connectors = () => null, onRemoved = nu
     const entry = read.parsed.entries.find((item) => item.id === id);
     if (!entry) return { outcome: 'no_op' };
     const result = entries.remove(read, entry);
-    // What the collector brought and nobody dealt with goes with it; failing to clear it never undoes the removal.
+    // What the collector brought and nobody dealt with goes with it; failing to clear it never takes the removal back.
     if (result.outcome === 'success') {
       try { onRemoved?.(id); } catch (error) { console.warn(`[dudu] The records of the removed collector ${id} could not be cleared: ${error?.message ?? error}`); }
     }
     return result;
   });
 
-  const api = { list, update, remove, undo: entries.undo };
+  const api = { list, update, remove };
   return {
     dudu: { ...api, register },
     owner: { ...api, add },

@@ -34,7 +34,9 @@ export { installChatAutoHistory } from './lib/auto-chat-history.js';
 export { installSessionHistoryCache } from './lib/session-history-cache.js';
 export { installHarnessStats } from './lib/harness-stats.js';
 export { installHarnessForeground } from './lib/harness-foreground.js';
+export { installCollectorNotifications } from './collector/notifications.js';
 export { installIssueHeader, ISSUE_HEADER_SLOT } from './lib/session-header.jsx';
+export { navigationLabelTranslations } from './lib/navigation-labels.mjs';
 export function openDashboard() { takeIssueRequest(); requestDashboard(); }
 
 // Replaced by scripts/build-client.mjs with the compiled, `.dudu`-scoped Tailwind output.

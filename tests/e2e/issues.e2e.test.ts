@@ -29,7 +29,7 @@ test('an issue made in the New issue window shows in Active, opens on its own pa
   await page.getByRole('button', { name: 'Create issue' }).click();
   await rowOf(page, '回复供应商合同的修改意见').waitFor();
 
-  // The status icon of the row changes the status in place, and says so at the bottom with Undo.
+  // The status icon of the row changes the status in place, and says so at the bottom.
   await rowOf(page, '回复供应商合同的修改意见').getByRole('button', { name: /Change status/ }).click();
   await page.getByRole('option', { name: 'In Progress' }).click();
   await rowOf(page, '回复供应商合同的修改意见').getByRole('button', { name: /^In Progress\./ }).waitFor();
@@ -47,7 +47,7 @@ test('an issue made in the New issue window shows in Active, opens on its own pa
   await page.close();
 });
 
-test('ticked rows change together, Shift ticks a run, and Undo puts every one back', async () => {
+test('ticked rows change together and Shift ticks a run', async () => {
   const ids = [];
   for (const letter of ['A', 'B', 'C', 'D']) ids.push((await add({ title: `批量 ${letter}`, status: 'todo', priority: 'medium' })).id);
   const page = await dudu.openPanel();
@@ -63,10 +63,6 @@ test('ticked rows change together, Shift ticks a run, and Undo puts every one ba
   await toast(page, 'Updated 4 issues').waitFor();
   assert.deepEqual(await Promise.all(ids.map(async (id) => (await get(id)).status)), Array(4).fill('in_progress'));
   await bar.waitFor({ state: 'detached' });
-
-  await page.getByRole('button', { name: 'Undo' }).click();
-  await rowOf(page, '批量 A').getByRole('button', { name: /^Todo\./ }).waitFor();
-  assert.deepEqual(await Promise.all(ids.map(async (id) => (await get(id)).status)), Array(4).fill('todo'));
 
   // Escape lets go of the ticks.
   await page.getByRole('checkbox', { name: 'Select 批量 B', exact: true }).click();

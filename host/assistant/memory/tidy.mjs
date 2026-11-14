@@ -2,7 +2,6 @@
 //
 //   const tidy = createTidy({ turns, files, skills, llm, now });
 //   await tidy.run({ apply = false, maxTurns }) -> { outcome, applied, review, summary, ops, staged, questions, skipped, turns, more }
-//   tidy.undo(reviewId) -> { outcome, review, reverted, skipped: [{ id, reason }] }
 //   tidy.reviews({ limit }), tidy.reviewsCiting(what), tidy.scrubReviews(what)   what = { turnIds, entryIds, skillNames }
 //
 // One run is one model call over the conversation turns since the last applied run, then plain code:
@@ -18,7 +17,7 @@
 //          new one is added; no contradicting second entry); an unclear conflict is a question for the owner, not a change.
 //          An entry's `since` is the day the owner first said it (the earliest turn that counts as evidence), not the day of the run
 //   write  reviews/<date>.md gets one section: what changed, with before and after of every touched entry in a comment, so that
-//          undo(reviewId) can put it back; an entry edited since is left alone and reported
+//          a write that fails on the way can be taken back (an older review that was undone says so: `undone`; nothing undoes a review now)
 // Input is ONLY conversation turns (src owner or dudu), with anything that looks like a secret blanked out; whatever else is in the
 // store is never sent. apply: false computes the same plan and writes nothing (not the staged notes, not the cursor).
 import { checkEntryText, CURATED, dayOf, EntryTextError, findEntry, nextId, parseCurated, renderContext, renderEntry, serializeCurated, timeOf } from './files.mjs';
@@ -33,7 +32,7 @@ const RELATIONS = ['new', 'corroborate', 'refine', 'supersede', 'ask'];
 export const EXPLICIT = /记一下|记住|记着|记下|帮我记|请记|别忘了|不要忘|remember (?:that|this|to)\b|please remember|keep in mind|don'?t forget|make a note|note that|write (?:this|that) down/i;
 
 // Words written into the owner's files (the day's notes and the reviews): plain ones (reviewed in the owner's style, 2026-10-31).
-export const WORD = { new: '新增', corroborate: '又提到', refine: '补充', supersede: '改成', skill: '新增技能', ask: '待确认', staged: '暂存', remembered: '记下', edited: '修改', undo: '撤销', undone: '已撤销' };
+export const WORD = { new: '新增', corroborate: '又提到', refine: '补充', supersede: '改成', skill: '新增技能', ask: '待确认', staged: '暂存', remembered: '记下', edited: '修改', undone: '已撤销' };
 
 const SYSTEM = `You maintain the long-term memory of a personal assistant called 嘟嘟 (dudu). The user message is one JSON object:
 - today: the date.
@@ -473,7 +472,7 @@ export function createTidy({ turns, files, skills, llm = null, now = Date.now })
         };
       }
 
-      // write: entries and skills first, then the review that can undo them (if anything fails on the way, what was written is undone)
+      // write: entries and skills first, then the review (if anything fails on the way, what was written is taken back)
       const applied = [];
       const day = dayOf(at);
       let review = null;
@@ -538,19 +537,6 @@ export function createTidy({ turns, files, skills, llm = null, now = Date.now })
     }
   }
 
-  function undo(id) {
-    const found = typeof id === 'string' ? allReviews().find(({ review }) => review.id === id) : null;
-    if (!found) return { outcome: 'error', message: `There is no review ${String(id).slice(0, 40)}.`, next: 'List the reviews to find the id.' };
-    if (found.review.undone) return { outcome: 'no_op', message: `${id} was already undone.` };
-    const { reverted, skipped } = revertAll(found.review.ops);
-    const at = now();
-    rewrite(found.day, (review) => (review.id === id ? { ...review, undone: at } : review));
-    try {
-      files.appendDaily(dayOf(at), flowLine(at, WORD.undo, id, '', [id]));
-    } catch {}
-    return { outcome: 'success', review: id, reverted: reverted.length, skipped };
-  }
-
   function reviews({ limit = 20 } = {}) {
     return allReviews().map(({ review }) => review).sort((a, b) => b.at - a.at).slice(0, limit).map((review) => ({
       id: review.id, at: review.at, undone: review.undone ?? null, summary: countKinds(review.ops), questions: review.questions?.length ?? 0, ops: review.ops.map(show),
@@ -563,7 +549,7 @@ export function createTidy({ turns, files, skills, llm = null, now = Date.now })
   const asked = (question, sets) => question.src.some((ref) => sets.refs.has(ref));
 
   return {
-    run, undo, reviews,
+    run, reviews,
     reviewsCiting(what) {
       const sets = asSets(what);
       return allReviews().map(({ review }) => ({ id: review.id, ops: review.ops.filter((op) => hits(op, sets)).length + (review.questions ?? []).filter((q) => asked(q, sets)).length }))

@@ -53,6 +53,17 @@ function world(t: any, extra: any = {}) {
   return { dir, file, connectors, state, store, calls, connections, read: () => readFileSync(file, 'utf8'), signIn: (value = true) => { signedIn = value; } };
 }
 
+test('a server found in another tool wears the logo its name says, as the connector made from it will, and a plain one the sign of its kind', async (t) => {
+  const w = world(t, { here: async () => [
+    { id: 'here-a', key: 'a', name: 'notion', spec: { transport: 'http', url: 'https://mcp.notion.com/mcp' }, line: 'mcp.notion.com' },
+    { id: 'here-b', key: 'b', name: 'drawio', spec: { transport: 'stdio', command: 'npx' }, line: 'npx' },
+    { id: 'here-c', key: 'c', name: 'internal', spec: { transport: 'http', url: 'https://mcp.example/mcp' }, line: 'mcp.example' },
+  ] });
+  const view = await w.connections.catalogView();
+  const here = view.groups.find((group: any) => group.id === 'here').items;
+  assert.deepEqual(here.map((item: any) => [item.name, item.icon]), [['notion', 'notion'], ['drawio', 'terminal'], ['internal', 'plug']]);
+});
+
 test('connecting a hosted server that signs in: it is at once a connector that waits, the browser sign-in is asked for once, and then it is connected with its tools counted', async (t) => {
   const w = world(t);
   const answer = await w.connections.connect('notion');
@@ -99,7 +110,6 @@ test('disconnecting removes the entry, the secrets, the sign-in and the state; o
   assert.equal(gone.outcome, 'success');
   assert.deepEqual([w.store.has('notion'), w.state.get('notion'), w.calls.forgotten], [false, null, ['notion']]);
   assert.ok(!w.read().includes('## Notion'));
-  assert.equal(typeof gone.undo, 'string', 'the entry can be brought back');
 });
 
 // What is connected is given to DSH (publish.mjs is tested on its own): when, with what, and when it is taken back.

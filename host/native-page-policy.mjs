@@ -1,6 +1,8 @@
+import { Buffer } from 'node:buffer';
 import {
   PAGE_READ_METHODS, PAGE_WRITE_METHODS, PAGE_STREAM_METHODS,
 } from './native-page-rpc.mjs';
+import { sessionChildren } from './dsh-subagents.mjs';
 
 const READS = new Set(PAGE_READ_METHODS);
 const WRITES = new Set(PAGE_WRITE_METHODS);
@@ -153,7 +155,8 @@ function scopedAddress(page, address) {
   }
   return page.kind === 'team' && address.kind === 'subagent'
     && ownKeys(address, ['kind', 'parentSessionId', 'childSessionId', 'mode'])
-    && address.parentSessionId === page.sessionId && page.sessionIds.has(address.childSessionId)
+    && page.sessionIds.has(address.parentSessionId)
+    && page.childrenBySession.get(address.parentSessionId)?.has(address.childSessionId) === true
     && ['one-shot', 'continuable', 'unknown'].includes(address.mode);
 }
 
@@ -188,6 +191,8 @@ function sessionRequest(page, endpoint, request) {
 
 export function initializePagePolicy(page) {
   page.sessionIds = new Set(page.sessionId ? [page.sessionId] : []);
+  page.childrenBySession = new Map();
+  page.childProjections = new Map();
   page.settingsNamespaces = new Set();
   page.credentialRefs = new Set();
   page.pluginIds = new Set();
@@ -319,9 +324,16 @@ export function acceptPageResult(page, endpoint, result, args) {
     }
   }
   if (endpoint === 'session/projections' && page.kind === 'team') {
-    const projections = value?.values ?? {};
-    for (const member of [...(projections.agentTeam?.members ?? []), ...(projections.subagentCatalog ?? [])]) {
-      if (shortString(member?.id, 256)) page.sessionIds.add(member.id);
+    const parentId = args?.request?.sessionId ?? page.sessionId;
+    if (page.sessionIds.has(parentId)) {
+      const projections = { ...page.childProjections.get(parentId), ...value?.values };
+      page.childProjections.set(parentId, projections);
+      const children = new Set(sessionChildren(projections)
+        .filter((child) => shortString(child.id, 256) && child.mode !== 'external'
+          && !['failed', 'provisioning'].includes(child.phase))
+        .map((child) => child.id));
+      page.childrenBySession.set(parentId, children);
+      for (const id of children) page.sessionIds.add(id);
     }
   }
   if (endpoint === 'pluginManager/listPlugins') {
@@ -364,9 +376,12 @@ export function pageStreamItem(page, endpoint, item) {
   }
   if (endpoint === 'session/control') {
     if (item?.type === 'baseline') {
-      const parent = item.value?.projections?.[page.sessionId];
-      if (parent && page.kind === 'team') {
-        acceptPageResult(page, 'session/projections', { ok: true, value: parent });
+      if (page.kind === 'team') {
+        // Learn each generation only from its admitted parent's own projection.
+        for (const id of page.sessionIds) {
+          const projection = item.value?.projections?.[id];
+          if (projection) acceptPageResult(page, 'session/projections', { ok: true, value: projection }, { request: { sessionId: id } });
+        }
       }
       return {
         ...item,
@@ -376,9 +391,10 @@ export function pageStreamItem(page, endpoint, item) {
       };
     }
     if (item?.type === 'projection' && !page.sessionIds.has(item.sessionId)) return undefined;
-    if (page.kind === 'team' && item?.type === 'projection' && item.sessionId === page.sessionId
+    if (page.kind === 'team' && item?.type === 'projection'
       && ['agentTeam', 'subagentCatalog'].includes(item.key)) {
-      acceptPageResult(page, 'session/projections', { ok: true, value: { values: { [item.key]: item.value } } });
+      acceptPageResult(page, 'session/projections', { ok: true, value: { values: { [item.key]: item.value } } },
+        { request: { sessionId: item.sessionId } });
     }
   }
   return item;

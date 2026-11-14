@@ -8,6 +8,10 @@
 //     Both come out as true, false or null. `mine` marks a message of the context that the owner wrote.
 //   identityOf(raw) -> { name, id } | null     who the owner is on the source (the account the session read as), as the session says it
 //
+// An item the inbox has already can be given again to change it: `update: true` with the id (and the thread, if the first record had one) and only what changes. It comes out as
+// { update: true, sourceId, thread, changes: { title?, text?, author?, url?, at?, more?, context? }, truncated }, with nothing in it that was not given; the inbox changes the row that
+// holds that item and makes none (store.mjs `ingest`). It is never one message of a conversation, and a title it does not give is not made up.
+//
 // A conversation is one record, however many messages it has (owner, 2026-11-06: sixteen messages of one private chat were sixteen rows): the
 // messages of a chat or a comment thread that one collection brings are put together under the thread's id, oldest first, one message to a
 // line that starts with its time; `conversation: true` tells the inbox to add the messages that come later to the row that is still waiting.
@@ -24,7 +28,7 @@ export const RECORD_LIMITS = Object.freeze({ records: 100, id: 300, version: 100
 export const KINDS = Object.freeze(['mail', 'message', 'issue', 'comment', 'page', 'task', 'other']);
 /** The kinds whose items are messages of a conversation: a mail has its own subject, a message or a comment is only a line of the talk. */
 export const CONVERSATION_KINDS = Object.freeze(['message', 'comment']);
-const inConversation = (record) => Boolean(record.thread) && CONVERSATION_KINDS.includes(record.kind);
+const inConversation = (record) => !record.update && Boolean(record.thread) && CONVERSATION_KINDS.includes(record.kind);
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 /** true, false, or null for "not said": only a real boolean (or the words) counts. */
@@ -86,6 +90,23 @@ const linkOf = (value) => {
   }
 };
 
+/** The messages around an item, cleaned: at most RECORD_LIMITS.context of them, each with who, when and what; `cut` says one was left out or shortened. */
+function contextOf(value) {
+  const context = [];
+  let cut = false;
+  for (const item of Array.isArray(value) ? value : []) {
+    if (!isObject(item) || context.length >= RECORD_LIMITS.context) {
+      if (isObject(item)) cut = true;
+      continue;
+    }
+    const said = cleanText(item.text, RECORD_LIMITS.contextText, { multiline: true });
+    if (!said.text) continue;
+    cut ||= said.cut;
+    context.push({ from: cleanText(item.from, RECORD_LIMITS.from).text, at: timeOf(item.at), text: said.text, mine: flag(item.mine ?? item.from_me) === true });
+  }
+  return { context, cut };
+}
+
 function one(raw, state) {
   if (!isObject(raw)) return { problem: 'A record must be an object.' };
   // The id is the service's own: it is how a record is told from another and from itself later. A secret inside it (a link with a token)
@@ -96,6 +117,24 @@ function one(raw, state) {
   if (!rawId || rawId.length > RECORD_LIMITS.id) return { problem: `The id must be 1 to ${RECORD_LIMITS.id} characters.` };
   const sourceId = findSecret(rawId) ? `ref-${digest(rawId).slice(0, 16)}` : rawId;
 
+  // The item is given again to change what the inbox kept of it: only the fields that are given, cleaned as a new record's are, and at least one of them.
+  if (flag(raw.update) === true) {
+    const title = cleanText(raw.title, RECORD_LIMITS.title);
+    const text = cleanText(raw.text, RECORD_LIMITS.text, { multiline: true });
+    const author = cleanText(raw.from, RECORD_LIMITS.from);
+    const thread = cleanText(raw.thread, RECORD_LIMITS.thread);
+    const more = cleanText(raw.more, RECORD_LIMITS.more);
+    const around = contextOf(raw.context);
+    const at = timeOf(raw.at);
+    const url = linkOf(raw.url);
+    const changes = {
+      ...(title.text ? { title: title.text } : {}), ...(text.text ? { text: text.text } : {}), ...(author.text ? { author: author.text } : {}), ...(url ? { url } : {}),
+      ...(at !== null ? { at } : {}), ...(more.text ? { more: more.text } : {}), ...(around.context.length ? { context: around.context } : {}),
+    };
+    if (!Object.keys(changes).length) return { id: sourceId, problem: 'An update needs something to change: a title, a text, a sender, a time, a link, a context or more.' };
+    return { record: { update: true, sourceId, thread: thread.text, changes, truncated: title.cut || text.cut || author.cut || more.cut || around.cut } };
+  }
+
   const title = cleanText(raw.title, RECORD_LIMITS.title);
   const text = cleanText(raw.text, RECORD_LIMITS.text, { multiline: true });
   if (!title.text && !text.text) return { id: sourceId, problem: 'A record needs a title or a text.' };
@@ -104,17 +143,8 @@ function one(raw, state) {
   const more = cleanText(raw.more, RECORD_LIMITS.more);
   let cut = title.cut || text.cut || author.cut || thread.cut || more.cut;
 
-  const context = [];
-  for (const item of Array.isArray(raw.context) ? raw.context : []) {
-    if (!isObject(item) || context.length >= RECORD_LIMITS.context) {
-      if (isObject(item)) cut = true;
-      continue;
-    }
-    const said = cleanText(item.text, RECORD_LIMITS.contextText, { multiline: true });
-    if (!said.text) continue;
-    cut ||= said.cut;
-    context.push({ from: cleanText(item.from, RECORD_LIMITS.from).text, at: timeOf(item.at), text: said.text, mine: flag(item.mine ?? item.from_me) === true });
-  }
+  const { context, cut: contextCut } = contextOf(raw.context);
+  cut ||= contextCut;
 
   const given = cleanText(raw.version, RECORD_LIMITS.version).text;
   // With no version the text is the version: an edit is a new version, the same text again is not.
@@ -279,7 +309,7 @@ export function normalizeRecords(raw, { now = Date.now } = {}) {
       out.rejected.push({ index, id: result.id ?? (typeof item?.id === 'string' ? cleanText(item.id, 40).text : ''), message: result.problem });
       return;
     }
-    const key = `${result.record.sourceId}\u0000${result.record.version}`;
+    const key = result.record.update ? `update\u0000${result.record.sourceId}` : `${result.record.sourceId}\u0000${result.record.version}`;
     if (seen.has(key)) {
       out.duplicates++;
       return;
@@ -290,6 +320,6 @@ export function normalizeRecords(raw, { now = Date.now } = {}) {
   });
   out.records = gather(out.records);
   // A title the session left out is the first words of what the record says, never a blank row (`titleFromText`).
-  for (const record of out.records) if (!record.title) record.title = titleFromText(record.text);
+  for (const record of out.records) if (!record.update && !record.title) record.title = titleFromText(record.text);
   return out;
 }

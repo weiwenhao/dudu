@@ -6,6 +6,7 @@ import { OarNormalizer, createOarProvider } from '../oar.mjs';
 import { claudeRuntime } from '../oar-runtimes.mjs';
 import { readClaudeQuota } from '../quota/claude.mjs';
 import { CLAUDE_TOOLS, fallbackSpec } from './claude-tools.mjs';
+import { createClaudeChildUsageReader } from '../native/claude-child-usage.mjs';
 
 // Claude Code through OAR. The `claude` installed on this computer, with this user's login, settings, skills and MCP
 // servers, does the work, and its sessions are ordinary ones that `claude --resume` lists.
@@ -52,6 +53,7 @@ export function createClaudeProvider({ runtime = claudeRuntime, registry } = {})
     tools: CLAUDE_TOOLS, fallbackTool: fallbackSpec,
     login: 'Run `claude` in a terminal and sign in.',
     normalizer: (options) => new ClaudeNormalizer(options),
+    childUsage: createClaudeChildUsageReader,
     fallbackModels: FALLBACK_MODELS,
     // The child must not believe it runs inside another harness. OAR already drops Claude's own markers.
     scrub: { patterns: [/^(ORCA_|HERDR_)/] },

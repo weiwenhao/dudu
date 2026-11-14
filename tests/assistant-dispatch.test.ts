@@ -105,6 +105,46 @@ test('collected records are kept in the inbox and nothing else is done with them
   assert.equal(w.issues.counts().total, 0);
 });
 
+test('collection notifications use committed fresh rows and current preferences; failures never fail the collection', async (t) => {
+  const events: any[] = [];
+  const w = world(t, { onCollected: (collector: any, rows: any[]) => {
+    for (const row of rows) assert.ok(w.issues.inbox.get(row.id)?.record, 'notification follows storage');
+    events.push({ notify: collector.notify, rows });
+  } });
+  w.records.set('mail', [rec('m1')]);
+  assert.equal((await w.dispatch.intake()).outcome, 'success');
+  assert.equal(events[0].notify, false);
+  assert.equal((await w.dispatch.intake()).outcome, 'success');
+  assert.equal(events.length, 1, 'unchanged records do not publish again');
+  w.records.set('mail', () => {
+    w.sources.owner.update('mail', { notify: true });
+    return { outcome: 'success', records: [{ id: 'm1', update: true, title: '已恢复' }, rec('m2')] };
+  });
+  assert.equal((await w.dispatch.intake()).outcome, 'success');
+  assert.equal(events[1].notify, true, 'a toggle during collection takes effect for that result');
+  assert.deepEqual(events[1].rows.map((row: any) => row.title).sort(), ['已恢复', '来信 m2']);
+  const failing = w.reopen({ onCollected: () => { throw new Error('notification unavailable'); } });
+  w.records.set('mail', [rec('m3')]);
+  assert.equal((await failing.intake()).outcome, 'success');
+  assert.equal(w.issues.inbox.lastRun('mail').ok, true);
+  assert.equal(w.issues.inbox.list({ connector: 'mail' }).items.length, 3);
+});
+
+test('a collector can change a record it brought before: the row changes in place, the run says so, and an item the inbox does not have is not made', async (t) => {
+  const w = world(t);
+  w.records.set('mail', [rec('a1', { title: 'CPU 高 · db1' }), rec('a2', { title: 'CPU 高 · db2' })]);
+  await w.dispatch.intake();
+  const before = w.issues.inbox.list({ connector: 'mail', limit: 10 }).items;
+  w.records.set('mail', [{ id: 'a1', update: true, title: '已恢复 · CPU 高 · db1' }, { id: 'gone', update: true, title: '已恢复 · 没有的' }]);
+  const op = firstOp(await w.dispatch.intake());
+  assert.deepEqual([op.status, op.added, op.updated, op.unmatched], ['read', 1, 1, 1]);
+  const rows = w.issues.inbox.list({ connector: 'mail', limit: 10 }).items;
+  assert.equal(rows.length, 2, 'no row was made');
+  assert.deepEqual(rows.map((row: any) => row.title).sort(), ['CPU 高 · db2', '已恢复 · CPU 高 · db1']);
+  assert.deepEqual(rows.map((row: any) => row.ref).sort(), before.map((row: any) => row.ref).sort(), 'the numbers are the ones it had');
+  assert.equal(firstOp(await w.dispatch.intake()).status, 'unchanged', 'the same answer again changes nothing');
+});
+
 test('more context for one record: the session of its collector reads the conversation around it and the record grows; no run is kept, and a failure changes nothing', async (t) => {
   const w = world(t);
   w.records.set('mail', [rec('m9', { kind: 'message', thread: 'omt_1', from: 'Frank Wang', at: '2026-10-31T11:00:00+08:00', text: '@我', more: 'read the thread' })]);

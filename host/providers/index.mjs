@@ -96,7 +96,10 @@ export async function createProviders({ host, providers, folder, log = console }
     const bridge = new HarnessBridge({
       driver, agentOf: (id) => host.agents.get(id), permissionOf: (agent) => host.permissionOf?.(agent), onLink: host.onLink,
       eventsOf: host.eventsOf, flushSession: host.flushSession, inputJournal,
-      onForeground: (id) => foreground.changed(id),
+      onForeground: (id) => {
+        foreground.changed(id);
+        bridge.yieldForInput(id);
+      },
       inputOf: createHarnessInput({ attachments: () => host.attachments?.(), folder: join(folder, 'input-images') }),
     });
     const teams = createHarnessTeams({ host, driver, log });
@@ -155,6 +158,9 @@ export async function createProviders({ host, providers, folder, log = console }
   const disposers = [
     host.on('agent/created', ({ agent }) => syncMirrorTools(agent, routeOf(agent))),
     host.on('session/event', (session, event) => {
+      if (event?.type === 'agent/inbox/spliced' && event.data?.target === 'next-step') {
+        for (const { bridge } of registered.values()) bridge.yieldForInput(session.id);
+      }
       if (event?.type !== 'model/selection') return;
       const agent = host.agents.get(session.id);
       if (agent) syncMirrorTools(agent, event.data?.provider);
@@ -177,6 +183,7 @@ export async function createProviders({ host, providers, folder, log = console }
       id: driver.id, name: driver.name, route: driver.route, command: path, version, environment, driver, activeRuns: () => bridge.activeRuns(),
     })),
     refresh: async () => { await refresh(); return view(); },
+    hasActiveWork: (sessionId) => [...registered.values()].some(({ bridge }) => bridge.hasActiveWork(sessionId)),
     /** Lets go of what the harnesses hold for a DSH session whose turn has ended (deep sleep); -> whether any of them held a run. */
     async release(sessionId) {
       const results = await Promise.all([...registered.values()].map(({ bridge }) => bridge.release(sessionId).catch(() => false)));

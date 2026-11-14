@@ -209,6 +209,19 @@ export class HarnessBridge {
 
   runOf(sessionId) { return this.#runs.get(sessionId); }
 
+  /** Live native work, including retained background tasks and compaction, keeps an idle issue awake. */
+  hasActiveWork(sessionId) {
+    const run = this.#runs.get(sessionId);
+    return this.#compactions.has(sessionId) || Boolean(run && (!run.finished || run.handle.backgroundActive));
+  }
+
+  yieldForInput(sessionId) {
+    const run = this.#runs.get(sessionId);
+    if (run && !run.finished && !run.foregroundActive && this.agentOf(sessionId)?.inbox?.nextStep?.length) {
+      run.handle.yieldForInput?.();
+    }
+  }
+
   async historyOf(sessionId, signal) {
     const events = await this.eventsOf?.(sessionId, signal);
     return withInputDeliveries(events, await this.inputJournal?.read(this.route, sessionId) ?? []);
@@ -429,6 +442,7 @@ export function createHarnessAdapter(bridge) {
         } else if (event.type === 'step-end' || event.type === 'turn-end') {
           yield* closeOpen();
           if (event.type === 'turn-end' && event.ok === false) {
+            if (usage || event.usage) yield { type: 'usage', usage: usageOf(usage ?? event.usage) };
             throw event.error instanceof Error ? event.error : harnessError(String(event.error ?? 'The harness failed.'), 'HARNESS_FAILED');
           }
           // DSH can admit input after the native turn ends, before it consumes the final answer.

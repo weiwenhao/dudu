@@ -20,7 +20,7 @@ const PAGES = {
 
 // What the plugin put in the document: which section. The language is the phone's.
 const config = window.__DUDU_PHONE__ ?? {};
-setLocale(navigator.language);
+setLocale(config.locale ?? navigator.language);
 
 /** The plugin's POST helper, as the desktop interface has it, with the header that says this is one of the app's pages. */
 async function request(action, body = {}, { signal } = {}) {

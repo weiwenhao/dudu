@@ -49,7 +49,7 @@ struct QuotaSheet: View {
 
     private var titleRow: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text("额度")
+            Text(L10n.text("额度"))
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(Color(white: 0.4))
                 .accessibilityAddTraits(.isHeader)
@@ -85,7 +85,7 @@ struct QuotaSheet: View {
             }
             .accessibilityHidden(true)
         } else {
-            Text(model.state == .failed ? "—" : "暂无用量")
+            Text(model.state == .failed ? "—" : L10n.text("暂无用量"))
                 .font(.system(size: 14))
                 .foregroundStyle(DSBotStyle.muted)
                 .frame(maxWidth: .infinity)
@@ -118,7 +118,7 @@ private struct QuotaCard: View {
             .frame(height: QuotaSheet.Layout.headHeight)
             if let amount = block.amount {
                 HStack {
-                    Text("余额")
+                    Text(L10n.text("余额"))
                         .font(.system(size: 14))
                         .foregroundStyle(DSBotStyle.chatSecondary)
                     Spacer(minLength: 8)
@@ -171,7 +171,7 @@ private struct QuotaRowView: View {
                         .foregroundStyle(Color(red: 185.0 / 255, green: 28.0 / 255, blue: 28.0 / 255))
                 } else {
                     HStack(alignment: .firstTextBaseline, spacing: 3) {
-                        Text("剩余")
+                        Text(L10n.text("剩余"))
                             .font(.system(size: 13))
                             .foregroundStyle(DSBotStyle.muted)
                         Text("\(row.left)%")
@@ -199,7 +199,7 @@ private struct QuotaRowView: View {
         .frame(minHeight: QuotaSheet.Layout.rowHeight - 8, alignment: .top)
         .padding(.bottom, 8)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(row.phrase.map { "\(row.label)，\($0)" } ?? "\(row.label)，剩余 \(row.left)%\(row.reset.map { "，\($0)" } ?? "")")
+        .accessibilityLabel(row.phrase.map { L10n.text("{0}，{1}", "\(row.label)", "\($0)") } ?? L10n.text("{0}，剩余 {1}%{2}", "\(row.label)", "\(row.left)", "\(row.reset.map { L10n.text("，{0}", "\($0)") } ?? "")"))
     }
 }
 

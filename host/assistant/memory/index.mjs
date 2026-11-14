@@ -47,7 +47,7 @@
 //   records({ file?, status?, q? })                           sync     -> { records: [{ id, file, since, status, src, text }], total, budget }
 //   update(id, { text?, status? })                            sync     the owner's edit from the settings page -> { record }
 //   tidy({ apply = false, maxTurns? })                        async    see tidy.mjs -> { applied, review, summary, ops, staged, questions, skipped }
-//   undoReview(id), reviews({ limit })                        sync     put a tidy back (entries edited since are left alone and listed in `skipped`)
+//   reviews({ limit })                                        sync     the tidy runs, newest first
 //   rules()                                                   sync     -> { rules: { 'TRIAGE.md': text | null, 'ASSIGN.md': text | null } } (read only)
 //   skills.list() / skills.read(name) / skills.remove(name)   sync     only the tidy creates skills
 //   close()
@@ -445,7 +445,6 @@ export function createMemory({ dir, indexDir, llm = null, now = Date.now }) {
     records: guarded(records),
     update: guarded(update),
     tidy: guardedAsync((options) => tidy.run(options ?? {})),
-    undoReview: guarded((id) => tidy.undo(id)),
     reviews: guarded((options) => success({ reviews: tidy.reviews(options ?? {}) })),
     rules: guarded(() => success({ rules: { 'TRIAGE.md': files.read('TRIAGE.md')?.text ?? null, 'ASSIGN.md': files.read('ASSIGN.md')?.text ?? null } })),
     skills: publicSkills,

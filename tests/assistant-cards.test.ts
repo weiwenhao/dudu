@@ -53,6 +53,17 @@ test('a todo row carries the latest message of its session, and the sessions wit
   assert.equal('latest' in card.rows[1], false);
 });
 
+test('the sheet can page the same needs-you list without storing a transcript card', async () => {
+  const asked: unknown[] = [];
+  const cards = createCards({ issues: () => ({ execute: async (action, body) => {
+    asked.push([action, body]);
+    return { outcome: 'success', total: 31, items: [issue(10)], nextCursor: 'next' };
+  } }) });
+  assert.equal((await cards.todos('after')).nextCursor, 'next');
+  assert.deepEqual(asked, [['list', { tab: 'active', filter: { agentState: ['blocked'] }, order: 'priority', limit: 30, cursor: 'after' }]]);
+  assert.deepEqual(cards.many(['after']), {});
+});
+
 test('an information card lists the records still to handle, and counts them from the collectors\' own totals', async () => {
   const cards = createCards(services());
   const card = await cards.build('info');

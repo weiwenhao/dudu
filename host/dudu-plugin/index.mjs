@@ -32,6 +32,7 @@ import { AGENTS, createAgentSessions, modelFor } from './dist/assistant/home/age
 import { approvalText, createDshSessions, questionText } from './dist/assistant/home/dsh-sessions.mjs';
 import { createAssignment } from './dist/assistant/home/assign.mjs';
 import { createDispatch } from './dist/assistant/dispatch/index.mjs';
+import { createCollectorNotifications } from './dist/assistant/collectors/notifications.mjs';
 import { createDshLlm } from './dist/assistant/dispatch/dsh-llm.mjs';
 import { createHandOut } from './dist/assistant/dispatch/hand-out.mjs';
 import { createScheduler } from './dist/assistant/schedule/index.mjs';
@@ -141,6 +142,7 @@ async function startProviders(ctx, folder, assignment) {
         return canReadSessionHistory(services) ? (await readSessionHistory(services, sessionId, signal)).events : undefined;
       },
       flushSession: (session) => ctx.sessions.flush(session),
+      tokenUsageOf: (session) => ctx.sessionProjections?.stateOf(session, 'tokenUsage')?.totals,
       onLink: links.record,
     },
   });
@@ -169,6 +171,7 @@ async function startProviders(ctx, folder, assignment) {
   assignment.nativeSessions = native;
   assignment.sources = providers.sources;
   assignment.release = (sessionId) => providers.release(sessionId); // deep sleep lets go of what the harnesses hold for a session whose turn has ended
+  assignment.hasActiveWork = providers.hasActiveWork;
   assignment.links = links;
   const overview = createOverview({ sources: providers.sources, links, titleOf: native.titleOf });
   // The subscription quota: read only when a person asks (the panel's icon, the chat's card), from the providers that are found and enabled and from DSH's DeepSeek accounts, kept in quota.db.
@@ -219,6 +222,7 @@ async function startProviders(ctx, folder, assignment) {
       delete assignment.searchSessions;
       delete assignment.sources;
       delete assignment.release;
+      delete assignment.hasActiveWork;
       delete assignment.links;
       delete assignment.quota;
       quota.close();
@@ -236,6 +240,7 @@ async function startIssues(ctx, folder, assignment = {}) {
   const issues = createIssues({ file: join(folder, 'assistant', 'issues.db'), sessionState: (key) => assignment.sessionState?.(key) ?? assignment.snapshots?.stateOf(key) ?? null,
     sessionSince: (key) => assignment.sessionSince?.(key) ?? assignment.snapshots?.snapshotOf(key)?.stateSince ?? null,
     sessionBases: (key) => assignment.sessionBases?.(key), sessionHandledAt: (key) => assignment.sessionHandledAt?.(key) ?? null, deepSleepMs: deepSleepAfter,
+    sessionTurnActive: (key) => key.startsWith('dsh:') && assignment.hasActiveWork?.(key.slice(4)) ? true : assignment.sessionTurnActive?.(key) ?? null,
     deepSleepOn: () => assignment.assistant?.settings?.value('deepSleep') !== false }); // the settings open later (startAssistant): until then, and for a file without the key, it is on
   const attachmentApi = createIssueAttachmentApi({ issues, attachments: () => ctx.attachments });
   const forward = async (issue, text, _entry, attachments = [], { chat = false } = {}) => {
@@ -348,7 +353,7 @@ async function startAssignment(ctx, folder, assignment) {
     // What ASSIGN.md allows for this kind of issue; full access when it says nothing (3.3, owner 2026-11-09), and for Claude Code its own default.
     accessOf: (issue) => sessionOptions(assignment.assistant?.memory?.rules?.()?.rules?.['ASSIGN.md'], issue, { home: homedir(), defaultAccess: issue.agent === 'claude' ? null : 'danger-full-access' }),
   });
-  Object.assign(assignment, { sessions: agentSessions, sessionState: hooks.sessionState, sessionSince: hooks.sessionSince, sessionBases: hooks.sessionBases, sessionHandledAt: hooks.sessionHandledAt, onAssign: hooks.onAssign, onReply: hooks.onReply, forward: hooks.forward, onResume: hooks.onResume, start: hooks.start, setAccess: hooks.setAccess, closeFor: hooks.closeFor, restore: hooks.restore });
+  Object.assign(assignment, { sessions: agentSessions, sessionState: hooks.sessionState, sessionSince: hooks.sessionSince, sessionBases: hooks.sessionBases, sessionHandledAt: hooks.sessionHandledAt, sessionTurnActive: hooks.sessionTurnActive, onAssign: hooks.onAssign, onReply: hooks.onReply, forward: hooks.forward, onResume: hooks.onResume, start: hooks.start, setAccess: hooks.setAccess, closeFor: hooks.closeFor, restore: hooks.restore });
   assignment.rebindSession = async (previousId, sessionId) => {
     const previous = `dsh:${previousId}`;
     const next = `dsh:${sessionId}`;
@@ -512,7 +517,7 @@ async function startAssignment(ctx, folder, assignment) {
     await inbox.close();
     delete assignment.snapshots;
     delete assignment.loadIssueSession;
-    for (const hook of ['sessions', 'sessionState', 'sessionBases', 'sessionHandledAt', 'onAssign', 'onReply', 'forward', 'onResume', 'start', 'closeFor', 'restore', 'deleteSessions', 'rebindSession']) delete assignment[hook];
+    for (const hook of ['sessions', 'sessionState', 'sessionBases', 'sessionHandledAt', 'sessionTurnActive', 'onAssign', 'onReply', 'forward', 'onResume', 'start', 'closeFor', 'restore', 'deleteSessions', 'rebindSession']) delete assignment[hook];
     await hooks.dispose();
     agentSessions.dispose();
   };
@@ -576,6 +581,8 @@ async function startDispatch(ctx, folder, assignment) {
   if (!assignment.issues) throw new Error('there are no issues');
   const dsh = createDshSessions(ctx);
   const llm = createDshLlm(ctx);
+  const notifications = createCollectorNotifications();
+  assignment.collectorNotifications = notifications;
   assignment.llm = llm;
   assignment.collectSource = createSourceCollector(ctx, {
     folder: () => assignment.assistant?.folder, file: join(folder, 'assistant', 'collect-sessions.json'),
@@ -589,6 +596,7 @@ async function startDispatch(ctx, folder, assignment) {
     issues: assignment.issues,
     collectors: () => assignment.assistant?.collectors ?? null,
     collect: assignment.collectSource,
+    onCollected: notifications.publish,
     rules: () => assignment.assistant?.memory?.rules?.() ?? { rules: {} },
     llm,
     agents: async () => {
@@ -627,24 +635,31 @@ async function startDispatch(ctx, folder, assignment) {
     path: '/api/dudu/dispatch/state', methods: ['POST'], requestBody: 'buffered',
     fetch: async () => Response.json(await dispatch.state(), { headers: { 'cache-control': 'no-store' } }),
   });
-  const disposeTidy = ['tidy', 'tidy-undo'].map((action) => registerRoute(ctx, {
-    path: `/api/dudu/issues/${action}`, methods: ['POST'], requestBody: 'buffered',
+  const disposeNotifications = registerRoute(ctx, {
+    path: '/api/dudu/inbox/notifications', methods: ['POST'], requestBody: 'buffered',
+    fetch: (request) => notifications.follow(request.signal),
+  });
+  const disposeTidy = registerRoute(ctx, {
+    path: '/api/dudu/issues/tidy', methods: ['POST'], requestBody: 'buffered',
     fetch: async (request) => {
       const body = await request.json().catch(() => null);
       if (!body || typeof body !== 'object' || Array.isArray(body)) return Response.json({ error: 'Expected a JSON object.' }, { status: 400 });
-      if (action === 'tidy' && body.trigger === 'dashboard') {
+      if (body.trigger === 'dashboard') {
         // Older clients still send this notification. Viewing issues must not run a model or edit them.
         return Response.json({ outcome: 'success' }, { headers: { 'cache-control': 'no-store' } });
       }
-      return Response.json(action === 'tidy-undo' ? tidy.undo() : await tidy.run({ token: body.token }), { headers: { 'cache-control': 'no-store' } });
+      return Response.json(await tidy.run({ token: body.token }), { headers: { 'cache-control': 'no-store' } });
     },
-  }));
+  });
   return async () => {
     clearTimeout(tidying);
     clearTimeout(prunedFirst);
     clearInterval(pruning);
+    notifications.close();
+    delete assignment.collectorNotifications;
+    disposeNotifications();
     disposeRoute();
-    for (const dispose of disposeTidy) dispose();
+    disposeTidy();
     const closing = tidy.close();
     const draining = scheduler.dispose(); // no new collection starts; the one running ends when dispatch is told to stop
     await dispatch.dispose();
@@ -768,6 +783,11 @@ async function startConversation(ctx, folder, assignment) {
 async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
   const diagnostics = createNativeDiagnostics(folder);
   const peer = ctx.connection.createPeer({ principal: { kind: 'owner' } });
+  // DSH 0.2.2's HMR marks its transaction with this AsyncLocalStorage. A server
+  // started during a reload inherits that mark in future HTTP requests. Leave
+  // only that scope at ingress, as HMR itself does for its config watcher.
+  // Older hosts without this transaction scope need no detachment.
+  const reloadTransaction = ctx.get('hmr')?.executing;
   let control;
   let questionBridge;
   const disposers = [];
@@ -800,6 +820,7 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
       folder,
       rpc,
       pages,
+      runRequest: reloadTransaction ? (operation) => reloadTransaction.exit(operation) : undefined,
       conversationReads: createConversationReads({
         connection: ctx.connection, peer, workspaceChanges: () => ctx.get('workspaceChanges'),
       }),
@@ -817,12 +838,16 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
         // The quick buttons of the chat on the phone: the same card, and the contents of one the thread names.
         card: (kind, since) => assignment.conversation?.card(kind, since) ?? { outcome: 'error', code: 'unavailable' },
         cardOf: (commandId) => assignment.cards?.get(commandId) ?? null,
+        todos: (cursor) => assignment.cards?.todos(cursor),
         // The lines of the group chat in the thread, and the ones the owner hid.
         groupOf: (commandId) => assignment.group?.get(commandId) ?? null,
+        onGroupChange: (listener) => assignment.group?.onChange(listener),
         hidden: () => assignment.group?.hidden() ?? null,
         hide: (seqs) => assignment.group?.hide(seqs) ?? { outcome: 'error', code: 'unavailable' },
       },
       duduPages,
+      collectorNotifications: assignment.collectorNotifications,
+      collectorNotificationsEnabled: () => assignment.assistant?.collectors?.dudu.list().collectors?.some((entry) => entry.notify === true) === true,
       // The phone's board and Collector: the same commands the desktop interface sends, run for the owner (the issues are opened later than this: asked for when used).
       board: {
         getNeedsYouColor: () => assignment.assistant?.settings?.value('needsYouColor'),

@@ -1,13 +1,14 @@
 // 嘟嘟's conversation as a group chat with a boundary (owner, 2026-11-10: "将嘟嘟会话框的展现形式展现成群聊一样的方式，嘟嘟能看到他当前会话内的所有上下文，但是其他会话 … 他们看不到"; docs/assistant.md 4.1).
 //
 // Four things come into the thread besides what the owner and 嘟嘟 say: the owner's `@ISSUE …` line (`at`), the answer of that issue's agent to it (`reply`: the last message of the turn the line
-// started, or its question when the turn stops to ask), a silent mark that the answer will not come (`end`: the turn failed or was stopped, or said nothing), and the result of a scheduled task that
+// started, or its question when the turn stops to ask), a silent mark that the answer will not come (`end`: the turn left no visible text), and the result of a scheduled task that
 // 嘟嘟 did (`task`: its last message, or why the run failed; the run itself happened in a conversation of its own, task-session.mjs). Each one is a command of the
 // conversation that the plugin runs without the model, `/dudu-say <kind> <id>`, exactly as a card is (cards.mjs): its two ordinary session events are the entry's place in the thread, and what it
 // says is kept here under the command's id, so that both ends can ask for it. The agent of an issue is never told of any of this: it gets the owner's line, as it always did, and sees nothing else.
 //
 // 嘟嘟 reads none of these events (the model never reads a command's), so `material()` hands it the latest of them in its system prompt: it sees the whole group, the agents see their own lines.
 // Nothing here talks to a model, and an agent that is not asked says nothing in the thread.
+// A waiting line carries its current reply as an in-memory overlay; only the final reply appends a command and enters prompt material.
 //
 // The owner can hide a line of the thread (a message of theirs, of 嘟嘟, a card, a line of the group): hiding is only about what the interface shows. DSH's session log only grows, and 嘟嘟 still has
 // what it was told (the owner, 2026-11-10: "删除只是在会话界面删除这个消息，实际是没有删除"). The hidden ones are named by the sequence number of their event.
@@ -74,7 +75,18 @@ export function createGroup({ file = null, sessions = () => null, say = async ()
   }
   const pending = new Map();
   const waits = new Map();
+  const liveReplies = new Map();
+  const listeners = new Set();
+  let revision = 0;
   let unsubscribe = null;
+  let unsubscribeText = null;
+
+  function changed(commandId) {
+    revision++;
+    for (const listener of [...listeners]) {
+      try { listener(commandId); } catch (error) { log.warn?.(`[dudu] A group listener failed: ${error.message}`); }
+    }
+  }
 
   function save() {
     if (!file) return;
@@ -102,8 +114,13 @@ export function createGroup({ file = null, sessions = () => null, say = async ()
     kept.set(commandId, record);
     while (kept.size > KEEP) kept.delete(kept.keys().next().value);
     save();
+    changed(commandId);
   }
-  const get = (commandId) => (typeof commandId === 'string' ? kept.get(commandId) ?? null : null);
+  const get = (commandId) => {
+    const line = typeof commandId === 'string' ? kept.get(commandId) ?? null : null;
+    const liveReply = liveReplies.get(commandId);
+    return line && liveReply ? { ...line, liveReply } : line;
+  };
 
   /** The command as DSH registers it (on the conversation's agent: conversation.mjs): it takes the line that waits under the id it was given and keeps it under its own. */
   function command() {
@@ -136,11 +153,33 @@ export function createGroup({ file = null, sessions = () => null, say = async ()
 
   async function finish(wait) {
     waits.delete(wait.token);
-    const outcome = wait.outcome ?? { kind: 'end' };
+    let outcome = wait.outcome ?? { kind: 'end' };
+    // Keep text already shown if a turn is stopped or fails after beginning its reply.
+    if (wait.text && outcome.answer !== 'question') outcome = { kind: 'reply', text: wait.text, answer: 'answer' };
     try {
       if (outcome.kind === 'reply') await say('reply', { v: VERSION, kind: 'reply', issue: wait.issue, text: outcome.text, to: wait.atId, answer: outcome.answer, at: now() });
       else await say('end', { v: VERSION, kind: 'end', issue: wait.issue, to: wait.atId, at: now() });
     } catch (error) { log.warn?.(`[dudu] The answer of an issue could not be put in the group chat: ${error.message}`); }
+    finally {
+      if (liveReplies.delete(wait.atId)) changed(wait.atId);
+    }
+  }
+
+  function preview(wait) {
+    if (!wait.atId) return;
+    if (wait.text) liveReplies.set(wait.atId, { text: wait.text, at: wait.replyAt });
+    else liveReplies.delete(wait.atId);
+    changed(wait.atId);
+  }
+  function hearText(change) {
+    for (const wait of waits.values()) {
+      if (wait.key !== change.key || !wait.started || wait.outcome) continue;
+      const text = clip(change.text, MAX_TEXT);
+      if (text === wait.text) continue;
+      wait.text = text;
+      if (text && wait.replyAt == null) wait.replyAt = now();
+      preview(wait);
+    }
   }
 
   function advance(change) {
@@ -153,15 +192,20 @@ export function createGroup({ file = null, sessions = () => null, say = async ()
       if (wait.atId) void finish(wait); // else `sent` is still making the entry for the line, and finishes after it
     }
   }
-  try { unsubscribe = sessions()?.onChange?.(advance) ?? null; } catch { unsubscribe = null; }
   const hear = () => {
     // The agent sessions may start after this module: join them the first time a line is sent.
-    if (unsubscribe) return;
-    try { unsubscribe = sessions()?.onChange?.(advance) ?? null; } catch { unsubscribe = null; }
+    try {
+      const source = sessions();
+      unsubscribe ??= source?.onChange?.(advance) ?? null;
+      unsubscribeText ??= source?.onText?.(hearText) ?? null;
+    } catch { /* the agent sessions are not available yet */ }
   };
+  hear();
 
   return {
     command, pend, take, put, get,
+    revision: () => revision,
+    onChange(callback) { listeners.add(callback); return () => listeners.delete(callback); },
     many(ids) {
       const found = {};
       for (const id of Array.isArray(ids) ? ids.slice(0, 100) : []) { const line = get(id); if (line) found[id] = line; }
@@ -172,11 +216,15 @@ export function createGroup({ file = null, sessions = () => null, say = async ()
     expect(key) {
       hear();
       const token = Symbol('say');
-      waits.set(token, { token, key, started: false, outcome: null, atId: null, issue: null });
+      waits.set(token, { token, key, started: false, outcome: null, atId: null, issue: null, text: '', replyAt: null });
       return token;
     },
     /** The line was not delivered. */
-    cancel(token) { waits.delete(token); },
+    cancel(token) {
+      const wait = waits.get(token);
+      waits.delete(token);
+      if (wait && liveReplies.delete(wait.atId)) changed(wait.atId);
+    },
     /** The line was delivered: it comes into the thread (its tick), and its answer when it comes. */
     async sent(token, { issue, text, files = 0 }) {
       const wait = waits.get(token);
@@ -189,6 +237,7 @@ export function createGroup({ file = null, sessions = () => null, say = async ()
         log.warn?.(`[dudu] The line to an issue could not be put in the group chat: ${error.message}`);
         return null;
       }
+      if (wait.text) preview(wait);
       if (wait.outcome) await finish(wait);
       return wait.atId;
     },
@@ -220,6 +269,11 @@ export function createGroup({ file = null, sessions = () => null, say = async ()
       return { outcome: 'success', hidden: [...hidden] };
     },
     hidden: () => hidden,
-    dispose() { try { unsubscribe?.(); } catch { /* gone already */ } unsubscribe = null; waits.clear(); },
+    dispose() {
+      try { unsubscribe?.(); } catch { /* gone already */ }
+      try { unsubscribeText?.(); } catch { /* gone already */ }
+      unsubscribe = null; unsubscribeText = null;
+      waits.clear(); liveReplies.clear(); listeners.clear();
+    },
   };
 }

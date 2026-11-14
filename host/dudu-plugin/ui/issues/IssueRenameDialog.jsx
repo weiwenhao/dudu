@@ -6,7 +6,7 @@ import { Input } from '../components/input.jsx';
 import { useToast } from '../components/toast.jsx';
 import { T } from '../strings.js';
 
-/** The small naming window used by views, with the issue's title and existing update/Undo path. */
+/** The small naming window used by views, with the issue's title and its existing update path. */
 export function IssueRenameDialog({ issue, onSave, onClose, onCloseAutoFocus }) {
   const [title, setTitle] = useState(issue.title);
   const [busy, setBusy] = useState(false);

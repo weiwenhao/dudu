@@ -47,7 +47,7 @@ struct QRScannerView: View {
                         .padding(.horizontal, 32)
                         .padding(.top, 22)
                 } else {
-                    Text("对准电脑上显示的配对码")
+                    Text(L10n.text("对准电脑上显示的配对码"))
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(.white)
                         .padding(.top, 22)
@@ -92,11 +92,11 @@ private final class QRScannerController: NSObject, ObservableObject, AVCaptureMe
                 if granted {
                     self.sessionQueue.async { [weak self] in self?.configureAndRun(token: token) }
                 } else {
-                    DispatchQueue.main.async { self.message = "需要相机权限才能扫描配对码。" }
+                    DispatchQueue.main.async { self.message = L10n.text("需要相机权限才能扫描配对码。") }
                 }
             }
         default:
-            message = "请在系统设置中允许相机访问。"
+            message = L10n.text("请在系统设置中允许相机访问。")
         }
     }
 
@@ -119,20 +119,20 @@ private final class QRScannerController: NSObject, ObservableObject, AVCaptureMe
             guard let device = AVCaptureDevice.default(for: .video),
                   let input = try? AVCaptureDeviceInput(device: device),
                   session.canAddInput(input) else {
-                showMessage("无法启动相机。")
+                showMessage(L10n.text("无法启动相机。"))
                 return
             }
             session.addInput(input)
 
             let output = AVCaptureMetadataOutput()
             guard session.canAddOutput(output) else {
-                showMessage("无法读取配对码。")
+                showMessage(L10n.text("无法读取配对码。"))
                 return
             }
             session.addOutput(output)
             output.setMetadataObjectsDelegate(self, queue: .main)
             guard output.availableMetadataObjectTypes.contains(.qr) else {
-                showMessage("此相机不支持二维码扫描。")
+                showMessage(L10n.text("此相机不支持二维码扫描。"))
                 return
             }
             output.metadataObjectTypes = [.qr]

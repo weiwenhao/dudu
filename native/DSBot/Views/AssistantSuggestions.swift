@@ -15,7 +15,7 @@ struct AssistantSuggestions: View {
                             ProgressView().tint(DSBotStyle.muted)
                                 .frame(maxWidth: .infinity, minHeight: 60)
                         } else {
-                            Text(completion.status == .failed ? "连接暂时不可用。" : completion.query?.kind == .issue ? "没有事项" : "还没有技能")
+                            Text(completion.status == .failed ? L10n.text("连接暂时不可用。") : completion.query?.kind == .issue ? L10n.text("没有事项") : L10n.text("还没有技能"))
                                 .font(.system(size: 14))
                                 .foregroundStyle(DSBotStyle.muted)
                                 .frame(maxWidth: .infinity, minHeight: 60)

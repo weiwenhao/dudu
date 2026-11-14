@@ -33,7 +33,7 @@ private struct MessageActions: ViewModifier {
             } preview: {
                 MessageMenuPreview(text: text, isUser: isUser, seq: seq)
             }
-            .accessibilityAction(named: "复制", copy)
+            .accessibilityAction(named: L10n.text("复制"), copy)
             .sheet(item: $selection) { selection in
                 MessageSelectionSheet(text: selection.text)
             }
@@ -46,16 +46,16 @@ private struct MessageActions: ViewModifier {
     @ViewBuilder
     private func groupMenu(_ group: GroupChatContext) -> some View {
         if let reply {
-            Button { group.reply(reply) } label: { DSBotLabel("回复", icon: .reply) }
+            Button { group.reply(reply) } label: { DSBotLabel(L10n.text("回复"), icon: .reply) }
                 .accessibilityIdentifier("message.reply")
         }
         if !text.isEmpty {
-            Button(action: copy) { DSBotLabel("复制", icon: .copy) }
+            Button(action: copy) { DSBotLabel(L10n.text("复制"), icon: .copy) }
                 .accessibilityIdentifier("message.copy")
         }
         let lines = seqs.isEmpty ? (seq.map { [$0] } ?? []) : seqs
         if !lines.isEmpty {
-            Button(role: .destructive) { group.hide(lines) } label: { DSBotLabel("删除", icon: .trash) }
+            Button(role: .destructive) { group.hide(lines) } label: { DSBotLabel(L10n.text("删除"), icon: .trash) }
                 .accessibilityIdentifier("message.delete")
         }
     }
@@ -64,13 +64,13 @@ private struct MessageActions: ViewModifier {
     private var ordinaryMenu: some View {
                 if !text.isEmpty {
                     Button(action: copy) {
-                        DSBotLabel("复制", icon: .copy)
+                        DSBotLabel(L10n.text("复制"), icon: .copy)
                     }
                     .accessibilityIdentifier("message.copy")
                     Button {
                         selection = MessageSelection(text: text)
                     } label: {
-                        Label("选择", systemImage: "selection.pin.in.out")
+                        Label(L10n.text("选择"), systemImage: "selection.pin.in.out")
                     }
                     .accessibilityIdentifier("message.select")
                 }
@@ -83,7 +83,7 @@ private struct MessageActions: ViewModifier {
                             catch { forkFailure = DSBotToastMessage(text: error.localizedDescription, kind: .error) }
                         }
                     } label: {
-                        Label("在新对话中分支", systemImage: "arrow.triangle.branch")
+                        Label(L10n.text("在新对话中分支"), systemImage: "arrow.triangle.branch")
                     }
                     .disabled(!access.connected || forking)
                     .accessibilityIdentifier("message.fork")
@@ -135,11 +135,11 @@ private struct MessageSelectionSheet: View {
     var body: some View {
         NavigationStack {
             SelectableMessageText(text: text)
-                .navigationTitle("选择")
+                .navigationTitle(L10n.text("选择"))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("完成") { dismiss() }
+                        Button(L10n.text("完成")) { dismiss() }
                             .accessibilityIdentifier("message.selection.close")
                     }
                 }

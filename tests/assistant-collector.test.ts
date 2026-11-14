@@ -72,6 +72,86 @@ test('more context for a record: its conversation takes the messages the session
   assert.deepEqual([mergeMessages('b', 'a').text, mergeMessages('b', 'a').added], ['a\nb', 1]);
 });
 
+test('an item given again with update carries only what it gives: it is no message of a conversation, no title is made up for it, and it needs an id and something to change', () => {
+  // The owner's alert collector (2026-11-14): a reply under an alert means it is over, and the alert's row is changed instead of another row written.
+  const out = normalizeRecords([
+    { id: 'a1', update: true, title: '已恢复 · CPU 高', text: '' },
+    { id: 'a1', update: true, title: 'twice' },
+    { id: 'm1', kind: 'message', thread: 'omt_1', from: 'A', at: '2026-11-11T04:07:00+08:00', text: '告警' },
+    { id: 'm1', update: true, kind: 'message', thread: 'omt_1', text: '告警，已恢复' },
+    { id: 'x', update: true },
+    { id: 'y', update: 'true', from: 'Bob', url: 'javascript:alert(1)', at: '2026-11-11T04:07:00+08:00' },
+  ]);
+  assert.deepEqual(out.records.map((r: any) => (r.update ? `update:${r.sourceId}` : r.sourceId)), ['update:a1', 'thread:omt_1', 'update:m1', 'update:y']);
+  assert.deepEqual(out.records[0].changes, { title: '已恢复 · CPU 高' });
+  assert.equal(out.records[2].thread, 'omt_1');
+  assert.equal(out.records[2].title, undefined);
+  assert.deepEqual(Object.keys(out.records[3].changes).sort(), ['at', 'author'], 'a link that is not http(s) is not taken');
+  assert.deepEqual(out.rejected.map((r: any) => [r.index, r.id]), [[4, 'x']]);
+  assert.equal(out.duplicates, 1, 'the same item twice in one answer is one update');
+});
+
+test('an update changes the row that holds the item and makes none: the owner\'s marks, its issue and its number stay, a search finds the new words, and an item the inbox does not have is not added', (t) => {
+  const w = inboxWorld(t);
+  const [alert] = w.ingest('alerts', [raw('a1', { title: 'CPU 高 · db1', text: '告警正文', from: '监控' })]).added;
+  const [other] = w.ingest('alerts', [raw('a2', { title: 'CPU 高 · db2' })]).added;
+  const issue = w.issues.add({ title: '处理 db2' }).issue;
+  assert.equal(w.inbox.ignore(alert.id), true);
+  assert.equal(w.inbox.link(other.id, { issueId: issue.id, verdict: 'issue' }), true);
+
+  const first = w.ingest('alerts', [{ id: 'a1', update: true, title: '已恢复 · CPU 高 · db1' }, { id: 'a2', update: true, title: '已恢复 · CPU 高 · db2' }]);
+  assert.deepEqual([first.added.length, first.updated.length, first.seen, first.missed], [0, 2, 0, 0]);
+  const now = w.inbox.get(alert.id).record;
+  assert.deepEqual([now.title, now.ref, now.version, now.text, now.from], ['已恢复 · CPU 高 · db1', alert.ref, alert.version, '告警正文', '监控'], 'what is not given stays, and so does the number');
+  assert.notEqual(now.ignoredAt, null, 'the owner\'s mark stays');
+  const linked = w.inbox.get(other.id).record;
+  assert.deepEqual([linked.title, linked.issueId, linked.byOwner], ['已恢复 · CPU 高 · db2', issue.id, true], 'so does the issue it became');
+  assert.equal(w.inbox.list({}).items.length, 2, 'no row was made');
+  assert.equal(w.inbox.search('已恢复').length, 2);
+  assert.equal(w.inbox.search('db1').length, 1, 'the words that were not changed are found as before');
+
+  const again = w.ingest('alerts', [{ id: 'a1', update: true, title: '已恢复 · CPU 高 · db1' }]);
+  assert.deepEqual([again.updated.length, again.seen], [0, 1], 'the same update again changes nothing');
+  const none = w.ingest('alerts', [{ id: 'zz', update: true, title: '没有的' }]);
+  assert.deepEqual([none.added.length, none.updated.length, none.missed], [0, 0, 1]);
+  assert.equal(w.ingest('other', [{ id: 'a1', update: true, title: '别的收集器' }]).missed, 1, 'another collector\'s item is not touched');
+  assert.equal(w.inbox.list({}).items.length, 2);
+});
+
+test('an update finds a conversation by its thread and has the last word of an answer that also brings the talk; a deleted row is left alone and a cleared one keeps its text cleared', (t) => {
+  const w = inboxWorld(t);
+  const [talk] = w.ingest('alerts', [{ id: 'm1', kind: 'message', thread: 'omt_1', title: 'CPU 高', from: '监控', at: '2026-11-11T04:07:00+08:00', text: '告警 db1' }]).added;
+  assert.equal(talk.sourceId, 'thread:omt_1');
+  // The reply comes as a message of the thread, and the alert is said to be over: the talk takes the message (and its title), then the update says what the title is.
+  const out = w.ingest('alerts', [
+    { id: 'm2', kind: 'message', thread: 'omt_1', title: '收到', from: '张三', at: '2026-11-11T04:12:00+08:00', text: '收到，在看' },
+    { id: 'm1', update: true, thread: 'omt_1', title: '已恢复 · CPU 高' },
+  ]);
+  assert.deepEqual([out.added.length, out.updated.length], [0, 1], 'one row changed, once');
+  const row = w.inbox.get(talk.id).record;
+  assert.equal(row.title, '已恢复 · CPU 高');
+  assert.equal(row.text.split('\n').length, 2, 'and the talk has both messages');
+
+  assert.equal(w.inbox.remove(talk.id), true);
+  assert.equal(w.ingest('alerts', [{ id: 'm1', update: true, thread: 'omt_1', title: '又改了' }]).missed, 1, 'a row the owner deleted is not changed');
+  assert.equal(w.inbox.restore(talk.id), true);
+
+  // After 30 days the text of a row the owner put aside is cleared; an update may still change its title, and the text stays cleared.
+  assert.equal(w.inbox.ignore(talk.id), true);
+  w.clock.now += KEEP_TEXT_MS + DAY;
+  assert.deepEqual(w.inbox.prune(), { cleared: 1, deleted: 0 });
+  const late = w.ingest('alerts', [{ id: 'm1', update: true, thread: 'omt_1', title: '已恢复 · CPU 高 · 补记', text: '新的正文' }]);
+  assert.equal(late.updated.length, 1);
+  const kept = w.inbox.get(talk.id).record;
+  assert.deepEqual([kept.title, kept.text, kept.cleared], ['已恢复 · CPU 高 · 补记', '', true]);
+
+  // The item's own id comes first: a row of that id is changed, not the newer conversation the update says the item is in.
+  const [own] = w.ingest('alerts', [raw('a9', { title: '自己的行' })]).added;
+  const [chat] = w.ingest('alerts', [{ id: 'c1', kind: 'message', thread: 'oc_9', title: '群聊', from: 'A', at: '2026-11-11T05:00:00+08:00', text: '聊天' }]).added;
+  w.ingest('alerts', [{ id: 'a9', update: true, thread: 'oc_9', title: '改了自己的' }]);
+  assert.deepEqual([w.inbox.get(own.id).record.title, w.inbox.get(chat.id).record.title], ['改了自己的', '群聊']);
+});
+
 test('a record is checked field by field; secrets are blanked, a link must be http(s), and nothing a model wrote is trusted as it is', () => {
   const out = normalizeRecords([
     raw('m1', { text: `第 3 条请确认 ${SECRET}`, url: 'https://mail.test/m1', kind: 'MAIL', at: '2026-11-03T09:00:00+08:00', context: [{ from: 'Bob', text: '前一条', at: '2026-11-03T08:50:00+08:00' }, 'junk'] }),

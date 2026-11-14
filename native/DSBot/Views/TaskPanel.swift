@@ -45,7 +45,7 @@ struct TaskPanel: View {
                 HStack(spacing: 8) {
                     DSBotChecklistGlyph(size: 16)
                         .foregroundStyle(DSBotStyle.chatSecondary)
-                    Text("任务")
+                    Text(L10n.text("任务"))
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(DSBotStyle.chatInk)
                     Text(TodoSummary.progress(todos))
@@ -61,8 +61,8 @@ struct TaskPanel: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("任务，\(TodoSummary.progress(todos))")
-            .accessibilityHint(isExpanded ? "点按收起" : "点按展开")
+            .accessibilityLabel(L10n.text("任务，{0}", "\(TodoSummary.progress(todos))"))
+            .accessibilityHint(isExpanded ? L10n.text("点按收起") : L10n.text("点按展开"))
             .accessibilityIdentifier("tasks.toggle")
 
             if isExpanded {
@@ -105,7 +105,7 @@ struct TaskPanel: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 5)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(item.content)，\(item.isCompleted ? "已完成" : item.isInProgress ? "进行中" : "待处理")")
+        .accessibilityLabel(L10n.text("{0}，{1}", "\(item.content)", "\(item.isCompleted ? L10n.text("已完成") : item.isInProgress ? L10n.text("进行中") : L10n.text("待处理"))"))
     }
 }
 

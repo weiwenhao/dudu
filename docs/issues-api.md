@@ -1,6 +1,6 @@
 # dudu Issues API
 
-事项的 HTTP 调用和嘟嘟作用域工具共用 `host/assistant/issues/api.mjs` 的 `createIssueCommands`。数据契约在 `host/assistant/issues/contract.mjs`；数据库负责字段校验、项目约束、事务、记录和撤销。
+事项的 HTTP 调用和嘟嘟作用域工具共用 `host/assistant/issues/api.mjs` 的 `createIssueCommands`。数据契约在 `host/assistant/issues/contract.mjs`；数据库负责字段校验、项目约束、事务和记录。
 
 ## 发现和认证
 
@@ -21,7 +21,7 @@ Content-Type: application/json
 
 `id` 是内部数值主键，跨排序、项目变更和重启保持稳定。无项目事项的 `ref` 为 `null`，界面不显示编号。
 
-项目事项的 `ref` 如 `APP-1`，由最多 3 个大写英文字母和该项目内的序号组成。项目前缀取规范化项目名中的前 3 个英文字母；没有则取目录名，仍没有则用 `PRJ`。前缀重复时以字母替换末尾区分（如 `APP`、`APA`、`APB`），长度仍不超过 3。项目按目录识别；改名保留关键词，同名的其他目录取得不同关键词。序号不会复用。换项目获得该项目的预留号；移回、撤销时恢复旧号，清掉项目后隐藏编号。
+项目事项的 `ref` 如 `APP-1`，由最多 3 个大写英文字母和该项目内的序号组成。项目前缀取规范化项目名中的前 3 个英文字母；没有则取目录名，仍没有则用 `PRJ`。前缀重复时以字母替换末尾区分（如 `APP`、`APA`、`APB`），长度仍不超过 3。项目按目录识别；改名保留关键词，同名的其他目录取得不同关键词。序号不会复用。换项目获得该项目的预留号；移回时恢复旧号，清掉项目后隐藏编号。
 
 数据库版本 4 自动缩短旧前缀，优先保留已经合规的前缀，不改变内部 `id`、项目序号、预留号、活动或会话关联。迁移后使用新的完整编号查找。
 
@@ -41,7 +41,6 @@ Content-Type: application/json
 | `reply` | `id`、`text` | 兼容的提问回复操作；界面使用 `message` |
 | `complete` / `cancel` | `id`，可选 `outcome` / `reason` | 完成或取消，接通会话收起 |
 | `snooze` | `id`、`until` | 时间为毫秒；`null` 清除推迟 |
-| `undo` | 可选 `target: { eventId }` / `{ groupId }` 或事件数值 | 撤销可撤销的修改，保留之后的编辑 |
 | `resume` | `id` 或 `session` | 恢复已有会话，不创建另一份工作 |
 | `session` | `id` | 读取原生 `sessionId`、`provider` 和 `command`；Claude/Codex 返回可复制的 resume 命令 |
 | `source` | `id` | 读取事项来自哪个连接器和原文链接：`{ source: { connector, name, url, from, at, title } }`，没有可打开的来源时是 `null`；事项页的“来源”组用它 |
@@ -90,7 +89,7 @@ schema v5 增加可自定义的事项状态。`status` 是 `statuses` 返回的�
 
 Agent 的工作消息只有标题和描述；事项流程、状态、活动和访问说明不拼进去。访问方式仍由 DSH 的权限模式执行。
 
-分配后 Agent 和 project（名字、目录）不可变；`assign`、`update`、工具和撤销遵守相同约束。相同 Agent 的重复分配保留当前会话。内部原生会话导入仍可将 `claude:<id>` / `codex:<id>` 关联转换成对应的 `dsh:<id>`。
+分配后 Agent 和 project（名字、目录）不可变；`assign`、`update` 和工具遵守相同约束。相同 Agent 的重复分配保留当前会话。内部原生会话导入仍可将 `claude:<id>` / `codex:<id>` 关联转换成对应的 `dsh:<id>`。
 
 ## 留言和接管
 
@@ -149,4 +148,4 @@ HTTP 200 表示操作已被处理。调用方仍须检查 `outcome`：
 
 无法解析的 JSON 或非对象请求返回 HTTP 400；未知 HTTP 操作返回 404；未处理的存储错误返回 500。留言已存但转发失败时为 `error`、`code: "delivery_failed"`、`saved: true`，界面保留这条留言，避免重复保存。
 
-调用身份来自受信任的注册入口：HTTP 为 `owner`，嘟嘟工具为 `dudu`。请求中的 `actor` 不能覆盖身份；撤销也使用入口身份。嘟嘟工具额外保留管理约束：只按规则分配、不任意修改来源与会话身份、Done 使用专门工具并等待主人确认。
+调用身份来自受信任的注册入口：HTTP 为 `owner`，嘟嘟工具为 `dudu`。请求中的 `actor` 不能覆盖身份。嘟嘟工具额外保留管理约束：只按规则分配、不任意修改来源与会话身份、Done 使用专门工具并等待主人确认。

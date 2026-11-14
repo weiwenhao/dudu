@@ -113,6 +113,7 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
   if (!dsh || typeof dsh.watch !== 'function') throw new TypeError('createAgentSessions needs the adapter of DSH.');
   const entries = new Map();       // DSH session id -> entry
   const listeners = new Set();
+  const textListeners = new Set();
   let disposed = false;
   let questions = 0;
 
@@ -128,6 +129,7 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
 
   const snapshot = (entry) => ({
     key: entry.key, id: entry.sessionId, agent: entry.agent, cwd: entry.cwd, closed: entry.closed, state: entry.state, stateSince: entry.since,
+    turnActive: Boolean(entry.running || entry.waiters.length),
     agentState: agentStateForSession(entry.state),
     lastActivityAt: entry.activityAt, touchedAt: entry.touchedAt, pending: entry.waiters[0] ? { kind: entry.waiters[0].kind, text: entry.waiters[0].text } : null,
     error: entry.error, ending: entry.ending, excerpt: oneLine(entry.ending, EXCERPT_CHARS),
@@ -174,9 +176,18 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
       entry.error = kind === 'error' ? oneLine(tidyFailure(error ?? 'The turn failed.'), 600) : '';
       settle(entry);
     },
-    assistant(sessionId, text) {
+    assistant(sessionId, text, { streaming = false } = {}) {
       const entry = entries.get(sessionId);
-      if (entry && typeof text === 'string' && text.trim()) entry.ending = text.trim().slice(-ENDING_KEPT);
+      if (!entry || typeof text !== 'string') return;
+      if (!streaming) {
+        if (!text.trim()) return; // A tool-only message does not erase the text already shown.
+        entry.ending = text.trim().slice(-ENDING_KEPT);
+      }
+      if (!entry.running) return;
+      const change = { key: entry.key, text: text.trim().slice(0, ENDING_KEPT), at: now() };
+      for (const listener of [...textListeners]) {
+        try { listener(change); } catch (error) { log.warn?.(`[dudu] A session text listener failed: ${error.message}`); }
+      }
     },
     question(sessionId, { text, kind, signal } = {}) {
       const entry = entries.get(sessionId);
@@ -263,6 +274,8 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
     if (!id) return clarify(`"${key}" is not a DSH session key (dsh:<id>).`);
     let folded;
     try { folded = await reopen(id); } catch (error) { return failure(error); }
+    // Completed issues are not followed during restore. Opening one must still record the touch that wakes it.
+    if (!entries.has(id)) await adopt(key);
     const opened = entries.get(id);
     if (opened) opened.touchedAt = now(); // opening it is handling it: it is awake again
     // Where the session lives is what a window must be told to adopt it, so the answer always says.
@@ -393,11 +406,14 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
     has: (key) => entries.has(idOf(key)),
     keys: () => [...entries.values()].map((entry) => entry.key),
     onChange(callback) { listeners.add(callback); return () => listeners.delete(callback); },
+    /** Body-only text for a currently running turn; these deltas are not state or issue activity. */
+    onText(callback) { textListeners.add(callback); return () => textListeners.delete(callback); },
     dispose() {
       if (disposed) return;
       disposed = true;
       unwatch?.();
       listeners.clear();
+      textListeners.clear();
       // A question nobody will answer must not hold a turn for ever: the adapter gives it to DSH's own window, or ends it.
       for (const entry of entries.values()) for (const waiter of entry.waiters.splice(0)) waiter.reject(new Error('嘟嘟 stopped before the question was answered.'));
     },

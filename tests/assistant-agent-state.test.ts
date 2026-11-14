@@ -109,16 +109,11 @@ test('a word cannot be given over live work or to an issue without an agent, and
   assert.equal(s.issues.update(id, { agentStateBasis: 'x' }).outcome, 'needs_clarification', 'the basis is the store\'s own');
 });
 
-test('null takes the word back, Undo puts it back, and another session forgets it', (t) => {
+test('null takes the word back, and another session forgets it', (t) => {
   const s = store();
   t.after(s.cleanup);
   const id = s.issue('dsh:a', 'error', 100);
   assert.deepEqual(s.lanes(), { blocked: [id] });
-  const set = s.issues.update(id, { agentState: 'idle' });
-  assert.deepEqual(s.lanes(), { idle: [id] });
-  const undone = s.issues.undo(set.eventId);
-  assert.equal(undone.outcome, 'success', JSON.stringify(undone));
-  assert.deepEqual(s.lanes(), { blocked: [id] }, 'Undo gives the fact back');
   s.issues.update(id, { agentState: 'idle' });
   assert.deepEqual(s.lanes(), { idle: [id] });
   const cleared = s.issues.update(id, { agentState: null });
@@ -211,7 +206,7 @@ test('the work-state helpers: a mark is one of four, and its state one of three'
   assert.equal(markAt({}, saved('done'), indexed('error', 200)), 'blocked', 'the index is newer: a failure');
   assert.equal(markAt({}, saved('blocked'), null), 'blocked');
   assert.equal(markAt({}, saved('idle'), null), 'idle');
-  assert.equal(markAt({}, null, indexed('finished', 5)), 'done', 'a finished run waits for its look (until it has been left for a day: the test after this one)');
+  assert.equal(markAt({}, null, indexed('finished', 5)), 'done', 'a finished run waits for its look (until it has been left for 72 hours: the test after this one)');
   assert.equal(markAt({}, saved('done', 1), indexed('finished', 1)), 'done');
   assert.equal(markAt({ completionUnread: true }, null, null), 'done', 'a finished run nobody has read');
   assert.equal(markAt({}, null, null), 'idle');
@@ -252,35 +247,35 @@ test('a session that was stopped, a question, a failure and a finished run all n
   assert.equal(flag(stopped).deepSleep, undefined, 'and a session that needs the owner never sleeps');
 });
 
-test('what waits for the owner and has not been handled for 24 hours reads Idle by itself; before that, and when nobody can say when it was handled, it stays with the owner (owner, 2026-11-07: "超过 24 小时没有处理的会话也自动进入到空闲中")', (t) => {
+test('what waits for the owner and has not been handled for 72 hours reads Idle by itself; before that, and when nobody can say when it was handled, it stays with the owner (owner, 2026-11-07: "超过 24 小时没有处理的会话也自动进入到空闲中", made 72 hours on 2026-11-14)', (t) => {
   const s = store();
   t.after(s.cleanup);
   const flag = (id: number) => s.issues.get(id).issue;
   const at = (hours: number) => s.clock.get() - hours * HOUR;
   const aged = (key: string, state: string, hours: number) => { const id = s.issue(key, state, at(hours)); s.handle(key, at(hours)); return id; };
-  const finished = aged('dsh:fin', 'finished', 40);
-  const asked = aged('dsh:ask', 'waiting_owner', 40);
-  const failed = aged('dsh:bad', 'error', 40);
-  const stopped = aged('dsh:stop', 'stopped', 40);
-  const fresh = aged('dsh:new', 'finished', 23);
-  const unknown = s.issue('dsh:unknown', 'finished', at(40)); // nobody can say when it was handled: that is not guessed
-  const resting = aged('dsh:rest', 'idle', 40);
+  const finished = aged('dsh:fin', 'finished', 80);
+  const asked = aged('dsh:ask', 'waiting_owner', 80);
+  const failed = aged('dsh:bad', 'error', 80);
+  const stopped = aged('dsh:stop', 'stopped', 80);
+  const fresh = aged('dsh:new', 'finished', 71);
+  const unknown = s.issue('dsh:unknown', 'finished', at(80)); // nobody can say when it was handled: that is not guessed
+  const resting = aged('dsh:rest', 'idle', 80);
   const sorted = (list: number[]) => [...list].sort((a, b) => a - b);
   const lanes = () => Object.fromEntries(Object.entries(s.lanes()).map(([key, ids]) => [key, sorted(ids as number[])]));
-  assert.deepEqual(lanes(), { blocked: sorted([fresh, unknown]), idle: sorted([finished, asked, failed, stopped, resting]) }, 'a day and more unhandled: Idle; 23 hours, and a time nobody knows: still the owner\'s');
+  assert.deepEqual(lanes(), { blocked: sorted([fresh, unknown]), idle: sorted([finished, asked, failed, stopped, resting]) }, '72 hours and more unhandled: Idle; 71 hours, and a time nobody knows: still the owner\'s');
   assert.deepEqual([flag(finished).agentState, flag(finished).agentFinished === true], ['idle', false], 'and the green check is gone with it');
   assert.deepEqual([flag(fresh).agentState, flag(fresh).agentFinished === true], ['blocked', true]);
   // an agent that is idle by the clock is in deep sleep at once if its turn has ended (nobody handled it for far longer than the half hour), but not one that still waits for an answer
   assert.deepEqual([finished, failed, stopped].map((id) => flag(id).deepSleep === true), [true, true, true]);
   assert.equal(flag(asked).deepSleep, undefined, 'a question that is alive is not asleep: its turn has not ended');
-  // time passing: the 23 hours become 24, and the one nobody can date never does
+  // time passing: the 71 hours become 73, and the one nobody can date never does
   s.clock.set(s.clock.get() + 2 * HOUR);
   assert.deepEqual(lanes(), { blocked: [unknown], idle: sorted([finished, asked, failed, stopped, resting, fresh]) });
   // the owner's word beats the clock: a finished run put in "needs you" by hand stays there, however long it is left
   assert.equal(s.issues.update(finished, { agentState: 'blocked' }).outcome, 'success');
   s.clock.set(s.clock.get() + 100 * HOUR);
   assert.equal(flag(finished).agentState, 'blocked', 'the owner\'s word holds while the session\'s state does not change');
-  // and being handled (a new word from the session) starts the day again
+  // and being handled (a new word from the session) starts the 72 hours again
   s.handle('dsh:rest', s.clock.get());
   s.session('dsh:rest', 'finished', s.clock.get());
   assert.equal(flag(resting).agentState, 'blocked');
@@ -314,13 +309,13 @@ test('the boss\'s word holds whichever of the places a session is read from answ
   assert.equal(lone.issues.get(one).issue.agentState, 'blocked');
 });
 
-test('the marks of the sidebar and the phone age the same way: a state that waits for the owner and has not been handled for a day is Idle', () => {
-  const day = 24 * HOUR;
-  const now = 10 * day;
-  const old = { state: 'finished', lastActivityAt: now - day - 1, stateSince: now - day - 1 };
+test('the marks of the sidebar and the phone age the same way: a state that waits for the owner and has not been handled for 72 hours is Idle', () => {
+  const wait = 72 * HOUR;
+  const now = 10 * wait;
+  const old = { state: 'finished', lastActivityAt: now - wait - 1, stateSince: now - wait - 1 };
   assert.equal(agentMarkForActivity(undefined, undefined, old, { now }), 'idle');
-  assert.equal(agentMarkForActivity(undefined, undefined, { ...old, lastActivityAt: now - day + 1000, stateSince: now - day + 1000 }, { now }), 'done', 'a minute short of the day');
-  assert.equal(agentMarkForActivity(undefined, { state: 'blocked', at: now - 3 * day }, undefined, { now }), 'idle', 'what the session saved of itself ages too');
+  assert.equal(agentMarkForActivity(undefined, undefined, { ...old, lastActivityAt: now - wait + 1000, stateSince: now - wait + 1000 }, { now }), 'done', 'a moment short of the 72 hours');
+  assert.equal(agentMarkForActivity(undefined, { state: 'blocked', at: now - 2 * wait }, undefined, { now }), 'idle', 'what the session saved of itself ages too');
   assert.equal(agentMarkForActivity({ running: true }, undefined, old, { now }), 'working', 'work that runs is never aged');
   assert.equal(agentMarkForActivity({ pendingInteraction: true }, undefined, old, { now }), 'blocked', 'nor is a question that is live');
   assert.equal(agentMarkForActivity(undefined, undefined, { state: 'finished' }, { now }), 'done', 'a time nobody has is not guessed');

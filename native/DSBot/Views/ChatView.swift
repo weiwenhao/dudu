@@ -10,6 +10,7 @@ struct ChatView: View {
     var isPageTransitioning = false
     var presentationRequest: UUID?
     var onPresentationLayout: (UUID, DraftTarget?) -> Bool = { _, _ in false }
+    var replyRequest: GroupReplyRequest?
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var speechCapture = NativeSpeechCapture()
@@ -29,8 +30,6 @@ struct ChatView: View {
     @State private var latestJump = 0
     /// The owner asked for a card (待办): while it is set, a card that ends the thread is shown from its top (`ConversationHistoryView.cardFromTop`).
     @State private var cardFromTop = false
-    /// The command of the card the owner asked for, until it is in the thread and the chat has gone to it (owner, 2026-11-11: "窗口会自动向下滑到底部呀，不应该让我手动点一下回到底部").
-    @State private var cardToReveal: String?
     @State private var transitionHistory: HistoryPresentation?
     @State private var presentationFrame = PagePresentationFrame()
     @State private var historyFailure: String?
@@ -61,8 +60,6 @@ struct ChatView: View {
     @State private var composerFocused = false
     @StateObject private var assistantCompletion = AssistantCompletions()
     @State private var editorSelection: ComposerSelection?
-    /// The quick button of 嘟嘟's chat whose card is on its way.
-    @State private var quickCardBusy: QuickCardKind?
     /// What 回复 put in the box and the title of the issue it is for: the title shows in grey after it for as long as nothing else is written.
     @State private var replyGhost: (draft: String, title: String)?
     @Environment(\.openIssueConversation) private var openIssueConversation
@@ -180,7 +177,6 @@ struct ChatView: View {
             followsLatestMessage = true
             awayFromLatest = false
             cardFromTop = false
-            cardToReveal = nil
             historyFailure = nil
             historyRequestID = nil
         }
@@ -221,7 +217,7 @@ struct ChatView: View {
                 preparedPhotos.append(contentsOf: result.photos)
                 compressedPhotoBytes = preparedPhotos.reduce(0) { $0 + $1.compressedBytes }
                 if result.rejectedCount > 0 {
-                    photoNotice = "部分照片未添加"
+                    photoNotice = L10n.text("部分照片未添加")
                 }
                 selectedPhotos = []
             }
@@ -236,15 +232,15 @@ struct ChatView: View {
         .onChange(of: store.goal?.id) { _, _ in
             goalEditor = nil
         }
-        // The card the owner asked for comes with the thread's next snapshot when the answer was first: go to it then.
-        .onChange(of: store.contentRevision) { _, _ in
-            if cardToReveal != nil { revealCardIfPresent() }
-        }
         .onChange(of: isOverlayOpen) { _, isOpen in
             guard isOpen else { return }
             assistantCompletion.close()
             composerFocused = false
             cancelVoiceCapture()
+        }
+        .onChange(of: replyRequest?.id) { _, _ in
+            guard let replyRequest, replyRequest.target == draftTarget, !isOverlayOpen else { return }
+            groupChat?.reply(replyRequest.issue)
         }
         #if DEBUG && targetEnvironment(simulator)
         // `-dsbot-review-tap-chip todo,task,info`: the simulator has no finger, so the review taps these quick buttons of 嘟嘟's chat one after the other (through the buttons' own handler).
@@ -253,8 +249,7 @@ struct ChatView: View {
             guard store.isAssistantConversation, let index = arguments.firstIndex(of: "-dsbot-review-tap-chip"), index + 1 < arguments.count else { return }
             for name in arguments[index + 1].split(separator: ",") {
                 try? await Task.sleep(nanoseconds: 3_500_000_000)
-                // 待办 sends its card; 信息 and 定时任务 open their pages (what the buttons do).
-                if let kind = QuickCardKind(rawValue: String(name)) { kind == .todo ? sendQuickCard(kind) : openQuickPage(kind) }
+                if let kind = QuickCardKind(rawValue: String(name)) { openQuickPage(kind) }
             }
         }
         // `-dsbot-review-reply DUD-9` (with `-dsbot-review-reply-title <title>`), `-dsbot-review-hide 101` and `-dsbot-review-tap-avatar DUD-9`: what 回复 in the menu, 删除 in the menu and a tap on an issue's picture do (the simulator has no finger).
@@ -413,7 +408,13 @@ struct ChatView: View {
             .id(target)
         }
         .modifier(DSBotScrollEdgeBar(edge: .bottom, underlapsBar: true, showsEffect: false) {
-            bottomChrome()
+            if store.selectedSession?.subagent == nil {
+                bottomChrome()
+            } else {
+                // Child histories retain DSH's parent address and are read-only on the phone.
+                Color.clear.frame(height: 24)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { chromeHeight = $0 }
+            }
         })
         .overlay(alignment: .bottom) {
             // The jump button must not extend the native bottom edge into readable history.
@@ -502,7 +503,7 @@ struct ChatView: View {
                     ProgressView()
                         .controlSize(.small)
                         .frame(maxWidth: .infinity, minHeight: 28)
-                        .accessibilityLabel("加载更早")
+                        .accessibilityLabel(L10n.text("加载更早"))
                         .accessibilityIdentifier("chat.history.loading")
                 }
                 if let failure {
@@ -583,7 +584,7 @@ struct ChatView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 4)
                 } label: {
-                    Text("查看详情")
+                    Text(L10n.text("查看详情"))
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(DSBotStyle.muted)
                 }
@@ -593,7 +594,7 @@ struct ChatView: View {
                 Button(role: .destructive) {
                     respond(to: approval, allow: false)
                 } label: {
-                    Text("拒绝")
+                    Text(L10n.text("拒绝"))
                         .font(.system(size: 13, weight: .medium))
                         .frame(maxWidth: .infinity, minHeight: 34)
                         .background(DSBotStyle.sheet, in: Capsule())
@@ -604,7 +605,7 @@ struct ChatView: View {
                 Button {
                     respond(to: approval, allow: true)
                 } label: {
-                    Text("允许")
+                    Text(L10n.text("允许"))
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity, minHeight: 34)
@@ -723,7 +724,7 @@ struct ChatView: View {
         .scaleEffect(shows ? 1 : 0.85)
         .animation(.easeOut(duration: 0.2), value: shows)
         .allowsHitTesting(shows)
-        .accessibilityLabel("回到最新消息")
+        .accessibilityLabel(L10n.text("回到最新消息"))
         // While it is faded out the glass is still in the hierarchy; XCUITest finds it under another name.
         .accessibilityIdentifier(shows ? "chat.latest" : "chat.latest.faded")
         .accessibilityHidden(!shows)
@@ -784,8 +785,8 @@ struct ChatView: View {
                 if action == "edit" { queueEditor = nil }
             } catch {
                 guard target == draftTarget else { return }
-                let failure = action == "edit" ? "编辑失败：这条消息可能已经开始发送。"
-                    : action == "remove" ? "删除失败：这条消息可能已经开始发送。" : "插话发送失败，请重试。"
+                let failure = action == "edit" ? L10n.text("编辑失败：这条消息可能已经开始发送。")
+                    : action == "remove" ? L10n.text("删除失败：这条消息可能已经开始发送。") : L10n.text("插话发送失败，请重试。")
                 if action == "edit", queueEditor?.id == message.id {
                     queueEditorError = failure
                 } else {
@@ -843,7 +844,7 @@ struct ChatView: View {
 
     // MARK: Quick buttons of 嘟嘟's chat
 
-    /// 待办, 信息 and 定时任务 above the input of 嘟嘟's conversation (owner, 2026-11-10). A tap makes 嘟嘟 send that card into the thread. They stay while something is typed (the owner: "我一发消息，待办那个按钮就没了"),
+    /// 待办、信息、任务 open their content in a native bottom sheet (owner, 2026-11-13). They stay while something is typed (the owner: "我一发消息，待办那个按钮就没了"),
     /// and give way to whatever else stands in their place (the owner: "排队时或者其他有占用这里的都隐藏吧"): a queued message, the goal bar, DSH's task list, an approval, a picture or file waiting in the box,
     /// the list of candidates, an upload, voice, or a goal command being written.
     private var showsQuickChips: Bool {
@@ -860,55 +861,9 @@ struct ChatView: View {
     @ViewBuilder
     private var quickChips: some View {
         if showsQuickChips {
-            QuickChipsRow(busy: quickCardBusy, onPick: sendQuickCard, onOpen: openQuickPage)
-                .disabled(store.isSending)
+            QuickChipsRow(onOpen: openQuickPage)
                 .transition(.opacity)
         }
-    }
-
-    private func sendQuickCard(_ kind: QuickCardKind) {
-        guard quickCardBusy == nil, !store.isSending else { return }
-        // The spinner shows before the request goes (a button answers within 200 ms), and nothing else can be tapped meanwhile.
-        quickCardBusy = kind
-        // The owner asked for this card: the chat goes to it by itself and shows it from its top (owner, 2026-11-11: "窗口会自动向下滑到底部呀，不应该让我手动点一下回到底部"). From now on a card that ends the thread is
-        // followed by its top, until the owner takes the chat in hand.
-        cardFromTop = true
-        cardToReveal = nil
-        // A tap that would only repeat the card the thread ends with makes no new one (owner, 2026-11-10: "连点就发一张"): the plugin compares the lists and says `unchanged`.
-        let since = QuickCard.repeatable(in: store.displayedTranscriptRows, kind: kind)
-        Task {
-            let answer = await store.assistantCard(kind, since: since)
-            quickCardBusy = nil
-            switch answer {
-            case let .made(commandId), let .unchanged(commandId):
-                // The card is the command's entry of the thread: it may be there already (the answer came last) or arrive with the next snapshot (`revealCardIfPresent`, on every change of the thread).
-                // An older plugin that names no command: bring the end of the thread into view, as the jump button does.
-                if let commandId = commandId ?? since {
-                    cardToReveal = commandId
-                    revealCardIfPresent()
-                } else {
-                    latestJump &+= 1
-                }
-            case .failed:
-                cardFromTop = false
-            }
-        }
-    }
-
-    /// Goes to the card the owner asked for once it is in the thread: the chat slides to it, as the jump button does to the latest, and shows it from its top while it is taller than the screen.
-    private func revealCardIfPresent() {
-        guard let commandId = cardToReveal else { return }
-        // The owner took the chat in hand since the tap (a drag put `cardFromTop` down): a card that arrives now does not pull the page out from under their finger.
-        guard cardFromTop else {
-            cardToReveal = nil
-            return
-        }
-        guard store.displayedTranscriptRows.contains(where: { row in
-            if case let .command(command) = row { return command.commandId == commandId }
-            return false
-        }) else { return }
-        cardToReveal = nil
-        latestJump &+= 1
     }
 
     // MARK: Project and mode above the composer
@@ -944,7 +899,7 @@ struct ChatView: View {
     /// DSH's new-task selectors, in the existing native chip and sheet styles.
     @ViewBuilder
     private var projectContextChip: some View {
-        if let project = store.currentWorkspaceName ?? (store.isChoosingWorkspace ? "选择工作区" : nil) {
+        if let project = store.currentWorkspaceName ?? (store.isChoosingWorkspace ? L10n.text("选择工作区") : nil) {
             ContextChip(
                 glyph: store.currentWorkspaceName == nil ? .workspace : .workspaceOpen,
                 title: project, showsChevron: !store.workspaces.isEmpty,
@@ -1000,7 +955,7 @@ struct ChatView: View {
                 )
             }
             ContextPickerSheet(
-                title: "项目", rows: rows, emptyText: "暂无已登记的项目",
+                title: L10n.text("项目"), rows: rows, emptyText: L10n.text("暂无已登记的项目"),
                 identifierPrefix: "context.project."
             ) { chooseProject($0) }
             .presentationDetents([.height(ContextPickerSheet.height(rows: rows.count))])
@@ -1013,7 +968,7 @@ struct ChatView: View {
                 )
             }
             ContextPickerSheet(
-                title: "模式", rows: rows, emptyText: "暂无可选模式",
+                title: L10n.text("模式"), rows: rows, emptyText: L10n.text("暂无可选模式"),
                 identifierPrefix: "context.mode."
             ) { chooseMode($0) }
             .presentationDetents([.height(ContextPickerSheet.height(rows: rows.count))])
@@ -1027,7 +982,7 @@ struct ChatView: View {
                 )
             }
             ContextPickerSheet(
-                title: "供应商", rows: rows, emptyText: "", identifierPrefix: "context.provider."
+                title: L10n.text("供应商"), rows: rows, emptyText: "", identifierPrefix: "context.provider."
             ) { id in
                 contextPicker = nil
                 Task { await store.chooseProvider(id) }
@@ -1100,7 +1055,7 @@ struct ChatView: View {
                 DSBotIcon(.plus, size: 24, strokeWidth: 1.5)
                     .foregroundStyle(DSBotStyle.ink.opacity(0.3))
                     .frame(width: DSBotLayout.composerHeight, height: DSBotLayout.composerHeight)
-                Text("选择工作区")
+                Text(L10n.text("选择工作区"))
                     .font(.system(size: 16))
                     .foregroundStyle(DSBotStyle.muted)
                 Spacer(minLength: 0)
@@ -1115,7 +1070,7 @@ struct ChatView: View {
                 .strokeBorder(DSBotStyle.chatDivider, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
                 .allowsHitTesting(false)
         }
-        .accessibilityLabel("选择工作区")
+        .accessibilityLabel(L10n.text("选择工作区"))
         .accessibilityIdentifier("composer.inert")
     }
 
@@ -1192,14 +1147,14 @@ struct ChatView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("添加")
+        .accessibilityLabel(L10n.text("添加"))
         .accessibilityIdentifier("composer.plus")
     }
 
     private var placeholder: String {
         switch composerIntent {
-        case .goal: return "输入目标，智能体将持续执行"
-        case .message: return store.planMode ? "描述你的任务以生成计划" : "发消息"
+        case .goal: return L10n.text("输入目标，智能体将持续执行")
+        case .message: return store.planMode ? L10n.text("描述你的任务以生成计划") : L10n.text("发消息")
         }
     }
 
@@ -1211,13 +1166,13 @@ struct ChatView: View {
                 Button {
                     composerIntent = .message
                 } label: {
-                    Text("/目标")
+                    Text(L10n.text("/目标"))
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(DSBotStyle.blue)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("目标指令，点按取消")
+                .accessibilityLabel(L10n.text("目标指令，点按取消"))
                 .accessibilityIdentifier("composer.goal.token")
             }
             ComposerTextView(
@@ -1271,7 +1226,7 @@ struct ChatView: View {
     }
 
     private var holdToTalkBar: some View {
-        Text("按住说话")
+        Text(L10n.text("按住说话"))
             .font(.system(size: 17, weight: .semibold))
             .foregroundStyle(DSBotStyle.ink)
             .frame(maxWidth: .infinity, minHeight: DSBotLayout.composerHeight)
@@ -1311,7 +1266,7 @@ struct ChatView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isVoiceMode ? "切换到键盘" : "语音输入")
+        .accessibilityLabel(isVoiceMode ? L10n.text("切换到键盘") : L10n.text("语音输入"))
         .accessibilityIdentifier(isVoiceMode ? "composer.keyboard" : "composer.voice")
     }
 
@@ -1336,7 +1291,7 @@ struct ChatView: View {
             }
             .buttonStyle(.plain)
             .disabled(store.isStoppingSession || store.isSending || store.status != .connected)
-            .accessibilityLabel("停止任务")
+            .accessibilityLabel(L10n.text("停止任务"))
             .accessibilityIdentifier("composer.stop")
         } else if hasSendableContent {
             Button(action: send) {
@@ -1359,7 +1314,7 @@ struct ChatView: View {
             }
             .buttonStyle(.plain)
             .disabled(store.isSending || store.isChoosingProvider || isGoalWorking || store.selectedSession == nil || uploadingFileName != nil)
-            .accessibilityLabel("发送")
+            .accessibilityLabel(L10n.text("发送"))
             .accessibilityIdentifier("composer.send")
         }
     }
@@ -1883,7 +1838,7 @@ private struct ChatMessageRow: View, Equatable {
                     } label: {
                         HStack(spacing: 7) {
                             DSBotIcon(.terminal, size: 16, scalesStroke: true)
-                            Text(message.toolName.flatMap { $0.isEmpty ? nil : $0 } ?? "工具输出")
+                            Text(message.toolName.flatMap { $0.isEmpty ? nil : $0 } ?? L10n.text("工具输出"))
                                 .font(.system(size: 12, weight: .medium))
                                 .lineLimit(1)
                             DSBotIcon(isToolExpanded ? .up : .down, size: 14, scalesStroke: true)
@@ -1892,7 +1847,7 @@ private struct ChatMessageRow: View, Equatable {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(isToolExpanded ? "收起工具输出" : "展开工具输出")
+                    .accessibilityLabel(isToolExpanded ? L10n.text("收起工具输出") : L10n.text("展开工具输出"))
                     if isToolExpanded {
                         messageText(message.text)
                     }
@@ -1909,7 +1864,7 @@ private struct ChatMessageRow: View, Equatable {
                                 .padding(.top, 5)
                         }
                     } label: {
-                        Text("处理过程")
+                        Text(L10n.text("处理过程"))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(DSBotStyle.muted)
                     }
@@ -1919,7 +1874,7 @@ private struct ChatMessageRow: View, Equatable {
                         messageText(reasoning)
                             .padding(.top, 5)
                     } label: {
-                        Text("思考过程")
+                        Text(L10n.text("思考过程"))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(DSBotStyle.muted)
                     }

@@ -116,6 +116,7 @@ body[data-ds-dark-theme] .dudu .dudu-pet-chip { box-shadow: 0 4px 14px var(--dud
 .dudu-pet-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted-foreground); opacity: .4; animation: dudu-pet-dot 1.2s ease-in-out infinite; }
 .dudu-pet-dots i:nth-child(2) { animation-delay: .15s; }
 .dudu-pet-dots i:nth-child(3) { animation-delay: .3s; }
+.dudu-pet-dots--reply { width: fit-content; height: 14px; margin-top: 8px; padding: 0; }
 .dudu-pet-at { display: flex; flex-direction: column; align-items: flex-end; }
 /* The result of a scheduled task of 嘟嘟 (owner, 2026-11-11; .local/designs/scheduled-tasks-fresh-session-2026-11-11/chat.png, the left frame): its own words under a header of the type of an issue's line (12px on 14px),
    a 13px clock level with the letters, 6px before the task's name, and the time 8px after it. The words themselves are `.dudu-pet-message--dudu`. */

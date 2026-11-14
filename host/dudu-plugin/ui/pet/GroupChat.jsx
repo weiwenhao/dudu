@@ -63,8 +63,7 @@ function Label({ issue, at }) {
  * The answer of an issue's agent: markdown, cut at six lines the way Lark cuts a long message (owner, 2026-11-11, from a Lark screenshot): the last lines fade into the bubble and a white capsule, 展开, sits over the
  * fade; opened, the bubble grows where it stands and a capsule, 收起, ends it, and closing it brings the bubble back into view. Only the capsule changes it, so a click that selects words opens nothing.
  */
-function Answer({ text }) {
-  const [open, setOpen] = useState(false);
+function Answer({ text, open, setOpen, running }) {
   const [longer, setLonger] = useState(false);
   const root = useRef(null);
   const body = useRef(null);
@@ -78,34 +77,45 @@ function Answer({ text }) {
   }, [open]);
   return (
     <div ref={root} className="dudu-pet-guest-bubble">
-      <div ref={body} className={open ? undefined : cn('dudu-pet-clamp', longer && 'dudu-pet-clamp--cut')} style={open ? undefined : { WebkitLineClamp: CLAMP_LINES }}><Markdown text={text} /></div>
-      {longer && !open && <button type="button" className="dudu-pet-fold" aria-expanded="false" onClick={() => setOpen(true)}>{P.expand}</button>}
+      <div className="relative">
+        <div ref={body} className={open ? undefined : cn('dudu-pet-clamp', longer && 'dudu-pet-clamp--cut')} style={open ? undefined : { WebkitLineClamp: CLAMP_LINES }}><Markdown text={text} /></div>
+        {longer && !open && <button type="button" className="dudu-pet-fold" aria-expanded="false" onClick={() => setOpen(true)}>{P.expand}</button>}
+      </div>
       {open && <button type="button" className="dudu-pet-fold dudu-pet-fold--end" aria-expanded="true" onClick={() => { closing.current = true; setOpen(false); }}>{P.collapse}</button>}
+      {running && <ReplyDots className="dudu-pet-dots--reply" />}
     </div>
   );
 }
 
 /** A line the owner's issue answered with (`reply`), on the left. `onOpenIssue` is what a click on the picture does (the issue's page). */
-export function GuestMessage({ line, onOpenIssue }) {
+export function GuestMessage({ line, onOpenIssue, expanded, onExpandedChange, running = false }) {
   return (
-    <div className="dudu-pet-guest" data-group-issue={nameOf(line.issue)}>
+    <div className="dudu-pet-guest" data-group-issue={nameOf(line.issue)} data-group-waiting={running ? nameOf(line.issue) : undefined} aria-busy={running || undefined}>
       <Face issue={line.issue} onOpen={() => onOpenIssue(line.issue)} />
       <div className="min-w-0">
         <Label issue={line.issue} at={line.at} />
-        <Answer text={line.text ?? ''} />
+        <Answer text={line.text ?? ''} open={expanded} setOpen={onExpandedChange} running={running} />
       </div>
     </div>
   );
 }
 
+/** The same dots remain after text arrives, until the forwarded run actually ends. */
+function ReplyDots({ className }) {
+  return <div className={cn('dudu-pet-dots', className)} aria-hidden="true"><i /><i /><i /></div>;
+}
+
 /** The dots of an issue that has not answered yet. */
-export function WaitingMessage({ line, onOpenIssue }) {
+export function WaitingMessage({ line, onOpenIssue, expanded, onExpandedChange }) {
+  if (line.liveReply?.text) {
+    return <GuestMessage running line={{ ...line, kind: 'reply', text: line.liveReply.text, at: line.liveReply.at }} onOpenIssue={onOpenIssue} expanded={expanded} onExpandedChange={onExpandedChange} />;
+  }
   return (
     <div className="dudu-pet-guest" data-group-waiting={nameOf(line.issue)} role="status" aria-busy="true">
       <Face issue={line.issue} onOpen={() => onOpenIssue(line.issue)} />
       <div className="min-w-0">
         <Label issue={line.issue} />
-        <div className="dudu-pet-guest-bubble dudu-pet-dots" aria-hidden="true"><i /><i /><i /></div>
+        <ReplyDots className="dudu-pet-guest-bubble" />
       </div>
     </div>
   );

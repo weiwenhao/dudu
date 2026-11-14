@@ -51,10 +51,10 @@ private struct FileAttachmentTile: View {
             .frame(width: AttachmentTile.size, height: AttachmentTile.size)
             .background(Color(white: 0.94), in: AttachmentTile.shape)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("文件 \(file.name)")
+            .accessibilityLabel(L10n.text("文件 {0}", "\(file.name)"))
             .accessibilityIdentifier("file.tile.\(file.id)")
 
-            AttachmentRemoveBadge(label: "移除文件", identifier: "file.remove.\(file.id)", action: onRemove)
+            AttachmentRemoveBadge(label: L10n.text("移除文件"), identifier: "file.remove.\(file.id)", action: onRemove)
         }
         .frame(width: AttachmentTile.size, height: AttachmentTile.size)
     }

@@ -10,6 +10,7 @@ import { createDshContentSearch } from './session-search.mjs';
 import { withAbort } from '../../providers/async.mjs';
 import { readSessionHistory } from '../../dsh-session-history.mjs';
 import { isHarness } from '../../providers/catalog.mjs';
+import { createReplyStream } from './reply-stream.mjs';
 
 const textOf = (content) => (typeof content === 'string' ? content : (Array.isArray(content) ? content : []).filter((block) => block?.type === 'text').map((block) => block.text).join('\n'));
 
@@ -337,6 +338,7 @@ export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, c
     /** Listens to DSH for the sessions `handlers.owns` names (see agent-sessions.mjs). Returns the way to stop. */
     watch(handlers) {
       const safe = (work) => { try { work(); } catch (error) { console.warn(`[dudu] A session event was not handled: ${error.message}`); } };
+      const streams = new Map();
       async function relay(request, next, { text, kind, answer }) {
         const sessionId = request?.agent?.session?.id;
         if (typeof sessionId !== 'string' || !handlers.owns(sessionId)) return next();
@@ -356,6 +358,19 @@ export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, c
       }
       const stops = [
         ctx.on('api-session/status', (sessionId, running) => { if (handlers.owns(sessionId)) safe(() => handlers.status(sessionId, running)); }),
+        ctx.on('agent/assistant-stream', ({ agent, frame }) => {
+          const id = agent?.session?.id;
+          if (!id || !handlers.owns(id)) return;
+          safe(() => {
+            if (frame?.type === 'start' && typeof frame.attemptId === 'string') streams.set(id, { attemptId: frame.attemptId, body: createReplyStream() });
+            const stream = streams.get(id);
+            if (!stream || frame?.attemptId !== stream.attemptId) return;
+            const text = stream.body.accept(frame);
+            if (text !== null && text !== undefined) handlers.assistant(id, text, { streaming: true });
+            if (frame?.type === 'end') streams.delete(id);
+          });
+        }, { global: true }),
+        ctx.on('agent/disposed', ({ agent }) => streams.delete(agent?.session?.id), { global: true }),
         ctx.on('session/event', (session, event) => {
           const id = session?.id;
           if (!id || !['turn/start', 'turn/end', 'assistant/message'].includes(event?.type) || !handlers.owns(id)) return;
@@ -365,7 +380,10 @@ export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, c
               // Imported native boundaries are history: only an actually running DSH Agent starts work.
               if (optional('agents')?.get(id)?.status === 'running') handlers.status(id, true);
             } else if (event.type === 'assistant/message') handlers.assistant(id, textOf(event.data?.message?.content));
-            else handlers.turnEnd(id, { kind: event.data?.reason?.kind, error: event.data?.reason?.error?.message });
+            else {
+              streams.delete(id);
+              handlers.turnEnd(id, { kind: event.data?.reason?.kind, error: event.data?.reason?.error?.message });
+            }
           });
         }),
         // A question of the agent, and its request for a wider mode, are answerers on DSH's waterfalls: each asks the owner on the issue's page,
@@ -379,7 +397,7 @@ export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, c
         // Without this a read-only agent that asks to write waits for ever: DSH's window is the only place the request is shown.
         ctx.on('approval/request', (request, next) => relay(request, next, { text: approvalText(request), kind: 'approval', answer: outcomeOf }), { global: true, prepend: true }),
       ];
-      return () => { for (const stop of stops) { try { stop?.(); } catch { /* already gone */ } } };
+      return () => { streams.clear(); for (const stop of stops) { try { stop?.(); } catch { /* already gone */ } } };
     },
   };
 }

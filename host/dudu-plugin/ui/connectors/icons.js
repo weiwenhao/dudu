@@ -1,9 +1,11 @@
-// What a connector's `icon` key stands for. Every service Dudu ships has one: its logo (the brand mark, on the white tile) or a plain symbol. The catalog's own services
+// What a connector's `icon` key stands for. Every service Dudu ships has one: its logo (the brand mark, on the white tile) or a plain symbol. A connector with neither (the
+// owner added it by hand, or it was found on this computer: the plugin's keys `plug` and `terminal`, which name no service) has no entry here and is drawn with the first
+// letter of its name (`ConnectorMark`), as the Collector and the phone draw it. The catalog's own services
 // are imported here; the logos of the other common services (Lark, Stripe, QQ, WeChat and so on: the owner, 2026-11-07) are collected by scripts/collect-brand-logos.mjs
 // into brand-logos.js, and host/assistant/connectors/brands.mjs says which name is which service. The logos are the CC0 "SVG Logos" set (gilbarbara/logos), Simple Icons
 // (CC0), devicon's Canva, Ant Design's and TDesign's DingTalk and WeCom (MIT) and Wikimedia Commons' Lark (icons/NOTICE.md); trademarks stay with their owners, and the
 // marks are here only so that a row can be told from the next.
-import { Globe, PenTool, Plug, Terminal } from 'lucide-react';
+import { Globe, PenTool } from 'lucide-react';
 import airtable from './icons/airtable.svg';
 import atlassian from './icons/atlassian.svg';
 import canva from './icons/canva.svg';
@@ -36,18 +38,4 @@ export const ICONS = {
   ...BRAND_LOGOS,
   browser: { Glyph: Globe },
   pencil: { Glyph: PenTool },
-  // what the owner added by hand, or what was found on this computer: a service somewhere else, or a command
-  plug: { Glyph: Plug },
-  terminal: { Glyph: Terminal },
 };
-
-const REMOTE = ICONS.plug;
-const LOCAL = ICONS.terminal;
-
-/**
- * The icon of a connector or of a catalog item: the one its key names. Without one it is a plug (a service somewhere else, which is what a custom
- * address is) or a terminal (a command, or a sentence about how to read), as `about.kind` or the catalog group says.
- */
-export function iconFor(key, fallback = 'local') {
-  return ICONS[key] ?? (fallback === 'remote' ? REMOTE : LOCAL);
-}

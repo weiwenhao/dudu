@@ -459,44 +459,6 @@ test('every change leaves an event: who, what was before and after, why, and whi
   assert.equal(s.issues.events(null).outcome, 'success');
 });
 
-test('undo puts back status, resolvedAt, ask and outcome, and says so in its own event', (t) => {
-  const s = store();
-  t.after(s.cleanup);
-  const x = s.add({ title: 'x', status: 'in_review', ask: 'Confirm?' });
-  const done = s.ok(s.issues.complete(x.id, { outcome: 'Confirmed' }));
-  assert.deepEqual(pick(done.issue), { status: 'done', ask: '', resolvedAt: T0 + 1000, outcome: 'Confirmed' });
-  const undone = s.ok(s.issues.undo(done.eventId));
-  assert.deepEqual(pick(undone.issue), { status: 'in_review', ask: 'Confirm?', resolvedAt: null, outcome: null });
-  assert.deepEqual([undone.skipped, undone.kept], [[], []]);
-  const { events } = s.issues.events({ issueId: x.id });
-  assert.deepEqual([events[0].action, events[0].undoes, events[1].undoneBy], ['undo', done.eventId, events[0].id]);
-  assert.deepEqual(events[0].after, { status: 'in_review', ask: 'Confirm?', resolvedAt: null, outcome: null });
-  // The restored question and the status move are both on the log again, the question last.
-  assert.deepEqual(s.issues.get(x.id).log.slice(0, 2).map((entry: any) => [entry.kind, entry.text, entry.data]), [
-    ['blocked', 'Confirm?', null],
-    ['status', '', { from: 'done', to: 'in_review' }],
-  ]);
-  assert.equal(s.issues.undo(done.eventId).outcome, 'needs_clarification');
-});
-
-test('undo never overwrites a later edit: untouched fields come back, the rest are kept and reported', (t) => {
-  const s = store();
-  t.after(s.cleanup);
-  const x = s.add({ title: 'x' });
-  const raised = s.ok(s.issues.update(x.id, { priority: 'high' }));
-  s.ok(s.issues.update(x.id, { priority: 'low' }));
-  const refused = s.issues.undo(raised.eventId);
-  assert.equal(refused.outcome, 'no_op');
-  assert.deepEqual(refused.skipped, [{ eventId: raised.eventId, issueId: 1, reason: 'it was changed again since' }]);
-  assert.equal(s.issues.get(x.id).issue.priority, 'low');
-
-  const both = s.ok(s.issues.update(x.id, { priority: 'urgent', kind: 'ops' }));
-  s.ok(s.issues.update(x.id, { kind: 'finance' }));
-  const partial = s.ok(s.issues.undo(both.eventId));
-  assert.deepEqual([partial.issue.priority, partial.issue.kind], ['low', 'finance']);
-  assert.deepEqual(partial.kept, [{ eventId: both.eventId, issueId: 1, fields: ['kind'] }]);
-});
-
 // --- search
 
 test('search finds Chinese words, Latin prefixes, briefs and outcomes, best match first', (t) => {
@@ -547,7 +509,7 @@ test('search text is only ever words: operators and punctuation do nothing', (t)
 
 // --- counters, facets, the completed-from cut
 
-test('counts() agree with the rows after a long random run of changes, undos included', (t) => {
+test('counts() agree with the rows after a long random run of changes', (t) => {
   const s = store();
   t.after(s.cleanup);
   const raw = new DatabaseSync(s.file);
@@ -566,7 +528,6 @@ test('counts() agree with the rows after a long random run of changes, undos inc
     else if (roll < 0.62) s.issues.update(id, { priority: pickOne(['none', 'urgent', 'high', 'medium', 'low']) });
     else if (roll < 0.72) s.issues.complete(id, { outcome: 'ok' });
     else if (roll < 0.8) s.issues.cancel(id, { reason: 'no' });
-    else if (roll < 0.9) s.issues.undo();
     else s.issues.update(id, { project: pickOne([null, { name: 'docs', path: '/d' }]), agent: pickOne([null, 'claude']) });
     s.clock.now += 1000;
   }
@@ -809,10 +770,6 @@ test('two connections to one file see each other and hand out distinct ids', (t)
   assert.equal(s.issues.get(1).issue.priority, 'urgent');
   assert.equal(other.search('second').total, 3);
   assert.equal(s.issues.search('second').total, 3);
-  // The event table is shared too: one connection can undo what the other did.
-  const undone = s.ok(s.issues.undo());
-  assert.equal(undone.issue.priority, 'none');
-  assert.equal(other.get(1).issue.priority, 'none');
   assert.deepEqual(other.counts(), s.issues.counts());
 });
 let big: Promise<any> | null = null;

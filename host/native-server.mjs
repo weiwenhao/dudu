@@ -1,4 +1,6 @@
+import { nativeLabels, nativeText, withNativeLocale } from './native-locale.mjs';
 import http from 'node:http';
+import { Buffer } from 'node:buffer';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
 import { NATIVE_METHODS } from './native-bridge.mjs';
@@ -22,7 +24,7 @@ const IDLE_TIMEOUT_MS = 2 * 60_000;
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NONCE = /^[A-Za-z0-9_-]{16,128}$/;
 
-const SAFE_ERRORS = Object.freeze({
+const SAFE_ERRORS = nativeLabels(Object.freeze({
   AUTH_FAILED: '配对已失效，请重新配对。',
   AUTH_REQUIRED: '请更新电脑端的 dsbot 插件。',
   BAD_REQUEST: '请求参数不正确。',
@@ -40,7 +42,7 @@ const SAFE_ERRORS = Object.freeze({
   UNSUPPORTED: '此操作暂不受支持。',
   UPSTREAM_ERROR: '桌面服务拒绝了此操作。',
   UPSTREAM_UNAVAILABLE: '桌面服务暂时无法完成此操作。',
-});
+}));
 
 const reply = (response, status, value) => {
   if (response.writableEnded || response.destroyed) return;
@@ -131,7 +133,7 @@ export async function probeNativeAddress(address, nonce = randomBytes(24).toStri
     }
     url.pathname = ROUTES.probe;
   } catch {
-    throw new Error('连接地址格式不正确。');
+    throw new Error(nativeText('连接地址格式不正确。'));
   }
   let response;
   try {
@@ -144,13 +146,13 @@ export async function probeNativeAddress(address, nonce = randomBytes(24).toStri
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
-    throw new Error('连接地址未连接到这台电脑，请检查地址、TLS 证书和网络配置。');
+    throw new Error(nativeText('连接地址未连接到这台电脑，请检查地址、TLS 证书和网络配置。'));
   }
-  if (!response.ok) throw new Error('连接地址未连接到兼容的 dsbot 服务。');
+  if (!response.ok) throw new Error(nativeText('连接地址未连接到兼容的 dsbot 服务。'));
   let value;
-  try { value = await response.json(); } catch { throw new Error('探测响应格式不正确。'); }
+  try { value = await response.json(); } catch { throw new Error(nativeText('探测响应格式不正确。')); }
   if (!isRecord(value) || value.protocol !== 1 || typeof value.proof !== 'string') {
-    throw new Error('连接地址未连接到兼容的 dsbot 服务。');
+    throw new Error(nativeText('连接地址未连接到兼容的 dsbot 服务。'));
   }
   return value.proof;
 }
@@ -163,6 +165,7 @@ export async function createNativeServer({
   dispatch,
   onDisconnect,
   httpHandler,
+  runRequest = (operation) => operation(),
   capabilities = [],
   maxClients = 32,
   maxInflightPerClient = 32,
@@ -202,12 +205,14 @@ export async function createNativeServer({
   });
 
   const server = http.createServer((request, response) => {
-    void handle(request, response).catch((error) => {
-      if (response.writableEnded || response.destroyed) return;
-      const status = error instanceof HTTPError ? error.status : 503;
-      const body = errorValue(error);
-      reply(response, status, { ok: false, error: body });
-    });
+    const language = request.headers['accept-language'];
+    void runRequest(() => withNativeLocale(language, () => handle(request, response)))
+      .catch((error) => withNativeLocale(language, () => {
+        if (response.writableEnded || response.destroyed) return;
+        const status = error instanceof HTTPError ? error.status : 503;
+        const body = errorValue(error);
+        reply(response, status, { ok: false, error: body });
+      }));
   });
 
   function makeConnection(deviceId, clientName) {

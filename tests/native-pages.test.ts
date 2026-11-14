@@ -86,7 +86,7 @@ test('serves only document-provider manifest resources and rejects URL and trave
   ]));
   const { pages, connection } = createHarness({ frontend });
   const page = await openPage(pages, connection);
-  assert.deepEqual(frontend.calls.documents, [{ kind: 'plugins', sessionId: undefined }]);
+  assert.deepEqual(frontend.calls.documents, [{ kind: 'plugins', sessionId: undefined, locale: 'zh-CN' }]);
 
   const result = await pages.dispatch('web.resource', {
     id: page.id,
@@ -127,7 +127,7 @@ test('serves direct HTTP documents and raw manifest resources per connection and
 
   assert.match(page.id, /^[0-9a-f-]{36}$/iu);
   assert.deepEqual(frontend.calls.documents, [{
-    kind: 'plugins', sessionId: undefined, transport: 'http', basePath,
+    kind: 'plugins', sessionId: undefined, locale: 'zh-CN', transport: 'http', basePath,
   }]);
   assert.equal(await pages.documentHttp({ id: page.id }, connection), page.html);
 
@@ -616,7 +616,7 @@ test('pages for what plugins add are named by a registered id, and ids and sessi
   await assert.rejects(open({ page: 'panel' }), { code: 'BAD_REQUEST' });
   const panel = await open({ page: 'panel', target: 'insight' });
   assert.match(panel.id, /^[0-9a-f-]{36}$/u);
-  assert.deepEqual(frontend.calls.documents.at(-1), { kind: 'panel', sessionId: undefined });
+  assert.deepEqual(frontend.calls.documents.at(-1), { kind: 'panel', sessionId: undefined, locale: 'zh-CN' });
 
   // Conversation pages require a session; a named view also requires its target.
   await assert.rejects(open({ page: 'view', target: 'notes' }), { code: 'BAD_REQUEST' });
@@ -626,12 +626,16 @@ test('pages for what plugins add are named by a registered id, and ids and sessi
     await assert.rejects(open(params), { code: 'BAD_REQUEST' });
   }
   await open({ page: 'view', sessionId: SESSION_ID, target: 'notes' });
-  assert.deepEqual(frontend.calls.documents.at(-1), { kind: 'view', sessionId: SESSION_ID });
+  assert.deepEqual(frontend.calls.documents.at(-1), { kind: 'view', sessionId: SESSION_ID, locale: 'zh-CN' });
 
-  // Settings can open on a section; other pages take no target at all.
+  // Specialized conversation pages keep their registry ID, just like generic views.
+  for (const [page, target] of [['trace', 'trajectory'], ['context', 'dsh-context'], ['team', 'fleet']]) {
+    const opened = await open({ page, sessionId: SESSION_ID, target });
+    await pages.dispatch('web.close', { id: opened.id }, connection);
+  }
+  // Settings can open on a section; plugin inventory has no selectable target.
   await open({ page: 'settings', target: 'models' });
   await assert.rejects(open({ page: 'plugins', target: 'x' }), { code: 'BAD_REQUEST' });
-  await assert.rejects(open({ page: 'trace', sessionId: SESSION_ID, target: 'x' }), { code: 'BAD_REQUEST' });
 
   for (const target of ['', 'has space', 'a'.repeat(300), '../up', 'line\nbreak', '<script>', 42]) {
     await assert.rejects(open({ page: 'panel', target }), { code: 'BAD_REQUEST' }, String(target));

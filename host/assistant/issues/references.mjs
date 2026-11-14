@@ -43,7 +43,7 @@ export function shortenProjectKeys(db) {
   }
 }
 
-/** Called within the same transaction as its issue change, including migration and Undo. */
+/** Called within the same transaction as its issue change, including migration. */
 export function createReferences(db) {
   function assign(id, project) {
     if (!project) {

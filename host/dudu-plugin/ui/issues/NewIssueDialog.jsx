@@ -110,7 +110,7 @@ export function NewIssueDialog({ open, onOpenChange, onCreate, request, preset =
   const due = dueAt == null ? null : dueInfo(dueAt, now);
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) reset(); onOpenChange(next); }}>
-      <DialogContent className="gap-3 sm:max-w-[640px]"
+      <DialogContent className="max-h-[calc(100dvh-2rem)] gap-3 overflow-y-auto sm:max-w-[640px]"
         onPasteCapture={(event) => { if (event.clipboardData?.files.length) { event.preventDefault(); event.stopPropagation(); attach(event.clipboardData.files); } }}>
         <DialogTitle className="sr-only">{T.newIssue.title}</DialogTitle>
         <DialogDescription className="sr-only">{T.newIssue.description}</DialogDescription>
@@ -127,7 +127,8 @@ export function NewIssueDialog({ open, onOpenChange, onCreate, request, preset =
           onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); create(); } }}
           className="h-9 w-full rounded-md bg-transparent text-lg font-semibold outline-none placeholder:text-muted-foreground"
         />
-        <RichText className="min-h-24 [&_.dudu-rich]:min-h-24" value={brief} onChange={setBrief} onSubmit={create} label={T.newIssue.briefPlaceholder} placeholder={T.newIssue.briefPlaceholder} />
+        {/* A long description (a Collector record's whole text) scrolls inside its own box: the window stays within the screen, with the title, the values and Create issue in view. */}
+        <RichText className="max-h-[min(50dvh,420px)] min-h-24 overflow-y-auto [&_.dudu-rich]:min-h-24" value={brief} onChange={setBrief} onSubmit={create} label={T.newIssue.briefPlaceholder} placeholder={T.newIssue.briefPlaceholder} />
         {drafts.length > 0 && <AttachmentDrafts drafts={drafts} disabled={busy} onRemove={removeDraft} />}
         <div className="flex flex-wrap items-center gap-1.5" data-new-issue-values="">
           <StatusMenu status={chosenStatus} onSelect={setStatus}>

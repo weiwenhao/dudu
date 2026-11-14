@@ -4,8 +4,8 @@
 // tokens, the keys and the values of environment variables are in that store, never in this file.
 //
 //   const connectors = createConnectors({ file, inUse? })     inUse(id) -> [names of the collectors that read through it]
-//   connectors.owner.list() / add(input) / update(id, patch) / remove(id) / undo(token)     the owner's, from the settings page
-//   connectors.dudu.list() / register(input) / update / remove / undo                       the same, as 嘟嘟's tools call them
+//   connectors.owner.list() / add(input) / update(id, patch) / remove(id)     the owner's, from the settings page
+//   connectors.dudu.list() / register(input) / update / remove                the same, as 嘟嘟's tools call them
 //   connectors.close()
 //
 // A connector is { id, name, kind: 'prompt' | 'mcp', prompt, spec, via, legacy, source: 'owner' | 'dudu' }. A Prompt connector has its text and no spec;
@@ -25,8 +25,6 @@ const plain = (value) => value && typeof value === 'object' && !Array.isArray(va
 const MESSAGES = {
   changed: 'The connectors changed. Read them again before editing.',
   unreadable: 'The connectors could not be read or saved.',
-  undone: 'That undo is no longer available.',
-  undoChanged: 'The connectors changed after that edit.',
 };
 
 const view = ({ id, name, kind, prompt, server, spec, via, source }) => ({
@@ -144,7 +142,7 @@ export function createConnectors({ file, inUse = () => [] }) {
     return entries.remove(read, entry);
   });
 
-  const api = { list, update, remove, undo: entries.undo };
+  const api = { list, update, remove };
   return {
     dudu: { ...api, register },
     owner: { ...api, add },

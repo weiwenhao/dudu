@@ -1,12 +1,13 @@
 import UIKit
 
-/// Writes down every tap and every press and hold on the app's windows, so that "I tapped and nothing happened for a while" can be read off the diagnostics
+/// Writes down taps, holds and completed drags on the app's windows, so that "I tapped and nothing happened for a while" can be read off the diagnostics
 /// afterwards (owner, 2026-11-07: "user action 之类的日志"): next to the requests to the computer (`http.request.complete`) and the main thread's stalls
 /// (`ui.main_thread_stall`, `UIResponsivenessMonitor`), `scripts/device-actions.mjs` says which tap was followed by a wait, and for what.
 ///
-/// What is written: the kind (`user.tap`, `user.hold`), where on the screen (points) and how big the screen is, and a time. For a tap that time is how long the touch
+/// What is written: the kind (`user.tap`, `user.hold`, `user.drag`), where on the screen (points) and how big the screen is, and a time. For a tap that time is how long the touch
 /// waited for the main thread before the app saw it (`elapsedMs`: the system stamps a touch when the finger lands; a busy main thread takes it later); for a hold,
-/// how long the finger stayed. Nothing that says what was tapped, what was typed or which conversation it was: the keyboard is another window, which is left alone.
+/// how long the finger stayed. A drag also has its displacement and greatest distance from the starting point, once on release. Nothing says what was tapped, typed or which conversation it was.
+/// The keyboard is another window, which is left alone.
 ///
 /// The recorder is a gesture recognizer that never recognizes anything: it watches, leaves every touch to the views and delays none of them, and fails as soon as the
 /// touch is over. It is put on the windows once (`install`, from the scene's becoming active).
@@ -72,6 +73,8 @@ private final class TouchRecorder: UIGestureRecognizer {
         }
         guard let beginning, let touch = touches.first else { return }
         let duration = touch.timestamp - beginning.time
+        let end = touch.location(in: nil)
+        travel = max(travel, hypot(end.x - beginning.point.x, end.y - beginning.point.y))
         let size = view?.bounds.size ?? .zero // (the window's: the whole screen)
         let place: [String: Double] = [
             "tapX": beginning.point.x.rounded(), "tapY": beginning.point.y.rounded(),
@@ -83,7 +86,14 @@ private final class TouchRecorder: UIGestureRecognizer {
         case .hold:
             DSBotLog.record("user.hold", elapsedMs: duration * 1_000, geometry: place)
         case .drag:
-            break
+            DSBotLog.record(
+                "user.drag", elapsedMs: duration * 1_000,
+                geometry: place.merging([
+                    "dragX": (end.x - beginning.point.x).rounded(),
+                    "dragY": (end.y - beginning.point.y).rounded(),
+                    "dragTravel": travel.rounded()
+                ]) { _, value in value }
+            )
         }
     }
 

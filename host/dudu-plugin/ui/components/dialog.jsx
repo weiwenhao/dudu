@@ -19,10 +19,10 @@ export const DialogContent = React.forwardRef(function DialogContent({ className
   const shade = cn('fixed inset-0 z-[1000] bg-black/50', overlayClassName);
   return (
     <DialogPrimitive.Portal container={container}>
-      {modal ? <DialogPrimitive.Overlay ref={overlayRef} data-slot="dialog-overlay" className={shade} />
-        : <div ref={overlayRef} data-slot="dialog-overlay" className={shade} />}
+      {modal ? <DialogPrimitive.Overlay ref={overlayRef} data-slot="dialog-overlay" data-window-drag-exclude className={shade} />
+        : <div ref={overlayRef} data-slot="dialog-overlay" data-window-drag-exclude className={shade} />}
       <DialogPrimitive.Content
-        ref={ref} data-slot="dialog-content"
+        ref={ref} data-slot="dialog-content" data-window-drag-exclude
         className={cn('fixed top-1/2 left-1/2 z-[1000] flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-xl border bg-popover p-5 text-popover-foreground shadow-lg outline-hidden sm:max-w-[560px]', className)}
         {...props}
       >

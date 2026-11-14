@@ -32,9 +32,15 @@ final class ConversationMarkdown: @unchecked Sendable {
                     return nil
                 }
             case let .command(command):
-                // The result of a task that 嘟嘟 did itself is drawn as one of its messages: prepared with the rest, so it never shows as raw text first.
-                let task = command.group.flatMap { $0.kind == .task ? $0.taskText : nil }.flatMap { $0.isEmpty ? nil : $0 }
-                return (command.detail.map { [$0] } ?? []) + (task.map { [$0] } ?? [])
+                // Group replies include the current streamed body. Prepare it before publishing the row, so every delta does not replace the bubble with a Markdown-loading spinner.
+                let body = command.group.flatMap { line -> String? in
+                    switch line.kind {
+                    case .reply: return line.text
+                    case .task: return line.taskText
+                    default: return nil
+                    }
+                }.flatMap { $0.isEmpty ? nil : $0 }
+                return (command.detail.map { [$0] } ?? []) + (body.map { [$0] } ?? [])
             default: return []
             }
         })

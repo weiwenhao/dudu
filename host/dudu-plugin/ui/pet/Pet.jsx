@@ -133,6 +133,15 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
   // The cards of the quick buttons: what each lists is kept by the plugin under its command's id (assistant/cards), asked for once when its events have been read.
   const [cards, setCards] = useState({});
   const cardsAsked = useRef(new Set());
+  const knownCards = useRef({});
+  const groupRevision = useRef(-1);
+  // Expansion belongs to the answer's @ line, so the final command retains the streamed bubble's open state.
+  const [expandedReplies, setExpandedReplies] = useState(() => new Set());
+  const setReplyExpanded = useCallback((id, expanded) => setExpandedReplies((current) => {
+    const next = new Set(current);
+    if (expanded) next.add(id); else next.delete(id);
+    return next;
+  }), []);
   const [quickBusy, setQuickBusy] = useState('');
   // The lines the owner hid (删除: only what this thread shows; DSH's log and what 嘟嘟 was told stay), by the sequence number of their event; and the grey title after the @ID that 回复 put in the box.
   const [hidden, setHidden] = useState(() => new Set());
@@ -140,7 +149,7 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
   // An issue's answer stands under the line it answers, where its dots were, not at the end of the thread (`placeReplies`).
   const visibleMessages = useMemo(() => placeReplies(messages.filter((message) => !hidden.has(message.id)), cards), [messages, hidden, cards]);
   // What is at the end of the thread: its last line, and whether that line has what it is drawn from (a card or a line comes by its command's id, after its events).
-  const endKey = useMemo(() => { const last = visibleMessages.at(-1); return last ? `${last.id}:${last.role === 'card' || last.role === 'group' ? Boolean(cards[last.commandId]) : true}` : ''; }, [visibleMessages, cards]);
+  const endKey = useMemo(() => { const last = visibleMessages.at(-1); return last ? `${last.id}:${last.role === 'card' || last.role === 'group' ? Boolean(cards[last.commandId]) : true}:${cards[last.commandId]?.liveReply?.text?.length ?? 0}` : ''; }, [visibleMessages, cards]);
   const scrolledTo = useRef(null);
   const sendingNow = useRef(false);
   const failedRelay = useRef(null);
@@ -213,6 +222,18 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
     else if (scrolledTo.current !== endKey) { element.scrollTop = element.scrollHeight; scrolledTo.current = endKey; }
   }, [messages, cards, open, earlier, endKey]);
 
+  const rememberCards = useCallback((answer) => {
+    if (!alive.current || answer?.outcome !== 'success') return;
+    const incoming = { ...answer.cards };
+    // A slower page read must not overwrite a newer streaming reply.
+    if (answer.groupRevision < groupRevision.current) {
+      for (const id of Object.keys(incoming)) if (knownCards.current[id]) delete incoming[id];
+    }
+    groupRevision.current = Math.max(groupRevision.current, answer.groupRevision ?? 0);
+    Object.assign(knownCards.current, incoming);
+    setCards((current) => ({ ...current, ...incoming }));
+  }, []);
+
   const read = useCallback(async (snapshot, { before } = {}) => {
     if (!snapshot?.sessionId || !actions.readConversation) return;
     const page = await actions.readConversation(snapshot, before);
@@ -226,9 +247,8 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
     const wanted = found.filter((message) => (message.role === 'card' || message.role === 'group') && !cardsAsked.current.has(message.commandId)).map((message) => message.commandId);
     if (wanted.length) {
       for (const id of wanted) cardsAsked.current.add(id);
-      request('assistant/cards', { ids: wanted }).then((answer) => {
-        if (alive.current && answer?.outcome === 'success') setCards((current) => ({ ...current, ...answer.cards }));
-      }).catch(() => { for (const id of wanted) cardsAsked.current.delete(id); });
+      await request('assistant/cards', { ids: wanted }).then(rememberCards)
+        .catch(() => { for (const id of wanted) cardsAsked.current.delete(id); });
     }
     if (before !== undefined || oldest.current === null) {
       oldest.current = page.records?.[0]?.event?.seq ?? found[0]?.id ?? oldest.current;
@@ -242,7 +262,7 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
     }
     if (last && last.id > newestReply.current) notify.current = false;
     if (last) newestReply.current = Math.max(newestReply.current, last.id);
-  }, [actions, request]);
+  }, [actions, request, rememberCards]);
 
   // What was hidden (here or on the phone) is read when the window opens, so that the lines the phone hid are gone here too.
   useEffect(() => {
@@ -265,6 +285,15 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
     }
     return started.current;
   }, [request]);
+  // The state and the thread, read at once after something the owner did (a send, a stop), as the quick cards and the line to an issue are: `running` and the new line show now, not at the next poll.
+  const sync = useCallback(async (fallback) => {
+    const value = await request('assistant/state');
+    const snapshot = value.conversation?.sessionId ? value.conversation : fallback;
+    if (!alive.current || !snapshot?.sessionId) return;
+    state.current = snapshot;
+    setConversation(snapshot);
+    if (snapshot.cursor !== knownCursor.current) await read(snapshot);
+  }, [request, read]);
   const suggestions = useSuggestions({ actions, request, ensure, input, text: draft, setText: setDraft, open });
   const { close: closeSuggestions, recipient: relayRecipient } = suggestions;
   const marked = useMemo(() => highlightParts(draft, suggestions.skillNames), [draft, suggestions.skillNames]);
@@ -296,6 +325,12 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
           state.current = snapshot;
           setConversation(snapshot);
           if (snapshot.cursor !== knownCursor.current) await read(snapshot);
+          if (active && open && snapshot.groupRevision !== groupRevision.current) {
+            const records = knownCards.current;
+            const ids = waitingLines(Object.keys(records).map((commandId) => ({ role: 'group', commandId })), records)
+              .map(({ commandId }) => commandId).slice(-100);
+            if (ids.length) rememberCards(await request('assistant/cards', { ids }));
+          }
           if (snapshot.error) setProblem(P.failed);
         }
       } catch { if (active) setProblem(P.failed); }
@@ -303,7 +338,7 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
     };
     void poll();
     return () => { active = false; clearTimeout(timer); };
-  }, [open, conversation?.sessionId, ensure, read, request, settings.enabled, suppressed]);
+  }, [open, conversation?.sessionId, ensure, read, rememberCards, request, settings.enabled, suppressed]);
 
   // A quick button: the plugin makes the card as a command of the conversation (no model turn) and it comes into the thread like any event; it is read at once, not at the next poll.
   const sendCard = useCallback(async (kind) => {
@@ -427,13 +462,15 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
         setDraft(''); setBubble('');
         for (const item of attached) if (item.url) URL.revokeObjectURL(item.url);
         draftItems.current = []; setDrafts([]);
+        // The line and the state (the stop square in place of the arrow) are read at once rather than at the next poll, a second at most, while the box is already empty.
+        void sync(target).catch(() => { /* the next poll reads it */ });
       }
     } catch (error) {
       notify.current = false;
       if (alive.current) setSendProblem(T.activity.notDelivered(error.message || T.shell.unavailable));
     }
     finally { sendingNow.current = false; if (alive.current) setSending(false); }
-  }, [actions, ensure, read, request, closeSuggestions, relayRecipient]);
+  }, [actions, ensure, read, request, sync, closeSuggestions, relayRecipient]);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -604,7 +641,7 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
   const waitingOf = new Map(waiting.map((one) => [one.commandId, one]));
   const shown = new Set((earlier ? [...older, ...current] : current).map((message) => message.commandId));
   const strays = waiting.filter(({ commandId }) => !shown.has(commandId));
-  const waitingRow = ({ commandId, line }) => <div key={`waiting:${commandId}`} className="dudu-pet-row"><WaitingMessage line={line} onOpenIssue={openCardIssue} /></div>;
+  const waitingRow = ({ commandId, line }) => <div key={`waiting:${commandId}`} className="dudu-pet-row"><WaitingMessage line={line} onOpenIssue={openCardIssue} expanded={expandedReplies.has(commandId)} onExpandedChange={(value) => setReplyExpanded(commandId, value)} /></div>;
   const loadEarlier = async () => {
     if (paging.current || !hasMore) return;
     paging.current = true;
@@ -634,9 +671,10 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
       const line = cards[message.commandId];
       // `end` is the silent mark that an answer will not come: it only stops the dots.
       if (line?.kind !== 'at' && line?.kind !== 'reply' && line?.kind !== 'task') return null;
+      const answerId = line.to ?? message.commandId;
       // A task's line (the result of a run of a task of 嘟嘟) is no issue's: it has no issue, so no 回复.
       const row = <MessageRow key={message.id} onCopy={lineText(line) ? () => copyText(lineText(line)) : undefined} onReply={line.issue?.id != null ? () => replyTo(line.issue) : undefined} onDelete={() => void hideMessage(message)}>
-        {line.kind === 'at' ? <AtMessage line={line} /> : line.kind === 'task' ? <TaskMessage line={line} /> : <GuestMessage line={line} onOpenIssue={openCardIssue} />}
+        {line.kind === 'at' ? <AtMessage line={line} /> : line.kind === 'task' ? <TaskMessage line={line} /> : <GuestMessage line={line} onOpenIssue={openCardIssue} expanded={expandedReplies.has(answerId)} onExpandedChange={(value) => setReplyExpanded(answerId, value)} />}
       </MessageRow>;
       const dots = line.kind === 'at' ? waitingOf.get(message.commandId) : undefined;
       return dots ? <Fragment key={message.id}>{row}{waitingRow(dots)}</Fragment> : row;
@@ -659,9 +697,9 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
     </MessageRow>;
   };
   return (
-    <div className="dudu-pet-dock" ref={dock}>
+    <div className="dudu-pet-dock" ref={dock} data-window-drag-exclude>
       {open && (
-        <section ref={dialog} className="dudu-pet-conversation" role="dialog" aria-label={P.conversation}>
+        <section ref={dialog} className="dudu-pet-conversation" role="dialog" aria-label={P.conversation} data-window-drag-exclude>
           <header>
             <Button variant="ghost" size="sm" className="h-auto gap-1 p-0 text-xs font-normal disabled:opacity-100 [&_svg]:size-3.5" onClick={showEarlier} disabled={!older.length && !hasMore}>{earlier ? <ChevronDown /> : <ChevronUp />}{P.earlier}</Button>
             <div className="flex items-center">
@@ -742,7 +780,7 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
                 renderPermission={renderPermission} locked={sending || Boolean(conversation?.running)} onError={setProblem} />
               {available && settings.voice && <Button type="button" variant="ghost" size="icon-sm" aria-label={P.voice} aria-pressed={listening} onClick={() => listening ? stopVoice(false) : startVoice(false)}><Mic /></Button>}
               {conversation?.running
-                ? <Button type="button" variant="ghost" size="icon-sm" className="dudu-pet-stop" aria-label={P.stop} onClick={() => actions.stopConversation?.(conversation.sessionId).catch(() => setProblem(P.failed))}><Square /></Button>
+                ? <Button type="button" variant="ghost" size="icon-sm" className="dudu-pet-stop" aria-label={P.stop} onClick={() => actions.stopConversation?.(conversation.sessionId).then(() => sync(conversation).catch(() => { /* the next poll reads it */ })).catch(() => setProblem(P.failed))}><Square /></Button>
                 : <Button type="submit" size="icon-sm" className="dudu-pet-send" aria-label={P.send} disabled={(!draft.trim() && !drafts.length) || sending}>{sending ? <LoaderCircle className="animate-spin" /> : <ArrowUp />}</Button>}
             </div>
             <Suggestions suggestions={suggestions} anchor={box} input={input} />

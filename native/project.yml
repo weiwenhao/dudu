@@ -4,16 +4,19 @@ options:
   deploymentTarget:
     iOS: "18.0"
   createIntermediateGroups: true
+  developmentLanguage: zh-Hans
 settings:
   base:
     DEVELOPMENT_TEAM: S3549488QR
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.3.0"
-    CURRENT_PROJECT_VERSION: 94
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: 106
     IPHONEOS_DEPLOYMENT_TARGET: "18.0"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_EMIT_LOC_STRINGS: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+    DUDU_APNS_ENVIRONMENT: development
 packages:
   LucideSwift:
     url: https://github.com/ajaxjiang96/lucide-swift.git
@@ -25,6 +28,10 @@ targets:
   dsbot:
     type: application
     platform: iOS
+    entitlements:
+      path: DSBot/DSBot.entitlements
+      properties:
+        aps-environment: "$(DUDU_APNS_ENVIRONMENT)"
     sources:
       - path: DSBot
         excludes:
@@ -38,7 +45,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.harnessmobile.app
         INFOPLIST_KEY_CFBundleDisplayName: Dudu
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        TARGETED_DEVICE_FAMILY: "1,2"
+        TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: NO
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: DSBot/Info.plist

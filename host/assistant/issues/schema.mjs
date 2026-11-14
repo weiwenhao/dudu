@@ -128,7 +128,7 @@ const MIGRATIONS = [
     key TEXT NOT NULL UNIQUE COLLATE NOCASE,
     next_number INTEGER NOT NULL DEFAULT 1
   );
-  -- Reservations survive moving, undoing and forgetting an issue; project numbers are never reused.
+  -- Reservations survive moving and forgetting an issue; project numbers are never reused.
   CREATE TABLE issue_project_numbers (
     identity TEXT NOT NULL REFERENCES issue_projects(identity),
     issue_id INTEGER NOT NULL,

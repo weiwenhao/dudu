@@ -104,9 +104,9 @@ struct SessionGoal: Codable, Equatable, Sendable {
 
     var title: String {
         switch phase {
-        case "paused": return "已暂停的目标"
-        case "blocked": return "受阻的目标"
-        default: return "进行中的目标"
+        case "paused": return L10n.text("已暂停的目标")
+        case "blocked": return L10n.text("受阻的目标")
+        default: return L10n.text("进行中的目标")
         }
     }
 }
@@ -122,39 +122,39 @@ enum ActivityKind: String, Sendable, Equatable {
 
     var doneTitle: String {
         switch self {
-        case .thinking: return "已完成分析"
-        case .read: return "已读取文件"
-        case .readImage: return "已读取图片"
-        case .write: return "已写入文件"
-        case .search: return "已搜索代码"
-        case .edit: return "修改了文件"
-        case .commands: return "执行了命令"
-        case .code: return "运行了代码"
-        case .webSearch: return "已搜索网页"
-        case .webFetch: return "已访问网页"
-        case .subagents: return "已协调子智能体"
-        case .plan: return "更新了计划"
-        case .questions: return "向用户提出了问题"
-        case .tools: return "已调用工具"
+        case .thinking: return L10n.text("已完成分析")
+        case .read: return L10n.text("已读取文件")
+        case .readImage: return L10n.text("已读取图片")
+        case .write: return L10n.text("已写入文件")
+        case .search: return L10n.text("已搜索代码")
+        case .edit: return L10n.text("修改了文件")
+        case .commands: return L10n.text("执行了命令")
+        case .code: return L10n.text("运行了代码")
+        case .webSearch: return L10n.text("已搜索网页")
+        case .webFetch: return L10n.text("已访问网页")
+        case .subagents: return L10n.text("已协调子智能体")
+        case .plan: return L10n.text("更新了计划")
+        case .questions: return L10n.text("向用户提出了问题")
+        case .tools: return L10n.text("已调用工具")
         }
     }
 
     var runningTitle: String {
         switch self {
-        case .thinking: return "正在分析请求"
-        case .read: return "正在读取文件"
-        case .readImage: return "正在读取图片"
-        case .write: return "正在写入文件"
-        case .search: return "正在搜索代码"
-        case .edit: return "正在编辑文件"
-        case .commands: return "正在运行命令"
-        case .code: return "正在运行代码"
-        case .webSearch: return "正在搜索网页"
-        case .webFetch: return "正在访问网页"
-        case .subagents: return "正在协调子智能体"
-        case .plan: return "正在更新计划"
-        case .questions: return "等待你的操作"
-        case .tools: return "正在调用工具"
+        case .thinking: return L10n.text("正在分析请求")
+        case .read: return L10n.text("正在读取文件")
+        case .readImage: return L10n.text("正在读取图片")
+        case .write: return L10n.text("正在写入文件")
+        case .search: return L10n.text("正在搜索代码")
+        case .edit: return L10n.text("正在编辑文件")
+        case .commands: return L10n.text("正在运行命令")
+        case .code: return L10n.text("正在运行代码")
+        case .webSearch: return L10n.text("正在搜索网页")
+        case .webFetch: return L10n.text("正在访问网页")
+        case .subagents: return L10n.text("正在协调子智能体")
+        case .plan: return L10n.text("正在更新计划")
+        case .questions: return L10n.text("等待你的操作")
+        case .tools: return L10n.text("正在调用工具")
         }
     }
 }
@@ -171,49 +171,49 @@ enum TranscriptTitles {
             if first.hasPrefix(sharedPrefix), second.hasPrefix(sharedPrefix) {
                 second = String(second.dropFirst(sharedPrefix.count))
             }
-            return "\(first)并\(second)"
+            return L10n.text("{0}并{1}", "\(first)", "\(second)")
         }
-        let title = labels.joined(separator: "，")
-        return counts.count > 3 ? "\(title)等" : title
+        let title = labels.joined(separator: L10n.language == "en" ? ", " : "，")
+        return counts.count > 3 ? L10n.text("{0}等", "\(title)") : title
     }
 
     /// Row title for one tool call ("运行命令 · List top memory processes").
     static func rowTitle(forTool name: String) -> String {
         switch name {
-        case "bash", "pwsh", "exec_command", "write_stdin": return "运行命令"
-        case "read": return "读取"
-        case "read_image": return "读取图片"
-        case "write": return "写入"
-        case "edit", "apply_patch": return "编辑"
-        case "run_code": return "代码"
-        case "grep": return "搜索文件内容"
-        case "glob": return "查找文件"
-        case "web_search": return "网页搜索"
-        case "web_fetch": return "网页获取"
-        case "ask_user_question", "request_user_input": return "提问"
-        case "todo_write": return "更新待办清单"
-        case "create_goal": return "创建目标"
-        case "get_goal": return "查看目标"
-        case "update_goal": return "更新目标"
+        case "bash", "pwsh", "exec_command", "write_stdin": return L10n.text("运行命令")
+        case "read": return L10n.text("读取")
+        case "read_image": return L10n.text("读取图片")
+        case "write": return L10n.text("写入")
+        case "edit", "apply_patch": return L10n.text("编辑")
+        case "run_code": return L10n.text("代码")
+        case "grep": return L10n.text("搜索文件内容")
+        case "glob": return L10n.text("查找文件")
+        case "web_search": return L10n.text("网页搜索")
+        case "web_fetch": return L10n.text("网页获取")
+        case "ask_user_question", "request_user_input": return L10n.text("提问")
+        case "todo_write": return L10n.text("更新待办清单")
+        case "create_goal": return L10n.text("创建目标")
+        case "get_goal": return L10n.text("查看目标")
+        case "update_goal": return L10n.text("更新目标")
         default:
-            if name.hasPrefix("terminal_") { return "运行命令" }
-            if name.hasPrefix("subagent") { return "子智能体" }
-            return "工具调用"
+            if name.hasPrefix("terminal_") { return L10n.text("运行命令") }
+            if name.hasPrefix("subagent") { return L10n.text("子智能体") }
+            return L10n.text("工具调用")
         }
     }
 
     static func triggerTitle(_ source: String) -> String {
         switch source {
-        case "goal": return "继续执行目标"
-        case "agent-message": return "收到任务消息"
-        case "team-message": return "收到团队消息"
-        case "subagent-settled": return "子任务状态更新"
-        case "github": return "收到 GitHub 事件"
-        case "webhook": return "收到外部事件"
-        case "schedule": return "自动化任务"
-        case "tool-jobs": return "后台任务状态更新"
-        case "cordis-host-runner": return "插件状态更新"
-        default: return "收到执行请求"
+        case "goal": return L10n.text("继续执行目标")
+        case "agent-message": return L10n.text("收到任务消息")
+        case "team-message": return L10n.text("收到团队消息")
+        case "subagent-settled": return L10n.text("子任务状态更新")
+        case "github": return L10n.text("收到 GitHub 事件")
+        case "webhook": return L10n.text("收到外部事件")
+        case "schedule": return L10n.text("自动化任务")
+        case "tool-jobs": return L10n.text("后台任务状态更新")
+        case "cordis-host-runner": return L10n.text("插件状态更新")
+        default: return L10n.text("收到执行请求")
         }
     }
 
@@ -224,9 +224,9 @@ enum TranscriptTitles {
         let minutes = (total / 60) % 60
         let seconds = total % 60
         var text = ""
-        if hours > 0 { text += "\(hours)小时" }
-        if total >= 60 { text += "\(minutes)分" }
-        return text + "\(seconds)秒"
+        if hours > 0 { text += L10n.text("{0}小时", "\(hours)") }
+        if total >= 60 { text += L10n.text("{0}分", "\(minutes)") }
+        return text + L10n.text("{0}秒", "\(seconds)")
     }
 
     /// `517`, `12.2K`, `1.3M` — the compact token figure used in the usage label.
@@ -244,16 +244,16 @@ enum TranscriptTitles {
         let date = Date(timeIntervalSince1970: milliseconds / 1_000)
         let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
         let today = calendar.dateComponents([.year, .month, .day], from: now)
-        let time = String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
-        if parts.year == today.year, parts.month == today.month, parts.day == today.day { return time }
-        let monthDay = "\(parts.month ?? 1)月\(parts.day ?? 1)日"
-        if parts.year == today.year { return "\(monthDay) \(time)" }
-        return "\(parts.year ?? 0)年\(monthDay) \(time)"
+        if parts.year == today.year, parts.month == today.month, parts.day == today.day {
+            return L10n.date(date, template: "jmm", timezone: calendar.timeZone)
+        }
+        return L10n.date(date, template: parts.year == today.year ? "MMMdjmm" : "yMMMdjmm",
+                         timezone: calendar.timeZone)
     }
 
     static func compactionSummary(items: Int?, tokens: Int?) -> String? {
         guard let items else { return nil }
-        return "已压缩 \(items) 条历史记录（约 \(tokens ?? 0) tokens）"
+        return L10n.text("已压缩 {0} 条历史记录（约 {1} tokens）", "\(items)", "\(tokens ?? 0)")
     }
 }
 
@@ -359,11 +359,11 @@ struct TurnRow: Identifiable, Equatable, Sendable {
     var summaryTitle: String? {
         guard isLastFragment, hasProcess, outcome != .running else { return nil }
         switch outcome {
-        case .failed, .interrupted: return "处理失败"
-        case .stopped: return "已停止"
+        case .failed, .interrupted: return L10n.text("处理失败")
+        case .stopped: return L10n.text("已停止")
         default:
-            guard let duration, duration >= 0 else { return "已完成" }
-            return "已完成，用时 \(TranscriptTitles.duration(milliseconds: duration))"
+            guard let duration, duration >= 0 else { return L10n.text("已完成") }
+            return L10n.text("已完成，用时 {0}", "\(TranscriptTitles.duration(milliseconds: duration))")
         }
     }
 
@@ -494,7 +494,7 @@ enum TranscriptBuilder {
                 rows.append(.command(commandRow(entry)))
             case "compaction":
                 rows.append(.command(CommandRow(
-                    id: entry.id, name: "上下文已压缩",
+                    id: entry.id, name: L10n.text("上下文已压缩"),
                     summary: TranscriptTitles.compactionSummary(items: entry.items, tokens: entry.tokens) ?? "",
                     isError: false, isRunning: false,
                     detail: nonEmpty(entry.summary), isCompaction: true
@@ -578,9 +578,17 @@ enum TranscriptBuilder {
         // "应该在原位吧，我新发的消息可以把它慢慢覆盖", and for the answer "我希望这个消息能停留在 loading 框对应的位置").
         rows = GroupChat.placingReplies(in: rows)
         rows = GroupChat.placingTyping(in: rows, now: Date().timeIntervalSince1970 * 1000) { line in
-            .command(CommandRow(
-                id: "typing:\(line.commandId ?? line.id)", name: GroupChat.command, summary: "", isError: false, isRunning: true,
-                group: line.group, isTyping: true
+            var reply = line.group
+            let live = reply?.liveReply
+            if let live, !live.text.isEmpty {
+                reply?.kind = .reply
+                reply?.text = live.text
+                reply?.at = live.at
+                reply?.to = line.commandId
+            }
+            return .command(CommandRow(
+                id: "answer:\(line.commandId ?? line.id)", name: GroupChat.command, summary: "", isError: false, isRunning: true,
+                group: reply, isTyping: live?.text.isEmpty != false
             ))
         }
         let admittedIDs = Set(transcript.entries.filter { $0.type == "user" }.map(\.id))
@@ -600,7 +608,7 @@ enum TranscriptBuilder {
         var summary = (entry.summary ?? "").split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         if name == "compact" {
             if running {
-                summary = "正在压缩…"
+                summary = L10n.text("正在压缩…")
             } else if !isError {
                 summary = TranscriptTitles.compactionSummary(
                     items: entry.compaction?.items, tokens: entry.compaction?.tokens

@@ -2,6 +2,70 @@ import XCTest
 @testable import dsbot
 
 final class ConversationProjectionTests: XCTestCase {
+    func testGroupReplyStreamsUnderItsOwnLineAndCommitsWithTheSameIdentityAndPreparedMarkdown() async throws {
+        let projector = ConversationProjector()
+        var line = try JSONDecoder().decode(GroupLine.self, from: Data("""
+        {"kind":"at","issue":{"id":9,"ref":"DUD-9","title":"Research","agent":"claude"},"text":"Continue"}
+        """.utf8))
+        line.at = Date().timeIntervalSince1970 * 1000
+        var transcript = Transcript(entries: [
+            TranscriptEntry(type: "command", id: "ask", seq: 1, commandId: "cmd-at",
+                            name: GroupChat.command, outcome: "success", group: GroupLineSlot(line)),
+            TranscriptEntry(type: "user", id: "later", seq: 3, text: "A later message")
+        ], turns: [], throughSeq: 3)
+        var projection = await projector.project(current: nil, incoming: transcript, currentRows: [], isRunning: false)
+        let rowIDs = projection.rows.map(\.id)
+        XCTAssertEqual(rowIDs, ["command:ask", "command:answer:cmd-at", "user:later"])
+        guard case let .command(waiting) = projection.rows[1] else { return XCTFail("Expected waiting reply") }
+        XCTAssertTrue(waiting.isTyping)
+        XCTAssertTrue(waiting.isRunning)
+        for text in ["**First**", "**First**\n\nSecond paragraph"] {
+            line.liveReply = GroupLiveReply(text: text, at: try XCTUnwrap(line.at))
+            line.at = Date().timeIntervalSince1970 * 1000 - GroupChat.waitLimit - 1
+            transcript.entries[0].group = GroupLineSlot(line)
+            projection = await projector.project(
+                current: projection.transcript, incoming: transcript, currentRows: projection.rows, isRunning: false
+            )
+            XCTAssertEqual(projection.rows.map(\.id), rowIDs)
+            guard case let .command(reply) = projection.rows[1] else { return XCTFail("Expected live reply") }
+            XCTAssertFalse(reply.isTyping)
+            XCTAssertTrue(reply.isRunning, "Text arriving does not end the forwarded run")
+            XCTAssertEqual(reply.group?.kind, .reply)
+            XCTAssertEqual(reply.group?.text, text)
+            XCTAssertNotNil(projection.markdown.content(for: text))
+            XCTAssertEqual(projection.transcript?.throughSeq, 3, "Text deltas add no durable events")
+        }
+        projection = await projector.project(
+            current: projection.transcript, incoming: transcript, currentRows: projection.rows, isRunning: false
+        )
+        guard case let .command(paused) = projection.rows[1] else { return XCTFail("Expected the in-flight reply") }
+        XCTAssertTrue(paused.isRunning, "A gap in text, even while Dudu itself is idle, is still the issue's active run")
+        XCTAssertFalse(projection.rowsChanged)
+        let finalText = try XCTUnwrap(line.liveReply?.text)
+        line.liveReply = nil
+        transcript.entries[0].group = GroupLineSlot(line)
+        var final = line
+        final.kind = .reply
+        final.text = finalText
+        final.to = "cmd-at"
+        final.answer = "answer"
+        transcript.entries.append(TranscriptEntry(
+            type: "command", id: "final", seq: 4, commandId: "cmd-reply",
+            name: GroupChat.command, outcome: "success", group: GroupLineSlot(final)
+        ))
+        transcript.throughSeq = 5
+        projection = await projector.project(
+            current: projection.transcript, incoming: transcript, currentRows: projection.rows, isRunning: false
+        )
+        XCTAssertEqual(projection.rows.map(\.id), rowIDs)
+        guard case let .command(reply) = projection.rows[1] else { return XCTFail("Expected final reply") }
+        XCTAssertFalse(reply.isRunning)
+        XCTAssertEqual(reply.commandId, "cmd-reply")
+        XCTAssertEqual(reply.seq, 4, "Actions retain the final command's authoritative sequence")
+        XCTAssertEqual(reply.group?.text, finalText)
+        XCTAssertNotNil(projection.markdown.content(for: finalText))
+    }
+
     func testChangeCountsUpdateWithoutOpeningFilesAndRemainScopedToTheirComparison() async throws {
         let projector = ConversationProjector()
         let counts = ConversationChangeSummary(total: 9, added: 78, deleted: 12)

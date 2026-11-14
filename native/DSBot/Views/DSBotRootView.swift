@@ -13,9 +13,9 @@ struct MainDestination: Equatable {
     var target: NavigationTarget
     var title: String
 
-    static let conversation = MainDestination(id: "chat", area: .view, target: .chat, title: "对话")
+    static let conversation = MainDestination(id: "chat", area: .view, target: .chat, title: L10n.text("对话"))
     /// The page the app opens on (owner, 2026-11-07): the board. The conversation is one level down from it.
-    static let board = MainDestination(id: "dudu.board", area: .sidebar, target: .board, title: "看板")
+    static let board = MainDestination(id: "dudu.board", area: .sidebar, target: .board, title: L10n.text("看板"))
 
     var showsChat: Bool { target == .chat }
     /// The conversation, the board and the Collector are drawn by the app itself, on the canvas; every other page is white.
@@ -35,16 +35,24 @@ struct MainDestination: Equatable {
         case .dshSettings: return "dshSettings"
         case .duduSettings: return "duduSettings"
         case .files: return "files"
-        case .schedule: return "schedule"
         case let .web(page, _): return page.rawValue
         case .unsupported: return "unsupported"
         }
     }
 }
 
+private struct EmbeddedPreloadRequest: Equatable {
+    let connection: String
+    let enabled: Bool
+    let routes: [EmbeddedPageRoute]
+    let viewport: CGSize
+}
+
 @MainActor
 struct DSBotRootView: View {
     @ObservedObject private var store: DSBotStore
+    @ObservedObject private var notifications = AppNotifications.shared
+    @State private var handlingNotificationID: UUID?
     @State private var isSidebarOpen = false
     @State private var sidebarNavigationRevision = 0
     @State private var presentedSheet: RootSheet?
@@ -67,11 +75,21 @@ struct DSBotRootView: View {
     /// The subscription quota the gauge button at the top right of the board opens (read only when the sheet opens).
     @StateObject private var quota = QuotaModel()
     @State private var showsQuota = false
+    @State private var activityRequest: SessionActivityRequest?
+    @State private var quickSheetRequest: AssistantQuickSheetState?
+    @State private var returningQuickSheet: AssistantQuickSheetState?
+    @State private var composerReply: GroupReplyRequest?
+    @State private var quickSheetMaximumHeight: CGFloat = 600
+    @State private var quickNavigation: QuickNavigation?
+    private enum QuickNavigation {
+        case issue(BoardIssue), issueID(Int), session(String), reply(GroupIssue)
+    }
+    @State private var subagentParents: [SessionSummary] = []
     /// 嘟嘟's own settings, drawn by the app: the pages of the one that is open.
     @StateObject private var settingsNav = SettingsNavigator()
     @State private var isMakingIssue = false
     @State private var issueDetail: BoardIssue?
-    /// The result of an action on a page of the app's own (a mark on records, with its Undo), under the toolbar.
+    /// The result of an action on a page of the app's own (a mark on records), under the toolbar.
     @State private var pageToast: DSBotToastMessage?
     @State private var isSearchActive = false
     @State private var conversationSearch = SessionSearchModel()
@@ -86,12 +104,12 @@ struct DSBotRootView: View {
     #else
     private var chatIdentity: Int { 0 }
     #endif
-    /// A request from the toolbar's "+" to the plugin page.
-    @State private var pageCommand: PageCommand?
     @State private var drawerMotion = DrawerMotion()
     /// DSH pages stay loaded for a few minutes after the user leaves them.
     @StateObject private var pagePool = EmbeddedPagePool()
+    @State private var pageViewport: CGSize = .zero
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     init(store: DSBotStore) {
         self.store = store
@@ -116,6 +134,10 @@ struct DSBotRootView: View {
             } else {
                 GeometryReader { geometry in
                     drawerStack(in: geometry)
+                        .onGeometryChange(for: CGSize.self) { $0.size } action: { pageViewport = $0 }
+                        .onGeometryChange(for: CGFloat.self) {
+                            ($0.size.height + $0.safeAreaInsets.top + $0.safeAreaInsets.bottom) * 0.75 - $0.safeAreaInsets.bottom
+                        } action: { quickSheetMaximumHeight = $0 }
                 }
                 .accessibilityHidden(presentedSheet != nil)
                 .sheet(isPresented: $isMakingIssue) {
@@ -127,8 +149,24 @@ struct DSBotRootView: View {
                         .presentationDragIndicator(.hidden)
                         .presentationBackground(ComposerAttachmentSheet.background)
                 }
-                .sheet(item: $issueDetail) { issue in
+                .sheet(item: $issueDetail, onDismiss: restoreQuickSheet) { issue in
                     IssueDetailSheet(issue: issue, board: board, store: store)
+                }
+                .sheet(item: $activityRequest) { request in
+                    SessionActivitySheet(request: request, store: store) { child in
+                        openSubagent(child, from: request)
+                    }
+                }
+                .sheet(item: $quickSheetRequest, onDismiss: finishQuickSheetDismissal) { request in
+                    AssistantQuickSheet(
+                        state: request, store: store, board: board, collector: collector, tasks: tasks,
+                        maximumHeight: quickSheetMaximumHeight,
+                        onOpenIssue: { leaveQuickSheet(request, for: .issue($0)) },
+                        onOpenIssueID: { leaveQuickSheet(request, for: .issueID($0)) },
+                        onOpenSession: { leaveQuickSheet(request, for: .session($0)) },
+                        onReply: { leaveQuickSheet(request, for: .reply($0)) },
+                        toast: $pageToast
+                    )
                 }
             }
         }
@@ -212,7 +250,7 @@ struct DSBotRootView: View {
                 // The tasks page, as the sidebar's fourth row opens it.
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 conversationFromBoard = false
-                destination = MainDestination(id: "dudu.tasks", area: .sidebar, target: .tasks, title: "任务")
+                destination = MainDestination(id: "dudu.tasks", area: .sidebar, target: .tasks, title: L10n.text("任务"))
             }
             if let seconds = reviewArgument("-dsbot-review-press-back").flatMap(Double.init) {
                 // The back button, once, after that many seconds: what a tap on it does (the simulator has no finger).
@@ -281,11 +319,46 @@ struct DSBotRootView: View {
             tasks.reset()
             quota.reset()
             showsQuota = false
+            activityRequest = nil
+            quickSheetRequest = nil
+            returningQuickSheet = nil
+            composerReply = nil
+            quickNavigation = nil
+            subagentParents = []
             isSearchActive = false
             conversationSearch.reset()
         }
+        .onChange(of: "\(notifications.target?.id.uuidString ?? "")/\(store.isRestoring)/\(store.status)/\(store.navigationAvailability)/\(store.navigation.sidebar.count)", initial: true) { _, _ in
+            Task { await openCollectorNotification() }
+        }
         .onChange(of: pageConnectionKey, initial: true) { _, key in
             pagePool.connectionChanged(to: key)
+        }
+        .task(id: pagePreloadRequest, priority: .utility) {
+            let request = pagePreloadRequest
+            guard request.enabled else {
+                pagePool.cancelPreloading()
+                return
+            }
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            pagePool.preload(request.routes, using: store, viewport: request.viewport)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { pagePool.discardReleasedPages() }
+        }
+        .onChange(of: store.status) { _, status in
+            if status != .connected { pagePool.discardReleasedPages() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            pagePool.discardReleasedPages()
+        }
+        .onDisappear { pagePool.cancelPreloading() }
+        .onChange(of: store.selectedSession?.id) { _, id in
+            if activityRequest?.session.id != id { activityRequest = nil }
+            if quickSheetRequest?.target.sessionID != id { quickSheetRequest = nil }
+            if composerReply?.target.sessionID != id { composerReply = nil }
+            if store.selectedSession?.subagent == nil { subagentParents = [] }
         }
         .onAppear {
             collector.report = { toast in pageToast = toast }
@@ -450,7 +523,7 @@ struct DSBotRootView: View {
                     toolbar
                         .frame(width: geometry.size.width, height: DSBotLayout.toolbarHeight)
                         .background {
-                            if DSBotScrollEdges.usesSystemEffect, boardConversationTitle != nil {
+                            if DSBotScrollEdges.usesSystemEffect, conversationHasTitle {
                                 DSBotToolbarTitleBackdrop(safeAreaTop: safeTop)
                             }
                         }
@@ -531,21 +604,24 @@ struct DSBotRootView: View {
             // long history again, which could land scrolled past its end: a white screen.
             ChatView(
                 store: store,
-                isOverlayOpen: isSidebarOpen || drawerMotion.isMoving || presentedSheet != nil || !destination.showsChat || conversationIsMoving,
+                isOverlayOpen: isSidebarOpen || drawerMotion.isMoving || presentedSheet != nil || activityRequest != nil || quickSheetRequest != nil || !destination.showsChat || conversationIsMoving,
                 historyTopInset: DSBotScrollEdges.usesSystemEffect ? 0 : safeTop + DSBotLayout.toolbarHeight,
                 isPageTransitioning: conversationIsMoving || drawerMotion.isMoving,
                 presentationRequest: boardConversationPreparation?.id,
-                onPresentationLayout: presentPreparedBoardConversation
+                onPresentationLayout: presentPreparedBoardConversation,
+                replyRequest: composerReply
             )
             .id(chatIdentity)
+            // Keep history and drafts mounted without composing its glass over another page.
+            .opacity(destination.showsChat ? 1 : 0)
             // Keep the toolbar's native safe area: ignoring the top also discards its scroll edge.
             .ignoresSafeArea(.container, edges: DSBotScrollEdges.usesSystemEffect ? .bottom : .all)
             .allowsHitTesting(destination.showsChat)
             .accessibilityHidden(!destination.showsChat)
-            .environment(\.conversationIsCovered, isSidebarOpen || drawerMotion.isMoving || !destination.showsChat || conversationIsMoving)
+            .environment(\.conversationIsCovered, isSidebarOpen || drawerMotion.isMoving || quickSheetRequest != nil || !destination.showsChat || conversationIsMoving)
             // A row of a todo card in 嘟嘟's chat opens its issue, as a row of the board does.
             .environment(\.openQuickCardIssue, { issue in Task { await openIssue(issue) } })
-            // The picture of an issue in the thread, and 打开会话 under a row of the todo card, open that issue's own conversation, one to one; 信息 and 定时任务 open their pages.
+            // The issue's explicit conversation action opens its ordinary session; the three shortcuts present sheets.
             .environment(\.openIssueConversation, { id in Task { await openIssueConversation(id: id) } })
             .environment(\.openQuickPage, { kind in openQuickPage(kind) })
 
@@ -568,7 +644,7 @@ struct DSBotRootView: View {
     private func edgeStripLayer(drawerWidth: CGFloat, pageWidth: CGFloat) -> some View {
         if !isSidebarOpen && presentedSheet == nil && !isBoardTransitioning {
             // The edge pulls the drawer out on the board and on a conversation of the sidebar's; on every page, and on a conversation opened from the board, it is the way back.
-            if destination.target == .board || (destination.showsChat && !conversationFromBoard) {
+            if destination.target == .board || (destination.showsChat && !conversationFromBoard && store.selectedSession?.subagent == nil) {
                 Color.clear
                     .frame(width: DSBotLayout.edgeSwipeWidth)
                     .frame(maxHeight: .infinity)
@@ -583,7 +659,7 @@ struct DSBotRootView: View {
                         onComplete: openSidebar
                     ))
                     .accessibilityHidden(true)
-            } else if destination.showsChat && conversationFromBoard && !returnsToAssistant {
+            } else if destination.showsChat && conversationFromBoard && !returnsToAssistant && store.selectedSession?.subagent == nil {
                 Color.clear
                     .frame(width: DSBotLayout.edgeSwipeWidth)
                     .frame(maxHeight: .infinity)
@@ -710,6 +786,7 @@ struct DSBotRootView: View {
     }
 
     private var boardConversationTitle: String? {
+        if toolbarDestination.showsChat, store.selectedSession?.subagent != nil { return store.selectedSession?.title }
         guard toolbarDestination.showsChat, conversationChromeIsFromBoard else { return nil }
         return board.openedIssue(for: store.selectedSession)?.title ?? store.selectedSession?.title
     }
@@ -724,11 +801,17 @@ struct DSBotRootView: View {
 
     private var toolbarTitle: String? {
         switch toolbarDestination.target {
-        case .collector: return collector.isSelecting ? "已选 \(collector.selection.count) 条" : toolbarDestination.title
+        case .chat: return store.isAssistantConversation ? L10n.text("嘟嘟") : nil
+        case .collector: return collector.isSelecting ? L10n.text("已选 {0} 条", "\(collector.selection.count)") : toolbarDestination.title
         case .tasks: return toolbarDestination.title
         case .duduSettings: return settingsNav.title
         default: return nil
         }
+    }
+
+    /// Both inline issue titles and the centered assistant title use the same readable backing.
+    private var conversationHasTitle: Bool {
+        toolbarDestination.showsChat && (boardConversationTitle != nil || toolbarTitle != nil)
     }
 
     @ViewBuilder
@@ -736,7 +819,7 @@ struct DSBotRootView: View {
         switch toolbarDestination.target {
         case .board:
             sidebarButton
-        case .chat where !conversationChromeIsFromBoard:
+        case .chat where !conversationChromeIsFromBoard && store.selectedSession?.subagent == nil:
             sidebarButton
         case .collector where collector.isSelecting:
             Button {
@@ -748,7 +831,7 @@ struct DSBotRootView: View {
                     .contentShape(Circle())
             }
             .buttonStyle(DSBotGlassButtonStyle())
-            .accessibilityLabel("取消选择")
+            .accessibilityLabel(L10n.text("取消选择"))
             .accessibilityIdentifier("collector.selection.cancel")
         default:
             backButton
@@ -774,7 +857,7 @@ struct DSBotRootView: View {
                     Button {
                         collector.selectAll()
                     } label: {
-                        Text("全选")
+                        Text(L10n.text("全选"))
                             .font(.system(size: 15, weight: .medium))
                             .foregroundStyle(DSBotStyle.ink)
                             .padding(.horizontal, 18)
@@ -784,18 +867,6 @@ struct DSBotRootView: View {
                     .buttonStyle(DSBotGlassCapsuleButtonStyle())
                     .accessibilityIdentifier("collector.selectAll")
                 }
-            } else if !collector.items.isEmpty {
-                Button {
-                    collector.startSelecting()
-                } label: {
-                    DSBotIcon(.selectRows, size: 22)
-                        .foregroundStyle(DSBotStyle.ink)
-                        .frame(width: DSBotLayout.toolbarButtonSize, height: DSBotLayout.toolbarButtonSize)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(DSBotGlassButtonStyle())
-                .accessibilityLabel("选择")
-                .accessibilityIdentifier("collector.select")
             }
         case .tasks:
             newTaskButton
@@ -803,7 +874,7 @@ struct DSBotRootView: View {
             NativeSettingsSaveButton(navigator: settingsNav, store: store) { pageToast = $0 }
                 .buttonStyle(DSBotGlassCapsuleButtonStyle())
         default:
-            if isPluginPage { addPluginButton }
+            EmptyView()
         }
     }
 
@@ -826,7 +897,7 @@ struct DSBotRootView: View {
                 .contentShape(Circle())
         }
         .buttonStyle(DSBotGlassButtonStyle())
-        .accessibilityLabel("额度")
+        .accessibilityLabel(L10n.text("额度"))
         .accessibilityIdentifier("board.quota")
     }
 
@@ -841,7 +912,7 @@ struct DSBotRootView: View {
                 .contentShape(Circle())
         }
         .buttonStyle(DSBotGlassButtonStyle())
-        .accessibilityLabel("新建事项")
+        .accessibilityLabel(L10n.text("新建事项"))
         .accessibilityIdentifier("board.new")
     }
 
@@ -857,7 +928,7 @@ struct DSBotRootView: View {
                 .contentShape(Circle())
         }
         .buttonStyle(DSBotGlassButtonStyle())
-        .accessibilityLabel("新建任务")
+        .accessibilityLabel(L10n.text("新建任务"))
         .accessibilityIdentifier("tasks.new")
     }
 
@@ -875,9 +946,9 @@ struct DSBotRootView: View {
     /// The arrows to the issue before and after the one whose conversation is open, in the order of the board (the desktop's "上一条事项" and "下一条事项").
     private var issuePager: some View {
         HStack(spacing: 0) {
-            pagerButton(.up, offset: -1, label: "上一条事项")
+            pagerButton(.up, offset: -1, label: L10n.text("上一条事项"))
             Rectangle().fill(DSBotStyle.ink.opacity(0.12)).frame(width: DSBotLayout.issuePagerDividerWidth, height: 20)
-            pagerButton(.down, offset: 1, label: "下一条事项")
+            pagerButton(.down, offset: 1, label: L10n.text("下一条事项"))
         }
         .frame(height: DSBotLayout.toolbarButtonSize)
         .dsbotGlass(in: Capsule())
@@ -915,7 +986,7 @@ struct DSBotRootView: View {
                 .contentShape(Circle())
         }
         .buttonStyle(DSBotGlassButtonStyle())
-        .accessibilityLabel(isSidebarOpen ? "关闭会话列表" : "打开会话列表")
+        .accessibilityLabel(isSidebarOpen ? L10n.text("关闭会话列表") : L10n.text("打开会话列表"))
         .accessibilityIdentifier("sidebar.toggle")
     }
 
@@ -931,7 +1002,7 @@ struct DSBotRootView: View {
                 .contentShape(Circle())
         }
         .buttonStyle(DSBotGlassButtonStyle())
-        .accessibilityLabel("返回")
+        .accessibilityLabel(L10n.text("返回"))
         .accessibilityIdentifier("page.back")
     }
 
@@ -940,36 +1011,36 @@ struct DSBotRootView: View {
         "\(store.activeComputer?.id ?? "")/\(store.connectionRevision)"
     }
 
-    /// The plugin manager is on screen: the toolbar's right button adds a plugin instead of opening the menu.
-    private var isPluginPage: Bool {
-        if case .web(.plugins, _) = destination.target { return true }
-        return false
-    }
-
-    /// Stands in for DSH's black "添加插件" button, which is hidden on the phone along with refresh.
-    private var addPluginButton: some View {
-        Button {
-            pageCommand = PageCommand(name: "add")
-        } label: {
-            DSBotIcon(.plus, size: 22)
-                .foregroundStyle(DSBotStyle.ink)
-                .frame(width: DSBotLayout.toolbarButtonSize, height: DSBotLayout.toolbarButtonSize)
-                .contentShape(Circle())
-        }
-        .buttonStyle(DSBotGlassButtonStyle())
-        .accessibilityLabel("添加插件")
-        .accessibilityIdentifier("plugins.add")
+    private var pagePreloadRequest: EmbeddedPreloadRequest {
+        var enabled = scenePhase == .active && store.status == .connected
+            && !store.showsConnectionGuide && !store.isRestoring && !store.isLoadingSession
+            && !store.isLoadingSessions && !store.isLoadingCatalog
+            && pageViewport.width > 0 && pageViewport.height > 0
+#if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("-dsbot-ui-review") { enabled = false }
+#endif
+        return EmbeddedPreloadRequest(
+            connection: pageConnectionKey, enabled: enabled,
+            routes: EmbeddedPageRoute.preloadCandidates(
+                navigation: store.activeNavigation, sessionID: store.selectedSession?.id
+            ),
+            viewport: pageViewport
+        )
     }
 
     @ViewBuilder
     private var conversationMenu: some View {
-        let views = menuViews
-        if !views.isEmpty {
+        if store.selectedSession != nil, !store.isBlankSession {
             Menu {
-                if !views.isEmpty {
-                    Picker("会话视图", selection: viewSelection(of: views)) {
-                        ForEach(views) { Text($0.title).tag($0.id) }
-                    }
+                Button {
+                    openActivity(.team)
+                } label: {
+                    Label { Text(L10n.text("智能体团队")) } icon: { DSBotIcon(.team, size: 20) }
+                }
+                Button {
+                    openActivity(.jobs)
+                } label: {
+                    Label { Text(L10n.text("后台任务")) } icon: { DSBotIcon(.stateWorking, size: 20) }
                 }
             } label: {
                 DSBotIcon(.options, size: 22)
@@ -981,36 +1052,47 @@ struct DSBotRootView: View {
             .menuStyle(.button)
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
-            .accessibilityLabel("更多")
+            .accessibilityLabel(L10n.text("更多"))
             .accessibilityIdentifier("conversation.menu")
         } else {
             Color.clear.frame(width: DSBotLayout.toolbarButtonSize, height: DSBotLayout.toolbarButtonSize)
         }
     }
 
-    /// DSH shows its tabs only when a started conversation has more than one view.
-    private var menuViews: [NavigationItem] {
-        guard store.selectedSession != nil, !store.isBlankSession else { return [] }
-        let views = store.activeNavigation.views
-        return views.count > 1 ? views : []
+    private func openActivity(_ panel: SessionActivityPanel) {
+        guard let session = store.selectedSession, let computer = store.activeComputer else { return }
+        dismissKeyboard()
+        activityRequest = SessionActivityRequest(panel: panel, computerID: computer.id, session: session)
     }
 
-    private func viewSelection(of views: [NavigationItem]) -> Binding<String> {
-        Binding(
-            get: {
-                if destination.showsChat { return views.first { $0.target == .chat }?.id ?? "" }
-                return destination.area == .view ? destination.id : ""
-            },
-            set: { id in
-                if let item = views.first(where: { $0.id == id }) { open(item, in: .view) }
-            }
-        )
+    private func openSubagent(_ child: SessionSummary, from request: SessionActivityRequest) {
+        guard store.activeComputer?.id == request.computerID, store.selectedSession?.id == request.session.id,
+              child.subagent?.parentSessionId == request.session.id else { return }
+        activityRequest = nil
+        subagentParents.append(request.session)
+        dismissKeyboard()
+        Task { await store.selectSession(child) }
+    }
+
+    private func returnFromSubagent() {
+        guard let address = store.selectedSession?.subagent else { return }
+        guard store.status == .connected else {
+            store.error = DSBotFailure.disconnected.localizedDescription
+            return
+        }
+        let parent = subagentParents.popLast() ?? store.sessions.first { $0.id == address.parentSessionId }
+        guard let parent else {
+            store.error = DSBotFailure.remote("NOT_FOUND").localizedDescription
+            return
+        }
+        dismissKeyboard()
+        Task { await store.selectSession(parent) }
     }
 
     @ViewBuilder
     private func statusBarFrost(safeAreaTop: CGFloat) -> some View {
         let toolbarBottom = safeAreaTop + DSBotLayout.toolbarHeight
-        let hasTitle = toolbarDestination.showsChat && conversationChromeIsFromBoard
+        let hasTitle = conversationHasTitle
         if !DSBotScrollEdges.usesSystemEffect {
             DSBotEdgeBlur(
                 edge: .top,
@@ -1046,24 +1128,15 @@ struct DSBotRootView: View {
                 showConversation()
                 Task { await store.selectSession(session) }
             }
-        case .schedule:
-            LibraryView(section: "schedule", store: store) { sessionID in
-                guard let session = store.sessions.first(where: { $0.id == sessionID }) else { return }
-                showConversation()
-                Task { await store.selectSession(session) }
-            }
-            .padding(.top, DSBotScrollEdges.usesSystemEffect ? 0 : safeAreaTop)
         case .duduSettings:
             NativeSettingsView(navigator: settingsNav, store: store, topInset: toolbarInset) { pageToast = $0 }
         case let .web(page, target):
             let sessionID = page.needsSession ? store.selectedSession?.id : nil
             EmbeddedPageView(
-                store: store, page: page, target: target, sessionID: sessionID, pool: pagePool,
-                command: page == .plugins ? pageCommand : nil,
-                commandDelivered: { pageCommand = nil }
+                store: store, page: page, target: target, sessionID: sessionID, pool: pagePool
             )
                 // Pages of plugins this app has no layout for start below the toolbar buttons.
-                .padding(.top, [.panel, .view].contains(page) ? toolbarInset : 0)
+                .padding(.top, toolbarInset)
                 // One view identity per page and conversation, so each owns its own session and web view.
                 .id("\(page.rawValue)/\(target ?? "")/\(sessionID ?? "")")
         }
@@ -1076,11 +1149,11 @@ struct DSBotRootView: View {
         DSBotLog.record("navigation.open", state: "page")
         sidebarNavigationRevision &+= 1
         guard target != .unsupported else {
-            store.notice = "手机端暂不支持「\(item.title)」"
+            store.notice = L10n.text("手机端暂不支持「{0}」", "\(item.title)")
             return
         }
         if case let .web(page, _) = target, page.needsSession, store.selectedSession == nil {
-            store.notice = "先打开一个会话"
+            store.notice = L10n.text("先打开一个会话")
             return
         }
         if target == .assistant {
@@ -1105,10 +1178,35 @@ struct DSBotRootView: View {
     }
 
     private func showConversation() {
+        subagentParents = []
         conversationFromBoard = false
         returnsToAssistant = false
         destination = .conversation
         closeSidebar()
+    }
+
+    private func openCollectorNotification() async {
+        guard let target = notifications.target, !store.isRestoring,
+              handlingNotificationID != target.id else { return }
+        handlingNotificationID = target.id
+        defer { if handlingNotificationID == target.id { handlingNotificationID = nil } }
+        guard let computer = store.computers.first(where: { $0.computerId == target.computerID }) else {
+            notifications.consumed(target.id)
+            return
+        }
+        if store.activeComputer?.id != computer.id { await store.selectComputer(computer) }
+        guard !Task.isCancelled, notifications.target?.id == target.id,
+              store.activeComputer?.id == computer.id, store.status == .connected,
+              let item = store.navigation.sidebar.first(where: { $0.target == .collector }) else { return }
+        presentedSheet = nil
+        quickSheetRequest = nil
+        returningQuickSheet = nil
+        isSearchActive = false
+        collector.stopSelecting()
+        resetBoardTransition(showingBoard: true)
+        open(item, in: .sidebar)
+        notifications.consumed(target.id)
+        await collector.refresh(using: store)
     }
 
     /// One level up: a page goes back to the conversation, as it always did; a conversation opened from the board goes back to the board.
@@ -1121,6 +1219,7 @@ struct DSBotRootView: View {
             return
         }
         if destination.showsChat {
+            if store.selectedSession?.subagent != nil { returnFromSubagent(); return }
             if returnsToAssistant { returnToAssistant() } else { returnToBoard() }
             return
         } else {
@@ -1189,7 +1288,13 @@ struct DSBotRootView: View {
         conversationFromBoard = false
         returnsToAssistant = false
         Task {
-            if let session = await store.assistantSession() { await store.selectSession(session) }
+            if let session = await store.assistantSession() {
+                await store.selectSession(session)
+                if let sheet = returningQuickSheet, sheet.isCurrent(store), !conversationFromBoard {
+                    returningQuickSheet = nil
+                    quickSheetRequest = sheet
+                }
+            }
         }
     }
 
@@ -1257,14 +1362,54 @@ struct DSBotRootView: View {
         }
     }
 
-    /// 信息 and 任务 above the input of 嘟嘟's chat: their pages, with the back button every page has (it leads to the conversation).
+    /// Present before requesting data; the main conversation and its draft stay mounted beneath.
     private func openQuickPage(_ kind: QuickCardKind) {
+        guard quickSheetRequest == nil, let computer = store.activeComputer?.id,
+              let session = store.selectedSession, session.isAssistant == true else { return }
         dismissKeyboard()
-        switch kind {
-        case .info: destination = MainDestination(id: "dudu.collector", area: .sidebar, target: .collector, title: "信息")
-        case .task: destination = MainDestination(id: "dudu.tasks", area: .sidebar, target: .tasks, title: "任务")
-        case .todo: break
+        returningQuickSheet = nil
+        quickSheetRequest = AssistantQuickSheetState(kind: kind, target: DraftTarget(computerID: computer, sessionID: session.id))
+    }
+
+    private func leaveQuickSheet(_ sheet: AssistantQuickSheetState, for destination: QuickNavigation) {
+        returningQuickSheet = sheet
+        quickNavigation = destination
+        quickSheetRequest = nil
+    }
+
+    private func finishQuickSheetDismissal() {
+        collector.stopSelecting()
+        guard let navigation = quickNavigation, let sheet = returningQuickSheet else { return }
+        quickNavigation = nil
+        Task {
+            guard sheet.isCurrent(store) else { returningQuickSheet = nil; return }
+            switch navigation {
+            case .reply(let issue):
+                // Focus only after UIKit has dismissed the sheet. Use the group's existing reply action.
+                returningQuickSheet = nil
+                composerReply = GroupReplyRequest(target: sheet.target, issue: issue)
+                return
+            case .issue(let issue):
+                await openIssue(issue)
+            case .issueID(let id):
+                await openIssueConversation(id: id)
+            case .session(let id):
+                if !store.sessions.contains(where: { $0.id == id }) { await store.refreshSessions() }
+                guard sheet.isCurrent(store) else { return }
+                if let session = store.sessions.first(where: { $0.id == id }) {
+                    await selectIssueSession(session, returningToAssistant: true)
+                } else {
+                    store.error = DSBotFailure.remote("NOT_FOUND").localizedDescription
+                }
+            }
+            restoreQuickSheet()
         }
+    }
+
+    private func restoreQuickSheet() {
+        guard let sheet = returningQuickSheet, sheet.isCurrent(store), issueDetail == nil, quickNavigation == nil else { return }
+        returningQuickSheet = nil
+        quickSheetRequest = sheet
     }
 
     /// The same for an issue known by its number (a record that went to it).
@@ -1343,8 +1488,8 @@ struct DSBotRootView: View {
 
 func libraryTitle(for section: String) -> String {
     switch section {
-    case "plugins": return "插件"
-    case "schedule": return "任务"
+    case "plugins": return L10n.text("插件")
+    case "schedule": return L10n.text("任务")
     default: return section
     }
 }

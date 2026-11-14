@@ -10,6 +10,7 @@ private struct SettingsRow: Identifiable, Equatable {
 struct SettingsView: View {
     @ObservedObject var store: DSBotStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     /// Only DSH's own settings need an embedded page, created when its list is entered.
     @StateObject private var embeddedSession = EmbeddedPageSession()
     @State private var embeddedRetryToken = 0
@@ -26,6 +27,14 @@ struct SettingsView: View {
     /// sections the settings page itself reports once it has loaded.
     private var rows: [SettingsRow] {
         let provided = store.activeNavigation.settings.filter { $0.group != "dudu" }
+        if embeddedSession.isCurrent, embeddedSession.hasReceivedSettingsCategories {
+            return embeddedSession.settingsCategories.map { category in
+                SettingsRow(
+                    id: category.id, title: category.label,
+                    icon: provided.first { $0.id == category.id }?.icon
+                )
+            }
+        }
         if !provided.isEmpty {
             return provided.map { SettingsRow(id: $0.id, title: $0.title, icon: $0.icon) }
         }
@@ -73,11 +82,11 @@ struct SettingsView: View {
                     DSBotIcon(closes ? .close : .back, size: 20)
                         .foregroundStyle(DSBotStyle.ink)
                 }
-                .accessibilityLabel(closes ? "关闭设置" : "返回设置栏目")
+                .accessibilityLabel(closes ? L10n.text("关闭设置") : L10n.text("返回设置栏目"))
                 .accessibilityIdentifier(closes ? "settings.close" : "settings.dsh.back")
             }
             ToolbarItem(placement: .principal) {
-                Text(selectedRow?.title ?? (showsDSHSettings ? "其他设置" : "设置"))
+                Text(selectedRow?.title ?? (showsDSHSettings ? L10n.text("其他设置") : L10n.text("设置")))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(DSBotStyle.ink)
                     .lineLimit(1)
@@ -98,6 +107,11 @@ struct SettingsView: View {
         #endif
         .onChange(of: selectedRowID) { _, _ in pushSelection() }
         .onChange(of: embeddedSession.hasPage) { _, _ in pushSelection() }
+        .onChange(of: rows) { _, current in
+            if let selectedRowID, !current.contains(where: { $0.id == selectedRowID }) {
+                self.selectedRowID = nil
+            }
+        }
         .onDisappear(perform: refreshCatalogAfterEmbeddedSettings)
     }
 
@@ -147,6 +161,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 22) {
                 connectionCard
                 duduSettingsCard
+                aboutCard
             }
             .padding(.horizontal, 18)
             .padding(.top, 12)
@@ -175,7 +190,7 @@ struct SettingsView: View {
                     .foregroundStyle(DSBotStyle.ink)
                     .frame(width: 28)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(store.activeComputer?.name ?? "选择电脑")
+                    Text(store.activeComputer?.name ?? L10n.text("选择电脑"))
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(DSBotStyle.ink)
                         .lineLimit(1)
@@ -199,7 +214,7 @@ struct SettingsView: View {
         }
         .buttonStyle(DSBotRowButtonStyle())
         .accessibilityIdentifier("settings.computers")
-        .accessibilityHint("查看、切换或添加电脑")
+        .accessibilityHint(L10n.text("查看、切换或添加电脑"))
     }
 
     /// 嘟嘟's native settings pages, and the separate entry to DSH's own pages.
@@ -226,7 +241,7 @@ struct SettingsView: View {
             .foregroundStyle(DSBotStyle.ink)
             .frame(width: 28)
             // Keep the approved name when an older plugin or cached catalog supplies the old label.
-            Text(item.target == .dshSettings ? "其他设置" : item.title)
+            Text(item.target == .dshSettings ? L10n.text("其他设置") : item.title)
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(DSBotStyle.ink)
                 .lineLimit(1)
@@ -255,6 +270,70 @@ struct SettingsView: View {
         }
     }
 
+    /// 隐私政策, 关于 and 版本信息, in the owner's order (2026-11-12: "隐私策略，关于，版本信息都放设置里面吧"): one more card
+    /// of the same rows as the others. The policy opens in the browser, 关于 is a page, the version is only read.
+    private var aboutCard: some View {
+        VStack(spacing: 0) {
+            Button {
+                DSBotLog.record("settings.privacy.open")
+                openURL(AppInfo.privacyPolicyURL)
+            } label: {
+                aboutRowLabel(.privacy, L10n.text("隐私政策")) {
+                    DSBotIcon(.openLink, size: 16)
+                        .foregroundStyle(DSBotStyle.muted)
+                }
+            }
+            .buttonStyle(DSBotRowButtonStyle())
+            .accessibilityIdentifier("settings.privacy")
+
+            rowDivider
+
+            NavigationLink {
+                AboutView()
+            } label: {
+                aboutRowLabel(.info, L10n.text("关于")) {
+                    DSBotIcon(.right, size: 16)
+                        .foregroundStyle(DSBotStyle.muted)
+                }
+            }
+            .buttonStyle(DSBotRowButtonStyle())
+            .accessibilityIdentifier("settings.about")
+
+            rowDivider
+
+            aboutRowLabel(.version, L10n.text("版本信息")) {
+                Text(AppInfo.versionText)
+                    .font(.system(size: 13))
+                    .foregroundStyle(DSBotStyle.muted)
+                    .lineLimit(1)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("settings.version")
+        }
+        .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    /// The row of the cards above: the glyph in its 28pt column, the name, then what the row ends with.
+    private func aboutRowLabel<Trailing: View>(
+        _ glyph: DSBotGlyph, _ title: String, @ViewBuilder trailing: () -> Trailing
+    ) -> some View {
+        HStack(spacing: 12) {
+            DSBotIcon(glyph)
+                .foregroundStyle(DSBotStyle.ink)
+                .frame(width: 28)
+            Text(title)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(DSBotStyle.ink)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            trailing()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(minHeight: 58)
+        .contentShape(Rectangle())
+    }
+
     /// DSH's settings sections, as DSH lists them (with its icons). The first read of the list is a
     /// request to the plugin, not a page load, so it appears at once.
     private var dshSettingsCard: some View {
@@ -269,7 +348,7 @@ struct SettingsView: View {
                     DSBotIcon(.settings)
                         .foregroundStyle(DSBotStyle.ink)
                         .frame(width: 28)
-                    Text("加载设置…")
+                    Text(L10n.text("加载设置…"))
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(DSBotStyle.muted)
                     Spacer(minLength: 0)
@@ -292,7 +371,7 @@ struct SettingsView: View {
                         DSBotIcon(.reconnect)
                             .foregroundStyle(DSBotStyle.ink)
                             .frame(width: 28)
-                        Text("重试")
+                        Text(L10n.text("重试"))
                             .font(.system(size: 15, weight: .medium))
                             .foregroundStyle(DSBotStyle.ink)
                         Spacer(minLength: 0)
@@ -384,9 +463,9 @@ struct SettingsView: View {
 
     private var connectionStatusText: String {
         switch store.status {
-        case .connected: return "已连接"
-        case .connecting: return "正在连接"
-        case .disconnected: return "未连接"
+        case .connected: return L10n.text("已连接")
+        case .connecting: return L10n.text("正在连接")
+        case .disconnected: return L10n.text("未连接")
         }
     }
 
@@ -436,13 +515,13 @@ private struct DuduSettingsPage: View {
                     if navigator.canPop { navigator.pop() } else { dismiss() }
                 } label: {
                     if navigator.current?.page?.isForm == true {
-                        Text("取消")
+                        Text(L10n.text("取消"))
                     } else {
                         DSBotIcon(.back, size: 20).foregroundStyle(DSBotStyle.ink)
                     }
                 }
                 .disabled(navigator.current?.busy == true)
-                .accessibilityLabel(navigator.current?.page?.isForm == true ? "取消" : "返回")
+                .accessibilityLabel(navigator.current?.page?.isForm == true ? L10n.text("取消") : L10n.text("返回"))
                 .accessibilityIdentifier("settings.dudu.back")
             }
             ToolbarItem(placement: .principal) {

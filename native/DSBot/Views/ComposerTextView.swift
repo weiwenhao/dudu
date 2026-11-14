@@ -46,6 +46,7 @@ struct ComposerTextView: UIViewRepresentable {
         context.coordinator.isUpdating = true
         defer { context.coordinator.isUpdating = false }
         if view.markedTextRange == nil, view.text != text {
+            context.coordinator.isDeleting = false
             let selection = view.selectedRange
             view.text = text
             view.selectedRange = NSRange(
@@ -60,6 +61,7 @@ struct ComposerTextView: UIViewRepresentable {
             editor.completionActive = completionActive
             editor.onCompletionKey = onCompletionKey
             editor.onTapEditor = { [weak view, weak coordinator = context.coordinator] in
+                coordinator?.isDeleting = false
                 coordinator?.parent.onTapEditor?()
                 if let view { coordinator?.reportEditing(view) }
             }
@@ -87,6 +89,8 @@ struct ComposerTextView: UIViewRepresentable {
         private let ghostLabel = UILabel()
         private var focusRevision = 0
         var isUpdating = false
+        // Keep the edit intent across both selection and text callbacks for the same keystroke.
+        var isDeleting = false
         private var appliedSelection: UUID?
         private var highlightedText: String?
         private var highlightedRanges: [NSRange] = []
@@ -173,7 +177,8 @@ struct ComposerTextView: UIViewRepresentable {
             // Publish the native draft before completion updates can redraw this wrapper.
             if parent.text != view.text { parent.text = view.text }
             parent.onEditingChange?(ComposerEditingState(
-                text: view.text, selection: view.selectedRange, isComposing: view.markedTextRange != nil
+                text: view.text, selection: view.selectedRange, isComposing: view.markedTextRange != nil,
+                isDeleting: isDeleting
             ))
         }
 
@@ -206,12 +211,14 @@ struct ComposerTextView: UIViewRepresentable {
         }
 
         func textView(_ view: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
-            guard view.markedTextRange == nil, parent.completionActive else { return true }
-            if text == "\n" || text == "\t" { return !(parent.onCompletionKey?("choose") ?? false) }
+            if view.markedTextRange == nil, parent.completionActive, text == "\n" || text == "\t",
+               parent.onCompletionKey?("choose") == true { return false }
+            isDeleting = text.isEmpty && range.length > 0
             return true
         }
 
         func textViewDidBeginEditing(_ view: UITextView) {
+            isDeleting = false
             if !parent.isFocused { parent.isFocused = true }
             parent.onTapEditor?()
             reportEditing(view)

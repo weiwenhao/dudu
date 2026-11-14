@@ -21,8 +21,8 @@ export function groupEvent(event, memory) {
 }
 
 /**
- * The lines the owner wrote to an issue whose answer is still on its way: an `at` line that no `reply` or `end` names, and that is not older than WAIT_LIMIT. `lines` are the plugin's records by command id.
- * Each is `{ commandId, line }`, oldest first: the interface draws their dots at the end of the thread.
+ * The lines the owner wrote to an issue whose answer is still on its way: an `at` line that no `reply` or `end` names, and that is not older than WAIT_LIMIT or carries live text.
+ * `lines` are the plugin's records by command id. Each result is `{ commandId, line }`: dots or live text stand under that line.
  */
 export function waitingLines(messages, lines, now = Date.now()) {
   const answered = new Set();
@@ -35,7 +35,7 @@ export function waitingLines(messages, lines, now = Date.now()) {
     if (message.role !== 'group') return [];
     const line = lines[message.commandId];
     if (!line || line.kind !== 'at' || answered.has(message.commandId)) return [];
-    if (Number.isFinite(line.at) && now - line.at > WAIT_LIMIT) return [];
+    if (!line.liveReply?.text && Number.isFinite(line.at) && now - line.at > WAIT_LIMIT) return [];
     return [{ commandId: message.commandId, line }];
   });
 }

@@ -342,6 +342,7 @@ export function createConversation({ ctx, assistant, issues, assignment, dashboa
     return {
       sessionId: record.created ? record.sessionId : null,
       cursor: handle ? handle.agent.session.seq - 1 : -1,
+      groupRevision: group?.revision?.() ?? 0,
       running: handle?.agent.status === 'running' || activity.get(record.sessionId) === true,
       model: handle ? {
         provider: model.provider, model: model.model,
@@ -437,7 +438,7 @@ export function createConversation({ ctx, assistant, issues, assignment, dashboa
     },
     card: makeCard,
     // Cards and the lines of the group chat are kept by the id of the command that made them (a card's kind is todo, info or task; a line's is at, reply or end).
-    cardsOf: (ids) => ({ outcome: 'success', cards: { ...(cards ? cards.many(ids) : {}), ...(group ? group.many(ids) : {}) } }),
+    cardsOf: (ids) => ({ outcome: 'success', groupRevision: group?.revision?.() ?? 0, cards: { ...(cards ? cards.many(ids) : {}), ...(group ? group.many(ids) : {}) } }),
     say,
     /** The scheduled tasks 嘟嘟 does itself (the engine's `deliver` for the provider dudu: tasks/host.mjs). */
     taskRuns,

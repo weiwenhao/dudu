@@ -106,6 +106,19 @@ test('workers receive only the task, without issue management, activity, sources
   w.stop();
 });
 
+test('a sub-issue is told its title and its description and nothing of its parent or of the other sub-issues; with no description, the title alone', async () => {
+  // DUD-13 (owner, 2026-11-14): a title and no description, under a parent whose description is an order of its own; the agent did the parent's order.
+  const w = world();
+  const parent = w.add({ title: 'desktop 插件', brief: '把供应商选择器里奇怪的“插件”图标换掉。' });
+  const bare = w.add({ title: 'dsh 新版本适配', brief: '', parent: parent.id });
+  w.add({ title: 'README 优化', brief: '', parent: parent.id });
+  const described = w.add({ title: '检查 API', brief: '对照新版本的接口。', parent: parent.id });
+  await w.give(bare.id, 'deepseek');
+  await w.give(described.id, 'deepseek');
+  assert.deepEqual(w.ofKind('prompt').map((call: any) => call[2]), ['dsh 新版本适配', '检查 API\n\n对照新版本的接口。']);
+  w.stop();
+});
+
 test('a question of the agent is the issue\'s ask; the owner\'s answer on the page reaches the session and the question is gone', async () => {
   const w = world();
   const issue = w.add();

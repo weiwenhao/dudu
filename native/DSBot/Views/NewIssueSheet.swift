@@ -48,7 +48,7 @@ struct NewIssueSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if let parent = draft.parent { parentChip(parent) }
-                    TextField("事项标题", text: $draft.title, axis: .vertical)
+                    TextField(L10n.text("事项标题"), text: $draft.title, axis: .vertical)
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(DSBotStyle.chatInk)
                         .lineLimit(1...4)
@@ -57,7 +57,7 @@ struct NewIssueSheet: View {
                         .padding(.vertical, 12)
                         .background(DSBotStyle.sheet, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .accessibilityIdentifier("newissue.title")
-                    TextField("添加描述…", text: $draft.brief, axis: .vertical)
+                    TextField(L10n.text("添加描述…"), text: $draft.brief, axis: .vertical)
                         .font(.system(size: 16))
                         .foregroundStyle(DSBotStyle.chatInk)
                         .lineLimit(4...8)
@@ -68,8 +68,8 @@ struct NewIssueSheet: View {
                         properties
                     } else if optionsFailed {
                         HStack(spacing: 12) {
-                            Text("事项没能加载").foregroundStyle(DSBotStyle.muted)
-                            Button("重试") {
+                            Text(L10n.text("事项没能加载")).foregroundStyle(DSBotStyle.muted)
+                            Button(L10n.text("重试")) {
                                 optionsFailed = false
                                 Task { await loadOptions() }
                             }
@@ -79,7 +79,7 @@ struct NewIssueSheet: View {
                         ProgressView().tint(DSBotStyle.muted).frame(height: 44)
                     }
                     if failed {
-                        Text("事项没能创建")
+                        Text(L10n.text("事项没能创建"))
                             .font(.system(size: 13))
                             .foregroundStyle(DSBotStyle.chatError)
                             .accessibilityIdentifier("newissue.error")
@@ -99,11 +99,11 @@ struct NewIssueSheet: View {
             } action: { inset in
                 if path.isEmpty, abs(formTopInset - inset) > 0.5 { formTopInset = inset }
             }
-            .navigationTitle("新建事项")
+            .navigationTitle(L10n.text("新建事项"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+                    Button(L10n.text("取消")) { dismiss() }
                         .disabled(isCreating)
                         .accessibilityIdentifier("newissue.cancel")
                 }
@@ -114,11 +114,11 @@ struct NewIssueSheet: View {
                         if isCreating {
                             ProgressView()
                         } else {
-                            Text("创建事项")
+                            Text(L10n.text("创建事项"))
                         }
                     }
                     .disabled(!canCreate)
-                    .accessibilityLabel("创建事项")
+                    .accessibilityLabel(L10n.text("创建事项"))
                     .accessibilityIdentifier("newissue.create")
                 }
             }
@@ -142,22 +142,22 @@ struct NewIssueSheet: View {
 
     private var properties: some View {
         IssueValueFlow(spacing: 6) {
-            chip(status?.title ?? "状态", identifier: "status", picker: .status) {
+            chip(status?.title ?? L10n.text("状态"), identifier: "status", picker: .status) {
                 IssueStatusIcon(type: status?.type ?? "todo", color: status?.color, iconProgress: status?.iconProgress)
             }
-            chip(draft.priority == .none ? "优先级" : draft.priority.title, identifier: "priority", picker: .priority) {
+            chip(draft.priority == .none ? L10n.text("优先级") : draft.priority.title, identifier: "priority", picker: .priority) {
                 IssuePriorityIcon(priority: draft.priority)
             }
-            chip(draft.project?.name ?? "项目", identifier: "project", picker: .project) {
+            chip(draft.project?.name ?? L10n.text("项目"), identifier: "project", picker: .project) {
                 DSBotIcon(.issueProject, size: 16, scalesStroke: true)
             }
             if let folder = draft.project?.path, !folder.isEmpty {
-                chip(draft.agent?.name ?? "智能体", identifier: "agent", picker: .agent) {
+                chip(draft.agent?.name ?? L10n.text("智能体"), identifier: "agent", picker: .agent) {
                     if let agent = draft.agent { AgentLogo(agent: agent, size: 16) }
                     else { DSBotIcon(.stateUnassigned, size: 16, scalesStroke: true) }
                 }
             }
-            chip(selectedLabels.isEmpty ? "标签" : selectedLabels.map(\.name).joined(separator: ", "), identifier: "labels", picker: .labels) {
+            chip(selectedLabels.isEmpty ? L10n.text("标签") : selectedLabels.map(\.name).joined(separator: ", "), identifier: "labels", picker: .labels) {
                 DSBotIcon(.issueLabel, size: 16, scalesStroke: true)
             }
             if let due = draft.dueAt {
@@ -166,14 +166,14 @@ struct NewIssueSheet: View {
                 }
             }
             Menu {
-                Button { choose(.due) } label: { DSBotLabel("截止日期", icon: .dueDate) }
-                Button { choose(.parent) } label: { DSBotLabel("设置父事项…", icon: .open) }
+                Button { choose(.due) } label: { DSBotLabel(L10n.text("截止日期"), icon: .dueDate) }
+                Button { choose(.parent) } label: { DSBotLabel(L10n.text("设置父事项…"), icon: .open) }
             } label: {
-                ContextChipLabel(title: "更多", iconOnly: true) { DSBotIcon(.options, size: 16, scalesStroke: true) }
+                ContextChipLabel(title: L10n.text("更多"), iconOnly: true) { DSBotIcon(.options, size: 16, scalesStroke: true) }
                     .frame(minHeight: 44)
             }
             .buttonStyle(DSBotQuietPressStyle())
-            .accessibilityLabel("更多")
+            .accessibilityLabel(L10n.text("更多"))
         }
         .disabled(store.status != .connected || !sameComputer)
     }
@@ -203,7 +203,7 @@ struct NewIssueSheet: View {
             Button { draft.parent = nil } label: {
                 DSBotIcon(.close, size: 16, scalesStroke: true).frame(width: 44, height: 44)
             }
-            .accessibilityLabel("移除父事项")
+            .accessibilityLabel(L10n.text("移除父事项"))
         }
         .font(.system(size: 14))
         .foregroundStyle(DSBotStyle.chatSecondary)
@@ -216,7 +216,7 @@ struct NewIssueSheet: View {
     private func destination(_ picker: IssueCreationPicker) -> some View {
         switch picker {
         case .status:
-            IssueChoiceList(title: "状态") {
+            IssueChoiceList(title: L10n.text("状态")) {
                 ForEach(options?.statuses ?? []) { item in
                     IssueChoiceRow(title: item.title, selected: draft.status == item.id) {
                         IssueStatusIcon(type: item.type, color: item.color, iconProgress: item.iconProgress)
@@ -224,7 +224,7 @@ struct NewIssueSheet: View {
                 }
             }
         case .priority:
-            IssueChoiceList(title: "优先级") {
+            IssueChoiceList(title: L10n.text("优先级")) {
                 ForEach(IssuePriority.allCases) { item in
                     IssueChoiceRow(title: item.title, selected: draft.priority == item) {
                         IssuePriorityIcon(priority: item)
@@ -238,8 +238,8 @@ struct NewIssueSheet: View {
                 path.removeLast()
             }
         case .agent:
-            IssueChoiceList(title: "智能体") {
-                IssueChoiceRow(title: "未分配", selected: draft.agent == nil) {
+            IssueChoiceList(title: L10n.text("智能体")) {
+                IssueChoiceRow(title: L10n.text("未分配"), selected: draft.agent == nil) {
                     DSBotIcon(.stateUnassigned, size: 18, scalesStroke: true)
                 } action: { draft.agent = nil; path.removeLast() }
                 ForEach(store.agentChoices(keeping: draft.agent), id: \.rawValue) { item in
@@ -392,7 +392,7 @@ struct IssueDetailSheet: View {
                     Button { dismiss() } label: {
                         DSBotIcon(.close, size: 18).foregroundStyle(DSBotStyle.ink)
                     }
-                    .accessibilityLabel("关闭")
+                    .accessibilityLabel(L10n.text("关闭"))
                     .accessibilityIdentifier("issue.detail.close")
                 }
             }
@@ -405,12 +405,12 @@ struct IssueDetailSheet: View {
     /// The desktop's names for the six statuses.
     private static func statusName(_ status: String) -> String {
         switch status {
-        case "backlog": return "待规划"
-        case "todo": return "待办"
-        case "in_progress": return "处理中"
-        case "in_review": return "待审核"
-        case "done": return "已完成"
-        case "canceled": return "已取消"
+        case "backlog": return L10n.text("待规划")
+        case "todo": return L10n.text("待办")
+        case "in_progress": return L10n.text("处理中")
+        case "in_review": return L10n.text("待审核")
+        case "done": return L10n.text("已完成")
+        case "canceled": return L10n.text("已取消")
         default: return status
         }
     }

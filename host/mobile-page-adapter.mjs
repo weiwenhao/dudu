@@ -7,7 +7,6 @@ html[data-dsbot-page-kind] body {
   min-height: 0;
   margin: 0;
   overflow: hidden;
-  font-family: "PingFang SC", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif !important;
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
 }
@@ -15,18 +14,6 @@ html[data-dsbot-page-kind] #root {
   width: 100%;
   min-width: 0 !important;
   height: 100%;
-}
-html[data-dsbot-page-kind] *,
-html[data-dsbot-page-kind] *::before,
-html[data-dsbot-page-kind] *::after {
-  box-sizing: border-box;
-}
-html[data-dsbot-page-kind] *:not(.katex):not(.katex *) {
-  font-family: "PingFang SC", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif !important;
-}
-html[data-dsbot-page-kind] :is(pre, code, kbd, samp),
-html[data-dsbot-page-kind] :is(pre, code, kbd, samp) * {
-  font-family: ui-monospace, "SFMono-Regular", Menlo, "PingFang SC", monospace !important;
 }
 html[data-dsbot-page-kind] button,
 html[data-dsbot-page-kind] a,
@@ -37,7 +24,8 @@ html[data-dsbot-page-kind] [contenteditable="true"] {
   touch-action: manipulation;
 }
 html[data-dsbot-page-kind] [data-dsbot-frame] > [class*="_leadingSeat"],
-html[data-dsbot-page-kind] [data-dsbot-frame] > [class*="_handle"] {
+html[data-dsbot-page-kind] [data-dsbot-frame] > [class*="_handle"],
+html[data-dsbot-page-kind] [data-dsbot-frame] > [class*="_drawerMask"] {
   display: none !important;
 }
 html[data-dsbot-page-kind="plugins"] [data-dsbot-sidebar],
@@ -50,76 +38,24 @@ html[data-dsbot-page-kind="panel"] [data-slot="conversation.composer"],
 html[data-dsbot-page-kind="panel"] [data-slot="conversation.composer.bar"] {
   display: none !important;
 }
+/* Fit DSH's shell to the native viewport; the selected page owns its layout and scrolling. */
 html[data-dsbot-page-kind="plugins"] [data-dsbot-frame],
-html[data-dsbot-page-kind="plugins"] [data-dsbot-center],
-html[data-dsbot-page-kind="plugins"] [data-slot="main"],
-html[data-dsbot-page-kind="plugins"] [data-slot="main.conversation"],
-html[data-dsbot-page-kind="panel"] [data-dsbot-frame],
-html[data-dsbot-page-kind="panel"] [data-dsbot-center],
-html[data-dsbot-page-kind="panel"] [data-slot="main"],
-html[data-dsbot-page-kind="panel"] [data-slot="main.conversation"] {
-  display: block !important;
-  position: fixed !important;
-  inset: 0 !important;
-  width: 100vw !important;
+html[data-dsbot-page-kind="panel"] [data-dsbot-frame] {
+  grid-template-columns: minmax(0, 1fr) !important;
   min-width: 0 !important;
-  max-width: none !important;
-  height: 100% !important;
   padding: 0 !important;
-  overflow: auto !important;
+}
+html[data-dsbot-page-kind="plugins"] [data-dsbot-center],
+html[data-dsbot-page-kind="panel"] [data-dsbot-center] {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  min-height: 0;
   border: 0 !important;
   border-radius: 0 !important;
 }
-html[data-dsbot-page-kind="plugins"] [data-plugin-panel] > header [class*="_pageHeading"] {
-  display: none !important;
-}
-html[data-dsbot-page-kind="plugins"] [data-plugin-panel] {
-  align-items: stretch !important;
-  gap: 16px !important;
-  padding: 16px 16px 32px !important;
-}
-html[data-dsbot-page-kind="plugins"] [data-plugin-panel] > header {
-  justify-content: flex-end;
-  align-items: center;
-  min-height: 44px;
-  margin: 0;
-  padding-top: 0;
-}
-/* The app's own "+" in the toolbar adds a plugin, and refreshing is not needed on a phone. */
-html[data-dsbot-page-kind="plugins"] [data-plugin-panel] > header {
-  display: none !important;
-}
-/* Newer DSH nests its main header inside the scroll body; retain only plugin tabs. */
-html[data-dsbot-page-kind="plugins"] [data-plugin-header-part="title"],
-html[data-dsbot-page-kind="plugins"] [data-plugin-header-part="intro"],
-html[data-dsbot-page-kind="plugins"] [data-plugin-header-part="toolbar"],
-html[data-dsbot-page-kind="plugins"] [data-plugin-bar][data-measuring],
-html[data-dsbot-page-kind="plugins"] [data-plugin-bar]:not(:has([data-plugin-header-part="tabs"])) {
-  display: none !important;
-}
-html[data-dsbot-page-kind="plugins"] [data-plugin-bar] > header {
-  height: auto !important;
+html[data-dsbot-page-kind="plugins"] [data-global-panel],
+html[data-dsbot-page-kind="panel"] [data-global-panel] {
   padding-top: 0 !important;
-  clip-path: none !important;
-}
-html[data-dsbot-page-kind="plugins"] [data-plugin-bar]::before,
-html[data-dsbot-page-kind="plugins"] [data-plugin-bar]::after {
-  display: none !important;
-}
-html[data-dsbot-page-kind="plugins"] [data-plugin-header-part="tabs"] {
-  position: static !important;
-}
-html[data-dsbot-page-kind="plugins"] [data-plugin-panel] > header button,
-html[data-dsbot-page-kind="plugins"] [data-plugin-panel] [class*="_moreBack"] {
-  min-height: 44px;
-}
-html[data-dsbot-page-kind="plugins"] [data-plugin-panel] [class*="_pageTabs"] {
-  width: 100%;
-  margin-top: 0;
-}
-html[data-dsbot-page-kind="plugins"] [data-plugin-panel] [class*="_pageTabList"] {
-  width: 100% !important;
-  min-width: 0 !important;
 }
 html[data-dsbot-page-kind="settings"] #root,
 html[data-dsbot-page-kind="settings"] #root * {
@@ -210,29 +146,6 @@ html[data-dsbot-page-kind="context"] [class*="_viewArea"] {
   height: 100%;
   overflow-y: auto;
 }
-html[data-dsbot-page-kind="context"] .lc-root {
-  flex: 1 1 0;
-  min-height: 0;
-  width: 100%;
-  height: 100%;
-  padding: 16px 16px 28px;
-  overscroll-behavior-y: contain;
-}
-html[data-dsbot-page-kind="context"] :is(.lc-head, .lc-cols, .lc-body) {
-  flex-direction: column !important;
-  min-width: 0 !important;
-}
-html[data-dsbot-page-kind="context"] :is(.lc-col, .lc-col-browser, .lc-col-graph, .lc-head > .lc-card) {
-  width: 100% !important;
-  min-width: 0 !important;
-  flex: none !important;
-}
-html[data-dsbot-page-kind="context"] .lc-card-title {
-  flex-wrap: wrap !important;
-}
-html[data-dsbot-page-kind="context"] .lc-legend {
-  grid-template-columns: minmax(0, 1fr) !important;
-}
 html[data-dsbot-page-kind="trace"] aside[aria-label="事件详情"],
 html[data-dsbot-page-kind="trace"] aside[aria-label="Event details"] {
   position: absolute !important;
@@ -277,28 +190,12 @@ html[data-dsbot-page-kind="settings"] [data-dsbot-settings-body] > [class*="_hea
 html[data-dsbot-page-kind="settings"] [data-dsbot-duplicate-heading] {
   display: none !important;
 }
-html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_content"] > [class*="_options"] [class*="_section"] > :is(h1,h2):first-child {
-  display: none !important;
-}
 html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_content"] > [class*="_options"],
 html[data-dsbot-page-kind="settings"] [data-dsbot-settings-body][class*="_options"],
 html[data-dsbot-page-kind="settings"] [data-dsbot-settings-body] > [class*="_options"] {
   width: 100% !important;
   min-width: 0 !important;
   padding: 16px !important;
-}
-html[data-dsbot-page-kind="settings"] [data-dsh-market-root] [class*="_titleRow"],
-html[data-dsbot-page-kind="settings"] [data-dsh-market-root] [class*="_head"] > [class$="_sub"] {
-  display: none !important;
-}
-html[data-dsbot-page-kind="settings"] [data-dsh-market-root] [class*="_tabs"] {
-  flex-wrap: nowrap !important;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-}
-html[data-dsbot-page-kind="settings"] [data-dsh-market-root] [class*="_tabs"] > button {
-  flex-shrink: 0;
-  min-height: 44px;
 }
 html[data-dsbot-page-kind] input,
 html[data-dsbot-page-kind] textarea,
@@ -319,14 +216,14 @@ html[data-dsbot-page-kind] select {
 
 export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
   const page = window.__DSBOT_PAGE__;
-  const supported = new Set(["trace", "context", "team", "view", "panel", "plugins", "settings"]);
+  const supported = new Set(["trace", "context", "team", "tools", "view", "panel", "plugins", "settings"]);
   if (!page || !supported.has(page.kind)) return;
   // The id of a panel, view or settings section the phone asked for.
   let target = typeof page.target === "string" && page.target ? page.target : null;
 
   const html = document.documentElement;
   html.dataset.dsbotPageKind = page.kind;
-  if (["trace", "context", "team", "view"].includes(page.kind)) {
+  if (["trace", "context", "team", "tools", "view"].includes(page.kind)) {
     html.dataset.dsbotPageSession = "";
   }
 
@@ -399,21 +296,6 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     center?.setAttribute("data-dsbot-center", "");
     rightbar?.setAttribute("data-dsbot-rightbar", "");
     frame?.setAttribute("data-dsbot-frame", "");
-    if (page.kind === "team") {
-      for (const task of document.querySelectorAll(".lc-root li[data-task][aria-expanded]")) {
-        const expanded = task.getAttribute("aria-expanded") === "true";
-        const title = cleanText(task.querySelector(".lc-team-task-subject")?.textContent);
-        const label = (expanded ? "收起任务 " : "展开任务 ") + task.getAttribute("data-task") + "：" + title;
-        if (task.getAttribute("aria-label") !== label) task.setAttribute("aria-label", label);
-      }
-      for (const member of document.querySelectorAll(".lc-root .lc-member-card[role=button]")) {
-        const selected = member.classList.contains("lc-member-pinned");
-        const name = cleanText(member.querySelector(".lc-member-name")?.textContent);
-        const label = (selected ? "取消选中成员 " : "选中成员 ") + name;
-        if (member.getAttribute("aria-label") !== label) member.setAttribute("aria-label", label);
-      }
-    }
-
     if (page.kind === "settings") {
       const dialog = document.querySelector('[data-shortcut-modal="settings"]');
       const nav = dialog?.querySelector("nav");
@@ -510,7 +392,8 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
       id: String(id),
       label: resolveLabel(ui, ctx, entry)
     })).filter(category => category.id && category.label);
-    if (!categories.length) return;
+    // A registry may become empty after a plugin unloads. Do not leave the old list on the phone.
+    if (!categories.length && !settingsSignature && !slotEntries(ctx, "settings.section").length) return;
     const signature = JSON.stringify(categories);
     if (signature === settingsSignature) return;
     settingsSignature = signature;
@@ -572,15 +455,17 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     if (!entry || ["dudu-mobile-control", "dudu-providers", "dsbot-mobile-control", "general"].includes(id)) return false;
     const dialog = settingsModal();
     const label = resolveLabel(ui, ctx, entry.entry);
-    const target = [...(dialog?.querySelectorAll("nav button") || [])]
-      .find(button => labelOf(button) === label);
-    if (target) {
-      if (target.getAttribute("aria-current") !== "true") target.click();
-      return true;
-    }
+    const matches = [...(dialog?.querySelectorAll("nav button") || [])]
+      .filter(button => labelOf(button) === label);
+    const target = matches.length === 1 ? matches[0] : null;
+    if (target?.getAttribute("aria-current") === "true") return true;
     const shell = settingsShell(ui);
     if (typeof shell?.actions?.openSection === "function") {
       shell.actions.openSection(id);
+      return true;
+    }
+    if (target) {
+      if (target.getAttribute("aria-current") !== "true") target.click();
       return true;
     }
     if (typeof ui?.selectSettingsSection === "function") {
@@ -593,12 +478,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
       openSettingsFromUI(ui);
       return false;
     }
-    const nav = dialog.querySelector("nav");
-    const buttons = [...(nav?.querySelectorAll("button") || [])];
-    const fallback = buttons[entry.index];
-    if (!fallback) return false;
-    if (fallback.getAttribute("aria-current") !== "true") fallback.click();
-    return true;
+    return false;
   }
 
   function conversationTabs() {
@@ -610,27 +490,30 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
 
   // The tab for a view is found by the label DSH resolves for it in this page, so the lookup does not
   // depend on the desktop's language or on the order of the tabs.
-  function viewLabel(ui, ctx) {
-    const entry = slotEntries(ctx, "conversation.view").find(item => item?.options?.id === target);
-    return entry ? resolveLabel(ui, ctx, entry) : "";
+  function viewLabels(ui, ctx) {
+    const entries = slotEntries(ctx, "conversation.view");
+    const legacyIDs = {
+      trace: /^(?:trajectory)$/iu,
+      context: /^(?:context|dsh-?context|dshContext)$/iu,
+      team: /^(?:team|fleet|agent-?team|dsh-?team|dsh-?fleet)$/iu,
+      tools: /^(?:tools)$/iu
+    };
+    const entry = entries.find(item => target ? item?.options?.id === target
+      : legacyIDs[page.kind]?.test(item?.options?.id || ""));
+    // Older catalogs have no target. Prefer the registry's localized label even for those.
+    return entry ? [resolveLabel(ui, ctx, entry)] : target ? [] : (tabLabels[page.kind] || []);
   }
 
   function conversationTab(ui, ctx) {
     const tabs = conversationTabs();
-    if (page.kind === "view") {
-      const label = viewLabel(ui, ctx);
-      return label ? tabs.find(tab => labelOf(tab) === label) : undefined;
-    }
-    return tabs.find(tab => tabLabels[page.kind]?.includes(labelOf(tab)));
+    const labels = viewLabels(ui, ctx);
+    return tabs.find(tab => labels.includes(labelOf(tab)));
   }
 
   // A hidden desktop header has no width budget: newer DSH folds its non-Chat
   // views into More. Use those same controls rather than making another store.
   function selectOverflowView(ui, ctx) {
-    const id = page.kind === "view" ? target
-      : page.kind === "trace" ? "trajectory" : page.kind;
-    const entry = slotEntries(ctx, "conversation.view").find(item => item?.options?.id === id);
-    const labels = entry ? [resolveLabel(ui, ctx, entry)] : (tabLabels[page.kind] || []);
+    const labels = viewLabels(ui, ctx);
     const strip = document.querySelector('[data-slot="conversation.header"] [data-conversation-tabs]');
     const more = strip?.parentElement?.querySelector('button[aria-haspopup="menu"]');
     if (!more || more.disabled || !labels.length) return false;
@@ -642,6 +525,8 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
         return true;
       }
       item.click();
+      lastMutationAt = performance.now();
+      return true;
     } else if (more.getAttribute("aria-expanded") !== "true") more.click();
     return false;
   }
@@ -657,7 +542,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     routeStarted = true;
     const ctx = contextOf(ui);
     try {
-      if (["trace", "context", "team", "view"].includes(page.kind) && page.sessionId) {
+      if (["trace", "context", "team", "tools", "view"].includes(page.kind) && page.sessionId) {
         const workspace = service(ui, "uiWorkspace");
         if (!requestedSession && typeof workspace?.openSession === "function") {
           await workspace.openSession(page.sessionId);
@@ -736,8 +621,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     if (isVisible) schedule();
   }
 
-  // The app asks the page to do what its native buttons stand for. "add" is the toolbar's "+" on the
-  // plugin page: it presses DSH's own add-plugin button, which is hidden on the phone.
+  // Older apps still dispatch their native "+" here; current apps use DSH's visible toolbar.
   function addPlugin() {
     const group = [...document.querySelectorAll('[data-plugin-panel] [role="group"]')]
       .find(element => /添加插件|add plugin/iu.test(element.getAttribute("aria-label") || ""));
@@ -766,11 +650,6 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     observer?.disconnect();
     if (page.kind === "settings") {
       observer?.observe(document.body, {childList: true, subtree: true});
-    } else if (page.kind === "team") {
-      const content = document.querySelector("[data-conversation-content]");
-      if (content) observer?.observe(content, {
-        childList: true, subtree: true, attributes: true, attributeFilter: ["aria-expanded", "class"]
-      });
     }
   }
 

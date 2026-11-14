@@ -525,7 +525,7 @@ private actor ReviewTransport: DSBotTransport {
                     SessionProvider(id: "codex", name: "ChatGPT", modelIds: ["codex:gpt"], defaultModelId: "codex:gpt")
                 ]),
                 "permissions": try encode([
-                    Choice(id: "ask", name: "操作前询问"),
+                    Choice(id: "ask", name: L10n.language == "en" ? "Full access" : "操作前询问"),
                     Choice(id: "allow", name: "自动允许"),
                     Choice(id: "danger-full-access", name: "danger-full-access")
                 ]),
@@ -1006,8 +1006,8 @@ private actor ReviewTransport: DSBotTransport {
             let initial = arguments.firstIndex(of: "-dsbot-review-quick-cards-initial")
                 .flatMap { $0 + 1 < arguments.count ? Int(arguments[$0 + 1]) : nil } ?? 0
             let entries = [
-                TranscriptEntry(type: "user", id: "assistant-user-1", seq: 1, time: now - 3_600_000, text: "今天有什么要处理的？"),
-                TranscriptEntry(type: "assistant", id: "assistant-a1", seq: 2, time: now - 3_590_000, text: "先看一眼待办吧。", turn: 1, step: 1),
+                TranscriptEntry(type: "user", id: "assistant-user-1", seq: 1, time: now - 3_600_000, text: L10n.language == "en" ? "What needs my attention today?" : "今天有什么要处理的？"),
+                TranscriptEntry(type: "assistant", id: "assistant-a1", seq: 2, time: now - 3_590_000, text: L10n.language == "en" ? "Let me look at the todos first." : "先看一眼待办吧。", turn: 1, step: 1),
             ] + Array(quickCardEntries.prefix(initial)) + tappedCards
             return Transcript(entries: entries, turns: [TranscriptTurn(turn: 1, start: now - 3_595_000, end: now - 3_590_000, outcome: "done")], live: nil)
         }

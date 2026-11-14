@@ -39,7 +39,7 @@ private struct TurnChangesCard: View {
                     .frame(width: 24, height: 24)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(counts.map { "已编辑 \($0.total) 个文件" } ?? "已编辑文件")
+                    Text(counts.map { L10n.plural("已编辑 \($0.total) 个文件") } ?? L10n.text("已编辑文件"))
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(DSBotStyle.chatInk)
                         .lineLimit(1)
@@ -82,7 +82,7 @@ private struct TurnDeliveredFiles: View {
                 fileDivider
                 Button { showingFiles = true } label: {
                     HStack(spacing: 10) {
-                        Text("全部 \(files.count) 个文件")
+                        Text(L10n.plural("全部 \(files.count) 个文件"))
                             .font(.subheadline)
                         Spacer(minLength: 8)
                         FileDisclosure()
@@ -177,7 +177,7 @@ private struct DeliveredFileRow: View {
         .disabled(preview.loadingID != nil || access?.connected != true)
         .accessibilityIdentifier("chat.file.\(file.id)")
         .contextMenu {
-            Button("复制路径") { UIPasteboard.general.string = file.path }
+            Button(L10n.text("复制路径")) { UIPasteboard.general.string = file.path }
         }
     }
 }
@@ -197,9 +197,9 @@ private struct DeliveredFilesBrowser: View {
                 }
             }
             .listStyle(.plain)
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索文件")
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: L10n.text("搜索文件"))
             .searchPresentationToolbarBehavior(.avoidHidingContent)
-            .navigationTitle("全部 \(files.count) 个文件")
+            .navigationTitle(L10n.plural("全部 \(files.count) 个文件"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { FileBrowserClose() }
             .modifier(TurnFilePreviewPresentation(preview: preview))
@@ -244,7 +244,7 @@ private struct ChangedFilesBrowser: View {
                         .disabled(access?.connected != true)
                         .accessibilityIdentifier("changes.file.\(index)")
                         .contextMenu {
-                            Button("复制路径") { UIPasteboard.general.string = file.path }
+                            Button(L10n.text("复制路径")) { UIPasteboard.general.string = file.path }
                         }
                     }
                 } else if let failure {
@@ -257,9 +257,9 @@ private struct ChangedFilesBrowser: View {
                 }
             }
             .listStyle(.plain)
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索文件")
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: L10n.text("搜索文件"))
             .searchPresentationToolbarBehavior(.avoidHidingContent)
-            .navigationTitle(changes.map { "已编辑 \($0.total) 个文件" } ?? "已编辑文件")
+            .navigationTitle(changes.map { L10n.plural("已编辑 \($0.total) 个文件") } ?? L10n.text("已编辑文件"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { FileBrowserClose() }
             .accessibilityIdentifier("changes.browser")
@@ -296,7 +296,7 @@ private struct FileBrowserClose: ToolbarContent {
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
-            .accessibilityLabel("关闭")
+            .accessibilityLabel(L10n.text("关闭"))
             .accessibilityIdentifier("files.browser.close")
         }
     }

@@ -15,7 +15,8 @@ export const ISSUE_AGENT_STATES = Object.freeze([...AGENT_STATES, 'unassigned'])
 /**
  * The mark of a session's state. A stopped or interrupted turn needs the owner like a question or a failure does (owner, 2026-11-05): idle is what they will not
  * handle soon. A finished run waited for ever for its look: the owner took the 12 hours away on 2026-11-07 ("去掉自动进入空闲的机制吧，只有我手动放到空闲区域") and, the
- * same afternoon, put a day back ("超过 24 小时没有处理的会话也自动进入到空闲中", `agedMark` below). Idle is a session that really is idle, the owner's own word, or a day nobody has handled it.
+ * same afternoon, put a day back ("超过 24 小时没有处理的会话也自动进入到空闲中", `agedMark` below); on 2026-11-14 he made it 72 hours ("改成 72 小时吧").
+ * Idle is a session that really is idle, the owner's own word, or 72 hours nobody has handled it.
  */
 export function agentMarkForSession(state) {
   if (state === 'running') return 'working';
@@ -26,12 +27,12 @@ export function agentMarkForSession(state) {
 
 export const agentStateForSession = (state) => stateOfMark(agentMarkForSession(state));
 
-/** How long nobody handles a session that waits for the owner before it reads Idle by itself (owner, 2026-11-07). */
-export const UNHANDLED_IDLE_MS = 24 * 60 * 60_000;
+/** How long nobody handles a session that waits for the owner before it reads Idle by itself (owner, 2026-11-07: 24 hours; 2026-11-14: 72 hours). */
+export const UNHANDLED_IDLE_MS = 72 * 60 * 60_000;
 
 /**
  * The mark with that rule applied: the marks that wait for the owner (a finished run, a question, a failure, a stop) read Idle once nobody has handled the session
- * for a day. Work that runs, and Idle itself, are left as they are; a time that is not known is never aged (it is not guessed). `handledAt` is when anybody last did anything
+ * for 72 hours. Work that runs, and Idle itself, are left as they are; a time that is not known is never aged (it is not guessed). `handledAt` is when anybody last did anything
  * with the session, in ms (the latest of its state's beginning, its last activity and the owner's last word to it or opening of it).
  */
 export function agedMark(mark, handledAt, now = Date.now()) {

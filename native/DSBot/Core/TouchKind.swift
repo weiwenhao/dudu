@@ -7,7 +7,7 @@ enum TouchKind: Equatable {
     case tap
     /// Down and up in the same place, after a pause: a press and hold.
     case hold
-    /// Moved: a scroll, a swipe, a drag. Not recorded.
+    /// Moved: a scroll, a swipe, a drag. Recorded once on release, never for each move.
     case drag
 
     /// A finger that moves this far (points) is dragging.

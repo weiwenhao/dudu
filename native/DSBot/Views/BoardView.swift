@@ -33,17 +33,17 @@ struct BoardView: View {
             }
         }
         .alert(
-            removing.map { "删除“\($0.reference) \($0.title)”？" } ?? "删除",
+            removing.map { L10n.text("删除“{0} {1}”？", "\($0.reference)", "\($0.title)") } ?? L10n.text("删除"),
             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })
         ) {
-            Button("取消", role: .cancel) { removing = nil }
-            Button("删除", role: .destructive) {
+            Button(L10n.text("取消"), role: .cancel) { removing = nil }
+            Button(L10n.text("删除"), role: .destructive) {
                 guard let issue = removing else { return }
                 removing = nil
                 Task { await board.delete(issue, using: store) }
             }
         } message: {
-            Text("将删除这条事项、活动和本地关联。来源消息和会话历史会保留。")
+            Text(L10n.text("将删除这条事项、活动和本地关联。来源消息和会话历史会保留。"))
         }
         .onChange(of: store.activeComputer?.id) { _, _ in removing = nil; revealed = nil; editing = nil }
         .onChange(of: board.tab) { _, _ in revealed = nil }
@@ -79,10 +79,10 @@ struct BoardView: View {
                 .accessibilityIdentifier("board.loading")
         case .failed:
             VStack(spacing: 14) {
-                Text("事项没能加载")
+                Text(L10n.text("事项没能加载"))
                     .font(.system(size: 15))
                     .foregroundStyle(DSBotStyle.muted)
-                Button("重试") { Task { await board.refresh(using: store) } }
+                Button(L10n.text("重试")) { Task { await board.refresh(using: store) } }
                     .font(.system(size: 15, weight: .medium))
                     .buttonStyle(DSBotGlassCapsuleButtonStyle())
                     .padding(.horizontal, 20)
@@ -93,7 +93,7 @@ struct BoardView: View {
             .padding(.top, 80)
         case .loaded:
             if board.groups.isEmpty {
-                Text("没有事项")
+                Text(L10n.text("没有事项"))
                     .font(.system(size: 15))
                     .foregroundStyle(DSBotStyle.muted)
                     .frame(maxWidth: .infinity)
@@ -116,7 +116,7 @@ struct BoardView: View {
                                             .disabled(!action.isAvailable(for: issue) || store.status != .connected)
                                     }
                                     Divider()
-                                    Button(role: .destructive) { revealed = nil; removing = issue } label: { DSBotLabel("删除", icon: .trash) }
+                                    Button(role: .destructive) { revealed = nil; removing = issue } label: { DSBotLabel(L10n.text("删除"), icon: .trash) }
                                         .disabled(store.status != .connected)
                                 } preview: { SidebarSessionCard(title: issue.title) }
                             }
@@ -138,8 +138,8 @@ struct BoardView: View {
     private func actions(for issue: BoardIssue) -> [SwipeAction] {
         guard store.status == .connected else { return [] }
         return [
-            SwipeAction(id: "more", title: "更多", symbol: "ellipsis", color: SwipeAction.grey) { edit(issue) },
-            SwipeAction(id: "delete", title: "删除", symbol: "trash", color: SwipeAction.red) { removing = issue },
+            SwipeAction(id: "more", title: L10n.text("更多"), symbol: "ellipsis", color: SwipeAction.grey) { edit(issue) },
+            SwipeAction(id: "delete", title: L10n.text("删除"), symbol: "trash", color: SwipeAction.red) { removing = issue },
         ]
     }
 
@@ -265,9 +265,9 @@ private struct BoardGroupHeader: View {
         .padding(.leading, 10)
         .padding(.trailing, 4)
         .padding(.horizontal, DSBotLayout.sidebarPadding)
-        .accessibilityLabel("\(group.title)，\(isFolded ? "已折叠" : "已展开")")
+        .accessibilityLabel(L10n.text("{0}，{1}", "\(group.title)", "\(isFolded ? L10n.text("已折叠") : L10n.text("已展开"))"))
         .accessibilityValue("\(group.count)")
-        .accessibilityHint("点按折叠或展开")
+        .accessibilityHint(L10n.text("点按折叠或展开"))
         .accessibilityIdentifier("board.group.\(group.key)")
     }
 }

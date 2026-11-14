@@ -14,11 +14,11 @@ final class TranscriptTitleTests: XCTestCase {
     }
 
     func testDurationDropsEmptyLeadingUnits() {
-        XCTAssertEqual(TranscriptTitles.duration(milliseconds: 44_000), "44秒")
-        XCTAssertEqual(TranscriptTitles.duration(milliseconds: 313_000), "5分13秒")
-        XCTAssertEqual(TranscriptTitles.duration(milliseconds: 60_000), "1分0秒")
-        XCTAssertEqual(TranscriptTitles.duration(milliseconds: 3_720_000), "1小时2分0秒")
-        XCTAssertEqual(TranscriptTitles.duration(milliseconds: -5), "0秒")
+        XCTAssertEqual(TranscriptTitles.duration(milliseconds: 44_000), L10n.text("{0}秒", "44"))
+        XCTAssertEqual(TranscriptTitles.duration(milliseconds: 313_000), L10n.text("{0}分", "5") + L10n.text("{0}秒", "13"))
+        XCTAssertEqual(TranscriptTitles.duration(milliseconds: 60_000), L10n.text("{0}分", "1") + L10n.text("{0}秒", "0"))
+        XCTAssertEqual(TranscriptTitles.duration(milliseconds: 3_720_000), L10n.text("{0}小时", "1") + L10n.text("{0}分", "2") + L10n.text("{0}秒", "0"))
+        XCTAssertEqual(TranscriptTitles.duration(milliseconds: -5), L10n.text("{0}秒", "0"))
     }
 
     func testTokenFiguresAreCompact() {
@@ -31,54 +31,54 @@ final class TranscriptTitleTests: XCTestCase {
 
     func testClockShowsTheDateOnlyWhenItIsNotToday() {
         let now = calendar.date(from: DateComponents(year: 2025, month: 10, day: 20, hour: 13, minute: 17))!
-        XCTAssertEqual(TranscriptTitles.clock(milliseconds(2025, 10, 20, 9, 5), now: now, calendar: calendar), "09:05")
+        func formatted(_ at: Double, _ template: String) -> String {
+            L10n.date(Date(timeIntervalSince1970: at / 1000), template: template, timezone: calendar.timeZone)
+        }
+        XCTAssertEqual(TranscriptTitles.clock(milliseconds(2025, 10, 20, 9, 5), now: now, calendar: calendar),
+                       formatted(milliseconds(2025, 10, 20, 9, 5), "jmm"))
         XCTAssertEqual(
             TranscriptTitles.clock(milliseconds(2025, 10, 19, 11, 37), now: now, calendar: calendar),
-            "10月19日 11:37"
+            formatted(milliseconds(2025, 10, 19, 11, 37), "MMMdjmm")
         )
         XCTAssertEqual(
             TranscriptTitles.clock(milliseconds(2024, 12, 31, 23, 59), now: now, calendar: calendar),
-            "2024年12月31日 23:59"
+            formatted(milliseconds(2024, 12, 31, 23, 59), "yMMMdjmm")
         )
     }
 
     func testGroupTitleJoinsTheTopKindsLikeDSH() {
-        XCTAssertEqual(TranscriptTitles.groupTitle([(.commands, 3)]), "执行了命令")
-        XCTAssertEqual(TranscriptTitles.groupTitle([(.read, 2), (.search, 1)]), "已读取文件并搜索代码")
-        XCTAssertEqual(
-            TranscriptTitles.groupTitle([(.read, 3), (.search, 2), (.commands, 1)]),
-            "已读取文件，已搜索代码，执行了命令"
-        )
-        XCTAssertEqual(
-            TranscriptTitles.groupTitle([(.read, 4), (.search, 3), (.commands, 2), (.edit, 1)]),
-            "已读取文件，已搜索代码，执行了命令等"
-        )
-        XCTAssertEqual(TranscriptTitles.groupTitle([]), "已完成分析")
+        XCTAssertEqual(TranscriptTitles.groupTitle([(.commands, 3)]), ActivityKind.commands.doneTitle)
+        let three = TranscriptTitles.groupTitle([(.read, 3), (.search, 2), (.commands, 1)])
+        for kind in [ActivityKind.read, .search, .commands] { XCTAssertTrue(three.contains(kind.doneTitle)) }
+        let many = TranscriptTitles.groupTitle([(.read, 4), (.search, 3), (.commands, 2), (.edit, 1)])
+        XCTAssertTrue(many.contains(three))
+        XCTAssertFalse(many.contains(ActivityKind.edit.doneTitle))
+        XCTAssertEqual(TranscriptTitles.groupTitle([]), ActivityKind.thinking.doneTitle)
     }
 
     func testToolRowTitlesAndTriggerTitles() {
-        XCTAssertEqual(TranscriptTitles.rowTitle(forTool: "bash"), "运行命令")
-        XCTAssertEqual(TranscriptTitles.rowTitle(forTool: "terminal_run"), "运行命令")
-        XCTAssertEqual(TranscriptTitles.rowTitle(forTool: "apply_patch"), "编辑")
-        XCTAssertEqual(TranscriptTitles.rowTitle(forTool: "subagent_spawn"), "子智能体")
-        XCTAssertEqual(TranscriptTitles.rowTitle(forTool: "something_new"), "工具调用")
-        XCTAssertEqual(TranscriptTitles.triggerTitle("goal"), "继续执行目标")
-        XCTAssertEqual(TranscriptTitles.triggerTitle("schedule"), "自动化任务")
-        XCTAssertEqual(TranscriptTitles.triggerTitle("unheard-of"), "收到执行请求")
+        XCTAssertEqual(TranscriptTitles.rowTitle(forTool: "bash"), L10n.text("运行命令"))
+        XCTAssertEqual(TranscriptTitles.rowTitle(forTool: "terminal_run"), L10n.text("运行命令"))
+        XCTAssertEqual(TranscriptTitles.rowTitle(forTool: "apply_patch"), L10n.text("编辑"))
+        XCTAssertEqual(TranscriptTitles.rowTitle(forTool: "subagent_spawn"), L10n.text("子智能体"))
+        XCTAssertEqual(TranscriptTitles.rowTitle(forTool: "something_new"), L10n.text("工具调用"))
+        XCTAssertEqual(TranscriptTitles.triggerTitle("goal"), L10n.text("继续执行目标"))
+        XCTAssertEqual(TranscriptTitles.triggerTitle("schedule"), L10n.text("自动化任务"))
+        XCTAssertEqual(TranscriptTitles.triggerTitle("unheard-of"), L10n.text("收到执行请求"))
     }
 
     func testCompactionSummaryNeedsAnItemCount() {
         XCTAssertEqual(
             TranscriptTitles.compactionSummary(items: 348, tokens: 192_127),
-            "已压缩 348 条历史记录（约 192127 tokens）"
+            L10n.text("已压缩 {0} 条历史记录（约 {1} tokens）", "348", "192127")
         )
         XCTAssertNil(TranscriptTitles.compactionSummary(items: nil, tokens: 10))
     }
 
     func testGoalTitlesFollowThePhase() {
-        XCTAssertEqual(SessionGoal(id: "g", phase: "active", objective: "x").title, "进行中的目标")
-        XCTAssertEqual(SessionGoal(id: "g", phase: "paused", objective: "x").title, "已暂停的目标")
-        XCTAssertEqual(SessionGoal(id: "g", phase: "blocked", objective: "x").title, "受阻的目标")
+        XCTAssertEqual(SessionGoal(id: "g", phase: "active", objective: "x").title, L10n.text("进行中的目标"))
+        XCTAssertEqual(SessionGoal(id: "g", phase: "paused", objective: "x").title, L10n.text("已暂停的目标"))
+        XCTAssertEqual(SessionGoal(id: "g", phase: "blocked", objective: "x").title, L10n.text("受阻的目标"))
         XCTAssertFalse(SessionGoal(id: "g", phase: "active", objective: "x").isPaused)
         XCTAssertTrue(SessionGoal(id: "g", phase: "paused", objective: "x").isPaused)
     }
@@ -123,7 +123,7 @@ final class TranscriptBuilderTests: XCTestCase {
         XCTAssertEqual(user.text, "谁占用的内存")
         let turn = try XCTUnwrap(turns(in: rows).first)
         XCTAssertEqual(turn.outcome, .done)
-        XCTAssertEqual(turn.summaryTitle, "已完成，用时 44秒")
+        XCTAssertEqual(turn.summaryTitle, L10n.text("已完成，用时 {0}", TranscriptTitles.duration(milliseconds: 44_000)))
         XCTAssertEqual(turn.answer, "Docker 占用最多。")
         XCTAssertEqual(turn.answerID, "a3")
         XCTAssertEqual(turn.usage, 1_300_000)
@@ -133,7 +133,7 @@ final class TranscriptBuilderTests: XCTestCase {
         XCTAssertEqual(group.calls.map(\.id), ["c1", "c2", "c3"])
         XCTAssertEqual(group.thoughts.map(\.id), ["a1"])
         XCTAssertEqual(group.thoughts.first?.summary, "Check the top processes first.")
-        XCTAssertEqual(group.title, "执行了命令并已读取文件")
+        XCTAssertEqual(group.title, TranscriptTitles.groupTitle([(.commands, 2), (.read, 1)]))
         XCTAssertFalse(group.isRunning)
     }
 
@@ -192,11 +192,11 @@ final class TranscriptBuilderTests: XCTestCase {
         }
 
         let failed = try turn(outcome: "failed")
-        XCTAssertEqual(failed.summaryTitle, "处理失败")
+        XCTAssertEqual(failed.summaryTitle, L10n.text("处理失败"))
         XCTAssertTrue(failed.staysOpen)
-        XCTAssertEqual(try turn(outcome: "interrupted").summaryTitle, "处理失败")
+        XCTAssertEqual(try turn(outcome: "interrupted").summaryTitle, L10n.text("处理失败"))
         let stopped = try turn(outcome: "stopped")
-        XCTAssertEqual(stopped.summaryTitle, "已停止")
+        XCTAssertEqual(stopped.summaryTitle, L10n.text("已停止"))
         XCTAssertTrue(stopped.staysOpen)
     }
 
@@ -306,15 +306,15 @@ final class TranscriptBuilderTests: XCTestCase {
         }
 
         XCTAssertEqual(commands.count, 5)
-        XCTAssertEqual(commands[0].summary, "已压缩 348 条历史记录（约 192127 tokens）")
+        XCTAssertEqual(commands[0].summary, L10n.text("已压缩 {0} 条历史记录（约 {1} tokens）", "348", "192127"))
         XCTAssertFalse(commands[0].isRunning)
-        XCTAssertEqual(commands[1].summary, "正在压缩…")
+        XCTAssertEqual(commands[1].summary, L10n.text("正在压缩…"))
         XCTAssertTrue(commands[1].isRunning)
-        XCTAssertEqual(commands[2].summary, "当前无法压缩，请等会话空闲后再试")
+        XCTAssertEqual(commands[2].summary, L10n.text("当前无法压缩，请等会话空闲后再试"))
         XCTAssertTrue(commands[2].isError)
         XCTAssertEqual(commands[3].summary, "Plan mode on.")
-        XCTAssertEqual(commands[4].name, "上下文已压缩")
-        XCTAssertEqual(commands[4].summary, "已压缩 5 条历史记录（约 60 tokens）")
+        XCTAssertEqual(commands[4].name, L10n.text("上下文已压缩"))
+        XCTAssertEqual(commands[4].summary, L10n.text("已压缩 {0} 条历史记录（约 {1} tokens）", "5", "60"))
         // The compaction summary is what opens when the row is tapped; other commands have none.
         XCTAssertEqual(commands[0].detail, "## 摘要\n\n保留了计划。")
         XCTAssertTrue(commands[0].isCompaction)
@@ -325,7 +325,7 @@ final class TranscriptBuilderTests: XCTestCase {
         XCTAssertEqual(commands[4].detail, "自动压缩的摘要。")
         XCTAssertTrue(commands[4].isCompaction)
         guard case let .trigger(trigger) = rows[4] else { return XCTFail("Expected the goal trigger row") }
-        XCTAssertEqual(trigger.title, "继续执行目标")
+        XCTAssertEqual(trigger.title, L10n.text("继续执行目标"))
         XCTAssertEqual(trigger.time, 9)
     }
 
@@ -405,7 +405,7 @@ final class TranscriptBuilderTests: XCTestCase {
         }
 
         XCTAssertNil(row.detail)
-        XCTAssertEqual(row.summary, "已压缩 2 条历史记录（约 10 tokens）")
+        XCTAssertEqual(row.summary, L10n.text("已压缩 {0} 条历史记录（约 {1} tokens）", "2", "10"))
     }
 
     func testSuccessfulAutomaticHarnessCompactionDoesNotLeaveACompletedStatusRow() {
@@ -479,31 +479,31 @@ final class CommandTextTests: XCTestCase {
         CommandText.message(for: command, argument: argument, outcome: CommandOutcome(isError: error, text: reply))
     }
 
-    func testCompactRepliesBecomeChinese() {
+    func testKnownCompactRepliesAreLocalized() {
         XCTAssertEqual(
             text(.compact, "Compacted 14 history items (~3200 tokens)."),
-            "已压缩 14 条历史（约 3200 tokens）"
+            L10n.text("已压缩 {0} 条历史（约 {1} tokens）", "14", "3200")
         )
-        XCTAssertEqual(text(.compact, "No compactable history is available."), "暂无可压缩的历史")
-        XCTAssertEqual(text(.compact, "Compaction cancelled."), "压缩已取消")
-        XCTAssertEqual(text(.compact, "", error: true), "压缩失败")
+        XCTAssertEqual(text(.compact, "No compactable history is available."), L10n.text("暂无可压缩的历史"))
+        XCTAssertEqual(text(.compact, "Compaction cancelled."), L10n.text("压缩已取消"))
+        XCTAssertEqual(text(.compact, "", error: true), L10n.text("压缩失败"))
     }
 
-    func testPlanRepliesBecomeChinese() {
-        XCTAssertEqual(text(.plan, "Plan mode on. Use /plan off to leave."), "已进入计划模式")
-        XCTAssertEqual(text(.plan, "Plan mode off."), "已退出计划模式")
-        XCTAssertEqual(text(.plan, "Plan mode is already inactive."), "计划模式当前未开启")
-        XCTAssertEqual(text(.plan, "Attachments cannot be sent while leaving plan mode."), "退出计划模式时不能带附件")
+    func testKnownPlanRepliesAreLocalized() {
+        XCTAssertEqual(text(.plan, "Plan mode on. Use /plan off to leave."), L10n.text("已进入计划模式"))
+        XCTAssertEqual(text(.plan, "Plan mode off."), L10n.text("已退出计划模式"))
+        XCTAssertEqual(text(.plan, "Plan mode is already inactive."), L10n.text("计划模式当前未开启"))
+        XCTAssertEqual(text(.plan, "Attachments cannot be sent while leaving plan mode."), L10n.text("退出计划模式时不能带附件"))
     }
 
-    func testGoalRepliesBecomeChinese() {
-        XCTAssertEqual(text(.goal, "Goal created\nStatus: active"), "已设置目标")
-        XCTAssertEqual(text(.goal, "Goal updated\nStatus: active"), "已更新目标")
-        XCTAssertEqual(text(.goal, "Goal paused\nStatus: paused"), "目标已暂停")
-        XCTAssertEqual(text(.goal, "Goal resumed\nStatus: active"), "目标已继续")
-        XCTAssertEqual(text(.goal, "Goal cleared."), "已清除目标")
-        XCTAssertEqual(text(.goal, "No goal to clear."), "没有可清除的目标")
-        XCTAssertEqual(text(.goal, "A goal is already active. Use /goal edit."), "已有进行中的目标，请使用「更新目标」")
+    func testKnownGoalRepliesAreLocalized() {
+        XCTAssertEqual(text(.goal, "Goal created\nStatus: active"), L10n.text("已设置目标"))
+        XCTAssertEqual(text(.goal, "Goal updated\nStatus: active"), L10n.text("已更新目标"))
+        XCTAssertEqual(text(.goal, "Goal paused\nStatus: paused"), L10n.text("目标已暂停"))
+        XCTAssertEqual(text(.goal, "Goal resumed\nStatus: active"), L10n.text("目标已继续"))
+        XCTAssertEqual(text(.goal, "Goal cleared."), L10n.text("已清除目标"))
+        XCTAssertEqual(text(.goal, "No goal to clear."), L10n.text("没有可清除的目标"))
+        XCTAssertEqual(text(.goal, "A goal is already active. Use /goal edit."), L10n.text("已有进行中的目标，请使用「更新目标」"))
     }
 
     func testUnfamiliarRepliesAreShownAsTheyAre() {
