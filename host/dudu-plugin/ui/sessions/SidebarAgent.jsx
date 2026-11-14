@@ -14,7 +14,7 @@ export function SidebarAgent({ sessionId, sessions, activity, useSessionStatus }
   const selection = values?.modelSelection?.next ?? values?.modelSelection?.lastUsed;
   const provider = selection?.provider;
   const mapped = ['deepseek-account', 'deepseek-official'].includes(provider) ? 'deepseek' : provider;
-  const agent = ['claude', 'codex', 'deepseek'].includes(mapped) ? mapped : indexed?.agent;
+  const agent = ['claude', 'codex', 'pi', 'deepseek'].includes(mapped) ? mapped : indexed?.agent;
   const mark = sidebarAgentMark(live, values?.duduAgentActivity, indexed);
   // Deep sleep (its issue says so, whatever the session's last turn was): the crescent over the corner, unless the session is alive again; the mark itself is left as it is.
   const asleep = indexed?.deepSleep === true && !live?.running && !live?.pendingInteraction;
@@ -30,7 +30,7 @@ export function SidebarAgent({ sessionId, sessions, activity, useSessionStatus }
   }, [sessionId]);
   return <>
     <span ref={anchor} hidden />
-    {cell && ['claude', 'codex', 'deepseek'].includes(agent) && createPortal(
+    {cell && ['claude', 'codex', 'pi', 'deepseek'].includes(agent) && createPortal(
       <span className="dudu" data-dudu-sidebar-agent="" style={{ display: 'inline-flex', width: 16, height: 16, '--background': 'transparent' }}>
         <AgentAvatar agent={agent} state={stateOfMark(mark)} finished={mark === 'done'} asleep={asleep} compact logoClassName="size-3.5" />
       </span>, cell)}

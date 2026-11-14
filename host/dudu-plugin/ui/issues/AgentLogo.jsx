@@ -6,10 +6,12 @@ import duduMark from './logos/dudu.png';
 export function AgentMark({ agent, badge = false }) {
   const mark = agentLogo(agent, badge);
   if (!mark) return null;
+  const transform = [mark.inset ? `translate(${mark.inset} ${mark.inset}) scale(${(24 - mark.inset * 2) / 24})` : '', mark.transform].filter(Boolean).join(' ') || undefined;
   return <>
     {mark.background && <rect width="24" height="24" rx="5.5" fill={mark.background} />}
-    <path d={mark.path} fill={badge ? mark.color : 'currentColor'} stroke={mark.outline ?? undefined} strokeWidth={mark.outline ? 0.35 : undefined}
-      transform={[mark.inset ? `translate(${mark.inset} ${mark.inset}) scale(${(24 - mark.inset * 2) / 24})` : '', mark.transform].filter(Boolean).join(' ') || undefined} />
+    {mark.parts
+      ? <g transform={transform}>{mark.parts.map((part) => <path key={part.fill} d={part.d} fill={part.fill} />)}</g>
+      : <path d={mark.path} fill={badge ? mark.color : 'currentColor'} stroke={mark.outline ?? undefined} strokeWidth={mark.outline ? 0.35 : undefined} transform={transform} />}
   </>;
 }
 

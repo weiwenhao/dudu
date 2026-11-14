@@ -1,4 +1,8 @@
-const HARNESS = new Set(['claude', 'codex']);
+// The harnesses that are routes of their own (providers/drivers/). Their ids are the routes of DSH and the names of an issue's agent.
+export const HARNESS_IDS = Object.freeze(['claude', 'codex', 'pi']);
+const HARNESS = new Set(HARNESS_IDS);
+export const isHarness = (id) => HARNESS.has(id);
+const HARNESS_NAMES = { claude: 'Claude', codex: 'ChatGPT', pi: 'Pi' };
 export const providerFamily = (provider) => HARNESS.has(provider) ? provider : 'deepseek';
 const groupRank = (group) => group.id === 'deepseek-account' ? 0 : group.id === 'deepseek-official' ? 1 : 2;
 
@@ -8,7 +12,7 @@ export function sessionProviders(catalog) {
   const providers = [];
   const deepseek = groups.filter((group) => !HARNESS.has(group.id));
   if (deepseek.length) providers.push({ id: 'deepseek', name: 'DeepSeek', groups: deepseek });
-  for (const group of groups) if (HARNESS.has(group.id)) providers.push({ id: group.id, name: group.name || (group.id === 'codex' ? 'ChatGPT' : 'Claude'), groups: [group] });
+  for (const group of groups) if (HARNESS.has(group.id)) providers.push({ id: group.id, name: group.name || HARNESS_NAMES[group.id], groups: [group] });
   return providers;
 }
 

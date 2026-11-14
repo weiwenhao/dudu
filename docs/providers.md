@@ -1,7 +1,7 @@
 # 供应商：在 DSH 里使用电脑上的 Claude 和 ChatGPT
 
-dudu 插件把电脑上已安装的 harness（第一版是 Claude Code 和 Codex）接进 DSH。新会话的聊天框上方会多一个供应商
-下拉框，选 Claude 或 ChatGPT 后，这个会话由对应的 harness 运行，DSH 只负责显示。
+dudu 插件把电脑上已安装的 harness（第一版是 Claude Code 和 Codex，2026-11-14 加了 Pi）接进 DSH。新会话的聊天框上方会多一个供应商
+下拉框，选 Claude、ChatGPT 或 Pi 后，这个会话由对应的 harness 运行，DSH 只负责显示。
 
 关键点：会话是 harness 自己的真实会话。在终端里用 `claude --resume` 或 `codex resume` 就能接着聊。
 
@@ -18,13 +18,13 @@ DSH 的 loop ──一步一条助手消息──▶ harness 适配器（LLM ada
 - **驱动层是 [OAR](https://github.com/botiverse/oar)**（`@botiverse/oar`，Apache-2.0）。DSH 官方的 subagent 包
   （`packages/experimental/subagent-oar`）用的也是它。启动 CLI、读协议、resume、找安装位置、列模型都由 OAR 做，
   这里不再手写。2026-11-07 按主人确认的方案，改由本地包 `@dudu/oar-adapter`
-  （`packages/oar-adapter/`）统一引入，依赖精确固定的官方 `@botiverse/oar@0.92.0`，
+  （`packages/oar-adapter/`）统一引入，依赖精确固定的官方 `@botiverse/oar@0.105.0`（2026-11-14 从 0.92.0 升上来，见下），
   用 6 份带输入/输出校验的补丁保留仍有必要的本地扩展。手动压缩和通用单任务停止改用官方实现，
   已移除原 `0.75.0-dudu.2` 中相应的重复补丁。仓库不再维护完整的上游副本；
   `npm install` 和打包从官方依赖生成被忽略的 `.generated/oar/`，不修改 `node_modules`。
   来源、原包 integrity、各文件校验与维护步骤记在包内 `README.md`、`upstream.json`，保留原许可证和 NOTICE。
-  打包只把 Claude 和 Codex 两个 runtime 的依赖打成一个文件
-  （`host/providers/oar-runtimes.mjs`），安装后的插件没有自己的依赖；包里的许可证在
+  打包把 Claude 和 Codex 两个 runtime 的依赖打成一个文件
+  （`host/providers/oar-runtimes.mjs`），Pi 的 runtime 和它的 SDK 另打成 `host/providers/oar-pi.mjs`（约 16.5 MB，第一次开 Pi 会话或列 Pi 的模型时才加载），安装后的插件没有自己的依赖；包里的许可证在
   `dist/THIRD_PARTY_NOTICES.txt`。升级时先对照上游检查本地扩展，再用真实的 Claude、Codex 做相关回归；全量测试仍需主人明确同意。
 - **DSH 一侧是我们自己的**（`host/providers/`）：
   - `harness-bridge.mjs`：适配器。DSH 每请求一步，就回放 harness 的一条助手消息；harness 的工具调用变成镜像工具的调用。
@@ -45,6 +45,50 @@ DSH 的 loop ──一步一条助手消息──▶ harness 适配器（LLM ada
   供应商的选择写进会话日志（`model/selection` 事件）。这部分是一个单独的 Cordis 插件，依赖的服务缺失时只是不出现，
   不会影响手机控制和设置页。嘟嘟设置里的"供应商"页（DSH 自己的设置里没有）显示是否找到、版本、路径，可以启用/停用、指定可执行文件路径、重新检测。
   选择器左侧使用当前供应商自己的 Logo，复用侧栏与事项的 `AgentLogo`（16 px，跟随浅色/深色主题），切换供应商时同步更新。
+
+## 官方 OAR 0.105.0 与 Pi 供应商（2026-11-14）
+
+主人（2026-11-14）：“嘟嘟供应商，将 PI agent 添加进来……OAR 升级到最新版吧，另外看看 OAR 现在支持哪些 agent”，并要求测：开关供应商时分配智能体、新建事项等处的列表增减；后台任务、子智能体、各种响应；步数、token；压缩；目标。
+
+### OAR 0.92.0 → 0.105.0
+
+依赖和锁文件只变了 OAR 一项（它自己的依赖没变，只有可选的 `@cursor/sdk` 对等依赖从 1.2.0 变成 1.3.1）。补丁碰过的 23 个文件里，12 个上游一字没变，9 个有 2 到 32 行的小改动，2 个是补丁自己新增的。`claude-session`、`codex-session`、`process-ownership` 原样适用；`session-controls`、`claude-defaults`、`codex-subagents` 各有一两处上下文被上游挪动，按新文件手工重做，`upstream.json` 的校验全部重新记录（做法和一个坑见 `packages/oar-adapter/README.md`）。
+
+上游行为变化和对宿主的影响：
+
+- Codex v1 派生子智能体的调用（`collabAgentToolCall`）现在也作为工具调用事件报告。`CodexNormalizer` 对认不出的条目返回空，所以界面不变，子智能体照旧通过 `task_*` 事件进团队。单测 “进行中的 spawn 不产生任何事件” 改成 “不产生 task 事件”。
+- `deliver()`：回合刚结束、状态还显示同一回合在跑时的插话改为排队，不再被拒；被拒的控制多了 `failure` 分类；输入超过字节上限会提前拒绝。
+- 官方 `compaction.js` 和 0.92.0 一字不差：`/compact` 偶发的 “Claude commands changed between provenance validation and the compaction boundary” 红字不是升级带来的，升级也没有修它（214 次里出现过 1 次，压缩本身是成功的）。
+- 两个单测里写死的 0.92.0 改成读 `upstream.json`，以后升级不用再改。
+
+### OAR 现在支持哪些 agent
+
+0.105.0 内置 13 个 runtime：Claude Code、Codex、Pi、Pi Durable（宿主托管的持久会话，实验性）、DeepSeek Harness（经它的私有插件）、Cursor（要自己装 `@cursor/sdk`，不在默认列表里）、Grok、Kimi、OpenCode、Antigravity、CodeBuddy（这五个共用 ACP v1）、Qwen Code、Qoder（自己的 SDK 守护协议）；社区 runtime 一个：Mister Morph。0.92.0 已经是这 13 个，升级没有新增 agent，Pi 的 runtime 两个版本一字不差。这台电脑上装着 claude、codex、pi、grok。嘟嘟现在接了 Claude Code、Codex 和 Pi。
+
+### Pi
+
+- **怎么跑**：`drivers/pi.mjs` 用电脑上装的 `pi`（1.4.0 起的普通版本，OAR 自己的下限），经 OAR 的 `createPiRuntime({ execution: subprocess, command })` 以 RPC 模式一个会话起一个进程；会话是 Pi 自己的会话，终端里 `pi --session <id>` 接着聊（`pi --resume` 也列得出）。OAR 默认的进程内 SDK 没用：它会把 Pi 和用户的扩展装进 DSH 宿主进程，也没法在宿主里杀掉。
+- **SDK 为什么还要打包**：OAR 的 Pi runtime 在宿主进程里用 Pi 的 SDK 读模型目录和会话文件，所以 `@earendil-works/pi-coding-agent` 和 `pi-ai` 打进单独的 `providers/oar-pi.mjs`（约 16.5 MB；插件包 4.3 MB 变 7.4 MB），第一次开 Pi 会话或列模型才加载。找可执行文件和读版本不需要它（`oar-runtimes.mjs` 里的 `executableInstallation`），没装 Pi 的电脑永远不加载。
+- **找 Pi**：设置里的路径 → PATH → npm 的前缀、Homebrew、Bun、Volta、pnpm、nvm 的各个 Node。版本低于 1.4.0 或不是普通版本，设置页显示 “版本不受支持” 和原因，不等会话失败才发现。
+- **模型和思考等级**：模型 id 是 Pi 自己的 `provider/model`，显示名取 Pi 的；思考等级取 Pi 对这个模型给的（off、low、high……）。
+- **工具**：Pi 的 read、bash、edit、write、grep、find、ls 镜像成 `pi_<名字>`（DSH 自己的工具叫 bash、read、edit……，同名会冲突），用 DSH 已有的卡片：终端、diff、读文件、搜索；Pi 扩展带来的工具用通用卡片。
+- **访问模式**：Pi 没有沙盒和授权。只读 = 去掉 bash、edit、write；别的模式不限制（`workspace-write` 对 Pi 不起限制作用）。
+- **步数和 token**：Pi 的一条助手消息后面跟它的工具调用，每个调用一步，最后的回答一步；token 取 OAR 的累计值，按消息取差值只计一次，缓存读写分开记。
+- **压缩**：手动 `/compact` 走 OAR 的 `compact()`（Pi 自己压缩）；Pi 上下文快满时自己的自动压缩同样出现在 compact 行；会话太小时 Pi 说 “Nothing to compact (session too small)”，原样显示。
+- **没有**：后台任务和子智能体（Pi 没有内置的，OAR 也不暴露；Pi 扩展做的子智能体只是普通工具调用）、授权和提问、单写者检查（终端里同时写同一个 Pi 会话会各写各的，和 Claude 一样要自己当心）、侧栏面板里浏览和载入 Pi 已有的会话（那要像 Claude、Codex 一样读它自己的会话文件，没做）。
+- **目标（/goal）**（2026-11-14 修好）：以前在 Claude、ChatGPT、Pi 的会话里都完成不了目标，不是 Pi 带来的。DSH 的目标回合是 `source.kind: 'goal'` 的用户消息，桥只把人写的消息交给 harness（`isPrompt`），这一轮马上以 `HARNESS_NO_PROMPT` 结束；harness 的模型又没有 `update_goal`。现在：目标回合（`round > 0`；第 0 回合是目标附件的那条）和人写的消息一样交给 harness，`input.mjs` 在回合文字后面加一句说明（`GOAL_ROUND_NOTE`）：做完并检查过，就在回复最后单独一行写 `GOAL_COMPLETE`；做不下去，最后一行写 `GOAL_BLOCKED: 原因`。回合结束时桥（`goal.mjs` 的 `goalReportOf`、`reportGoal`）读它的最后几行，对仍然有效、仍是 active 的那个目标调 DSH 的目标服务（`ctx.goals`，`complete` 或 `block`，原因码 `model-reported`），在 DSH 看到智能体空闲、起下一轮之前完成，所以不会多跑一轮；没写标记就留着，下一轮接着做（和 DSH 自己的模型忘了调 `update_goal` 一样，到回合上限 256 或你暂停为止）。暂停会中止正在跑的回合。没有目标服务的 DSH 里这一步什么也不做。这是靠最后几行字约定的，不是结构化的工具调用；要结构化，得把 `get_goal`、`update_goal` 通过 MCP 给 harness。
+- **列表跟着开关走**：新建事项、事项详情、右键菜单里的 “智能体” 以前是固定三项，不管供应商开没开；现在只列装好并启用的（`ui/issues/agents.js`，读 `providers/state`，设置里一改就跟着变；事项已有的智能体始终留在列表里）。分配给一个关着的 Pi，事项不会开会话，它的提问处写 “Pi is not available”。定时任务的选项、DSH 的模型目录、办公室本来就跟着开关走。
+- **手机**（2026-11-14 修好）：App 里 “智能体” 的选择以前写死三项（Swift 的 `SessionAgent` 枚举和两处 `[claude, codex, deepseek]`），选不了 Pi，也不跟着供应商开关。现在 `SessionAgent` 是开放的（认不出的 id 照样解码，用它自己的名字和首字母显示），新建事项和事项操作里的 “智能体” 列表由 `DSBotStore.agentChoices` 按宿主发来的 providers 给出（和桌面一样：开着并找到的 harness + DeepSeek；providers 还没来之前显示 App 认识的全部；事项已有的智能体始终在列）；Pi 的标志用 SwiftUI 画（三色），没有标志的智能体画首字母；定时任务的选择本来就读宿主的选项，自动带上 Pi。宿主一侧：手机接口接受并发出所有 harness 的 id（`HARNESS_IDS`），会话列表里 Pi 的会话带 `agent: "pi"`。`DSBotStore` 里 “助手对话只用 DeepSeek 家的模型” 的过滤也不再写死 claude、codex。
+
+### 验证（2026-11-14）
+
+环境：Desktop 自带 CLI（DSH 0.2.2-rc.2）的隔离 web、独立 HOME，真实的 Claude 2.1.323、Codex 0.162.1、Pi 1.4.0，只脚本化模型；没有碰你的 DSH，也没用任何真实账号和额度。
+
+- **单元**：相关 29 个文件 285 项，283 过；1 项失败是原有的（`what the boss said before "done" went away…`，`icon_progress` 迁移，干净的 HEAD 上也失败）。typecheck、lint 过；打包后的插件在仓库外能加载。
+- **Pi**（`tests/e2e/pi-provider.e2e.test.ts`，13 项全过）：Pi 被找到、进模型目录、给出模型和思考等级；在设置里关掉 Pi，新建事项的智能体列表、定时任务选项、DSH 的模型目录都去掉 Pi，分配给它的事项不开会话并写 “Pi is not available”，打开后全部回来；分配给 Pi 的事项开 Pi 会话、结束进 “需要你”；read、bash、edit、write 和一个失败的命令（退出码 3）都画出来，文件真的改了，步数 = 工具调用数 + 1，每条消息的 token 只记一次；没有后台任务和子智能体；思考等级到达 Pi 的模型；停止后下一条接着同一个 Pi 会话，DSH 重启后也是；运行中插话被同一回合收下；手动 `/compact` 和 Pi 自己的自动压缩都成功，太小的会话原样说 “Nothing to compact”；模型报错时 Pi 的原话到界面，会话继续；`/goal`：一个目标跑两轮（第一轮没说完成）后被 Pi 的 `GOAL_COMPLETE` 完成且不再多跑，Pi 报 `GOAL_BLOCKED` 后目标进入阻塞并停止，暂停会中止在跑的回合、会话照常接着聊；Claude 和 Codex 各用真实 CLI 验了一遍同样的两轮完成（`.local/verify/e2e-lite/`）。加了目标之后，`claude-stop`、`harness-failures`、`harness-resume` 又整体跑过，全过。
+- **OAR 升级对 Claude、Codex 的回归**（0.105.0，与升级前的 0.92.0 对照）：`claude-stop` 3/3、`harness-failures` 9/9（含两家的手动压缩）、`harness-resume` 8/8 全过；旧的 `harness-stats`（步数、token）、`native-queue`（排队、插话）通过。旧的 `native-background-jobs`、`native-subagents`、`provider-model-recovery` 在升级前后一样全失败（测试是 11 月初写的，期望的界面和语义已变，例如现在后台任务期间 DSH 回合保持运行），所以另写了数据层的两个检查，Claude、Codex 各一遍，升级前后都过：后台命令是一个运行中的 DSH 任务、输出能读、DSH 能停它并且进程真的退出；子智能体作为团队成员出现，根会话在子任务期间保持运行，子任务完成，结果在子会话自己的历史里。这两个检查放在 `.local/verify/e2e-lite/`，没进仓库。
+- **手机**：`native:build` 通过；Swift 单测 2 项在模拟器上过（认不出的智能体 id 能解码并用自己的名字显示；列表跟着 providers 增减、DeepSeek 始终在、已有的智能体保留、providers 没到之前给全部）；Pi、Claude、ChatGPT、DeepSeek 和一个不认识的智能体的标志画出来看过（`.local/designs/pi-provider-2026-11-14/phone-agent-marks.png`）；宿主的手机接口有一项新单测（Pi 的会话带 `agent: "pi"`）。已装到你的 iPhone，但在真机上点开新建事项的“智能体”看列表这一步没做；而且 Desktop 还是旧插件，手机上要等 Desktop 更新后才会看到 Pi。
+- **没测**：Pi 收图片；用 Pi 自己的 OAuth 账号、扩展、技能（隔离 HOME 里没有）；Windows；手机；装进 Desktop 热更新；Pi 的 SDK 载入后宿主进程多占多少内存（没量出可靠数字）。
 
 ## 官方 OAR 0.92.0 与适配包验证（2026-11-07）
 

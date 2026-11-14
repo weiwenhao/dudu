@@ -63,7 +63,7 @@ function Models({ directory, model, actions, onError }) {
   const [picking, setPicking] = useState(false);
   const state = useSyncExternalStore(directory?.store.subscribe ?? noop, directory?.store.getSnapshot ?? (() => empty));
   const current = state.current ?? model;
-  const groups = state.groups.filter((group) => !['claude', 'codex'].includes(group.id));
+  const groups = state.groups.filter((group) => !['claude', 'codex', 'pi'].includes(group.id));
   const selected = groups.find((group) => group.id === current?.provider)?.models.find((item) => item.id === current?.model);
   const efforts = selected?.reasoning?.efforts ?? [];
   const effort = efforts.find((item) => item.id === (current?.reasoningEffort ?? selected?.reasoning?.defaultEffort));

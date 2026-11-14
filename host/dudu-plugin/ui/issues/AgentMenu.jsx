@@ -5,14 +5,14 @@ import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.j
 import { T } from '../strings.js';
 import { AgentAvatar } from './icons.jsx';
 import { AGENT_NAMES } from './model.js';
+import { useAgentIds } from './agents.js';
 import { ProjectChoices } from './ProjectMenu.jsx';
-
-const AGENTS = Object.keys(AGENT_NAMES);
 
 /**
  * Assignment requires a project first. Saved assignments can keep the trigger as a static label.
  */
 export function AgentMenu({ agent, project, request, onSelect, locked = false, align = 'start', side, children }) {
+  const agents = useAgentIds(agent, request);
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(project);
   const [choosing, setChoosing] = useState(false);
@@ -34,7 +34,7 @@ export function AgentMenu({ agent, project, request, onSelect, locked = false, a
               <span>{T.noAgent}</span>
               {!agent && <Check className="ml-auto" aria-hidden="true" />}
             </CommandItem>
-            {AGENTS.map((id) => (
+            {agents.map((id) => (
               <CommandItem key={id} value={AGENT_NAMES[id]} onSelect={() => pick(id)}>
                 <AgentAvatar agent={id} state="idle" />
                 <span>{AGENT_NAMES[id]}</span>

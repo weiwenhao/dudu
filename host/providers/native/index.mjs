@@ -260,7 +260,8 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
     if (!refresh && listed && now() - listed.at < LIST_TTL) return listed;
     const providers = [];
     const sessions = [];
-    for (const source of sources()) {
+    // Only Claude and Codex keep sessions that the plugin reads itself (OAR cannot list a harness's sessions, so these two have readers here).
+    for (const source of sources().filter((candidate) => ['claude', 'codex'].includes(candidate.id))) {
       try {
         const found = source.id === 'claude'
           ? await listClaudeSessions({ cache: claudeCache, ...claude })

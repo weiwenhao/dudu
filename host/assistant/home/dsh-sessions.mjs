@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { createDshContentSearch } from './session-search.mjs';
 import { withAbort } from '../../providers/async.mjs';
 import { readSessionHistory } from '../../dsh-session-history.mjs';
+import { isHarness } from '../../providers/catalog.mjs';
 
 const textOf = (content) => (typeof content === 'string' ? content : (Array.isArray(content) ? content : []).filter((block) => block?.type === 'text').map((block) => block.text).join('\n'));
 
@@ -188,7 +189,7 @@ export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, c
         const selection = values.modelSelection?.next ?? values.modelSelection?.lastUsed ?? optional('agents')?.get(id)?.options;
         return {
           key: `dsh:${id}`, id, provider: 'dsh', dshSessionId: id, workspaceId: workspace?.id,
-          agent: ['claude', 'codex'].includes(selection?.provider) ? selection.provider : 'deepseek',
+          agent: isHarness(selection?.provider) ? selection.provider : 'deepseek',
           project: workspace ? { name: workspace.title, path: workspace.path } : null,
           title, cwd: item.cwd, updatedAt: item.updatedAt ?? 0,
           seq: item.seq,

@@ -12,7 +12,8 @@ const opened = () => foldCodexNotification(initialCodexProjection('root'), 'item
 
 test('Codex v1 spawn completion establishes a running child, without declaring the research completed', () => {
   const progress = foldCodexNotification(initialCodexProjection('root'), 'item/started', { threadId: 'root', item: spawn('inProgress') });
-  assert.equal(frameEvents(progress).length, 0);
+  // OAR 0.105 also reports the spawn call itself as a tool call; the host skips it. A child exists only once the call has completed.
+  assert.equal(frameEvents(progress).filter((event: any) => event.kind.startsWith('task_')).length, 0);
   const result = opened();
   assert.deepEqual(frameEvents(result).filter((event: any) => event.kind.startsWith('task_')), [{
     kind: 'task_started', taskId: 'child', taskType: 'agent', nativeType: 'collabAgentToolCall',

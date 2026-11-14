@@ -19,6 +19,7 @@ import { availableModel, pickModel } from '../dispatch/dsh-llm.mjs';
 import { modelFor } from './agent-sessions.mjs';
 import { taskLine } from './group.mjs';
 import { conversationToolNames, isConversationTool } from './native-tools.mjs';
+import { isHarness } from '../../providers/catalog.mjs';
 
 export const TASK_PREFIX = 'dudu-assistant-task-';
 export const MAX_RUNS = 24;
@@ -140,7 +141,7 @@ export function createTaskSessions({ ctx, assistant, tools, context, say, file =
       }, { prepend: true });
       agentCtx.on('agent/request', async (_request, next) => {
         const config = await next();
-        if (['claude', 'codex'].includes(config.provider)) throw new Error('A scheduled task of dudu needs a conversation model.');
+        if (isHarness(config.provider)) throw new Error('A scheduled task of dudu needs a conversation model.');
         return { ...config, cwd: assistant.folder };
       });
       agentCtx.on('approval/request', () => 'rejected');

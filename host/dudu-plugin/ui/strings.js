@@ -234,7 +234,7 @@ const en = {
       clear: 'Clear search', more: 'More sessions', openFailed: 'Could not open this session.', takeoverLabel: 'Let Dudu manage this task', // NEW
       takeoverFailed: 'Could not take over this session.', openIssue: 'Open issue', // NEW
       takeoverSuccess: 'Session taken over', // NEW: Chinese supplied by the owner, English awaits review (2026-11-05).
-      agents: { claude: 'Claude', codex: 'ChatGPT', dsh: 'DeepSeek Harness' },
+      agents: { claude: 'Claude', codex: 'ChatGPT', pi: 'Pi', dsh: 'DeepSeek Harness' },
     },
   },
   // The approved settings layout and Chinese copy; English translations and NEW states await review.
@@ -551,7 +551,7 @@ const zh = {
       clear: '清空搜索', more: '更多会话', openFailed: '会话没能打开。', takeoverLabel: '交给嘟嘟管理',
       takeoverFailed: '会话没能接管。', openIssue: '打开事项', // NEW
       takeoverSuccess: '接管成功', // Owner wording (2026-11-05).
-      agents: { claude: 'Claude', codex: 'ChatGPT', dsh: 'DeepSeek Harness' },
+      agents: { claude: 'Claude', codex: 'ChatGPT', pi: 'Pi', dsh: 'DeepSeek Harness' },
     },
   },
   settings: {

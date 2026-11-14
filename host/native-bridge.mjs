@@ -8,7 +8,7 @@ import { createNativePages, NATIVE_PAGE_METHODS } from './native-pages.mjs';
 import { imageFromBlock, MAX_IMAGE_BYTES } from './native-images.mjs';
 import { markdownImagePath } from './native-markdown-images.mjs';
 import { mapLimit } from './providers/async.mjs';
-import { providerDefault, providerFamily, sessionProviders } from './providers/catalog.mjs';
+import { HARNESS_IDS, providerDefault, providerFamily, sessionProviders } from './providers/catalog.mjs';
 import { agentMarkForActivity, stateOfMark } from './assistant/sessions/work-state.mjs';
 import { CARD_COMMAND } from './assistant/home/cards.mjs';
 import { SAY_COMMAND } from './assistant/home/group.mjs';
@@ -332,7 +332,7 @@ function summaryFrom(row) {
     status: row?.running || row?.status === 'running' ? 'running'
       : questionCount > 0 || row?.status === 'waiting' ? 'waiting' : 'idle',
     ...(provider ? { providerId: provider } : {}),
-    ...(['claude', 'codex', 'deepseek'].includes(agent) ? (() => {
+    ...([...HARNESS_IDS, 'deepseek'].includes(agent) ? (() => {
       const live = { running: row?.running || row?.status === 'running', pendingInteraction: pending };
       // An agent in deep sleep is told to the phone with its mark as it is (owner, 2026-11-07): the phone draws the crescent over the corner, unless the session is alive again,
       // and it is the mark's own again when the agent wakes.

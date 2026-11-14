@@ -59,14 +59,41 @@ struct SessionSummary: Codable, Identifiable, Sendable, Equatable {
     var deepSleep: Bool?
 }
 
-enum SessionAgent: String, Codable, Sendable {
-    case claude, codex, deepseek
+/// An agent of an issue or a session: the id the plugin names it by (`claude`, `codex`, `pi`, `deepseek`, and whatever it adds next). It is not a closed list: an id the app does not know
+/// decodes and shows, under its own name, with its first letter for a mark, so that a plugin with one more harness does not break the lists it comes in.
+struct SessionAgent: RawRepresentable, Codable, Hashable, Sendable {
+    let rawValue: String
+
+    init?(rawValue: String) {
+        guard !rawValue.isEmpty else { return nil }
+        self.rawValue = rawValue
+    }
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        guard let agent = SessionAgent(rawValue: raw) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "An agent has no name"))
+        }
+        self = agent
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    static let claude = SessionAgent(rawValue: "claude")!
+    static let codex = SessionAgent(rawValue: "codex")!
+    static let pi = SessionAgent(rawValue: "pi")!
+    static let deepseek = SessionAgent(rawValue: "deepseek")!
 
     var name: String {
-        switch self {
-        case .claude: return "Claude"
-        case .codex: return "ChatGPT"
-        case .deepseek: return "DeepSeek"
+        switch rawValue {
+        case "claude": return "Claude"
+        case "codex": return "ChatGPT"
+        case "pi": return "Pi"
+        case "deepseek": return "DeepSeek"
+        default: return rawValue.prefix(1).uppercased() + rawValue.dropFirst()
         }
     }
 }

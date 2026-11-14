@@ -13,6 +13,7 @@ import { conversationToolNames, isConversationTool } from './native-tools.mjs';
 import { createTaskSessions } from './task-session.mjs';
 import { createIdleTidy } from './tidy.mjs';
 import { assistantTools, definition } from './tools.mjs';
+import { isHarness } from '../../providers/catalog.mjs';
 
 export const SESSION_PREFIX = 'dudu-assistant-';
 export function conversationModel(events, fallback) {
@@ -283,7 +284,7 @@ export function createConversation({ ctx, assistant, issues, assignment, dashboa
     // The working folder can move while the durable session identity and log remain the same.
     agentCtx.on('agent/request', async (_request, next) => {
       const config = await next();
-      if (['claude', 'codex'].includes(config.provider)) throw new Error('The assistant needs a conversation model. Delegate harness work through an issue.');
+      if (isHarness(config.provider)) throw new Error('The assistant needs a conversation model. Delegate harness work through an issue.');
       return { ...config, cwd: assistant.folder };
     });
   }
@@ -401,7 +402,7 @@ export function createConversation({ ctx, assistant, issues, assignment, dashboa
     return {
       outcome: 'success', settings: defaults,
       model: pickModel(catalog, defaults.model),
-      groups: catalog.groups.filter((group) => !['claude', 'codex'].includes(group.id)),
+      groups: catalog.groups.filter((group) => !isHarness(group.id)),
       permissions: permissions?.defaultOptions ?? [],
     };
   }

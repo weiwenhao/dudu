@@ -7,6 +7,7 @@ import { COPY_KINDS } from './copy.js';
 import { useCopyIssue } from './use-copy.js';
 import { T } from '../strings.js';
 import { AGENT_NAMES } from './model.js';
+import { useAgentIds } from './agents.js';
 import { AgentAvatar, DueIcon } from './icons.jsx';
 import { DueChoices, DueDateDialog } from './DueMenu.jsx';
 import { ProjectChoices } from './ProjectMenu.jsx';
@@ -19,6 +20,7 @@ import { IssueRenameDialog } from './IssueRenameDialog.jsx';
 function AssignmentChoices({ issue, request, onSelect }) {
   const [selected, setSelected] = useState(issue.project);
   const [choosing, setChoosing] = useState(!selected?.path);
+  const agents = useAgentIds(issue.agent, request);
   if (choosing) return <ProjectChoices request={request} project={selected}
     onSelect={(value) => { setSelected(value); setChoosing(false); }} />;
   return <>
@@ -29,8 +31,8 @@ function AssignmentChoices({ issue, request, onSelect }) {
       <CommandInput placeholder={T.detail.setAgent} aria-label={T.detail.setAgent} />
       <CommandSeparator />
       <CommandList>
-        {Object.entries(AGENT_NAMES).map(([agent, name]) => <CommandItem key={agent} value={name} onSelect={() => onSelect(agent, selected)}>
-          <AgentAvatar agent={agent} state="idle" />{name}
+        {agents.map((agent) => <CommandItem key={agent} value={AGENT_NAMES[agent]} onSelect={() => onSelect(agent, selected)}>
+          <AgentAvatar agent={agent} state="idle" />{AGENT_NAMES[agent]}
         </CommandItem>)}
       </CommandList>
     </Command>

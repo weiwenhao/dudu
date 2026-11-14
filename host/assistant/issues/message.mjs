@@ -2,7 +2,7 @@
 export function issueMessage(text, assignedAgent, { hasAttachments = false } = {}) {
   if (typeof text !== 'string' || !text.trim() && !hasAttachments || text.length > 20_000) return { error: 'invalid_message' };
   const visible = text.replace(/```[\s\S]*?(?:```|$)|`[^`\n]*`/g, (part) => ' '.repeat(part.length));
-  const mentions = [...visible.matchAll(/(^|[\s(（])@(dudu|嘟嘟|claude|codex|chatgpt|deepseek|agent)(?=$|[\s,，:：.!?。！？)）])/giu)];
+  const mentions = [...visible.matchAll(/(^|[\s(（])@(dudu|嘟嘟|claude|codex|chatgpt|pi|deepseek|agent)(?=$|[\s,，:：.!?。！？)）])/giu)];
   const targets = new Set(mentions.map((match) => {
     const name = match[2].toLowerCase();
     return name === '嘟嘟' ? 'dudu' : name === 'chatgpt' ? 'codex' : name === 'agent' ? assignedAgent ?? 'agent' : name;

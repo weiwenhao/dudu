@@ -20,6 +20,8 @@ import { createOverview } from './dist/providers/native/overview.mjs';
 import { createPluginQuota, handleQuota } from './dist/providers/quota/index.mjs';
 import { claudeProvider } from './dist/providers/drivers/claude.mjs';
 import { codexProvider } from './dist/providers/drivers/codex.mjs';
+import { piProvider } from './dist/providers/drivers/pi.mjs';
+import { isHarness } from './dist/providers/catalog.mjs';
 import { permissionOf } from './dist/providers/permission.mjs';
 import { createIssues } from './dist/assistant/issues/index.mjs';
 import { createIssuesApi, ISSUE_ACTIONS } from './dist/assistant/issues/api.mjs';
@@ -118,10 +120,11 @@ async function startProviders(ctx, folder, assignment) {
   const links = await createLinkStore(folder);
   const providers = await createProviders({
     folder,
-    providers: [claudeProvider, codexProvider],
+    providers: [claudeProvider, codexProvider, piProvider],
     host: {
       llm: ctx.llm,
       agents: ctx.agents,
+      goals: () => { try { return ctx.get('goals'); } catch { return undefined; } },   // DSH's goal service, when this DSH has it
       jobs: () => ctx.jobs,
       attachments: () => ctx.attachments,
       on: (event, handler) => ctx.on(event, handler),
@@ -449,7 +452,7 @@ async function startAssignment(ctx, folder, assignment) {
     await observe({
       key: `dsh:${sessionId}`, provider: 'dsh', state: 'waiting_owner',
       title: '', cwd: agent.session.header.cwd,
-      agent: ['claude', 'codex'].includes(agent.options.provider) ? agent.options.provider : 'deepseek',
+      agent: isHarness(agent.options.provider) ? agent.options.provider : 'deepseek',
       pending: { text: text(request), kind: event === 'approval/request' ? 'approval' : 'question' },
     });
     return next();

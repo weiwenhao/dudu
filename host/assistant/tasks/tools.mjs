@@ -1,3 +1,4 @@
+import { HARNESS_IDS } from '../../providers/catalog.mjs';
 const string = { type: 'string' };
 const schedule = { type: 'object', properties: {
   kind: { type: 'string', enum: ['once', 'interval', 'daily', 'workdays', 'weekly', 'monthly', 'cron'] },
@@ -7,7 +8,7 @@ const schedule = { type: 'object', properties: {
   day: { type: 'integer', minimum: 1, maximum: 31 }, expression: string,
 }, required: ['kind', 'timezone'], additionalProperties: false };
 const properties = {
-  title: string, prompt: string, agent: { type: 'string', enum: ['dudu', 'deepseek', 'claude', 'codex'] }, model: { type: ['string', 'null'] },
+  title: string, prompt: string, agent: { type: 'string', enum: ['dudu', 'deepseek', ...HARNESS_IDS] }, model: { type: ['string', 'null'] },
   project: { type: ['object', 'null'], properties: { id: string, name: string, path: string }, required: ['name', 'path'], additionalProperties: false },
   target: { type: 'object', properties: { mode: { type: 'string', enum: ['reuse', 'new', 'existing'] }, sessionId: string }, required: ['mode'], additionalProperties: false }, schedule,
 };

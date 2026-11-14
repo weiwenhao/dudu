@@ -76,7 +76,7 @@
  import { manualCompaction } from "../../shared/manual-compaction.js";
  import { codexCompaction, codexCompactionBusy } from "./compaction.js";
  import { appendCleanupFailure } from "../../shared/executable/process-cleanup.js";
-@@ -73,13 +74,14 @@
+@@ -75,13 +76,14 @@ export const codexSession = withSessionCredentials(async (installation, options,
              throw new Error(readback.refusal);
          }
          const kernel = credentials.kernel(threadId);
@@ -92,7 +92,7 @@
          };
          const tasks = codexTaskControl(kernel, client, () => state.projection.subagents);
          const nativeBusy = () => state.active !== null || state.spontaneous;
-@@ -97,6 +99,7 @@
+@@ -99,6 +101,7 @@ export const codexSession = withSessionCredentials(async (installation, options,
          // transport-only turn id and the control decisions (busy, spontaneous).
          const onNotification = (method, params) => {
              tasks.observe(method, params);
@@ -100,7 +100,7 @@
              const isRoot = typeof params.threadId !== "string" || params.threadId === threadId;
              if (isRoot && method === "turn/started") {
                  const startedTurn = asRecord(params.turn)?.id;
-@@ -256,13 +259,32 @@
+@@ -262,13 +265,32 @@ export const codexSession = withSessionCredentials(async (installation, options,
              id: kernel.sessionId,
              ...(options.goals === true ? { goal: codexGoalControl(kernel, client, threadId) } : {}),
              capabilities,

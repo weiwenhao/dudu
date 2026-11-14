@@ -242,7 +242,7 @@ struct NewIssueSheet: View {
                 IssueChoiceRow(title: "未分配", selected: draft.agent == nil) {
                     DSBotIcon(.stateUnassigned, size: 18, scalesStroke: true)
                 } action: { draft.agent = nil; path.removeLast() }
-                ForEach([SessionAgent.claude, .codex, .deepseek], id: \.rawValue) { item in
+                ForEach(store.agentChoices(keeping: draft.agent), id: \.rawValue) { item in
                     IssueChoiceRow(title: item.name, selected: draft.agent == item) {
                         AgentLogo(agent: item, size: 20)
                     } action: { draft.agent = item; path.removeLast() }

@@ -315,7 +315,7 @@ test('嘟嘟 is the first provider of the task options, and its tasks go to its 
     dsh: { models: async () => ({ default: { provider: 'deepseek', model: 'flash' }, groups: [{ id: 'deepseek', models: [{ id: 'flash' }] }, { id: 'claude', models: [{ id: 'sonnet' }] }] }), list: async () => [] },
   });
   const options = await host.options({ includeSessions: false });
-  assert.deepEqual(options.providers.map((provider: any) => [provider.id, provider.available]), [['dudu', true], ['claude', true], ['codex', false], ['deepseek', true]]);
+  assert.deepEqual(options.providers.map((provider: any) => [provider.id, provider.available]), [['dudu', true], ['claude', true], ['codex', false], ['pi', false], ['deepseek', true]]);
   assert.deepEqual(options.providers[0].models, ['flash'], 'the models of the conversation routes, never Claude Code or Codex');
   const task: any = { ...base(), agent: 'dudu', project: null, target: { mode: 'new' } };
   await host.validate(task);

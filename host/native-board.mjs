@@ -1,3 +1,4 @@
+import { HARNESS_IDS } from './providers/catalog.mjs';
 // The board and the Collector for the phone (docs/assistant.md 4.2). The owner is the one asking, here as on the desktop, and the commands are the desktop
 // interface's own: `issues/list`, `issues/add`, `inbox/*` (host/assistant/issues/api.mjs, host/assistant/inbox/api.mjs). What changes is the answer: plain,
 // small rows (no description, no activity), so that the app draws its lists itself.
@@ -196,7 +197,7 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, f
   }
 
   async function assign(params) {
-    if (!positive(params.id) || !['claude', 'codex', 'deepseek'].includes(params.agent)
+    if (!positive(params.id) || ![...HARNESS_IDS, 'deepseek'].includes(params.agent)
       || !isRecord(params.project) || !shortText(params.project.name, 200) || !shortText(params.project.path, 1000)) fail('BAD_REQUEST');
     const result = await askIssues('assign', {
       id: params.id, agent: params.agent, project: { name: params.project.name.trim(), path: params.project.path.trim() },
@@ -258,7 +259,7 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, f
       fields.project = params.project === null ? null : { name: params.project.name.trim(), path: params.project.path?.trim() ?? null };
     }
     if (params.agent !== undefined) {
-      if (params.agent !== null && !['claude', 'codex', 'deepseek'].includes(params.agent)) fail('BAD_REQUEST');
+      if (params.agent !== null && ![...HARNESS_IDS, 'deepseek'].includes(params.agent)) fail('BAD_REQUEST');
       fields.agent = params.agent;
     }
     if (params.labels !== undefined) {

@@ -7,8 +7,9 @@
 // DSH has as its default, unless that is Claude Code or Codex: those are harnesses that run a whole session, not a place to ask one
 // question, so then the first model of another route is used. A DSH that has none says so, and the callers do not do the step.
 import { PERSONAL_IDENTITY } from '../identity.mjs';
+import { HARNESS_IDS } from '../../providers/catalog.mjs';
 
-const HARNESS = new Set(['claude', 'codex']);
+const HARNESS = new Set(HARNESS_IDS);
 
 /** The route and model for a one-shot call: DSH's default when it is a plain model, else the first model of a route that is. */
 export function availableModel(catalog, wanted) {

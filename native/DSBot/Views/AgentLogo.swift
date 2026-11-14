@@ -1,25 +1,62 @@
 import SwiftUI
+import UIKit
 
 struct AgentLogo: View {
     let agent: SessionAgent
     var size: CGFloat = 18
 
     private var color: Color {
-        switch agent {
-        case .claude: return Color(red: 217.0 / 255, green: 119.0 / 255, blue: 87.0 / 255)
-        case .codex: return DSBotStyle.ink
-        case .deepseek: return Color(red: 77.0 / 255, green: 107.0 / 255, blue: 254.0 / 255)
+        switch agent.rawValue {
+        case "claude": return Color(red: 217.0 / 255, green: 119.0 / 255, blue: 87.0 / 255)
+        case "codex": return DSBotStyle.ink
+        case "deepseek": return Color(red: 77.0 / 255, green: 107.0 / 255, blue: 254.0 / 255)
+        default: return DSBotStyle.muted
         }
     }
 
     var body: some View {
-        Image("Agent-\(agent.rawValue)")
-            .renderingMode(.template)
-            .resizable()
-            .scaledToFit()
-            .foregroundStyle(color)
-            .frame(width: size, height: size)
-            .accessibilityHidden(true)
+        Group {
+            if agent == .pi {
+                PiMark()
+            } else if UIImage(named: "Agent-\(agent.rawValue)") != nil {
+                Image("Agent-\(agent.rawValue)")
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(color)
+            } else {
+                // An agent the app has no mark for: its first letter, as the Desktop draws an agent it does not know.
+                Text(String(agent.name.prefix(1)))
+                    .font(.system(size: size * 0.55, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: size, height: size)
+                    .background(Circle().fill(color.opacity(0.15)))
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The Pi mark (the three pieces of pi.dev/logo-on-light.svg, on its 800 x 800 grid, in its own colours), the Desktop's `PI_PARTS`: the pieces span 165 to 635 of the grid and are
+/// drawn at four fifths of the box, centred.
+private struct PiMark: View {
+    var body: some View {
+        Canvas { context, size in
+            let span: CGFloat = 469.43
+            let unit = size.width * 0.8 / span
+            let origin = (size.width - span * unit) / 2 - 165.29 * unit
+            func piece(_ points: [(CGFloat, CGFloat)], _ color: Color) {
+                var path = Path()
+                path.move(to: CGPoint(x: origin + points[0].0 * unit, y: origin + points[0].1 * unit))
+                for point in points.dropFirst() { path.addLine(to: CGPoint(x: origin + point.0 * unit, y: origin + point.1 * unit)) }
+                path.closeSubpath()
+                context.fill(path, with: .color(color))
+            }
+            piece([(165.29, 165.29), (517.36, 165.29), (517.36, 400), (400, 400), (400, 282.65), (165.29, 282.65)], Color(red: 240.0 / 255, green: 144.0 / 255, blue: 130.0 / 255))
+            piece([(165.29, 282.65), (282.65, 282.65), (282.65, 400), (400, 400), (400, 517.36), (282.65, 517.36), (282.65, 634.72), (165.29, 634.72)], Color(red: 77.0 / 255, green: 154.0 / 255, blue: 191.0 / 255))
+            piece([(517.36, 400), (634.72, 400), (634.72, 634.72), (517.36, 634.72)], Color(red: 241.0 / 255, green: 190.0 / 255, blue: 88.0 / 255))
+        }
     }
 }
 

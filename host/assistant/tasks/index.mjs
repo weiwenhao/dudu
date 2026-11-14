@@ -5,6 +5,7 @@ import { dirname, isAbsolute } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { nextOccurrence, validateSchedule } from './timing.mjs';
 import { TASK_ACTIONS } from './contract.mjs';
+import { HARNESS_IDS } from '../../providers/catalog.mjs';
 
 export { TASK_ACTIONS } from './contract.mjs';
 const success = (extra = {}) => ({ outcome: 'success', ...extra });
@@ -17,7 +18,7 @@ const editable = new Set(['title', 'prompt', 'agent', 'model', 'project', 'targe
 function fields(input) {
   if (!record(input) || Object.keys(input).some((key) => !editable.has(key))) invalid();
   if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 200 || typeof input.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > 100_000) invalid();
-  if (!['dudu', 'deepseek', 'claude', 'codex'].includes(input.agent) || input.model != null && (typeof input.model !== 'string' || !input.model || input.model.length > 300)) invalid();
+  if (!['dudu', 'deepseek', ...HARNESS_IDS].includes(input.agent) || input.model != null && (typeof input.model !== 'string' || !input.model || input.model.length > 300)) invalid();
   // 嘟嘟 does a task in its own folder, in a conversation of its own: a task of it has no project (any that comes with it is not kept) and no existing conversation to go to.
   const dudu = input.agent === 'dudu';
   let project = null;

@@ -1183,3 +1183,11 @@ test('a quick button\'s card is its command in the thread with what it listed at
   assert.equal('card' in byId['cmd-bad'], false, 'a command that failed has no card');
   assert.equal('card' in byId['cmd-other'], false, 'only the card command carries one');
 });
+
+// The phone lists agents by the id the plugin names them with (the app draws one it has no special case for under its own name): Pi, and the next harness, are not left out.
+test('a session of a harness other than Claude and Codex is told to the phone with its own agent id', async () => {
+  const rows = [{ sessionId: 's-pi', updatedAt: 1, projections: { kind: 'cached', values: { title: 'Pi work', modelSelection: { next: { provider: 'pi', model: 'x/y' } } } } }];
+  const { bridge } = makeHarness({ rows });
+  const [session] = await bridge.dispatch('session.list', {}, {});
+  assert.equal(session.agent, 'pi');
+});

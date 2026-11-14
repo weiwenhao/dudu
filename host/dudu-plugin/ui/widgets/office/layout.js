@@ -399,7 +399,7 @@ export function lookFor(id, inUse = []) {
 
 // --- the agent's colour (the hover card's dot): Claude orange, ChatGPT green, DeepSeek blue; any other agent takes one of three more, by
 // its name, so it keeps it; no agent is grey.
-const AGENT_COLORS = { claude: 0xd97757, codex: 0x19a58a, chatgpt: 0x19a58a, deepseek: 0x4d6bfe };
+const AGENT_COLORS = { claude: 0xd97757, codex: 0x19a58a, chatgpt: 0x19a58a, pi: 0x4d9abf, deepseek: 0x4d6bfe };
 const OTHER_COLORS = [0x8b6fd6, 0xe27ba8, 0xe4b93c]; // purple, pink, yellow
 const NO_AGENT_COLOR = 0x9aa0ad;
 

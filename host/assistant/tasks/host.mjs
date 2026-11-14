@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises';
 import { pickModel } from '../dispatch/dsh-llm.mjs';
 import { modelFor, AGENTS, ACCESS_MODES } from '../home/agent-sessions.mjs';
 import { withAbort } from '../../providers/async.mjs';
+import { isHarness } from '../../providers/catalog.mjs';
 
 const reject = (code) => { throw Object.assign(new Error(code), { code, beforeSend: true }); };
 /**
@@ -42,11 +43,11 @@ export function createTaskHost({ dsh, registry, controller, agents, access = () 
       const [catalog, listed] = await Promise.all([read(dsh.models()), includeSessions ? read(dsh.list()) : []]);
       const providers = Object.entries(AGENTS).map(([id, name]) => {
         const selected = modelFor(id, catalog);
-        const groups = catalog.groups.filter((group) => id === 'deepseek' ? !['claude', 'codex'].includes(group.id) : group.id === id);
+        const groups = catalog.groups.filter((group) => id === 'deepseek' ? !isHarness(group.id) : group.id === id);
         return { id, name, available: Boolean(selected), models: [...new Set(groups.flatMap((group) => group.models.map((model) => model.id)))] };
       });
       // 嘟嘟 itself comes first: it can use the models of the conversation routes (never Claude Code or Codex), as its own conversation does.
-      const own = catalog.groups.filter((group) => !['claude', 'codex'].includes(group.id));
+      const own = catalog.groups.filter((group) => !isHarness(group.id));
       providers.unshift({ id: 'dudu', name: '嘟嘟', available: Boolean(dudu()) && Boolean(pickModel(catalog)), models: [...new Set(own.flatMap((group) => group.models.map((model) => model.id)))] });
       const workspaces = projects();
       const sessions = listed.filter((item) => {

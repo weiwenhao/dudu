@@ -8,6 +8,7 @@ import { createHarnessTeams } from './teams.mjs';
 import { createInputJournal } from './input-delivery.mjs';
 import { createHarnessJobs } from './jobs.mjs';
 import { createForegroundWatch } from './foreground.mjs';
+import { reportGoal } from './goal.mjs';
 
 // The providers of DSH: the harnesses installed on this computer. A harness that is found and enabled becomes a
 // model route of its own (`claude`, `codex`); a session that selects the route is run by that harness, and the
@@ -100,6 +101,8 @@ export async function createProviders({ host, providers, folder, log = console }
     });
     const teams = createHarnessTeams({ host, driver, log });
     bridge.teams = teams;
+    // A goal of DSH (/goal) in a session of this harness: the end of a round says whether the goal is done (goal.mjs).
+    bridge.onGoalReport = (sessionId, round, report) => reportGoal({ goals: host.goals?.(), agent: host.agents.get(sessionId), round, report, log });
     bridge.jobs = createHarnessJobs({ host, route: driver.route, log });
     // AgentOptions keeps the host's default route after restore. Recheck the actual adapter before replaying tools.
     bridge.beforeStep = (sessionId) => {

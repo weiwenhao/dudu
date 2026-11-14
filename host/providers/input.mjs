@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
+import { GOAL_ROUND_NOTE } from './goal.mjs';
 
 const EXTENSIONS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
 
@@ -29,6 +30,7 @@ export function createHarnessInput({ attachments, folder }) {
           images.push({ path, mediaType });
         }
       }
+      if (text.length && message.source?.kind === 'goal') text.push(`\n\n${GOAL_ROUND_NOTE}`);
       if (text.length) texts.push(text.join(''));
     }
     return { prompt: texts.filter(Boolean).join('\n\n'), ...(images.length ? { images } : {}) };

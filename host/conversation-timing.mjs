@@ -1,3 +1,4 @@
+import { isHarness } from './providers/catalog.mjs';
 const text = (value) => typeof value === 'string' && value.length > 0;
 
 /** First observed output chunk in a DSH stream, including its compact persisted representation. */
@@ -23,7 +24,7 @@ export function firstToken(stream) {
 }
 
 // Native turn totals and DSH replay timestamps cannot measure a model's per-message generation speed.
-export const isHarnessMessage = (message) => ['claude', 'codex'].includes(message?.source?.replayState?.harness ?? message?.source?.provider);
+export const isHarnessMessage = (message) => isHarness(message?.source?.replayState?.harness ?? message?.source?.provider);
 
 export function withoutHarnessTiming(stats, excluded) {
   if (!stats || !excluded || !(excluded.decodeMs > 0 || excluded.decodeTokens > 0)) return stats;

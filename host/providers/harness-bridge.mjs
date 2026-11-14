@@ -1,6 +1,7 @@
 import { stat } from 'node:fs/promises';
 import { AsyncQueue, abortReason, deferred } from './async.mjs';
 import { createHarnessActivity } from './activity.mjs';
+import { goalReportOf } from './goal.mjs';
 import { admittedLink, createInputDelivery, undeliveredInputs, withInputDeliveries } from './input-delivery.mjs';
 
 // An external harness (Claude Code, Codex) runs a turn with its own loop, tools and permissions. DSH's loop
@@ -15,7 +16,10 @@ export const CONTEXT_WINDOW = 10_000_000;
 const textOf = (content) => (Array.isArray(content) ? content : [])
   .filter((block) => block?.type === 'text').map((block) => block.text).join('');
 const hasToolCalls = (message) => (Array.isArray(message.content) ? message.content : []).some((block) => block?.type === 'tool-call');
-const isPrompt = (message) => message.role === 'user' && message.source?.kind === 'user';
+/** A round of the goal a person set (DSH's goal driver writes them as messages of its own source), see goal.mjs. */
+const isGoalRound = (message) => message.role === 'user' && message.source?.kind === 'goal' && message.source.round > 0;
+// What a harness is given: what a person wrote, and the rounds of their goal.
+const isPrompt = (message) => message.role === 'user' && (message.source?.kind === 'user' || isGoalRound(message));
 
 export class HarnessFailure extends Error {
   constructor(message, code) {
@@ -52,7 +56,8 @@ export function analyzeRequest(messages, route, events, promptFilter = isPrompt)
   if (boundary >= 0) {
     const current = events.slice(boundary + 1);
     const ids = new Set(current.filter((event) => event.type === 'user/message').map((event) => event.data.id));
-    const pending = undeliveredInputs(events.slice(0, boundary), route, promptFilter);
+    // What an earlier turn failed to hand over is carried to this one, but not a goal round: it is DSH's own, and the next one is written when the agent is idle.
+    const pending = undeliveredInputs(events.slice(0, boundary), route, (message) => promptFilter(message) && !isGoalRound(message));
     prompts = [...new Map([...pending, ...messages.filter((message) => promptFilter(message) && ids.has(message.id))]
       .map((message) => [message.id, message])).values()];
     continuing = current.some((event) => event.type === 'assistant/message');
@@ -377,7 +382,8 @@ export function createHarnessAdapter(bridge) {
     yield { type: 'finish', reason: { kind: 'stop' } };
   }
 
-  async function* step(run, signal, resumePending) {
+  async function* step(run, signal, resumePending, goalRound) {
+    let finalText = '';
     let index = 0;
     let open;
     let calls = 0;
@@ -404,6 +410,7 @@ export function createHarnessAdapter(bridge) {
           if (type === 'text') {
             hasText = true;
             separatesNextAnswer = false;
+            finalText += text;
           }
           open.text += text;
           yield { type: event.type, index: open.index, text };
@@ -435,6 +442,8 @@ export function createHarnessAdapter(bridge) {
             }
           }
           if (usage || event.usage) yield { type: 'usage', usage: usageOf(usage ?? event.usage) };
+          // The end of a goal round: the harness cannot call update_goal, so what it says of the goal is done here, before DSH sees the agent idle and starts another round.
+          if (goalRound && calls === 0) await bridge.onGoalReport?.(run.sessionId, goalRound.source, goalReportOf(finalText));
           const nativeSubagents = await run.team?.checkpoint();
           yield {
             type: 'finish',
@@ -498,6 +507,7 @@ export function createHarnessAdapter(bridge) {
             }
           }
         }
+        const goalRound = request.prompts.find(isGoalRound);
         yield* step(run, signal, async (completed) => {
           const prompts = request.prompts.filter((prompt) => !completed.forwarded.has(prompt.id));
           if (!prompts.length) return;
@@ -512,7 +522,7 @@ export function createHarnessAdapter(bridge) {
           });
           for (const id of completed.forwarded) next.forwarded.add(id);
           return next;
-        });
+        }, goalRound);
       } catch (error) {
         if (!(error instanceof HarnessFailure)) throw error;
         // DSH discards codes on foreign Error classes. Its stream protocol carries our known failures without

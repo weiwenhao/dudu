@@ -437,7 +437,7 @@ window.__ModuleLoader__.load({
     const MODE_SLOT = 'dudu.hero.mode';
     // Routes that are whole harnesses. Every other route belongs to the DeepSeek family (DeepSeek Account,
     // DeepSeek, and any API-key provider the user configured).
-    const HARNESS = new Set(['claude', 'codex']);
+    const HARNESS = new Set(['claude', 'codex', 'pi']);   // host/providers/catalog.mjs says the same
     const familyOf = (provider) => (HARNESS.has(provider) ? provider : 'deepseek');
 
     // The look of the mode chip (dsh-client-ui-agent-preset), under this plugin's own class names.
@@ -751,8 +751,8 @@ window.__ModuleLoader__.load({
       return parts.length > 3 ? `…/${parts.slice(-2).join('/')}` : text;
     };
     const quote = (text) => `'${String(text).replace(/'/g, `'\\''`)}'`;
-    const resumeCommand = (session) => `${session.cwd ? `cd ${quote(session.cwd)} && ` : ''}${session.provider === 'claude' ? 'claude --resume' : 'codex resume'} ${session.id}`;
-    const agentName = (provider) => (provider === 'claude' ? 'Claude' : 'ChatGPT');
+    const resumeCommand = (session) => `${session.cwd ? `cd ${quote(session.cwd)} && ` : ''}${session.provider === 'claude' ? 'claude --resume' : session.provider === 'pi' ? 'pi --session' : 'codex resume'} ${session.id}`;
+    const agentName = (provider) => (provider === 'claude' ? 'Claude' : provider === 'pi' ? 'Pi' : 'ChatGPT');
     const termsOf = (query) => query.toLowerCase().split(/\s+/).filter(Boolean);
     // A lone letter would light up half the words of a snippet.
     const markable = (terms) => terms.filter((term) => term.length > 1 || /[^\x00-\x7f]/.test(term));

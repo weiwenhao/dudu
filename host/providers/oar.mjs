@@ -514,7 +514,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
  * A harness provider on an OAR runtime. `session` returns what is specific to the harness in the options of one OAR
  * session (environment, tool limits, launch arguments) from the DSH access mode.
  */
-export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, quota }) {
+export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, quota, backgroundTasks = true }) {
   const known = new Set(tools.map((tool) => tool.name));
   const environment = (extra) => ({ ...scrubbedEnvironment(scrub.patterns, scrub), ...extra });
 
@@ -526,7 +526,7 @@ export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbac
     /** What the settings page shows about the harness on this computer: OAR looks where each vendor installs it. */
     async probe({ override } = {}) {
       let snapshot;
-      try { snapshot = await runtime.installation(override ? { env: { [binaryEnv]: override } } : undefined); }
+      try { snapshot = await (installationOf ?? ((probe) => runtime.installation(probe)))(override ? { env: { [binaryEnv]: override } } : undefined); }
       catch (error) { return { state: 'broken', reason: error instanceof Error ? error.message : String(error) }; }
       if (snapshot.kind === 'available' && snapshot.via === 'executable') {
         return { state: 'ready', path: snapshot.command, version: text(snapshot.version).match(/\d+\.\d+\.\d+\S*/)?.[0] ?? text(snapshot.version), installation: snapshot };
@@ -536,12 +536,14 @@ export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbac
     },
 
     create({ installation }) {
+      // A harness whose runtime depends on what was found (Pi: the command OAR launches) builds it from the detection.
+      const active = runtimeFor ? runtimeFor(installation) : runtime;
       let loaded;
       const load = async () => {
         if (loaded && Date.now() < loaded.until) return loaded.models;
         let models;
         try {
-          const listed = await runtime.listModels(installation, { env: environment(), cwd: homedir(), timeoutMs: 30_000 });
+          const listed = await active.listModels(installation, { env: environment(), cwd: homedir(), timeoutMs: 30_000 });
           if (listed.kind === 'ok') models = listed.models.filter((model) => !model.disabled);
         } catch { /* the fallback below */ }
         loaded = models?.length ? { until: Date.now() + MODEL_TTL, models } : { until: Date.now() + FALLBACK_TTL, models: fallbackModels };
@@ -564,8 +566,8 @@ export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbac
       return {
         id, name, route: id, tools,
         normalizer: () => normalizer({ name, login }),
-        configuration: typeof runtime.configuration === 'function'
-          ? (options = {}) => runtime.configuration(installation, { ...options, env: environment() })
+        configuration: typeof active.configuration === 'function'
+          ? (options = {}) => active.configuration(installation, { ...options, env: environment() })
           : undefined,
         knowsTool: (toolName) => known.has(toolName),
         fallbackTool,
@@ -593,16 +595,17 @@ export function createOarProvider({ id, name, runtime, binaryEnv, tools, fallbac
         },
         async start({ prompt, images, signal, onRecord, observedSubagents, onInput, onTasks, previous, ...options }) {
           const sessionOptions = await optionsFor({ ...options, signal, retained: previous?.backgroundActive });
-          if (onTasks) sessionOptions.backgroundTasks = true;
+          // Only the harnesses whose OAR session reads background tasks (Claude, Codex) are asked for them.
+          if (onTasks && backgroundTasks) sessionOptions.backgroundTasks = true;
           if (id === 'codex' && observedSubagents?.length) sessionOptions.observedSubagents = observedSubagents;
           return startOarRun({
-            runtime, installation, sessionOptions, prompt, images, normalizer: normalizer({ name, login }),
+            runtime: active, installation, sessionOptions, prompt, images, normalizer: normalizer({ name, login }),
             name, signal, queuesSteer, onRecord, observedSubagents, onInput, onTasks, previous,
           });
         },
         async compact(options) {
           const sessionOptions = await optionsFor(options);
-          return compactOarSession({ runtime, installation, sessionOptions, name, signal: options.signal });
+          return compactOarSession({ runtime: active, installation, sessionOptions, name, signal: options.signal });
         },
       };
     },

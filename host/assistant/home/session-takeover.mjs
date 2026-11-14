@@ -1,5 +1,6 @@
 import { basename, isAbsolute } from 'node:path';
 import { redact } from '../memory/secrets.mjs';
+import { HARNESS_IDS } from '../../providers/catalog.mjs';
 
 const PROMPT = `You are dudu taking over an existing work conversation for its owner: you make an issue for it and keep track of it.
 Describe the task itself, what the owner wants done, in one to three short sentences and at most 300 characters. Do not report progress and do not list what was done.
@@ -28,7 +29,7 @@ export function createSessionTakeover({ issues, catalog, read, llm, adopt, state
     if (existing) return { outcome: 'no_op', issue: existing };
     const path = session.project?.path || session.cwd;
     const agent = ['claude', 'codex'].includes(session.provider) ? session.provider : session.agent;
-    if (!isAbsolute(path || '') || !['claude', 'codex', 'deepseek'].includes(agent)) return { outcome: 'needs_clarification', code: 'session_project_missing' };
+    if (!isAbsolute(path || '') || ![...HARNESS_IDS, 'deepseek'].includes(agent)) return { outcome: 'needs_clarification', code: 'session_project_missing' };
     const conversation = await read(session.key);
     if (lifetime.signal.aborted) return { outcome: 'error', code: 'takeover_closed' };
     if (conversation.outcome !== 'success' || !conversation.messages?.length) return { outcome: 'error', code: 'session_unreadable' };

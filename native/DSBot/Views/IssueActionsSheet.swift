@@ -218,7 +218,7 @@ struct IssueActionsSheet: View {
     private var agentChoices: some View {
         if let project = assignmentProject, let folder = project.path, !folder.isEmpty {
             IssueChoiceList(title: "智能体") {
-                ForEach([SessionAgent.claude, .codex, .deepseek], id: \.rawValue) { agent in
+                ForEach(store.agentChoices(keeping: issue.sessionAgent), id: \.rawValue) { agent in
                     IssueChoiceRow(title: agent.name) { AgentLogo(agent: agent, size: 20) } action: {
                         perform { await board.assign(issue, agent: agent, project: project, using: store) }
                     }

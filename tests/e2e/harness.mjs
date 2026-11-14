@@ -93,6 +93,18 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
       'env_key = "DUDU_MOCK_MODEL_KEY"', 'wire_api = "responses"', 'supports_websockets = false',
     ].join('\n'));
   }
+  if (mock && model.nativePi) {
+    // Pi reads ~/.pi/agent (HOME is the isolated one): a provider of its own that speaks to the scripted model, and no network of its own.
+    const agent = join(user, '.pi', 'agent');
+    await mkdir(agent, { recursive: true });
+    const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: { dudu_e2e: {
+      baseUrl: mock.url, api: 'openai-completions', apiKey: 'dudu-e2e-key',
+      models: (model.piModels ?? [{ id: 'mock-pi', name: 'Mock Pi' }]).map((entry) => ({ reasoning: false, input: ['text'], contextWindow: 128000, maxTokens: 8192, cost: zero, ...entry })),
+    } } }));
+    await writeFile(join(agent, 'settings.json'), JSON.stringify({ defaultProvider: 'dudu_e2e', defaultModel: (model.piModels ?? [{ id: 'mock-pi' }])[0].id, quietStartup: true, ...(model.piSettings ?? {}) }));
+    Object.assign(env, { PI_OFFLINE: '1', PI_SKIP_VERSION_CHECK: '1', PI_TELEMETRY: '0' });
+  }
   const modelPatch = mock ? [
     '- id: llm-pi-ai', '  config:', '    providers:', '      mock:', '        displayName: Mock', '        api: openai-completions',
     `        baseURL: ${mock.url}`, '        apiKeyEnv: DUDU_MOCK_MODEL_KEY',

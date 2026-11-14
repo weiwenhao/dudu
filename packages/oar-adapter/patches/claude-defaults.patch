@@ -1,14 +1,14 @@
 --- a/dist/runtimes/claude/index.d.ts
 +++ b/dist/runtimes/claude/index.d.ts
-@@ -32,6 +32,7 @@
-     readonly install: import("../../browser.js").Installer;
-     readonly accountUsage: import("../../browser.js").AccountUsageReader;
+@@ -34,6 +34,7 @@ export declare const claudeRuntime: Omit<{
+     readonly inspectLimitResets: import("../../browser.js").LimitResetInspector;
+     readonly redeemLimitReset: import("../../browser.js").LimitResetRedeemer;
      readonly listModels: import("../../browser.js").ModelLister;
 +    readonly configuration: typeof import("./list-models.js").claudeConfiguration;
      readonly checkUpdate: import("../../browser.js").UpdateChecker;
      readonly upgrade: typeof claudeUpgrade;
      readonly login: typeof claudeLogin;
-@@ -42,4 +43,4 @@
+@@ -44,4 +45,4 @@ export declare const claudeRuntime: Omit<{
  export { claudeAccountUsage } from "./account-usage.js";
  export { claudeListModels, projectClaudeModels } from "./list-models.js";
  export { claudeSession } from "./session.js";
@@ -17,8 +17,8 @@
 +//# sourceMappingURL=index.d.ts.map
 --- a/dist/runtimes/claude/index.js
 +++ b/dist/runtimes/claude/index.js
-@@ -8,7 +8,7 @@
- import { claudeAccountUsage } from "./account-usage.js";
+@@ -9,7 +9,7 @@ import { claudeAccountUsage } from "./account-usage.js";
+ import { claudeInspectLimitResets, claudeRedeemLimitReset } from "./limit-reset/index.js";
  import { claudeInstallation } from "./installation.js";
  import { claudeInstall, claudeInstallPlan } from "./install.js";
 -import { claudeListModels } from "./list-models.js";
@@ -26,15 +26,15 @@
  import { claudeCheckUpdate, claudeUpgrade } from "./update.js";
  import { claudeSession } from "./session.js";
  export const claudeRuntime = defineRuntime({
-@@ -30,6 +30,7 @@
-     install: claudeInstall,
-     accountUsage: claudeAccountUsage,
+@@ -33,6 +33,7 @@ export const claudeRuntime = defineRuntime({
+     inspectLimitResets: claudeInspectLimitResets,
+     redeemLimitReset: claudeRedeemLimitReset,
      listModels: claudeListModels,
 +    configuration: claudeConfiguration,
      checkUpdate: claudeCheckUpdate,
      upgrade: claudeUpgrade,
      login: claudeLogin,
-@@ -40,4 +41,4 @@
+@@ -43,4 +44,4 @@ export const claudeRuntime = defineRuntime({
  export { claudeAccountUsage } from "./account-usage.js";
  export { claudeListModels, projectClaudeModels } from "./list-models.js";
  export { claudeSession } from "./session.js";
@@ -53,7 +53,7 @@
 \ No newline at end of file
 --- a/dist/runtimes/claude/launch-args.js
 +++ b/dist/runtimes/claude/launch-args.js
-@@ -32,7 +32,7 @@
+@@ -32,7 +32,7 @@ export function refuseManagedLaunchArgs(launchArgs) {
      }
  }
  /** Keep explicit native modes noninteractive; omission preserves OAR's default bypass. */
@@ -62,7 +62,7 @@
      const args = launchArgs ?? [];
      let hasMode = false;
      for (const [index, arg] of args.entries()) {
-@@ -54,6 +54,15 @@
+@@ -54,6 +54,15 @@ export function claudePermissionArgs(launchArgs) {
      if (hasMode && args.some((arg) => arg.split("=", 1)[0] === "--dangerously-skip-permissions")) {
          throw new UnsupportedOptionError("launchArgs", "claude --dangerously-skip-permissions overrides the requested --permission-mode; choose one permission policy");
      }
@@ -81,7 +81,7 @@
 \ No newline at end of file
 --- a/dist/runtimes/claude/launch.js
 +++ b/dist/runtimes/claude/launch.js
-@@ -57,7 +57,7 @@
+@@ -57,7 +57,7 @@ function spawnClaude(command, sessionId, options, mcpConfig, tierSettings, nativ
   */
  export async function launchClaude(command, sessionId, options) {
      refuseManagedLaunchArgs(options.launchArgs);
@@ -90,7 +90,7 @@
      refuseSessionOptions(claudeRefusedSessionOptions, options);
      checkSessionName(options);
      const tierSettings = claudeServiceTierSettings(options.serviceTier);
-@@ -88,4 +88,4 @@
+@@ -88,4 +88,4 @@ export async function launchClaude(command, sessionId, options) {
          throw error;
      }
  }
@@ -99,7 +99,7 @@
 +//# sourceMappingURL=launch.js.map
 --- a/dist/runtimes/claude/list-models.d.ts
 +++ b/dist/runtimes/claude/list-models.d.ts
-@@ -8,4 +8,5 @@
+@@ -10,4 +10,5 @@ import type { ModelEntry, ModelLister } from "../../contracts/list-models.js";
   */
  export declare function projectClaudeModels(payload: unknown): ModelEntry[];
  export declare const claudeListModels: ModelLister;
@@ -109,7 +109,7 @@
 +export declare function claudeConfiguration(installation: import("../../contracts/installation.js").AvailableInstallation, options?: import("../../contracts/list-models.js").ListModelsOptions & { model?: string }): Promise<{ model?: string; resolvedModel?: string; effort?: string; defaultEffort?: string; modelEfforts?: Record<string, string>; permissionMode?: string }>;
 --- a/dist/runtimes/claude/list-models.js
 +++ b/dist/runtimes/claude/list-models.js
-@@ -59,7 +59,7 @@
+@@ -61,7 +61,7 @@ function controlError(inner) {
   * and the answer is the same models, faster). User settings stay loaded —
   * provider env and apiKeyHelper live there — so authentication is unaffected.
   */
@@ -118,7 +118,7 @@
      const child = spawnLineProcess(command, [
          "-p",
          "--input-format", "stream-json",
-@@ -68,6 +68,7 @@
+@@ -70,6 +70,7 @@ async function readListModels(command, cwd, timeoutMs, env) {
          "--settings", "{\"disableAllHooks\":true}",
          "--strict-mcp-config",
          "--mcp-config", "{\"mcpServers\":{}}",
@@ -126,7 +126,7 @@
      ], { cwd, env: claudeEnv(env), killTree: true });
      const requestId = `oar-list-models-${randomUUID()}`;
      const { promise: answered, resolve } = Promise.withResolvers();
-@@ -92,11 +93,11 @@
+@@ -94,11 +95,11 @@ async function readListModels(command, cwd, timeoutMs, env) {
          child.write(`${JSON.stringify({
              type: "control_request",
              request_id: requestId,
@@ -140,7 +140,7 @@
          }
          if (inner.subtype === "success") {
              return { kind: "ok", payload: inner.response };
-@@ -113,9 +114,9 @@
+@@ -115,9 +116,9 @@ async function readListModels(command, cwd, timeoutMs, env) {
          await child.exited;
      }
  }
@@ -152,7 +152,7 @@
      }
      catch (error) {
          throw new Error("Failed to list Claude models", { cause: error });
-@@ -127,11 +128,45 @@
+@@ -129,11 +130,45 @@ export const claudeListModels = async (installation, options = {}) => {
      }
      const outcome = await readOutcome(installation.command, listingCwd(options), options.timeoutMs ?? 15_000, options.env);
      if (outcome.kind === "ok") {

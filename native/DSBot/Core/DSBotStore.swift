@@ -889,7 +889,7 @@ final class DSBotStore: ObservableObject {
     }
     var currentProviderModels: [Choice] {
         if isAssistantConversation {
-            let ids = Set(providers.filter { !["claude", "codex"].contains($0.id) }.flatMap(\.modelIds))
+            let ids = Set(providers.filter { $0.id == "deepseek" }.flatMap(\.modelIds))
             return models.filter { ids.contains($0.id) }
         }
         guard let provider = currentProvider else { return models }

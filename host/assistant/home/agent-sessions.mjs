@@ -46,11 +46,12 @@
 //     anyone, in DSH's own window as well
 
 import { agentStateForSession } from '../sessions/work-state.mjs';
+import { HARNESS_IDS } from '../../providers/catalog.mjs';
 
 export const ACCESS_MODES = Object.freeze(['read-only', 'workspace-write', 'danger-full-access']);
-// The three agents the issues name, and what each is to DSH: the harnesses are routes of their own, DeepSeek is DSH's own model.
-export const AGENTS = Object.freeze({ claude: 'Claude', codex: 'ChatGPT', deepseek: 'DeepSeek' });
-const HARNESS_ROUTES = { claude: 'claude', codex: 'codex' };
+// The agents the issues name, and what each is to DSH: the harnesses are routes of their own, DeepSeek is DSH's own model.
+export const AGENTS = Object.freeze({ claude: 'Claude', codex: 'ChatGPT', pi: 'Pi', deepseek: 'DeepSeek' });
+const HARNESS_ROUTES = Object.fromEntries(HARNESS_IDS.map((id) => [id, id]));
 
 const KEY = /^dsh:(.+)$/s;
 const TEXT_MAX = 100_000;

@@ -90,7 +90,7 @@ test('the OAR prepare CLI also builds when invoked through a directory alias', a
   const alias = join(sample.adapterRoot, '../adapter-alias');
   await symlink(sample.adapterRoot, alias, 'junction');
   const { stdout } = await exec(process.execPath, [join(alias, 'build.mjs')], { timeout: 30_000 });
-  assert.match(stdout, /Prepared @botiverse\/oar@0\.92\.0 with 6 Dudu patches/);
+  assert.ok(stdout.includes(`Prepared ${reference.upstream} with 6 Dudu patches`), stdout);
   const receipt = JSON.parse(await readFile(join(alias, '.generated/build.json'), 'utf8'));
   assert.equal(receipt.treeSha256, reference.treeSha256);
   assert.equal(await readFile(join(alias, '.generated/oar', ownership), 'utf8'),
@@ -107,7 +107,7 @@ test('the desktop OAR bundle uses the prepared adapter and retains upstream, ada
   assert.ok(inputs.some(input => input.includes('packages/oar-adapter/.generated/oar/dist/')));
   assert.ok(inputs.every(input => !input.startsWith('vendor/') && !input.includes('node_modules/@botiverse/oar/dist/')));
   const notices = (await collectNotices(resolve(root), metafile)).join('\n');
-  assert.match(notices, /@botiverse\/oar 0\.92\.0 \(Apache-2\.0\)/);
+  assert.ok(notices.includes(`@botiverse/oar ${reference.upstream.split('@').pop()} (Apache-2.0)`));
   assert.match(notices, /@dudu\/oar-adapter 0\.1\.0\./);
   assert.match(notices, /signal-exit 4\.1\.0 \(ISC\)/);
   assert.match(notices, /Changes cover Claude opening/);

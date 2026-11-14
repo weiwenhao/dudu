@@ -23,7 +23,7 @@ export function watchIssueSession(request, { id, agent }, receive) {
       if (controller.signal.aborted || result?.outcome !== 'success') return;
       receive(result);
       // Harness identity may arrive after DSH has already created its session.
-      if (!controller.signal.aborted && ['claude', 'codex'].includes(agent) && !result.command) timer = setTimeout(read, 5000);
+      if (!controller.signal.aborted && ['claude', 'codex', 'pi'].includes(agent) && !result.command) timer = setTimeout(read, 5000);
     } catch { /* The copy command stays unavailable; do not retry a failed read. */ }
   };
   void read();

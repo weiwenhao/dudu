@@ -19,7 +19,7 @@
  }
  function warn(reason) {
      if (reason === undefined) {
-@@ -59,12 +61,16 @@
+@@ -59,12 +61,16 @@ function killOwnedProcess(child, table) {
   * covers sessions, probes, updaters, logins and ACP terminals when a host
   * calls process.exit without disposing them; on POSIX it also SIGKILLs the
   * descendants of a child still running that left its group, and their groups
@@ -39,7 +39,7 @@
      child.once("close", forget);
      child.once("error", () => {
          // Other errors (e.g. a failed kill) do not prove the process is gone.
-@@ -72,9 +78,17 @@
+@@ -72,9 +78,17 @@ export function trackOwnedProcess(child) {
              forget();
          }
      });
@@ -60,7 +60,7 @@
              // One read of the process table serves every child.
              let observation = null;
              const observe = () => {
-@@ -105,4 +119,4 @@
+@@ -105,4 +119,4 @@ export function trackOwnedProcess(child) {
          });
      }
  }

@@ -1,14 +1,15 @@
 # Dudu OAR adapter
 
 `@dudu/oar-adapter` is the compatibility boundary between Dudu and the official
-`@botiverse/oar` package. It exposes only the Claude and Codex runtimes and the
-observation helpers the host uses. DSH event mapping, caching, native-store
+`@botiverse/oar` package. It exposes the Claude and Codex runtimes, the executable probe and the
+observation helpers the host uses from its main entry, and the Pi runtime from `@dudu/oar-adapter/pi`
+(a separate entry on purpose: a bundle of it carries Pi's SDK, about 15 MB, which Claude and Codex must not ship in the same file). DSH event mapping, caching, native-store
 reading and process retention remain in `host/providers/`; protocol and native
 process ownership remain in OAR.
 
 ## Source of truth and build
 
-- `package.json` depends on the exact official **0.92.0** release and
+- `package.json` depends on the exact official **0.105.0** release and
   `signal-exit@4.1.0`. The root lockfile pins their npm archives and transitive
   dependencies.
 - `upstream.json` records the original archive, integrity, source-tree checksum,
@@ -43,7 +44,7 @@ runtime dependency graphs, and carries OAR's Apache-2.0 license, its modificatio
 notice identifying the adapter version, and licenses of dependencies actually bundled.
 
 The previous `0.75.0-dudu.2` full vendor copy has been replaced by the official
-0.92.0 release plus six compatibility patches. Native compaction and native
+0.92.0 release plus six compatibility patches (2026-11-07), moved to 0.105.0 on 2026-11-14 (see "Upgrade to 0.105.0" below). Native compaction and native
 single-task stopping now use upstream implementations. The remaining patches
 are grouped by implementation area because several features share session modules:
 
@@ -58,8 +59,8 @@ are grouped by implementation area because several features share session module
 
 ## Upstream provenance
 
-The baseline is the published `@botiverse/oar@0.92.0` npm package from
-https://registry.npmjs.org/@botiverse/oar/-/oar-0.92.0.tgz.
+The baseline is the published `@botiverse/oar@0.105.0` npm package from
+https://registry.npmjs.org/@botiverse/oar/-/oar-0.105.0.tgz.
 The upstream project is https://github.com/botiverse/oar, package directory
 `packages/oar`, licensed under Apache-2.0. Its original `LICENSE`, README,
 runtime modules, declarations and brand notices are preserved in the generated
@@ -68,7 +69,7 @@ copy. The official installed package remains unchanged, including its manifest.
 The original npm archive's integrity is:
 
 ```
-sha512-wnuL3EniE2q01RvdJQkgM7adlOMLSeYxoWVLhm/fXOGTdS+AZaq3TU93dzGv7DMuU4D8IA/TdHTISWTfiPspmQ==
+sha512-hhBT0bx+e44EeEJ4rIZBFAsGgL3rXcGn6ZVWBLuL7A4q4HuVaqUFt5WopNxk9LWhMnGTO930+NbHtL3Y3YJg6A==
 ```
 
 The installed source-tree checksum excludes source maps and `node_modules`;
@@ -211,6 +212,18 @@ an intentionally handled signal, captured ownership after the root closes,
 and hook removal after both normal disposal and final captured cleanup.
 The original isolated reproduction also runs the installed Claude CLI with a
 scripted model: SIGTERM no longer leaves the native CLI parented by PID 1.
+
+## Upgrade to 0.105.0 (2026-11-14)
+
+The archive integrity above is the registry's and the lockfile's. Of the 23 files the patches touch, 12 are byte-identical in 0.105.0 and 9 changed upstream by
+2 to 32 lines each (a `failure` class on refused controls, version-gated errors of the Codex open, new limit-reset members of the Claude runtime,
+`collabAgentToolCall` reported as a tool item); two more are files the patches add. `claude-session`, `codex-session` and `process-ownership` apply as they
+were. `session-controls`, `claude-defaults` and `codex-subagents` each had one or two hunks whose context an upstream edit had moved; they were redone by
+hand against the new files, one patch at a time in the order of `upstream.json`, and the manifest was recorded again from the resulting trees.
+Patches stay plain unified diffs without `diff --git` or `index` lines: with those lines `git apply --no-index` inside a repository skips every path
+under the generated folder without a message, and the build then fails on the output checksum of the first file.
+
+Upstream's own `compaction.js` and the Pi runtime are the same as in 0.92.0.
 
 ## Maintaining patches and upgrading
 
