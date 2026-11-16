@@ -4,6 +4,45 @@ import XCTest
 
 @MainActor
 final class CoreStoreTests: XCTestCase {
+    func testHomepageRestoresBeforeConnectingAndKeepsRowsThroughFailedRefresh() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = FileBoardStorage(directory: directory)
+        let entry = BoardConversation(
+            id: "assistant", title: "cached", sessionId: "assistant", preview: "last completed reply",
+            receivedAt: 42, sessionState: .unread, deepSleep: false, unread: true, readSeq: 7, pinned: true
+        )
+        try await cache.save(BoardSnapshot(
+            computerID: "local-fixture", conversationsByTab: ["active": [entry], "all": []], pins: [entry.id], unreadCount: 1
+        ))
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        store.activeComputer = Computer(id: "local-fixture", name: "fixture", url: "http://127.0.0.1:3170", lastUsedAt: 0)
+        let board = BoardModel(storage: cache)
+        await board.refresh(using: store)
+        XCTAssertEqual(board.state, .loaded)
+        XCTAssertEqual(board.conversations, [entry])
+        XCTAssertEqual(board.pinnedConversations, [entry])
+        XCTAssertEqual(board.unreadCount, 1)
+        let initialRequests = await transport.requestCount("board.list")
+        XCTAssertEqual(initialRequests, 0, "Local rows do not depend on reconnecting.")
+        store.status = .connected
+        await transport.failNextRequest("board.list", with: .disconnected)
+        await board.refresh(using: store)
+        XCTAssertEqual(board.state, .loaded)
+        XCTAssertEqual(board.conversations, [entry])
+        let reads = await transport.requestCount("session.read")
+        XCTAssertEqual(reads, 0, "Restoring/refreshing a homepage must not acknowledge a conversation.")
+        board.select(.all)
+        XCTAssertEqual(board.state, .loaded)
+        XCTAssertTrue(board.conversations.isEmpty)
+        store.activeComputer?.id = "other"
+        store.status = .disconnected
+        await board.refresh(using: store)
+        XCTAssertEqual(board.state, .loading)
+        XCTAssertTrue(board.conversations.isEmpty, "Another computer must not inherit cached rows.")
+    }
+
     func testSelectionPreparesCachedHistoryBeforeWatchAndAlsoSignalsTheRetainedSession() async {
         let transport = StoreTransportFixture()
         let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
@@ -1515,7 +1554,7 @@ final class CoreStoreTests: XCTestCase {
 
         store.error = nil
         do {
-            _ = try await store.uploadFile(name: "notes.txt", data: Data("abc".utf8))
+            _ = try await store.uploadFile(PickedFile(name: "notes.txt", url: URL(fileURLWithPath: "/fixture/notes.txt"), bytes: 3))
             XCTFail("An old plugin cannot stage files")
         } catch {
             XCTAssertEqual(store.error, L10n.text("请先在电脑上更新 Dudu 插件，再使用此功能。"))
@@ -1527,14 +1566,15 @@ final class CoreStoreTests: XCTestCase {
         let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
         await store.start()
 
-        let file = try await store.uploadFile(name: "notes.txt", data: Data("abc".utf8))
+        let file = try await store.uploadFile(PickedFile(name: "notes.txt", url: URL(fileURLWithPath: "/fixture/notes.txt"), bytes: 3))
         try await store.send(text: "看看这个文件", files: [file])
 
         XCTAssertEqual(file, UploadedFile(receiptId: "receipt-1", name: "notes.txt", bytes: 3))
         let uploads = await transport.uploadParams()
         XCTAssertEqual(uploads.first?["id"]?.stringValue, "a")
         XCTAssertEqual(uploads.first?["name"]?.stringValue, "notes.txt")
-        XCTAssertEqual(uploads.first?["data"]?.stringValue, "YWJj")
+        XCTAssertEqual(uploads.first?["bytes"]?.numberValue, 3)
+        XCTAssertNil(uploads.first?["data"])
         let sends = await transport.sendParams()
         let attachments = try XCTUnwrap(sends.first?["attachments"]?.arrayValue)
         XCTAssertEqual(attachments.count, 1)
@@ -2010,6 +2050,12 @@ private actor StoreTransportFixture: DSBotTransport {
         event = onEvent
         self.onDisconnect = onDisconnect
         return ("desktop-fixture", "Fixture")
+    }
+
+    func uploadFile(_ file: PickedFile, sessionID: String) async throws -> JSONValue {
+        try await request("file.upload", params: [
+            "id": .string(sessionID), "name": .string(file.name), "bytes": .number(Double(file.bytes))
+        ], timeoutSeconds: 300)
     }
 
     func request(_ method: String, params: [String: JSONValue], timeoutSeconds: UInt64) async throws -> JSONValue {

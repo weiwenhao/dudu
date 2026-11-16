@@ -326,7 +326,8 @@ test('assigned Properties are locked, expose the native resume command, and dele
   assert.equal((await dudu.api('issues/assign', { id: issue.id, agent: 'codex' })).outcome, 'needs_clarification');
   assert.equal((await dudu.api('issues/update', { id: issue.id, patch: { project: null } })).outcome, 'needs_clarification');
   await page.getByRole('button', { name: 'Back to Issues', exact: true }).click();
-  await page.getByRole('checkbox', { name: `Select ${issue.ref}`, exact: true }).click();
+  await page.locator(`[data-issue-row="${issue.id}"]`).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Select', exact: true }).click();
   const bar = page.getByRole('toolbar', { name: 'Bulk actions' });
   assert.equal(await bar.getByRole('button', { name: 'Agent', exact: true }).isDisabled(), true);
   await bar.getByRole('button', { name: 'Delete', exact: true }).click();

@@ -15,7 +15,7 @@ function store(options: any = {}) {
   const file = join(dir, 'state', 'issues.db');
   const clock = { now: T0 };
   const states = new Map<string, string>();
-  const issues = createIssues({ file, now: () => clock.now, sessionState: (key: string) => states.get(key) ?? null, ...options });
+  const issues = createIssues({ file, now: () => clock.now, lifecycleState: (key: string) => states.get(key) ?? null, sessionState: (key: string) => ({ running: 'processing', waiting_owner: 'unread', finished: 'unread', error: 'unread' }[states.get(key) ?? ''] ?? 'idle'), ...options });
   const opened: any[] = [issues];
   const ok = (result: any) => {
     assert.equal(result.outcome, 'success', JSON.stringify(result));
@@ -59,9 +59,9 @@ test('add creates an issue with the documented defaults', (t) => {
   assert.equal(result.outcome, 'success');
   assert.equal(typeof result.eventId, 'number');
   assert.deepEqual(result.issue, {
-    id: 1, ref: null, title: '回复供应商合同的修改意见', brief: '', status: 'todo', statusType: 'todo', agentState: 'unassigned', labels: [], parent: null, ask: '', priority: 'none',
+    id: 1, ref: null, title: '回复供应商合同的修改意见', brief: '', status: 'todo', statusType: 'todo', sessionState: 'unassigned', labels: [], parent: null, ask: '', priority: 'none',
     impact: null, effort: null, kind: '', project: null, dueAt: null, snoozeUntil: null, agent: null, session: null, outcome: null,
-    source: 'owner', sourceRef: '', resolvedAt: null, createdAt: T0, updatedAt: T0,
+    source: 'owner', sourceRef: '', resolvedAt: null, createdAt: T0, updatedAt: T0, receivedAt: 0,
   });
 });
 
@@ -170,7 +170,7 @@ function filterWorld(s: any) {
   s.add({ title: 'b', status: 'in_progress', priority: 'urgent', project: { name: 'infra', path: '/w/infra' }, agent: 'codex', session: 'codex:1', source: 'dudu', dueAt: T0 - DAY }); // 2
   s.add({ title: 'c', status: 'in_review', priority: 'medium', ask: 'Ship it?' }); // 3
   s.add({ title: 'd', status: 'backlog', priority: 'low', project: { name: 'docs', path: '/w/docs' }, source: 'session' }); // 4
-  const e = s.add({ title: 'e', project: { name: 'docs', path: '/w/docs' }, agent: 'claude' }); // 5, done at T0 + 5000
+  const e = s.add({ title: 'e', project: { name: 'docs', path: '/w/docs' }, agent: 'claude', session: 'claude:idle' }); // 5, done at T0 + 5000
   s.ok(s.issues.complete(e.id, { outcome: 'shipped' }));
   s.add({ title: 'f 合同', priority: 'high' }); // 6
 }
@@ -188,11 +188,11 @@ test('every filter narrows the list, and the total follows', (t) => {
     [{ agent: ['claude'] }, [1, 5]],
     [{ agent: [null] }, [3, 4, 6]],
     [{ agent: ['codex', null] }, [2, 3, 4, 6]],
-    [{ agentState: ['working'] }, [1]],
-    [{ agentState: ['blocked'] }, [2]],
-    [{ agentState: ['idle'] }, [5]],
-    [{ agentState: ['unassigned'] }, [3, 4, 6]],
-    [{ agentState: ['working', 'blocked'] }, [1, 2]],
+    [{ sessionState: ['processing'] }, [1]],
+    [{ sessionState: ['unread'] }, [2]],
+    [{ sessionState: ['idle'] }, [5]],
+    [{ sessionState: ['unassigned'] }, [3, 4, 6]],
+    [{ sessionState: ['processing', 'unread'] }, [1, 2]],
     [{ hasQuestion: true }, [3]],
     [{ hasQuestion: false }, [1, 2, 4, 5, 6]],
     [{ source: ['connector'] }, [1]],
@@ -229,10 +229,10 @@ test('every filter narrows the list, and the total follows', (t) => {
 function groupWorld(s: any) {
   s.states.set('claude:9', 'running');
   s.states.set('codex:9', 'error');
-  s.add({ title: 'p1', priority: 'high', project: { name: 'docs', path: '/w/docs' }, agent: 'claude' }); // 1 todo
+  s.add({ title: 'p1', priority: 'high', project: { name: 'docs', path: '/w/docs' }, agent: 'claude', session: 'claude:idle' }); // 1 todo
   s.add({ title: 'p2', status: 'in_progress', priority: 'urgent', project: { name: 'docs', path: '/w/docs' }, agent: 'claude', session: 'claude:9' }); // 2
   s.add({ title: 'p3', priority: 'low', project: { name: 'docs', path: '/w/docs' }, agent: 'codex', session: 'codex:9' }); // 3
-  s.add({ title: 'p4', priority: 'medium', project: { name: 'infra', path: '/w/infra' }, agent: 'codex' }); // 4
+  s.add({ title: 'p4', priority: 'medium', project: { name: 'infra', path: '/w/infra' }, agent: 'codex', session: 'codex:idle' }); // 4
   s.add({ title: 'p5', status: 'in_review', priority: 'medium', project: { name: 'infra', path: '/w/infra' }, ask: 'Merge?' }); // 5
   s.add({ title: 'p6' }); // 6 todo, no project, no agent
 }
@@ -251,12 +251,12 @@ test('grouping by status, priority, agent and agent state, in their fixed orders
   assert.deepEqual(summary('priority'), [['urgent', 1, [2]], ['high', 1, [1]], ['medium', 2, [4, 5]], ['low', 1, [3]], ['none', 1, [6]]]);
   assert.deepEqual(summary('agent'), [['claude', 2, [2, 1]], ['codex', 2, [4, 3]], [null, 2, [5, 6]]]);
   // Review questions do not make an idle worker blocked.
-  assert.deepEqual(summary('agentState'), [['blocked', 1, [3]], ['working', 1, [2]], ['idle', 2, [1, 4]], ['unassigned', 2, [5, 6]]]);
+  assert.deepEqual(summary('sessionState'), [['unread', 1, [3]], ['processing', 1, [2]], ['idle', 2, [1, 4]], ['unassigned', 2, [5, 6]]]);
   s.states.set('codex:finished', 'finished');
   s.add({ title: 'turn finished', agent: 'codex', session: 'codex:finished' }); // 9, workflow still Todo
-  assert.deepEqual(summary('agentState'), [['blocked', 2, [3, 9]], ['working', 1, [2]], ['idle', 2, [1, 4]], ['unassigned', 2, [5, 6]]], 'a finished turn is the boss\'s turn, as a question is');
-  const nested = s.issues.list({ group: 'status', subGroup: 'agentState' }).groups.find((group: any) => group.key === 'todo');
-  assert.deepEqual(nested.groups.map((group: any) => group.key), ['blocked', 'idle', 'unassigned']);
+  assert.deepEqual(summary('sessionState'), [['unread', 2, [3, 9]], ['processing', 1, [2]], ['idle', 2, [1, 4]], ['unassigned', 2, [5, 6]]], 'a finished turn is the boss\'s turn, as a question is');
+  const nested = s.issues.list({ group: 'status', subGroup: 'sessionState' }).groups.find((group: any) => group.key === 'todo');
+  assert.deepEqual(nested.groups.map((group: any) => group.key), ['unread', 'idle', 'unassigned']);
 });
 
 // --- agent state and snooze
@@ -264,36 +264,36 @@ test('grouping by status, priority, agent and agent state, in their fixed orders
 test('the agent lifecycle follows its session independently of review questions and reminder snoozes', (t) => {
   const s = store();
   t.after(s.cleanup);
-  const state = (fields: any) => s.add({ title: 'x', ...fields }).agentState;
+  const state = (fields: any) => s.add({ title: 'x', ...fields }).sessionState;
   assert.equal(state({}), 'unassigned', 'no agent: unassigned, the state an issue starts in');
   assert.equal(state({ ask: 'Which one?' }), 'unassigned');
   assert.equal(state({ ask: 'Which one?', status: 'in_review' }), 'unassigned');
   assert.equal(state({ ask: 'Which one?', snoozeUntil: T0 + DAY }), 'unassigned');
   assert.equal(state({ ask: 'Which one?', snoozeUntil: T0 - DAY }), 'unassigned');
 
-  for (const [session, agentState] of [['running', 'working'], ['waiting_owner', 'blocked'], ['error', 'blocked'], ['idle', 'idle'], ['finished', 'blocked'], ['mystery', 'idle']]) {
+  for (const [session, sessionState] of [['running', 'processing'], ['waiting_owner', 'unread'], ['error', 'unread'], ['idle', 'idle'], ['finished', 'unread'], ['mystery', 'idle']]) {
     s.states.set(`claude:${session}`, session);
-    assert.equal(state({ agent: 'claude', session: `claude:${session}` }), agentState, session);
+    assert.equal(state({ agent: 'claude', session: `claude:${session}` }), sessionState, session);
   }
   assert.equal(state({ agent: 'claude', session: 'claude:unknown' }), 'idle');
   // Questions and snoozes affect review and reminders, never the worker lifecycle.
-  assert.equal(state({ agent: 'claude', ask: 'Which one?', session: 'claude:running' }), 'working');
-  assert.equal(state({ agent: 'claude', ask: 'Which one?', snoozeUntil: T0 + DAY, session: 'claude:running' }), 'working');
-  assert.equal(state({ agent: 'claude', ask: 'Which one?', snoozeUntil: T0 + DAY, session: 'claude:waiting_owner' }), 'blocked');
-  assert.equal(state({ agent: 'claude', snoozeUntil: T0 + DAY, session: 'claude:waiting_owner' }), 'blocked');
+  assert.equal(state({ agent: 'claude', ask: 'Which one?', session: 'claude:running' }), 'processing');
+  assert.equal(state({ agent: 'claude', ask: 'Which one?', snoozeUntil: T0 + DAY, session: 'claude:running' }), 'processing');
+  assert.equal(state({ agent: 'claude', ask: 'Which one?', snoozeUntil: T0 + DAY, session: 'claude:waiting_owner' }), 'unread');
+  assert.equal(state({ agent: 'claude', snoozeUntil: T0 + DAY, session: 'claude:waiting_owner' }), 'unread');
   // The state is read when asked: the session changing is seen without touching the issue.
   const watched = s.add({ title: 'watched', agent: 'claude', session: 'claude:live' });
-  assert.equal(s.issues.get(watched.id).issue.agentState, 'idle');
+  assert.equal(s.issues.get(watched.id).issue.sessionState, 'idle');
   s.states.set('claude:live', 'running');
-  assert.equal(s.issues.get(watched.id).issue.agentState, 'working');
-  assert.equal(s.issues.list({ filter: { agentState: ['working'] } }).items.some((item: any) => item.id === watched.id), true);
+  assert.equal(s.issues.get(watched.id).issue.sessionState, 'processing');
+  assert.equal(s.issues.list({ filter: { sessionState: ['processing'] } }).items.some((item: any) => item.id === watched.id), true);
   const before = s.issues.get(watched.id).issue.updatedAt;
-  for (const [session, expected] of [['waiting_owner', 'blocked'], ['finished', 'blocked'], ['idle', 'idle']]) {
+  for (const [session, expected] of [['waiting_owner', 'unread'], ['finished', 'unread'], ['idle', 'idle']]) {
     s.states.set('claude:live', session);
     const current = s.issues.get(watched.id).issue;
-    assert.equal(current.agentState, expected);
+    assert.equal(current.sessionState, expected);
     assert.equal(current.updatedAt, before, 'reading lifecycle never rewrites the issue timestamp');
-    assert.ok(s.issues.list({ filter: { agentState: [expected] } }).items.some((item: any) => item.id === watched.id));
+    assert.ok(s.issues.list({ filter: { sessionState: [expected] } }).items.some((item: any) => item.id === watched.id));
   }
 });
 
@@ -371,9 +371,9 @@ test('update edits any field, says no_op when nothing changed, and refuses what 
     dueAt: T0 + DAY, snoozeUntil: T0 + 2 * DAY, agent: 'codex', session: 'codex:1', outcome: 'maybe', source: 'dudu', sourceRef: 'x',
   })).issue;
   assert.deepEqual(edited, {
-    id: 1, ref: 'INF-1', title: 'new title', brief: 'summary', status: 'todo', statusType: 'todo', agentState: 'idle', labels: [], parent: null, ask: 'q?', priority: 'urgent', impact: null, effort: 'l',
+    id: 1, ref: 'INF-1', title: 'new title', brief: 'summary', status: 'todo', statusType: 'todo', sessionState: 'idle', labels: [], parent: null, ask: 'q?', priority: 'urgent', impact: null, effort: 'l',
     kind: 'ops', project: { name: 'infra', path: '/work/infra' }, dueAt: T0 + DAY, snoozeUntil: T0 + 2 * DAY, agent: 'codex', session: 'codex:1', outcome: 'maybe',
-    source: 'dudu', sourceRef: 'x', resolvedAt: null, createdAt: T0, updatedAt: T0 + 1000,
+    source: 'dudu', sourceRef: 'x', resolvedAt: null, createdAt: T0, updatedAt: T0 + 1000, receivedAt: 0,
   });
   const cleared = s.ok(s.issues.update(issue.id, { dueAt: null, snoozeUntil: null, outcome: '', effort: null })).issue;
   assert.deepEqual([cleared.project, cleared.dueAt, cleared.agent, cleared.session, cleared.outcome, cleared.effort], [{ name: 'infra', path: '/work/infra' }, null, 'codex', 'codex:1', null, null]);
@@ -383,7 +383,7 @@ test('update edits any field, says no_op when nothing changed, and refuses what 
   assert.equal(same.issue.updatedAt, s.issues.get(issue.id).issue.updatedAt);
   assert.equal(s.issues.update(issue.id, {}).outcome, 'no_op');
   assert.equal(s.issues.update(issue.id, null).outcome, 'no_op');
-  for (const [patch, mentions] of [[{ colour: 'red' }, 'colour'], [{ id: 5 }, 'id'], [{ createdAt: 1 }, 'createdAt'], [{ resolvedAt: 1 }, 'resolvedAt'], [{ agentState: 'nonsense' }, 'agentState'],
+  for (const [patch, mentions] of [[{ colour: 'red' }, 'colour'], [{ id: 5 }, 'id'], [{ createdAt: 1 }, 'createdAt'], [{ resolvedAt: 1 }, 'resolvedAt'], [{ sessionState: 'nonsense' }, 'sessionState'],
     [{ title: '' }, 'title'], [{ status: 'finished' }, 'status'], [{ priority: 3 }, 'priority'], [{ impact: 0 }, 'impact'], [{ dueAt: 'soon' }, 'dueAt'], ['status', 'object']] as [any, string][]) {
     const result = s.issues.update(issue.id, patch);
     assert.equal(result.outcome, 'needs_clarification', JSON.stringify(patch));
@@ -400,7 +400,7 @@ test('assign links an agent and a session, remembers every session, and closes t
   const issue = s.add({ title: 'x', project: { name: 'work', path: '/work' } });
   s.states.set('claude:s1', 'running');
   const first = s.ok(s.issues.assign(issue.id, { agent: 'claude', session: 'claude:s1', reason: 'Best for contracts', actor: 'dudu' }));
-  assert.deepEqual([first.issue.agent, first.issue.session, first.issue.agentState], ['claude', 'claude:s1', 'working']);
+  assert.deepEqual([first.issue.agent, first.issue.session, first.issue.sessionState], ['claude', 'claude:s1', 'processing']);
   assert.equal(s.issues.assign(issue.id, { agent: 'claude', session: 'claude:s1' }).outcome, 'no_op');
 
   const opened = s.clock.now;
@@ -559,7 +559,7 @@ test('counts() agree with the rows after a long random run of changes', (t) => {
 
 const PRIORITY_ORDER = ['urgent', 'high', 'medium', 'low', 'none'];
 const STATUS_ORDER = ['in_progress', 'in_review', 'todo', 'backlog', 'done', 'canceled'];
-const AGENT_STATE_ORDER = ['blocked', 'working', 'idle', 'unassigned'];
+const SESSION_STATE_ORDER = ['unread', 'processing', 'idle', 'unassigned'];
 const SOURCE_ORDER = ['owner', 'dudu', 'connector', 'session'];
 const isFinishedStatus = (status: string) => status === 'done' || status === 'canceled';
 const compare = (a: number, b: number) => (a < b ? -1 : a > b ? 1 : 0);
@@ -589,7 +589,7 @@ const model = {
     const within = (value: number | null, from?: number, to?: number) => (from == null && to == null) || (value !== null && (from == null || value >= from) && (to == null || value <= to));
     return model.inTab(issue, view.tab ?? 'active')
       && among('status', issue.status) && among('priority', issue.priority) && among('project', issue.project?.name ?? null) && among('agent', issue.agent)
-      && among('agentState', issue.agentState) && among('source', issue.source)
+      && among('sessionState', issue.sessionState) && among('source', issue.source)
       && within(issue.dueAt, f.dueFrom, f.dueTo) && within(issue.createdAt, f.createdFrom, f.createdTo) && within(issue.updatedAt, f.updatedFrom, f.updatedTo)
       && (f.completedFrom == null || !isFinishedStatus(issue.status) || issue.resolvedAt >= f.completedFrom)
       && (f.q == null || issue.title.split(' ')[1].startsWith(f.q));
@@ -612,7 +612,7 @@ const model = {
   },
   groupKey: (issue: any, group: string) => (group === 'project' ? issue.project?.name ?? null : issue[group]),
   groupOrder(group: string, keys: any[]) {
-    const fixed: any = { status: STATUS_ORDER, priority: PRIORITY_ORDER, agentState: AGENT_STATE_ORDER };
+    const fixed: any = { status: STATUS_ORDER, priority: PRIORITY_ORDER, sessionState: SESSION_STATE_ORDER };
     if (fixed[group]) return [...keys].sort((a, b) => fixed[group].indexOf(a) - fixed[group].indexOf(b));
     return [...keys].sort((a, b) => (a === null ? 1 : 0) - (b === null ? 1 : 0) || (a ?? '').localeCompare(b ?? ''));
   },
@@ -660,7 +660,7 @@ test('list, counts, groups and facets agree with a plain model over many random 
     if (random() < 0.3) filter.priority = subset(PRIORITY_ORDER);
     if (random() < 0.3) filter.project = subset(['docs', 'infra', null, 'ghost']);
     if (random() < 0.3) filter.agent = subset(['claude', 'codex', null]);
-    if (random() < 0.3) filter.agentState = subset(AGENT_STATE_ORDER);
+    if (random() < 0.3) filter.sessionState = subset(SESSION_STATE_ORDER);
     if (random() < 0.3) filter.source = subset(SOURCE_ORDER);
     for (const key of ['dueFrom', 'dueTo', 'createdFrom', 'createdTo', 'updatedFrom', 'updatedTo']) if (random() < 0.12) filter[key] = someTime();
     if (random() < 0.3) filter.completedFrom = random() < 0.15 ? Number.MAX_SAFE_INTEGER : someTime();
@@ -696,16 +696,16 @@ test('list, counts, groups and facets agree with a plain model over many random 
     assert.deepEqual(walked, expected.map((issue: any) => issue.id), `paged ${label}`);
 
     const facets = s.issues.facets(view).facets;
-    for (const [name, pick] of [['project', (issue: any) => issue.project?.name ?? null], ['agent', (issue: any) => issue.agent], ['agentState', (issue: any) => issue.agentState], ['source', (issue: any) => issue.source]] as [string, any][]) {
+    for (const [name, pick] of [['project', (issue: any) => issue.project?.name ?? null], ['agent', (issue: any) => issue.agent], ['sessionState', (issue: any) => issue.sessionState], ['source', (issue: any) => issue.source]] as [string, any][]) {
       const counted = model.tally(everything.filter((issue: any) => model.passes(issue, view, name)), pick);
       for (const selected of filter[name] ?? []) if (!counted.has(selected)) counted.set(selected, 0);
-      const fixed: any = { agentState: AGENT_STATE_ORDER, source: SOURCE_ORDER };
+      const fixed: any = { sessionState: SESSION_STATE_ORDER, source: SOURCE_ORDER };
       const keys = fixed[name] ? [...counted.keys()].sort((a, b) => fixed[name].indexOf(a) - fixed[name].indexOf(b)) : model.groupOrder(name, [...counted.keys()]);
       assert.deepEqual(facets[name].map((option: any) => [option.key, option.count]), keys.map((key: any) => [key, counted.get(key)]), `facet ${name} ${label}`);
     }
 
     if (random() < 0.5) {
-      const group = pickOne(['status', 'priority', 'project', 'agent', 'agentState']);
+      const group = pickOne(['status', 'priority', 'project', 'agent', 'sessionState']);
       const grouped = s.issues.list({ ...view, group, limit: 200 });
       const parts = model.tally(expected, (issue: any) => model.groupKey(issue, group));
       assert.deepEqual(

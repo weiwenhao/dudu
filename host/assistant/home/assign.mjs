@@ -1,5 +1,5 @@
 // An issue given to an agent gets a session in its project folder, with the task title and description as its first message.
-// Session facts drive agent state and actual questions; the owner controls the issue's workflow status.
+// Session facts drive actual questions; read receipts drive presentation status. The owner controls workflow.
 // What the owner answers on the issue's page reaches the session. It never imports DSH: the sessions are
 // ./agent-sessions.mjs's, the issues are host/assistant/issues/'s.
 //
@@ -7,7 +7,7 @@
 //
 //   accessOf(issue)   -> { access?, model?, problem? }   what ASSIGN.md says; with nothing said the session is read-only (3.3)
 //
-//   sessionState(key)        for createIssues({ sessionState }); sessionSince, sessionBases, sessionHandledAt and sessionTurnActive for its corresponding hooks
+//   sessionState(key)        execution lifecycle for createIssues({ lifecycleState }); sessionHandledAt and sessionTurnActive for sleep safety
 //   onAssign(issue)          for createIssuesApi({ onAssign }): starts the session of an issue that was just given an agent
 //   onReply(issue, text)     for createIssuesApi({ onReply }): hands the owner's answer to the issue's session
 //   onResume(issue)          for createIssuesApi({ onResume }): puts a closed session back in DSH's sidebar
@@ -16,7 +16,7 @@
 //   restore()                after a restart: follows the sessions of the issues that are open (their state is read from DSH); -> how many
 //   dispose()
 //
-// What the session does to the issue, as the session's state changes (agent state is derived from the session by the store):
+// What the session does to the issue as its execution lifecycle changes:
 //
 //   running        the question that was open is gone
 //   waiting_owner  the question of the agent is the issue's ask
@@ -59,20 +59,15 @@ export function createAssignment({ issues, agentSessions, snapshotOf = () => nul
     return indexed;
   };
   const sessionState = (key) => sessionSnapshot(key)?.state ?? null;
-  const sessionSince = (key) => sessionSnapshot(key)?.stateSince ?? null; // when that state began: a manual agent state holds until it changes
-  // A session is read from two places (what DSH says of it, what its harness wrote) that agree on its state and not on since when it has lasted: by a few hundred milliseconds
-  // (DSH's end of a turn against the last line of the transcript), or by hours. Which of them is the session's snapshot changes with whatever either one last did, and a manual
-  // agent state and deep sleep must not change with it: the word holds on ANY of the two (`sessionBases`), and whoever handled the session last, in either place, handled it.
   const sources = (key) => [agentSessions.snapshotOf(key), snapshotOf(key)].filter(Boolean);
-  const sessionBases = (key) => sources(key).map((snapshot) => `${snapshot.state ?? ''}@${snapshot.stateSince ?? ''}`);
-  const sessionHandledAt = (key) => { // when anybody last did anything with it: deep sleep, and 72 hours nobody has (Idle by itself)
+  const sessionHandledAt = (key) => { // latest actual handling across DSH and the native TUI, for deep sleep
     const times = sources(key).map(handledAtOf).filter(Number.isFinite);
     return times.length ? Math.max(...times) : null;
   };
   const sessionTurnActive = (key) => {
     const flags = sources(key).map((snapshot) => snapshot.state === 'running' ? true
       : snapshot.turnActive ?? (snapshot.state === 'waiting_owner' ? null : false));
-    if (flags.includes(true)) return true; // neither a newer transcript nor a manual idle mark hides live work
+    if (flags.includes(true)) return true; // a newer transcript never hides live work
     return !flags.length || flags.includes(null) ? null : false; // a cached question has not been checked for liveness yet
   };
   const serialized = (id, work) => {
@@ -261,7 +256,7 @@ export function createAssignment({ issues, agentSessions, snapshotOf = () => nul
   }
 
   return {
-    sessionState, sessionSince, sessionBases, sessionHandledAt, sessionTurnActive, snapshotOf: sessionSnapshot,
+    sessionState, sessionHandledAt, sessionTurnActive, snapshotOf: sessionSnapshot,
     onAssign, onReply, onResume, start, setAccess, closeFor, restore, adopt,
     forward: (issue, text, attachments = []) => agentSessions.send(issue.session, text, { direct: true, attachments }),
     suspend(issue) {

@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalS
 import { createPortal } from 'react-dom';
 import { AgentAvatar } from '../issues/icons.jsx';
 import { getLocale, subscribeLocale } from '../lib/locale.mjs';
-import { sidebarAgentMark, stateOfMark } from './sidebar-state.js';
+import { sidebarSessionState } from './sidebar-state.js';
 
 export function SidebarAgent({ sessionId, sessions, activity, useSessionStatus }) {
   useSyncExternalStore(subscribeLocale, getLocale);
@@ -15,7 +15,7 @@ export function SidebarAgent({ sessionId, sessions, activity, useSessionStatus }
   const provider = selection?.provider;
   const mapped = ['deepseek-account', 'deepseek-official'].includes(provider) ? 'deepseek' : provider;
   const agent = ['claude', 'codex', 'pi', 'deepseek'].includes(mapped) ? mapped : indexed?.agent;
-  const mark = sidebarAgentMark(live, values?.duduAgentActivity, indexed);
+  const mark = sidebarSessionState(live, indexed);
   // Deep sleep (its issue says so, whatever the session's last turn was): the crescent over the corner, unless the session is alive again; the mark itself is left as it is.
   const asleep = indexed?.deepSleep === true && !live?.running && !live?.pendingInteraction;
   const anchor = useRef(null);
@@ -32,7 +32,7 @@ export function SidebarAgent({ sessionId, sessions, activity, useSessionStatus }
     <span ref={anchor} hidden />
     {cell && ['claude', 'codex', 'pi', 'deepseek'].includes(agent) && createPortal(
       <span className="dudu" data-dudu-sidebar-agent="" style={{ display: 'inline-flex', width: 16, height: 16, '--background': 'transparent' }}>
-        <AgentAvatar agent={agent} state={stateOfMark(mark)} finished={mark === 'done'} asleep={asleep} compact logoClassName="size-3.5" />
+        <AgentAvatar agent={agent} state={mark} asleep={asleep} compact logoClassName="size-3.5" />
       </span>, cell)}
   </>;
 }

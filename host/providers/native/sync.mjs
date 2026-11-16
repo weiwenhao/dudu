@@ -122,7 +122,7 @@ export const busy = (live) => Boolean(live) && live.status !== 'idle';
 const putOff = (reason = 'busy') => ({ deferred: true, reason });
 
 /** Use the live Session's publication path when attached; cold sessions use an exclusively owned persistence handle. */
-export function createNativeSync({ persistence, controller = () => undefined, query = () => undefined, agents = () => undefined, refresh, pollMs = 5000 }) {
+export function createNativeSync({ persistence, controller = () => undefined, query = () => undefined, agents = () => undefined, refresh, onHistoryAppended, pollMs = 5000 }) {
   const held = new Map();
   return async ({ sessionId, history, route }) => {
     let live = agents()?.get(sessionId);
@@ -154,7 +154,10 @@ export function createNativeSync({ persistence, controller = () => undefined, qu
           if (event.type === 'turn/start') reservation.lastTurn = Math.max(reservation.lastTurn, event.data.turn);
         }
         owner.open = openTurn([...inspected.events, ...updates]);
-        if (updates.length) await store.flush?.();
+        if (updates.length) {
+          await store.flush?.();
+          onHistoryAppended?.(sessionId, updates);
+        }
         if (!owner.open) owner.release.resolve();
         return { updated: updates.length > 0 };
       };
@@ -200,7 +203,11 @@ export function createNativeSync({ persistence, controller = () => undefined, qu
       if (agents()?.get(sessionId)) return putOff();
       const { events } = await handle.read();
       const updates = nativeUpdates({ events, history, route, sessionId });
-      if (updates.length) { await handle.append(updates); await handle.flush(); }
+      if (updates.length) {
+        await handle.append(updates);
+        await handle.flush();
+        onHistoryAppended?.(sessionId, updates);
+      }
       return { updated: updates.length > 0 };
     } finally { await handle.close(); }
   };

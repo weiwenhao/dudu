@@ -37,7 +37,7 @@ const en = {
   addFilter: 'Add Filter…',
   filterOptions: 'Filter…',
   filterButton: 'Filter',
-  fields: { status: 'Status', agent: 'Agent', agentState: 'Agent state', priority: 'Priority', project: 'Project', source: 'Source', label: 'Labels' },
+  fields: { status: 'Status', agent: 'Agent', sessionState: 'Session status', priority: 'Priority', project: 'Project', source: 'Source', label: 'Labels' }, // NEW: Session status, docs/issues-ui-wording.md
   isAnyOf: 'is any of',
   is: 'is',
   removeFilter: 'Remove filter',
@@ -208,7 +208,7 @@ const en = {
   },
   // NEW: the words of the small widgets (the design names the widgets and what they show, not their wording).
   widgets: {
-    titles: { issues: 'Issues', quota: 'Quota', sessions: 'Sessions', office: 'Office', collector: 'Collector' },
+    titles: { issues: 'Issues', quota: 'Quota', sessions: 'Sessions', office: 'Office', collector: 'Inbox' },
     descriptions: {
       issues: 'Every issue, as a list or a board',
       office: 'Assigned active issues as people at desks',
@@ -340,7 +340,7 @@ const en = {
     },
     skills: { empty: 'No skills yet', delete: 'Delete', back: 'Back to skills', deleteOf: (name) => `Delete: ${name}` },
   },
-  agentState: { idle: 'Idle', working: 'Working', blocked: 'Needs you', unassigned: 'Unassigned' }, // the owner's wording (2026-11-04), for a question, a failure, a stop and a finished run alike; NEW: "Unassigned" (the owner asked for the state 2026-11-05, the word is mine)
+  sessionState: { idle: 'Idle', processing: 'Working', unread: 'Unread', unassigned: 'Unassigned' }, // NEW: Unread awaits English review; Working reuses the previous label
   deepSleep: 'Deep sleep', // NEW (2026-11-05): the owner's word 深度睡眠, the name of the crescent that takes the place of the idle ring (hover title, screen readers); the English awaits review
   // NEW: the Pet frame's English controls and its unavailable states.
   pet: {
@@ -363,6 +363,7 @@ const en = {
     actions: { tasks_create: 'Task created', tasks_update: 'Task updated', tasks_pause: 'Task paused', tasks_resume: 'Task resumed', tasks_duplicate: 'Task duplicated', tasks_run: 'Run now', tasks_delete: 'Task deleted', issues_add: 'Issue added', issues_update: 'Issue updated', issues_assign: 'Issue assigned', issues_complete: 'Issue completed', issues_cancel: 'Issue canceled', memory_remember: 'Remembered', memory_forget: 'Forgotten', connector_register: 'Connector added', collector_register: 'Collector added', dashboard_add: 'Widget added', dashboard_remove: 'Widget removed', dashboard_reset: 'Layout restored' },
   },
   attachments: { download: 'Download', copyImage: 'Copy image', copyLink: 'Copy link' }, // NEW: issue attachment controls, pending wording review
+  issuePin: { on: '置顶', off: '取消置顶' }, // Owner-supplied wording; no unreviewed English translation.
   noAgent: 'No agent',
   today: 'Today',
   // NEW: the hint shown when the mouse rests on a due date (the doc asks for date and days left or overdue).
@@ -408,7 +409,7 @@ const zh = {
   priority: { none: '无优先级', urgent: '紧急', high: '高', medium: '中', low: '低' },
   priorityOf: (name) => `优先级：${name}`,
   addFilter: '添加筛选…', filterOptions: '筛选…', filterButton: '筛选',
-  fields: { status: '状态', agent: '智能体', agentState: '智能体状态', priority: '优先级', project: '项目', source: '来源', label: '标签' },
+  fields: { status: '状态', agent: '智能体', sessionState: '会话状态', priority: '优先级', project: '项目', source: '来源', label: '标签' },
   command: { suggestions: '候选项' }, // NEW
   attachments: { download: '下载', copyImage: '复制图片', copyLink: '复制链接' }, // NEW: 事项附件按钮文案待主人审核
   isAnyOf: '是其中之一', is: '是', removeFilter: '移除筛选', clear: '清除', addFilterChip: '筛选', changeStatus: '更改状态…',
@@ -538,7 +539,7 @@ const zh = {
     scopeMany: '将删除这些事项、它们的活动和本地关联。来源消息和会话历史会保留。',
   },
   widgets: {
-    titles: { issues: '看板', quota: '额度', sessions: '会话', office: '办公室', collector: '信息' },
+    titles: { issues: '看板', quota: '额度', sessions: '会话', office: '办公室', collector: '收件箱' },
     descriptions: { issues: '所有事项，可按列表或看板查看', office: '已分配智能体的进行中事项，各有一位员工', collector: '收集器收集回来的信息，可分享到事项、新建事项或忽略' }, // collector: 新写的
     needs: { issues: '事项', quota: '额度', inputs: '输入', sessions: '会话', network: '网络' },
     quota: { leftLine: (window, percent) => `${window} 剩余 ${percent}%`, empty: '暂无用量', unknown: '—', fiveHour: '5 小时', weekly: '每周', days: (n) => `${n} 天`, used: (label, percent) => `${label} 已用 ${percent}%`,
@@ -635,7 +636,7 @@ const zh = {
       pass: '通过', fail: '待检查', idMismatch: '小组件编号与插槽注册不一致。' },
     skills: { empty: '还没有技能', delete: '删除', back: '返回技能', deleteOf: (name) => `删除：${name}` },
   },
-  agentState: { idle: '空闲中', working: '工作中', blocked: '需要你', unassigned: '未分配' }, // 主人 2026-11-09 将「空闲」改为「空闲中」；提问、出错、停止和正常结束都是「需要你」；「未分配」这个词待审
+  sessionState: { idle: '空闲', processing: '工作', unread: '未读', unassigned: '未分配' },
   deepSleep: '深度睡眠', // 主人 2026-11-05 的原话：代替空闲圈的月牙的名字（悬停提示、读屏）
   pet: {
     open: '展开对话', close: '关闭', conversation: '嘟嘟', message: '发消息', send: '发送', earlier: '更早的对话', voice: '语音输入', release: '松开发送 · Esc 取消',
@@ -651,6 +652,7 @@ const zh = {
     actions: { tasks_create: '已创建任务', tasks_update: '已更新任务', tasks_pause: '已暂停任务', tasks_resume: '已恢复任务', tasks_duplicate: '已复制任务', tasks_run: '立即执行', tasks_delete: '已删除任务', issues_add: '已添加事项', issues_update: '已更新事项', issues_assign: '已分配事项', issues_complete: '已完成事项', issues_cancel: '已取消事项',
       memory_remember: '已记录', memory_forget: '已忘记', connector_register: '已添加连接器', collector_register: '已添加收集器', dashboard_add: '已添加小组件', dashboard_remove: '已移除小组件', dashboard_reset: '已恢复版面' },
   },
+  issuePin: { on: '置顶', off: '取消置顶' },
   noAgent: '未分配', today: '今天', dueIn: (n) => `${n} 天后`, overdue: (n) => `逾期 ${n} 天`, empty: '没有事项', loadFailed: '事项没能加载', retry: '重试',
   shell: {
     unavailable: '连接暂时不可用。', reading: '正在读取连接配置…', loading: '正在读取…', busy: '处理中…', phone: '手机控制',

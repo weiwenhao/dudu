@@ -42,31 +42,172 @@ struct RealizedHistoryAnchor: Hashable {
     let id: String
 }
 
-/// The white screen that only a swipe cured (owner, 2026-11-07; the device log of that moment is in `docs/native-mobile-fixes.md`). The lazy stack's height is an
-/// estimate until the rows near its end are built, and it can be higher than the rows really reach. Following the latest message goes to the end of that estimate,
-/// and an estimate that is too high puts the viewport past the last row: nothing is there to draw, nothing is built to correct the estimate, and going to the same
-/// place again moves nothing, so it stayed white (every drag ended with "follow" putting the viewport back at the estimated end). The way out is through a row that
-/// IS built: its place is real, what is built around it brings the estimate back, and the next layout goes to the latest as usual.
-enum BlankViewportRecovery {
-    /// The row to go to instead of the latest (`target`), or nil to go to the latest as usual; and the estimate that was found blank (`held`), to hand back next time.
-    /// - The latest is built and visible: nothing to recover.
-    /// - No row is built: a previously populated history can materialize its first occurrence again.
-    /// - The viewport shows no built row, even if the latest exists elsewhere: go to the last built row.
-    /// - The same estimate as when the viewport was found blank: still go to that row, however many times it is asked and wherever the viewport is now (going back
-    ///   to the end of an estimate known to be too high is what made it white again after every drag). A new estimate (rows were built) is trusted again.
-    static func target(
-        latestID: String, rows: [HistoryRowFrame], contentOffset: CGFloat, viewportHeight: CGFloat,
-        contentHeight: CGFloat, heldEstimate: CGFloat?, fallbackID: String? = nil
-    ) -> (target: String?, held: CGFloat?) {
-        guard let last = rows.max(by: { $0.maxY < $1.maxY }) else {
-            return (fallbackID, fallbackID == nil ? nil : contentHeight)
+enum HistoryPositioningAccess: Equatable {
+    case suspended, preparing, visible
+
+    static func resolve(covered: Bool, preparing: Bool, active: Bool) -> Self {
+        guard active else { return .suspended }
+        return !covered ? .visible : (preparing ? .preparing : .suspended)
+    }
+}
+
+struct HistoryViewport: Equatable {
+    let offset: CGFloat
+    let height: CGFloat
+    let contentHeight: CGFloat
+    var topInset: CGFloat = 0
+    var bottomInset: CGFloat = 0
+
+    func contains(_ row: HistoryRowFrame) -> Bool {
+        row.maxY > offset + topInset && row.minY < offset + height - bottomInset
+    }
+
+    func isAligned(_ row: HistoryRowFrame, anchor: CGFloat) -> Bool {
+        let available = height - topInset - bottomInset
+        let destination = max(-topInset, row.minY - topInset - anchor * (available - (row.maxY - row.minY)))
+        return contains(row) && abs(offset - destination) <= 1
+    }
+}
+
+struct HistoryScrollTarget: Equatable {
+    let id: String
+    let anchor: CGFloat
+    let isRealized: Bool
+    let isRecovery: Bool
+
+    var readerID: AnyHashable {
+        isRealized ? AnyHashable(RealizedHistoryAnchor(id: id)) : AnyHashable(id)
+    }
+}
+
+/// Position through real rows and their immediate neighbours. An estimated distant end is never a target.
+struct HistoryPositioning {
+    struct Bookmark: Equatable {
+        let id: String
+        let anchor: CGFloat
+    }
+
+    enum Request: Equatable {
+        case latest
+        case reading(Bookmark)
+    }
+
+    private struct Command: Equatable {
+        let target: HistoryScrollTarget
+        let contentHeight: CGFloat
+        let viewportHeight: CGFloat
+        let topInset: CGFloat
+        let bottomInset: CGFloat
+        let rowIDs: Set<String>
+        let targetFrame: HistoryRowFrame?
+    }
+
+    private(set) var access = HistoryPositioningAccess.suspended
+    private(set) var request: Request?
+    private var hasRealizedRows = false
+    private var bookmark: Bookmark?
+    private var lastCommand: Command?
+
+    mutating func setAccess(_ next: HistoryPositioningAccess) {
+        if access != next { lastCommand = nil }
+        access = next
+    }
+
+    mutating func observe(rows: [HistoryRowFrame]) {
+        if !rows.isEmpty { hasRealizedRows = true }
+    }
+
+    /// Capture only at gesture/page boundaries, never to reposition ordinary reading or keyboard changes.
+    mutating func rememberReading(rows: [HistoryRowFrame], viewport: HistoryViewport) {
+        let centre = viewport.offset + (viewport.height + viewport.topInset - viewport.bottomInset) / 2
+        guard let row = rows.filter({ viewport.contains($0) }).min(by: {
+            abs(($0.minY + $0.maxY) / 2 - centre) < abs(($1.minY + $1.maxY) / 2 - centre)
+        }) else { return }
+        let space = viewport.height - viewport.topInset - viewport.bottomInset - (row.maxY - row.minY)
+        let anchor = abs(space) > 0.5 ? (row.minY - viewport.offset - viewport.topInset) / space : 0
+        bookmark = Bookmark(id: row.id, anchor: min(1, max(0, anchor)))
+        observe(rows: rows)
+    }
+
+    mutating func requestLatest() {
+        request = .latest
+        lastCommand = nil
+    }
+
+    mutating func interrupt() {
+        request = nil
+        lastCommand = nil
+    }
+
+    mutating func completeIfReached(
+        itemIDs: [String], rows: [HistoryRowFrame], viewport: HistoryViewport, latestFromTop: Bool
+    ) -> Request? {
+        guard access != .suspended, let pending = request,
+              let goal = destination(for: pending, itemIDs: itemIDs, latestFromTop: latestFromTop),
+              let row = rows.first(where: { $0.id == goal.id }),
+              viewport.isAligned(row, anchor: goal.anchor) else { return nil }
+        request = nil
+        return pending
+    }
+
+    mutating func nextTarget(
+        itemIDs: [String], rows: [HistoryRowFrame], viewport: HistoryViewport,
+        followsLatest: Bool, latestFromTop: Bool
+    ) -> HistoryScrollTarget? {
+        observe(rows: rows)
+        guard access != .suspended, let first = itemIDs.first else { return nil }
+        if case .reading(let saved) = request, !itemIDs.contains(saved.id) {
+            request = nil
+            bookmark = nil
+            lastCommand = nil
         }
-        let isVisible: (HistoryRowFrame) -> Bool = {
-            $0.maxY > contentOffset && $0.minY < contentOffset + viewportHeight
+        if request == nil, !followsLatest {
+            guard hasRealizedRows, !rows.contains(where: viewport.contains) else { return nil }
+            let nearest = rows.filter { itemIDs.contains($0.id) }.min {
+                abs($0.minY - viewport.offset) < abs($1.minY - viewport.offset)
+            }
+            let saved = bookmark.flatMap { itemIDs.contains($0.id) ? $0 : nil }
+            request = .reading(saved ?? Bookmark(id: nearest?.id ?? first, anchor: 0))
         }
-        if rows.contains(where: { $0.id == latestID && isVisible($0) }) { return (nil, nil) }
-        if let heldEstimate, abs(heldEstimate - contentHeight) < 0.5 { return (last.id, heldEstimate) }
-        let visible = rows.contains(where: isVisible)
-        return visible ? (nil, nil) : (last.id, contentHeight)
+        guard let goal = destination(for: request ?? .latest, itemIDs: itemIDs, latestFromTop: latestFromTop),
+              let index = itemIDs.firstIndex(of: goal.id) else { return nil }
+        if let row = rows.first(where: { $0.id == goal.id }), viewport.isAligned(row, anchor: goal.anchor) {
+            return nil
+        }
+        let target: HistoryScrollTarget
+        if rows.contains(where: { $0.id == goal.id }) {
+            target = HistoryScrollTarget(
+                id: goal.id, anchor: goal.anchor, isRealized: true,
+                isRecovery: !rows.contains(where: viewport.contains) || (request != .latest && !followsLatest)
+            )
+        } else {
+            let built = Set(rows.map(\.id))
+            let nearest = itemIDs.indices.filter { built.contains(itemIDs[$0]) }.min { abs($0 - index) < abs($1 - index) }
+            if let nearest {
+                let next = nearest + (nearest < index ? 1 : -1)
+                target = HistoryScrollTarget(
+                    id: itemIDs[next], anchor: next == index ? goal.anchor : (nearest < index ? 0 : 1),
+                    isRealized: false, isRecovery: true
+                )
+            } else {
+                guard hasRealizedRows else { return nil }
+                target = HistoryScrollTarget(id: first, anchor: 0, isRealized: false, isRecovery: true)
+            }
+        }
+        let command = Command(
+            target: target, contentHeight: viewport.contentHeight, viewportHeight: viewport.height,
+            topInset: viewport.topInset, bottomInset: viewport.bottomInset,
+            rowIDs: Set(rows.map(\.id)), targetFrame: rows.first { $0.id == target.id }
+        )
+        guard command != lastCommand else { return nil }
+        lastCommand = command
+        return target
+    }
+
+    private func destination(for request: Request, itemIDs: [String], latestFromTop: Bool) -> Bookmark? {
+        switch request {
+        case .latest: return itemIDs.last.map { Bookmark(id: $0, anchor: latestFromTop ? 0 : 1) }
+        case .reading(let saved): return saved
+        }
     }
 }

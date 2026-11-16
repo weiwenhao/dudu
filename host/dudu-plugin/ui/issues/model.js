@@ -1,7 +1,7 @@
 // The fixed vocabularies of an issue, in the order Linear shows them.
 export const STATUS_ORDER = ['backlog', 'todo', 'in_progress', 'in_review', 'done', 'canceled'];
 export const PRIORITY_ORDER = ['none', 'urgent', 'high', 'medium', 'low'];
-export const AGENT_STATE_ORDER = ['blocked', 'working', 'idle', 'unassigned'];
+export const SESSION_STATE_ORDER = ['unread', 'processing', 'idle', 'unassigned'];
 
 // How the agents are named and lettered on avatars; an agent not listed shows its own id and first letter.
 export const AGENT_NAMES = { claude: 'Claude', codex: 'ChatGPT', pi: 'Pi', deepseek: 'DeepSeek' };

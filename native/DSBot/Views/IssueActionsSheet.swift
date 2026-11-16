@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum IssueQuickAction: String, CaseIterable, Identifiable, Hashable {
-    case agentState, priority, agent, status, due, labels, project, subIssue
+    case priority, agent, status, due, labels, project, subIssue
 
     var id: String { rawValue }
     var title: String {
@@ -9,7 +9,6 @@ enum IssueQuickAction: String, CaseIterable, Identifiable, Hashable {
         case .status: return L10n.text("状态")
         case .priority: return L10n.text("优先级")
         case .agent: return L10n.text("智能体")
-        case .agentState: return L10n.text("智能体状态")
         case .due: return L10n.text("截止日期")
         case .labels: return L10n.text("标签")
         case .project: return L10n.text("项目")
@@ -21,7 +20,6 @@ enum IssueQuickAction: String, CaseIterable, Identifiable, Hashable {
         case .status: return .issueStatus
         case .priority: return .issuePriority
         case .agent: return .stateUnassigned
-        case .agentState: return .trace
         case .due: return .dueDate
         case .labels: return .issueLabel
         case .project: return .issueProject
@@ -31,7 +29,6 @@ enum IssueQuickAction: String, CaseIterable, Identifiable, Hashable {
     func isAvailable(for issue: BoardIssue) -> Bool {
         switch self {
         case .agent, .project: return issue.agent == nil
-        case .agentState: return issue.agent != nil && issue.agentState != "working"
         default: return true
         }
     }
@@ -86,14 +83,17 @@ struct IssueActionsSheet: View {
                     }
                 }
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        if rootAction == nil || path.isEmpty {
+                    if rootAction != nil && path.isEmpty {
+                        ToolbarItem(placement: .cancellationAction) {
                             Button { dismiss() } label: {
-                                DSBotIcon(rootAction == nil ? .close : .back, size: rootAction == nil ? 18 : 20)
+                                DSBotIcon(.back, size: 20)
                             }
                             .disabled(saving)
-                            .accessibilityLabel(rootAction == nil ? L10n.text("关闭") : L10n.text("返回"))
+                            .accessibilityLabel(L10n.text("返回"))
                         }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        SheetCloseButton { dismiss() }.disabled(saving)
                     }
                 }
         }
@@ -117,7 +117,7 @@ struct IssueActionsSheet: View {
             }
         }
         .presentationDetents([.large])
-        .presentationCornerRadius(32)
+        .presentationCornerRadius(28)
         .interactiveDismissDisabled(saving)
         .sheet(isPresented: $addingSubIssue) {
             NewIssueSheet(board: board, store: store, parent: issue) { dismiss() }
@@ -185,14 +185,6 @@ struct IssueActionsSheet: View {
                     IssueChoiceRow(title: priority.title, selected: priority.rawValue == issue.priority) {
                         IssuePriorityIcon(priority: priority)
                     } action: { save(["priority": .string(priority.rawValue)]) }
-                }
-            }
-        case .agentState:
-            IssueChoiceList(title: action.title) {
-                ForEach(["blocked", "idle"], id: \.self) { state in
-                    IssueChoiceRow(title: BoardGroup.title(for: state), selected: state == issue.agentState) {
-                        DSBotIcon(state == "blocked" ? .stateBlocked : .stateIdle, size: 18, scalesStroke: true)
-                    } action: { save(["agentState": .string(state)]) }
                 }
             }
         case .project:

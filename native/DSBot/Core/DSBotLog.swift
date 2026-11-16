@@ -1,12 +1,28 @@
 import Foundation
 
+/// One ephemeral interaction ID follows a homepage press through session preparation and navigation.
+/// It contains no issue, session, computer or content identity, and never leaves diagnostics.
+struct BoardOpenTrace {
+    private let id = UUID().uuidString
+    private let started = ProcessInfo.processInfo.systemUptime
+    private let rowToken: String?
+
+    init(rowToken: UUID? = nil) { self.rowToken = rowToken?.uuidString }
+
+    func record(_ stage: String, state: String? = nil) {
+        DSBotLog.record("board.open.\(stage)", requestId: id,
+                        historyId: rowToken,
+                        elapsedMs: (ProcessInfo.processInfo.systemUptime - started) * 1_000, state: state)
+    }
+}
+
 enum DSBotLog {
     private static let queue = DispatchQueue(label: "com.harnessmobile.dsbot.diagnostics")
     private static let maximumFileBytes = 512 * 1_024
     private static let retainedFiles = 4
     private static let allowedMethods: Set<String> = [
         "workspace.list", "session.list", "session.create", "session.open",
-        "session.watch", "session.unwatch", "session.send", "session.stop",
+        "session.watch", "session.unwatch", "session.read", "session.send", "session.stop", "file.upload",
         "session.rename", "session.pin", "session.archive", "session.unarchive", "session.configure",
         "catalog.get", "navigation.get", "plugins.list", "assistant.open",
         "schedule.list", "approval.respond", "files.list", "files.read",
@@ -20,7 +36,7 @@ enum DSBotLog {
         "inbox.list", "inbox.get", "inbox.mark", "inbox.share", "inbox.complete"
     ]
     private static let allowedCountKeys: Set<String> = [
-        "payloadBytes", "computerCount", "sessionCount", "workspaceCount",
+        "payloadBytes", "computerCount", "sessionCount", "workspaceCount", "rowCount",
         "attachmentCount", "messageCount", "pendingCount", "realizedCount", "visibleCount",
         "registeredCount", "latestRealizedCount", "followingCount", "scrollCommandCount",
         "frameCount", "lateFrameCount",

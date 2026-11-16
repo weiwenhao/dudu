@@ -138,6 +138,10 @@ private actor ReviewComputerRepository: DSBotComputerStorage {
 }
 
 private actor ReviewTransport: DSBotTransport {
+    func uploadFile(_ file: PickedFile, sessionID: String) async throws -> JSONValue {
+        .object(["receiptId": .string(UUID().uuidString), "name": .string(file.name), "bytes": .number(Double(file.bytes))])
+    }
+
     private var connectedEndpoint: ConnectionEndpoint?
     private var searchRequests = 0
 
@@ -379,7 +383,28 @@ private actor ReviewTransport: DSBotTransport {
     }
 
     func request(_ method: String, params: [String: JSONValue], timeoutSeconds: UInt64) async throws -> JSONValue {
+        // Simulator-only UI review may exercise the real homepage store in a disposable local service.
+        // Neither arbitrary hosts nor unrelated DSH actions can enter this route.
+        if ["board.list", "board.pin", "board.read", "issue.get", "issue.open", "issue.update", "issue.options", "issue.pick", "assistant.open", "session.read"].contains(method),
+           let address = Self.reviewArgument("-dsbot-review-home-url"),
+           let url = URL(string: address), url.scheme == "http", url.host == "127.0.0.1" {
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(JSONValue.object([
+                "method": .string(method), "params": .object(params),
+            ]))
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw DSBotFailure.protocolError }
+            return try JSONDecoder().decode(JSONValue.self, from: data)
+        }
         if let response = hostPageReview?["responses"]?[method] { return response }
+        if method == "session.page", ProcessInfo.processInfo.arguments.contains("-dsbot-review-paged-history") {
+            // Another page of older turns, as the host answers one: the entries before `beforeSeq`, and where the next page ends.
+            // `-dsbot-review-slow-paged-load`: the page lands nine seconds later, when the reader has come to rest at the start.
+            try await Task.sleep(nanoseconds: ProcessInfo.processInfo.arguments.contains("-dsbot-review-slow-paged-load") ? 9_000_000_000 : 350_000_000)
+            return try encode(ConversationPage(transcript: Self.pagedTranscript(before: params["beforeSeq"]?.numberValue)))
+        }
         if ProcessInfo.processInfo.arguments.contains("-dsbot-review-parity") {
             switch method {
             case "session.page":
@@ -862,6 +887,9 @@ private actor ReviewTransport: DSBotTransport {
             assistant.isAssistant = true
             values.insert(assistant, at: 0)
         }
+        if ProcessInfo.processInfo.arguments.contains("-dsbot-review-paged-history") {
+            values.insert(SessionSummary(id: "review-paged", title: "分页历史", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now + 4, status: "idle"), at: 0)
+        }
         if ProcessInfo.processInfo.arguments.contains("-dsbot-review-heavy-history") {
             values.insert(SessionSummary(id: "review-heavy", title: "很长的对话", workspaceId: "mobile", workspaceName: "dsbot", updatedAt: now + 2, status: "idle"), at: 0)
         }
@@ -870,10 +898,8 @@ private actor ReviewTransport: DSBotTransport {
             var changed = session
             let agent: SessionAgent = session.id == "review-second" ? .claude : session.id == "review-notes" ? .codex : .deepseek
             changed.agent = session.id.hasPrefix("review-new-") ? (modelID.hasPrefix("claude:") ? .claude : modelID.hasPrefix("codex:") ? .codex : .deepseek) : agent
-            changed.agentState = session.status == "running" ? .working
-                : session.id == "review-second" || session.id == "review-notes" ? .blocked : .idle
-            // one of the two that need you is a finished run (a check), the other a question (red)
-            if session.id == "review-notes" { changed.agentFinished = true }
+            changed.sessionState = session.status == "running" ? .processing
+                : session.id == "review-second" || session.id == "review-notes" ? .unread : .idle
             if let title = renamedSessions[session.id] { changed.title = title }
             if let rank = pinnedSessions.firstIndex(of: session.id) {
                 changed.pinned = true
@@ -939,6 +965,9 @@ private actor ReviewTransport: DSBotTransport {
         }
         let all = messages + (sentMessages[id] ?? [])
         let arguments = ProcessInfo.processInfo.arguments
+        let transcript = wantsTranscript ? reviewTranscript(id, messages: all) : nil
+        let homeReviewPosition = Self.reviewArgument("-dsbot-review-home-url") == nil ? nil
+            : SessionReadPosition(seq: Int(transcript?.entries.compactMap(\.seq).max() ?? -1))
         return SessionDetail(
             session: session, messages: wantsTranscript ? [] : all,
             modelId: modelID, permissionId: permissionID,
@@ -952,7 +981,7 @@ private actor ReviewTransport: DSBotTransport {
                     detail: "当前会话的持久目标是「测试目标不需要任何操作」（active，round 1/256）。用户切入 plan mode 并输入「测试计划」。\n\n本计划针对该无操作测试目标本身：不修改仓库、不运行命令，只确认流程可以走通。\n\n## 步骤\n\n1. 读取当前目标\n2. 汇报结论"
                 )
             ] : [],
-            transcript: wantsTranscript ? reviewTranscript(id, messages: all) : nil,
+            transcript: transcript,
             goal: goal.map { SessionGoal(id: "review-goal", phase: $0.phase, objective: $0.objective) },
             // `-dsbot-review-tasks`: a task list like the one DSH shows above its composer.
             todos: reviewTodos(id, arguments: arguments),
@@ -964,7 +993,8 @@ private actor ReviewTransport: DSBotTransport {
                 ? [ConversationParityFixture.questions] : [],
             planMode: planMode,
             reasoningEffort: effortID.isEmpty ? nil : effortID,
-            agentPreset: presetID
+            agentPreset: presetID,
+            readPosition: homeReviewPosition
         )
     }
 
@@ -978,6 +1008,25 @@ private actor ReviewTransport: DSBotTransport {
         ]
         guard arguments.contains("-dsbot-review-many-tasks") else { return items }
         return items + (5...20).map { TodoItem(content: "检查第 \($0) 项任务", status: "pending") }
+    }
+
+    /// `-dsbot-review-paged-history`: 150 turns of very different heights served five at a time from the end (the latest page when `before` is nil),
+    /// so that reading upward loads older pages again and again, as the log of the owner's phone showed (2026-11-16).
+    private static let pagedTurnCount = 150
+    private static func pagedTranscript(before: Double?) -> Transcript {
+        let last = before.map { Int($0 / 2) - 1 } ?? pagedTurnCount
+        let first = max(1, last - (before == nil ? 3 : 4))
+        let day = Date().timeIntervalSince1970 * 1_000
+        var entries: [TranscriptEntry] = []
+        var turns: [TranscriptTurn] = []
+        for index in first...max(first, last) where index <= last {
+            let sequence = Double(index * 2)
+            let start = day - Double(pagedTurnCount - index) * 120_000
+            entries.append(TranscriptEntry(type: "user", id: "paged-user-\(index)", seq: sequence, time: start, text: "第 \(index) 个问题"))
+            entries.append(TranscriptEntry(type: "assistant", id: "paged-answer-\(index)", seq: sequence + 1, time: start + 20_000, text: heavyAnswer(index), turn: index, step: 1))
+            turns.append(TranscriptTurn(turn: index, start: start, end: start + 20_000, outcome: "done", lastSeq: sequence + 1))
+        }
+        return Transcript(entries: entries, turns: turns, live: nil, beforeSeq: Double(first * 2), throughSeq: Double(pagedTurnCount * 2 + 1), hasMore: first > 1)
     }
 
     private static func heavyAnswer(_ index: Int) -> String {
@@ -1002,6 +1051,7 @@ private actor ReviewTransport: DSBotTransport {
     /// The legacy review messages as transcript entries, plus a richer history behind `-dsbot-review-rich`.
     private func reviewTranscript(_ id: String, messages: [ChatMessage]) -> Transcript {
         let arguments = ProcessInfo.processInfo.arguments
+        if id == "review-paged" { return Self.pagedTranscript(before: nil) }
         if id == "review-assistant" {
             let initial = arguments.firstIndex(of: "-dsbot-review-quick-cards-initial")
                 .flatMap { $0 + 1 < arguments.count ? Int(arguments[$0 + 1]) : nil } ?? 0

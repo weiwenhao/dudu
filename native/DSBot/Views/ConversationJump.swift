@@ -73,7 +73,7 @@ final class ConversationJump: NSObject {
             hasRecordedProgress = true
             DSBotLog.record("chat.latest.progress", elapsedMs: elapsed * 1_000, geometry: geometry())
         }
-        // Let the last message command lay out before enabling ordinary following again.
+        // End the motion after its last command lays out; the positioning goal is checked separately.
         if elapsed >= trajectory.duration { isLanding = true }
     }
 
@@ -96,43 +96,60 @@ final class ScrollMetrics {
     var showsCardFromTop = false
     var jumpStartedAt: TimeInterval?
     var isReviewPositioning = false
+    var itemIDs: [String] = []
+    var positioning = HistoryPositioning()
+    var onLayout: (() -> Void)?
     private var layoutRecordsRemaining = 12
     private var commandRecordsRemaining = 32
     private var followingCommandCount = 0
     private var rows: [String: WeakHistoryRow] = [:]
     private var jump: ConversationJump?
-    private var hasRealizedRows = false
-    /// The estimated height at which the viewport was found with no built row in it (`BlankViewportRecovery`).
-    private var heldEstimate: CGFloat?
+    private let layoutFrame = PagePresentationFrame()
 
-    struct FollowingTarget {
-        let id: String
-        let isRealized: Bool
-        let isRecovery: Bool
-        let anchor: CGFloat
-
-        var readerID: AnyHashable {
-            isRealized ? AnyHashable(RealizedHistoryAnchor(id: id)) : AnyHashable(id)
-        }
+    func positioningTarget(followsLatest: Bool) -> HistoryScrollTarget? {
+        guard let scrollView else { return nil }
+        let frames = rowFrames(in: scrollView)
+        return positioning.nextTarget(
+            itemIDs: itemIDs, rows: frames, viewport: viewport(in: scrollView),
+            followsLatest: followsLatest, latestFromTop: cardIsShownFromTop(frames: frames, in: scrollView)
+        )
     }
 
-    func followingTarget(latestID: String, firstID: String?) -> FollowingTarget {
-        guard let scrollView else {
-            return FollowingTarget(id: latestID, isRealized: false, isRecovery: false, anchor: 1)
-        }
+    func completePositioningIfReached() -> HistoryPositioning.Request? {
+        guard let scrollView else { return nil }
         let frames = rowFrames(in: scrollView)
-        if !frames.isEmpty { hasRealizedRows = true }
-        let answer = BlankViewportRecovery.target(
-            latestID: latestID, rows: frames, contentOffset: scrollView.contentOffset.y, viewportHeight: scrollView.bounds.height,
-            contentHeight: scrollView.contentSize.height, heldEstimate: heldEstimate,
-            fallbackID: hasRealizedRows ? firstID : nil
+        return positioning.completeIfReached(
+            itemIDs: itemIDs, rows: frames, viewport: viewport(in: scrollView),
+            latestFromTop: cardIsShownFromTop(frames: frames, in: scrollView)
         )
-        heldEstimate = answer.held
-        let id = answer.target ?? latestID
-        let isRealized = frames.contains { $0.id == id }
-        var anchor: CGFloat = answer.target != nil && !isRealized ? 0 : 1
-        if answer.target == nil, id == self.latestID, cardIsShownFromTop(frames: frames, in: scrollView) { anchor = 0 }
-        return FollowingTarget(id: id, isRealized: isRealized, isRecovery: answer.target != nil, anchor: anchor)
+    }
+
+    func observeLayout() {
+        guard let scrollView else { return }
+        positioning.observe(rows: rowFrames(in: scrollView))
+    }
+
+    func rememberReadingPosition() {
+        guard let scrollView else { return }
+        positioning.rememberReading(rows: rowFrames(in: scrollView), viewport: viewport(in: scrollView))
+    }
+
+    func requestLayout() {
+        guard positioning.access != .suspended, onLayout != nil else { return }
+        layoutFrame.afterLayout { [weak self] in self?.onLayout?() }
+    }
+
+    func pausePositioning() {
+        cancelJump()
+        layoutFrame.cancel()
+    }
+
+    private func viewport(in scrollView: UIScrollView) -> HistoryViewport {
+        HistoryViewport(
+            offset: scrollView.contentOffset.y, height: scrollView.bounds.height,
+            contentHeight: scrollView.contentSize.height,
+            topInset: scrollView.adjustedContentInset.top, bottomInset: scrollView.adjustedContentInset.bottom
+        )
     }
 
     /// Whether the latest row is a card to be shown from its top: asked for, and as tall as what can be seen or taller. A card that is not built yet is taken for one (its top is where it is shown from;
@@ -161,15 +178,12 @@ final class ScrollMetrics {
         }
     }
 
-    /// Whether the latest row is out of the reach of a single command: it is not built, and the row before it is not built either. Only a built row has a place of its own, and
-    /// the one right after it; a row further off is where the lazy stack's estimate puts it, and that estimate follows whichever rows happen to be built (device log of
-    /// 2026-11-12 00:40:41: 18 571 → 42 351 pt within 55 ms of a send, nothing built where the viewport was, and the way out was the first row: the top of the thread).
-    /// Such a row is reached by walking, as the jump does, row after row from what is built. False while a jump is on its way, and when nothing at all is built.
-    func needsWalk(to latestID: String, itemIDs: [String]) -> Bool {
-        guard let scrollView, jumpStartedAt == nil else { return false }
-        let built = Set(rowFrames(in: scrollView).map(\.id))
-        guard !built.isEmpty, !built.contains(latestID), let index = itemIDs.lastIndex(of: latestID), index > 0 else { return false }
-        return !built.contains(itemIDs[index - 1])
+    var isAtLatestContent: Bool {
+        guard let scrollView, latestIsVisible else { return false }
+        return ChatScrollPosition.isAtEnd(
+            contentHeight: scrollView.contentSize.height, containerHeight: scrollView.bounds.height,
+            contentOffset: scrollView.contentOffset.y, topInset: scrollView.adjustedContentInset.top, tolerance: 1
+        )
     }
 
     private func rowFrames(in scrollView: UIScrollView) -> [HistoryRowFrame] {
@@ -192,12 +206,12 @@ final class ScrollMetrics {
         ]
     }
 
-    func recordFollowing(reason: String, targetID: String, messageCount: Int) {
+    func recordFollowing(reason: String, targetID: String, messageCount: Int, following: Bool = true) {
         followingCommandCount += 1
         guard commandRecordsRemaining > 0 else { return }
         commandRecordsRemaining -= 1
         recordLayout(
-            event: "chat.scroll.command", messageCount: messageCount, following: true,
+            event: "chat.scroll.command", messageCount: messageCount, following: following,
             state: reason, targetID: targetID
         )
     }
@@ -256,20 +270,26 @@ final class ScrollMetrics {
         )
     }
 
-    func register(_ view: UIView, id: String) { rows[id] = WeakHistoryRow(view) }
+    func register(_ view: UIView, id: String) {
+        guard rows[id]?.view !== view else { return }
+        rows[id] = WeakHistoryRow(view)
+        requestLayout()
+    }
 
     func remove(_ view: UIView, id: String) {
-        if rows[id]?.view === view { rows[id] = nil }
+        if rows[id]?.view === view {
+            rows[id] = nil
+            requestLayout()
+        }
     }
 
     func animateToLatest(
-        itemIDs: [String], scroll: @escaping (AnyHashable, CGFloat) -> Void, completion: @escaping () -> Void
+        scroll: @escaping (AnyHashable, CGFloat) -> Void, completion: @escaping () -> Void
     ) -> Bool {
-        cancelJump()
-        guard let trajectory = trajectory() else { return false }
+        guard positioning.access == .visible, let trajectory = trajectory() else { return false }
         jump = ConversationJump(
             trajectory: trajectory, geometry: { [weak self] in self?.geometry ?? [:] },
-            frame: { [weak self] fraction in self?.advance(fraction: fraction, itemIDs: itemIDs, scroll: scroll) }
+            frame: { [weak self] fraction in self?.advance(fraction: fraction, scroll: scroll) }
         ) { [weak self] in
             self?.jump = nil
             completion()
@@ -280,12 +300,13 @@ final class ScrollMetrics {
     func cancelJump() {
         jump?.cancel()
         jump = nil
+        jumpStartedAt = nil
     }
 
-    private func advance(fraction: CGFloat, itemIDs: [String], scroll: (AnyHashable, CGFloat) -> Void) {
+    private func advance(fraction: CGFloat, scroll: (AnyHashable, CGFloat) -> Void) {
+        guard positioning.access == .visible else { return }
         guard fraction < 1 else {
-            if let last = latestID ?? itemIDs.last {
-                let target = followingTarget(latestID: last, firstID: itemIDs.first)
+            if let target = positioningTarget(followsLatest: true) {
                 scroll(target.readerID, target.anchor)
             }
             return

@@ -8,11 +8,11 @@ enum QuickCardKind: String, CaseIterable, Identifiable, Codable, Sendable {
 
     var id: String { rawValue }
 
-    /// The desktop's words for the three: the status 待办, the Collector's name 信息 and 任务 (`T.status.todo`, `T.widgets.titles.collector`, `T.tasks.title`).
+    /// The desktop's words for the three: the status 待办, the Collector's name 收件箱 (信息 until 2026-11-16) and 任务 (`T.status.todo`, `T.widgets.titles.collector`, `T.tasks.title`).
     var title: String {
         switch self {
         case .todo: return L10n.text("待办")
-        case .info: return L10n.text("信息")
+        case .info: return L10n.text("收件箱")
         case .task: return L10n.text("任务")
         }
     }

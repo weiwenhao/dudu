@@ -8,8 +8,8 @@ import {
   paddles, PING_PONG, pickSpot, placeOf, plan, REST_SPOTS, SCENE, seatAnchor, seating, SLEEP_ROOM, SOFA_FRONT, SPOTS, spotAt, spreadTags, stateOf, stayFor, summarize, toCanvas, TOILET, TREADMILL, TREADMILLS, TV_SCREEN, WATER_BAR_Y, zoneOf,
 } from '../host/dudu-plugin/ui/widgets/office/layout.js';
 
-type Item = { id: number; status: string; agent?: string | null; agentState?: string; deepSleep?: boolean };
-const issue = (id: number, status = 'in_progress', agentState = 'idle', agent: string | null = 'claude'): Item => ({ id, status, agent, agentState });
+type Item = { id: number; status: string; agent?: string | null; sessionState?: string; deepSleep?: boolean };
+const issue = (id: number, status = 'in_progress', sessionState = 'idle', agent: string | null = 'claude'): Item => ({ id, status, agent, sessionState: ({ working: 'processing', blocked: 'unread' }[sessionState] ?? sessionState) });
 const working = (id: number, status = 'in_progress') => issue(id, status, 'working');
 // The seven Active issues of the design frames, in the Issues default order.
 const SEVEN = [issue(12, 'in_progress', 'blocked', 'deepseek'), issue(13, 'in_progress', 'blocked', 'claude'), issue(9, 'todo', 'idle', null), issue(14, 'in_progress', 'working', 'claude'),
@@ -419,11 +419,11 @@ test('custom workflow statuses keep active employees and whiteboard counts using
 });
 
 test('the numbers on the widget: states, totals and what the one sentence says', () => {
-  assert.deepEqual(summarize(SEVEN), { total: 7, working: 1, blocked: 4, idle: 2 });
+  assert.deepEqual(summarize(SEVEN), { total: 7, processing: 1, unread: 4, idle: 2 });
   assert.deepEqual(boardCounts(SEVEN), [1, 1, 4, 1], 'unassigned, todo, in progress, in review');
   assert.deepEqual(boardCounts([]), [0, 0, 0, 0]);
-  assert.equal(stateOf({ agentState: 'blocked' }), 'blocked');
-  assert.equal(stateOf({ agentState: 'nonsense' }), 'idle');
+  assert.equal(stateOf({ sessionState: 'unread' }), 'unread');
+  assert.equal(stateOf({ sessionState: 'nonsense' }), 'idle');
   assert.equal(stateOf(null), 'idle');
 });
 

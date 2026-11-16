@@ -5,14 +5,28 @@ import Foundation
 
 // MARK: Board
 
+struct BoardIssueParent: Codable, Equatable, Sendable {
+    var id: Int
+    var ref: String?
+    var title: String
+    var status: String
+    var statusType: String
+}
+
+struct BoardSubIssueProgress: Codable, Equatable, Sendable {
+    var total: Int
+    var done: Int
+}
+
 /// One issue, as a row of the board: a title, the agent that has it and what that agent is doing, and the DSH session behind it.
 struct BoardIssue: Codable, Identifiable, Equatable, Sendable {
     var id: Int
     var ref: String?
     var title: String
+    var parent: BoardIssueParent?
+    var subIssues: BoardSubIssueProgress?
     var agent: String?
-    var agentState: String
-    var agentFinished: Bool?
+    var sessionState: String?
     var deepSleep: Bool?
     var status: String
     var statusType: String
@@ -28,11 +42,12 @@ struct BoardIssue: Codable, Identifiable, Equatable, Sendable {
     var createdAt: Double?
     var projectInfo: IssueProject?
     var labels: [IssueLabel]?
+    var children: [BoardIssue]?
     /// Only on the rows of a todo card: the latest message of the issue's session (the owner's own words or the agent's) when the card was made.
     var latest: IssueLatest?
 
     var sessionAgent: SessionAgent? { agent.flatMap(SessionAgent.init(rawValue:)) }
-    var workState: AgentWorkState { AgentWorkState(rawValue: agentState) ?? .idle }
+    var workState: SessionActivityState { sessionState.flatMap(SessionActivityState.init(rawValue:)) ?? .idle }
     /// What the issue is called by: its project's reference, else its number.
     var reference: String { ref ?? "#\(id)" }
 }
@@ -46,27 +61,21 @@ struct IssueLatest: Codable, Equatable, Sendable {
     var isMine: Bool { who == "me" }
 }
 
-/// The issues of one agent state, in the order the plugin sent them.
-struct BoardGroup: Codable, Identifiable, Equatable, Sendable {
-    var key: String
-    var count: Int
-    var nextCursor: String?
-    var items: [BoardIssue]
+/// Homepage presentation only; the actual issue reference and session identity stay authoritative.
+struct BoardConversation: Codable, Identifiable, Equatable, Sendable {
+    var id: String
+    var title: String
+    var sessionId: String?
+    var issue: BoardIssue?
+    var preview: String
+    var receivedAt: Double
+    var sessionState: SessionActivityState
+    var deepSleep: Bool
+    var unread: Bool
+    var readSeq: Int
+    var pinned: Bool
 
-    var id: String { key }
-    var title: String { Self.title(for: key) }
-
-    /// The phone puts what needs the owner first (the desktop lists what is working first).
-    static let order = ["blocked", "working", "idle", "unassigned"]
-
-    static func title(for key: String) -> String {
-        switch key {
-        case "blocked": return L10n.text("需要你")
-        case "working": return L10n.text("工作中")
-        case "idle": return L10n.text("空闲中")
-        default: return L10n.text("未分配")
-        }
-    }
+    var isAssistant: Bool { id == "assistant" }
 }
 
 enum BoardTab: String, CaseIterable, Identifiable, Sendable {
@@ -86,8 +95,9 @@ private struct BoardAnswer: Decodable, Sendable {
     var outcome: String
     var tab: String?
     var total: Int?
-    var groups: [BoardGroup]?
-    var needsYouColor: String?
+    var conversations: [BoardConversation]?
+    var pins: [String]?
+    var unreadCount: Int?
 }
 
 private struct IssueAnswer: Decodable, Sendable {
@@ -114,110 +124,339 @@ private struct IssueDeletionAnswer: Decodable, Sendable {
 final class BoardModel: ObservableObject {
     enum LoadState: Equatable { case loading, loaded, failed }
 
-    private static let initiallyFoldedGroups = Set(BoardTab.allCases.flatMap { tab in
-        ["working", "idle"].map { "\(tab.rawValue)/\($0)" }
-    })
-
     @Published private(set) var tab: BoardTab = .active
-    @Published private(set) var groupsByTab: [BoardTab: [BoardGroup]] = [:]
     @Published private(set) var states: [BoardTab: LoadState] = [:]
-    @Published private(set) var foldedGroups = BoardModel.initiallyFoldedGroups
-    @Published private(set) var loadingMore: Set<String> = []
     @Published private(set) var deleting: Set<Int> = []
-    @Published private(set) var needsYouColor: UInt32 = 0x4f948e
+    @Published private(set) var conversationsByTab: [BoardTab: [BoardConversation]] = [:]
+    @Published private(set) var pinOrder: [String] = []
+    @Published private(set) var unreadCount = 0
+    @Published private(set) var changing: Set<String> = []
     var report: ((DSBotToastMessage) -> Void)?
     private let json = DSBotJSON()
-    private var refreshing = false
+    private var refreshID: UUID?
     private var refreshPending = false
     private var resetID = UUID()
     private var mutationRevision = 0
+    private let storage: any DSBotBoardStorage
+    private let previewPreparation = BoardPreviewPreparation()
+    private var computerID: String?
+    private var restoreTask: Task<Void, Never>?
+    private var writeTask: Task<Void, Never>?
+    private var savedSnapshot: BoardSnapshot?
+    private struct VisibleRead {
+        var receipt: VisibleSessionRead
+        var originals: [BoardTab: [BoardConversation]]
+        var reducedCount: Bool
+    }
+    private var visibleReads: [String: VisibleRead] = [:]
 
-    var groups: [BoardGroup] { groupsByTab[tab] ?? [] }
+    init(storage: any DSBotBoardStorage = FileBoardStorage.shared) { self.storage = storage }
+
     var state: LoadState { states[tab] ?? .loading }
 
-    /// The issues in the order the board shows them, folded groups included.
-    var orderedIssues: [BoardIssue] { groups.flatMap(\.items) }
+    /// The issues in the homepage's received-message order, without duplicating its pins.
+    var orderedIssues: [BoardIssue] { conversations.compactMap(\.issue) }
+    var conversations: [BoardConversation] {
+        // Also applies to retained disk snapshots from before the server scoped Dudu.
+        (conversationsByTab[tab] ?? []).filter { tab != .backlog || !$0.isAssistant }
+    }
+    var pinnedConversations: [BoardConversation] {
+        let byID = Dictionary(uniqueKeysWithValues: conversations.map { ($0.id, $0) })
+        return pinOrder.compactMap { byID[$0] }.filter(\.pinned)
+    }
 
     func select(_ next: BoardTab) { tab = next }
 
     /// Forget what was read: another computer has another board.
-    func reset() {
+    func reset(for computerID: String?) {
+        guard computerID != self.computerID else { return }
+        self.computerID = computerID
+        restoreTask?.cancel()
+        restoreTask = nil
+        savedSnapshot = nil
         resetID = UUID()
+        refreshID = nil
         mutationRevision += 1
         refreshPending = false
-        groupsByTab = [:]
+        visibleReads = [:]
+        conversationsByTab = [:]
+        pinOrder = []
+        changing = []
+        unreadCount = 0
+        AppNotifications.shared.setUnreadCount(0)
         states = [:]
-        foldedGroups = Self.initiallyFoldedGroups
-        loadingMore = []
         deleting = []
-        needsYouColor = 0x4f948e
         tab = .active
+        guard let computerID else { return }
+        let reset = resetID
+        let precedingWrite = writeTask
+        restoreTask = Task {
+            await precedingWrite?.value
+            do {
+                guard let snapshot = try await storage.load(for: computerID) else { return }
+                try snapshot.validate(for: computerID)
+                var prepared: [BoardTab: [BoardConversation]] = [:]
+                for (key, rows) in snapshot.conversationsByTab {
+                    if let tab = BoardTab(rawValue: key) {
+                        prepared[tab] = await previewPreparation.prepare(rows)
+                    }
+                }
+                guard !Task.isCancelled, reset == resetID else { return }
+                conversationsByTab = prepared
+                states = conversationsByTab.mapValues { _ in .loaded }
+                pinOrder = snapshot.pins
+                unreadCount = snapshot.unreadCount
+                savedSnapshot = snapshot
+                AppNotifications.shared.setUnreadCount(unreadCount)
+                DSBotLog.record("board.cache.restore", counts: ["rowCount": conversations.count])
+            } catch {
+                if !Task.isCancelled, reset == resetID { DSBotLog.networkFailure("board.cache.restore.fail", error: error) }
+            }
+        }
     }
 
-    func isFolded(_ group: BoardGroup) -> Bool { foldedGroups.contains("\(tab.rawValue)/\(group.key)") }
-
-    func toggle(_ group: BoardGroup) {
-        let key = "\(tab.rawValue)/\(group.key)"
-        if foldedGroups.contains(key) { foldedGroups.remove(key) } else { foldedGroups.insert(key) }
+    /// Save settled presentation facts, never an optimistic mutation that may still fail.
+    private func persist() {
+        guard let computerID, !conversationsByTab.isEmpty, changing.isEmpty, visibleReads.isEmpty else { return }
+        let snapshot = BoardSnapshot(
+            computerID: computerID,
+            conversationsByTab: Dictionary(uniqueKeysWithValues: conversationsByTab.map { ($0.key.rawValue, $0.value) }),
+            pins: pinOrder, unreadCount: unreadCount
+        )
+        guard snapshot != savedSnapshot else { return }
+        savedSnapshot = snapshot
+        let precedingWrite = writeTask
+        let reset = resetID
+        writeTask = Task {
+            await precedingWrite?.value
+            do { try await storage.save(snapshot) }
+            catch {
+                if reset == resetID, savedSnapshot == snapshot { savedSnapshot = nil }
+                DSBotLog.networkFailure("board.cache.save.fail", error: error)
+            }
+        }
     }
 
     /// Read the tab again. A refresh keeps what is on screen; only a tab that has nothing yet shows its loading.
     func refresh(using store: DSBotStore) async {
+        reset(for: store.activeComputer?.id)
+        let restoring = resetID
+        await restoreTask?.value
+        guard !Task.isCancelled, restoring == resetID else { return }
         guard store.status == .connected else { return }
-        if refreshing { refreshPending = true; return }
-        refreshing = true
+        // A cancelled request from an old connection must never hold the homepage refresh gate.
+        let currentReads = visibleReads.filter {
+            $0.value.receipt.connection == store.connectionRevision && $0.value.receipt.target.computerID == store.activeComputer?.id
+        }
+        if currentReads.count != visibleReads.count { visibleReads = currentReads; mutationRevision += 1 }
+        if refreshID != nil || !changing.isEmpty { refreshPending = true; return }
+        let flight = UUID()
+        refreshID = flight
+        refreshPending = false
         let reset = resetID
+        let connection = store.connectionRevision
         defer {
-            refreshing = false
-            if refreshPending {
-                refreshPending = false
-                // An in-flight poll cannot hide a mutation's authoritative refresh until the next timer tick.
-                Task { if reset == resetID { await refresh(using: store) } }
+            if refreshID == flight {
+                refreshID = nil
+                if refreshPending && changing.isEmpty {
+                    refreshPending = false
+                    // An in-flight poll cannot hide a mutation's authoritative refresh until the next timer tick.
+                    Task { if reset == resetID { await refresh(using: store) } }
+                }
             }
         }
         let wanted = tab
         let revision = mutationRevision
-        if groupsByTab[wanted] == nil { states[wanted] = .loading }
+        if conversationsByTab[wanted] == nil { states[wanted] = .loading }
         do {
-            let value = try await store.request("board.list", ["tab": .string(wanted.rawValue)])
+            let value = try await store.request("board.list", ["tab": .string(wanted.rawValue), "layout": .string("chat")])
             let answer = try await json.decode(BoardAnswer.self, from: value)
-            guard revision == mutationRevision else { return }
+            guard !Task.isCancelled, reset == resetID, revision == mutationRevision,
+                  connection == store.connectionRevision else { return }
             guard answer.outcome == "success" else { throw DSBotFailure.protocolError }
-            if let hex = answer.needsYouColor, let color = UInt32(hex.dropFirst(), radix: 16), needsYouColor != color {
-                needsYouColor = color
+            guard var conversations = answer.conversations, let count = answer.unreadCount, count >= 0 else {
+                DSBotLog.record("board.contract.mismatch", level: "warn", state: "chat_layout_missing")
+                throw DSBotFailure.protocolError
             }
-            let groups = (answer.groups ?? []).sorted {
-                (BoardGroup.order.firstIndex(of: $0.key) ?? .max) < (BoardGroup.order.firstIndex(of: $1.key) ?? .max)
+            conversations = await previewPreparation.prepare(conversations)
+            guard !Task.isCancelled, reset == resetID, revision == mutationRevision,
+                  connection == store.connectionRevision else { return }
+            // A poll may race a read request. Retain immediate feedback only through that
+            // exact delivered sequence, while allowing other sessions to keep updating.
+            var locallyRead: Set<String> = []
+            for index in conversations.indices {
+                guard let session = conversations[index].sessionId, let pending = visibleReads[session],
+                      conversations[index].unread, conversations[index].readSeq <= pending.receipt.seq else { continue }
+                conversations[index].unread = false
+                if conversations[index].sessionState == .unread { conversations[index].sessionState = .idle }
+                locallyRead.insert(session)
             }
-            if groupsByTab[wanted] != groups { groupsByTab[wanted] = groups }
-            states[wanted] = .loaded
+            let displayedCount = max(0, count - locallyRead.count)
+            if conversationsByTab[wanted] != conversations { conversationsByTab[wanted] = conversations }
+            if pinOrder != (answer.pins ?? []) { pinOrder = answer.pins ?? [] }
+            if unreadCount != displayedCount { unreadCount = displayedCount }
+            if states[wanted] != .loaded { states[wanted] = .loaded }
+            AppNotifications.shared.setUnreadCount(displayedCount)
+            persist()
         } catch {
+            guard !Task.isCancelled, reset == resetID, connection == store.connectionRevision else { return }
             DSBotLog.networkFailure("board.load.fail", error: error)
-            if groupsByTab[wanted] == nil { states[wanted] = .failed }
+            if conversationsByTab[wanted] == nil { states[wanted] = .failed }
         }
     }
 
-    /// The next page of one group.
-    func loadMore(_ group: BoardGroup, using store: DSBotStore) async {
-        let wanted = tab
-        let key = "\(wanted.rawValue)/\(group.key)"
-        let revision = mutationRevision
-        guard let cursor = group.nextCursor, !loadingMore.contains(key), store.status == .connected else { return }
-        loadingMore.insert(key)
-        defer { loadingMore.remove(key) }
-        do {
-            let value = try await store.request("board.list", [
-                "tab": .string(wanted.rawValue), "groupKey": .string(group.key), "cursor": .string(cursor),
-            ])
-            let answer = try await json.decode(BoardAnswer.self, from: value)
-            guard revision == mutationRevision, answer.outcome == "success", let page = answer.groups?.first,
-                  var current = groupsByTab[wanted], let index = current.firstIndex(where: { $0.key == group.key }) else { return }
-            let known = Set(current[index].items.map(\.id))
-            current[index].items += page.items.filter { !known.contains($0.id) }
-            current[index].nextCursor = page.nextCursor
-            groupsByTab[wanted] = current
-        } catch {
-            DSBotLog.networkFailure("board.more.fail", error: error)
+    func setPinned(_ entry: BoardConversation, using store: DSBotStore) async {
+        await changeHome(entry, method: "board.pin", params: ["pinned": .bool(!entry.pinned)], using: store)
+    }
+
+    func toggleUnread(_ entry: BoardConversation, using store: DSBotStore) async {
+        guard let session = entry.sessionId else { return }
+        await changeHome(entry, method: "board.read", params: [
+            "unread": .bool(!entry.unread), "sessionId": .string(session), "seq": .number(Double(entry.readSeq)),
+        ], using: store)
+    }
+
+    func receiveSessionActivity(_ activity: WatchedSessionActivity, using store: DSBotStore) {
+        guard activity.target.computerID == store.activeComputer?.id,
+              activity.connection == store.connectionRevision else { return }
+        var changed = false
+        for scope in BoardTab.allCases {
+            guard var rows = conversationsByTab[scope] else { continue }
+            for index in rows.indices where rows[index].sessionId == activity.target.sessionID && rows[index].readSeq <= activity.seq && !changing.contains(rows[index].id) {
+                // Watch activity owns work and sleep, not homepage read receipts. A stale
+                // idle/unread snapshot must not undo a person's explicit read action.
+                rows[index].sessionState = activity.state == .processing ? .processing : (rows[index].unread ? .unread : .idle)
+                rows[index].deepSleep = activity.asleep
+            }
+            if rows != conversationsByTab[scope] { conversationsByTab[scope] = rows; changed = true }
+        }
+        guard changed else { return }
+        mutationRevision += 1
+        persist()
+    }
+
+    /// Clear a visible unread badge in the same main-actor turn as its read request. Do not
+    /// wait for the five-second homepage poll, nor clear a later, unseen message's sequence.
+    func receiveVisibleRead(_ receipt: VisibleSessionRead, using store: DSBotStore) {
+        guard receipt.target.computerID == store.activeComputer?.id,
+              receipt.connection == store.connectionRevision else { return }
+        let session = receipt.target.sessionID
+        switch receipt.phase {
+        case .pending:
+            let previous = visibleReads[session]
+            // Stream-prefix receipts at the same completed cut cannot improve this list's
+            // feedback; retain the first request rather than replacing it on every delta.
+            if let previous, previous.receipt.seq >= receipt.seq { return }
+            var originals = previous?.originals ?? [:]
+            var cleared = false
+            for scope in BoardTab.allCases {
+                guard var rows = conversationsByTab[scope] else { continue }
+                var changed = false
+                for index in rows.indices where rows[index].sessionId == session && rows[index].readSeq <= receipt.seq && rows[index].unread {
+                    if originals[scope]?.contains(where: { $0.id == rows[index].id }) != true {
+                        originals[scope, default: []].append(rows[index])
+                    }
+                    rows[index].unread = false
+                    if rows[index].sessionState == .unread { rows[index].sessionState = .idle }
+                    changed = true
+                }
+                if changed { conversationsByTab[scope] = rows; cleared = true }
+            }
+            guard cleared || previous != nil else { return }
+            let reduced = cleared && previous?.reducedCount != true && unreadCount > 0
+            if reduced { unreadCount -= 1 }
+            visibleReads[session] = VisibleRead(receipt: receipt, originals: originals, reducedCount: reduced || previous?.reducedCount == true)
+            mutationRevision += 1 // An older in-flight list must not restore the red badge.
+        case .saved, .failed:
+            guard let pending = visibleReads[session], pending.receipt.id == receipt.id else { return }
+            visibleReads[session] = nil
+            mutationRevision += 1
+            if receipt.phase == .failed {
+                var restored = false
+                for (scope, originals) in pending.originals {
+                    guard var rows = conversationsByTab[scope] else { continue }
+                    for original in originals {
+                        guard let index = rows.firstIndex(where: { $0.id == original.id && $0.sessionId == session && $0.readSeq == original.readSeq }) else { continue }
+                        rows[index].unread = original.unread
+                        if rows[index].sessionState == .idle { rows[index].sessionState = original.sessionState }
+                        restored = true
+                    }
+                    if rows != conversationsByTab[scope] { conversationsByTab[scope] = rows }
+                }
+                if restored, pending.reducedCount { unreadCount += 1 }
+            }
+            refreshPending = true
+            Task { await refresh(using: store) }
+        }
+        AppNotifications.shared.setUnreadCount(unreadCount)
+        persist()
+    }
+
+    private func changeHome(_ entry: BoardConversation, method: String, params: [String: JSONValue], using store: DSBotStore) async {
+        guard store.status == .connected, !changing.contains(entry.id) else { return }
+        let reset = resetID
+        let computer = store.activeComputer?.id
+        // A person's explicit mark supersedes feedback from an older read request.
+        if method == "board.read", let session = entry.sessionId { visibleReads[session] = nil }
+        changing.insert(entry.id)
+        mutationRevision += 1
+        let before = conversationsByTab
+        let previousPins = pinOrder
+        for scope in BoardTab.allCases {
+            guard var entries = conversationsByTab[scope], let index = entries.firstIndex(where: { $0.id == entry.id }) else { continue }
+            if method == "board.pin" { entries[index].pinned = !entry.pinned }
+            else {
+                entries[index].unread = !entry.unread
+                if entries[index].sessionState != .processing { entries[index].sessionState = entry.unread ? .idle : .unread }
+            }
+            conversationsByTab[scope] = entries
+        }
+        if method == "board.pin" {
+            pinOrder.removeAll { $0 == entry.id }
+            if !entry.pinned { pinOrder.append(entry.id) }
+        }
+        defer { finishHomeChange(entry.id, reset: reset, using: store) }
+        var request = params
+        request["target"] = .string(entry.id)
+        let answer = await creationRequest(IssueAnswer.self, method, request, using: store)
+        guard reset == resetID, computer == store.activeComputer?.id else { return }
+        mutationRevision += 1
+        if answer?.outcome != "success" {
+            // Restore only this entry; another row may have completed an independent edit.
+            for scope in BoardTab.allCases {
+                if let original = before[scope]?.first(where: { $0.id == entry.id }),
+                   let index = conversationsByTab[scope]?.firstIndex(where: { $0.id == entry.id }) {
+                    conversationsByTab[scope]?[index] = original
+                }
+            }
+            if method == "board.pin" {
+                pinOrder.removeAll { $0 == entry.id }
+                if let index = previousPins.firstIndex(of: entry.id) { pinOrder.insert(entry.id, at: min(index, pinOrder.count)) }
+            }
+            report?(DSBotToastMessage(text: L10n.text("更改没能保存"), kind: .error))
+        }
+    }
+
+    private func finishHomeChange(_ key: String, reset: UUID, using store: DSBotStore) {
+        guard reset == resetID else { return }
+        changing.remove(key)
+        persist()
+        if changing.isEmpty { Task { if reset == resetID { await refresh(using: store) } } }
+    }
+
+    func complete(_ issue: BoardIssue, using store: DSBotStore) async {
+        let key = "issue:\(issue.id)"
+        guard store.status == .connected, !changing.contains(key) else { return }
+        let reset = resetID
+        changing.insert(key)
+        defer { finishHomeChange(key, reset: reset, using: store) }
+        guard let options = await creationOptions(using: store), reset == resetID,
+              let done = options.statuses.first(where: { $0.type == "done" }) else {
+            if reset == resetID { report?(DSBotToastMessage(text: L10n.text("更改没能保存"), kind: .error)) }
+            return
+        }
+        if await update(issue, patch: ["status": .string(done.id)], using: store) == nil, reset == resetID {
+            report?(DSBotToastMessage(text: L10n.text("更改没能保存"), kind: .error))
         }
     }
 
@@ -246,17 +485,11 @@ final class BoardModel: ObservableObject {
                 throw DSBotFailure.remote(answer.code?.uppercased() ?? "REQUEST_FAILED")
             }
             mutationRevision += 1
-            // Remove the row immediately; other scopes and the next poll read their authoritative counts again.
-            let current = groups.map { group -> BoardGroup in
-                var group = group
-                if group.items.contains(where: { $0.id == issue.id }) {
-                    group.items.removeAll { $0.id == issue.id }
-                    group.count = max(0, group.count - 1)
-                }
-                return group
-            }.filter { $0.count > 0 }
-            groupsByTab = [tab: current]
-            states = [tab: .loaded]
+            for scope in BoardTab.allCases {
+                conversationsByTab[scope]?.removeAll { $0.issue?.id == issue.id }
+            }
+            pinOrder.removeAll { $0 == "issue:\(issue.id)" }
+            persist()
             await store.refreshSessions(quiet: true)
             await refresh(using: store)
         } catch {
@@ -292,21 +525,16 @@ final class BoardModel: ObservableObject {
         return orderedIssues.first { $0.sessionId == session.id }
     }
 
-    /// The issue before (`-1`) or after (`1`) the open one that has a session the phone can open, in the order of the board.
-    func neighbor(of session: SessionSummary?, offset: Int) -> BoardIssue? {
-        let openable = orderedIssues.filter { $0.sessionId != nil }
-        guard let session, let index = openable.firstIndex(where: { $0.sessionId == session.id }) else { return nil }
-        let target = index + offset
-        return openable.indices.contains(target) ? openable[target] : nil
-    }
-
     func detail(of issue: BoardIssue, using store: DSBotStore) async -> BoardIssue? {
+        let computer = store.activeComputer?.id
+        let connection = store.connectionRevision
         do {
             let value = try await store.request("issue.get", ["id": .number(Double(issue.id))])
             let answer = try await json.decode(IssueAnswer.self, from: value)
+            guard !Task.isCancelled, computer == store.activeComputer?.id, connection == store.connectionRevision else { return nil }
             return answer.outcome == "success" ? answer.issue : nil
         } catch {
-            DSBotLog.networkFailure("issue.get.fail", error: error)
+            if !Task.isCancelled { DSBotLog.networkFailure("issue.get.fail", error: error) }
             return nil
         }
     }
@@ -344,14 +572,26 @@ final class BoardModel: ObservableObject {
         guard let answer = await creationRequest(IssueAnswer.self, method, params, using: store),
               answer.outcome == "success", let changed = answer.issue, changed.id == issue.id else { return nil }
         mutationRevision += 1
-        // The response updates the loaded row immediately; the authoritative read then reconciles groups and counts.
-        let current = groups.map { group -> BoardGroup in
-            var group = group
-            group.items = group.items.map { $0.id == changed.id ? changed : $0 }
-            return group
+        // Keep the latest received message while changing issue metadata; workflow stays explicit.
+        for scope in BoardTab.allCases {
+            guard let entries = conversationsByTab[scope] else { continue }
+            conversationsByTab[scope] = entries.compactMap { entry in
+                guard entry.issue?.id == changed.id else { return entry }
+                let included = scope == .all || (scope == .backlog ? changed.statusType == "backlog"
+                    : ["todo", "in_progress", "in_review"].contains(changed.statusType))
+                guard included else { return nil }
+                var fresh = entry
+                fresh.title = changed.title
+                fresh.issue = changed
+                if fresh.sessionId != changed.sessionId {
+                    fresh.preview = ""; fresh.receivedAt = 0; fresh.unread = false; fresh.readSeq = -1
+                    fresh.sessionState = changed.workState; fresh.deepSleep = changed.deepSleep == true
+                }
+                fresh.sessionId = changed.sessionId
+                return fresh
+            }
         }
-        groupsByTab = [tab: current]
-        states = [tab: .loaded]
+        persist()
         await refresh(using: store)
         return changed
     }

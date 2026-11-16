@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, ChevronUp, Clock, Gauge, Inbox, ListTodo, LoaderCircle, Reply, SquareArrowOutUpRight } from 'lucide-react';
+import { ChevronDown, ChevronUp, Clock, Gauge, Inbox, ListTodo, Reply, SquareArrowOutUpRight } from 'lucide-react';
 import { T } from '../strings.js';
 import { cn } from '../lib/cn.js';
 import { AgentLogo } from '../issues/AgentLogo.jsx';
@@ -12,36 +12,13 @@ import { plainText } from './group-events.mjs';
 import { panelOf, updatedText } from '../quota/panel-model.mjs';
 import { QuotaBlock } from '../quota/QuotaBlocks.jsx';
 
-// The quick buttons of 嘟嘟's chat and the card they bring (owner, 2026-11-10; design: docs/assistant.md 4.1, `.local/designs/quick-chips-2026-11-09/` and `.local/designs/group-chat-2026-11-10/`). A button is a
-// rounded rectangle after the owner's reference (Doubao's: radius a fifth of the height), 32 high; it floats over the bottom of the thread in glass, as the phone's do (owner, 2026-11-11: "使用和手机一样的悬浮按钮吧，
-// 而不是背景白色", and of the drawings "选 B 更透明的玻璃"; `.dudu-pet-chip` and `.dudu-pet-quick` in pet.css). 待办 makes 嘟嘟 send a card into the thread (host/assistant/home/cards.mjs);
-// 信息 and 定时任务 have no card any more: they go to their pages (the small › says so), as the owner asked ("直接跳转到对应的会话窗口").
-export const QUICK = [
+// Keep transcript cards after removing Desktop's composer shortcuts (owner, 2026-11-16).
+const CARDS = [
   { kind: 'todo', Icon: ListTodo, label: () => T.status.todo },
-  { kind: 'info', Icon: Inbox, label: () => T.widgets.titles.collector, go: true },
-  { kind: 'task', Icon: Clock, label: () => T.tasks.title, go: true },
+  { kind: 'info', Icon: Inbox, label: () => T.widgets.titles.collector },
+  { kind: 'task', Icon: Clock, label: () => T.tasks.title },
+  { kind: 'quota', Icon: Gauge, label: () => T.widgets.titles.quota },
 ];
-// The cards the thread can show: the buttons' and 额度, which has a card but no button (owner, 2026-11-11: "问问 嘟嘟当前的订阅额度，嘟嘟回复一个卡片", then "这个不需要一个按钮快捷获取，我可以直接问嘟嘟，让嘟嘟发"):
-// 嘟嘟 sends it when it is asked in words (`show_quota_card`), what is left of each subscription at that moment, in the quota panel's own blocks (`QuotaBlocks.jsx`; owner: "选 A",
-// `.local/designs/quota-card-2026-11-11/`). The word is the panel's own.
-const CARDS = [...QUICK, { kind: 'quota', Icon: Gauge, label: () => T.widgets.titles.quota }];
-
-/** The row of buttons above the input. `busy` is the kind whose card is on its way: its icon turns and nothing else can be tapped meanwhile. `onGo` is what the two that jump do. */
-export function QuickChips({ busy = '', disabled = false, onPick, onGo }) {
-  return (
-    <div className="dudu-pet-quick">
-      {QUICK.map(({ kind, Icon, label, go }) => (
-        <button key={kind} type="button" disabled={disabled || Boolean(busy)} aria-busy={busy === kind || undefined} onClick={() => (go ? onGo(kind) : onPick(kind))}
-          className={cn('dudu-pet-chip inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md pl-[11px] text-[13px] font-medium text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
-            go ? 'pr-[7px]' : 'pr-[11px]')}>
-          {busy === kind ? <LoaderCircle className="size-[15px] animate-spin" aria-hidden="true" /> : <Icon className="size-[15px]" strokeWidth={1.8} aria-hidden="true" />}
-          <span>{label()}</span>
-          {go && <ChevronRight className="-ml-0.5 size-3.5 text-muted-foreground/75" strokeWidth={1.8} aria-hidden="true" />}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 const emptyOf = (kind) => (kind === 'todo' ? T.empty : kind === 'info' ? T.collector.empty : kind === 'quota' ? T.widgets.quota.empty : T.pet.noTasks);
 
@@ -70,7 +47,7 @@ function TodoRow({ row, open, onToggle, onReply, onOpenSession, onOpenIssue }) {
     <div data-card-issue={row.id}>
       <button type="button" aria-expanded={answerable ? open : undefined} onClick={() => (answerable ? onToggle(row.id) : onOpenIssue(row))}
         className="flex w-full items-start gap-3 px-3.5 pt-2.5 pb-2.5 text-left outline-none hover:bg-accent/60 focus-visible:bg-accent/60">
-        <AgentAvatar agent={row.agent} state={row.agentState} finished={row.agentFinished === true} asleep={row.deepSleep === true} showTitle={false} />
+        <AgentAvatar agent={row.agent} state={row.sessionState} asleep={row.deepSleep === true} showTitle={false} />
         <span className="min-w-0 flex-1">
           <span className="flex h-6 items-center gap-2">
             <span className="shrink-0 text-[13px] font-semibold tabular-nums">{row.ref ?? `#${row.id}`}</span>

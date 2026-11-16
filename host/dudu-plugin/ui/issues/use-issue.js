@@ -36,7 +36,8 @@ export function useIssue(request, id) {
     const poll = () => { if (document.visibilityState === 'visible') load(); };
     const timer = setInterval(poll, POLL_MS);
     document.addEventListener('visibilitychange', poll);
-    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', poll); sequence.current++; };
+    window.addEventListener('dudu:session-read', poll);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', poll); window.removeEventListener('dudu:session-read', poll); sequence.current++; };
   }, [id, load]);
 
   // Every change answers with the store's result and then reloads, so the page shows what the store has.

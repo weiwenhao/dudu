@@ -107,7 +107,7 @@ export function metadataWeight(session, term) {
 export const termsOf = (query) => lower(query).split(/\s+/).filter(Boolean);
 
 // `attachments()` is DSH's attachment store (it may be absent): the pictures a person pasted into a session are kept there when it is loaded.
-export function createNativeSessions({ sources, persistence, workspaces, attachments = () => undefined, controller = () => undefined, query = () => undefined, agents = () => undefined, rebind, links, claude = {}, cacheFile, diagnostics, now = Date.now }) {
+export function createNativeSessions({ sources, persistence, workspaces, attachments = () => undefined, controller = () => undefined, query = () => undefined, agents = () => undefined, rebind, onHistoryAppended, links, claude = {}, cacheFile, diagnostics, now = Date.now }) {
   const claudeCache = new Map();
   const content = createCachedContentIndex({ file: cacheFile });
   let listed;                // { at, sessions, providers }
@@ -144,7 +144,7 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
   const putOff = new Map(); // DSH session id -> { stamp, until }: the transcript as it was when its synchronization was put off, and when it may be tried again
   const unlinked = new Map();
   const synchronize = createNativeSync({
-    persistence, controller, query, agents,
+    persistence, controller, query, agents, onHistoryAppended,
     refresh: ({ history, route }) => load({ provider: history.provider ?? route, id: history.id, syncOnly: true, fresh: false }),
   });
   const repair = createImportRepair({ persistence, controller, query, agents, workspaces, links, rebind });
@@ -502,6 +502,7 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
     } finally {
       await handle.close();
     }
+    onHistoryAppended?.(sessionId, events);
     try { await workspace.attachSession(sessionId); } catch (error) { console.warn(`[dudu] Could not attach the loaded session to its workspace: ${error.message}`); }
     links.record({ route: source.route, nativeSessionId: summary.id, sessionId });
     if (pictured.turns.some((turn) => turn.complete === false)) await synchronize({ sessionId, history: pictured, route: source.route });

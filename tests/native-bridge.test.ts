@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { contentDigest } from '../host/assistant/sessions/session-state.mjs';
 import {
   NATIVE_METHODS,
   createNativeBridge,
@@ -57,9 +58,11 @@ function makeHarness({
   conversationReads,
   questionBridge,
   sessionActivity,
+  acknowledgeRead,
   sessionSearch,
   assistantConversation,
   assistant,
+  fileTransfers,
   streams = {},
 } = {}) {
   const calls = [];
@@ -105,7 +108,7 @@ function makeHarness({
       throw new Error(`unexpected stream endpoint: ${endpoint}`);
     },
   };
-  return { bridge: createNativeBridge({ rpc, conversationReads, questionBridge, sessionActivity, sessionSearch, assistantConversation, assistant }), calls };
+  return { bridge: createNativeBridge({ rpc, conversationReads, fileTransfers, questionBridge, sessionActivity, acknowledgeRead, sessionSearch, assistantConversation, assistant }), calls };
 }
 
 test('opening the assistant reuses its scoped session and ignores caller-supplied identities', async () => {
@@ -747,6 +750,28 @@ test('file upload stages exact bytes for the session and returns only the opaque
   assert.equal(calls.length, 1);
 });
 
+test('binary uploads require the selected session and return only its DSH receipt', async () => {
+  let uploaded = 0;
+  const { bridge } = makeHarness({ fileTransfers: {
+    async upload({ sessionId, name, data }) {
+      assert.equal(sessionId, 'session-1');
+      assert.equal(name, 'large.mov');
+      let bytes = 0;
+      for await (const chunk of data) bytes += chunk.length;
+      uploaded++;
+      return { receiptId: 'source-receipt', file: { attachmentId: 'private', name, bytes } };
+    },
+  } });
+  const conn = { selectedSessionId: 'session-1', closed: false };
+  const source = async function* () { yield Buffer.alloc(64 * 1024); };
+  await assert.rejects(bridge.uploadFile({ id: 'other' }, source(), conn), { code: 'NOT_FOUND' });
+  const result = await bridge.uploadFile({ id: 'session-1', name: 'large.mov' }, source(), conn);
+  assert.deepEqual(result, { receiptId: 'source-receipt', name: 'large.mov', bytes: 64 * 1024 });
+  conn.closed = true;
+  await assert.rejects(bridge.uploadFile({ id: 'session-1' }, source(), conn), { code: 'NOT_FOUND' });
+  assert.equal(uploaded, 1);
+});
+
 test('native submission receipts preserve the caller request identity and reject malformed identities', async () => {
   const { bridge, calls } = commandHarness();
   const requestId = 'ec1cc965-9896-43b4-995d-65c6d8d53b75';
@@ -843,6 +868,45 @@ function controlledStream(frames = []) {
     get disposals() { return disposals; },
   };
 }
+
+test('read receipts require the current watch, never acknowledge a preload, and keep the exact delivered stream cut', async () => {
+  const message = eventMessage('answer', 4, 'Shown answer');
+  const snapshot = {
+    type: 'snapshot', cursor: 4, records: [message],
+    // A control projection may already know content not present in the follow snapshot.
+    projections: { values: { duduSessionActivity: { seq: 9 } } },
+    assistantStream: { revision: 0, activeAttempt: {
+      attemptId: 'visible-prefix', turn: 2, step: 1, nextIndex: 2,
+      stream: [
+        { index: 0, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
+        { index: 1, chunk: { type: 'text-delta', index: 0, text: 'Part' } },
+      ],
+    } },
+  };
+  const acknowledgements: any[] = [];
+  const { bridge } = makeHarness({
+    snapshot, acknowledgeRead: async (id, position) => {
+      acknowledgements.push({ id, position });
+      return { sessionState: 'unread' };
+    },
+  });
+  const connection = attachmentConnection();
+  const watchId = '11c03864-12f9-4c40-b449-216b922c643a';
+  try {
+    const preload = await bridge.dispatch('session.open', { id: 'session-1', transcript: true }, {});
+    assert.deepEqual(acknowledgements, []);
+    assert.deepEqual(preload.readPosition, { seq: 4, stream: { turn: 2, step: 1, digest: contentDigest([{ type: 'text', text: 'Part' }]) } });
+    const detail = await bridge.dispatch('session.watch', { id: 'session-1', watchId, transcript: true }, connection, { watchGeneration: 1 });
+    assert.deepEqual(acknowledgements, [], 'watching alone is not reading');
+    await assert.rejects(bridge.dispatch('session.read', { id: 'session-1', watchId: 'old', position: detail.readPosition }, connection), { code: 'BAD_REQUEST' });
+    await assert.rejects(bridge.dispatch('session.read', { id: 'session-2', watchId, position: detail.readPosition }, connection), { code: 'NOT_FOUND' });
+    const read = await bridge.dispatch('session.read', { id: 'session-1', watchId, position: detail.readPosition }, connection);
+    assert.deepEqual(read, { sessionState: 'unread' });
+    assert.deepEqual(acknowledgements, [{ id: 'session-1', position: detail.readPosition }]);
+    await bridge.dispatch('session.unwatch', { watchId }, connection);
+    await assert.rejects(bridge.dispatch('session.read', { id: 'session-1', watchId, position: detail.readPosition }, connection), { code: 'NOT_FOUND' });
+  } finally { await connection.stopWatch(); }
+});
 
 test('ended and failed watch streams notify once, close both streams and release question ownership', async () => {
   for (const source of ['follow', 'control']) {
@@ -1022,6 +1086,73 @@ test('a late history or tool reply cannot cross a watch replacement', async () =
   await assert.rejects(request, { code: 'NOT_FOUND' });
 });
 
+test('conversation videos use exact user-event ownership and reject a changed watch', async (t) => {
+  const file = { attachmentId: `sha256:${'a'.repeat(64)}`, name: 'clip.mov', bytes: 3 };
+  const dataBase64 = Buffer.from('abc').toString('base64');
+  const reads = [];
+  let finish;
+  let wait = false;
+  const payload = { name: file.name, mediaType: 'video/quicktime', dataBase64 };
+  const records = [
+    surface('user/message', 1, 1000, { id: 'video-user', source: { kind: 'user' }, content: [{ type: 'file', attachment: file }] }),
+    surface('user/message', 2, 1001, { id: 'context-file', source: { kind: 'context' }, content: [{ type: 'file', attachment: file }] }),
+  ];
+  const { bridge } = makeHarness({
+    snapshot: { type: 'snapshot', projections: { values: { inbox: { 'next-turn': [
+      { id: 'queued-video', source: { kind: 'user' }, content: [{ type: 'file', attachment: file }] },
+      { id: 'context-video', source: { kind: 'context' }, content: [{ type: 'file', attachment: file }] },
+    ] } } }, records },
+    responses: { 'session/page': () => ({ records }) },
+    conversationReads: {
+      openVideo(coordinates) {
+        assert.deepEqual(coordinates, { attachment: file });
+        return { bytes: file.bytes, name: file.name, mediaType: payload.mediaType, data: (async function* () {
+          yield Buffer.from('a');
+          yield Buffer.from('bc');
+        })() };
+      },
+      async read(kind, coordinates) {
+        reads.push({ kind, coordinates });
+        if (wait) return new Promise((resolve) => { finish = resolve; });
+        return payload;
+      },
+    },
+  });
+  const connection = attachmentConnection();
+  t.after(() => connection.cancel());
+  const detail = await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, connection, { watchGeneration: 1 });
+  assert.deepEqual(detail.transcript.entries[0].attachments, [{ kind: 'video', name: 'clip.mov', id: 'video-user:0', seq: 1 }]);
+  assert.equal(JSON.stringify(detail).includes(dataBase64), false);
+  const params = { id: 'session-1', kind: 'video', attachmentId: 'video-user:0', seq: 1 };
+  assert.deepEqual(await bridge.dispatch('session.attachment', params, connection), payload);
+  assert.deepEqual(reads, [{ kind: 'video', coordinates: { attachment: file } }]);
+  for (const patch of [
+    { id: 'session-2' }, { attachmentId: '/private/clip.mov' }, { seq: 2, attachmentId: 'context-file:0' },
+  ]) await assert.rejects(bridge.dispatch('session.attachment', { ...params, ...patch }, connection), { code: 'NOT_FOUND' });
+  assert.equal(reads.length, 1);
+  for (const patch of [{ id: 'other' }, { attachmentId: 'context-file:0', seq: 2 }, { path: '/private/video.mov' }]) {
+    await assert.rejects(bridge.openVideo({ id: 'session-1', attachmentId: 'video-user:0', seq: 1, ...patch }, connection),
+      { code: Object.hasOwn(patch, 'path') ? 'BAD_REQUEST' : 'NOT_FOUND' });
+  }
+  const stream = await bridge.openVideo({ id: 'session-1', attachmentId: 'video-user:0', seq: 1 }, connection);
+  const iterator = stream.data[Symbol.asyncIterator]();
+  assert.deepEqual((await iterator.next()).value, Buffer.from('a'));
+  assert.deepEqual(await bridge.dispatch('session.attachment', {
+    id: 'session-1', kind: 'video', attachmentId: 'queue:queued-video:0',
+  }, connection), payload);
+  await assert.rejects(bridge.dispatch('session.attachment', {
+    id: 'session-1', kind: 'video', attachmentId: 'queue:context-video:0',
+  }, connection), { code: 'NOT_FOUND' });
+  wait = true;
+  const pending = bridge.dispatch('session.attachment', params, connection);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(typeof finish, 'function');
+  connection.watchGeneration++;
+  await assert.rejects(iterator.next(), { code: 'NOT_FOUND' });
+  finish(payload);
+  await assert.rejects(pending, { code: 'NOT_FOUND' });
+});
+
 test('conversation images are authenticated watch-scoped references without bytes in snapshots', async () => {
   const data = Buffer.from('private-image').toString('base64');
   const { bridge } = makeHarness({ snapshot: {
@@ -1155,7 +1286,7 @@ test('native sidebar and search return cold list hints without waiting for per-s
   }));
   const { bridge, calls } = makeHarness({
     rows,
-    sessionActivity: () => ({ agent: 'codex', title: 'Indexed conversation', state: 'finished', lastActivityAt: Date.now() - 60_000 }), // handled a minute ago: a finished run unhandled for 72 hours reads Idle (2026-11-07, 72 hours since 2026-11-14)
+    sessionActivity: () => ({ agent: 'codex', title: 'Indexed conversation', state: 'finished', sessionState: 'unread', lastActivityAt: Date.now() - 60_000 }), // handled a minute ago: a finished run unhandled for 72 hours reads Idle (2026-11-07, 72 hours since 2026-11-14)
     responses: {
       'session/projections': () => pending,
       'session/search': { items: [{ sessionId: 'cold-1', snippet: 'Matching text' }] },
@@ -1168,7 +1299,7 @@ test('native sidebar and search return cold list hints without waiting for per-s
     ]);
     assert.equal(result.length, rows.length);
     assert.equal(result[0].agent, 'codex', 'The activity index covers older rows without model hints.');
-    assert.equal(result[0].agentState, 'blocked');
+    assert.equal(result[0].sessionState, 'unread');
     assert.equal(result[0].title, 'Indexed conversation', 'Use an existing indexed title when DSH has no cached title.');
     assert.equal(result[1].title, 'Conversation 1');
     assert.equal((await bridge.dispatch('session.list', {}, {}))[1].agent, 'codex');
@@ -1299,7 +1430,7 @@ test('group reply deltas publish through the current native watch without adding
 });
 
 test('a quick button\'s card is its command in the thread with what it listed attached; any other command, an unknown card and a failed one stay plain', async () => {
-  const card = { v: 1, kind: 'todo', at: 5, total: 1, rows: [{ id: 9, ref: 'DUD-9', title: 'x', agent: 'codex', agentState: 'blocked', status: 'todo', statusType: 'todo', priority: 'none', updatedAt: 1 }] };
+  const card = { v: 1, kind: 'todo', at: 5, total: 1, rows: [{ id: 9, ref: 'DUD-9', title: 'x', agent: 'codex', sessionState: 'unread', status: 'todo', statusType: 'todo', priority: 'none', updatedAt: 1 }] };
   const records = [
     surface('command/run', 1, 100, { commandId: 'cmd-card', name: 'dudu-card', args: 'todo', source: { kind: 'user' } }),
     surface('command/done', 2, 110, { commandId: 'cmd-card', kind: 'success', text: 'DUD-9 x' }),

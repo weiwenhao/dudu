@@ -185,6 +185,20 @@ struct WorkPanelView: View {
     }
 }
 
+#if DEBUG && targetEnvironment(simulator)
+struct SimulatorProjectFileReview: View {
+    @ObservedObject var store: DSBotStore
+
+    var body: some View {
+        NavigationStack {
+            ProjectFilePreview(entry: ProjectFileEntry(name: "README.md", path: "README.md", isDirectory: false, size: nil), store: store)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+}
+#endif
+
 private struct ProjectFilePreview: View {
     let entry: ProjectFileEntry
     @ObservedObject var store: DSBotStore
@@ -228,10 +242,7 @@ private struct ProjectFilePreview: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button { dismiss() } label: {
-                    DSBotIcon(.close, size: 20).frame(width: 36, height: 36)
-                }
-                .accessibilityLabel(L10n.text("关闭文件"))
+                SheetCloseButton(label: L10n.text("关闭文件")) { dismiss() }
                 .accessibilityIdentifier("files.preview.close")
             }
             ToolbarItem(placement: .topBarTrailing) {

@@ -53,7 +53,10 @@ test('ticked rows change together and Shift ticks a run', async () => {
   const page = await dudu.openPanel();
   await rowOf(page, '批量 D').waitFor();
 
-  await page.getByRole('checkbox', { name: 'Select 批量 A', exact: true }).click();
+  // Ticking begins in a row's right-click menu (as in the Collector); there is no box until then.
+  assert.equal(await page.getByRole('checkbox', { name: 'Select 批量 A', exact: true }).count(), 0);
+  await rowOf(page, '批量 A').click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Select', exact: true }).click();
   await page.getByRole('checkbox', { name: 'Select 批量 D', exact: true }).click({ modifiers: ['Shift'] });
   const bar = page.getByRole('toolbar', { name: 'Bulk actions' });
   await bar.getByText('4 selected').waitFor();
@@ -65,7 +68,8 @@ test('ticked rows change together and Shift ticks a run', async () => {
   await bar.waitFor({ state: 'detached' });
 
   // Escape lets go of the ticks.
-  await page.getByRole('checkbox', { name: 'Select 批量 B', exact: true }).click();
+  await rowOf(page, '批量 B').click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Select', exact: true }).click();
   await bar.getByText('1 selected').waitFor();
   await page.keyboard.press('Escape');
   await bar.waitFor({ state: 'detached' });

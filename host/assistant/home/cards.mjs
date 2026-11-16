@@ -10,6 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { boardRow } from '../../native-board.mjs';
+import { issueSessionId, listAllIssues } from './issue-list.mjs';
 
 export const CARD_COMMAND = 'dudu-card';
 export const CARD_KINDS = Object.freeze(['todo', 'info', 'task', 'quota']);
@@ -38,7 +39,7 @@ function scheduleOf(schedule) {
  * `issues`, `inbox` and `tasks` each answer with the service that runs the desktop interface's commands (`execute(action, body)`) or with nothing yet: they are asked for when a card is made,
  * because the plugin starts them after the conversation.
  */
-export function createCards({ file, issues = () => null, inbox = () => null, tasks = () => null, quota = () => null, latest = null, now = Date.now }) {
+export function createCards({ file, issues = () => null, inbox = () => null, tasks = () => null, quota = () => null, activity, warm, latest = null, now = Date.now }) {
   const kept = new Map();
   if (file && existsSync(file)) {
     try {
@@ -63,29 +64,37 @@ export function createCards({ file, issues = () => null, inbox = () => null, tas
     return answer;
   };
 
-  const sessionIdOf = (key) => (typeof key === 'string' && key.startsWith('dsh:') ? key.slice(4) : null);
-
   /**
-   * 待办 is what needs the owner (owner, 2026-11-10: "待办应该就是需要我这一栏的东西"): the board's 需要你 group, the issues whose agent has finished a run, asked a question or failed and waits for the owner,
-   * in the board's default scope (进行中) and its order. Not the issues whose workflow status is Todo: that status is the owner's own word and says nothing of whose turn it is. The rows are the board's own,
-   * each with the latest message of its session when there is one (`latest`: who said it, what, when; latest.mjs). The sessions that have nothing kept yet are read once, for a moment at most: the row of one
-   * that is not read in time is just without it.
+   * The phone's 待办 lists unread issue conversations across workflows (owner, 2026-11-16).
+   * Warm exact read boundaries before filtering; work can coexist with unread content. This is
+   * read-only and uses the homepage's completed-message order, never partial generation time.
    */
   async function todo(cursor) {
-    const answer = await ask(issues, 'list', {
-      tab: 'active', filter: { agentState: ['blocked'] }, order: 'priority', limit: MAX_TODO,
-      ...(cursor ? { cursor } : {}),
-    });
-    const items = (answer.items ?? []).slice(0, MAX_TODO);
-    await latest?.ensure(items.map((item) => sessionIdOf(item.session)).filter(Boolean));
-    const rows = items.map((item) => {
-      const row = boardRow(item);
-      const said = latest?.get(sessionIdOf(item.session));
+    let before;
+    if (cursor != null) {
+      try { before = JSON.parse(Buffer.from(cursor, 'base64url').toString()); } catch { /* rejected below */ }
+      if (!Array.isArray(before) || before.length !== 2 || !Number.isFinite(before[0]) || before[0] < 0
+        || !Number.isSafeInteger(before[1]) || before[1] < 1) throw new TypeError('Invalid todo cursor');
+    }
+    const all = await listAllIssues((action, body) => ask(issues, action, body));
+    await warm([...new Set(all.map(issueSessionId).filter(Boolean))]);
+    const unread = all.flatMap((item) => {
+      const sessionId = issueSessionId(item);
+      const state = sessionId ? activity(sessionId) : null;
+      return state?.unread === true ? [{ item, sessionId, state, at: state.attention?.messageAt ?? 0 }] : [];
+    }).sort((a, b) => b.at - a.at || a.item.id - b.item.id);
+    const page = unread.filter(({ at, item }) => !before || at < before[0] || (at === before[0] && item.id > before[1]));
+    const items = page.slice(0, MAX_TODO);
+    await latest?.ensure(items.map(({ sessionId }) => sessionId));
+    const rows = items.map(({ item, sessionId, state }) => {
+      const row = boardRow({ ...item, sessionState: state.sessionState });
+      const said = latest?.get(sessionId);
       return said ? { ...row, latest: { who: said.who, text: said.text, at: said.at } } : row;
     });
+    const last = items.at(-1);
     return {
-      total: Number.isSafeInteger(answer.total) ? answer.total : rows.length, rows,
-      ...(typeof answer.nextCursor === 'string' && answer.nextCursor ? { nextCursor: answer.nextCursor } : {}),
+      total: unread.length, rows,
+      ...(page.length > MAX_TODO ? { nextCursor: Buffer.from(JSON.stringify([last.at, last.item.id])).toString('base64url') } : {}),
     };
   }
 

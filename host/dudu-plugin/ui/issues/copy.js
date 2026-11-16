@@ -35,7 +35,7 @@ export function everythingMarkdown(issue, { log = [], links = issue.links ?? [] 
   const lines = [];
   lines.push(`- ${T.fields.status}: ${statusLabel(issue.status)}`);
   if (issue.priority && issue.priority !== 'none') lines.push(`- ${T.fields.priority}: ${T.priority[issue.priority] ?? issue.priority}`);
-  if (issue.agent) lines.push(`- ${T.fields.agent}: ${AGENT_NAMES[issue.agent] ?? issue.agent}${issue.agentState ? ` (${T.agentState[issue.agentState] ?? issue.agentState})` : ''}`);
+  if (issue.agent) lines.push(`- ${T.fields.agent}: ${AGENT_NAMES[issue.agent] ?? issue.agent}${issue.sessionState ? ` (${T.sessionState[issue.sessionState] ?? issue.sessionState})` : ''}`);
   if (issue.project?.name) lines.push(`- ${T.fields.project}: ${issue.project.name}`);
   if (issue.labels?.length) lines.push(`- ${T.labels.name}: ${issue.labels.map((label) => label.name).join(', ')}`);
   if (issue.dueAt != null) lines.push(`- ${T.detail.dueDate}: ${dayOf(issue.dueAt)}`);

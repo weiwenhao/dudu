@@ -106,7 +106,7 @@ struct QuickTodoRow: View {
         HStack(spacing: 12) {
             Group {
                 if let agent = issue.sessionAgent {
-                    AgentAvatar(agent: agent, state: issue.workState, finished: issue.agentFinished == true, asleep: issue.deepSleep == true, size: 28)
+                    AgentAvatar(agent: agent, state: issue.workState, asleep: issue.deepSleep == true, size: 28)
                 } else {
                     BoardNoAgentMark()
                 }

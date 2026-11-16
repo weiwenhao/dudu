@@ -33,7 +33,7 @@
 //       snapshots: [{ key, provider, id, dshSessionId, title, cwd, state, stateSince, lastActivityAt, excerpt (<= 300), pending, turnActive? }],
 //       turnActive is a live observation, not persisted: before the first read after a restart it is unknown.
 //       the most recently active first; sources: { claude: 'ok' | 'pending' | 'error: ...', codex, dsh } for the readers given
-//   stateOf(key)   -> the state or null; synchronous: it is the `sessionState` hook of createIssues as it is
+//   stateOf(key)   -> the execution state or null; synchronous: it supplies createIssues' `lifecycleState` hook as it is
 //   snapshotOf(key) -> the current snapshot or null, resolving native/DSH aliases as stateOf does
 //   onChange(cb)   -> unsubscribe; cb({ key, from, to, snapshot }) once for every change of a session's state, not debounced. A session
 //                     seen for the first time has from null, one that is gone has to null. The first read of a reader whose sessions
@@ -50,7 +50,6 @@ import { DatabaseSync } from 'node:sqlite';
 import { mapLimit } from '../../providers/async.mjs';
 import { oneLine } from '../../providers/native/text.mjs';
 import { EXCERPT_CHARS, judge, SESSION_STATES } from './states.mjs';
-import { agentStateForSession } from './work-state.mjs';
 
 export { claudeReader, codexReader } from './readers.mjs';
 export { endsInQuestion, judge, RULE_DEFAULTS, SESSION_STATES } from './states.mjs';
@@ -102,6 +101,7 @@ const MIGRATIONS = [
     pending_text TEXT
   ) WITHOUT ROWID;
   `,
+  `ALTER TABLE sessions ADD COLUMN incoming_at INTEGER;`,
 ];
 
 class TooNew extends Error {}
@@ -150,13 +150,13 @@ function openStore(file) {
   }
 }
 
-const toRow = (s) => [s.key, s.provider, s.id, s.dshSessionId, s.title, s.cwd, s.state, s.stateSince, s.lastActivityAt, s.excerpt, s.pending?.kind ?? null, s.pending?.text ?? null];
+const toRow = (s) => [s.key, s.provider, s.id, s.dshSessionId, s.title, s.cwd, s.state, s.stateSince, s.lastActivityAt, s.excerpt, s.pending?.kind ?? null, s.pending?.text ?? null, s.incomingAt ?? null];
 const fromRow = (r) => ({
   key: r.key, provider: r.provider, id: r.id, dshSessionId: r.dsh_session_id, title: r.title, cwd: r.cwd, state: r.state,
-  stateSince: r.state_since, lastActivityAt: r.last_activity_at, excerpt: r.excerpt, pending: r.pending_kind ? { kind: r.pending_kind, text: r.pending_text ?? '' } : null,
+  stateSince: r.state_since, lastActivityAt: r.last_activity_at, excerpt: r.excerpt, incomingAt: r.incoming_at ?? null, pending: r.pending_kind ? { kind: r.pending_kind, text: r.pending_text ?? '' } : null,
 });
-// What a caller gets is a copy with the agent state the owner's rules give it (sessions/work-state.mjs).
-const copy = (s) => (s ? { ...s, agentState: agentStateForSession(s.state), pending: s.pending ? { ...s.pending } : null } : s);
+// Lifecycle observations are copied; presentation status is derived with shared read receipts.
+const copy = (s) => (s ? { ...s,  pending: s.pending ? { ...s.pending } : null } : s);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 const clarify = (message, next = 'Correct the input and call again.') => ({ outcome: 'needs_clarification', message, next });
@@ -169,7 +169,7 @@ export function createSessions({
   if (typeof file !== 'string' || !file) throw new TypeError('createSessions needs the file of its index.');
   const db = openStore(file);
   const select = db.prepare('SELECT * FROM sessions');
-  const upsert = db.prepare('INSERT OR REPLACE INTO sessions (key, provider, id, dsh_session_id, title, cwd, state, state_since, last_activity_at, excerpt, pending_kind, pending_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const upsert = db.prepare('INSERT OR REPLACE INTO sessions (key, provider, id, dsh_session_id, title, cwd, state, state_since, last_activity_at, excerpt, pending_kind, pending_text, incoming_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const remove = db.prepare('DELETE FROM sessions WHERE key = ?');
   const rules = {};
   if (staleMs !== undefined) rules.staleMs = staleMs;
@@ -281,7 +281,7 @@ export function createSessions({
   // --- judging -------------------------------------------------------------------------------------------------------
 
   function snapshotOf(key, provider, facts, dsh, dshId, at, before) {
-    // An issue's agent keeps a question, a failure or a stop however old: it is idle only by the owner's word (`pinned`).
+    // Managed lifecycle facts stay available for question handling and resource safety (`pinned`).
     const dshKey = provider === 'dsh' ? `dsh:${facts.id}` : dshId ? `dsh:${dshId}` : null;
     const verdict = judge(provider, { ...facts, dsh }, { now: at, ...rules, ...(dshKey && pinned(dshKey) ? { staleMs: Infinity } : {}) });
     const activity = [facts.lastActivityAt, dsh?.at].filter(Number.isFinite);
@@ -290,11 +290,15 @@ export function createSessions({
       state: verdict.state,
       // A state that has not changed keeps the time it began even when a reader has nothing better than its own clock to say.
       stateSince: verdict.stateSince ?? (before?.state === verdict.state ? before.stateSince : facts.updatedAt ?? at),
+      incomingAt: Math.max(facts.incomingAt ?? 0, before?.incomingAt ?? 0) || null,
       lastActivityAt: activity.length ? Math.max(...activity) : facts.updatedAt ?? 0,
       excerpt: oneLine(facts.excerpt || dsh?.excerpt || '', EXCERPT_CHARS), pending: verdict.pending,
       // A transcript question is resumable history, not evidence of a process waiting on a dialog. Preserve that distinction
       // separately from `state`; live work is never inferred from the cached SQLite row after a restart.
       turnActive: Boolean(dsh?.running || dsh?.pending || verdict.state === 'running' || (provider === 'claude' && facts.process?.status === 'waiting')),
+      // A Claude background shell keeps its process protected without occupying the foreground.
+      foregroundActive: Boolean(dsh?.running || (provider === 'claude' ? facts.process?.status === 'busy'
+        : provider === 'codex' ? facts.turn?.status === 'inProgress' && verdict.state === 'running' : verdict.state === 'running')),
     };
   }
 

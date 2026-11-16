@@ -19,6 +19,11 @@ enum ConversationHistoryItem: Identifiable, Equatable {
         }
     }
 
+    var isControls: Bool {
+        if case .controls = self { return true }
+        return false
+    }
+
     /// A card (the 待办 list) that ends the thread is shown from its top when it is taller than what can be seen: what the owner asked for starts with its title and its first rows, not its last.
     var isCard: Bool {
         if case let .transcript(row, _) = self, case let .command(command) = row { return command.card != nil }
@@ -68,11 +73,18 @@ struct ConversationHistoryView<Content: View>: View {
     /// puts it down (and the jump button, in the chat), after which the end of the thread is the end again.
     @Binding var cardFromTop: Bool
     let onReachedStart: () -> Void
+    var onLatestVisibilityChange: (Bool) -> Void = { _ in }
+    /// Told whether the history is being scrolled, and asked to keep the reader's row while a page of older history comes in (see `ScrollIdleGate`).
+    var scrollGate: ScrollIdleGate?
     @ViewBuilder let content: (ConversationHistoryItem) -> Content
 
     @State private var phase = ScrollPhase.idle
+    /// The top visible row, kept by SwiftUI's own `scrollPosition(id:)`: when older rows come in above it, the system keeps that row where it is. A reference, so that SwiftUI writing it as the reader
+    /// scrolls never redraws this view.
+    @State private var topRow = TopRowHolder()
     @State private var dragBeganFollowingWithKeyboard = false
     @State private var metrics = ScrollMetrics()
+    @State private var latestFrame = PagePresentationFrame()
 
     var body: some View {
         Group {
@@ -87,32 +99,49 @@ struct ConversationHistoryView<Content: View>: View {
         }
     }
 
+    private func historyRow(_ item: ConversationHistoryItem) -> some View {
+        ConversationHistoryRow(
+            item: item, target: target, canLoadAttachments: canLoadAttachments,
+            isCovered: isCovered, content: content
+        )
+        .equatable()
+        // Materialize the message and its reserved space together when scrolling to the end.
+        .padding(.top, item.id == items.first?.id ? topInset : 0)
+        .padding(.bottom, item.id == items.last?.id ? bottomInset : 0)
+        .background {
+            HistoryRowLocator(id: item.id, metrics: metrics)
+                .allowsHitTesting(false)
+                .id(RealizedHistoryAnchor(id: item.id))
+        }
+        .id(item.id)
+    }
+
     private func history(_ proxy: ScrollViewProxy) -> some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(items) { item in
-                    ConversationHistoryRow(
-                        item: item, target: target, canLoadAttachments: canLoadAttachments,
-                        isCovered: isCovered, content: content
-                    )
-                    .equatable()
-                    // Materialize the message and its reserved space together when scrolling to the end.
-                    .padding(.top, item.id == items.first?.id ? topInset : 0)
-                    .padding(.bottom, item.id == items.last?.id ? bottomInset : 0)
-                    .background {
-                        HistoryRowLocator(id: item.id, metrics: metrics)
-                            .allowsHitTesting(false)
-                            .id(RealizedHistoryAnchor(id: item.id))
-                    }
-                    .id(item.id)
+            VStack(alignment: .leading, spacing: 0) {
+                // The spinner row at the start stands outside the rows SwiftUI may keep in place: it goes when the page is in, and a reader waiting at the start was reading it (the phone's log).
+                ForEach(items.prefix(while: \.isControls)) { item in historyRow(item) }
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(items.drop(while: \.isControls)) { item in historyRow(item) }
                 }
+                .scrollTargetLayout()
             }
             .background(ScrollViewLocator(metrics: metrics).allowsHitTesting(false))
         }
+        .scrollPosition(id: Binding(get: { scrollGate?.keepsReader == true ? topRow.id : nil }, set: { topRow.id = $0 }), anchor: .top)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .defaultScrollAnchor(.top, for: .alignment)
         .scrollDismissesKeyboard(.interactively)
         .accessibilityIdentifier("chat.history")
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            ChatScrollPosition.isAtEnd(
+                contentHeight: geometry.contentSize.height, containerHeight: geometry.containerSize.height,
+                contentOffset: geometry.contentOffset.y, topInset: geometry.contentInsets.top, tolerance: 1
+            )
+        } action: { _, atEnd in
+            if !atEnd { onLatestVisibilityChange(false) }
+            else { reportLatestVisibility() }
+        }
 
         .onScrollGeometryChange(for: Bool.self) { geometry in
             isAtStart(geometry)
@@ -122,7 +151,9 @@ struct ConversationHistoryView<Content: View>: View {
             }
         }
         .onScrollGeometryChange(for: ViewportChange.self) { ViewportChange(geometry: $0) } action: { _, change in
+            metrics.observeLayout()
             record("chat.scroll.viewport", geometry: change.geometry)
+            positionHistory(proxy, reason: "viewport")
         }
         .onScrollGeometryChange(for: Bool.self) { geometry in
             ChatScrollPosition.isAwayFromEnd(
@@ -139,36 +170,45 @@ struct ConversationHistoryView<Content: View>: View {
                 contentInsets: geometry.contentInsets
             )
         } action: { _, _ in
+            metrics.observeLayout()
+            reportLatestVisibility()
             metrics.recordLayout(messageCount: items.count, following: followsLatest)
-            if followsLatest, canPositionHistory, phase == .idle,
-               metrics.jumpStartedAt == nil, !metrics.isReviewPositioning {
-                scrollToLatest(proxy, reason: "layout")
-            }
+            positionHistory(proxy, reason: "layout")
+        }
+        .onChange(of: items.map(\.id), initial: true) { _, ids in
+            metrics.itemIDs = ids
+            metrics.requestLayout()
         }
         .onChange(of: LatestRow(id: items.last?.id, isCard: items.last?.isCard ?? false), initial: true) { _, latest in
             metrics.latestID = latest.id
             metrics.latestIsCard = latest.isCard
+            reportLatestVisibility()
         }
         .onChange(of: cardFromTop, initial: true) { _, asked in
             metrics.showsCardFromTop = asked
+            metrics.requestLayout()
         }
-        .onChange(of: isPreparingForPresentation, initial: true) { _, preparing in
-            if preparing, followsLatest { scrollToLatest(proxy, reason: "prepare") }
+        .onChange(of: positioningAccess, initial: true) { _, access in
+            if access == .suspended, !followsLatest { metrics.rememberReadingPosition() }
+            metrics.pausePositioning()
+            metrics.positioning.setAccess(access)
+            metrics.requestLayout()
         }
         .onChange(of: jumpToken) { _, _ in jumpToLatest(proxy) }
         .onScrollPhaseChange { oldPhase, newPhase, context in
             phase = newPhase
-            if newPhase == .tracking, metrics.jumpStartedAt != nil {
-                metrics.cancelJump()
-                metrics.jumpStartedAt = nil
+            scrollGate?.set(scrolling: newPhase != .idle)
+            if newPhase == .tracking, metrics.jumpStartedAt != nil || metrics.positioning.request != nil {
+                metrics.pausePositioning()
+                metrics.positioning.interrupt()
                 followsLatest = false
                 if cardFromTop { cardFromTop = false }
             }
             if newPhase == .interacting {
                 // The owner takes the chat in hand: the end of the thread is the end again.
                 if cardFromTop { cardFromTop = false }
-                metrics.cancelJump()
-                metrics.jumpStartedAt = nil
+                metrics.pausePositioning()
+                metrics.positioning.interrupt()
                 dragBeganFollowingWithKeyboard = followsLatest && keyboardVisible
                 followsLatest = false
                 record("chat.scroll.begin", geometry: context.geometry)
@@ -185,21 +225,19 @@ struct ConversationHistoryView<Content: View>: View {
                 )
                 dragBeganFollowingWithKeyboard = false
                 // A normal drag has already landed. Only keyboard dismissal needs realignment.
-                if dismissedKeyboard, !isCovered { scrollToLatest(proxy, reason: "keyboard.dismiss") }
+                if !followsLatest { metrics.rememberReadingPosition() }
+                if dismissedKeyboard, !isCovered { positionHistory(proxy, reason: "keyboard.dismiss") }
                 record("chat.scroll.end", geometry: context.geometry)
                 if !isCovered, isAtStart(context.geometry) { onReachedStart() }
             }
         }
         .onChange(of: isCovered) { wasCovered, covered in
-            if covered {
-                metrics.cancelJump()
-                metrics.jumpStartedAt = nil
-            }
+            reportLatestVisibility()
             if wasCovered && !covered {
                 DSBotLog.record("chat.resume", counts: ["messageCount": items.count],
                                 state: followsLatest ? "following" : "reading")
                 metrics.recordLayout(event: "chat.resume.rows", messageCount: items.count, following: followsLatest)
-                if followsLatest { scrollToLatest(proxy, reason: "resume") }
+                metrics.requestLayout()
             }
         }
         .onChange(of: scenePhase) { _, next in
@@ -209,10 +247,17 @@ struct ConversationHistoryView<Content: View>: View {
                     geometry: metrics.geometry, state: followsLatest ? "following" : "reading"
                 )
                 metrics.recordLayout(event: "chat.foreground.rows", messageCount: items.count, following: followsLatest)
-                if followsLatest, phase == .idle, metrics.jumpStartedAt == nil {
-                    scrollToLatest(proxy, reason: "foreground")
-                }
+                metrics.requestLayout()
             }
+        }
+        .onAppear {
+            metrics.onLayout = {
+                scrollGate?.keepsReader = false
+                metrics.observeLayout()
+                positionHistory(proxy, reason: "materialized")
+                reportLatestVisibility()
+            }
+            metrics.requestLayout()
         }
         .task {
             DSBotLog.record(
@@ -221,12 +266,19 @@ struct ConversationHistoryView<Content: View>: View {
             )
         }
         .onDisappear {
-            metrics.cancelJump()
-            metrics.jumpStartedAt = nil
+            latestFrame.cancel()
+            scrollGate?.set(scrolling: false)
+            onLatestVisibilityChange(false)
+            metrics.pausePositioning()
+            metrics.onLayout = nil
         }
         #if DEBUG && targetEnvironment(simulator)
         .task(id: items.isEmpty) { await reviewJumpCycle(proxy) }
         #endif
+    }
+
+    private func reportLatestVisibility() {
+        latestFrame.afterLayout { onLatestVisibilityChange(metrics.isAtLatestContent) }
     }
 
     #if DEBUG && targetEnvironment(simulator)
@@ -263,15 +315,17 @@ struct ConversationHistoryView<Content: View>: View {
     /// Keep the in-flight jump in an unobserved reference: rebuilding the lazy stack on its first
     /// frame disrupts its estimates. Following resumes after the last message command lands.
     private func jumpToLatest(_ proxy: ScrollViewProxy) {
-        guard !isCovered, !items.isEmpty else { return }
+        guard metrics.positioning.access != .suspended, !metrics.itemIDs.isEmpty else { return }
+        scrollGate?.keepsReader = false
         metrics.cancelJump()
+        metrics.positioning.requestLatest()
         metrics.isReviewPositioning = false
         metrics.jumpStartedAt = ProcessInfo.processInfo.systemUptime
         DSBotLog.record(
             "chat.latest.jump", historyId: metrics.diagnosticID,
             counts: ["messageCount": items.count], geometry: metrics.geometry, state: "scroll"
         )
-        let animated = !reduceMotion && metrics.animateToLatest(itemIDs: items.map(\.id)) { id, anchor in
+        let animated = !reduceMotion && metrics.animateToLatest { id, anchor in
             proxy.scrollTo(id, anchor: UnitPoint(x: 0.5, y: anchor))
         } completion: {
             finishJump(proxy)
@@ -282,28 +336,25 @@ struct ConversationHistoryView<Content: View>: View {
     private func finishJump(_ proxy: ScrollViewProxy) {
         guard let startedAt = metrics.jumpStartedAt else { return }
         metrics.jumpStartedAt = nil
-        scrollToLatest(proxy, reason: "jump.complete")
-        followsLatest = true
+        positionHistory(proxy, reason: "jump.complete")
         DSBotLog.record(
-            metrics.latestIsVisible ? "chat.latest.complete" : "chat.latest.unsettled",
+            metrics.positioning.request == nil ? "chat.latest.complete" : "chat.latest.unsettled",
             historyId: metrics.diagnosticID,
             elapsedMs: (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000, geometry: metrics.geometry
         )
     }
 
-    private func scrollToLatest(_ proxy: ScrollViewProxy, reason: String) {
-        guard canPositionHistory else { return }
-        // An animation can outlive the snapshot that started it.
-        guard let id = metrics.latestID ?? items.last?.id else { return }
-        // A latest row that has no place of its own yet (`needsWalk`) is not jumped to: the jump goes to the stack's estimate of it. Walk there, as the jump button does.
-        if reason == "layout", metrics.needsWalk(to: id, itemIDs: items.map(\.id)) {
-            metrics.recordFollowing(reason: "layout.walk", targetID: id, messageCount: items.count)
-            jumpToLatest(proxy)
+    private func positionHistory(_ proxy: ScrollViewProxy, reason: String) {
+        guard metrics.positioning.access != .suspended, phase == .idle,
+              metrics.jumpStartedAt == nil, !metrics.isReviewPositioning else { return }
+        if let completed = metrics.completePositioningIfReached() {
+            if completed == .latest { followsLatest = true }
             return
         }
-        let target = metrics.followingTarget(latestID: id, firstID: items.first?.id)
+        guard let target = metrics.positioningTarget(followsLatest: followsLatest) else { return }
         metrics.recordFollowing(
-            reason: target.isRecovery ? "\(reason).recover" : reason, targetID: target.id, messageCount: items.count
+            reason: target.isRecovery ? "\(reason).recover" : reason,
+            targetID: target.id, messageCount: metrics.itemIDs.count, following: followsLatest
         )
         // A built row's own background has a real rectangle; the lazy occurrence may still have an estimated one.
         var transaction = Transaction(animation: nil)
@@ -311,12 +362,17 @@ struct ConversationHistoryView<Content: View>: View {
         withTransaction(transaction) {
             proxy.scrollTo(target.readerID, anchor: UnitPoint(x: 0.5, y: target.anchor))
         }
+        metrics.requestLayout()
     }
 
-    private var canPositionHistory: Bool { !isCovered || isPreparingForPresentation }
+    private var positioningAccess: HistoryPositioningAccess {
+        .resolve(covered: isCovered, preparing: isPreparingForPresentation, active: scenePhase == .active)
+    }
 
+    /// Older history is asked for while the reader is still a screen and a half below the start, so that the page is in before the start is reached: a page that lands while the scroll view bounces off its
+    /// start is overwritten by the bounce (the log of the owner's phone, 2026-11-16), one that lands in the middle of the history is kept in place by SwiftUI's own scroll-position tracking.
     private func isAtStart(_ geometry: ScrollGeometry) -> Bool {
-        geometry.contentOffset.y + geometry.contentInsets.top <= 24
+        geometry.contentOffset.y + geometry.contentInsets.top <= geometry.containerSize.height * 1.5
     }
 
     /// The last row of the thread and whether it is a card: what following and the jump to the latest aim at.
@@ -352,6 +408,31 @@ struct ConversationHistoryView<Content: View>: View {
                 "bottomInset": Double(geometry.contentInsets.bottom)
             ], state: followsLatest ? "following" : "reading"
         )
+    }
+}
+
+private final class TopRowHolder { var id: String? }
+
+/// Older history is put in above the reader only while the history is at rest, and SwiftUI's own scroll-position tracking keeps the row the reader is looking at in place across it. The store waits
+/// here before it applies a page; `set(scrolling:)` is told by the history view, and nothing is polled. `keepsReader` is raised in the same turn as the page is applied and lowered by the next
+/// layout: SwiftUI is handed the reader's row only then, because a row held all the time stops the jump to the latest message from landing.
+@MainActor
+final class ScrollIdleGate {
+    var keepsReader = false
+    private var scrolling = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func set(scrolling next: Bool) {
+        scrolling = next
+        guard !next else { return }
+        let ready = waiters
+        waiters = []
+        for waiter in ready { waiter.resume() }
+    }
+
+    func waitUntilIdle() async {
+        guard scrolling else { return }
+        await withCheckedContinuation { waiters.append($0) }
     }
 }
 

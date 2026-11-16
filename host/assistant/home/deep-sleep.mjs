@@ -1,5 +1,5 @@
-// Deep sleep of the agents the issues are given to (docs/assistant.md 3.4): once an agent is idle, or its run finished and waits for a look, and nobody has handled it for half
-// an hour (sessions/deep-sleep.mjs, which the issues store applies: its issue says `deepSleep`; an agent that asks, fails or was stopped never sleeps), what 嘟嘟 holds for its session is let go of, once. The next turn
+// Deep sleep releases stopped issue sessions once, after thirty minutes idle or an hour unread.
+// Actual work, live questions/approvals and background jobs remain protected by lifecycle checks. The next turn
 // starts the agent again by itself, and the owner speaking to the session or opening it makes it awake. It never changes an issue's status or the
 // agent's state, calls no model and writes nothing to the log: the session is as it was, and only what is kept in memory for it is gone.
 //
@@ -13,7 +13,7 @@
 //   close()
 //
 //   withDeepSleep(snapshot, key, asleep)  what the DSH sidebar and the phone are told of a session: its snapshot, plus `deepSleep: true` when `asleep(key)` says its crescent is to be drawn
-//                (the caller says so for every agent in deep sleep, whatever its mark: the crescent is drawn over the corner and the mark itself is left as it is, so it shows again on waking)
+//                (both clients retain unread's red dot and show the crescent for idle only).
 import { hasEndedTurn } from '../sessions/deep-sleep.mjs';
 
 /**

@@ -141,6 +141,8 @@ test('a TUI rewind or an older native store does not overwrite or replay a newer
 for (const api of ['legacy', 'query']) test(`live synchronization publishes through Session.append during idle maintenance and never takes a second writer (${api})`, async () => {
   const events = initial([turn('question', 'answer')]);
   let maintenance = 0;
+  let flushed = false;
+  const published: any[][] = [];
   const live = {
     status: 'idle',
     phase: { kind: 'idle', lastTurn: 1 },
@@ -157,7 +159,12 @@ for (const api of ['legacy', 'query']) test(`live synchronization publishes thro
     },
   };
   const sync = createNativeSync({
-    persistence: () => ({ open: () => { throw new Error('writer must not be opened'); }, flush: async () => {} }),
+    persistence: () => ({ open: () => { throw new Error('writer must not be opened'); }, flush: async () => { flushed = true; } }),
+    onHistoryAppended: (id: string, updates: any[]) => {
+      assert.equal(id, 'dsh-1');
+      assert.equal(flushed, true, 'attention follows the durable append');
+      published.push(updates);
+    },
     agents: () => ({ get: () => live }),
     ...(api === 'query'
       ? { query: () => ({ readSession: async () => ({ session: { id: 'dsh-1', cwd: '/work' }, events: [...events] }) }) }
@@ -167,11 +174,15 @@ for (const api of ['legacy', 'query']) test(`live synchronization publishes thro
   live.status = 'running';
   assert.equal((await sync(request)).deferred, true);
   assert.equal(maintenance, 0);
+  assert.equal(published.length, 0);
   live.status = 'idle';
   assert.equal((await sync(request)).updated, true);
   assert.equal(maintenance, 1);
   assert.equal(live.phase.lastTurn, 2, 'the next real prompt must start turn 3, not reuse imported turn 2');
+  assert.equal(published.length, 1);
+  assert.ok(JSON.stringify(published[0]).includes('new answer'));
   assert.equal((await sync(request)).updated, false);
+  assert.equal(published.length, 1);
 });
 
 test('live synchronization defers for an unknown driver instead of appending turns it cannot safely resume', async () => {

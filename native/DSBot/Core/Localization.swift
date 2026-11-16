@@ -45,10 +45,21 @@ enum L10n {
     }
 
     static func date(_ value: Date, template: String, timezone: TimeZone = .current) -> String {
+        let key = "\(locale.identifier)/\(timezone.identifier)/\(template)" as NSString
+        if let formatter = dateFormatters.object(forKey: key) { return formatter.string(from: value) }
         let formatter = DateFormatter()
         formatter.locale = locale
         formatter.timeZone = timezone
         formatter.setLocalizedDateFormatFromTemplate(template)
+        dateFormatters.setObject(formatter, forKey: key)
         return formatter.string(from: value)
     }
+
+    /// Row bodies are reevaluated during streaming. Reuse the expensive localized formatter;
+    /// NSCache and DateFormatter are thread safe on the supported systems. Never mutate a cached formatter.
+    private static let dateFormatters: NSCache<NSString, DateFormatter> = {
+        let cache = NSCache<NSString, DateFormatter>()
+        cache.countLimit = 32
+        return cache
+    }()
 }

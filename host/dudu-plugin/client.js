@@ -989,6 +989,7 @@ window.__ModuleLoader__.load({
           return () => document.removeEventListener('click', home, true);
         });
         ctx.effect(() => ui?.installSessionHistoryCache(ctx.sessions));
+        ctx.effect(() => ui?.installSessionReadReceipts(ctx.sessions, request));
         if (ui?.SidebarAgent) {
           const activity = ui.createSidebarActivity(request);
           ctx.effect(() => () => activity.dispose());

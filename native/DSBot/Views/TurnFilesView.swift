@@ -2,6 +2,18 @@ import SwiftUI
 import QuickLook
 import UIKit
 
+#if DEBUG && targetEnvironment(simulator)
+struct SimulatorFileBrowserReview: View {
+    let delivered: Bool
+    @State private var changes: ConversationChanges? = ConversationParityFixture.changes
+
+    var body: some View {
+        if delivered { DeliveredFilesBrowser(files: ConversationParityFixture.presentedFiles) }
+        else { ChangedFilesBrowser(changes: $changes, seq: 109) }
+    }
+}
+#endif
+
 struct TurnFilesView: View {
     let files: [DeliveredFile]
     let changesSeq: Double?
@@ -189,9 +201,10 @@ private struct DeliveredFilesBrowser: View {
 
     var body: some View {
         let names = TurnFileCollection.displayNames(files)
+        let matching = TurnFileCollection.matching(files, query: query)
         NavigationStack {
             List {
-                ForEach(TurnFileCollection.matching(files, query: query)) { file in
+                ForEach(matching) { file in
                     DeliveredFileRow(file: file, title: names[file.id] ?? file.name, preview: preview)
                         .listRowInsets(EdgeInsets())
                 }
@@ -206,8 +219,7 @@ private struct DeliveredFilesBrowser: View {
             .accessibilityIdentifier("files.browser")
         }
         .foregroundStyle(DSBotStyle.chatSecondary)
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .modifier(FileBrowserPresentation(rowCount: matching.count))
     }
 }
 
@@ -220,10 +232,11 @@ private struct ChangedFilesBrowser: View {
     @State private var requestID: UUID?
 
     var body: some View {
+        let matching = changes.map { TurnFileCollection.matchingChanges($0.files, query: query) } ?? []
         NavigationStack {
             List {
                 if let changes {
-                    ForEach(TurnFileCollection.matchingChanges(changes.files, query: query), id: \.self) { index in
+                    ForEach(matching, id: \.self) { index in
                         let file = changes.files[index]
                         NavigationLink {
                             ConversationDiffContent(seq: seq, index: index, name: file.display)
@@ -236,11 +249,12 @@ private struct ChangedFilesBrowser: View {
                                     .truncationMode(.middle)
                                 FileChangeCounts(added: file.added, deleted: file.deleted)
                             }
-                            .padding(.vertical, 8)
-                            .frame(minHeight: 52, alignment: .leading)
+                            .padding(.vertical, 10)
+                            .frame(minHeight: 56, alignment: .leading)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
                         }
+                        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
                         .disabled(access?.connected != true)
                         .accessibilityIdentifier("changes.file.\(index)")
                         .contextMenu {
@@ -264,8 +278,7 @@ private struct ChangedFilesBrowser: View {
             .toolbar { FileBrowserClose() }
             .accessibilityIdentifier("changes.browser")
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .modifier(FileBrowserPresentation(rowCount: matching.count))
         .task(id: access?.connected) { await loadChanges() }
     }
 
@@ -286,17 +299,32 @@ private struct ChangedFilesBrowser: View {
     }
 }
 
+/// The same compact start as the other App lists; a full-height view remains an explicit drag.
+private struct FileBrowserPresentation: ViewModifier {
+    let rowCount: Int
+    @ScaledMetric(relativeTo: .subheadline) private var rowHeight: CGFloat = 56
+    @State private var expanded = false
+
+    private var height: CGFloat { min(600, max(188, 144 + CGFloat(rowCount) * rowHeight)) }
+    private var fitted: PresentationDetent { .height(height) }
+
+    func body(content: Content) -> some View {
+        content
+            .presentationDetents([fitted, .large], selection: Binding(
+                get: { expanded ? .large : fitted },
+                set: { expanded = $0 == .large }
+            ))
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(28)
+    }
+}
+
 private struct FileBrowserClose: ToolbarContent {
     @Environment(\.dismiss) private var dismiss
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
-            Button { dismiss() } label: {
-                DSBotIcon(.close, size: 20)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel(L10n.text("关闭"))
+            SheetCloseButton { dismiss() }
             .accessibilityIdentifier("files.browser.close")
         }
     }

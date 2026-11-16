@@ -51,7 +51,7 @@ const centreOnPointer = ({ transform, activatorEvent, draggingNodeRect, overlayN
  * agent state: the group under the pointer gets a blue outline, as in Linear, and the row is held up as a small card.
  */
 export function IssueList({ list, view, tab, show, collapsed, onToggleGroup, onAddToGroup, selected, onSelect, onStatus, onMove, onOpen,
-  request, onChange, onAssign, onDelete, onOpenSession, onAddSub, onDuplicate, onPreviewSession }) {
+  request, onChange, onAssign, onDelete, onOpenSession, onAddSub, onDuplicate, onPreviewSession, onPin, pinning }) {
   const scroller = useRef(null);
   const now = useMemo(() => Date.now(), [list.items, list.groups]); // eslint-disable-line react-hooks/exhaustive-deps -- recomputed when the data is
   const [menuFor, setMenuFor] = useState(null);
@@ -59,7 +59,7 @@ export function IssueList({ list, view, tab, show, collapsed, onToggleGroup, onA
   const [over, setOver] = useState(null); // { key }: the group the pointer is over
   const hover = useIssueShortcuts();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
-  const field = view.group ?? (view.layout === 'board' ? 'agentState' : null);
+  const field = view.group ?? (view.layout === 'board' ? 'status' : null);
   const entries = useMemo(() => {
     if (!field || !list.groups) return list.items.map((issue) => ({ type: 'issue', id: `i:${issue.id}`, issue }));
     let groups = view.showEmpty ? withEmptyGroups(list.groups, field, tab) : list.groups;
@@ -150,6 +150,7 @@ export function IssueList({ list, view, tab, show, collapsed, onToggleGroup, onA
                   issue={issue} now={now} show={show} menuOpen={menuFor === issue.id} onHover={hover} onStatus={onStatus} onOpen={() => onOpen(issue.id, ids)} onNavigate={(id) => onOpen(id, ids)}
                   selected={selected.has(issue.id)} selecting={selected.size > 0} onSelect={(id, shift) => onSelect(id, shift, ids)}
                   request={request} onChange={onChange} onAssign={onAssign} onDelete={onDelete} onOpenSession={onOpenSession} onAddSub={onAddSub} onDuplicate={onDuplicate} onPreviewSession={onPreviewSession}
+                  onPin={onPin} pinning={pinning?.has(`issue:${issue.id}`)}
                   onMenuOpenChange={(open) => setMenuFor(open ? issue.id : (current) => (current === issue.id ? null : current))}
                 />
               </RowFrame>

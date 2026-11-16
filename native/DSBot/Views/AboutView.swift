@@ -3,8 +3,6 @@ import SwiftUI
 /// 关于: the settings' page about Dudu itself (owner, 2026-11-12). The logo, the name and the product's one line,
 /// set as the connection guide sets them; the page has the settings' own chrome.
 struct AboutView: View {
-    @Environment(\.dismiss) private var dismiss
-
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
@@ -29,20 +27,15 @@ struct AboutView: View {
             .accessibilityIdentifier("about.header")
         }
         .background(DSBotStyle.settingsBackground.ignoresSafeArea())
-        .navigationBarBackButtonHidden(true)
+        .navigationBarBackButtonHidden(false)
+        .toolbarRole(.editor)
+        .tint(DSBotStyle.ink)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(DSBotStyle.settingsBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.light, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button { dismiss() } label: {
-                    DSBotIcon(.back, size: 20).foregroundStyle(DSBotStyle.ink)
-                }
-                .accessibilityLabel(L10n.text("返回"))
-                .accessibilityIdentifier("about.back")
-            }
             ToolbarItem(placement: .principal) {
                 Text(L10n.text("关于"))
                     .font(.system(size: 16, weight: .semibold))

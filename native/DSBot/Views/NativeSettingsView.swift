@@ -9,10 +9,11 @@ struct NativeSettingsView: View {
     @ObservedObject var store: DSBotStore
     /// The toolbar above the page (the page itself starts below the status bar).
     let topInset: CGFloat
+    var displayedModel: SettingsPageModel?
     let report: SettingsReport
 
     var body: some View {
-        if let model = navigator.current {
+        if let model = displayedModel ?? navigator.current {
             SettingsPageView(model: model, navigator: navigator, store: store, topInset: topInset, report: report)
                 .id(model.id)
         } else {
@@ -22,39 +23,90 @@ struct NativeSettingsView: View {
 }
 
 /// Shared by the settings navigation bar and the root toolbar.
-struct NativeSettingsSaveButton: View {
+struct NativeSettingsToolbarActions: View {
     @ObservedObject var navigator: SettingsNavigator
     @ObservedObject var store: DSBotStore
+    var usesGlass = false
+    var displayedModel: SettingsPageModel?
     let report: SettingsReport
 
     var body: some View {
-        if let model = navigator.current {
-            if let save = model.page?.save {
-                Button {
-                    Task {
-                        if await model.act(save.act, form: true, using: store, report: report),
-                           navigator.current?.id == model.id {
-                            navigator.pop()
-                        }
+        if let model = displayedModel ?? navigator.current, model.hasToolbarActions {
+            HStack(spacing: 8) {
+                if let save = model.page?.save {
+                    if usesGlass {
+                        saveButton(save, model: model).buttonStyle(DSBotGlassCapsuleButtonStyle())
+                    } else {
+                        saveButton(save, model: model)
                     }
-                } label: {
-                    Group {
-                        if model.busy || model.isPreviewing {
-                            ProgressView().tint(DSBotStyle.ink)
-                        } else {
-                            Text(save.title).font(.system(size: 15, weight: .medium))
-                        }
-                    }
-                    .frame(minWidth: 44, minHeight: 44)
+                } else if model.busy {
+                    ProgressView().tint(DSBotStyle.muted)
+                        .frame(width: 44, height: 44)
                 }
-                .disabled(!model.canSave || store.status != .connected)
-                .accessibilityLabel(save.title)
-                .accessibilityIdentifier("settings.save")
-            } else if model.busy {
-                ProgressView().tint(DSBotStyle.muted)
-                    .frame(width: 44, height: 44)
+                if let page = model.page, !page.additionLinks.isEmpty || page.environmentItem != nil {
+                    if usesGlass {
+                        additionControl(page, model: model).buttonStyle(DSBotGlassButtonStyle())
+                    } else {
+                        additionControl(page, model: model)
+                    }
+                }
             }
         }
+    }
+
+    private func saveButton(_ save: SettingsButton, model: SettingsPageModel) -> some View {
+        Button {
+            Task {
+                if await model.act(save.act, form: true, using: store, report: report),
+                   navigator.current?.id == model.id {
+                    navigator.pop()
+                }
+            }
+        } label: {
+            Group {
+                if model.busy || model.isPreviewing {
+                    ProgressView().tint(DSBotStyle.ink)
+                } else {
+                    Text(save.title).font(.system(size: 15, weight: .medium))
+                }
+            }
+            .frame(minWidth: 44, minHeight: 44)
+        }
+        .disabled(!model.canSave || store.status != .connected)
+        .accessibilityLabel(save.title)
+        .accessibilityIdentifier("settings.save")
+    }
+
+    private func additionControl(_ page: SettingsPage, model: SettingsPageModel) -> some View {
+        Group {
+            if page.additionLinks.count > 1 {
+                Menu {
+                    ForEach(page.additionLinks) { row in
+                        if let to = row.to { Button(row.title) { navigator.open(to) } }
+                    }
+                } label: { additionLabel }
+            } else {
+                Button {
+                    if let to = page.additionLinks.first?.to {
+                        navigator.open(to)
+                    } else {
+                        model.addEnvironmentRow()
+                    }
+                } label: { additionLabel }
+            }
+        }
+        .disabled(model.busy || model.isPreviewing || store.status != .connected ||
+                  (page.additionLinks.isEmpty && model.environmentRows.count >= 40))
+        .accessibilityLabel(page.additionLinks.count > 1 ? L10n.text("添加") :
+                            (page.additionLinks.first?.title ?? page.environmentItem?.title ?? L10n.text("添加")))
+        .accessibilityIdentifier("settings.add")
+    }
+
+    private var additionLabel: some View {
+        DSBotIcon(.plus, size: 22)
+            .foregroundStyle(DSBotStyle.ink)
+            .frame(width: DSBotLayout.toolbarButtonSize, height: DSBotLayout.toolbarButtonSize)
+            .contentShape(Circle())
     }
 }
 
@@ -74,7 +126,6 @@ private struct SettingsPageView: View {
     @State private var revealed: String?
     @State private var confirming: PendingConfirm?
     @State private var switches: [String: Bool] = [:]
-    @State private var environmentRows: [Int] = []
 
     private let amber = Color(red: 245.0 / 255, green: 158.0 / 255, blue: 11.0 / 255)
 
@@ -149,17 +200,21 @@ private struct SettingsPageView: View {
                 Text(L10n.text("这一页没能加载"))
                     .font(.system(size: 15))
                     .foregroundStyle(DSBotStyle.muted)
-                Button(L10n.text("重试")) { Task { await model.load(using: store) } }
-                    .font(.system(size: 15, weight: .medium))
-                    .buttonStyle(DSBotGlassCapsuleButtonStyle())
-                    .padding(.horizontal, 20)
-                    .frame(height: 44)
+                Button { Task { await model.load(using: store) } } label: {
+                    Text(L10n.text("重试"))
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(DSBotStyle.ink)
+                        .padding(.horizontal, 20)
+                        .frame(height: 44)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(DSBotGlassCapsuleButtonStyle())
             }
             .frame(maxWidth: .infinity)
             .padding(.top, 80)
         case .loaded:
-            if let page = model.page {
-                ForEach(Array(page.sections.enumerated()), id: \.offset) { _, section in
+            if model.page != nil {
+                ForEach(Array(model.contentSections.enumerated()), id: \.offset) { _, section in
                     sectionView(section)
                 }
                 if let problem = model.problem {
@@ -227,7 +282,7 @@ private struct SettingsPageView: View {
         case "switch": switchRow(row)
         case "choice": choiceRow(row)
         case "field": fieldRow(row)
-        case "environment": environmentRow(row)
+        case "environment": environmentRow
         case "action": actionRow(row)
         default: textRow(row)
         }
@@ -511,9 +566,9 @@ private struct SettingsPageView: View {
         Binding(get: { model.values[key] ?? "" }, set: { model.values[key] = $0 })
     }
 
-    private func environmentRow(_ row: SettingsItem) -> some View {
+    private var environmentRow: some View {
         VStack(spacing: 12) {
-            ForEach(environmentRows, id: \.self) { id in
+            ForEach(model.environmentRows, id: \.self) { id in
                 HStack(spacing: 8) {
                     TextField(L10n.text("变量名"), text: fieldBinding("envName\(id)"))
                         .textInputAutocapitalization(.never)
@@ -522,9 +577,7 @@ private struct SettingsPageView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Button {
-                        environmentRows.removeAll { $0 == id }
-                        model.values.removeValue(forKey: "envName\(id)")
-                        model.values.removeValue(forKey: "envValue\(id)")
+                        model.removeEnvironmentRow(id)
                     } label: {
                         DSBotIcon(.close, size: 16)
                             .frame(width: 44, height: 44)
@@ -535,13 +588,6 @@ private struct SettingsPageView: View {
                 }
                 .font(.system(size: 14, design: .monospaced))
             }
-            Button(row.title) {
-                if let id = (0..<40).first(where: { !environmentRows.contains($0) }) { environmentRows.append(id) }
-            }
-            .font(.system(size: 15))
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .buttonStyle(.plain)
-            .disabled(environmentRows.count >= 40)
         }
         .foregroundStyle(DSBotStyle.ink)
         .padding(.horizontal, 16)

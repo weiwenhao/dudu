@@ -16,7 +16,9 @@ struct AcceptedSubmission: Equatable, Sendable, Identifiable {
     var attachments: [TranscriptAttachment] {
         images.enumerated().map { index, image in
             TranscriptAttachment(kind: "image", name: image.name, id: "\(id):\(index)")
-        } + files.map { TranscriptAttachment(kind: "file", name: $0.name) }
+        } + files.map {
+            TranscriptAttachment(kind: VideoPreviewStorage.isVideo(name: $0.name) ? "video" : "file", name: $0.name, id: $0.receiptId)
+        }
     }
     var row: TranscriptRow {
         .user(UserRow(

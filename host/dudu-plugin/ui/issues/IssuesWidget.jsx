@@ -1,4 +1,4 @@
-import { statusLabel, statusType } from './workflow.js';
+import { receiveStatuses, statusLabel, statusType } from './workflow.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Layers, ListFilter, Plus, Search } from 'lucide-react';
 import { Tabs } from 'radix-ui';
@@ -15,6 +15,8 @@ import { appliedFilters, removeFilter, toggleFilter } from './filter-state.js';
 import { FilterBar } from './FilterBar.jsx';
 import { FilterMenu } from './FilterMenu.jsx';
 import { IssueList } from './IssueList.jsx';
+import { Conversations } from './Conversations.jsx';
+import { IssueScopeMenu } from './IssueScopeMenu.jsx';
 import { AGENT_NAMES, leafIds, presetOf } from './model.js';
 import { NewIssueDialog } from './NewIssueDialog.jsx';
 import { keepVisible, selectRow } from './selection.js';
@@ -26,6 +28,7 @@ import { isTyping } from '../lib/typing.js';
 import { DeleteConfirm, DeleteIssuesDialog } from './DeleteIssuesDialog.jsx';
 import { useSavedViews, viewKey } from './saved-views.js';
 import { ViewNameDialog } from './ViewDialogs.jsx';
+import { usePolled } from '../widgets/use-polled.js';
 
 const TABS = ['active', 'backlog', 'all'];
 const SEARCH_DELAY_MS = 250;
@@ -48,9 +51,42 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   const savedView = saved.find((entry) => viewKey(entry.id) === tab);
   const base = savedView ? savedView.base : TABS.includes(tab) ? tab : 'active';
   const view = viewOf(tab);
+  const chat = view.layout === 'chat';
   const query = useMemo(() => listRequest(base, view, Date.now(), base === 'all' ? searched : ''), [base, view, searched]);
-  const list = useIssueList(request, query);
-  const { patch, move, refresh } = list;
+  const list = useIssueList(request, query, !chat);
+  const homeQuery = useMemo(() => ({ tab: query.tab, ...(query.filter ? { filter: query.filter } : {}) }), [query]);
+  const home = usePolled(request, 'home/list', homeQuery, { every: 5000, enabled: chat });
+  useEffect(() => { if (chat && home.value?.statuses) receiveStatuses(home.value.statuses); }, [chat, home.value]);
+  const { patch, move } = list;
+  const refresh = useCallback(() => window.dispatchEvent(new Event('dudu:home-changed')), []);
+  useEffect(() => {
+    if (!chat) return undefined;
+    const changed = () => { void home.refresh(); };
+    window.addEventListener('dudu:home-changed', changed);
+    window.addEventListener('dudu:session-read', changed);
+    return () => {
+      window.removeEventListener('dudu:home-changed', changed);
+      window.removeEventListener('dudu:session-read', changed);
+    };
+  }, [chat, home.refresh]);
+  const pinRequests = useRef(new Set());
+  const [pinning, setPinning] = useState(() => new Set());
+  const pin = useCallback(async (issue) => {
+    const target = issue.id === 'assistant' ? 'assistant' : `issue:${issue.id}`;
+    if (pinRequests.current.has(target)) return;
+    pinRequests.current.add(target);
+    setPinning(new Set(pinRequests.current));
+    try {
+      const result = await request('home/pin', { target, pinned: !issue.pinned });
+      if (result.outcome !== 'success') throw new Error();
+      if (issue.id !== 'assistant') patch(issue.id, { pinned: !issue.pinned });
+    } catch { toast({ message: T.toast.failed }); }
+    finally {
+      refresh();
+      pinRequests.current.delete(target);
+      setPinning(new Set(pinRequests.current));
+    }
+  }, [request, patch, refresh, toast]);
 
   // Every change says so at the bottom.
   const changeStatus = useCallback(async (issue, status) => {
@@ -110,7 +146,7 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   const select = useCallback((id, shift, ids) => { setSelected((current) => selectRow(current, id, { shift, anchor: anchor.current, ids })); anchor.current = id; }, []);
   const visibleIds = useMemo(() => (list.groups ? leafIds(list.groups) : list.items.map((issue) => issue.id)), [list.items, list.groups]);
   useEffect(() => { setSelected((current) => keepVisible(current, visibleIds)); }, [visibleIds]);
-  useEffect(() => { setSelected(new Set()); anchor.current = null; }, [tab]);
+  useEffect(() => { setSelected(new Set()); anchor.current = null; }, [tab, view.layout]);
   const bulk = useCallback(async (change, call) => {
     const ids = [...selected];
     const groupId = `bulk-${Date.now()}`;
@@ -127,9 +163,10 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   const grouped = [view.group, view.subGroup];
   const show = useMemo(() => ({
     ...view.properties,
+    updated: view.layout === 'list' ? view.listUpdated !== false : view.properties.updated,
     project: view.properties.project && !grouped.includes('project'),
     agent: view.properties.agent && !grouped.includes('agent'),
-  }), [view.properties, view.group, view.subGroup]); // eslint-disable-line react-hooks/exhaustive-deps -- `grouped` is those two
+  }), [view.properties, view.layout, view.listUpdated, view.group, view.subGroup]); // eslint-disable-line react-hooks/exhaustive-deps -- `grouped` is those two
 
   // Folded groups and columns are remembered per tab while the page is open.
   const [folded, setFolded] = useState({});
@@ -143,16 +180,26 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   // The filter menu opens from the icon beside the tabs, from "+ Filter" in the chip row, or with F.
   const root = useRef(null);
   const filterButton = useRef(null);
+  const scopeButton = useRef(null);
+  const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [menu, setMenu] = useState({ open: false, anchor: null });
-  const openFilter = useCallback((element, align) => setMenu({ open: true, anchor: { element, align } }), []);
+  const openFilter = useCallback((element, align) => {
+    // Compact controls live in the scope popover; anchor their filters to the
+    // persistent scope button before closing it, including the F shortcut.
+    const compact = element?.closest('[data-conversation-compact-tools]');
+    if (compact) setScopeMenuOpen(false);
+    setMenu({ open: true, anchor: { element: compact ? scopeButton.current : element, align } });
+  }, []);
   useEffect(() => {
     const onKey = (event) => {
       if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
       if (!root.current?.getClientRects().length || root.current.closest('[inert]')) return;
       if (event.key === 'Escape' && !event.defaultPrevented) { setSelected((current) => (current.size ? new Set() : current)); return; }
-      if (event.key.toLowerCase() !== 'f' || !filterButton.current) return;
+      const button = filterButton.current ?? scopeButton.current;
+      if (event.key.toLowerCase() !== 'f' || !button) return;
       event.preventDefault();
-      openFilter(filterButton.current, 'end');
+      setScopeMenuOpen(false);
+      openFilter(button, 'end');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -160,16 +207,71 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   const filtered = appliedFilters(view.filter, FILTER_KEYS).length > 0;
   const facets = useFacets(request, menu.open, query.tab, query.filter);
   const addTo = useCallback((entry) => startCreating({ preset: presetOf(entry.field, entry.groupKey) }), [startCreating]);
+  const selectView = (id) => {
+    // The built-in scopes stay in the conversation layout when selected here.
+    // Named views still open with their own saved layout, filters and properties.
+    if (chat && TABS.includes(id)) update(id, { layout: 'chat' });
+    setTab(id);
+  };
+  const addViewButton = <Button variant="ghost" size="icon-sm"
+    className={cn('size-7 text-muted-foreground', chat ? 'rounded-md' : 'rounded-full')}
+    aria-label={T.views.add} title={T.views.add} onClick={() => { setScopeMenuOpen(false); setNaming('new'); }}><Layers /></Button>;
+  const actions = <>
+    <Button ref={filterButton} variant={chat ? 'ghost' : 'outline'} size="icon-sm"
+      className={cn('size-7', chat ? 'rounded-md text-muted-foreground' : 'rounded-full', menu.open && 'bg-accent')}
+      aria-label={T.filterButton} aria-haspopup="dialog" aria-expanded={menu.open} onClick={(event) => openFilter(event.currentTarget, 'end')}>
+      <ListFilter />
+    </Button>
+    <DisplayMenu
+      tab={base} view={view} onChange={(change) => update(tab, change)}
+      onReset={() => update(tab, (current) => ({ ...DEFAULT_VIEW, filter: current.filter }))}
+      variant={chat ? 'ghost' : 'outline'} className={chat ? 'rounded-md text-muted-foreground' : undefined}
+    />
+    <Button variant={chat ? 'ghost' : 'outline'} size="icon-sm"
+      className={cn('size-7', chat ? 'rounded-md text-muted-foreground' : 'rounded-full')}
+      aria-label={T.newIssue.title} title={T.newIssue.title} onClick={() => { setScopeMenuOpen(false); startCreating({ preset: {} }); }}><Plus /></Button>
+  </>;
+  const searchControl = base === 'all' && <div className="relative">
+    <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+    <input
+      type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={T.search.placeholder} aria-label={T.search.label}
+      className={cn('h-7 border bg-background pr-3 pl-8 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50',
+        chat ? 'w-full rounded-md' : 'w-[150px] rounded-full @[560px]:w-[220px]')}
+    />
+  </div>;
+  const filterBar = filtered && <FilterBar
+    filter={view.filter} onAdd={(element) => openFilter(element, 'start')}
+    onRemove={(field) => update(tab, (current) => ({ filter: removeFilter(current.filter, field) }))}
+    onClear={() => update(tab, { filter: {} })}
+  />;
+  const filterMenu = <FilterMenu
+    open={menu.open} anchor={menu.anchor} filter={view.filter} counts={chat ? home.value?.counts : list.counts} facets={facets}
+    onOpenChange={(open) => setMenu((current) => ({ ...current, open }))}
+    onToggle={(field, value) => update(tab, (current) => ({ filter: toggleFilter(current.filter, field, value) }))}
+  />;
+  const sidebarTools = <div className="shrink-0">
+    {searchControl && <div className="px-3 pb-2">{searchControl}</div>}
+    {filterBar && <div className="dudu-conversation-filters">{filterBar}</div>}
+  </div>;
+  const conversationHeader = (compact) => <>
+    <header className="dudu-conversation-toolbar">
+      <IssueScopeMenu value={tab} saved={saved} onChange={selectView} onRename={setNaming} onDelete={setRemovingView}
+        open={scopeMenuOpen} onOpenChange={setScopeMenuOpen} triggerRef={scopeButton} compact={compact}>
+        {compact && <div data-conversation-compact-tools>
+          <div className="flex items-center justify-end gap-1.5 px-1.5 pt-1.5 pb-2">{addViewButton}{actions}</div>
+          {sidebarTools}
+        </div>}
+      </IssueScopeMenu>
+      {!compact && <div className="ml-auto flex shrink-0 items-center gap-1.5">{addViewButton}{actions}</div>}
+    </header>
+    {!compact && sidebarTools}
+    {filterMenu}
+  </>;
 
   return (
     <section ref={root} aria-label={T.widgets.titles.issues} className="@container relative flex h-full min-h-0 flex-col">
-      <header className="flex h-12 shrink-0 items-center gap-2 px-4">
-        <h2 className="font-semibold">{T.widgets.titles.issues}</h2>
-        <span className="flex-1" />
-        <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => startCreating({ preset: {} })}><Plus />{T.newIssue.title}</Button>
-      </header>
       <Tabs.Root value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
-        <div className="flex h-11 shrink-0 items-center gap-1.5 px-3">
+        {!chat && <div className="flex h-11 shrink-0 items-center gap-1.5 px-3">
           {/* The tabs give way to what is beside them (saved views can be many, and the smallest widget is narrow): they scroll sideways in their own row, with no bar. */}
           <Tabs.List className="-mx-1 flex min-w-0 items-center gap-1.5 overflow-x-auto px-1 [scrollbar-width:none]" aria-label={T.widgets.titles.issues}>
             {TABS.map((id) => (
@@ -193,37 +295,18 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
               </ContextMenu>
             ))}
           </Tabs.List>
-          <Button variant="ghost" size="icon-sm" className="size-7 rounded-full text-muted-foreground" aria-label={T.views.add} title={T.views.add} onClick={() => setNaming('new')}><Layers /></Button>
-          <div className="ml-auto flex items-center gap-1.5">
-            {base === 'all' && (
-              <div className="relative">
-                <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-                <input
-                  type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={T.search.placeholder} aria-label={T.search.label}
-                  className="h-7 w-[150px] rounded-full border bg-background pr-3 pl-8 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 @[560px]:w-[220px]"
-                />
-              </div>
-            )}
-            <Button
-              ref={filterButton} variant="outline" size="icon-sm" className={cn('size-7 rounded-full', menu.open && 'bg-accent')}
-              aria-label={T.filterButton} aria-haspopup="dialog" aria-expanded={menu.open} onClick={(event) => openFilter(event.currentTarget, 'end')}
-            >
-              <ListFilter />
-            </Button>
-            <DisplayMenu
-              tab={base} view={view} onChange={(change) => update(tab, change)}
-              onReset={() => update(tab, (current) => ({ ...DEFAULT_VIEW, filter: current.filter }))}
-            />
+          {addViewButton}
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {searchControl}
+            {actions}
           </div>
-        </div>
-        {filtered && (
-          <FilterBar
-            filter={view.filter} onAdd={(element) => openFilter(element, 'start')}
-            onRemove={(field) => update(tab, (current) => ({ filter: removeFilter(current.filter, field) }))}
-            onClear={() => update(tab, { filter: {} })}
-          />
-        )}
-        {list.status === 'error' ? (
+        </div>}
+        {!chat && filterBar}
+        {chat ? <Conversations
+          request={request} home={home} scope={JSON.stringify(homeQuery)} header={conversationHeader} onOpen={onOpen}
+          onChange={changeProperty} onAssign={assignCard} onDelete={(issue) => setDeleting([issue.id])}
+          onAddSub={addSub} onDuplicate={duplicate} onPin={pin} pinning={pinning}
+        /> : list.status === 'error' ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
             <span>{T.loadFailed}</span>
             <Button variant="outline" size="sm" onClick={list.retry}>{T.retry}</Button>
@@ -239,14 +322,15 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
                 list={list} view={view} tab={base} show={show} collapsed={collapsed} onToggleGroup={toggleGroup} onAddToGroup={addTo}
                 selected={selected} onSelect={select} onStatus={changeStatus} onMove={moveCard} onOpen={onOpen}
                 request={request} onChange={changeProperty} onAssign={assignCard} onDelete={(issue) => setDeleting([issue.id])} onOpenSession={onOpenSession} onAddSub={addSub} onDuplicate={duplicate} onPreviewSession={onPreviewSession}
+                onPin={pin} pinning={pinning}
               />
             )
         )}
-        {base === 'all' && list.status === 'ready' && (
+        {!chat && base === 'all' && list.status === 'ready' && (
           <footer className="flex h-9 shrink-0 items-center border-t px-4 text-xs text-muted-foreground">{T.total(list.total)}</footer>
         )}
       </Tabs.Root>
-      {selected.size > 0 && view.layout !== 'board' && (
+      {selected.size > 0 && view.layout === 'list' && (
         <BulkBar
           request={request}
           project={assignmentProject} assignmentLocked={assignmentLocked}
@@ -269,18 +353,14 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
           setNaming(null);
         }} />}
       <DeleteConfirm open={Boolean(removingView)} onClose={() => setRemovingView(null)} title={T.views.deleteTitle(removingView?.name ?? '')} description={T.views.deleteScope}
-        onDelete={() => { if (tab === viewKey(removingView.id)) setTab(removingView.base); removeView(removingView.id); setRemovingView(null); }} />
+        onDelete={() => { if (tab === viewKey(removingView.id)) selectView(removingView.base); removeView(removingView.id); setRemovingView(null); }} />
       <DeleteIssuesDialog request={request} ids={deleting} onClose={() => setDeleting(null)} onDeleted={() => { setSelected(new Set()); refresh(); }} />
       <NewIssueDialog
         request={request}
         key={dialogKey} open={creating !== null} onOpenChange={(open) => { if (!open) setCreating(null); }} preset={creating?.preset} parent={creating?.parent} initial={creating?.initial}
         onCreate={async (fields) => { const result = await request('issues/add', { fields }); if (result?.outcome === 'success') refresh(); return result; }}
       />
-      <FilterMenu
-        open={menu.open} anchor={menu.anchor} filter={view.filter} counts={list.counts} facets={facets}
-        onOpenChange={(open) => setMenu((current) => ({ ...current, open }))}
-        onToggle={(field, value) => update(tab, (current) => ({ filter: toggleFilter(current.filter, field, value) }))}
-      />
+      {!chat && filterMenu}
     </section>
   );
 }

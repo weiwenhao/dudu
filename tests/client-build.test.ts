@@ -37,8 +37,11 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
   const loaded: Array<{ id: string; factory: (require: (name: string) => unknown) => { name: string; apply: (ctx: unknown) => void } }> = [];
   const styles: string[] = [];
   const sandbox: Record<string, unknown> = {
-    window: { __ModuleLoader__: { load: (module: never) => loaded.push(module) } },
-    document: { baseURI: 'https://dsh.invalid/', documentElement: { style: {}, dataset: { platform: 'darwin' } }, createElement: () => ({ remove() {} }), head: { appendChild: (style: { textContent: string }) => styles.push(style.textContent) }, addEventListener() {}, removeEventListener() {} },
+    window: { __ModuleLoader__: { load: (module: never) => loaded.push(module) }, addEventListener() {}, removeEventListener() {} },
+    document: { baseURI: 'https://dsh.invalid/', body: {}, querySelectorAll: () => [], documentElement: { style: {}, dataset: { platform: 'darwin' } }, createElement: () => ({ remove() {} }), head: { appendChild: (style: { textContent: string }) => styles.push(style.textContent) }, addEventListener() {}, removeEventListener() {} },
+    // This loader VM has no rendered conversation; provide only the observer lifecycle it installs.
+    MutationObserver: class { observe() {} disconnect() {} },
+    requestAnimationFrame: () => 1, cancelAnimationFrame() {},
     console, clearTimeout, clearInterval, URL,
     // The grid library reads the browser's identity when it loads.
     navigator: { userAgent: 'node', platform: 'node' },

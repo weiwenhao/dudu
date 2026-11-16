@@ -36,7 +36,7 @@ final class DrawerMotion {
         let current = revision
         isSettling = true
         isInteracting = false
-        withAnimation(animation, completionCriteria: .removed) {
+        withAnimation(animation, completionCriteria: .logicallyComplete) {
             translation = 0
             updates()
         } completion: {

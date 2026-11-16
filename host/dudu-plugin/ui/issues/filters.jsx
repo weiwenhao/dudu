@@ -4,7 +4,7 @@ import { DATE_FIELDS } from './dates.js';
 import { PriorityIcon, StatusIcon } from './icons.jsx';
 import { LabelDot } from './LabelMenu.jsx';
 import { labelStore } from './labels.js';
-import { AGENT_NAMES, AGENT_STATE_ORDER, PRIORITY_ORDER } from './model.js';
+import { AGENT_NAMES, SESSION_STATE_ORDER, PRIORITY_ORDER } from './model.js';
 import { statusLabel, statusOrder } from './workflow.js';
 
 const SOURCE_ORDER = ['owner', 'dudu', 'connector', 'session'];
@@ -32,9 +32,9 @@ export const FILTER_FIELDS = {
     label: (value) => (value == null ? T.noAgent : (AGENT_NAMES[value] ?? value)),
     options: ({ facets }) => (facets?.agent ?? []).map(({ key, count }) => ({ value: key, label: key == null ? T.noAgent : (AGENT_NAMES[key] ?? key), count })),
   },
-  agentState: {
-    get name() { return T.fields.agentState; }, rowIcon: <Activity className="size-4 text-muted-foreground" aria-hidden="true" />, order: AGENT_STATE_ORDER, label: (value) => T.agentState[value],
-    options: ({ facets }) => { const counts = found(facets?.agentState); return AGENT_STATE_ORDER.map((value) => ({ value, label: T.agentState[value], count: counts.get(value) ?? 0 })); },
+  sessionState: {
+    get name() { return T.fields.sessionState; }, rowIcon: <Activity className="size-4 text-muted-foreground" aria-hidden="true" />, order: SESSION_STATE_ORDER, label: (value) => T.sessionState[value],
+    options: ({ facets }) => { const counts = found(facets?.sessionState); return SESSION_STATE_ORDER.map((value) => ({ value, label: T.sessionState[value], count: counts.get(value) ?? 0 })); },
   },
   priority: {
     get name() { return T.fields.priority; }, rowIcon: <PriorityIcon priority="high" />, order: PRIORITY_ORDER, label: (value) => T.priority[value],
@@ -60,12 +60,12 @@ export const FILTER_FIELDS = {
 // The rows of the menu: a field each, except Dates, which holds three.
 const rowOf = (key) => ({ get name() { return FILTER_FIELDS[key].name; }, rowIcon: FILTER_FIELDS[key].rowIcon, fields: [key] });
 export const FILTER_ROWS = {
-  status: rowOf('status'), agent: rowOf('agent'), agentState: rowOf('agentState'), priority: rowOf('priority'),
+  status: rowOf('status'), agent: rowOf('agent'), sessionState: rowOf('sessionState'), priority: rowOf('priority'),
   dates: { get name() { return T.dates.name; }, rowIcon: <CalendarDays className="size-4 text-muted-foreground" aria-hidden="true" />, fields: ['due', 'created', 'updated'] },
   project: rowOf('project'), label: rowOf('label'), source: rowOf('source'),
 };
 
 // The menu's groups, a line between each.
-export const FILTER_GROUPS = [['status', 'agent', 'agentState', 'priority', 'dates'], ['project', 'label'], ['source']];
+export const FILTER_GROUPS = [['status', 'agent', 'sessionState', 'priority', 'dates'], ['project', 'label'], ['source']];
 
 export const FILTER_KEYS = Object.keys(FILTER_FIELDS);

@@ -21,6 +21,8 @@
 //                                                        the list); when the last result is back, say `then(results)`
 //                                                        (default: "tool results: <results>")
 //     fail?: { status, message },                        answer with an HTTP error
+//     waitFor?: Promise<void>,                           release the answer on an observed interface event
+//     stream?: [{ text, waitFor?: Promise<void> }],       gate individual text parts without timer-based waits
 //     delay?: number }                                   wait this many ms before the first word (a turn that is seen to work)
 //
 // `context` is { prompt, hasToolResult, tools, system }. The prompt is the last message a person wrote, not the notes DSH adds to a turn.
@@ -75,6 +77,11 @@ export async function startMockModel({ replies = [], responseReplies = [], anthr
     // DSH asks the model for a title of a session with the same route: a title is what it gets.
     const titling = /concise title/i.test(context.system) || /concise title/i.test(context.prompt);
     const rule = titling ? { say: 'Title' } : (state.replies.find((candidate) => matches(candidate, context)) ?? { say: 'ok' });
+    if (rule.waitFor) await Promise.race([
+      Promise.resolve(rule.waitFor),
+      new Promise((resolve) => response.once('close', resolve)),
+    ]);
+    if (response.destroyed) return;
     if (rule.delay) await sleep(rule.delay);
     if (rule.fail) {
       response.writeHead(rule.fail.status ?? 400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: rule.fail.message ?? 'The model refused.', type: 'invalid_request_error', code: 'mock_failure' } }));
@@ -107,7 +114,14 @@ export async function startMockModel({ replies = [], responseReplies = [], anthr
       for (let at = 0; at < args.length; at += 24) response.write(chunk(id, model, { tool_calls: [{ index: 0, function: { arguments: args.slice(at, at + 24) } }] }));
       response.write(chunk(id, model, {}, 'tool_calls'));
     } else {
-      for (const piece of text.match(/[\s\S]{1,12}/g) ?? ['']) response.write(chunk(id, model, { content: piece }));
+      for (const part of rule.stream ?? [{ text }]) {
+        if (part.waitFor) await Promise.race([
+          Promise.resolve(part.waitFor),
+          new Promise((resolve) => response.once('close', resolve)),
+        ]);
+        if (response.destroyed) return;
+        for (const piece of part.text.match(/[\s\S]{1,12}/g) ?? ['']) response.write(chunk(id, model, { content: piece }));
+      }
       response.write(chunk(id, model, {}, 'stop'));
     }
     response.write(usage(id, model, 20, 5));

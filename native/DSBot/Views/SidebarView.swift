@@ -319,7 +319,7 @@ struct SidebarView: View {
             NavigationIconView(icon: icon, size: 20)
         } else {
             // The app's own glyph for an entry that came without a picture, at the weight of the pictures around it: a Lucide icon of a 24 grid at 20pt has a line of 1.67pt (the plugin's own
-            // icons, 看板 and 信息, are drawn so), and the plain 2pt of `DSBotIcon` made it the one bold icon of the list (owner, 2026-11-10: "那个定时任务的图标也很奇怪，是加粗的").
+            // icons, 看板 and 收件箱, are drawn so), and the plain 2pt of `DSBotIcon` made it the one bold icon of the list (owner, 2026-11-10: "那个定时任务的图标也很奇怪，是加粗的").
             DSBotIcon(glyph(for: item), size: 20, scalesStroke: true)
         }
     }
@@ -674,7 +674,7 @@ private struct SidebarSessionRow: View, Equatable {
         Button(action: onSelect) {
             HStack(spacing: 0) {
                 if let agent = session.agent {
-                    AgentAvatar(agent: agent, state: session.agentState ?? .idle, finished: session.agentFinished == true, asleep: session.deepSleep == true)
+                    AgentAvatar(agent: agent, state: session.sessionState ?? .idle, asleep: session.deepSleep == true)
                         .padding(.trailing, 10)
                         .accessibilityIdentifier("session.agent.\(session.id)")
                 }

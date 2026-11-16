@@ -31,7 +31,7 @@ const GROUPS = (answer: any) => Object.fromEntries(answer.groups.map((group: any
 test('the phone can ask for every one of these methods, and the bridge knows them', () => {
   for (const method of NATIVE_BOARD_METHODS) assert.ok(NATIVE_METHODS.includes(method), method);
   assert.deepEqual([...NATIVE_BOARD_METHODS], [
-    'board.list', 'issue.get', 'issue.delete', 'issue.update', 'issue.assign', 'issue.open', 'issue.pick', 'issue.options', 'issue.parents', 'issue.project.create', 'issue.label.create', 'issue.create',
+    'board.list', 'board.pin', 'board.read', 'issue.get', 'issue.delete', 'issue.update', 'issue.assign', 'issue.open', 'issue.pick', 'issue.options', 'issue.parents', 'issue.project.create', 'issue.label.create', 'issue.create',
     'inbox.list', 'inbox.get', 'inbox.mark', 'inbox.share', 'inbox.complete',
   ]);
 });
@@ -85,19 +85,17 @@ test('phone issue deletion uses the current preview and session cleanup, preserv
 });
 
 test('the board: the issues of a tab grouped by what their agent is doing, each row small and plain, with the session the phone can open', async (t) => {
-  const { issues, call } = world(t);
+  const { issues, call } = world(t, { sessionState: (key) => key === 'dsh:s2' ? 'unread' : 'idle' });
   const working = issues.add({ title: '写 skills', project: { name: 'ai', path: '/p/ai' }, agent: 'codex', session: 'dsh:s1', priority: 'high', dueAt: NOW + 86_400_000, brief: '很长的描述' }, { actor: 'owner' }).issue;
   const asking = issues.add({ title: '漏洞', project: { name: 'hs', path: '/p/hs' }, agent: 'claude', session: 'dsh:s2' }, { actor: 'owner' }).issue;
-  issues.update(asking.id, { agentState: 'blocked' }, { actor: 'owner' });
-  issues.update(working.id, { agentState: 'idle' }, { actor: 'owner' });
   issues.add({ title: '还没分配' }, { actor: 'owner' });
   issues.add({ title: '待规划的', status: 'backlog' }, { actor: 'owner' });
 
   const answer: any = await call('board.list', { tab: 'active' });
   assert.equal(answer.outcome, 'success');
-  assert.deepEqual(GROUPS(answer), { blocked: ['漏洞'], idle: ['写 skills'], unassigned: ['还没分配'] });
+  assert.deepEqual(GROUPS(answer), { unread: ['漏洞'], idle: ['写 skills'], unassigned: ['还没分配'] });
   const row = answer.groups.find((group: any) => group.key === 'idle').items[0];
-  assert.deepEqual(Object.keys(row).sort(), ['agent', 'agentState', 'dueAt', 'id', 'priority', 'project', 'ref', 'sessionId', 'status', 'statusType', 'title', 'updatedAt'].sort());
+  assert.deepEqual(Object.keys(row).sort(), ['agent', 'sessionState', 'dueAt', 'id', 'priority', 'project', 'ref', 'sessionId', 'status', 'statusType', 'title', 'updatedAt'].sort());
   assert.equal(row.sessionId, 's1');
   assert.equal(row.project, 'ai');
   assert.equal(JSON.stringify(answer).includes('很长的描述'), false, 'no description on a row');
@@ -143,6 +141,33 @@ test('one issue with its description, and opening it brings back the session it 
   await assert.rejects(call('issue.open', { id: 'one' }), { code: 'BAD_REQUEST' });
 });
 
+test('phone issue rows retain parent titles and completion counts; detail alone returns plain child rows', async (t) => {
+  const { issues, call } = world(t);
+  const parent = issues.add({ title: 'desktop 插件', brief: '父事项完整描述' }).issue;
+  const child = issues.add({ title: '子事项自己的标题', parent: parent.id, brief: '子事项完整描述', session: 'dsh:child' }).issue;
+  const finished = issues.add({ title: '已完成的子事项', parent: parent.id, status: 'done' }).issue;
+  const list: any = await call('board.list', { tab: 'all' });
+  const rows = list.groups.flatMap((group: any) => group.items);
+  const parentRow = rows.find((item: any) => item.id === parent.id);
+  const childRow = rows.find((item: any) => item.id === child.id);
+  assert.deepEqual(parentRow.subIssues, { total: 2, done: 1 });
+  assert.equal(parentRow.children, undefined, 'no child list or descriptions in homepage rows');
+  assert.equal(childRow.title, child.title, 'the original title is never overwritten by a joined presentation title');
+  assert.deepEqual(childRow.parent, {
+    id: parent.id, ref: parent.ref, title: parent.title, status: parent.status, statusType: parent.statusType,
+  });
+  assert.equal(JSON.stringify(list).includes('完整描述'), false);
+  const full: any = await call('issue.get', { id: parent.id });
+  assert.deepEqual(full.issue.children.map((item: any) => item.id), [child.id, finished.id]);
+  assert.equal(full.issue.children[0].sessionId, 'child');
+  assert.equal(full.issue.children[0].description, undefined);
+  issues.update(parent.id, { title: '新的父事项标题' });
+  issues.update(child.id, { status: 'done' });
+  const updated: any = await call('issue.get', { id: parent.id });
+  assert.deepEqual(updated.issue.subIssues, { total: 2, done: 2 });
+  assert.equal(updated.issue.children[0].parent.title, '新的父事项标题');
+});
+
 test('phone quick actions persist Desktop properties and detail metadata, including unchanged choices', async (t) => {
   const { issues, call } = world(t);
   const issue = issues.add({ title: '继续调研', brief: '保留现有描述' }, { actor: 'owner' }).issue;
@@ -157,7 +182,9 @@ test('phone quick actions persist Desktop properties and detail metadata, includ
     [custom.id, 'backlog', 'high', patch.dueAt, [label], project],
   );
   assert.equal(changed.issue.description, '保留现有描述');
-  assert.deepEqual((await call('issue.get', { id: issue.id }) as any).issue, changed.issue);
+  const { children, ...metadata } = (await call('issue.get', { id: issue.id }) as any).issue;
+  assert.deepEqual(children, []);
+  assert.deepEqual(metadata, changed.issue);
   assert.deepEqual((await call('issue.update', { id: issue.id, patch }) as any).issue, changed.issue, 'an unchanged choice is a successful save');
   const child: any = await call('issue.create', { title: '下一步', parent: issue.id, project });
   assert.equal(issues.get(child.issue.id).issue.parent.id, issue.id);
@@ -169,11 +196,11 @@ test('phone quick actions persist Desktop properties and detail metadata, includ
 
 test('phone quick actions keep assignment and working-state locks without moving the manual workflow', async (t) => {
   const assigned: number[] = [];
-  let state = 'stopped';
+  let state = 'unread';
   const { issues, call } = world(t, { onAssign: (issue: any) => { assigned.push(issue.id); }, sessionState: () => state });
   const issue = issues.add({ title: '先探索', status: 'backlog' }, { actor: 'owner' }).issue;
   const project = { name: 'Dudu', path: '/p/dudu' };
-  assert.notEqual((await call('issue.update', { id: issue.id, patch: { agentState: 'idle' } }) as any).outcome, 'success');
+  await assert.rejects(call('issue.update', { id: issue.id, patch: { sessionState: 'idle' } }), { code: 'BAD_REQUEST' });
   assert.notEqual((await call('issue.assign', { id: issue.id, agent: 'codex', project: { name: 'relative', path: 'relative' } }) as any).outcome, 'success');
   assert.deepEqual(assigned, []);
   const result: any = await call('issue.assign', { id: issue.id, agent: 'codex', project, session: 'dsh:injected', actor: 'dudu' });
@@ -186,15 +213,10 @@ test('phone quick actions keep assignment and working-state locks without moving
   assert.notEqual((await call('issue.assign', { id: issue.id, agent: 'claude', project }) as any).outcome, 'success');
   assert.notEqual((await call('issue.update', { id: issue.id, patch: { project: { name: 'Other', path: '/p/other' } } }) as any).outcome, 'success');
   assert.notEqual((await call('issue.update', { id: issue.id, patch: { project: null } }) as any).outcome, 'success');
-  state = 'running';
-  assert.notEqual((await call('issue.update', { id: issue.id, patch: { agentState: 'idle' } }) as any).outcome, 'success');
-  state = 'stopped';
-  for (const agentState of ['idle', 'blocked']) {
-    const marked: any = await call('issue.update', { id: issue.id, patch: { agentState } });
-    assert.equal(marked.outcome, 'success');
-    assert.deepEqual([marked.issue.agentState, marked.issue.status], [agentState, 'backlog']);
-  }
-  assert.deepEqual(GROUPS(await call('board.list', { tab: 'backlog' })), { blocked: ['先探索'] });
+  state = 'processing';
+  await assert.rejects(call('issue.update', { id: issue.id, patch: { sessionState: 'idle' } }), { code: 'BAD_REQUEST' });
+  state = 'unread';
+  assert.deepEqual(GROUPS(await call('board.list', { tab: 'backlog' })), { unread: ['先探索'] });
 });
 
 test('phone quick actions reject unsafe or malformed patches without side effects', async (t) => {
@@ -202,7 +224,7 @@ test('phone quick actions reject unsafe or malformed patches without side effect
   const issue = issues.add({ title: '原样保留', status: 'backlog' }, { actor: 'owner' }).issue;
   const before = issues.get(issue.id);
   for (const patch of [
-    {}, [], null, { status: '' }, { priority: 'critical' }, { agentState: 'working' }, { agentState: 'done' },
+    {}, [], null, { status: '' }, { priority: 'critical' }, { sessionState: 'working' }, { sessionState: 'done' },
     { dueAt: -1 }, { dueAt: 1.5 }, { labels: ['1'] }, { labels: Array(51).fill(1) },
     { project: [] }, { project: { name: 'x', path: 42 } }, { project: { name: ' ' } },
     { priority: 'high', session: 'dsh:injected' }, { actor: 'dudu' }, { agent: 'claude' }, { source: 'session' },

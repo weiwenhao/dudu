@@ -259,7 +259,7 @@ export function IssueDetail({ request, id, ids, logo, onBack, onOpen, openSessio
                     aria-label={issue.agent && issue.session ? `${AGENT_NAMES[issue.agent] ?? issue.agent} · ${T.detail.openSession}` : undefined}
                     title={issue.agent && issue.session ? T.detail.openSession : undefined}
                     onClick={() => { if (issue.agent && issue.session) previewSession(issue); }}>
-                    <AgentAvatar agent={issue.agent} state={issue.agentState} finished={issue.agentFinished} asleep={issue.deepSleep} compact />
+                    <AgentAvatar agent={issue.agent} state={issue.sessionState} asleep={issue.deepSleep} compact />
                     {issue.agent ? (AGENT_NAMES[issue.agent] ?? issue.agent) : T.noAgent}
                   </button>
                 </AgentMenu>

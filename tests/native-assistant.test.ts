@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createNativeAssistant } from '../host/native-assistant.mjs';
 
-function harness(overrides = {}, readSession?) {
+function harness(overrides = {}, readSession?, fileTransfers?) {
   const calls = [];
   const assistant = {
     state: () => ({ sessionId: 'dudu-owned' }),
@@ -29,6 +29,7 @@ function harness(overrides = {}, readSession?) {
     attachments: (items) => (items ?? []).map((item) => ({ type: 'image', ...item })),
     fileBytes: (data) => Buffer.from(data ?? '', 'base64'),
     readSession,
+    fileTransfers,
   });
   return { bridge, calls };
 }
@@ -41,6 +42,34 @@ test('assistant completions are scoped to the fixed session and use DSH skills a
   const result = await bridge.dispatch('assistant.recipients', { sessionId: 'dudu-owned', q: 'DUD' });
   assert.deepEqual(result.items[0].project, { name: 'dudu' });
   assert.equal(calls.some(([method]) => method === 'session/prompt'), false);
+});
+
+test('assistant forwarding restages only its own upload receipts without receiving the file bytes again', async () => {
+  const ref = { attachmentId: `sha256:${'a'.repeat(64)}`, name: 'large.mov', bytes: 40 * 1024 * 1024 };
+  const resolved = [];
+  const restaged = [];
+  const { bridge, calls } = harness({}, undefined, {
+    resolve(source, receipt) {
+      resolved.push([source, receipt]);
+      if (source !== 'dudu-owned' || receipt !== 'source-receipt') throw Object.assign(new Error(), { code: 'INVALID_ATTACHMENT' });
+      return ref;
+    },
+    async forward(target, file) { restaged.push([target, file]); return { receiptId: 'target-receipt' }; },
+  });
+  const params = {
+    sessionId: 'dudu-owned', id: 'DUD-7', session: 'dsh:agent', text: '看视频', requestId: 'streamed-1',
+    files: [{ name: 'large.mov', receiptId: 'source-receipt' }],
+  };
+  await bridge.dispatch('assistant.forward', params);
+  await bridge.dispatch('assistant.forward', params);
+  assert.deepEqual(restaged, [['agent', ref]]);
+  assert.equal(calls.filter(([method]) => method === 'forward').length, 1);
+  assert.equal(calls.some(([method]) => method === 'fileUploads/upload'), false);
+  await assert.rejects(bridge.dispatch('assistant.forward', {
+    ...params, requestId: 'foreign', files: [{ name: 'large.mov', receiptId: 'foreign-receipt' }],
+  }), { code: 'INVALID_ATTACHMENT' });
+  assert.equal(restaged.length, 1);
+  assert.ok(resolved.every(([source]) => source === 'dudu-owned'));
 });
 
 test('quick-sheet lists are read-only, bounded to the assistant, and pass their paging cursor without a card command', async () => {

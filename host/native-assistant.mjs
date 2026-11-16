@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { Buffer } from 'node:buffer';
 
 export const NATIVE_ASSISTANT_METHODS = Object.freeze([
   'assistant.skills', 'assistant.recipients', 'assistant.forward', 'assistant.card', 'assistant.hide',
@@ -10,7 +11,7 @@ const CARD_KINDS = new Set(['todo', 'info', 'task']);
 
 // These are the desktop assistant's own actions, reached only through authenticated native RPC.
 // No caller-selected route, arbitrary command or general DSH proxy is exposed.
-export function createNativeAssistant({ assistant, remote, fail, attachments, fileBytes, readSession, readImage }) {
+export function createNativeAssistant({ assistant, remote, fail, attachments, fileBytes, fileTransfers, readSession, readImage }) {
   const deliveries = new Map();
   const isSession = (id) => typeof id === 'string' && id.length > 0 && assistant?.state?.()?.sessionId === id;
   const requireSession = (id) => {
@@ -35,10 +36,16 @@ export function createNativeAssistant({ assistant, remote, fail, attachments, fi
     const files = params.files ?? [];
     if (!Array.isArray(files) || files.length > 5) fail('INVALID_ATTACHMENT');
     // Validate all bytes before putting back a folded session or uploading anything.
-    for (const file of files) {
-      if (!file || typeof file.name !== 'string' || !file.name || file.name.length > 255
-        || fileBytes(file.data).length === 0) fail('INVALID_ATTACHMENT');
-    }
+    const storedFiles = files.map((file) => {
+      if (!file || typeof file.name !== 'string' || !file.name || file.name.length > 255) fail('INVALID_ATTACHMENT');
+      if (file.receiptId !== undefined) {
+        if (typeof file.receiptId !== 'string' || !/^[\x21-\x7e]{1,512}$/u.test(file.receiptId)
+          || file.data !== undefined || typeof fileTransfers?.resolve !== 'function') fail('INVALID_ATTACHMENT');
+        return fileTransfers.resolve(params.sessionId, file.receiptId);
+      }
+      if (fileBytes(file.data).length === 0) fail('INVALID_ATTACHMENT');
+      return undefined;
+    });
     if (Buffer.byteLength(JSON.stringify({ content, files }), 'utf8') > 28 * 1024 * 1024) fail('LIMIT_EXCEEDED');
     const fingerprint = createHash('sha256').update(JSON.stringify({
       id: params.id, session: params.session, text: params.text, content, files, retryEntry: params.retryEntry,
@@ -64,8 +71,10 @@ export function createNativeAssistant({ assistant, remote, fail, attachments, fi
           return { outcome: 'needs_clarification', code: 'recipient_unavailable' };
         }
         session = `dsh:${target.sessionId}`;
-        for (const file of files) {
-          const uploaded = await remote.call('fileUploads/upload', target.sessionId, { name: file.name, data: file.data });
+        for (const [index, file] of files.entries()) {
+          const uploaded = storedFiles[index]
+            ? await fileTransfers.forward(target.sessionId, storedFiles[index])
+            : await remote.call('fileUploads/upload', target.sessionId, { name: file.name, data: file.data });
           if (typeof uploaded?.receiptId !== 'string' || !/^[\x21-\x7e]{1,512}$/u.test(uploaded.receiptId)) fail('UPSTREAM_UNAVAILABLE');
           content.push({ type: 'file', receiptId: uploaded.receiptId });
         }

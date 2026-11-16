@@ -185,7 +185,7 @@ test('an issue given to Pi runs in a Pi session and ends as Needs you with Pi\'s
   const issue = (await dudu.api('issues/add', { fields: { project, title: 'Say hello with Pi', brief: 'hello from the issue' } })).issue;
   assert.equal((await dudu.api('issues/assign', { id: issue.id, agent: 'pi' })).outcome, 'success');
   const done = await until(async () => (await dudu.api('issues/get', { id: issue.id })).issue,
-    (now: any) => Boolean(now.session) && now.agentState === 'blocked' && now.ask === '' && Boolean(now.sessions?.some((one: any) => one.key === now.session && one.state === 'finished')), 'the issue to finish');
+    (now: any) => Boolean(now.session) && now.sessionState === 'unread' && now.ask === '' && Boolean(now.sessions?.some((one: any) => one.key === now.session && one.state === 'finished')), 'the issue to finish');
   assert.equal(done.agent, 'pi');
   const sessionId = String(done.session).replace(/^dsh:/, '');
   const { events } = await history(sessionId);

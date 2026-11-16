@@ -48,11 +48,11 @@ struct NavigationCatalog: Decodable, Equatable, Sendable {
     /// The plugin identifies the primary entries. Native routes also recognize older snapshots
     /// from before the grouping field was added; the DSH plugin inventory stays dynamic.
     var primarySidebar: [NavigationItem] {
-        sidebar.filter(\.isPrimarySidebarEntry)
+        sidebar.filter { $0.target != .assistant && $0.isPrimarySidebarEntry }
     }
 
     var additionalSidebar: [NavigationItem] {
-        sidebar.filter { !$0.isPrimarySidebarEntry }
+        sidebar.filter { $0.target != .assistant && !$0.isPrimarySidebarEntry }
     }
 }
 

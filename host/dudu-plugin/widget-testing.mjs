@@ -1,8 +1,8 @@
 // Shared example data and browser assertions for a widget's preview, inspector and CI.
 export function exampleData(at = new Date(2026, 9, 31, 12).getTime()) {
   const items = [
-    { id: 1, ref: null, title: '准备续费资料', brief: '确认本次续费的范围。', status: 'todo', priority: 'high', agent: null, ask: '', agentState: 'idle', dueAt: at + 86400000, createdAt: at, updatedAt: at, source: 'owner', project: null },
-    { id: 2, ref: 'CON-1', title: '补齐合同附件', brief: '还缺一份附件。', status: 'in_progress', priority: 'medium', agent: 'claude', ask: '附件放在哪里？', agentState: 'blocked', dueAt: at - 86400000, createdAt: at, updatedAt: at, source: 'connector', project: { name: 'Contract', path: '/work/contract' } },
+    { id: 1, ref: null, title: '准备续费资料', brief: '确认本次续费的范围。', status: 'todo', priority: 'high', agent: null, ask: '', sessionState: 'idle', dueAt: at + 86400000, createdAt: at, updatedAt: at, source: 'owner', project: null },
+    { id: 2, ref: 'CON-1', title: '补齐合同附件', brief: '还缺一份附件。', status: 'in_progress', priority: 'medium', agent: 'claude', ask: '附件放在哪里？', sessionState: 'unread', dueAt: at - 86400000, createdAt: at, updatedAt: at, source: 'connector', project: { name: 'Contract', path: '/work/contract' } },
   ];
   return {
     issues: { outcome: 'success', items, total: items.length, nextCursor: null, groups: [], counts: { active: 2, backlog: 0, all: 2 }, facets: {} },

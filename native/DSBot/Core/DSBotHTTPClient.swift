@@ -10,6 +10,8 @@ protocol DSBotTransport: Sendable {
         onDisconnect: @escaping @Sendable () async -> Void
     ) async throws -> (id: String, name: String)
     func request(_ method: String, params: [String: JSONValue], timeoutSeconds: UInt64) async throws -> JSONValue
+    func uploadFile(_ file: PickedFile, sessionID: String) async throws -> JSONValue
+    func downloadVideo(_ parameters: [String: JSONValue]) async throws -> URL
     func disconnect() async
     func disconnect(throughGeneration: Int) async
     func resolvedEndpoint() async -> ConnectionEndpoint?
@@ -17,6 +19,8 @@ protocol DSBotTransport: Sendable {
 }
 
 extension DSBotTransport {
+    func uploadFile(_ file: PickedFile, sessionID: String) async throws -> JSONValue { throw DSBotFailure.remote("UNSUPPORTED") }
+    func downloadVideo(_ parameters: [String: JSONValue]) async throws -> URL { throw DSBotFailure.remote("UNSUPPORTED") }
     func resolvedEndpoint() async -> ConnectionEndpoint? { nil }
     func verifyEndpoint(_ endpoint: ConnectionEndpoint) async throws -> ConnectionEndpoint {
         throw DSBotFailure.remote("AUTH_REQUIRED")
@@ -450,6 +454,93 @@ actor DSBotHTTPClient: DSBotTransport {
         }
     }
 
+    func uploadFile(_ file: PickedFile, sessionID: String) async throws -> JSONValue {
+        guard let connection = active, connection.generation == latestGeneration else { throw DSBotFailure.disconnected }
+        let id = UUID().uuidString.lowercased()
+        var request = try fileRequest(connection.endpoint, route: "file/upload", id: id)
+        guard var components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false) else { throw DSBotFailure.invalidLink }
+        components.queryItems = [.init(name: "id", value: sessionID), .init(name: "name", value: file.name)]
+        request.url = components.url
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        let started = Date()
+        do {
+            let (data, response) = try await session.upload(for: request, fromFile: file.url)
+            try Task.checkCancellation()
+            guard let response = response as? HTTPURLResponse else { throw DSBotFailure.protocolError }
+            guard response.statusCode == 200 else {
+                if response.statusCode == 404 { throw DSBotFailure.remote("UNSUPPORTED") }
+                throw remoteFailure(data: data, status: response.statusCode)
+            }
+            guard let envelope = try? decoder.decode(HTTPRPCResponse.self, from: data), envelope.id == id else { throw DSBotFailure.protocolError }
+            guard envelope.ok, let result = envelope.result else { throw DSBotFailure.remoteCode(envelope.error?.code) }
+            guard active?.generation == connection.generation, latestGeneration == connection.generation else { throw DSBotFailure.switchedComputer }
+            DSBotLog.record("http.request.complete", method: "file.upload", requestId: id, elapsedMs: elapsed(since: started))
+            return result
+        } catch {
+            try Task.checkCancellation()
+            let failure = normalizedFailure(fileTransferFailure(error), method: "file.upload")
+            DSBotLog.networkFailure("http.request.fail", error: failure, method: "file.upload", requestId: id, elapsedMs: elapsed(since: started))
+            throw failure
+        }
+    }
+
+    func downloadVideo(_ parameters: [String: JSONValue]) async throws -> URL {
+        guard let connection = active, connection.generation == latestGeneration else { throw DSBotFailure.disconnected }
+        let id = UUID().uuidString.lowercased()
+        var request = try fileRequest(connection.endpoint, route: "file/video", id: id)
+        request.httpBody = try encoder.encode(parameters)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("video/*", forHTTPHeaderField: "Accept")
+        let started = Date()
+        var downloaded: URL?
+        do {
+            let (temporary, response) = try await session.download(for: request)
+            downloaded = temporary
+            try Task.checkCancellation()
+            guard let response = response as? HTTPURLResponse else { throw DSBotFailure.protocolError }
+            guard response.statusCode == 200,
+                  ["video/mp4", "video/x-m4v", "video/quicktime"].contains(response.mimeType ?? "") else {
+                if response.statusCode == 404 { throw DSBotFailure.remote("UNSUPPORTED") }
+                let size = (try? temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                let data = size <= 4096 ? (try? Data(contentsOf: temporary)) ?? Data() : Data()
+                throw remoteFailure(data: data, status: response.statusCode)
+            }
+            guard let declared = response.value(forHTTPHeaderField: "X-Dudu-File-Bytes").flatMap(Int.init), declared > 0,
+                  try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize == declared else { throw DSBotFailure.protocolError }
+            guard active?.generation == connection.generation, latestGeneration == connection.generation else { throw DSBotFailure.switchedComputer }
+            let directory = VideoPreviewStorage.downloadDirectory
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let saved = directory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.moveItem(at: temporary, to: saved)
+            downloaded = nil
+            DSBotLog.record("http.request.complete", method: "session.attachment", requestId: id, elapsedMs: elapsed(since: started))
+            return saved
+        } catch {
+            if let downloaded { try? FileManager.default.removeItem(at: downloaded) }
+            try Task.checkCancellation()
+            let failure = normalizedFailure(fileTransferFailure(error), method: "session.attachment")
+            DSBotLog.networkFailure("http.request.fail", error: failure, method: "session.attachment", requestId: id, elapsedMs: elapsed(since: started))
+            throw failure
+        }
+    }
+
+    private func fileRequest(_ endpoint: ConnectionEndpoint, route: String, id: String) throws -> URLRequest {
+        guard let url = endpointURL(endpoint, route: route) else { throw DSBotFailure.invalidLink }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 300)
+        request.httpMethod = "POST"
+        request.httpShouldHandleCookies = false
+        request.setValue("Bearer \(endpoint.token)", forHTTPHeaderField: "Authorization")
+        request.setValue(L10n.acceptLanguage, forHTTPHeaderField: "Accept-Language")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(id, forHTTPHeaderField: "X-Dudu-Request-ID")
+        return request
+    }
+
+    private func fileTransferFailure(_ error: Error) -> Error {
+        if let failure = error as? DSBotFailure { return failure }
+        return (error as? URLError)?.code == .timedOut ? DSBotFailure.timedOut : DSBotFailure.connectionFailed
+    }
+
     func disconnect() async {
         let nextGeneration = latestGeneration == Int.max ? Int.max : latestGeneration + 1
         await disconnect(throughGeneration: nextGeneration)
@@ -578,7 +669,7 @@ actor DSBotHTTPClient: DSBotTransport {
     }
 
     private func endpointURL(_ endpoint: ConnectionEndpoint, route: String) -> URL? {
-        guard ["connect", "disconnect", "events", "request"].contains(route),
+        guard ["connect", "disconnect", "events", "request", "file/upload", "file/video"].contains(route),
               var components = URLComponents(url: endpoint.httpURL, resolvingAgainstBaseURL: false),
               components.query == nil, components.fragment == nil,
               components.user == nil, components.password == nil,

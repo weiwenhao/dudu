@@ -351,7 +351,7 @@ struct IssueValueFlow: Layout {
     }
 }
 
-/// An issue that has no conversation to open (nobody has it yet): what it says and where it stands, read only.
+/// An issue's description; homepage assignment lives in the row's existing long-press menu.
 struct IssueDetailSheet: View {
     let issue: BoardIssue
     @ObservedObject var board: BoardModel
@@ -359,8 +359,20 @@ struct IssueDetailSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var full: BoardIssue?
+    @State private var loading = true
+    @State private var loadFailed = false
+    @State private var loadID = UUID()
+    private let computerID: String?
+
+    init(issue: BoardIssue, board: BoardModel, store: DSBotStore) {
+        self.issue = issue
+        self.board = board
+        self.store = store
+        computerID = store.activeComputer?.id
+    }
 
     private var shown: BoardIssue { full ?? issue }
+    private var sameComputer: Bool { computerID != nil && computerID == store.activeComputer?.id }
 
     var body: some View {
         NavigationStack {
@@ -373,6 +385,15 @@ struct IssueDetailSheet: View {
                     Text([shown.reference, Self.statusName(shown.status), shown.project ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.system(size: 13))
                         .foregroundStyle(DSBotStyle.muted)
+                    if loading {
+                        ProgressView().tint(DSBotStyle.muted).padding(.vertical, 8)
+                    } else if loadFailed {
+                        HStack(spacing: 12) {
+                            Text(L10n.text("事项没能加载")).foregroundStyle(DSBotStyle.muted)
+                            Button(L10n.text("重试")) { Task { await load() } }
+                        }
+                        .font(.system(size: 14))
+                    }
                     if let words = full?.description, !words.isEmpty {
                         Text(words)
                             .font(.system(size: 16))
@@ -388,18 +409,29 @@ struct IssueDetailSheet: View {
             .background(DSBotStyle.canvas)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() } label: {
-                        DSBotIcon(.close, size: 18).foregroundStyle(DSBotStyle.ink)
-                    }
-                    .accessibilityLabel(L10n.text("关闭"))
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton { dismiss() }
                     .accessibilityIdentifier("issue.detail.close")
                 }
             }
         }
         .presentationDetents([.medium, .large])
-        .presentationCornerRadius(32)
-        .task { full = await board.detail(of: issue, using: store) }
+        .presentationCornerRadius(28)
+        .task(id: "\(store.connectionRevision)/\(store.status)") { await load() }
+        .onChange(of: store.activeComputer?.id) { _, id in if id != computerID { dismiss() } }
+    }
+
+    private func load() async {
+        let request = UUID()
+        loadID = request
+        guard sameComputer, store.status == .connected else { loading = false; return }
+        let connection = store.connectionRevision
+        loading = full == nil
+        loadFailed = false
+        let detail = await board.detail(of: shown, using: store)
+        guard !Task.isCancelled, loadID == request, sameComputer, connection == store.connectionRevision else { return }
+        loading = false
+        if let detail { full = detail } else { loadFailed = true }
     }
 
     /// The desktop's names for the six statuses.

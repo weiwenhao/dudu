@@ -136,6 +136,13 @@ final class DSBotStore: ObservableObject {
     private var reconnectAttempt = 0
     private var reconnectTask: Task<Void, Never>?
     private var snapshotVersion = 0
+    @Published private(set) var sessionReadPosition: SessionReadPosition?
+    let visibleSessionReads = PassthroughSubject<VisibleSessionRead, Never>()
+    let watchedSessionActivity = PassthroughSubject<WatchedSessionActivity, Never>()
+    private var readPositionSessionID: String?
+    private var lastAcknowledgedRead: (target: DraftTarget, position: SessionReadPosition)?
+    private var readVisitID = UUID()
+    private var pendingReads: [UUID: SessionReadPosition] = [:]
     private var answeredApprovalIDs: Set<String> = []
     private var lifecycleGeneration = 0
     private var currentWatchID: String?
@@ -389,7 +396,11 @@ final class DSBotStore: ObservableObject {
                   !wasActive || currentGeneration == generation else { return }
             apply(library)
             await removeConversationCache(for: computer.id)
+            do { try await FileBoardStorage.shared.remove(for: computer.id) }
+            catch { DSBotLog.networkFailure("board.cache.remove.fail", error: error) }
             await conversationImages.remove(for: computer.id)
+            do { try await VideoPreviewStorage.shared.remove(for: computer.id) }
+            catch { DSBotLog.networkFailure("conversation.video.remove.fail", error: error) }
             guard isForeground, removalLifecycle == lifecycleGeneration,
                   !wasActive || currentGeneration == generation else { return }
             error = nil
@@ -530,7 +541,7 @@ final class DSBotStore: ObservableObject {
     /// A lost HTTP reply retries the same request; a saved-but-undelivered note retries its entry.
     private func forwardAssistant(
         text: String, recipient: AssistantRecipient?, images: [UploadAttachment],
-        files: [UploadedFile], fileData: [String: Data]
+        files: [UploadedFile]
     ) async throws {
         guard let session = selectedSession, let computerID = activeComputer?.id else { throw DSBotFailure.disconnected }
         guard let addressed = AssistantCompletion.address(text), !addressed.body.isEmpty else {
@@ -552,13 +563,7 @@ final class DSBotStore: ObservableObject {
             if let recipient, recipient.address.lowercased() == addressed.id.lowercased() {
                 params["session"] = .string(recipient.session)
             }
-            let picked: [PickedFile] = try files.map { file in
-                guard let data = fileData[file.id] else { throw FileAttachments.LoadError.unreadable }
-                return PickedFile(name: file.name, data: data)
-            }
-            params["files"] = await Task.detached(priority: .userInitiated) { () -> JSONValue in
-                .array(picked.map { .object(["name": .string($0.name), "data": .string($0.data.base64EncodedString())]) })
-            }.value
+            params["files"] = .array(files.map { .object(["name": .string($0.name), "receiptId": .string($0.receiptId)]) })
             guard generation == currentGeneration, currentSelection == sessionSelectionGeneration,
                   activeComputer?.id == computerID else { throw DSBotFailure.switchedComputer }
             let signature = JSONValue.object(["computerID": .string(computerID), "message": .object(params)])
@@ -601,6 +606,11 @@ final class DSBotStore: ObservableObject {
             error = DSBotFailure.disconnected.localizedDescription
             return
         }
+        // Returning from Home is a new read visit even when the retained watch and content are identical.
+        // A manual unread mark must not be hidden by the last visit's local acknowledgement cache.
+        readVisitID = UUID()
+        lastAcknowledgedRead = nil
+        pendingReads = [:]
         if var current = selectedSession, current.id == session.id, currentWatchID != nil {
             if session.isAssistant == true, current.isAssistant != true {
                 current.isAssistant = true
@@ -926,7 +936,7 @@ final class DSBotStore: ObservableObject {
 
     func send(
         text: String, attachments: [UploadAttachment] = [], files: [UploadedFile] = [],
-        assistantRecipient: AssistantRecipient? = nil, assistantFiles: [String: Data] = [:],
+        assistantRecipient: AssistantRecipient? = nil,
         draftText: String? = nil, onSubmitted: (() -> Void)? = nil
     ) async throws {
         guard let selectedSession, let computerID = activeComputer?.id else { throw DSBotFailure.disconnected }
@@ -941,7 +951,7 @@ final class DSBotStore: ObservableObject {
         onSubmitted?()
         do {
             if isAssistantConversation, text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("@") {
-                try await forwardAssistant(text: text, recipient: assistantRecipient, images: attachments, files: files, fileData: assistantFiles)
+                try await forwardAssistant(text: text, recipient: assistantRecipient, images: attachments, files: files)
             } else {
                 try await sendConversation(text: text, attachments: attachments, files: files, draftID: draftID)
             }
@@ -1217,30 +1227,26 @@ final class DSBotStore: ObservableObject {
     }
 
     /// Stages a file from the phone on the desktop for the next prompt of the open session.
-    func uploadFile(name: String, data: Data) async throws -> UploadedFile {
-        guard let selectedSession else { throw DSBotFailure.disconnected }
+    func uploadFile(_ file: PickedFile) async throws -> UploadedFile {
+        guard let selectedSession, status == .connected else { throw DSBotFailure.disconnected }
         let currentGeneration = generation
         let currentSelection = sessionSelectionGeneration
         let sessionId = selectedSession.id
         do {
-            let encoded = await Task.detached(priority: .userInitiated) { data.base64EncodedString() }.value
-            let value = try await request("file.upload", [
-                "id": .string(sessionId),
-                "name": .string(name),
-                "data": .string(encoded)
-            ], timeoutSeconds: 180)
+            let value = try await client.uploadFile(file, sessionID: sessionId)
             guard currentGeneration == generation,
                   currentSelection == sessionSelectionGeneration,
                   self.selectedSession?.id == sessionId else { throw DSBotFailure.switchedComputer }
             guard let object = value.objectValue,
-                  let receiptId = object["receiptId"]?.stringValue, !receiptId.isEmpty else {
+                  let receiptId = object["receiptId"]?.stringValue, !receiptId.isEmpty,
+                  let bytes = object["bytes"]?.numberValue, bytes == Double(file.bytes) else {
                 throw DSBotFailure.protocolError
             }
-            DSBotLog.record("file.upload", counts: ["payloadBytes": data.count])
+            DSBotLog.record("file.upload", counts: ["payloadBytes": file.bytes])
             return UploadedFile(
                 receiptId: receiptId,
-                name: object["name"]?.stringValue ?? name,
-                bytes: object["bytes"]?.numberValue.map { Int($0) } ?? data.count
+                name: object["name"]?.stringValue ?? file.name,
+                bytes: file.bytes
             )
         } catch {
             let failure = safeFailure(for: error)
@@ -1364,7 +1370,25 @@ final class DSBotStore: ObservableObject {
         return result
     }
 
-    func loadEarlierHistory(target: DraftTarget) async throws {
+    func downloadConversationVideo(_ parameters: [String: JSONValue], target: DraftTarget) async throws -> URL {
+        guard activeComputer?.id == target.computerID, selectedSession?.id == target.sessionID,
+              status == .connected else { throw DSBotFailure.disconnected }
+        let requestGeneration = generation
+        let selection = sessionSelectionGeneration
+        var params = parameters
+        params["id"] = .string(target.sessionID)
+        let url = try await client.downloadVideo(params)
+        guard requestGeneration == generation, selection == sessionSelectionGeneration,
+              activeComputer?.id == target.computerID, selectedSession?.id == target.sessionID else {
+            await VideoPreviewStorage.shared.removeDownload(url)
+            throw DSBotFailure.switchedComputer
+        }
+        return url
+    }
+
+    /// `beforeApply` runs once the page is in hand and before it is worked into the conversation: the history view uses it to wait until it is at rest.
+    /// `willApply` runs in the same turn as `apply`, with nothing in between: the history view raises its flag there, so that no layout between the wait and the page can lower it.
+    func loadEarlierHistory(target: DraftTarget, beforeApply: (() async -> Void)? = nil, willApply: (() -> Void)? = nil) async throws {
         guard historyLoadTarget != target, let before = transcript?.beforeSeq,
               transcript?.hasMore == true else { return }
         let identifier = UUID()
@@ -1387,6 +1411,7 @@ final class DSBotStore: ObservableObject {
               selection == sessionSelectionGeneration, transcript != nil,
               activeComputer?.id == target.computerID, selectedSession?.id == target.sessionID else { return }
         guard let previous = page.transcript.beforeSeq, previous < before else { throw DSBotFailure.protocolError }
+        await beforeApply?()
         while true {
             let revision = transcriptRevision
             let projection = await conversationProjector.project(
@@ -1400,6 +1425,7 @@ final class DSBotStore: ObservableObject {
                   selection == sessionSelectionGeneration,
                   activeComputer?.id == target.computerID, selectedSession?.id == target.sessionID else { return }
             guard revision == transcriptRevision else { continue }
+            willApply?()
             apply(projection)
             break
         }
@@ -2006,6 +2032,15 @@ final class DSBotStore: ObservableObject {
             contentRevision &+= 1
         }
         apply(prepared)
+        readPositionSessionID = detail.session.id
+        if sessionReadPosition != detail.readPosition { sessionReadPosition = detail.readPosition }
+        if let state = detail.session.sessionState, let position = detail.readPosition,
+           let computer = activeComputer?.id {
+            watchedSessionActivity.send(WatchedSessionActivity(
+                target: DraftTarget(computerID: computer, sessionID: detail.session.id),
+                connection: connection, seq: position.seq, state: state, asleep: detail.session.deepSleep == true
+            ))
+        }
         if goal != detail.goal { goal = detail.goal }
         let tasks = detail.todos ?? []
         if todos != tasks { todos = tasks }
@@ -2048,6 +2083,55 @@ final class DSBotStore: ObservableObject {
                 counts: ["messageCount": transcriptRows.count + messages.count]
             )
             DSBotLog.record("chat.snapshot.apply", elapsedMs: (completedAt - commitStartedAt) * 1_000)
+        }
+    }
+
+    /// Called only by an uncovered history after its latest rendered content is visible.
+    func acknowledgeVisibleConversation(_ position: SessionReadPosition, target: DraftTarget) async {
+        guard isForeground, canReadConversation, activeComputer?.id == target.computerID,
+              selectedSession?.id == target.sessionID, readPositionSessionID == target.sessionID,
+              let currentPosition = sessionReadPosition, currentPosition.seq == position.seq,
+              position.stream == nil || position.stream == currentPosition.stream,
+              let watchID = currentWatchID else { return }
+        if lastAcknowledgedRead?.target == target, lastAcknowledgedRead?.position == position { return }
+        let visit = readVisitID
+        guard pendingReads[visit] != position else { return }
+        pendingReads[visit] = position
+        defer { if pendingReads[visit] == position { pendingReads.removeValue(forKey: visit) } }
+        let selection = sessionSelectionGeneration
+        let connection = generation
+        var feedback = VisibleSessionRead(id: UUID(), target: target, connection: connection, seq: position.seq, phase: .pending)
+        visibleSessionReads.send(feedback)
+        do {
+            let stream = position.stream.map {
+                JSONValue.object(["turn": .number(Double($0.turn)), "step": .number(Double($0.step)), "digest": .string($0.digest)])
+            }
+            var value: [String: JSONValue] = ["seq": .number(Double(position.seq))]
+            if let stream { value["stream"] = stream }
+            let result = try await request("session.read", [
+                "id": .string(target.sessionID), "watchId": .string(watchID), "position": .object(value)
+            ])
+            feedback.phase = .saved
+            visibleSessionReads.send(feedback)
+            guard visit == readVisitID, selection == sessionSelectionGeneration, watchID == currentWatchID,
+                  connection == generation, activeComputer?.id == target.computerID,
+                  sessionReadPosition == currentPosition else { return }
+            lastAcknowledgedRead = (target, position)
+            if let raw = result.objectValue?["sessionState"]?.stringValue,
+               let state = SessionActivityState(rawValue: raw) {
+                selectedSession?.sessionState = state
+                if let index = sessions.firstIndex(where: { $0.id == target.sessionID }) {
+                    sessions[index].sessionState = state
+                }
+                watchedSessionActivity.send(WatchedSessionActivity(
+                    target: target, connection: connection, seq: position.seq,
+                    state: state, asleep: selectedSession?.deepSleep == true
+                ))
+            }
+        } catch {
+            feedback.phase = .failed
+            visibleSessionReads.send(feedback)
+            DSBotLog.networkFailure("session.read.fail", error: error)
         }
     }
 

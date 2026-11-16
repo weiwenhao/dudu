@@ -47,21 +47,18 @@ export function StatusIcon({ status, className, color, iconProgress }) {
   }
 }
 
-/**
- * Working turns only in a nonempty group. Needs you uses the computer's chosen color and the phone's outward ripple.
- * An empty group and the item in a menu hold still.
- */
-export function AgentStateIcon({ state, className, active = false }) {
+/** Group headings retain the approved palette and outward ripple; avatar unread badges stay solid red. */
+export function SessionStateIcon({ state, className, active = false }) {
   const { color } = useNeedsYouColor();
-  if (state === 'blocked') {
+  if (state === 'unread') {
     return <Svg className={cn('size-4 shrink-0 overflow-visible', className)} style={{ color }}>
       {active && <circle className="dudu-needs-you-ripple motion-reduce:hidden" cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="0.8" />}
       <circle cx="8" cy="8" r="6.5" fill="currentColor" fillOpacity="0.1" />
       <circle cx="8" cy="8" r="3.5" fill="currentColor" />
     </Svg>;
   }
-  const Icon = { idle: Circle, working: LoaderCircle, unassigned: User }[state] ?? Circle;
-  return <Icon aria-hidden="true" strokeWidth={1.7} className={cn('size-4 shrink-0 text-muted-foreground', state === 'working' && active && 'animate-spin motion-reduce:animate-none', className)} />;
+  const Icon = { idle: Circle, processing: LoaderCircle, unassigned: User }[state] ?? Circle;
+  return <Icon aria-hidden="true" strokeWidth={1.7} className={cn('size-4 shrink-0 text-muted-foreground', state === 'processing' && active && 'animate-spin motion-reduce:animate-none', className)} />;
 }
 const BARS = [[2, 9, 5], [6.5, 6, 8], [11, 3, 11]];
 const LEVEL = { high: 3, medium: 2, low: 1 };
@@ -156,17 +153,11 @@ export function DueDate({ info, className }) {
   );
 }
 
-// Worker marks follow the session; issue review and confirmation questions do not change them. A finished run and a question or a failure are
-// one state, "blocked" (it is your turn), but the corner still tells them apart (2026-11-04): a green disc with a check, and red.
+// Idle needs no badge. Sleep never covers unread.
 const BADGE = {
-  idle: 'border border-muted-foreground/60 bg-background',
-  working: 'animate-spin border-[1.5px] border-muted-foreground/30 border-t-muted-foreground bg-background motion-reduce:animate-none',
-  blocked: 'bg-destructive',
-  done: 'flex items-center justify-center bg-success text-white',
+  processing: 'animate-spin border-[1.5px] border-muted-foreground/30 border-t-muted-foreground bg-background motion-reduce:animate-none',
+  unread: 'bg-[#ec1313]',
 };
-
-/** What the corner shows for a state: a blocked state that is a finished run is "done". */
-export const markOf = (state, finished = false) => (state === 'blocked' && finished ? 'done' : state);
 
 // Deep sleep (the owner picked this picture on 2026-11-05, and the colour, a moon yellow #e8b923, the same day): a crescent takes the place of the idle ring, centred where the ring is centred (the marks sit
 // 2px in from the corner; a crescent is lighter than a disc, so it is drawn 1px larger than the box on every side). The moon is a circle (radius 6.8 of a 16
@@ -175,9 +166,9 @@ export const markOf = (state, finished = false) => (state === 'blocked' && finis
 // `--tw-*` properties do not inherit, so it is read on the span, where the ring class sets it, and the stroke is inherited from there.
 const CRESCENT = 'M14.999 8.256A6.8 6.8 0 1 1 7.761 1.018A5.2 5.2 0 0 0 14.999 8.256Z';
 
-export function AgentActivity({ state, finished = false, asleep = false, className }) {
-  const mark = markOf(state, finished);
-  if (asleep && mark !== 'working') {
+export function AgentActivity({ state, asleep = false, className }) {
+  const mark = state;
+  if (asleep && mark === 'idle') {
     return (
       <span aria-hidden="true" data-agent-activity="sleep" style={{ stroke: 'var(--tw-ring-color)' }}
         className={cn('absolute -right-0.5 -bottom-0.5 size-2 text-[#e8b923] ring-background', className, 'rounded-none border-0 bg-transparent ring-0')}>
@@ -189,11 +180,10 @@ export function AgentActivity({ state, finished = false, asleep = false, classNa
   }
   return BADGE[mark] ? <span aria-hidden="true" data-agent-activity={mark}
     className={cn('absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-1 ring-background', BADGE[mark], className)}>
-    {mark === 'done' && <svg viewBox="0 0 8 8" className="size-full" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M2 4.1l1.35 1.35L6 2.7" /></svg>}
   </span> : null;
 }
 
-export function AgentAvatar({ agent, state = 'idle', finished = false, asleep = false, compact = false, className, logoClassName, showTitle = true }) {
+export function AgentAvatar({ agent, state = 'idle', asleep = false, compact = false, className, logoClassName, showTitle = true, showActivity = true }) {
   const frame = cn('relative flex shrink-0 select-none', compact ? 'size-4' : 'size-6', className);
   if (!agent) {
     return (
@@ -206,12 +196,12 @@ export function AgentAvatar({ agent, state = 'idle', finished = false, asleep = 
   }
   const name = AGENT_NAMES[agent] ?? agent;
   const letter = AGENT_LETTERS[agent] ?? name.slice(0, 1).toUpperCase();
-  const sleeping = asleep && state !== 'working'; // deep sleep (an agent nobody has handled, whatever its mark): the crescent takes the corner, and its name; awake, the mark is its own again
-  const label = `${name} · ${sleeping ? T.deepSleep : T.agentState[state] ?? T.agentState.idle}`;
+  const sleeping = asleep && state === 'idle';
+  const label = `${name} · ${sleeping ? T.deepSleep : T.sessionState[state] ?? T.sessionState.idle}`;
   return (
-    <span className={frame} data-agent-state={state ?? 'idle'} title={showTitle ? label : undefined} role={showTitle ? undefined : 'img'} aria-label={showTitle ? undefined : label}>
+    <span className={frame} data-session-state={state ?? 'idle'} title={showTitle ? label : undefined} role={showTitle ? undefined : 'img'} aria-label={showTitle ? undefined : label}>
       <span className={cn('flex size-full items-center justify-center text-xs text-muted-foreground', !agentLogo(agent) && 'rounded-full bg-muted')}>{agentLogo(agent) ? <AgentLogo agent={agent} className={cn(compact ? 'size-4' : 'size-5', logoClassName)} /> : letter}</span>
-      <AgentActivity state={state} finished={finished} asleep={sleeping} className={!compact && 'size-2.5 ring-2'} />
+      {showActivity && <AgentActivity state={state} asleep={sleeping} className={!compact && 'size-2.5 ring-2'} />}
     </span>
   );
 }

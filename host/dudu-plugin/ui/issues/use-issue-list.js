@@ -23,7 +23,7 @@ const mapLeaves = (groups, change) => groups.map((group) => (group.groups ? { ..
  * POST helper. A flat view keeps one list and one cursor; a grouped view keeps a tree whose leaves each have their own rows
  * and cursor. A response that arrives after a newer request was sent is dropped.
  */
-export function useIssueList(request, view) {
+export function useIssueList(request, view, enabled = true) {
   const key = JSON.stringify(view);
   const [state, setState] = useState(() => empty(key));
   const latest = useRef(state);
@@ -56,6 +56,7 @@ export function useIssueList(request, view) {
   }, [key, request]); // eslint-disable-line react-hooks/exhaustive-deps -- `view` is represented by `key`
 
   useEffect(() => {
+    if (!enabled) return undefined;
     // The rows of the view just left stay until the new ones arrive (no blank flash while a filter is ticked); their cursors do not.
     setState((previous) => (previous.key === key ? previous : {
       ...previous, key, status: previous.items.length || previous.groups ? 'ready' : 'loading', cursor: null, error: null,
@@ -65,8 +66,10 @@ export function useIssueList(request, view) {
     const poll = () => { if (document.visibilityState === 'visible') fetchPage('refresh'); };
     const timer = setInterval(poll, POLL_MS);
     document.addEventListener('visibilitychange', poll);
-    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', poll); sequence.current++; };
-  }, [fetchPage, key]);
+    window.addEventListener('dudu:session-read', poll);
+    window.addEventListener('dudu:home-changed', poll);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', poll); window.removeEventListener('dudu:session-read', poll); window.removeEventListener('dudu:home-changed', poll); sequence.current++; };
+  }, [fetchPage, key, enabled]);
 
   const loadingMore = useRef(new Set());
   const loadMore = useCallback(async () => {

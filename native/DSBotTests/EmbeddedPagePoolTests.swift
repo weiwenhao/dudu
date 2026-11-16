@@ -37,29 +37,4 @@ final class EmbeddedPagePoolTests: XCTestCase {
         XCTAssertFalse(released === pool.session(page: .panel, target: "insight", sessionID: nil))
         XCTAssertEqual(pool.keptPageCount, 0)
     }
-
-    func testPreloadingUsesRegisteredWebRoutesAndOnlyTheCurrentSession() {
-        let navigation = NavigationCatalog(
-            schemaVersion: 1, available: true, updatedAt: 0,
-            sidebar: [
-                NavigationItem(id: "board", title: "", open: NavigationOpen(native: "board")),
-                NavigationItem(id: "insight", title: "", open: NavigationOpen(web: .init(page: "panel", target: "insight"))),
-                NavigationItem(id: "plugins", title: "", open: NavigationOpen(web: .init(page: "plugins"))),
-                NavigationItem(id: "extra", title: "", open: NavigationOpen(web: .init(page: "panel", target: "extra"))),
-            ],
-            views: [NavigationItem(id: "dsh-context", title: "", open: NavigationOpen(web: .init(page: "context", target: "dsh-context")))],
-            settings: []
-        )
-        let routes = EmbeddedPageRoute.preloadCandidates(navigation: navigation, sessionID: "current")
-        XCTAssertEqual(routes, [
-            EmbeddedPageRoute(page: .plugins),
-            EmbeddedPageRoute(page: .context, target: "dsh-context", sessionID: "current"),
-            EmbeddedPageRoute(page: .panel, target: "insight"),
-        ])
-        XCTAssertTrue(EmbeddedPageRoute.preloadCandidates(navigation: .empty, sessionID: "current").isEmpty)
-        XCTAssertTrue(
-            EmbeddedPageRoute.preloadCandidates(navigation: navigation, sessionID: nil)
-                .allSatisfy { $0.sessionID == nil && !$0.page.needsSession }
-        )
-    }
 }

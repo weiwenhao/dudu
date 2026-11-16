@@ -7,8 +7,9 @@ import { useServices } from '../services.jsx';
 import { T } from '../strings.js';
 import { AgentLogo } from './AgentLogo.jsx';
 import { useIssueSession } from './use-issue-session.js';
+import { useRetainedSession } from './use-retained-session.js';
 
-function CopyResume({ command }) {
+export function CopyResume({ command }) {
   const toast = useToast();
   const [copying, setCopying] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -37,30 +38,14 @@ function CopyResume({ command }) {
 export function IssueSessionDialog({ issue, resolveSession, actions, renderConversation, renderSessionHeader, onClose }) {
   const { request } = useServices();
   const session = useIssueSession(request, issue);
-  const [reference, setReference] = useState(null);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const retained = useRetainedSession(issue, resolveSession, actions, attempt);
+  const { reference } = retained;
   const [expanding, setExpanding] = useState(false);
   const surface = useRef(null);
   const backdrop = useRef(null);
   const opener = useRef(null);
-  useEffect(() => {
-    let active = true;
-    let retained;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(new DOMException('Session opening timed out.', 'TimeoutError')), 15_000);
-    void (async () => {
-      try {
-        const target = await resolveSession(issue, { signal: controller.signal });
-        if (!active) return;
-        retained = await actions.retainSession(target, { signal: controller.signal });
-        if (active) setReference(retained);
-        else retained.release();
-      } catch { if (active) setFailed(true); }
-      finally { clearTimeout(timeout); }
-    })();
-    return () => { active = false; clearTimeout(timeout); controller.abort(); retained?.release(); };
-  }, [issue, resolveSession, actions, attempt]);
   const expand = async () => {
     if (!reference || expanding) return;
     setExpanding(true);
@@ -102,9 +87,9 @@ export function IssueSessionDialog({ issue, resolveSession, actions, renderConve
         <DialogClose asChild><Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={T.pet.close}><X /></Button></DialogClose>
       </header>
       {reference && <div className="dudu-host-conversation flex min-h-0 flex-1 flex-col">{renderConversation(reference)}</div>}
-      {failed ? <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-3 p-5 text-muted-foreground">
+      {failed || retained.failed ? <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-3 p-5 text-muted-foreground">
         <span>{T.widgets.sessions.openFailed}</span>
-        <Button variant="outline" size="sm" onClick={() => { setFailed(false); setReference(null); setAttempt((value) => value + 1); }}>{T.retry}</Button>
+        <Button variant="outline" size="sm" onClick={() => { setFailed(false); setAttempt((value) => value + 1); }}>{T.retry}</Button>
       </div> : !reference && <div role="status" className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
         <LoaderCircle className="size-4 animate-spin" />{T.shell.loading}
       </div>}

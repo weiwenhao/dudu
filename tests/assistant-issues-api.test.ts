@@ -156,7 +156,7 @@ test('a reply goes into the log as a decision, clears the question and is handed
     const answer = await response.json();
     assert.equal(answer.outcome, 'success');
     assert.equal(answer.issue.ask, '');
-    assert.equal(answer.issue.agentState, 'idle', 'the Needs you mark goes with the question');
+    assert.equal(answer.issue.sessionState, 'idle', 'the Needs you mark goes with the question');
     assert.deepEqual(handed, [[issue.id, '抬头用公司全称']]);
     const { log } = issues.get(issue.id);
     assert.ok(log.some((entry: { kind: string; text: string; actor: string }) => entry.kind === 'decision' && entry.text === '抬头用公司全称' && entry.actor === 'owner'));

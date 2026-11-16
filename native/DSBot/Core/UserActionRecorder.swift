@@ -33,6 +33,7 @@ final class UserActionRecorder {
 
 private final class TouchRecorder: UIGestureRecognizer {
     private struct Beginning {
+        let id: String
         let time: TimeInterval
         let point: CGPoint
         /// How long after the finger landed the app saw it, in milliseconds.
@@ -56,8 +57,15 @@ private final class TouchRecorder: UIGestureRecognizer {
             return
         }
         let latency = max(0, (ProcessInfo.processInfo.systemUptime - touch.timestamp) * 1_000)
-        beginning = Beginning(time: touch.timestamp, point: touch.location(in: nil), latency: latency)
+        let id = UUID().uuidString
+        let point = touch.location(in: nil)
+        beginning = Beginning(id: id, time: touch.timestamp, point: point, latency: latency)
         travel = 0
+        let size = view?.bounds.size ?? .zero
+        DSBotLog.record("user.touch.begin", requestId: id, elapsedMs: latency, geometry: [
+            "tapX": point.x.rounded(), "tapY": point.y.rounded(),
+            "screenWidth": size.width.rounded(), "screenHeight": size.height.rounded()
+        ])
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -82,12 +90,12 @@ private final class TouchRecorder: UIGestureRecognizer {
         ]
         switch TouchKind.of(travel: travel, duration: duration) {
         case .tap:
-            DSBotLog.record("user.tap", elapsedMs: beginning.latency, geometry: place, state: beginning.latency >= 250 ? "late" : nil)
+            DSBotLog.record("user.tap", requestId: beginning.id, elapsedMs: beginning.latency, geometry: place, state: beginning.latency >= 250 ? "late" : nil)
         case .hold:
-            DSBotLog.record("user.hold", elapsedMs: duration * 1_000, geometry: place)
+            DSBotLog.record("user.hold", requestId: beginning.id, elapsedMs: duration * 1_000, geometry: place)
         case .drag:
             DSBotLog.record(
-                "user.drag", elapsedMs: duration * 1_000,
+                "user.drag", requestId: beginning.id, elapsedMs: duration * 1_000,
                 geometry: place.merging([
                     "dragX": (end.x - beginning.point.x).rounded(),
                     "dragY": (end.y - beginning.point.y).rounded(),
@@ -98,6 +106,7 @@ private final class TouchRecorder: UIGestureRecognizer {
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        if let beginning { DSBotLog.record("user.touch.cancel", requestId: beginning.id) }
         beginning = nil
         state = .failed
     }

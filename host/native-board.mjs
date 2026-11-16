@@ -5,10 +5,10 @@ import { HARNESS_IDS } from './providers/catalog.mjs';
 //
 //   board.list    { tab: 'active' | 'backlog' | 'all', groupKey?, cursor? }   the issues of a tab, grouped by what their agent is doing; with `groupKey` and
 //                 `cursor`, the next page of that one group
-//                 -> { tab, total, groups: [{ key: 'working' | 'blocked' | 'idle' | 'unassigned', count, nextCursor, items: [row] }] }
+//                 -> { tab, total, groups: [{ key: 'processing' | 'unread' | 'idle' | 'unassigned', count, nextCursor, items: [row] }] }
 //   issue.get     { id }                                     -> { issue }                          one issue, with its description
 //   issue.delete  { id, token? }                             -> { preview, token, issue } or { forgotten, id }; the desktop's preview and deletion
-//   issue.update  { id, patch: { status?, priority?, agentState?, dueAt?, labels?, project? } } -> { issue }
+//   issue.update  { id, patch: { status?, priority?, dueAt?, labels?, project? } } -> { issue }
 //   issue.assign  { id, agent, project: { name, path } }       -> { issue }; the same locked assignment as Desktop
 //   issue.open    { id }                                     -> { sessionId | null }               the session of the issue, put back in DSH's sidebar if it was folded away
 //   issue.pick    { withSession? }                           -> { items: [row] }                   the open issues, the one touched last first (what a record is shared to)
@@ -25,17 +25,17 @@ import { HARNESS_IDS } from './providers/catalog.mjs';
 //   inbox.complete { id }                                    -> { outcome, started }              more context for one record: its collector's session reads the conversation around it, in the
 //                                                                                               background; `inbox.get` then says `completing` and, when it failed, `completeError`
 //
-// A row is { id, ref, title, agent, agentState, agentFinished?, deepSleep?, status, statusType, priority, project?, dueAt?, updatedAt, sessionId? }; a card is the inbox's own
+// A row is { id, ref, title, agent, sessionState, deepSleep?, status, statusType, priority, project?, dueAt?, updatedAt, sessionId? }; a card is the inbox's own
 // (inbox/api.mjs). An answer that is not a success keeps its `outcome`, `code` and `message`: the app says it failed in its own words.
 export const NATIVE_BOARD_METHODS = Object.freeze([
-  'board.list', 'issue.get', 'issue.delete', 'issue.update', 'issue.assign', 'issue.open', 'issue.pick', 'issue.options', 'issue.parents', 'issue.project.create', 'issue.label.create', 'issue.create',
+  'board.list', 'board.pin', 'board.read', 'issue.get', 'issue.delete', 'issue.update', 'issue.assign', 'issue.open', 'issue.pick', 'issue.options', 'issue.parents', 'issue.project.create', 'issue.label.create', 'issue.create',
   'inbox.list', 'inbox.get', 'inbox.mark', 'inbox.share', 'inbox.complete',
 ]);
 
 const TABS = new Set(['active', 'backlog', 'all']);
 const INBOX_TABS = new Set(['todo', 'done', 'ignored']);
 const MARKS = new Set(['ignore', 'done', 'delete', 'restore']);
-const GROUPS = new Set(['working', 'blocked', 'idle', 'unassigned']);
+const GROUPS = new Set(['processing', 'unread', 'idle', 'unassigned']);
 const PAGE = 50;
 const MAX_IDS = 200;
 const MAX_TITLE = 300;
@@ -60,8 +60,13 @@ export function boardRow(issue) {
   const sessionId = sessionIdOf(issue.session);
   return {
     id: issue.id, ref: issue.ref ?? null, title: text(issue.title, MAX_TITLE),
-    agent: issue.agent ?? null, agentState: issue.agentState ?? 'unassigned',
-    ...(issue.agentFinished ? { agentFinished: true } : {}), ...(issue.deepSleep ? { deepSleep: true } : {}),
+    ...(issue.parent ? { parent: {
+      id: issue.parent.id, ref: issue.parent.ref ?? null, title: text(issue.parent.title, MAX_TITLE),
+      status: issue.parent.status, statusType: issue.parent.statusType,
+    } } : {}),
+    ...(issue.subIssues ? { subIssues: { total: issue.subIssues.total, done: issue.subIssues.done } } : {}),
+    agent: issue.agent ?? null, sessionState: issue.sessionState ?? 'unassigned',
+    ...(issue.deepSleep ? { deepSleep: true } : {}),
     status: issue.status, statusType: issue.statusType ?? issue.status, priority: issue.priority ?? 'none',
     ...(issue.project?.name ? { project: text(issue.project.name, 100) } : {}),
     ...(Number.isFinite(issue.dueAt) ? { dueAt: issue.dueAt } : {}),
@@ -82,7 +87,7 @@ const succeeded = (result) => result?.outcome === 'success';
  * `issues(action, body)` and `inbox(action, body)` run the desktop interface's commands (the owner's: every change is written as the owner); each may answer at once or
  * later. `fail(code)` throws the bridge's own error for a request that is not well formed.
  */
-export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, fail }) {
+export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, home, fail }) {
   const unavailable = () => fail('UPSTREAM_UNAVAILABLE');
   const askIssues = async (action, body) => (issues ? issues(action, body) : unavailable());
   const askInbox = async (action, body) => (inbox ? inbox(action, body) : unavailable());
@@ -129,7 +134,8 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, f
   async function list(params) {
     const tab = params.tab ?? 'active';
     if (!TABS.has(tab)) fail('BAD_REQUEST');
-    const request = { tab, group: 'agentState', limit: PAGE };
+    if (params.layout === 'chat') return home ? home.list(tab, row) : unavailable();
+    const request = { tab, group: 'sessionState', limit: PAGE };
     if (params.groupKey !== undefined || params.cursor !== undefined) {
       if (!GROUPS.has(params.groupKey) || typeof params.cursor !== 'string' || !params.cursor || params.cursor.length > 200) fail('BAD_REQUEST');
       request.groupFilter = { key: params.groupKey };
@@ -156,16 +162,20 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, f
     const { issue } = result;
     return {
       outcome: 'success',
-      issue: detail(issue),
+      issue: { ...detail(issue), children: issue.children.map(row) },
     };
   }
 
   async function update(params) {
     const { patch } = params;
-    const allowed = new Set(['status', 'priority', 'agentState', 'dueAt', 'labels', 'project']);
+    const allowed = new Set(['title', 'status', 'priority', 'dueAt', 'labels', 'project']);
     if (!positive(params.id) || !isRecord(patch) || !Object.keys(patch).length
       || !Object.keys(patch).every((key) => allowed.has(key))) fail('BAD_REQUEST');
     const fields = {};
+    if (Object.hasOwn(patch, 'title')) {
+      if (!shortText(patch.title, MAX_TITLE)) fail('BAD_REQUEST');
+      fields.title = patch.title.trim();
+    }
     if (Object.hasOwn(patch, 'status')) {
       if (!shortText(patch.status, 100)) fail('BAD_REQUEST');
       fields.status = patch.status;
@@ -173,10 +183,6 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, f
     if (Object.hasOwn(patch, 'priority')) {
       if (!['none', 'urgent', 'high', 'medium', 'low'].includes(patch.priority)) fail('BAD_REQUEST');
       fields.priority = patch.priority;
-    }
-    if (Object.hasOwn(patch, 'agentState')) {
-      if (!['blocked', 'idle'].includes(patch.agentState)) fail('BAD_REQUEST');
-      fields.agentState = patch.agentState;
     }
     if (Object.hasOwn(patch, 'dueAt')) {
       if (patch.dueAt !== null && (!Number.isSafeInteger(patch.dueAt) || patch.dueAt < 0)) fail('BAD_REQUEST');
@@ -333,6 +339,8 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, f
   }
 
   const METHODS = {
+    'board.pin': (params) => home ? home.pin(params, fail) : unavailable(),
+    'board.read': (params) => home ? home.read(params, fail) : unavailable(),
     'board.list': list, 'issue.get': get, 'issue.delete': remove, 'issue.update': update, 'issue.assign': assign, 'issue.open': open, 'issue.pick': pick,
     'issue.options': options, 'issue.parents': parents, 'issue.project.create': createProject, 'issue.label.create': createLabel, 'issue.create': create,
     'inbox.list': inboxList, 'inbox.get': inboxGet, 'inbox.mark': inboxMark, 'inbox.share': inboxShare, 'inbox.complete': inboxComplete,

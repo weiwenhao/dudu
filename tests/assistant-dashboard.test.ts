@@ -101,7 +101,7 @@ function assertSound(layout: { v: number; widgets: Item[] }, rows = FILL_ROWS) {
 
 test('the built-in widgets are the table of the design doc, and a declaration that breaks the rules is refused with a reason', () => {
   assert.deepEqual(BUILT_IN_WIDGETS.map((widget) => [widget.id, widget.label, `${widget.min.w}x${widget.min.h}`, `${widget.size.w}x${widget.size.h}`]), [
-    ['issues', 'Issues', '6x3', 'fillxfill'], ['office', 'Office', '5x3', '5x3'], ['collector', 'Collector', '4x3', '6x5'],
+    ['issues', 'Issues', '6x3', 'fillxfill'], ['office', 'Office', '5x3', '5x3'], ['collector', 'Inbox', '4x3', '6x5'],
   ]);
   for (const widget of BUILT_IN_WIDGETS) {
     assert.deepEqual(validateDeclaration(widget), { ok: true }, widget.id);

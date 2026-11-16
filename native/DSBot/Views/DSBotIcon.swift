@@ -2,7 +2,7 @@ import LucideSwift
 import SwiftUI
 
 enum DSBotGlyph: CaseIterable {
-    case menu, panel, camera, image, keyboard, microphone, voice
+    case menu, panel, camera, image, video, keyboard, microphone, voice
     case plus, add, compose, close, remove, check, settings
     case plugins, skills, schedule, computer, account, options
     case message, queue, trace, context, team
@@ -19,7 +19,7 @@ enum DSBotGlyph: CaseIterable {
     case completeContext
     /// The quota (the desktop's `Gauge`: the header icon and the chat's 额度 button), the board's second button (owner, 2026-11-11).
     case quota
-    /// The desktop's icons of an agent state, before the name of a group of the board (`AgentStateIcon`).
+    /// The desktop's session status icons, before the name of a board group (`SessionStateIcon`).
     case stateIdle, stateWorking, stateBlocked, stateUnassigned
     /// The square Stop in the approved background-job detail.
     case jobStop
@@ -30,6 +30,7 @@ enum DSBotGlyph: CaseIterable {
         case .panel: return .panelRight
         case .camera: return .camera
         case .image: return .image
+        case .video: return .film
         case .keyboard: return .keyboard
         case .microphone: return .mic
         case .voice: return .audioLines

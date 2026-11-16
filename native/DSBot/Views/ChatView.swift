@@ -22,10 +22,15 @@ struct ChatView: View {
     @State private var compressedPhotoBytes = 0
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var isPhotoPickerPresented = false
+    @State private var selectedVideo: PhotosPickerItem?
+    @State private var isVideoPickerPresented = false
     @State private var photoNotice: String?
     @State private var commandResult: DSBotToastMessage?
     @State private var photoLoadGeneration = 0
     @State private var followsLatestMessage = true
+    @State private var latestContentVisible = false
+    @State private var readFrame = PagePresentationFrame()
+    @State private var renderedLiveReplies: [String: String] = [:]
     @State private var awayFromLatest = false
     @State private var latestJump = 0
     /// The owner asked for a card (待办): while it is set, a card that ends the thread is shown from its top (`ConversationHistoryView.cardFromTop`).
@@ -34,6 +39,7 @@ struct ChatView: View {
     @State private var presentationFrame = PagePresentationFrame()
     @State private var historyFailure: String?
     @State private var historyRequestID: UUID?
+    @State private var scrollGate = ScrollIdleGate()
     @State private var isVoiceMode = false
     /// The open "+" sheet. The page rides along in the item so presentation and page cannot disagree.
     @State private var attachmentSheetRequest: AttachmentSheetRequest?
@@ -47,6 +53,8 @@ struct ChatView: View {
     @State private var planPreview: Approval?
     @State private var preparedFiles: [UploadedFile] = []
     @State private var uploadingFileName: String?
+    @State private var fileLoadID: UUID?
+    @State private var fileLoadTask: Task<Void, Never>?
     @State private var chromeHeight: CGFloat = 0
     @State private var composerHeight: CGFloat = DSBotLayout.composerHeight
     @State private var taskOverlayHeight: CGFloat = 0
@@ -64,10 +72,8 @@ struct ChatView: View {
     @State private var replyGhost: (draft: String, title: String)?
     @Environment(\.openIssueConversation) private var openIssueConversation
     @Environment(\.openQuickPage) private var openQuickPage
-    /// Only Dudu's pending files need their bytes again: @issue stages them on that issue's session.
-    @State private var assistantFileData: [String: Data] = [:]
 
-    var body: some View {
+    private var presentedHistory: some View {
         messageHistory
             .environment(\.conversationAccess, conversationAccess)
             .environment(\.groupChat, groupChat)
@@ -122,6 +128,12 @@ struct ChatView: View {
                 handleFileImport(result)
             }
         .photosPicker(
+            isPresented: $isVideoPickerPresented,
+            selection: $selectedVideo,
+            matching: .videos,
+            preferredItemEncoding: .current
+        )
+        .photosPicker(
             isPresented: $isPhotoPickerPresented,
             selection: $selectedPhotos,
             maxSelectionCount: max(1, PhotoAttachments.maximumPhotoCount - preparedPhotos.count),
@@ -140,6 +152,10 @@ struct ChatView: View {
             .opacity(isOverlayOpen ? 0 : 1)
             .accessibilityHidden(isOverlayOpen)
         }
+    }
+
+    var body: some View {
+        presentedHistory
         .onChange(of: isVoiceMode) { _, isOn in
             if isOn { assistantCompletion.close() }
             // Build the recognizer now, off the main thread, so the first press does not wait for it.
@@ -190,6 +206,8 @@ struct ChatView: View {
         }
         .onDisappear {
             presentationFrame.cancel()
+            readFrame.cancel()
+            latestContentVisible = false
             assistantCompletion.close()
             saveDraft()
             cancelVoiceCapture()
@@ -222,6 +240,12 @@ struct ChatView: View {
                 selectedPhotos = []
             }
         }
+        .onChange(of: selectedVideo) { _, item in
+            guard let item else { return }
+            selectedVideo = nil
+            DSBotLog.record("videos.select")
+            prepareFile(name: L10n.text("发送视频")) { try await VideoAttachments.load(item) }
+        }
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
             cancelVoiceCapture()
@@ -238,6 +262,15 @@ struct ChatView: View {
             composerFocused = false
             cancelVoiceCapture()
         }
+        .onChange(of: visibleReadPosition, initial: true) { _, position in
+            readFrame.cancel()
+            guard let position, let target = draftTarget else { return }
+            readFrame.afterLayout {
+                guard visibleReadPosition == position, draftTarget == target else { return }
+                Task { await store.acknowledgeVisibleConversation(position, target: target) }
+            }
+        }
+        .onPreferenceChange(RenderedLiveReplies.self) { renderedLiveReplies = $0 }
         .onChange(of: replyRequest?.id) { _, _ in
             guard let replyRequest, replyRequest.target == draftTarget, !isOverlayOpen else { return }
             groupChat?.reply(replyRequest.issue)
@@ -298,6 +331,9 @@ struct ChatView: View {
             fork: { seq in try await store.forkConversation(at: seq, target: target) },
             loadImage: { attachment, target, fullSize in
                 await store.conversationImage(attachment, target: target, fullSize: fullSize)
+            },
+            downloadVideo: { parameters in
+                try await store.downloadConversationVideo(parameters, target: target)
             }
         )
     }
@@ -333,14 +369,18 @@ struct ChatView: View {
         goalEditor = nil
         queueEditor = nil
         photoLoadGeneration += 1
+        fileLoadTask?.cancel()
+        fileLoadTask = nil
+        fileLoadID = nil
         preparedPhotos = []
         preparedFiles = []
-        assistantFileData = [:]
         uploadingFileName = nil
         composerIntent = .message
         compressedPhotoBytes = 0
         photoNotice = nil
         selectedPhotos = []
+        selectedVideo = nil
+        isVideoPickerPresented = false
         composerFocused = false
         cancelVoiceCapture()
     }
@@ -350,7 +390,6 @@ struct ChatView: View {
         let fileIDs = Set(preparedFiles.map(\.id))
         preparedPhotos.insert(contentsOf: submitted.photos.filter { !photoIDs.contains($0.id) }, at: 0)
         preparedFiles.insert(contentsOf: submitted.files.filter { !fileIDs.contains($0.id) }, at: 0)
-        assistantFileData.merge(submitted.fileData) { current, _ in current }
         compressedPhotoBytes = preparedPhotos.reduce(0) { $0 + $1.compressedBytes }
     }
 
@@ -395,7 +434,9 @@ struct ChatView: View {
                 awayFromLatest: $awayFromLatest, jumpToken: latestJump, cardFromTop: $cardFromTop,
                 onReachedStart: {
                     if let target { loadEarlierHistory(target: target) }
-                }
+                },
+                onLatestVisibilityChange: { latestContentVisible = $0 },
+                scrollGate: scrollGate
             ) { item in
                 historyContent(item, target: target, canLoadAttachments: canLoadAttachments)
                     .environment(\.conversationAccess, access)
@@ -453,6 +494,17 @@ struct ChatView: View {
                 // Re-arm the layout notification even when reopening the same retained conversation.
                 .id(presentationRequest)
         }
+    }
+
+    private var visibleReadPosition: SessionReadPosition? {
+        guard scenePhase == .active, !isOverlayOpen, !isPageTransitioning, latestContentVisible,
+              followsLatestMessage, store.canReadConversation else { return nil }
+        guard var position = store.sessionReadPosition else { return nil }
+        if position.stream != nil,
+           store.transcript?.live.map({ renderedLiveReplies[$0.id] != $0.text }) ?? true {
+            position.stream = nil
+        }
+        return position.seq >= 0 || position.stream != nil ? position : nil
     }
 
     private var historyItems: [ConversationHistoryItem] {
@@ -538,7 +590,10 @@ struct ChatView: View {
         Task { @MainActor in
             defer { if historyRequestID == requestID { historyRequestID = nil } }
             do {
-                try await store.loadEarlierHistory(target: target)
+                try await store.loadEarlierHistory(
+                    target: target, beforeApply: { await scrollGate.waitUntilIdle() },
+                    willApply: { scrollGate.keepsReader = true }
+                )
             } catch {
                 if draftTarget == target { historyFailure = error.localizedDescription }
             }
@@ -844,7 +899,7 @@ struct ChatView: View {
 
     // MARK: Quick buttons of 嘟嘟's chat
 
-    /// 待办、信息、任务 open their content in a native bottom sheet (owner, 2026-11-13). They stay while something is typed (the owner: "我一发消息，待办那个按钮就没了"),
+    /// 待办、收件箱、任务 open their content in a native bottom sheet (owner, 2026-11-13). They stay while something is typed (the owner: "我一发消息，待办那个按钮就没了"),
     /// and give way to whatever else stands in their place (the owner: "排队时或者其他有占用这里的都隐藏吧"): a queued message, the goal bar, DSH's task list, an approval, a picture or file waiting in the box,
     /// the list of candidates, an upload, voice, or a goal command being written.
     private var showsQuickChips: Bool {
@@ -1089,7 +1144,6 @@ struct ChatView: View {
                     onRemoveFile: { file in
                         DSBotLog.record("files.remove")
                         preparedFiles.removeAll { $0.id == file.id }
-                        assistantFileData.removeValue(forKey: file.id)
                     }
                 )
                 .transition(.opacity)
@@ -1347,8 +1401,10 @@ struct ChatView: View {
             store: store,
             initialPage: page,
             canAddPhotos: preparedPhotos.count < PhotoAttachments.maximumPhotoCount,
+            canAddVideos: preparedFiles.count < FileAttachments.maximumCount && uploadingFileName == nil,
             canAddFiles: preparedFiles.count < FileAttachments.maximumCount && uploadingFileName == nil,
             onAddPhotos: { dismissAttachmentSheet(then: .photos) },
+            onAddVideos: { dismissAttachmentSheet(then: .videos) },
             onAddFiles: { dismissAttachmentSheet(then: .files) },
             onGoal: { dismissAttachmentSheet(then: .goal) },
             onPlan: { dismissAttachmentSheet(then: .plan) },
@@ -1382,6 +1438,10 @@ struct ChatView: View {
             guard preparedPhotos.count < PhotoAttachments.maximumPhotoCount else { return }
             DSBotLog.record("photos.open")
             isPhotoPickerPresented = true
+        case .videos:
+            guard preparedFiles.count < FileAttachments.maximumCount, uploadingFileName == nil else { return }
+            DSBotLog.record("videos.open")
+            isVideoPickerPresented = true
         case .files:
             DSBotLog.record("files.open")
             isFileImporterPresented = true
@@ -1504,25 +1564,46 @@ struct ChatView: View {
 
     private func handleFileImport(_ result: Result<[URL], Error>) {
         guard case let .success(urls) = result, let url = urls.first else { return }
-        guard preparedFiles.count < FileAttachments.maximumCount else { return }
-        let sessionID = store.selectedSession?.id
-        let computerID = store.activeComputer?.id
-        uploadingFileName = url.lastPathComponent
-        Task {
+        prepareFile(name: url.lastPathComponent) { try await FileAttachments.load(url) }
+    }
+
+    /// Photos' videos and document files use the same authenticated upload and draft path.
+    private func prepareFile(name: String, load: @escaping () async throws -> PickedFile) {
+        guard let target = draftTarget, preparedFiles.count < FileAttachments.maximumCount,
+              uploadingFileName == nil else { return }
+        let request = UUID()
+        fileLoadID = request
+        uploadingFileName = name
+        fileLoadTask = Task {
+            defer {
+                if fileLoadID == request {
+                    uploadingFileName = nil
+                    fileLoadID = nil
+                    fileLoadTask = nil
+                }
+            }
             do {
-                let picked = try await FileAttachments.load(url)
-                let uploaded = try await store.uploadFile(name: picked.name, data: picked.data)
-                guard sessionID == store.selectedSession?.id,
-                      computerID == store.activeComputer?.id else { return }
+                let picked = try await load()
+                defer { Task { await FileAttachments.remove(picked) } }
+                guard !Task.isCancelled, fileLoadID == request, draftTarget == target else { return }
+                uploadingFileName = picked.name
+                var uploaded = try await store.uploadFile(picked)
+                if VideoPreviewStorage.isVideo(name: picked.name) {
+                    uploaded.video = try await VideoPreviewStorage.shared.store(
+                        picked.url, name: picked.name,
+                        for: ConversationVideoKey(target: target, attachmentID: uploaded.id)
+                    )
+                }
+                guard !Task.isCancelled, fileLoadID == request, draftTarget == target else { return }
                 preparedFiles.append(uploaded)
-                if store.isAssistantConversation { assistantFileData[uploaded.id] = picked.data }
-                uploadingFileName = nil
             } catch let error as FileAttachments.LoadError {
-                uploadingFileName = nil
+                guard !Task.isCancelled, fileLoadID == request, draftTarget == target else { return }
                 store.error = FileAttachments.message(for: error)
             } catch {
-                // `store.uploadFile` already published a safe message.
-                uploadingFileName = nil
+                guard !Task.isCancelled, fileLoadID == request, draftTarget == target else { return }
+                // Upload failures already have a safe message. A picker/provider failure uses
+                // the same existing unreadable-file message, without leaking provider details.
+                if !(error is DSBotFailure) { store.error = FileAttachments.message(for: error) }
             }
         }
     }
@@ -1601,29 +1682,26 @@ struct ChatView: View {
         let target = DraftTarget(computerID: computerID, sessionID: sessionID)
         let submittedText = draft
         let submitted = SubmittedComposerAttachments(
-            photos: preparedPhotos, files: preparedFiles, fileData: assistantFileData
+            photos: preparedPhotos, files: preparedFiles
         )
         let forwarding = store.isAssistantConversation && text.hasPrefix("@")
         if !forwarding { followSentMessage() }
         assistantCompletion.close()
         let files = preparedFiles
-        let sentFileIDs = Set(files.map(\.id))
         let recipient = assistantCompletion.recipient
-        let fileData = assistantFileData.filter { sentFileIDs.contains($0.key) }
         Task {
             guard draftTarget == target else { return }
             var handedOff = false
             do {
                 try await store.send(
                     text: text, attachments: attachments, files: files,
-                    assistantRecipient: recipient, assistantFiles: fileData,
+                    assistantRecipient: recipient,
                     draftText: submittedText
                 ) {
                     handedOff = true
                     updateDraft("")
                     preparedPhotos = []
                     preparedFiles = []
-                    assistantFileData = [:]
                     compressedPhotoBytes = 0
                     composerFocused = false
                 }
@@ -1778,7 +1856,7 @@ struct ChatView: View {
 }
 
 private enum PendingSheetAction {
-    case photos, files, goal, plan, compact
+    case photos, videos, files, goal, plan, compact
 }
 
 
@@ -1802,7 +1880,6 @@ private struct GoalEditorRequest: Identifiable {
 private struct SubmittedComposerAttachments {
     let photos: [PreparedPhotoAttachment]
     let files: [UploadedFile]
-    let fileData: [String: Data]
 }
 
 private struct ChatMessageRow: View, Equatable {

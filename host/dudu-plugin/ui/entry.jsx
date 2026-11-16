@@ -32,6 +32,7 @@ export { SidebarAgent } from './sessions/SidebarAgent.jsx';
 export { createSidebarActivity } from './sessions/sidebar-state.js';
 export { installChatAutoHistory } from './lib/auto-chat-history.js';
 export { installSessionHistoryCache } from './lib/session-history-cache.js';
+export { installSessionReadReceipts } from './lib/session-read-receipts.js';
 export { installHarnessStats } from './lib/harness-stats.js';
 export { installHarnessForeground } from './lib/harness-foreground.js';
 export { installCollectorNotifications } from './collector/notifications.js';
@@ -101,7 +102,8 @@ export function Page({ request, logo, actions = {}, renderConversation, renderSe
   const addSession = useCallback(async (target) => { await actions.addSession?.(target); }, [actions]);
   const services = useMemo(() => ({
     request, openIssue, openNativeSession, openIssueSession, previewIssueSession: setPreviewIssue, addSession, pickProjectDirectory: actions.pickProjectDirectory,
-  }), [request, openIssue, openNativeSession, openIssueSession, addSession, actions.pickProjectDirectory]);
+    conversation: { actions, resolveIssueSession, renderConversation, renderSessionHeader },
+  }), [request, openIssue, openNativeSession, openIssueSession, addSession, actions, resolveIssueSession, renderConversation, renderSessionHeader]);
   return (
     <Scope>
       <ToastProvider>

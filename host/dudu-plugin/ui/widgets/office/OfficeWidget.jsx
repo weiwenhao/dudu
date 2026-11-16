@@ -5,15 +5,12 @@ import { AgentLogo } from '../../issues/AgentLogo.jsx';
 import { agentLogo } from '../../issues/agent-logos.js';
 import { AgentActivity } from '../../issues/icons.jsx';
 import { T } from '../../strings.js';
-import { agentColor, boardCounts, DESKS, employeesOf, fitScene, headPoint, hex, SCENE, seatAnchor, seating, spreadTags, stateOf, STATES, summarize, toCanvas } from './layout.js';
+import { agentColor, boardCounts, DESKS, employeesOf, fitScene, headPoint, hex, SCENE, seatAnchor, seating, spreadTags, stateOf, summarize, toCanvas } from './layout.js';
 import { O } from './strings.js';
 import { useReducedMotion } from './use-environment.js';
 
 // what the plane looks like without the scene (no WebGL), and behind it while it loads: marvis-office's page colour
 const BACKGROUND = '#f7f7f7';
-
-const STATE_TEXT = { muted: 'text-muted-foreground', warning: 'text-warning-foreground', danger: 'text-danger-foreground' };
-const STATE_DOT = { muted: 'bg-muted-foreground/60', warning: 'bg-warning', danger: 'bg-destructive' };
 
 const refOf = (issue) => issue.ref || issue.title;
 const agentName = (agent) => (agent ? O.agents[agent] ?? agent : T.noAgent);
@@ -50,11 +47,13 @@ export function OfficeWidget({ size, issues = [], totals, openIssue, editing = f
   // loading: the scene is on its way; scene: it is drawing; picture: no WebGL, or its context was lost
   const [mode, setMode] = useState('loading');
   const [hover, setHover] = useState(null);
+  // Clear a removed person's hover before committing the scene and its name tags.
+  if (hover != null && !people.some((entry) => entry.id === hover)) setHover(null);
   const board = useMemo(() => totals?.board ?? boardCounts(issues), [issues, totals]);
   // where each head is at its desk, for the tags until the scene says where they are
   const resting = useMemo(() => staticTags(seated, box.width, box.height), [seated, box]);
   const latest = useRef({});
-  latest.current = { issues, board, box, reduced, resting };
+  useLayoutEffect(() => { latest.current = { issues, board, box, reduced, resting }; }, [issues, board, box, reduced, resting]);
 
   // While the dashboard is laid out nothing in the widget takes a click or a Tab. (`inert` is set by hand: React 18 does not know it.)
   useEffect(() => { stage.current?.toggleAttribute('inert', editing); }, [editing]);
@@ -145,9 +144,6 @@ export function OfficeWidget({ size, issues = [], totals, openIssue, editing = f
   useEffect(() => { scene.current?.setReducedMotion(reduced); }, [reduced, mode]);
   useEffect(() => { scene.current?.setHover(hover); }, [hover, mode]);
 
-  // an issue that is no longer in the office is no longer under the pointer
-  useEffect(() => { if (hover != null && !people.some((entry) => entry.id === hover)) setHover(null); }, [people, hover]);
-
   // the pointer over the picture: the person under it is highlighted, a click opens their issue
   const pick = (event) => {
     if (!scene.current) return null;
@@ -164,6 +160,7 @@ export function OfficeWidget({ size, issues = [], totals, openIssue, editing = f
 
   const sentence = O.summary(counts);
   const hovered = hover == null ? null : people.find((entry) => entry.id === hover)?.issue ?? null;
+  const hoveredState = stateOf(hovered);
   return (
     <section aria-label={O.title} data-office-desks={DESKS} data-office-people={seated.length} data-office-unassigned={board[0]} className="flex h-full min-h-0 w-full flex-col overflow-hidden text-card-foreground">
       <div
@@ -181,7 +178,7 @@ export function OfficeWidget({ size, issues = [], totals, openIssue, editing = f
             <button
               key={id} type="button" data-office-tag={id}
               ref={(element) => { if (element) tags.current.set(id, element); else tags.current.delete(id); }}
-              aria-label={O.tag(refOf(issue), issue.title, status, issue.deepSleep ? T.deepSleep : T.agentState[state])}
+              aria-label={O.tag(refOf(issue), issue.title, status, T.sessionState[state])}
               tabIndex={editing ? -1 : 0}
               className="absolute top-0 left-0 flex -translate-x-1/2 -translate-y-full cursor-pointer items-center gap-[3px] rounded-full bg-card/95 py-0.5 pr-[5px] pl-[3px] text-[10px] leading-[13px] whitespace-nowrap shadow-xs ring-1 ring-border/70 outline-none transition-[translate] duration-150 hover:z-10 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
               onClick={(event) => { event.stopPropagation(); openIssue?.(id); }}
@@ -192,7 +189,7 @@ export function OfficeWidget({ size, issues = [], totals, openIssue, editing = f
                 {agentLogo(issue.agent)
                   ? <AgentLogo agent={issue.agent} className="size-[11px]" />
                   : <span className="flex size-full items-center justify-center rounded-full bg-muted text-[7px] font-bold text-muted-foreground">{agentName(issue.agent).slice(0, 1).toUpperCase()}</span>}
-                <AgentActivity state={state} finished={issue.agentFinished} asleep={issue.deepSleep === true} className="-right-px -bottom-px size-1.5 border-[1px] ring-card" />
+                <AgentActivity state={state} className="-right-px -bottom-px size-1.5 border-[1px] ring-card" />
               </span>
               <span className="tracking-[-0.02em]">{refOf(issue)}</span>
               <i className="absolute top-full left-1/2 -ml-px w-px bg-muted-foreground/45 transition-[height] duration-150 motion-reduce:transition-none" style={{ height: 'var(--tag-lift, 0px)', left: 'calc(50% + var(--tag-shift, 0px))' }} aria-hidden="true" />
@@ -209,9 +206,11 @@ export function OfficeWidget({ size, issues = [], totals, openIssue, editing = f
             <div className="mt-1.5 flex items-center gap-1.5">
               <i className="size-2 rounded-full" style={{ background: hex(agentColor(hovered.agent)) }} />
               <span>{agentName(hovered.agent)}</span>
-              <span className={cn('ml-auto flex items-center gap-1', STATE_TEXT[STATES[stateOf(hovered)].tone])}>
-                <i className={cn('size-1.5 rounded-full', STATE_DOT[STATES[stateOf(hovered)].tone])} />
-                {hovered.deepSleep ? T.deepSleep : T.agentState[stateOf(hovered)]}
+              <span className={cn('ml-auto flex items-center gap-1 text-muted-foreground', hoveredState === 'unread' && 'text-[#ec1313]')}>
+                {hoveredState !== 'idle' && <span className="relative size-1.5" aria-hidden="true">
+                  <AgentActivity state={hoveredState} className="inset-0 size-1.5 border-[1px] ring-popover" />
+                </span>}
+                {T.sessionState[hoveredState]}
               </span>
             </div>
           </div>

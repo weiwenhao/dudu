@@ -1,7 +1,7 @@
 // The issues store (issues.db): the one unit of work in 嘟嘟, see docs/assistant.md 3.2.
 //
-//   const issues = createIssues({ file, now = Date.now, sessionState = () => null, sessionSince, sessionBases, sessionHandledAt, sessionTurnActive, deepSleepMs = 30 min, deepSleepOn = () => true, actor = 'owner' });
-//   sessionBases(key)   optional: every `state@since` the session reads as from the places it is read from; a boss's word on an agent holds while ANY of them is the one it was given on
+//   const issues = createIssues({ file, now = Date.now, lifecycleState = () => null, sessionState = () => 'idle',
+//     sessionReceivedAt = () => 0, sessionHandledAt, sessionTurnActive, deepSleepMs = 30 min, deepSleepOn = () => true, actor = 'owner' });
 //
 // createIssues throws SchemaTooNew (code 'SCHEMA_TOO_NEW') when the file was written by a newer app; the file is left
 // untouched. Everything else returns { outcome: 'success' | 'no_op' | 'needs_clarification' | 'error', issue?, message?,
@@ -10,12 +10,12 @@
 //   list(view)              view = { tab: 'active'|'backlog'|'all', filter, group, subGroup, order, reverse, completedLast,
 //                                    limit (1..200, default 50), cursor, groupFilter }
 //                           -> { items (with progressSummary), total, nextCursor, counts: { status, priority }, groups? }
-//                           filter = { status, priority, project, agent, agentState, sessionState (the session's own state, for the
+//                           filter = { status, priority, project, agent, sessionState, lifecycleState (the session's own state, for the
 //                                      reminders), source (lists; null is "none"),
 //                                      dueFrom, dueTo, createdFrom, createdTo, updatedFrom, updatedTo, completedFrom, q }
 //                           completedFrom hides finished issues resolved before it (open issues are never hidden);
 //                           Number.MAX_SAFE_INTEGER hides all finished issues
-//   facets(view)            -> { facets: { project, agent, agentState, source: [{ key, label, count }] } }: the filter menu's
+//   facets(view)            -> { facets: { project, agent, sessionState, source: [{ key, label, count }] } }: the filter menu's
 //                           options over the view's tab and filter, each field leaving out its own filter; null is "none";
 //                           an option with count 0 is listed only while the filter selects it
 //   get(id, { logLimit, logCursor })   -> { issue (with sessions), log, activeQuestion, nextLogCursor }
@@ -32,8 +32,8 @@
 // Grouping: with `group` the response has groups: [{ key, label, count, items, nextCursor }] (non-empty groups only, `items`
 // and `nextCursor` replaced by `groups` of the same shape when `subGroup` is set) and top-level items are []. A group's
 // next page is list({ ...view, groupFilter: { key, subKey }, cursor }), which returns a flat page of just that group.
-// A null key is the "none" group (no project, no agent). The agent state is a SQL function over the current session
-// state, so filtering and grouping by it is exact for paging and counts, at one JS call per scanned row.
+// A null key is the "none" group (no project, no agent). Session status is a SQL function over foreground activity and read receipts,
+// so filtering and grouping by it is exact for paging and counts, at one JS call per scanned row.
 import { mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, isAbsolute } from 'node:path';
@@ -44,14 +44,14 @@ import { FINISHED_SQL, migrate, OPEN_SQL, SCHEMA_VERSION, SchemaTooNew } from '.
 import { createReferences } from './references.mjs';
 import { SESSION_STATES } from '../sessions/states.mjs';
 import { DEEP_SLEEP_MS, inDeepSleep } from '../sessions/deep-sleep.mjs';
-import { AGENT_STATES, ISSUE_AGENT_STATES, agedMark, agentMarkForSession, agentStateForSession, stateOfMark } from '../sessions/work-state.mjs';
+import { SESSION_ACTIVITY_STATES, ISSUE_SESSION_STATES } from '../sessions/session-state.mjs';
 import { createWorkflow } from './workflow.mjs';
 import { createLabels } from './labels.mjs';
 import { createLinks } from './links.mjs';
 import { createInbox } from '../inbox/store.mjs';
 import { progressSentence } from './summary.mjs';
 
-export { AGENT_STATES, ISSUE_AGENT_STATES, SchemaTooNew };
+export { SESSION_ACTIVITY_STATES, ISSUE_SESSION_STATES, SchemaTooNew };
 export const STATUSES = ['backlog', 'todo', 'in_progress', 'in_review', 'done', 'canceled'];
 export const PRIORITIES = ['none', 'urgent', 'high', 'medium', 'low'];
 export const LOG_KINDS = ['source', 'priority', 'due', 'assign', 'status', 'progress', 'decision', 'blocked', 'session', 'result', 'note'];
@@ -64,12 +64,16 @@ const PRIORITY_RANK = "CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHE
 const STATUS_RANK = "CASE status WHEN 'in_progress' THEN 0 WHEN 'in_review' THEN 0 WHEN 'todo' THEN 1 WHEN 'backlog' THEN 2 WHEN 'done' THEN 3 ELSE 4 END";
 const WORKFLOW_POSITION = 'COALESCE((SELECT position FROM issue_statuses WHERE id = COALESCE(issues.workflow_status,issues.status)),0)';
 const DUE_RANK = `COALESCE(due_at, ${NO_DUE})`;
+const RECEIVED_AT_SQL = 'dudu_session_received_at(session)';
 // Every order runs one direction over all its keys, which lets a cursor be a single row-value comparison.
 const ORDERS = {
   priority: { keys: [PRIORITY_RANK, DUE_RANK, 'id'], dir: 'ASC' },
   status: { keys: [STATUS_RANK, WORKFLOW_POSITION, PRIORITY_RANK, DUE_RANK, 'id'], dir: 'ASC' },
   due: { keys: [DUE_RANK, PRIORITY_RANK, 'id'], dir: 'ASC' },
   updated: { keys: ['updated_at', 'id'], dir: 'DESC' },
+  // Like the phone: newest completed reply first, then the lexical "issue:<id>".
+  // Negating time keeps both cursor keys ascending, including equal/no-message times.
+  received: { keys: [`(-${RECEIVED_AT_SQL})`, "('issue:' || id)"], dir: 'ASC' },
   created: { keys: ['created_at', 'id'], dir: 'DESC' },
 };
 const FINISHED_ORDER = { keys: ['resolved_at', 'id'], dir: 'DESC' };
@@ -82,30 +86,29 @@ const TABS = {
 };
 const TAB_STATUSES = { active: ['todo', 'in_progress', 'in_review'], backlog: ['backlog'], all: STATUSES };
 
-// The state of the agent's work: the session's (a fact), or the boss's word over it (see agentStateOf).
-const AGENT_STATE_SQL = 'dudu_agent_state(agent, session, agent_state, agent_state_basis)';
-// What the boss may declare by hand. Working is never declared: only a session that is running is working.
-const MANUAL_AGENT_STATES = ['idle', 'blocked'];
+// Automatic presentation status; there are no issue-level overrides.
+const SESSION_STATE_SQL = 'dudu_session_activity(session)';
+
 const GROUPS = {
   status: { sql: 'status', order: ['in_progress', 'in_review', 'todo', 'backlog', 'done', 'canceled'] },
   priority: { sql: 'priority', order: ['urgent', 'high', 'medium', 'low', 'none'] },
-  agentState: { sql: AGENT_STATE_SQL, order: ['blocked', 'working', 'idle', 'unassigned'] },
+  sessionState: { sql: SESSION_STATE_SQL, order: ['unread', 'processing', 'idle', 'unassigned'] },
   agent: { sql: 'agent' },
   project: { sql: 'project_name' },
 };
 // The filter menu's fields that list() does not count; the orders are the fixed ones for enumerations, by name otherwise.
-const FACETS = { project: GROUPS.project, agent: GROUPS.agent, agentState: GROUPS.agentState, source: { sql: 'source', order: SOURCES } };
+const FACETS = { project: GROUPS.project, agent: GROUPS.agent, sessionState: GROUPS.sessionState, source: { sql: 'source', order: SOURCES } };
 const collator = new Intl.Collator('zh', { numeric: true });
 
 const COLUMNS = {
   title: 'title', brief: 'brief', status: 'status', ask: 'ask', priority: 'priority', impact: 'impact', effort: 'effort',
   kind: 'kind', dueAt: 'due_at', snoozeUntil: 'snooze_until', agent: 'agent', session: 'session', outcome: 'outcome',
-  source: 'source', sourceRef: 'source_ref', resolvedAt: 'resolved_at', agentState: 'agent_state', agentStateBasis: 'agent_state_basis',
+  source: 'source', sourceRef: 'source_ref', resolvedAt: 'resolved_at',
   labels: 'label_ids', parent: 'parent_id',
 };
 const BLANK = {
   title: '', brief: '', status: 'todo', ask: '', priority: 'none', impact: null, effort: null, kind: '', project: null, dueAt: null,
-  snoozeUntil: null, agent: null, session: null, outcome: null, source: OWNER, sourceRef: '', resolvedAt: null, agentState: null, agentStateBasis: null,
+  snoozeUntil: null, agent: null, session: null, outcome: null, source: OWNER, sourceRef: '', resolvedAt: null,
   labels: [], parent: null,
 };
 
@@ -178,7 +181,7 @@ const FIELDS = {
   title: text(300, true), brief: text(20000), status: text(100, true), ask: text(2000), priority: oneOf(PRIORITIES),
   impact: nullable(integer(1, 3)), effort: nullable(oneOf(EFFORTS)), kind: text(100), project, dueAt: nullable(timestamp),
   snoozeUntil: nullable(timestamp), agent: nullable(text(100)), session: nullable(text(300)), outcome: nullable(text(4000)),
-  source: oneOf(SOURCES), sourceRef: text(2000), agentState: nullable(oneOf(MANUAL_AGENT_STATES)),
+  source: oneOf(SOURCES), sourceRef: text(2000),
   labels: labelIds, parent: nullable(integer(1, Number.MAX_SAFE_INTEGER)),
 };
 
@@ -196,12 +199,13 @@ function numericId(value) {
 }
 
 const FILTER_PARSERS = {
-  status: list(text(100, true)), priority: list(oneOf(PRIORITIES)), agentState: list(oneOf(ISSUE_AGENT_STATES)), source: list(oneOf(SOURCES)),
-  // The session's own state (a fact), for what the agent state no longer tells apart: a stuck session from a finished one (the reminders).
-  sessionState: list(oneOf(SESSION_STATES)),
+  status: list(text(100, true)), priority: list(oneOf(PRIORITIES)), sessionState: list(oneOf(ISSUE_SESSION_STATES)), source: list(oneOf(SOURCES)),
+  // Raw execution facts remain available to reminders and resource safety.
+  lifecycleState: list(oneOf(SESSION_STATES)),
   hasQuestion: flag,
   project: list(nullable(text(200))), agent: list(nullable(text(100))), label: list(integer(1, Number.MAX_SAFE_INTEGER)),
   dueFrom: timestamp, dueTo: timestamp, createdFrom: timestamp, createdTo: timestamp, updatedFrom: timestamp, updatedTo: timestamp,
+  receivedFrom: timestamp, receivedTo: timestamp,
   completedFrom: timestamp,
   q: (value) => {
     if (referenceId(value)) return String(value).trim().toUpperCase();
@@ -213,8 +217,9 @@ const FILTER_PARSERS = {
 const RANGES = [
   ['dueFrom', 'due_at', '>='], ['dueTo', 'due_at', '<='], ['createdFrom', 'created_at', '>='], ['createdTo', 'created_at', '<='],
   ['updatedFrom', 'updated_at', '>='], ['updatedTo', 'updated_at', '<='],
+  ['receivedFrom', RECEIVED_AT_SQL, '>='], ['receivedTo', RECEIVED_AT_SQL, '<='],
 ];
-const VIEW_KEYS = ['tab', 'filter', 'group', 'subGroup', 'order', 'reverse', 'completedLast', 'limit', 'cursor', 'groupFilter'];
+const VIEW_KEYS = ['tab', 'filter', 'group', 'subGroup', 'order', 'reverse', 'completedLast', 'pinnedFirst', 'limit', 'cursor', 'groupFilter'];
 
 const encodeCursor = (s, k) => Buffer.from(JSON.stringify({ s, k })).toString('base64url');
 function decodeCursor(value) {
@@ -224,7 +229,8 @@ function decodeCursor(value) {
   } catch {
     throw new Invalid('cursor is not valid');
   }
-  if (!Number.isInteger(cursor?.s) || !Array.isArray(cursor.k) || !cursor.k.every(Number.isFinite)) throw new Invalid('cursor is not valid');
+  if (!Number.isInteger(cursor?.s) || !Array.isArray(cursor.k)
+    || !cursor.k.every((key) => Number.isFinite(key) || typeof key === 'string' && /^issue:[1-9]\d{0,15}$/.test(key))) throw new Invalid('cursor is not valid');
   return cursor;
 }
 
@@ -243,6 +249,7 @@ function parseView(input) {
     order: check('order', oneOf(Object.keys(ORDERS)), view.order ?? 'priority'),
     reverse: check('reverse', flag, view.reverse ?? false),
     completedLast: check('completedLast', flag, view.completedLast ?? tab === 'all'),
+    pinnedFirst: check('pinnedFirst', flag, view.pinnedFirst ?? false),
     limit: check('limit', integer(1, 200), view.limit ?? 50),
     cursor: view.cursor == null ? null : decodeCursor(view.cursor),
     groupFilter: parseGroupFilter(view.groupFilter, group, subGroup),
@@ -296,8 +303,8 @@ function filterSql(filter, skip = null) {
   anyOf('priority', 'priority');
   anyOf('project', 'project_name');
   anyOf('agent', 'agent');
-  anyOf('agentState', AGENT_STATE_SQL);
-  anyOf('sessionState', 'dudu_session_state(session)');
+  anyOf('sessionState', SESSION_STATE_SQL);
+  anyOf('lifecycleState', 'dudu_session_state(session)');
   anyOf('source', 'source');
   if (filter.label?.length && skip !== 'label') {
     sql.push('EXISTS (SELECT 1 FROM json_each(issues.label_ids) WHERE value IN (SELECT value FROM json_each(?)))');
@@ -330,7 +337,7 @@ const fieldsOf = (row) => ({
   title: row.title, brief: row.brief, status: row.workflow_status ?? row.status, ask: row.ask, priority: row.priority, impact: row.impact, effort: row.effort,
   kind: row.kind, project: row.project_name === null ? null : { name: row.project_name, path: row.project_path },
   dueAt: row.due_at, snoozeUntil: row.snooze_until, agent: row.agent, session: row.session, outcome: row.outcome,
-  source: row.source, sourceRef: row.source_ref, resolvedAt: row.resolved_at, agentState: row.agent_state, agentStateBasis: row.agent_state_basis,
+  source: row.source, sourceRef: row.source_ref, resolvedAt: row.resolved_at,
   labels: row.label_ids ? JSON.parse(row.label_ids) : [], parent: row.parent_id ?? null,
 });
 const isFinished = (status) => status === 'done' || status === 'canceled';
@@ -361,7 +368,7 @@ function logEntries(before, after, next, reason, finished = isFinished) {
   return entries;
 }
 
-export function createIssues({ file, now = Date.now, sessionState = () => null, sessionSince = () => null, sessionBases = null, sessionHandledAt = () => null, sessionTurnActive = () => null, deepSleepMs = DEEP_SLEEP_MS, deepSleepOn = () => true, actor: defaultActor = OWNER }) {
+export function createIssues({ file, now = Date.now, lifecycleState = () => null, sessionState = () => 'idle', sessionReceivedAt = () => 0, issuePinned = () => false, sessionHandledAt = () => null, sessionTurnActive = () => null, deepSleepMs = DEEP_SLEEP_MS, deepSleepOn = () => true, actor: defaultActor = OWNER }) {
   if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(file);
   try {
@@ -419,23 +426,13 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
   // A broken session reader must not break the list: its sessions just read as unknown.
   function stateOf(session) {
     try {
-      return (session && sessionState(session)) ?? null;
+      return (session && lifecycleState(session)) ?? null;
     } catch {
       return null;
     }
   }
 
-  function sinceOf(session) {
-    try {
-      return (session && sessionSince(session)) ?? null;
-    } catch {
-      return null;
-    }
-  }
-
-  // When anybody last did anything with the session (it changed, was spoken to or was opened): an idle agent, or one whose run finished and waits for a look
-  // (a red dot never), that nobody has handled for half an hour is in deep sleep (sessions/deep-sleep.mjs), unless the owner has turned deep sleep off
-  // (`deepSleepOn`, asked each time: the setting can change any moment).
+  // Deep sleep retains its timing and actual-work protections. Read status never clears a question or stops work.
   function handledAtOf(session) {
     try {
       return (session && sessionHandledAt(session)) ?? null;
@@ -451,35 +448,20 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
     }
   }
   const deepSleepOf = (row) => Boolean(deepSleepOn() && row.agent && row.session && inDeepSleep({
-    key: row.session, state: stateOf(row.session), agentMark: agentMarkOf(row.session, row.agent_state, row.agent_state_basis),
+    key: row.session, state: stateOf(row.session), agentMark: sessionStateOf(row.session),
     handledAt: handledAtOf(row.session), turnActive: turnActiveOf(row.session), now: now(), afterMs: deepSleepMs,
   }));
 
-  // What the session was doing when the boss spoke: its state and since when. The boss's word holds while that is still true.
-  const basisOf = (session) => `${stateOf(session) ?? ''}@${sinceOf(session) ?? ''}`;
-  // A session can be read from more than one place (what DSH says of it, and what its harness wrote), and the places do not agree on since when a state has lasted (by a few
-  // hundred milliseconds, or by hours): the word holds when ANY of them says it is still the state the boss saw, so that which of them is asked at the moment never moves it
-  // (it used to: an issue put to Idle by hand jumped to Needs you and back with every change of the one asked).
-  const basesOf = (session) => {
-    try {
-      const bases = sessionBases?.(session);
-      if (Array.isArray(bases) && bases.length) return bases;
-    } catch { /* the one that is asked, then */ }
-    return [basisOf(session)];
+  const sessionStateOf = (session) => {
+    if (!session) return 'unassigned'; // no conversation is an issue association, never a fourth session state
+    const value = sessionState(session);
+    return SESSION_ACTIVITY_STATES.includes(value) ? value : 'idle';
   };
-  // The boss's word (`override`) holds until the session's state changes, and never over live work. The mark is the state as an avatar's corner
-  // shows it: a finished run ("done") is the state "blocked", told from a question or a failure; the boss's word is never a finished run.
-  const agentMarkOf = (session, override, basis) => {
-    // A session that waits for the boss and that nobody has handled for 72 hours is Idle by itself (owner, 2026-11-07: "超过 24 小时没有处理的会话也自动进入到空闲中"; 2026-11-14: 72 hours);
-    // before that, no time makes an agent idle: that is a session that really is idle, or the boss's word. A stopped or interrupted turn needs the owner.
-    const fact = agedMark(agentMarkForSession(stateOf(session)), handledAtOf(session), now());
-    if (!override || fact === 'working') return fact;
-    return basesOf(session).includes(basis) ? override : fact;
-  };
-  // No agent: "unassigned" (owner, 2026-11-05), the state an issue starts in; with one, what its work is doing.
-  const agentStateOf = (agent, session, override, basis) => (agent ? stateOfMark(agentMarkOf(session, override, basis)) : 'unassigned');
-  db.function('dudu_agent_state', agentStateOf);
+  db.function('dudu_session_activity', sessionStateOf);
   db.function('dudu_session_state', (session) => stateOf(session));
+  const receivedAtOf = (session) => session ? sessionReceivedAt(session) : 0;
+  db.function('dudu_session_received_at', receivedAtOf);
+  db.function('dudu_issue_pinned', (id) => issuePinned(id) ? 1 : 0);
 
   // An issue's parent, and how many sub-issues it has and how many of them are done (only when it has any).
   const parentOf = (id) => {
@@ -504,14 +486,14 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
   };
 
   const toIssue = (row) => {
-    const { agentStateBasis, ...fields } = fieldsOf(row); // the basis stays inside the store
+    const fields = fieldsOf(row);
     return {
       id: row.id, ref: row.project_key ? `${row.project_key}-${row.project_number}` : null, ...fields,
-      agentState: agentStateOf(row.agent, row.session, row.agent_state, row.agent_state_basis),
-      ...(row.agent && agentMarkOf(row.session, row.agent_state, row.agent_state_basis) === 'done' ? { agentFinished: true } : {}), // (absent: not finished)
+      sessionState: sessionStateOf(row.session),
       ...(deepSleepOf(row) ? { deepSleep: true } : {}), // (absent: awake)
       statusType: row.status,
-      createdAt: row.created_at, updatedAt: row.updated_at,
+      createdAt: row.created_at, updatedAt: row.updated_at, receivedAt: receivedAtOf(row.session),
+      ...(issuePinned(row.id) ? { pinned: true } : {}),
       labels: labels.resolve(fields.labels), parent: parentOf(row.parent_id),
       ...subIssuesOf(row.id),
     };
@@ -640,14 +622,6 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
     for (const id of fields.labels ?? []) if (!labels.exists(id)) throw new Invalid(`labels: there is no label ${id}.`, 'Use the ids from issues/labels, or create the label first.');
     if (fields.agent && (!next.project?.path || !isAbsolute(next.project.path))) {
       throw new Invalid('Choose a project folder before assigning an agent.', 'Select or create a project, then choose an agent.');
-    }
-    // The boss's word about the agent's state belongs to this agent and this session, as it was when the word was given.
-    if ('agentState' in fields && fields.agentState && !next.agent) throw new Invalid('An issue without an agent has no agent state to set.');
-    if ('agentState' in fields && fields.agentState && agentStateForSession(stateOf(next.session)) === 'working') throw new Invalid('The agent is working; its state cannot be set by hand.', 'Wait until the session stops, or stop it.');
-    if ('agentState' in fields) next.agentStateBasis = fields.agentState ? basisOf(next.session) : null;
-    else if (current !== BLANK && current.agentState && (next.agent !== current.agent || next.session !== current.session)) {
-      next.agentState = null;
-      next.agentStateBasis = null;
     }
     if (next.status !== current.status) {
       const sameType = workflow.type(next.status) === workflow.type(current.status);
@@ -835,10 +809,14 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
   }
 
   function segmentsOf(view) {
-    const order = { ...ORDERS[view.order] };
-    if (view.reverse) order.dir = order.dir === 'ASC' ? 'DESC' : 'ASC';
+    const ordered = (source, reverse = false) => {
+      const dir = reverse ? (source.dir === 'ASC' ? 'DESC' : 'ASC') : source.dir;
+      // Pinning remains first in either sort direction, including paged groups.
+      return { dir, keys: [...(view.pinnedFirst ? [`(${dir === 'ASC' ? '-' : ''}dudu_issue_pinned(id))`] : []), ...source.keys] };
+    };
+    const order = ordered(ORDERS[view.order], view.reverse);
     if (view.tab !== 'all') return [{ scope: TABS[view.tab][0], order }];
-    return view.completedLast ? [{ scope: OPEN_SQL, order }, { scope: FINISHED_SQL, order: FINISHED_ORDER }] : [{ scope: null, order }];
+    return view.completedLast ? [{ scope: OPEN_SQL, order }, { scope: FINISHED_SQL, order: ordered(FINISHED_ORDER) }] : [{ scope: null, order }];
   }
 
   // One page of the view: up to `limit` rows after the cursor, fetching one extra to know whether there is more.
@@ -1012,8 +990,8 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
   function office() {
     const active = TABS.active[0];
     const board = [0, 0, 0, 0];
-    const counts = { total: 0, ...Object.fromEntries(AGENT_STATES.map((state) => [state, 0])) };
-    for (const row of stmt(`SELECT status, agent IS NOT NULL AS assigned, ${AGENT_STATE_SQL} AS state, COUNT(*) AS n FROM issues WHERE ${active} GROUP BY status, assigned, state`).all()) {
+    const counts = { total: 0, ...Object.fromEntries(ISSUE_SESSION_STATES.map((state) => [state, 0])) };
+    for (const row of stmt(`SELECT status, agent IS NOT NULL AS assigned, ${SESSION_STATE_SQL} AS state, COUNT(*) AS n FROM issues WHERE ${active} GROUP BY status, assigned, state`).all()) {
       board[row.assigned ? ['todo', 'in_progress', 'in_review'].indexOf(row.status) + 1 : 0] += row.n;
       if (row.assigned) { counts.total += row.n; counts[row.state] += row.n; }
     }
@@ -1105,6 +1083,7 @@ export function createIssues({ file, now = Date.now, sessionState = () => null, 
       return success({ issue: row ? toIssue(row) : null });
     }),
     sessionOwners: (key) => stmt('SELECT DISTINCT issue_id AS id FROM issue_sessions WHERE session_key = ? UNION SELECT id FROM issues WHERE session = ?').all(key, key).map((row) => row.id),
+    sessionKeys: () => stmt('SELECT DISTINCT session FROM issues WHERE session IS NOT NULL').all().map((row) => row.session),
     onChange(listener) { changeListeners.add(listener); return () => changeListeners.delete(listener); },
     titleRevision: (id) => stmt("SELECT id, at FROM issue_events WHERE issue_id = ? AND (action = 'add' OR json_type(after, '$.title') IS NOT NULL) ORDER BY id DESC LIMIT 1").get(parseId(id)),
     sessionStart: (id, key) => parseJson(stmt("SELECT data FROM issue_log WHERE issue_id = ? AND kind = 'session' AND actor = 'dudu' AND json_extract(data, '$.key') = ? AND json_extract(data, '$.provider') IS NOT NULL ORDER BY id LIMIT 1").get(parseId(id), key)?.data),

@@ -1,0 +1,46 @@
+/* The shared phone avatars in the owner's denser Desktop conversation layout. Scoped by the client build. */
+.dudu-conversation-avatar { position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center; user-select: none; }
+.dudu-conversation-avatar > [data-agent-logo="dudu"] { width: 94%; height: 94%; }
+.dudu-conversation-avatar-ref { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; flex-direction: column; border: 1px solid currentColor; border-radius: 50%; background: var(--background); padding: 0 3px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.dudu-conversation-avatar-ref > span { max-width: 100%; white-space: nowrap; }
+.dudu-conversation-mark { position: absolute; border-radius: 50%; background: var(--background); pointer-events: none; }
+.dudu-conversation-unread { background: #ec1313; }
+.dudu-conversation-working { position: absolute; inset: 0; width: 100%; height: 100%; }
+.dudu-conversation-working-arc { transform-origin: center; animation: dudu-conversation-spin 1s linear infinite; }
+@keyframes dudu-conversation-spin { to { transform: rotate(360deg); } }
+.dudu-conversations { display: flex; flex: 1; min-height: 0; min-width: 0; overflow-x: auto; background: var(--secondary); }
+.dudu-conversation-sidebar { --background: var(--card); display: flex; flex: 0 0 var(--dudu-conversation-sidebar-width); width: var(--dudu-conversation-sidebar-width); min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; background: var(--card); }
+.dudu-conversation-toolbar { display: flex; height: 44px; flex: none; min-width: 0; align-items: center; padding: 0 12px 0 8px; }
+.dudu-conversation-scroll { flex: 1; min-height: 0; overflow: auto; padding-top: 8px; padding-bottom: 24px; }
+.dudu-conversation-filters { overflow-x: auto; scrollbar-width: none; }
+.dudu-conversation-filters > div { min-width: max-content; }
+.dudu-conversation-pane { display: flex; min-height: 0; min-width: 480px; flex: 1; flex-direction: column; overflow: hidden; background: var(--card); }
+.dudu-conversation-splitter { position: relative; z-index: 1; flex: 0 0 8px; width: 8px; cursor: col-resize; touch-action: none; outline: none; }
+.dudu-conversation-splitter::before { content: ""; position: absolute; top: 8px; bottom: 8px; left: 3px; width: 2px; border-radius: 1px; background: color-mix(in srgb, var(--foreground) 25%, var(--background)); opacity: 0; pointer-events: none; }
+.dudu-conversation-splitter::after { content: ""; position: absolute; inset: 0; }
+.dudu-conversation-splitter:hover::before,.dudu-conversation-splitter:focus-visible:where(html[data-dudu-tabbing] *)::before,.dudu-conversations[data-resizing] > .dudu-conversation-splitter::before { opacity: 1; }
+.dudu-conversations[data-resizing] { cursor: col-resize; user-select: none; }
+.dudu-conversation-row { position: relative; isolation: isolate; display: flex; align-items: center; gap: 12px; height: 64px; padding: 0 16px; cursor: pointer; outline: none; background: var(--background); }
+.dudu-conversation-row::before { content: ""; position: absolute; z-index: -1; inset: 2px 8px; border-radius: 6px; pointer-events: none; }
+.dudu-conversation-row:hover::before,.dudu-conversation-row:active::before,.dudu-conversation-row:focus-visible:where(html[data-dudu-tabbing] *)::before { background: color-mix(in srgb, var(--foreground) 6%, var(--background)); }
+.dudu-conversation-row[aria-current="true"]::before { background: var(--dudu-conversation-selected); }
+.dudu-conversation-row-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
+.dudu-conversation-row-title,.dudu-conversation-row-preview { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dudu-conversation-row-title { height: 20px; }
+.dudu-conversation-row-title-text { display: flex; flex: 1; min-width: 0; align-items: center; font-size: 14px; line-height: 20px; font-weight: 400; }
+.dudu-conversation-row-time { flex: none; font-size: 12px; line-height: 20px; white-space: nowrap; color: #96989d; }
+.dudu-conversation-row-preview { height: 18px; font-size: 12px; line-height: 18px; color: #96989d; }
+.dudu-conversation-row-preview > .dudu-conversation-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dudu-conversation-row-preview [data-agent-logo] { width: 12px; height: 12px; }
+.dudu-conversation-subissues { position: absolute; right: 28px; top: 24px; height: 40px; border: 0; border-radius: 0; background: transparent; padding: 0 8px; color: #96989d; }
+.dudu-conversation-pins { display: grid; grid-template-columns: repeat(auto-fill,32px); column-gap: 22px; justify-content: space-between; padding: 8px 16px 0; }
+.dudu-conversation-pins:empty { display: none; }
+.dudu-conversation-pin { display: flex; position: relative; width: 32px; height: 64px; align-items: center; flex-direction: column; gap: 8px; background: transparent; border: 0; padding: 0; cursor: pointer; outline: none; }
+.dudu-conversation-pin-label { width: 54px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: center; font-size: 11.5px; line-height: 14px; font-weight: 400; color: #96989d; }
+@media (prefers-reduced-motion:reduce) { .dudu-conversation-working-arc { animation: none; } }
+.dudu-conversations[data-compact] .dudu-conversation-row { justify-content: center; gap: 0; padding: 0; }
+.dudu-conversations[data-compact] .dudu-conversation-toolbar { justify-content: center; padding: 0; }
+.dudu-conversations[data-compact] .dudu-conversation-pins,.dudu-conversations[data-compact] .dudu-conversation-row-copy,.dudu-conversations[data-compact] .dudu-conversation-subissues { display: none; }
+.dudu-conversations[data-compact] > .dudu-conversation-splitter { cursor: default; }
+.dudu-conversations[data-compact] > .dudu-conversation-splitter::after { display: none; }
+.dudu-conversations[data-compact] > .dudu-conversation-splitter::before { opacity: 0; }

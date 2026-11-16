@@ -1,20 +1,24 @@
 import SwiftUI
 
 /// One entry of DSH's settings list.
-private struct SettingsRow: Identifiable, Equatable {
+private struct SettingsRow: Identifiable, Hashable {
     let id: String
     let title: String
     let icon: NavigationIcon?
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id && lhs.title == rhs.title && lhs.icon == rhs.icon }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 struct SettingsView: View {
     @ObservedObject var store: DSBotStore
+    @ObservedObject var pagePool: EmbeddedPagePool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     /// Only DSH's own settings need an embedded page, created when its list is entered.
     @StateObject private var embeddedSession = EmbeddedPageSession()
     @State private var embeddedRetryToken = 0
-    @State private var selectedRowID: String?
+    @State private var selectedRow: SettingsRow?
     /// DSH's own pages are one level down, behind "其他设置" (owner, 2026-11-08), not listed beside 嘟嘟's.
     @State private var showsDSHSettings = false
 
@@ -41,58 +45,32 @@ struct SettingsView: View {
         return embeddedSession.settingsCategories.map { SettingsRow(id: $0.id, title: $0.label, icon: nil) }
     }
 
-    private var selectedRow: SettingsRow? {
-        guard let selectedRowID else { return nil }
-        return rows.first { $0.id == selectedRowID }
-    }
-
     var body: some View {
-        ZStack {
-            pageBackground.ignoresSafeArea()
-
-            if showsDSHSettings {
-                EmbeddedPageView(
-                    store: store,
-                    page: .settings,
-                    session: embeddedSession,
-                    retryToken: embeddedRetryToken,
-                    isVisible: selectedRow != nil,
-                    isInteractive: selectedRow != nil
-                )
-                .allowsHitTesting(selectedRow != nil)
-                .accessibilityHidden(selectedRow == nil)
-            }
-
-            if selectedRow == nil {
-                (showsDSHSettings ? AnyView(dshSettingsPage) : AnyView(settingsHome))
-                    .transition(.opacity)
-            }
-        }
-        .background(pageBackground.ignoresSafeArea())
-        // DSH's page is white, so the bar above it is white too; the list is on the grouped grey.
+        settingsHome
+        .background(DSBotStyle.settingsBackground.ignoresSafeArea())
         .navigationBarBackButtonHidden(true)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
-        .toolbarBackground(pageBackground, for: .navigationBar)
+        .toolbarBackground(DSBotStyle.settingsBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.light, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button(action: leave) {
-                    DSBotIcon(closes ? .close : .back, size: 20)
-                        .foregroundStyle(DSBotStyle.ink)
+                SheetCloseButton(label: L10n.text("关闭设置")) {
+                    refreshCatalogAfterEmbeddedSettings()
+                    dismiss()
                 }
-                .accessibilityLabel(closes ? L10n.text("关闭设置") : L10n.text("返回设置栏目"))
-                .accessibilityIdentifier(closes ? "settings.close" : "settings.dsh.back")
+                .accessibilityIdentifier("settings.close")
             }
             ToolbarItem(placement: .principal) {
-                Text(selectedRow?.title ?? (showsDSHSettings ? L10n.text("其他设置") : L10n.text("设置")))
+                Text(L10n.text("设置"))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(DSBotStyle.ink)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
         }
+        .navigationDestination(isPresented: $showsDSHSettings) { dshSettingsRoot }
         .task { await store.refreshNavigation() }
         #if DEBUG && targetEnvironment(simulator)
         .task {
@@ -101,22 +79,50 @@ struct SettingsView: View {
             if let index = arguments.firstIndex(of: "-dsbot-review-settings-section"),
                arguments.indices.contains(index + 1) {
                 try? await Task.sleep(nanoseconds: 800_000_000)
-                selectedRowID = arguments[index + 1]
+                showsDSHSettings = true
+                selectedRow = rows.first { $0.id == arguments[index + 1] }
             }
         }
         #endif
-        .onChange(of: selectedRowID) { _, _ in pushSelection() }
-        .onChange(of: embeddedSession.hasPage) { _, _ in pushSelection() }
         .onChange(of: rows) { _, current in
-            if let selectedRowID, !current.contains(where: { $0.id == selectedRowID }) {
-                self.selectedRowID = nil
+            if embeddedSession.isCurrent, embeddedSession.hasReceivedSettingsCategories,
+               let selectedRow, !current.contains(where: { $0.id == selectedRow.id }) {
+                self.selectedRow = nil
             }
         }
         .onDisappear(perform: refreshCatalogAfterEmbeddedSettings)
     }
 
-    private var pageBackground: Color {
-        selectedRow == nil ? DSBotStyle.settingsBackground : .white
+    private var dshSettingsRoot: some View {
+        ZStack {
+            // Load DSH's section registry behind its list, retaining the same authenticated page session.
+            EmbeddedPageView(
+                store: store, page: .settings, session: embeddedSession,
+                retryToken: embeddedRetryToken, isVisible: false, isInteractive: false
+            )
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            dshSettingsPage
+        }
+        .navigationBarBackButtonHidden(false)
+        .toolbarRole(.editor)
+        .tint(DSBotStyle.ink)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(DSBotStyle.settingsBackground, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(L10n.text("其他设置"))
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(DSBotStyle.ink)
+            }
+        }
+        .navigationDestination(item: $selectedRow) { row in
+            EmbeddedSettingsSection(store: store, pool: pagePool, row: row)
+        }
+        .onAppear {
+            refreshCatalogAfterEmbeddedSettings()
+        }
     }
 
     /// DSH's own pages, as DSH lists them: the page the "其他设置" row opens.
@@ -135,33 +141,17 @@ struct SettingsView: View {
         .background(DSBotStyle.settingsBackground.ignoresSafeArea())
     }
 
-    /// The first level closes the settings; the levels below it go back one.
-    private var closes: Bool { selectedRow == nil && !showsDSHSettings }
-
-    /// Close the settings, or go back one level: from a DSH section to DSH's list, from that list to the settings.
-    private func leave() {
-        if selectedRow != nil {
-            selectedRowID = nil
-            refreshCatalogAfterEmbeddedSettings()
-        } else if showsDSHSettings {
-            showsDSHSettings = false
-        } else {
-            refreshCatalogAfterEmbeddedSettings()
-            dismiss()
-        }
-    }
-
-    /// Hand the choice to the page; it switches as soon as it is ready.
-    private func pushSelection() {
-        embeddedSession.selectSettingsCategory(selectedRowID)
-    }
-
     private var settingsHome: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 connectionCard
                 duduSettingsCard
                 aboutCard
+                Text(verbatim: AppInfo.versionText)
+                    .font(.system(size: 13))
+                    .foregroundStyle(DSBotStyle.muted)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("settings.version")
             }
             .padding(.horizontal, 18)
             .padding(.top, 12)
@@ -270,8 +260,7 @@ struct SettingsView: View {
         }
     }
 
-    /// 隐私政策, 关于 and 版本信息, in the owner's order (2026-11-12: "隐私策略，关于，版本信息都放设置里面吧"): one more card
-    /// of the same rows as the others. The policy opens in the browser, 关于 is a page, the version is only read.
+    /// The privacy and About entries keep the settings' rows; the version follows the card as a quiet footer.
     private var aboutCard: some View {
         VStack(spacing: 0) {
             Button {
@@ -298,17 +287,6 @@ struct SettingsView: View {
             }
             .buttonStyle(DSBotRowButtonStyle())
             .accessibilityIdentifier("settings.about")
-
-            rowDivider
-
-            aboutRowLabel(.version, L10n.text("版本信息")) {
-                Text(AppInfo.versionText)
-                    .font(.system(size: 13))
-                    .foregroundStyle(DSBotStyle.muted)
-                    .lineLimit(1)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("settings.version")
         }
         .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
@@ -399,7 +377,7 @@ struct SettingsView: View {
 
     private func settingsRow(_ row: SettingsRow) -> some View {
         Button {
-            selectedRowID = row.id
+            selectedRow = row
             DSBotLog.record("settings.dsh.section")
         } label: {
             HStack(spacing: 12) {
@@ -483,9 +461,7 @@ struct SettingsView: View {
 private struct DuduSettingsPage: View {
     @ObservedObject var store: DSBotStore
     let item: NavigationItem
-    @Environment(\.dismiss) private var dismiss
     @StateObject private var navigator: SettingsNavigator
-    @State private var toast: DSBotToastMessage?
 
     init(store: DSBotStore, item: NavigationItem) {
         self.store = store
@@ -494,7 +470,29 @@ private struct DuduSettingsPage: View {
     }
 
     var body: some View {
-        NativeSettingsView(navigator: navigator, store: store, topInset: 0) { toast = $0 }
+        if let model = navigator.pages.first {
+            DuduSettingsScreen(store: store, navigator: navigator, model: model, fallbackTitle: item.title)
+        }
+    }
+}
+
+/// Each model is a real destination, so the system owns interactive movement and cancellation.
+private struct DuduSettingsScreen: View {
+    @ObservedObject var store: DSBotStore
+    @ObservedObject var navigator: SettingsNavigator
+    @ObservedObject var model: SettingsPageModel
+    var fallbackTitle = ""
+    @State private var toast: DSBotToastMessage?
+
+    private var nextPage: Binding<SettingsPageModel?> {
+        Binding(
+            get: { navigator.page(after: model.id) },
+            set: { if $0 == nil { navigator.pop(to: model.id) } }
+        )
+    }
+
+    var body: some View {
+        NativeSettingsView(navigator: navigator, store: store, topInset: 0, displayedModel: model) { toast = $0 }
         .overlay(alignment: .top) {
             DSBotToastOverlay(message: toast) { message in
                 if toast?.id == message.id { toast = nil }
@@ -503,37 +501,74 @@ private struct DuduSettingsPage: View {
             .padding(.top, 8)
         }
         .background(DSBotStyle.settingsBackground.ignoresSafeArea())
-        .navigationBarBackButtonHidden(true)
+        .navigationBarBackButtonHidden(model.busy)
+        .toolbarRole(.editor)
+        .tint(DSBotStyle.ink)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(DSBotStyle.settingsBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.light, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    if navigator.canPop { navigator.pop() } else { dismiss() }
-                } label: {
-                    if navigator.current?.page?.isForm == true {
-                        Text(L10n.text("取消"))
-                    } else {
-                        DSBotIcon(.back, size: 20).foregroundStyle(DSBotStyle.ink)
-                    }
-                }
-                .disabled(navigator.current?.busy == true)
-                .accessibilityLabel(navigator.current?.page?.isForm == true ? L10n.text("取消") : L10n.text("返回"))
-                .accessibilityIdentifier("settings.dudu.back")
-            }
             ToolbarItem(placement: .principal) {
-                Text(navigator.title ?? item.title)
+                Text(model.page?.title ?? fallbackTitle)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(DSBotStyle.ink)
                     .lineLimit(1)
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                NativeSettingsSaveButton(navigator: navigator, store: store) { toast = $0 }
+            if model.hasToolbarActions {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NativeSettingsToolbarActions(navigator: navigator, store: store, displayedModel: model) { toast = $0 }
+                }
             }
         }
-        .interactiveDismissDisabled(navigator.current?.busy == true)
+        .navigationDestination(item: nextPage) { child in
+            DuduSettingsScreen(store: store, navigator: navigator, model: child)
+        }
+        .interactiveDismissDisabled(model.busy)
+    }
+}
+
+private struct EmbeddedSettingsSection: View {
+    @ObservedObject var store: DSBotStore
+    @ObservedObject var pool: EmbeddedPagePool
+    @StateObject private var session: EmbeddedPageSession
+    let row: SettingsRow
+
+    init(store: DSBotStore, pool: EmbeddedPagePool, row: SettingsRow) {
+        self.store = store
+        self.pool = pool
+        self.row = row
+        _session = StateObject(wrappedValue: pool.session(page: .settings, target: row.id, sessionID: nil))
+    }
+
+    var body: some View {
+        EmbeddedPageView(
+            store: store, page: .settings, target: row.id, session: session, pool: pool,
+            isVisible: true, isInteractive: true
+        )
+        .background(Color.white.ignoresSafeArea())
+        .navigationBarBackButtonHidden(false)
+        .toolbarRole(.editor)
+        .tint(DSBotStyle.ink)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(Color.white, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(row.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(DSBotStyle.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .onAppear { session.selectSettingsCategory(row.id) }
+        .onChange(of: session.hasPage) { _, _ in session.selectSettingsCategory(row.id) }
+        .onDisappear {
+            if session.consumeSettingsMutation(), store.status == .connected {
+                Task { await store.refreshCatalog() }
+            }
+        }
     }
 }

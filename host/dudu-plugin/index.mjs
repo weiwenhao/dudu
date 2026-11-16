@@ -9,6 +9,7 @@ import { createDshMobileFrontend } from './dist/dsh-mobile-frontend.mjs';
 import { createNativePages } from './dist/native-pages.mjs';
 import { createDuduPages } from './dist/phone-pages.mjs';
 import { createConversationReads } from './dist/native-conversation-reads.mjs';
+import { createNativeFileTransfers } from './dist/native-file-transfers.mjs';
 import { createNativeQuestions } from './dist/native-questions.mjs';
 import { desktopPackageIdentity, writeDesktopRuntime } from './dist/desktop-runtime.mjs';
 import { createNativeDiagnostics } from './dist/native-diagnostics.mjs';
@@ -46,6 +47,8 @@ import { openAssistant } from './dist/assistant/assistant.mjs';
 import { createCards } from './dist/assistant/home/cards.mjs';
 import { createGroup } from './dist/assistant/home/group.mjs';
 import { createLatest } from './dist/assistant/home/latest.mjs';
+import { createChatHome } from './dist/assistant/home/chat-home.mjs';
+import { createChatHomeApi } from './dist/assistant/home/chat-home-api.mjs';
 import { createConversation } from './dist/assistant/home/conversation.mjs';
 import { reminders } from './dist/assistant/home/reminders.mjs';
 import { createIssueTidy } from './dist/assistant/issues/tidy.mjs';
@@ -60,7 +63,9 @@ import { sessionInfo } from './dist/providers/native/session-info.mjs';
 import { createSourceCollector } from './dist/assistant/home/source-collector.mjs';
 import { createOAuth } from './dist/assistant/connectors/mcp.mjs';
 import { createSessionCleanup } from './dist/assistant/home/session-cleanup.mjs';
-import { agentActivityProjection } from './dist/assistant/sessions/activity-projection.mjs';
+import { sessionActivityProjection } from './dist/assistant/sessions/activity-projection.mjs';
+import { createReadReceipts, validReadPosition } from './dist/assistant/sessions/read-receipts.mjs';
+import { createSessionActivity } from './dist/assistant/sessions/session-activity.mjs';
 import { harnessTimingProjection } from './dist/providers/stats.mjs';
 import { canReadSessionHistory, readSessionHistory } from './dist/dsh-session-history.mjs';
 
@@ -154,6 +159,7 @@ async function startProviders(ctx, folder, assignment) {
     attachments: () => ctx.attachments,
     controller: () => ctx.sessionController, query: () => ctx.sessionQuery, agents: () => ctx.agents,
     rebind: (previousId, sessionId) => assignment.rebindSession?.(previousId, sessionId),
+    onHistoryAppended: (sessionId, events) => assignment.sessionHistoryAppended?.(sessionId, events),
   });
   // The issues store opens in startIssues, so it is asked for when a list is read, not now.
   const searchDsh = createDshSessions(ctx, { hidden: links.removed, cacheFile: join(folder, 'session-search-dsh.sqlite'), diagnostics: sessionDiagnostics });
@@ -237,9 +243,10 @@ async function startProviders(ctx, folder, assignment) {
 // The issues of 嘟嘟 (docs/assistant.md): one SQLite file in the plugin's state folder, served to the desktop interface.
 // `assignment` is the issues' hooks into the sessions they are given to; startAssignment fills it in once the store is open.
 async function startIssues(ctx, folder, assignment = {}) {
-  const issues = createIssues({ file: join(folder, 'assistant', 'issues.db'), sessionState: (key) => assignment.sessionState?.(key) ?? assignment.snapshots?.stateOf(key) ?? null,
-    sessionSince: (key) => assignment.sessionSince?.(key) ?? assignment.snapshots?.snapshotOf(key)?.stateSince ?? null,
-    sessionBases: (key) => assignment.sessionBases?.(key), sessionHandledAt: (key) => assignment.sessionHandledAt?.(key) ?? null, deepSleepMs: deepSleepAfter,
+  const issues = createIssues({ file: join(folder, 'assistant', 'issues.db'), lifecycleState: (key) => assignment.sessionState?.(key) ?? assignment.snapshots?.stateOf(key) ?? null,
+    sessionState: (key) => assignment.sessionStatus?.(key)?.sessionState ?? 'idle', sessionHandledAt: (key) => assignment.sessionHandledAt?.(key) ?? null, deepSleepMs: deepSleepAfter,
+    sessionReceivedAt: (key) => assignment.sessionStatus?.(key)?.attention?.messageAt ?? 0,
+    issuePinned: (id) => assignment.chatHome?.isPinned(`issue:${id}`) === true,
     sessionTurnActive: (key) => key.startsWith('dsh:') && assignment.hasActiveWork?.(key.slice(4)) ? true : assignment.sessionTurnActive?.(key) ?? null,
     deepSleepOn: () => assignment.assistant?.settings?.value('deepSleep') !== false }); // the settings open later (startAssistant): until then, and for a file without the key, it is on
   const attachmentApi = createIssueAttachmentApi({ issues, attachments: () => ctx.attachments });
@@ -321,7 +328,9 @@ async function startIssues(ctx, folder, assignment = {}) {
 // runtimes serve it from the services every plugin can inject: no phone peer is needed.
 async function startAssignment(ctx, folder, assignment) {
   if (!assignment.issues) throw new Error('there are no issues');
-  await ctx.sessionProjections?.register(agentActivityProjection);
+  let closing = false;
+  const activityProjection = await ctx.sessionProjections?.register(sessionActivityProjection);
+  const readReceipts = createReadReceipts({ file: join(folder, 'assistant', 'session-reads.db') });
   await ctx.sessionProjections?.register(harnessTimingProjection);
   const dsh = createDshSessions(ctx, {
     hidden: (id) => assignment.links?.removed(id),
@@ -353,7 +362,7 @@ async function startAssignment(ctx, folder, assignment) {
     // What ASSIGN.md allows for this kind of issue; full access when it says nothing (3.3, owner 2026-11-09), and for Claude Code its own default.
     accessOf: (issue) => sessionOptions(assignment.assistant?.memory?.rules?.()?.rules?.['ASSIGN.md'], issue, { home: homedir(), defaultAccess: issue.agent === 'claude' ? null : 'danger-full-access' }),
   });
-  Object.assign(assignment, { sessions: agentSessions, sessionState: hooks.sessionState, sessionSince: hooks.sessionSince, sessionBases: hooks.sessionBases, sessionHandledAt: hooks.sessionHandledAt, sessionTurnActive: hooks.sessionTurnActive, onAssign: hooks.onAssign, onReply: hooks.onReply, forward: hooks.forward, onResume: hooks.onResume, start: hooks.start, setAccess: hooks.setAccess, closeFor: hooks.closeFor, restore: hooks.restore });
+  Object.assign(assignment, { sessions: agentSessions, sessionState: hooks.sessionState, sessionHandledAt: hooks.sessionHandledAt, sessionTurnActive: hooks.sessionTurnActive, onAssign: hooks.onAssign, onReply: hooks.onReply, forward: hooks.forward, onResume: hooks.onResume, start: hooks.start, setAccess: hooks.setAccess, closeFor: hooks.closeFor, restore: hooks.restore });
   assignment.rebindSession = async (previousId, sessionId) => {
     const previous = `dsh:${previousId}`;
     const next = `dsh:${sessionId}`;
@@ -367,6 +376,7 @@ async function startAssignment(ctx, folder, assignment) {
       }
     };
     try {
+      await sessionActivity.rebind(previousId, sessionId);
       for (const issue of originals) {
         hooks.forget(issue);
         changed.push(issue);
@@ -426,26 +436,51 @@ async function startAssignment(ctx, folder, assignment) {
   const snapshots = createSessions({
     file: join(folder, 'assistant', 'index', 'sessions.db'), readers, links: assignment.links,
     ignore: (key) => key.startsWith('dsh:dudu-assistant-'),
-    // An issue's agent keeps a question, a failure or a stop however old (owner, 2026-11-07: idle only by their own word): a lookup in the issues table, nothing else.
+    // Lifecycle safety keeps managed questions until observed inactive; presentation uses separate read receipts.
     pinned: (key) => (assignment.issues?.sessionOwners(key)?.length ?? 0) > 0,
   });
   assignment.snapshots = snapshots;
-  // What the sidebar and the phone know of a session: its snapshot, and `deepSleep` when its agent sleeps, whatever its mark is (owner, 2026-11-07: "进入到睡眠状态，右下角的图标应该都变成月亮才对。重新
-  // 激活后再恢复到原来的状态"): they draw the crescent in the corner for it, and the mark itself is not touched, so it is there again when the agent wakes.
-  const activityOf = (id) => withDeepSleep(hooks.snapshotOf(`dsh:${id}`), `dsh:${id}`, (key) => {
-    const issue = assignment.issues?.findBySession(key).issue;
-    return issue?.deepSleep === true;
+  const sessionActivity = createSessionActivity({
+    receipts: readReceipts,
+    projected: (id) => { const session = ctx.sessions.get(id); return session ? activityProjection?.stateOf(session) : null; },
+    readProjection: async (sessionId, signal) => (await ctx.sessionController?.projections({ sessionId }, signal))?.values?.duduSessionActivity,
+    snapshotOf: hooks.snapshotOf, nativeSnapshotOf: (key) => snapshots.snapshotOf(key), liveOf: (id) => ctx.agents?.get(id),
   });
+  const stopAttention = ctx.on('session/event', (session) => {
+    if (session?.id && activityProjection) sessionActivity.observe(session.id, activityProjection.stateOf(session));
+  }, { global: true });
+  assignment.sessionHistoryAppended = (id, events) => {
+    // Cold native imports append through persistence, without publishing a live session/event.
+    const attention = events.reduce((state, event) => sessionActivityProjection.apply(state, event), sessionActivity.attentionOf(id));
+    if (attention.seq >= 0 || attention.through >= 0) sessionActivity.observe(id, attention);
+  };
+  const warmActivity = sessionActivity.warm;
+  assignment.sessionStatus = sessionActivity.statusOf;
+  const activityOf = (id) => withDeepSleep(sessionActivity.statusOf(`dsh:${id}`), `dsh:${id}`, (key) => assignment.issues?.findBySession(key).issue?.deepSleep === true);
+  const acknowledgeRead = sessionActivity.acknowledge;
+  assignment.acknowledgeRead = acknowledgeRead;
+  assignment.markSessionUnread = sessionActivity.markUnread;
+  assignment.warmSessionActivity = warmActivity;
   assignment.sessionActivity = activityOf;
   const observe = (snapshot) => inbox.accept(snapshot).catch((error) => console.warn(`[dudu] A managed issue could not follow its session: ${error.message}`));
   const stopSnapshots = snapshots.onChange(({ to, snapshot }) => {
     if (to != null && snapshot) void observe(snapshot);
   });
   const startup = titles.restore()
-    .then(() => hooks.restore())
-    .then(() => snapshots.poll())
-    .then(() => hooks.restore())
-    .then(() => Promise.all(snapshots.snapshots({ state: 'waiting_owner', limit: 500 }).snapshots.map(observe)))
+    .then(() => { if (!closing) return hooks.restore(); })
+    .then(async () => {
+      if (closing) return;
+      try {
+        const rows = await dsh.list();
+        const ids = rows.map((row) => row.sessionId ?? row.id);
+        const assigned = assignment.issues.sessionKeys().filter((key) => key.startsWith('dsh:')).map((key) => key.slice(4));
+        await warmActivity([...ids, ...assigned]);
+      }
+      catch (error) { if (!closing) console.warn(`[dudu] Session read boundaries could not be loaded: ${error.message}`); }
+    })
+    .then(() => { if (!closing) return snapshots.poll(); })
+    .then(() => { if (!closing) return hooks.restore(); })
+    .then(() => { if (!closing) return Promise.all(snapshots.snapshots({ state: 'waiting_owner', limit: 500 }).snapshots.map(observe)); })
     .catch((error) => console.warn(`[dudu] The sessions of the open issues could not be followed again: ${error.message}`));
   const questionStops = [
     ['user-questions/request', (request) => Array.isArray(request.questions) ? questionText(request.questions) : ''],
@@ -493,20 +528,39 @@ async function startAssignment(ctx, folder, assignment) {
           body.sessionIds.some((id) => typeof id !== 'string' || !id || id.length > 512)) {
         return Response.json({ outcome: 'error', code: 'invalid_session' }, { status: 400 });
       }
+      await warmActivity(body.sessionIds);
       const states = Object.fromEntries(body.sessionIds.map((id) => {
         const snapshot = activityOf(id);
-        return [id, snapshot ? { state: snapshot.state, lastActivityAt: snapshot.lastActivityAt, provider: snapshot.provider, agent: snapshot.agent, ...(snapshot.deepSleep ? { deepSleep: true } : {}) } : null];
+        return [id, snapshot ? { state: snapshot.state, sessionState: snapshot.sessionState, lastActivityAt: snapshot.lastActivityAt, provider: snapshot.provider, agent: snapshot.agent, ...(snapshot.deepSleep ? { deepSleep: true } : {}) } : null];
       }));
       return Response.json({ states }, { headers: { 'cache-control': 'no-store' } });
     },
   });
+  const disposeRead = registerRoute(ctx, {
+    path: '/api/dudu/sessions/mark-read', methods: ['POST'], requestBody: 'buffered',
+    fetch: async (request) => {
+      const body = await request.json().catch(() => null);
+      if (!body || typeof body.sessionId !== 'string' || !validReadPosition(body.position)) return Response.json({ code: 'invalid_read' }, { status: 400 });
+      try {
+        return Response.json(await acknowledgeRead(body.sessionId, body.position), { headers: { 'cache-control': 'no-store' } });
+      } catch { return Response.json({ code: 'invalid_read' }, { status: 400 }); }
+    },
+  });
   return async () => {
+    closing = true;
+    disposeRead();
+    disposeActivity();
+    stopAttention();
+    delete assignment.sessionHistoryAppended;
+    delete assignment.acknowledgeRead;
+    delete assignment.markSessionUnread;
+    delete assignment.warmSessionActivity;
+    await sessionActivity.close();
     await folding.close();
     await deepSleep.close();
     for (const stop of questionStops) stop();
     stopSnapshots();
     disposeSnapshots();
-    disposeActivity();
     delete assignment.sessionActivity;
     disposeTakeover();
     delete assignment.takeOverSession;
@@ -517,9 +571,11 @@ async function startAssignment(ctx, folder, assignment) {
     await inbox.close();
     delete assignment.snapshots;
     delete assignment.loadIssueSession;
-    for (const hook of ['sessions', 'sessionState', 'sessionBases', 'sessionHandledAt', 'sessionTurnActive', 'onAssign', 'onReply', 'forward', 'onResume', 'start', 'closeFor', 'restore', 'deleteSessions', 'rebindSession']) delete assignment[hook];
+    for (const hook of ['sessions', 'sessionState', 'sessionHandledAt', 'sessionTurnActive', 'onAssign', 'onReply', 'forward', 'onResume', 'start', 'closeFor', 'restore', 'deleteSessions', 'rebindSession']) delete assignment[hook];
     await hooks.dispose();
     agentSessions.dispose();
+    delete assignment.sessionStatus;
+    readReceipts.close();
   };
 }
 
@@ -732,6 +788,7 @@ async function startConversation(ctx, folder, assignment) {
   const cards = createCards({
     file: join(folder, 'assistant', 'cards.json'),
     issues: () => assignment.issuesApi, inbox: () => assignment.inboxApi, tasks: () => assignment.tasks, quota: () => assignment.quota, latest,
+    activity: (id) => assignment.sessionActivity(id), warm: (ids) => assignment.warmSessionActivity(ids),
   });
   const conversation = createConversation({
     ctx, assistant: assignment.assistant, issues: assignment.issues, assignment, dashboard: assignment.dashboard,
@@ -780,6 +837,36 @@ async function startConversation(ctx, folder, assignment) {
   };
 }
 
+function startChatHome(ctx, folder, assignment) {
+  const home = createChatHome({
+    file: join(folder, 'assistant', 'chat-home.db'),
+    issues: (action, body) => assignment.issuesApi?.execute(action, body),
+    assistant: () => assignment.conversation?.state(),
+    activity: (id) => assignment.sessionActivity?.(id),
+    warm: (ids) => assignment.warmSessionActivity?.(ids),
+    markUnread: (id) => assignment.markSessionUnread(id),
+    acknowledge: (id, position) => assignment.acknowledgeRead(id, position),
+  });
+  const handle = createChatHomeApi(home, (action, body) => assignment.issuesApi.execute(action, body));
+  const disposers = [];
+  try {
+    for (const action of ['list', 'pin']) disposers.push(registerRoute(ctx, {
+      path: `/api/dudu/home/${action}`, methods: ['POST'], requestBody: 'buffered',
+      fetch: (request) => handle(action, request),
+    }));
+  } catch (error) {
+    for (const dispose of disposers) dispose();
+    home.close();
+    throw error;
+  }
+  assignment.chatHome = home;
+  return () => {
+    for (const dispose of disposers) dispose();
+    delete assignment.chatHome;
+    home.close();
+  };
+}
+
 async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
   const diagnostics = createNativeDiagnostics(folder);
   const peer = ctx.connection.createPeer({ principal: { kind: 'owner' } });
@@ -790,6 +877,7 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
   const reloadTransaction = ctx.get('hmr')?.executing;
   let control;
   let questionBridge;
+  const chatHome = assignment.chatHome;
   const disposers = [];
   try {
     const rpc = createTypertRpcAdapter({ gateway: ctx.typertGateway, peer, diagnostics });
@@ -823,9 +911,15 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
       runRequest: reloadTransaction ? (operation) => reloadTransaction.exit(operation) : undefined,
       conversationReads: createConversationReads({
         connection: ctx.connection, peer, workspaceChanges: () => ctx.get('workspaceChanges'),
+        attachments: () => ctx.attachments,
+      }),
+      fileTransfers: createNativeFileTransfers({
+        uploads: () => ctx.get('fileUploads'), attachments: () => ctx.attachments,
+        agent: (id) => ctx.agents.get(id),
       }),
       questionBridge,
       sessionActivity: (id) => assignment.sessionActivity?.(id),
+      acknowledgeRead: (id, position) => assignment.acknowledgeRead?.(id, position),
       sessionSearch: assignment.searchSessions,
       assistantConversation: () => assignment.conversation?.ensure(),
       assistant: {
@@ -850,6 +944,7 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
       collectorNotificationsEnabled: () => assignment.assistant?.collectors?.dudu.list().collectors?.some((entry) => entry.notify === true) === true,
       // The phone's board and Collector: the same commands the desktop interface sends, run for the owner (the issues are opened later than this: asked for when used).
       board: {
+        home: chatHome,
         getNeedsYouColor: () => assignment.assistant?.settings?.value('needsYouColor'),
         issues: (action, body) => assignment.issuesApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
         inbox: (action, body) => assignment.inboxApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
@@ -952,6 +1047,9 @@ export async function apply(ctx, config = {}) {
   } catch (error) {
     console.warn(`[dudu] The assistant conversation is unavailable: ${error.message}`);
   }
+
+  try { stops.push(startChatHome(ctx, folder, assignment)); }
+  catch (error) { console.error(`[dudu] Conversation home did not start: ${error.message}`); }
 
   if (typeof ctx.connection.createPeer === 'function') {
     try { stops.push(await startPhoneControl(ctx, config, dshHome, folder, assignment)); }

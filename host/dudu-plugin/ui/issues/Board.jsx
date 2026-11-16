@@ -10,7 +10,7 @@ import { canDrag, canDrop } from './drag.js';
 import { groupLabel, withEmptyGroups } from './flatten.js';
 import { GroupIcon } from './groups.jsx';
 import { IssueCard } from './IssueCard.jsx';
-import { AGENT_STATE_ORDER, PRIORITY_ORDER } from './model.js';
+import { SESSION_STATE_ORDER, PRIORITY_ORDER } from './model.js';
 import { statusOrder } from './workflow.js';
 import { useIssueShortcuts } from './use-issue-shortcuts.js';
 
@@ -108,10 +108,10 @@ function Lane({ column, field, subField, now, show, menuFor, setMenuFor, onStatu
 /**
  * The Board: a lane for each group of the Columns field (by default Agent state), the cards of a lane scrolling inside it and
  * fetched as they are scrolled to. Rows, when set, split each lane into sections. A card can be dragged to another lane, which gives it
- * the lane's status, priority or (the boss's word for the) agent state; the status icon and the right-click menu do the same.
+ * the lane's workflow status or priority; automatic session status has no drag mutation.
  */
 export function Board({ list, view, tab, show, collapsed, onToggleLane, onAddToLane, onStatus, onMove, onOpen, request, onChange, onAssign, onDelete, onOpenSession, onAddSub, onDuplicate, onPreviewSession }) {
-  const field = view.group ?? 'agentState';
+  const field = view.group ?? 'status';
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const [lifted, setLifted] = useState(null); // the card the pointer holds
   const now = useMemo(() => Date.now(), [list.groups]); // eslint-disable-line react-hooks/exhaustive-deps -- recomputed when the data is
@@ -120,7 +120,7 @@ export function Board({ list, view, tab, show, collapsed, onToggleLane, onAddToL
   let columns = list.groups ?? [];
   if (view.showEmpty) columns = withEmptyGroups(columns, field, tab);
   // Lanes follow the workflow (Todo, In Progress, In Review …), not the list's "what is being done first" order.
-  const workflow = field === 'status' ? statusOrder() : field === 'priority' ? PRIORITY_ORDER : field === 'agentState' ? AGENT_STATE_ORDER : null;
+  const workflow = field === 'status' ? statusOrder() : field === 'priority' ? PRIORITY_ORDER : field === 'sessionState' ? SESSION_STATE_ORDER : null;
   if (workflow) columns = [...columns].sort((a, b) => workflow.indexOf(a.key) - workflow.indexOf(b.key));
   if (view.reverseGroups) columns = [...columns].reverse();
   // The cards in the order they are on screen, left to right, for the previous/next arrows of an issue's page.

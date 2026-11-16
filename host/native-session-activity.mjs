@@ -38,13 +38,13 @@ export function createNativeSessionActivity({ remote, rowOf, summaryOf, streamHa
     if (entry) source.title = entry.label || entry.description || entry.name || source.title;
     const session = { ...summaryOf(source), ...(subagent ? { subagent } : {}) };
     const selection = values.modelSelection?.next ?? values.modelSelection?.lastUsed;
-    const completed = values.subagentTiming?.lastTurnCompleted === true || session.agentFinished === true;
+    const completed = values.subagentTiming?.lastTurnCompleted === true;
     return {
       id, session,
       name: text(entry?.label || entry?.description || entry?.name || session.title),
       ...(selection?.provider && selection?.model ? { modelId: `${selection.provider}:${selection.model}` } : {}),
       state: session.status === 'running' ? 'working' : entry?.phase === 'failed' ? 'failed'
-        : completed ? 'completed' : session.agentState === 'blocked' ? 'blocked' : 'idle',
+        : completed ? 'completed' : session.status === 'waiting' ? 'blocked' : 'idle',
       canOpen: Boolean(subagent && entry?.mode !== 'external' && entry?.phase !== 'failed' && entry?.phase !== 'provisioning'),
     };
   }

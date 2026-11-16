@@ -42,19 +42,70 @@ struct QuickSheetPage<Actions: View, Filters: View, Content: View, Footer: View>
     @State private var contentHeight: CGFloat = 82
     @State private var filtersHeight: CGFloat = 0
     @State private var footerHeight: CGFloat = 0
+    @State private var containerFrame = CGRect.zero
+    @State private var contentFrame = CGRect.zero
+
+    private var headerHeight: CGFloat {
+        guard !containerFrame.isEmpty, !contentFrame.isEmpty else { return 82 }
+        return max(0, contentFrame.minY - containerFrame.minY)
+    }
 
     var body: some View {
-        GeometryReader { geometry in
-            page(width: geometry.size.width)
+        NavigationStack {
+            GeometryReader { geometry in
+                page(width: geometry.size.width)
+            }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { contentFrame = $0 }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if let onBack {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(action: onBack) {
+                            Image(systemName: "chevron.left").font(.system(size: 18, weight: .medium))
+                        }
+                        .accessibilityLabel(L10n.text("返回"))
+                    }
+                } else if #available(iOS 26.0, *) {
+                    ToolbarItem(placement: .topBarLeading) { heading }
+                        .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .topBarLeading) { heading }
+                }
+                if onBack != nil {
+                    ToolbarItem(placement: .principal) {
+                        Text(title).font(.system(size: 16, weight: .semibold)).accessibilityAddTraits(.isHeader)
+                    }
+                }
+                if Actions.self != EmptyView.self {
+                    ToolbarItemGroup(placement: .topBarTrailing) { actions() }
+                    if #available(iOS 26.0, *) {
+                        ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton(label: closeLabel, action: onClose)
+                }
+            }
+            .foregroundStyle(DSBotStyle.ink)
         }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { containerFrame = $0 }
+        .preference(key: QuickSheetMetricsKey.self, value: active
+            ? QuickSheetMetrics(height: headerHeight + filtersHeight + contentHeight + footerHeight, allowsExpansion: allowsExpansion)
+            : nil)
+    }
+
+    private var heading: some View {
+        HStack(spacing: 8) {
+            Text(title).font(.system(size: 21, weight: .semibold)).accessibilityAddTraits(.isHeader)
+            if let count {
+                Text("\(count)").font(.system(size: 14)).foregroundStyle(DSBotStyle.muted).monospacedDigit()
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private func page(width: CGFloat) -> some View {
         VStack(spacing: 0) {
-            header
-                .padding(.horizontal, 24)
-                .padding(.top, 22)
-                .padding(.bottom, 16)
             filters()
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { filtersHeight = $0 }
             ScrollView {
@@ -69,62 +120,27 @@ struct QuickSheetPage<Actions: View, Filters: View, Content: View, Footer: View>
             .scrollPosition(id: scrollID, anchor: .top)
             .scrollBounceBehavior(.basedOnSize)
             .scrollDismissesKeyboard(.interactively)
-            footer()
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
+#if DEBUG && targetEnvironment(simulator)
+            .defaultScrollAnchor(reviewAtBottom ? .bottom : nil, for: .initialOffset)
+            .defaultScrollAnchor(reviewAtBottom ? .bottom : nil, for: .sizeChanges)
+#endif
         }
+        .modifier(SheetFooter {
+            VStack(spacing: 0) { footer() }
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
+        })
         .frame(width: width, alignment: .leading)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(DSBotStyle.sheet)
-        .preference(key: QuickSheetMetricsKey.self, value: active
-            ? QuickSheetMetrics(height: 82 + filtersHeight + contentHeight + footerHeight, allowsExpansion: allowsExpansion)
-            : nil)
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            if let onBack {
-                Button(action: onBack) {
-                    DSBotIcon(.back, size: 21)
-                        .frame(width: 28, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(DSBotQuietPressStyle())
-                .accessibilityLabel(L10n.text("返回"))
-                Spacer(minLength: 0)
-            } else {
-                Text(title)
-                    .font(.system(size: 21, weight: .semibold))
-                    .accessibilityAddTraits(.isHeader)
-                if let count {
-                    Text("\(count)").font(.system(size: 14)).foregroundStyle(DSBotStyle.muted).monospacedDigit()
-                }
-                Spacer(minLength: 8)
-            }
-            actions()
-            Button(action: onClose) {
-                DSBotIcon(.close, size: 12)
-                    .foregroundStyle(DSBotStyle.chatSecondary)
-                    .frame(width: 28, height: 28)
-                    .background(DSBotStyle.selected, in: Circle())
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(DSBotQuietPressStyle())
-            .padding(.trailing, -8)
-            .accessibilityLabel(closeLabel)
-        }
-        .foregroundStyle(DSBotStyle.ink)
-        .frame(height: 44)
-        .overlay {
-            if onBack != nil {
-                Text(title)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(DSBotStyle.ink)
-                    .accessibilityAddTraits(.isHeader)
-                    .allowsHitTesting(false)
-            }
-        }
+#if DEBUG && targetEnvironment(simulator)
+    private var reviewAtBottom: Bool {
+        ProcessInfo.processInfo.arguments.contains("-dsbot-ui-review")
+            && ProcessInfo.processInfo.arguments.contains("-dsbot-review-sheet-bottom")
     }
+#endif
 }
 
 /// Fits the actual content, excluding the safe area that UIKit adds to a height detent.

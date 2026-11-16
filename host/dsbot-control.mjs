@@ -21,8 +21,10 @@ export async function createDsbotControl({
   rpc,
   pages,
   conversationReads,
+  fileTransfers,
   questionBridge,
   sessionActivity,
+  acknowledgeRead,
   sessionSearch,
   assistantConversation,
   assistant,
@@ -91,7 +93,7 @@ export async function createDsbotControl({
     notifications = await createNativeNotifications({
       folder, devices, source: collectorNotifications, enabled: collectorNotificationsEnabled,
     });
-    bridge = injectedDispatch ? undefined : createNativeBridge({ rpc, pages, navigation, conversationReads, questionBridge, sessionActivity, sessionSearch, assistantConversation, assistant, board, duduPages, notifications });
+    bridge = injectedDispatch ? undefined : createNativeBridge({ rpc, pages, navigation, conversationReads, fileTransfers, questionBridge, sessionActivity, acknowledgeRead, sessionSearch, assistantConversation, assistant, board, duduPages, notifications });
     dispatch = injectedDispatch ?? bridge.dispatch;
     httpPages = typeof pages?.openHttp === 'function'
       ? createWebPageHttp({ pages, pairingStore: devices, duduPages }) : undefined;
@@ -101,6 +103,8 @@ export async function createDsbotControl({
       computer: () => ({ id: devices.id, name: settings.name, addresses: connectionRoutes() }),
       pairingStore: devices,
       dispatch,
+      uploadFile: bridge?.uploadFile,
+      openVideo: bridge?.openVideo,
       onDisconnect: bridge?.closeConnection,
       httpHandler: httpPages?.handle,
       runRequest,

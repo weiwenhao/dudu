@@ -76,6 +76,12 @@ struct SettingsItem: Codable, Equatable, Sendable, Identifiable {
 
     var id: String { rawID ?? "\(kind):\(title)" }
 
+    /// Route metadata stays stable when the computer changes the page's language.
+    var isAdditionLink: Bool {
+        guard let target = to?.target else { return false }
+        return target == "add" || target.hasPrefix("add:")
+    }
+
     enum CodingKeys: String, CodingKey {
         case rawID = "id"
         case kind, title, subtitle, detail, mono, tone, color, icon, on, options, selected, key, value, placeholder, multiline, secret, button, notification, to, swipe, act
@@ -102,6 +108,9 @@ struct SettingsPage: Codable, Equatable, Sendable {
     var poll: Double?
 
     var isForm: Bool { save != nil }
+
+    var additionLinks: [SettingsItem] { sections.flatMap(\.rows).filter(\.isAdditionLink) }
+    var environmentItem: SettingsItem? { sections.flatMap(\.rows).first { $0.kind == "environment" } }
 }
 
 struct SettingsToast: Codable, Equatable, Sendable {
@@ -120,7 +129,7 @@ typealias SettingsReport = @MainActor (DSBotToastMessage) -> Void
 
 /// One page of the settings on its way: read from the plugin, kept while the app runs, and told what the person does on it.
 @MainActor
-final class SettingsPageModel: ObservableObject, Identifiable {
+final class SettingsPageModel: ObservableObject, Identifiable, Hashable {
     enum LoadState { case loading, loaded, failed }
 
     let id = UUID()
@@ -129,6 +138,7 @@ final class SettingsPageModel: ObservableObject, Identifiable {
     @Published private(set) var state: LoadState = .loading
     /// What the fields and choices of a form hold now, by their key.
     @Published var values: [String: String] = [:]
+    @Published private(set) var environmentRows: [Int] = []
     @Published private(set) var busy = false
     @Published private(set) var isPreviewing = false
     /// What the plugin refused, in its own words.
@@ -147,6 +157,34 @@ final class SettingsPageModel: ObservableObject, Identifiable {
         guard let preview = page?.preview else { return true }
         let text = values[preview.key, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
         return !text.isEmpty && previewedValue == text
+    }
+
+    var hasToolbarActions: Bool {
+        page?.save != nil || busy || page?.additionLinks.isEmpty == false || page?.environmentItem != nil
+    }
+
+    nonisolated static func == (lhs: SettingsPageModel, rhs: SettingsPageModel) -> Bool { lhs.id == rhs.id }
+    nonisolated func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
+    /// Add routes are drawn by the toolbar, not duplicated as empty list cards.
+    var contentSections: [SettingsSection] {
+        (page?.sections ?? []).compactMap { original in
+            var section = original
+            section.rows.removeAll { $0.isAdditionLink || ($0.kind == "environment" && environmentRows.isEmpty) }
+            return section.rows.isEmpty ? nil : section
+        }
+    }
+
+    func addEnvironmentRow() {
+        guard page?.environmentItem != nil, !busy, !isPreviewing,
+              let id = (0..<40).first(where: { !environmentRows.contains($0) }) else { return }
+        environmentRows.append(id)
+    }
+
+    func removeEnvironmentRow(_ id: Int) {
+        environmentRows.removeAll { $0 == id }
+        values.removeValue(forKey: "envName\(id)")
+        values.removeValue(forKey: "envValue\(id)")
     }
 
     init(location: SettingsLocation) {
@@ -208,6 +246,7 @@ final class SettingsPageModel: ObservableObject, Identifiable {
             let rows = next.sections.flatMap(\.rows)
             if !rows.contains(where: { $0.key == "token" }) { values.removeValue(forKey: "token") }
             if !rows.contains(where: { $0.kind == "environment" }) {
+                environmentRows.removeAll()
                 values = values.filter { !$0.key.hasPrefix("envName") && !$0.key.hasPrefix("envValue") }
             }
         }
@@ -328,6 +367,19 @@ final class SettingsNavigator: ObservableObject {
     func pop() {
         guard pages.count > 1 else { return }
         pages.removeLast()
+        title = pages.last?.page?.title
+        observeCurrent()
+    }
+
+    func page(after id: UUID) -> SettingsPageModel? {
+        guard let index = pages.firstIndex(where: { $0.id == id }), pages.indices.contains(index + 1) else { return nil }
+        return pages[index + 1]
+    }
+
+    /// SwiftUI updates this boundary after an interactive pop commits, not while the finger is dragging.
+    func pop(to id: UUID) {
+        guard let index = pages.firstIndex(where: { $0.id == id }), index + 1 < pages.count else { return }
+        pages.removeSubrange((index + 1)...)
         title = pages.last?.page?.title
         observeCurrent()
     }

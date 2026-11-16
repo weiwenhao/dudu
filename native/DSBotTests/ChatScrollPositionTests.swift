@@ -159,85 +159,205 @@ final class ChatScrollPositionTests: XCTestCase {
         ))
     }
 
-    // The device log of 2026-11-07 12:37: 20 rows, the estimate 14,982 against 13,955 really, a viewport of 912 at the estimated end (offset 14,070), and the only
-    // row built (1,652 tall) ending at 13,818: above the viewport. The latest (136 tall) was not built, so there was nothing to draw.
-    private let blank = (
-        rows: [HistoryRowFrame(id: "row18", minY: 12_166, maxY: 13_818)], contentOffset: CGFloat(14_070), viewport: CGFloat(912), content: CGFloat(14_982)
-    )
+    private let positioningIDs = ["first", "middle", "previous", "latest"]
+    private let blankViewport = HistoryViewport(offset: 43_500, height: 912, contentHeight: 44_412)
 
-    func testAViewportWithNoBuiltRowGoesToTheLastRowThatIsBuiltInsteadOfTheEndOfTheEstimate() {
-        let answer = BlankViewportRecovery.target(
-            latestID: "row19", rows: blank.rows, contentOffset: blank.contentOffset, viewportHeight: blank.viewport, contentHeight: blank.content, heldEstimate: nil
-        )
-        XCTAssertEqual(answer.target, "row18")
-        XCTAssertEqual(answer.held, 14_982, "the estimate that was found blank is handed back")
+    private func positioner() -> HistoryPositioning {
+        var positioning = HistoryPositioning()
+        positioning.setAccess(.visible)
+        return positioning
     }
 
-    func testTheEstimateThatWasFoundBlankIsNotTrustedAgainWhereverTheViewportIsNow() {
-        // After the step the viewport shows the built row; "follow" is asked again (a second layout, the end of a drag): the end of the same estimate is still white.
-        let shown = BlankViewportRecovery.target(
-            latestID: "row19", rows: blank.rows, contentOffset: 12_906, viewportHeight: blank.viewport, contentHeight: blank.content, heldEstimate: 14_982
+    private func next(
+        _ positioning: inout HistoryPositioning, rows: [HistoryRowFrame],
+        viewport: HistoryViewport? = nil, followsLatest: Bool = true
+    ) -> HistoryScrollTarget? {
+        positioning.nextTarget(
+            itemIDs: positioningIDs, rows: rows, viewport: viewport ?? blankViewport,
+            followsLatest: followsLatest, latestFromTop: false
         )
-        XCTAssertEqual(shown.target, "row18")
-        XCTAssertEqual(shown.held, 14_982)
-        // Rows were built and the estimate came back to what the rows reach: it is trusted again, and nothing is held.
-        let corrected = BlankViewportRecovery.target(
-            latestID: "row19", rows: blank.rows + [HistoryRowFrame(id: "row19", minY: 13_818, maxY: 13_955)], contentOffset: 13_043, viewportHeight: blank.viewport,
-            contentHeight: 13_955, heldEstimate: 14_982
-        )
-        XCTAssertNil(corrected.target)
-        XCTAssertNil(corrected.held)
-        // A new estimate without the latest built is judged afresh: here the viewport shows a built row, so the latest is followed as usual.
-        let changed = BlankViewportRecovery.target(
-            latestID: "row19", rows: blank.rows, contentOffset: 12_906, viewportHeight: blank.viewport, contentHeight: 14_100, heldEstimate: 14_982
-        )
-        XCTAssertNil(changed.target)
-        XCTAssertNil(changed.held)
     }
 
-    func testAMessageThatArrivesWhileTheLastRowIsInViewIsFollowedAsUsual() {
-        // The viewport shows the last built row; the new row is not built yet and the estimate has grown by its estimated height.
-        let answer = BlankViewportRecovery.target(
-            latestID: "new", rows: [HistoryRowFrame(id: "last", minY: 12_400, maxY: 13_043)], contentOffset: 12_131, viewportHeight: 912, contentHeight: 14_043, heldEstimate: nil
+    func testPositioningRemembersCachedRowsBeforeItsFirstCommand() {
+        var positioning = positioner()
+        positioning.observe(rows: [HistoryRowFrame(id: "latest", minY: 41_680, maxY: 41_926)])
+        let target = next(&positioning, rows: [])
+        XCTAssertEqual(target?.id, "first")
+        XCTAssertEqual(target?.anchor, 0)
+        XCTAssertEqual(target?.isRecovery, true)
+    }
+
+    func testPositioningLeavesNeverPopulatedHistoryOnItsNativeInitialAnchor() {
+        var positioning = positioner()
+        XCTAssertNil(next(&positioning, rows: []))
+    }
+
+    func testPositioningUsesTheBuiltRowInsteadOfItsLazyEstimatedRectangle() {
+        var positioning = positioner()
+        let target = next(&positioning, rows: [HistoryRowFrame(id: "latest", minY: 7_286.67, maxY: 7_415)])
+        XCTAssertEqual(target?.readerID, AnyHashable(RealizedHistoryAnchor(id: "latest")))
+        XCTAssertEqual(target?.isRecovery, true)
+    }
+
+    func testPositioningTraversesNeighboursUntilTheActualLatestIsAligned() {
+        var positioning = positioner()
+        positioning.requestLatest()
+        var rows = [HistoryRowFrame(id: "first", minY: 0, maxY: 500)]
+        for (index, expected) in ["middle", "previous", "latest"].enumerated() {
+            let target = next(&positioning, rows: rows)
+            XCTAssertEqual(target?.id, expected)
+            XCTAssertEqual(target?.isRealized, false)
+            XCTAssertEqual(positioning.request, .latest)
+            rows.append(HistoryRowFrame(id: expected, minY: CGFloat(index + 1) * 500, maxY: CGFloat(index + 2) * 500))
+        }
+        // The estimated content end is still wrong; the real last row has reached the viewport's end.
+        XCTAssertEqual(positioning.completeIfReached(
+            itemIDs: positioningIDs, rows: rows,
+            viewport: HistoryViewport(offset: 1_088, height: 912, contentHeight: 44_412), latestFromTop: false
+        ), .latest)
+        XCTAssertNil(positioning.request)
+    }
+
+    func testPositioningCannotCompleteWithAnUnbuiltOrMisalignedLatest() {
+        var positioning = positioner()
+        positioning.requestLatest()
+        for rows in [[], [HistoryRowFrame(id: "first", minY: 0, maxY: 500)],
+                     [HistoryRowFrame(id: "latest", minY: 43_400, maxY: 44_800)]] {
+            XCTAssertNil(positioning.completeIfReached(
+                itemIDs: positioningIDs, rows: rows, viewport: blankViewport, latestFromTop: false
+            ))
+            XCTAssertEqual(positioning.request, .latest)
+        }
+        XCTAssertEqual(next(&positioning, rows: [HistoryRowFrame(id: "first", minY: 0, maxY: 500)])?.id, "middle")
+    }
+
+    func testPositioningRecoversTheReadingBookmarkWithoutRequestingLatest() {
+        var positioning = positioner()
+        let middle = HistoryRowFrame(id: "middle", minY: 500, maxY: 1_500)
+        let reading = HistoryViewport(offset: 500, height: 912, contentHeight: 44_412)
+        positioning.rememberReading(rows: [middle], viewport: reading)
+        XCTAssertEqual(next(&positioning, rows: [], followsLatest: false)?.id, "first")
+        XCTAssertEqual(next(&positioning, rows: [HistoryRowFrame(id: "first", minY: 0, maxY: 500)], followsLatest: false)?.id, "middle")
+        XCTAssertEqual(positioning.completeIfReached(
+            itemIDs: positioningIDs, rows: [middle], viewport: reading, latestFromTop: false
+        ), .reading(.init(id: "middle", anchor: 0)))
+        XCTAssertNil(positioning.request)
+        XCTAssertNil(next(&positioning, rows: [middle], viewport: reading, followsLatest: false))
+    }
+
+    func testPositioningPreservesAnOffsetInsideATallReadingRow() throws {
+        var positioning = positioner()
+        let row = HistoryRowFrame(id: "middle", minY: 200, maxY: 2_000)
+        positioning.rememberReading(
+            rows: [row], viewport: HistoryViewport(offset: 700, height: 912, contentHeight: 44_412)
         )
-        XCTAssertNil(answer.target)
-        XCTAssertNil(answer.held)
+        let target = try XCTUnwrap(next(&positioning, rows: [row], followsLatest: false))
+        XCTAssertEqual(target.id, "middle")
+        XCTAssertEqual(target.anchor, 500 / 888, accuracy: 0.0001)
+        XCTAssertNotNil(positioning.completeIfReached(
+            itemIDs: positioningIDs, rows: [row],
+            viewport: HistoryViewport(offset: 700, height: 912, contentHeight: 44_412), latestFromTop: false
+        ))
     }
 
-    func testAnInitialHistoryWithoutBuiltRowsUsesItsNormalInitialAnchor() {
-        XCTAssertNil(BlankViewportRecovery.target(latestID: "row19", rows: [], contentOffset: 14_070, viewportHeight: 912, contentHeight: 14_982, heldEstimate: nil).target)
+    func testPositioningDoesNotRealignReadableHistoryWhenTheKeyboardChanges() {
+        var positioning = positioner()
+        let row = HistoryRowFrame(id: "middle", minY: 500, maxY: 1_500)
+        positioning.rememberReading(rows: [row], viewport: HistoryViewport(offset: 500, height: 912, contentHeight: 44_412))
+        for height: CGFloat in [912, 557, 912] {
+            XCTAssertNil(next(
+                &positioning, rows: [row], viewport: HistoryViewport(offset: 600, height: height, contentHeight: 44_412),
+                followsLatest: false
+            ))
+        }
     }
 
-    func testABuiltLatestOutsideTheViewportStillNeedsRecovery() {
-        let answer = BlankViewportRecovery.target(
-            latestID: "latest", rows: [HistoryRowFrame(id: "latest", minY: 7_286.67, maxY: 7_415)],
-            contentOffset: 12_827.67, viewportHeight: 912, contentHeight: 13_739.67, heldEstimate: nil
+    func testPositioningRestoresReadingBackwardsThroughBuiltNeighbours() {
+        var positioning = positioner()
+        positioning.rememberReading(
+            rows: [HistoryRowFrame(id: "middle", minY: 500, maxY: 1_500)],
+            viewport: HistoryViewport(offset: 500, height: 912, contentHeight: 44_412)
         )
-        XCTAssertEqual(answer.target, "latest", "The recorded 02:39 blank viewport has a built latest row thousands of points above it.")
-        XCTAssertEqual(answer.held, 13_739.67)
-        XCTAssertEqual(BlankViewportRecovery.target(
-            latestID: "row18", rows: blank.rows, contentOffset: blank.contentOffset, viewportHeight: blank.viewport, contentHeight: blank.content, heldEstimate: 14_982
-        ).target, "row18")
-        XCTAssertNil(BlankViewportRecovery.target(
-            latestID: "latest", rows: [HistoryRowFrame(id: "latest", minY: 7_286.67, maxY: 7_415)],
-            contentOffset: 6_503, viewportHeight: 912, contentHeight: 7_415, heldEstimate: 13_739.67
-        ).target, "The latest is now actually visible.")
-    }
-
-    func testAPreviouslyPopulatedHistoryCanMaterializeItsFirstOccurrenceWhenNoRowsRemain() {
-        let answer = BlankViewportRecovery.target(
-            latestID: "latest", rows: [], contentOffset: 12_827.67, viewportHeight: 912,
-            contentHeight: 13_739.67, heldEstimate: nil, fallbackID: "first"
+        _ = next(&positioning, rows: [], followsLatest: false)
+        let previous = next(
+            &positioning, rows: [HistoryRowFrame(id: "latest", minY: 2_000, maxY: 2_500)], followsLatest: false
         )
-        XCTAssertEqual(answer.target, "first")
-        XCTAssertEqual(answer.held, 13_739.67)
+        XCTAssertEqual(previous?.id, "previous")
+        XCTAssertEqual(previous?.anchor, 1)
+        XCTAssertEqual(next(
+            &positioning, rows: [HistoryRowFrame(id: "previous", minY: 1_500, maxY: 2_000)], followsLatest: false
+        )?.id, "middle")
     }
 
-    func testTheLastBuiltRowIsTheOneWithTheGreatestBottomWhateverTheOrderOfTheRows() {
-        let rows = [
-            HistoryRowFrame(id: "b", minY: 5_000, maxY: 5_700), HistoryRowFrame(id: "c", minY: 5_700, maxY: 6_100), HistoryRowFrame(id: "a", minY: 4_000, maxY: 5_000),
-        ]
-        let answer = BlankViewportRecovery.target(latestID: "z", rows: rows, contentOffset: 9_000, viewportHeight: 912, contentHeight: 9_912, heldEstimate: nil)
-        XCTAssertEqual(answer.target, "c")
+    func testPositioningDoesNotKeepADeletedReadingBookmarkAsItsGoal() {
+        var positioning = positioner()
+        positioning.rememberReading(
+            rows: [HistoryRowFrame(id: "middle", minY: 500, maxY: 1_500)],
+            viewport: HistoryViewport(offset: 500, height: 912, contentHeight: 44_412)
+        )
+        _ = next(&positioning, rows: [], followsLatest: false)
+        let target = positioning.nextTarget(
+            itemIDs: ["first", "previous", "latest"],
+            rows: [HistoryRowFrame(id: "previous", minY: 1_000, maxY: 2_000)], viewport: blankViewport,
+            followsLatest: false, latestFromTop: false
+        )
+        XCTAssertEqual(target?.id, "previous")
+        XCTAssertEqual(target?.isRealized, true)
+        XCTAssertEqual(positioning.request, .reading(.init(id: "previous", anchor: 0)))
+    }
+
+    func testPositioningSuspendsAfterPreparationAndKeepsItsUnfinishedGoal() {
+        var positioning = positioner()
+        positioning.setAccess(.preparing)
+        positioning.requestLatest()
+        let rows = [HistoryRowFrame(id: "first", minY: 0, maxY: 500)]
+        XCTAssertEqual(next(&positioning, rows: rows)?.id, "middle")
+        positioning.setAccess(.resolve(covered: true, preparing: false, active: true))
+        XCTAssertNil(next(&positioning, rows: rows))
+        XCTAssertEqual(positioning.request, .latest)
+        positioning.setAccess(.resolve(covered: false, preparing: false, active: true))
+        XCTAssertEqual(next(&positioning, rows: rows)?.id, "middle")
+        positioning.setAccess(.resolve(covered: false, preparing: true, active: false))
+        XCTAssertNil(next(&positioning, rows: rows))
+    }
+
+    func testPositioningWaitsForNewLayoutInsteadOfRepeatingAnUnchangedCommand() {
+        var positioning = positioner()
+        let first = HistoryRowFrame(id: "first", minY: 0, maxY: 500)
+        XCTAssertEqual(next(&positioning, rows: [first])?.id, "middle")
+        XCTAssertNil(next(&positioning, rows: [first]))
+        XCTAssertEqual(next(&positioning, rows: [first, HistoryRowFrame(id: "middle", minY: 500, maxY: 1_000)])?.id, "previous")
+    }
+
+    func testPositioningReleasesTheLatestRequestWhenTheReaderTakesControl() {
+        var positioning = positioner()
+        positioning.requestLatest()
+        positioning.interrupt()
+        XCTAssertNil(positioning.request)
+        XCTAssertNil(next(
+            &positioning, rows: [HistoryRowFrame(id: "first", minY: 0, maxY: 500)],
+            viewport: HistoryViewport(offset: 0, height: 912, contentHeight: 44_412), followsLatest: false
+        ))
+    }
+
+    func testPositioningFollowsAnAdjacentNewMessageWithoutTrustingTheDistantEstimate() {
+        var positioning = positioner()
+        positioning.requestLatest()
+        let rows = [HistoryRowFrame(id: "latest", minY: 1_500, maxY: 2_000)]
+        let viewport = HistoryViewport(offset: 1_088, height: 912, contentHeight: 44_412)
+        let ids = positioningIDs + ["new"]
+        XCTAssertNil(positioning.completeIfReached(itemIDs: ids, rows: rows, viewport: viewport, latestFromTop: false))
+        XCTAssertEqual(positioning.nextTarget(
+            itemIDs: ids, rows: rows, viewport: viewport, followsLatest: true, latestFromTop: false
+        )?.id, "new")
+    }
+
+    func testPositioningRecognizesShortHistoryAndATopAlignedTallCard() {
+        let short = HistoryViewport(offset: -112, height: 912, contentHeight: 500, topInset: 112)
+        XCTAssertTrue(short.isAligned(HistoryRowFrame(id: "latest", minY: 0, maxY: 500), anchor: 1))
+        let card = HistoryRowFrame(id: "latest", minY: 1_000, maxY: 3_000)
+        let viewport = HistoryViewport(offset: 888, height: 912, contentHeight: 3_000, topInset: 112)
+        XCTAssertTrue(viewport.isAligned(card, anchor: 0))
+        XCTAssertFalse(viewport.isAligned(card, anchor: 1))
     }
 }

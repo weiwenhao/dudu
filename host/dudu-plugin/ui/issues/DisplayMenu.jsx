@@ -1,19 +1,19 @@
-import { ArrowDownWideNarrow, ArrowUpDown, ArrowUpNarrowWide, Kanban, List, SlidersHorizontal } from 'lucide-react';
+import { ArrowDownWideNarrow, ArrowUpDown, ArrowUpNarrowWide, Kanban, List, PanelsLeftBottom, Settings2 } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
 import { SelectField } from '../components/select-field.jsx';
 import { Switch } from '../components/switch.jsx';
 import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
-import { displayChanged, PROPERTY_ORDER } from './view.js';
+import { PROPERTY_ORDER } from './view.js';
 
 const D = T.display;
-const GROUP_FIELDS = ['agentState', 'status', 'agent', 'project', 'priority'];
+const GROUP_FIELDS = ['sessionState', 'status', 'agent', 'project', 'priority'];
 const ORDER_FIELDS = ['priority', 'status', 'due', 'updated', 'created'];
 const COMPLETED = ['all', 'day', 'week', 'month', 'none'];
 const groupOptions = (without, none) => [
   ...(none ? [{ value: null, label: D.noGrouping }] : []),
-  ...GROUP_FIELDS.filter((field) => field !== without).map((field) => ({ value: field, label: field === 'agentState' ? T.fields.agentState : D.groupBy[field] })),
+  ...GROUP_FIELDS.filter((field) => field !== without).map((field) => ({ value: field, label: field === 'sessionState' ? T.fields.sessionState : D.groupBy[field] })),
 ];
 
 const Separator = () => <div className="-mx-1.5 my-1.5 border-t" role="separator" />;
@@ -28,49 +28,49 @@ function Line({ label, reverse, children }) {
   );
 }
 
-const ReverseButton = ({ label, onClick, children }) => (
-  <Button variant="ghost" size="icon-xs" className="text-muted-foreground" aria-label={D.reverse(label)} onClick={onClick}>{children}</Button>
+const ReverseButton = ({ label, onClick, disabled, children }) => (
+  <Button variant="ghost" size="icon-xs" className="text-muted-foreground" aria-label={D.reverse(label)} disabled={disabled} onClick={onClick}>{children}</Button>
 );
 
-function ToggleLine({ label, checked, onChange }) {
+function ToggleLine({ label, checked, onChange, disabled }) {
   return (
     <div className="flex h-9 items-center justify-between px-2 text-sm">
       <span>{label}</span>
-      <Switch checked={checked} onCheckedChange={onChange} aria-label={label} />
+      <Switch checked={checked} onCheckedChange={onChange} aria-label={label} disabled={disabled} />
     </div>
   );
 }
 
 /**
  * Linear's Display options: the layout, how the rows are grouped and ordered, whether finished issues sink to the end and how
- * far back they go, and which properties a row shows. The button carries a blue dot while anything differs from the default.
+ * far back they go, and which properties a row shows.
  */
-export function DisplayMenu({ tab, view, onChange, onReset }) {
+export function DisplayMenu({ tab, view, onChange, onReset, variant = 'outline', className }) {
   const board = view.layout === 'board';
-  const group = view.group ?? (board ? 'agentState' : null);
-  const recency = view.recency ?? tab === 'all';
-  const changed = displayChanged(view);
+  const chat = view.layout === 'chat';
+  const group = chat ? null : view.group ?? (board ? 'status' : null);
+  const recency = !chat && (view.recency ?? (tab === 'all' && view.order !== 'updated'));
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="icon-sm" className="relative size-7 rounded-full data-[state=open]:bg-accent" aria-label={D.title}>
-          <SlidersHorizontal />
-          {changed && <span className="absolute top-1 right-1 size-1.5 rounded-full bg-ring" />}
+        <Button variant={variant} size="icon-sm" className={cn('size-7 rounded-full data-[state=open]:bg-accent', className)} aria-label={D.title}>
+          <Settings2 />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[300px]" aria-label={D.title}>
-        <div className="grid grid-cols-2 gap-1.5 px-1 pt-0.5 pb-1">
-          <Button variant={board ? 'outline' : 'secondary'} size="sm" onClick={() => onChange({ layout: 'list' })}><List />{D.list}</Button>
+        <div className="grid grid-cols-3 gap-1.5 px-1 pt-0.5 pb-1">
+          <Button variant={view.layout === 'list' ? 'secondary' : 'outline'} size="sm" onClick={() => onChange({ layout: 'list' })}><List />{D.list}</Button>
           <Button variant={board ? 'secondary' : 'outline'} size="sm" onClick={() => onChange({ layout: 'board' })}><Kanban />{D.board}</Button>
+          <Button variant={chat ? 'secondary' : 'outline'} size="sm" onClick={() => onChange({ layout: 'chat' })}><PanelsLeftBottom />{T.widgets.titles.sessions}</Button>
         </div>
         <Separator />
         <Line
           label={board ? D.columns : D.grouping}
-          reverse={<ReverseButton label={board ? D.columns : D.grouping} onClick={() => onChange({ reverseGroups: !view.reverseGroups })}><ArrowUpDown /></ReverseButton>}
+          reverse={<ReverseButton label={board ? D.columns : D.grouping} disabled={chat} onClick={() => onChange({ reverseGroups: !view.reverseGroups })}><ArrowUpDown /></ReverseButton>}
         >
           <SelectField
             label={board ? D.columns : D.grouping} value={group} options={groupOptions(null, !board)}
-            onChange={(value) => onChange({ group: value, subGroup: value === view.subGroup ? null : (value ? view.subGroup : null) })}
+            disabled={chat} onChange={(value) => onChange({ group: value, subGroup: value === view.subGroup ? null : (value ? view.subGroup : null) })}
           />
         </Line>
         <Line label={board ? D.rows : D.subGrouping}>
@@ -81,25 +81,26 @@ export function DisplayMenu({ tab, view, onChange, onReset }) {
         </Line>
         <Line
           label={D.ordering}
-          reverse={<ReverseButton label={D.ordering} onClick={() => onChange({ reverse: !view.reverse })}>{view.reverse ? <ArrowDownWideNarrow /> : <ArrowUpNarrowWide />}</ReverseButton>}
+          reverse={<ReverseButton label={D.ordering} disabled={chat} onClick={() => onChange({ reverse: !view.reverse })}>{!chat && view.reverse ? <ArrowDownWideNarrow /> : <ArrowUpNarrowWide />}</ReverseButton>}
         >
-          <SelectField label={D.ordering} value={view.order} options={ORDER_FIELDS.map((field) => ({ value: field, label: D.orderBy[field] }))} onChange={(value) => onChange({ order: value })} />
+          <SelectField label={D.ordering} value={chat ? 'updated' : view.order} disabled={chat} options={ORDER_FIELDS.map((field) => ({ value: field, label: D.orderBy[field] }))} onChange={(value) => onChange({ order: value })} />
         </Line>
-        <ToggleLine label={D.recency} checked={recency} onChange={(checked) => onChange({ recency: checked })} />
+        <ToggleLine label={D.recency} checked={recency} disabled={chat} onChange={(checked) => onChange({ recency: checked })} />
         <Separator />
         <Line label={D.completedIssues}>
           <SelectField label={D.completedIssues} value={view.completed} options={COMPLETED.map((value) => ({ value, label: D.completed[value] }))} onChange={(value) => onChange({ completed: value })} />
         </Line>
         <Separator />
         <div className="px-2 pt-1 pb-0.5 text-sm font-medium">{board ? D.boardOptions : D.listOptions}</div>
-        <ToggleLine label={board ? D.showEmptyColumns : D.showEmptyGroups} checked={view.showEmpty} onChange={(checked) => onChange({ showEmpty: checked })} />
+        <ToggleLine label={board ? D.showEmptyColumns : D.showEmptyGroups} checked={!chat && view.showEmpty} disabled={chat} onChange={(checked) => onChange({ showEmpty: checked })} />
         <div className="px-2 pt-2 pb-1.5 text-sm">{D.properties}</div>
         <div className="flex flex-wrap gap-1.5 px-2 pb-2">
           {PROPERTY_ORDER.map((property) => {
-            const on = view.properties[property];
+            const on = chat ? ['id', 'agent', 'updated'].includes(property) : property === 'updated' && !board ? view.listUpdated !== false : view.properties[property];
             return (
               <button
-                key={property} type="button" aria-pressed={on} onClick={() => onChange({ properties: { ...view.properties, [property]: !on } })}
+                key={property} type="button" aria-pressed={on} disabled={chat}
+                onClick={() => onChange(property === 'updated' && !board ? { listUpdated: !on } : { properties: { ...view.properties, [property]: !on } })}
                 className={cn('inline-flex h-7 items-center rounded-full px-3 text-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50', on ? 'bg-secondary font-medium text-foreground' : 'border text-muted-foreground')}
               >
                 {D.property[property]}

@@ -22,3 +22,8 @@ export function keepVisible(selected, ids) {
   const kept = [...selected].filter((id) => visible.has(id));
   return kept.length === selected.size ? selected : new Set(kept);
 }
+
+/** Home entries already use the shared newest-completed-reply order. Choose once; polls never steal an open conversation. */
+export function chooseConversation(entries, current = null) {
+  return current ?? entries.find((entry) => entry.issue ? Boolean(entry.issue.session) : Boolean(entry.sessionId))?.id ?? null;
+}

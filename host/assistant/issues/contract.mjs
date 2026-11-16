@@ -1,4 +1,4 @@
-import { ISSUE_AGENT_STATES } from '../sessions/work-state.mjs';
+import { ISSUE_SESSION_STATES } from '../sessions/session-state.mjs';
 import { LABEL_COLORS } from './labels.mjs';
 import { STATUS_ICON_PROGRESS } from './workflow.mjs';
 
@@ -15,7 +15,7 @@ const statusFields = {
   iconProgress: { type: 'number', enum: STATUS_ICON_PROGRESS, description: 'Icon fill for a started status; does not change issue workflow.' },
   description: { ...text, maxLength: 500 },
 };
-const groups = ['status', 'priority', 'agent', 'agentState', 'project'];
+const groups = ['status', 'priority', 'agent', 'sessionState', 'project'];
 export const ISSUE_ID = { anyOf: [{ type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER }, { type: 'string', pattern: '^#?(?:[1-9][0-9]{0,14}|[A-Za-z]{1,3}-[1-9][0-9]{0,14})$' }] };
 export const ISSUE_PROJECT = nullable(object({ name: { ...text, minLength: 1, maxLength: 200 }, path: nullable({ ...text, maxLength: 1000 }) }, ['name']));
 export const ISSUE_FIELDS = object({
@@ -25,21 +25,21 @@ export const ISSUE_FIELDS = object({
   kind: { ...text, maxLength: 100 }, project: ISSUE_PROJECT, dueAt: nullable(time), snoozeUntil: nullable(time),
   agent: nullable({ ...text, maxLength: 100 }), session: nullable({ ...text, maxLength: 300 }), outcome: nullable({ ...text, maxLength: 4000 }),
   source: choice(['owner', 'dudu', 'connector', 'session']), sourceRef: { ...text, maxLength: 2000 },
-  agentState: nullable(choice(['idle', 'blocked'])),
   labels: list({ type: 'integer', minimum: 1 }), // ids of labels (issues/labels), each once
   parent: nullable({ type: 'integer', minimum: 1 }), // the issue this one is a sub-issue of
 });
 const filter = {
   label: list({ type: 'integer', minimum: 1 }),
   status: list(ISSUE_FIELDS.properties.status), priority: list(ISSUE_FIELDS.properties.priority),
-  project: list(nullable(text)), agent: list(nullable(text)), agentState: list(choice(ISSUE_AGENT_STATES)),
+  project: list(nullable(text)), agent: list(nullable(text)), sessionState: list(choice(ISSUE_SESSION_STATES)),
   source: list(ISSUE_FIELDS.properties.source), q: text,
   hasQuestion: { type: 'boolean' },
-  ...Object.fromEntries(['dueFrom', 'dueTo', 'createdFrom', 'createdTo', 'updatedFrom', 'updatedTo', 'completedFrom'].map((name) => [name, time])),
+  ...Object.fromEntries(['dueFrom', 'dueTo', 'createdFrom', 'createdTo', 'updatedFrom', 'updatedTo', 'receivedFrom', 'receivedTo', 'completedFrom'].map((name) => [name, time])),
 };
 const view = object({
   tab: choice(['active', 'backlog', 'all']), filter: object(filter), group: nullable(choice(groups)), subGroup: nullable(choice(groups)),
-  order: choice(['priority', 'status', 'due', 'updated', 'created']), reverse: { type: 'boolean' }, completedLast: { type: 'boolean' },
+  order: choice(['priority', 'status', 'due', 'updated', 'received', 'created']), reverse: { type: 'boolean' }, completedLast: { type: 'boolean' },
+  pinnedFirst: { type: 'boolean' },
   limit: { type: 'integer', minimum: 1, maximum: 200 }, cursor: nullable(text), groupFilter: nullable(object({ key: nullable(text), subKey: nullable(text) }, ['key'])),
 });
 const meta = { reason: { ...text, maxLength: 2000 }, groupId: nullable(text) };
@@ -100,21 +100,21 @@ export function issueApiDocument() {
     components: { schemas: {
       Issue: { ...ISSUE_FIELDS, properties: {
         ...ISSUE_FIELDS.properties, id: { type: 'integer', minimum: 1 }, ref: nullable({ ...text, pattern: '^[A-Z]{1,3}-[1-9][0-9]{0,14}$' }),
-        createdAt: time, updatedAt: time, resolvedAt: nullable(time),
+        createdAt: time, updatedAt: time, receivedAt: { ...time, readOnly: true, description: 'Last completed incoming reply, from the shared session activity projection; 0 before any completed reply.' }, resolvedAt: nullable(time),
         statusType: choice(['backlog', 'todo', 'in_progress', 'in_review', 'done', 'canceled']),
         progressSummary: { ...text, maxLength: 20000, readOnly: true },
-        agentState: choice(ISSUE_AGENT_STATES),
+        sessionState: { ...choice(ISSUE_SESSION_STATES), readOnly: true },
+        pinned: { type: 'boolean', readOnly: true },
         labels: { type: 'array', readOnly: true, items: object({ id: { type: 'integer' }, name: text, color: choice(LABEL_COLORS) }) }, // `labels` as written are ids; as read, these
         parent: nullable(object({ id: { type: 'integer' }, ref: nullable(text), title: text, status: text, statusType: text })),
         subIssues: object({ total: { type: 'integer' }, done: { type: 'integer' } }), // only on an issue that has sub-issues
         children: { type: 'array', readOnly: true, items: { type: 'object' } }, // `get` only: the sub-issues
-        agentFinished: { type: 'boolean', readOnly: true }, // true when `agentState` is blocked because the run finished (an avatar shows a check, not red)
-        deepSleep: { type: 'boolean', readOnly: true }, // true when the agent's turn has ended, nobody has handled it for 30 minutes and it is idle or a finished run waiting for a look: never one that asks, fails or was stopped (absent: awake)
+        deepSleep: { type: 'boolean', readOnly: true }, // idle after 30 minutes or unread after an hour; live work/dialogs stay protected
         sessions: { type: 'array', items: object({
           key: text, agent: text, openedAt: time, closedAt: nullable(time),
           closeReason: nullable(choice(['auto', 'switch', 'done'])), open: { type: 'boolean' }, state: nullable(text),
         }) },
-      }, required: ['id', 'ref', 'title', 'status', 'agentState', 'createdAt', 'updatedAt'] },
+      }, required: ['id', 'ref', 'title', 'status', 'sessionState', 'createdAt', 'updatedAt'] },
       Result: { type: 'object', properties: { outcome: choice(['success', 'no_op', 'needs_clarification', 'error']), issue: { $ref: '#/components/schemas/Issue' }, code: text, message: text }, additionalProperties: true },
     } },
   };

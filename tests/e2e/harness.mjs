@@ -14,6 +14,7 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { request as httpRequest } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { startMockModel } from './mock-model.mjs';
@@ -62,7 +63,7 @@ async function waitForUrl(child, output) {
   throw new Error('dsh web did not print its address in time.');
 }
 
-export async function startDudu({ colorScheme = 'light', viewport = { width: 1440, height: 900 }, patch = '', files = {}, env: moreEnv = {}, model, plugins = [] } = {}) {
+export async function startDudu({ colorScheme = 'light', viewport = { width: 1440, height: 900 }, patch = '', files = {}, env: moreEnv = {}, model, plugins = [], launchBrowser = true } = {}) {
   const tgz = await packagedPlugin();
   const folder = await mkdtemp(join(tmpdir(), 'dudu-e2e-'));
   const home = join(folder, 'dsh');
@@ -151,25 +152,47 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
     let login = await launch();
     const base = login.origin;
 
-    state.browser = await chromium.launch({ channel: 'chrome', headless: true });
-    const context = await state.browser.newContext({ viewport, colorScheme, locale: 'en-US' });
-    const first = await context.newPage();
-    await first.goto(login.href);
-    await first.waitForLoadState('domcontentloaded');
-    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
+    // Visible review can use the owner's authorized browser while retaining this isolated DSH.
+    // The launch token stays in memory; only a scoped cookie is exchanged with that browser.
+    let context;
+    let first;
+    let cookie;
+    if (launchBrowser) {
+      state.browser = await chromium.launch({ channel: 'chrome', headless: true });
+      context = await state.browser.newContext({ viewport, colorScheme, locale: 'en-US' });
+      first = await context.newPage();
+      await first.goto(login.href);
+      await first.waitForLoadState('domcontentloaded');
+      await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
+    } else {
+      const response = await fetch(login.href, { redirect: 'manual' });
+      cookie = response.headers.get('set-cookie')?.split(';')[0];
+      if (response.status !== 303 || !cookie) throw new Error('The isolated review session could not be authorized.');
+    }
 
     const pages = new Set();
     const dudu = {
       base, context, folder, home, viewport, model: mock, packageArchive: tgz,
       diagnostics: () => state.output.text.replace(/https?:\/\/\S+/g, '[URL redacted]'),
-      /** An isolated loopback alias for visible browser review, without exposing a token-bearing launch URL. */
+      /** Authorize this isolated origin (or its loopback alias) without exposing the token-bearing launch URL. */
       async authorizeBrowserOrigin(origin) {
         const target = new URL(origin);
-        if (target.protocol !== 'http:' || target.port !== new URL(base).port || !target.hostname.endsWith('.localhost')) throw new Error('Use a loopback alias of this isolated DSH.');
-        const response = await context.request.get(login.href, { headers: { host: target.host }, maxRedirects: 0 });
-        const cookie = response.headers()['set-cookie'];
-        if (response.status() !== 303 || !cookie) throw new Error('The isolated browser session could not be authorized.');
-        return cookie;
+        if (target.protocol !== 'http:' || target.port !== new URL(base).port
+          || (target.origin !== base && !target.hostname.endsWith('.localhost'))) throw new Error('Use the origin or a loopback alias of this isolated DSH.');
+        const response = context
+          ? await context.request.get(login.href, { headers: { host: target.host }, maxRedirects: 0 })
+          : await new Promise((resolve, reject) => {
+            const request = httpRequest(login, { headers: { host: target.host } }, (response) => {
+              response.resume();
+              resolve({ statusCode: response.statusCode, headers: response.headers });
+            });
+            request.once('error', reject);
+            request.end();
+          });
+        const scoped = context ? response.headers()['set-cookie'] : response.headers['set-cookie']?.[0];
+        const status = context ? response.status() : response.statusCode;
+        if (status !== 303 || !scoped) throw new Error('The isolated browser session could not be authorized.');
+        return scoped;
       },
       /** Change only this test profile's package selection; restart() applies it on runtimes without profile hot reload. */
       async removePlugin(name) {
@@ -184,18 +207,27 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
         await stopChild();
         const next = await launch(new URL(base).port);
         login = next;
-        const auth = await context.newPage();
-        try { await auth.goto(next.href); await auth.waitForLoadState('domcontentloaded'); }
-        finally { await auth.close(); }
+        if (context) {
+          const auth = await context.newPage();
+          try { await auth.goto(next.href); await auth.waitForLoadState('domcontentloaded'); }
+          finally { await auth.close(); }
+        } else {
+          const response = await fetch(next.href, { redirect: 'manual' });
+          cookie = response.headers.get('set-cookie')?.split(';')[0];
+          if (response.status !== 303 || !cookie) throw new Error('The restarted review session could not be authorized.');
+        }
       },
       /** POST to the plugin as the logged-in browser does; the answer is the JSON the page would get. */
       async api(action, body = {}) {
-        const response = await context.request.post(`${base}/api/dudu/${action}`, { data: body });
-        if (!response.ok()) throw new Error(`${action}: HTTP ${response.status()}`);
+        const response = context ? await context.request.post(`${base}/api/dudu/${action}`, { data: body })
+          : await fetch(`${base}/api/dudu/${action}`, { method: 'POST', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify(body) });
+        const ok = context ? response.ok() : response.ok;
+        if (!ok) throw new Error(`${action}: HTTP ${context ? response.status() : response.status}`);
         return response.json();
       },
       /** A new page, on the 嘟嘟 panel. `views` is what the page remembers of its display options (per tab), set before it loads. */
       async openPanel({ views, viewport: size, selectPanel = true } = {}) {
+        if (!context) throw new Error('Use the authorized external browser for this review.');
         const page = await context.newPage();
         if (size) await page.setViewportSize(size);
         // The browser keeps the display options per origin, so a test starts from what it names (nothing, by default): once per tab,
@@ -225,7 +257,7 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
       },
       stop,
     };
-    await first.close();
+    await first?.close();
     return dudu;
   } catch (error) {
     await stop();

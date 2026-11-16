@@ -41,13 +41,6 @@ struct MainDestination: Equatable {
     }
 }
 
-private struct EmbeddedPreloadRequest: Equatable {
-    let connection: String
-    let enabled: Bool
-    let routes: [EmbeddedPageRoute]
-    let viewport: CGSize
-}
-
 @MainActor
 struct DSBotRootView: View {
     @ObservedObject private var store: DSBotStore
@@ -64,6 +57,8 @@ struct DSBotRootView: View {
     /// An issue's conversation opened from 嘟嘟's chat (a row of a todo card) has the chrome of one opened on the board, but its way back is that chat, not the board
     /// (owner, 2026-11-10: "详情返回没有返回到聊天，而是返回到看板").
     @State private var returnsToAssistant = false
+    /// Keep Home → Dudu → issue → Dudu → Home on the existing native return path.
+    @State private var assistantReturnsToBoard = false
     @State private var boardMotion = BoardPageMotion()
     @State private var boardConversationPreparation: BoardConversationPreparation?
     @State private var boardTransitionMetrics = PageTransitionMetrics()
@@ -107,7 +102,6 @@ struct DSBotRootView: View {
     @State private var drawerMotion = DrawerMotion()
     /// DSH pages stay loaded for a few minutes after the user leaves them.
     @StateObject private var pagePool = EmbeddedPagePool()
-    @State private var pageViewport: CGSize = .zero
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
@@ -134,7 +128,6 @@ struct DSBotRootView: View {
             } else {
                 GeometryReader { geometry in
                     drawerStack(in: geometry)
-                        .onGeometryChange(for: CGSize.self) { $0.size } action: { pageViewport = $0 }
                         .onGeometryChange(for: CGFloat.self) {
                             ($0.size.height + $0.safeAreaInsets.top + $0.safeAreaInsets.bottom) * 0.75 - $0.safeAreaInsets.bottom
                         } action: { quickSheetMaximumHeight = $0 }
@@ -184,7 +177,7 @@ struct DSBotRootView: View {
                 switch sheet {
                 case .settings:
                     NavigationStack {
-                        SettingsView(store: store)
+                        SettingsView(store: store, pagePool: pagePool)
                     }
                 case .computers:
                     NavigationStack {
@@ -208,6 +201,9 @@ struct DSBotRootView: View {
             .presentationBackground(DSBotStyle.settingsBackground)
         }
         .environment(\.homeIndicatorInset, homeInset)
+        #if DEBUG && targetEnvironment(simulator)
+        .modifier(SimulatorSheetReview(store: store, board: board, collector: collector, tasks: tasks, maximumHeight: quickSheetMaximumHeight))
+        #endif
         .task {
             #if DEBUG && targetEnvironment(simulator)
             if ProcessInfo.processInfo.arguments.contains("-dsbot-review-open-sidebar") {
@@ -308,13 +304,14 @@ struct DSBotRootView: View {
                 .replacingOccurrences(of: #"[^A-Za-z0-9.-]"#, with: "_", options: .regularExpression)
             DSBotLog.record("app.start.v\(version).b\(build)")
         }
-        .onChange(of: store.activeComputer?.id) { _, _ in
+        .onChange(of: store.activeComputer?.id, initial: true) { _, _ in
             isSidebarOpen = false
             drawerMotion.reset()
             conversationFromBoard = false
+            assistantReturnsToBoard = false
             resetBoardTransition(showingBoard: true)
             destination = .board
-            board.reset()
+            board.reset(for: store.activeComputer?.id)
             collector.reset()
             tasks.reset()
             quota.reset()
@@ -334,16 +331,6 @@ struct DSBotRootView: View {
         .onChange(of: pageConnectionKey, initial: true) { _, key in
             pagePool.connectionChanged(to: key)
         }
-        .task(id: pagePreloadRequest, priority: .utility) {
-            let request = pagePreloadRequest
-            guard request.enabled else {
-                pagePool.cancelPreloading()
-                return
-            }
-            await Task.yield()
-            guard !Task.isCancelled else { return }
-            pagePool.preload(request.routes, using: store, viewport: request.viewport)
-        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { pagePool.discardReleasedPages() }
         }
@@ -353,7 +340,6 @@ struct DSBotRootView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
             pagePool.discardReleasedPages()
         }
-        .onDisappear { pagePool.cancelPreloading() }
         .onChange(of: store.selectedSession?.id) { _, id in
             if activityRequest?.session.id != id { activityRequest = nil }
             if quickSheetRequest?.target.sessionID != id { quickSheetRequest = nil }
@@ -364,6 +350,12 @@ struct DSBotRootView: View {
             collector.report = { toast in pageToast = toast }
             tasks.report = { toast in pageToast = toast }
             board.report = { toast in pageToast = toast }
+        }
+        .onReceive(store.visibleSessionReads) { receipt in
+            board.receiveVisibleRead(receipt, using: store)
+        }
+        .onReceive(store.watchedSessionActivity) { activity in
+            board.receiveSessionActivity(activity, using: store)
         }
         .onChange(of: store.isBlankSession) { _, isBlank in
             // DSH shows no conversation views for a conversation that has not started.
@@ -422,6 +414,7 @@ struct DSBotRootView: View {
         let id = UUID()
         let target: DraftTarget
         let navigationRevision: Int
+        var trace: BoardOpenTrace?
     }
 
     private func drawerStack(in geometry: GeometryProxy) -> some View {
@@ -559,10 +552,11 @@ struct DSBotRootView: View {
         return BoardView(
             board: board, store: store,
             topInset: DSBotScrollEdges.usesSystemEffect ? 0 : DSBotLayout.toolbarHeight,
-            isActive: isActive
-        ) { issue in
-            Task { await openIssue(issue) }
-        }
+            isActive: isActive,
+            onOpen: { issue, trace in await openIssue(issue, trace: trace) },
+            onOpenAssistant: { trace in await openHomeAssistant(trace: trace) },
+            onDetail: { issue in issueDetail = issue }
+        )
         .id(store.activeComputer?.id)
         .environment(\.conversationIsCovered, !isActive)
         .modifier(DrawerPageEffect(motion: drawerMotion, isOpen: isSidebarOpen, width: drawerWidth))
@@ -592,7 +586,8 @@ struct DSBotRootView: View {
     /// it must be too, or a band of the canvas shows above and below, where the status bar and the back
     /// button sit. Only the conversation is canvas.
     private var cardBackground: Color {
-        destination.onCanvas ? DSBotStyle.canvas : .white
+        if destination.target == .board { return .white }
+        return destination.onCanvas ? DSBotStyle.canvas : .white
     }
 
     private func cardContent(in geometry: GeometryProxy, drawerWidth: CGFloat) -> some View {
@@ -788,6 +783,7 @@ struct DSBotRootView: View {
     private var boardConversationTitle: String? {
         if toolbarDestination.showsChat, store.selectedSession?.subagent != nil { return store.selectedSession?.title }
         guard toolbarDestination.showsChat, conversationChromeIsFromBoard else { return nil }
+        guard !store.isAssistantConversation else { return nil }
         return board.openedIssue(for: store.selectedSession)?.title ?? store.selectedSession?.title
     }
 
@@ -844,13 +840,7 @@ struct DSBotRootView: View {
         case .board:
             boardTrailing
         case .chat:
-            // An issue's conversation has the arrows to the issue before and after where the views menu would be (owner, 2026-11-07:
-            // "只有在看板进入会话界面右上角三个点才删掉，现在是上一个下一个。其他页面的三个点不用删"); any other conversation keeps the menu.
-            if conversationChromeIsFromBoard && hasIssuePager {
-                issuePager
-            } else {
-                conversationMenu
-            }
+            conversationMenu
         case .collector:
             if collector.isSelecting {
                 if !collector.allSelected {
@@ -871,8 +861,7 @@ struct DSBotRootView: View {
         case .tasks:
             newTaskButton
         case .duduSettings:
-            NativeSettingsSaveButton(navigator: settingsNav, store: store) { pageToast = $0 }
-                .buttonStyle(DSBotGlassCapsuleButtonStyle())
+            NativeSettingsToolbarActions(navigator: settingsNav, store: store, usesGlass: true) { pageToast = $0 }
         default:
             EmptyView()
         }
@@ -940,38 +929,6 @@ struct DSBotRootView: View {
         return counts
     }
 
-    /// The open conversation is an issue's, one of the board's rows.
-    private var hasIssuePager: Bool { board.openedIssue(for: store.selectedSession) != nil }
-
-    /// The arrows to the issue before and after the one whose conversation is open, in the order of the board (the desktop's "上一条事项" and "下一条事项").
-    private var issuePager: some View {
-        HStack(spacing: 0) {
-            pagerButton(.up, offset: -1, label: L10n.text("上一条事项"))
-            Rectangle().fill(DSBotStyle.ink.opacity(0.12)).frame(width: DSBotLayout.issuePagerDividerWidth, height: 20)
-            pagerButton(.down, offset: 1, label: L10n.text("下一条事项"))
-        }
-        .frame(height: DSBotLayout.toolbarButtonSize)
-        .dsbotGlass(in: Capsule())
-    }
-
-    private func pagerButton(_ glyph: DSBotGlyph, offset: Int, label: String) -> some View {
-        let target = board.neighbor(of: store.selectedSession, offset: offset)
-        return Button {
-            guard let target else { return }
-            DSBotLog.record("issue.pager")
-            Task { await openIssue(target) }
-        } label: {
-            DSBotIcon(glyph, size: 20)
-                .foregroundStyle(DSBotStyle.ink.opacity(target == nil ? 0.3 : 1))
-                .frame(width: DSBotLayout.issuePagerButtonWidth, height: DSBotLayout.toolbarButtonSize)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(DSBotIconButtonStyle())
-        .disabled(target == nil)
-        .accessibilityLabel(label)
-        .accessibilityIdentifier("issue.pager.\(offset < 0 ? "previous" : "next")")
-    }
-
     private var sidebarButton: some View {
         Button {
             if isSidebarOpen {
@@ -1009,23 +966,6 @@ struct DSBotRootView: View {
     /// The pages that stay valid for as long as this connection lives.
     private var pageConnectionKey: String {
         "\(store.activeComputer?.id ?? "")/\(store.connectionRevision)"
-    }
-
-    private var pagePreloadRequest: EmbeddedPreloadRequest {
-        var enabled = scenePhase == .active && store.status == .connected
-            && !store.showsConnectionGuide && !store.isRestoring && !store.isLoadingSession
-            && !store.isLoadingSessions && !store.isLoadingCatalog
-            && pageViewport.width > 0 && pageViewport.height > 0
-#if DEBUG && targetEnvironment(simulator)
-        if ProcessInfo.processInfo.arguments.contains("-dsbot-ui-review") { enabled = false }
-#endif
-        return EmbeddedPreloadRequest(
-            connection: pageConnectionKey, enabled: enabled,
-            routes: EmbeddedPageRoute.preloadCandidates(
-                navigation: store.activeNavigation, sessionID: store.selectedSession?.id
-            ),
-            viewport: pageViewport
-        )
     }
 
     @ViewBuilder
@@ -1165,6 +1105,7 @@ struct DSBotRootView: View {
                 closeSidebar()
                 dismissKeyboard()
                 conversationFromBoard = false
+                assistantReturnsToBoard = false
                 destination = MainDestination(id: item.id, area: area, target: .chat, title: item.title)
                 await store.selectSession(session)
             }
@@ -1181,6 +1122,7 @@ struct DSBotRootView: View {
         subagentParents = []
         conversationFromBoard = false
         returnsToAssistant = false
+        assistantReturnsToBoard = false
         destination = .conversation
         closeSidebar()
     }
@@ -1239,6 +1181,8 @@ struct DSBotRootView: View {
     }
 
     private func presentBoardConversation() {
+        let trace = boardConversationPreparation?.trace
+        trace?.record("transition_begin")
         closeSidebar()
         boardTransitionMetrics.start(direction: "enter")
         boardMotion.animate(showingConversation: true, animation: boardTransitionAnimation, updates: {
@@ -1248,6 +1192,7 @@ struct DSBotRootView: View {
             destination = .conversation
         }, completion: {
             boardTransitionMetrics.finish()
+            trace?.record("visible")
         })
     }
 
@@ -1257,9 +1202,11 @@ struct DSBotRootView: View {
               store.activeComputer?.id == target?.computerID, destination.target == .board,
               preparation.navigationRevision == sidebarNavigationRevision,
               !isSidebarOpen, presentedSheet == nil, !isBoardTransitioning else {
+            preparation.trace?.record("blocked", state: "layout_stale")
             boardConversationPreparation = nil
             return false
         }
+        preparation.trace?.record("layout_ready")
         presentBoardConversation()
         return true
     }
@@ -1275,6 +1222,7 @@ struct DSBotRootView: View {
                   destination.showsChat, conversationFromBoard else { return }
             boardTransitionMetrics.finish()
             conversationFromBoard = false
+            assistantReturnsToBoard = false
             destination = .board
         })
     }
@@ -1285,12 +1233,16 @@ struct DSBotRootView: View {
         closeSidebar()
         dismissKeyboard()
         showsConversationTitle = false
-        conversationFromBoard = false
+        conversationFromBoard = assistantReturnsToBoard
         returnsToAssistant = false
+        resetBoardTransition(showingBoard: !assistantReturnsToBoard)
+        let computer = store.activeComputer?.id
+        let revision = sidebarNavigationRevision
         Task {
-            if let session = await store.assistantSession() {
+            if let session = await store.assistantSession(), computer == store.activeComputer?.id,
+               revision == sidebarNavigationRevision, destination.showsChat, !returnsToAssistant {
                 await store.selectSession(session)
-                if let sheet = returningQuickSheet, sheet.isCurrent(store), !conversationFromBoard {
+                if let sheet = returningQuickSheet, sheet.isCurrent(store), store.isAssistantConversation {
                     returningQuickSheet = nil
                     quickSheetRequest = sheet
                 }
@@ -1298,40 +1250,61 @@ struct DSBotRootView: View {
         }
     }
 
+    private func openHomeAssistant(trace: BoardOpenTrace? = nil) async {
+        guard destination.target == .board, !isBoardTransitioning else {
+            trace?.record("blocked", state: "transition_or_page"); return
+        }
+        trace?.record("resolve", state: "assistant")
+        let computer = store.activeComputer?.id
+        let revision = sidebarNavigationRevision
+        guard let session = await store.assistantSession(), computer == store.activeComputer?.id,
+              revision == sidebarNavigationRevision, destination.target == .board, !isBoardTransitioning else {
+            trace?.record("blocked", state: "resolve_unavailable"); return
+        }
+        assistantReturnsToBoard = true
+        await selectIssueSession(session, returningToAssistant: false, trace: trace)
+    }
+
     /// The conversation of an issue, over the board. A session the phone already lists opens at once; one that DSH folded away is put back first.
     /// An issue nobody has yet has no conversation: what it says is shown instead.
-    private func openIssue(_ issue: BoardIssue) async {
-        guard !isBoardTransitioning else { return }
+    private func openIssue(_ issue: BoardIssue, trace: BoardOpenTrace? = nil) async {
+        guard !isBoardTransitioning else { trace?.record("blocked", state: "transition"); return }
         dismissKeyboard()
         let origin = destination
         // Opened from 嘟嘟's chat, or paged on from an issue that was: the way back is that chat.
-        let fromAssistant = conversationFromBoard ? returnsToAssistant : (destination.showsChat && store.isAssistantConversation)
+        let fromAssistant = destination.showsChat && (store.isAssistantConversation || (conversationFromBoard && returnsToAssistant))
         let navigationRevision = sidebarNavigationRevision
         let computer = store.activeComputer?.id
         if issue.sessionId == nil {
+            trace?.record("detail", state: "no_session")
             issueDetail = issue
             return
         }
         let session: SessionSummary?
         if let id = issue.sessionId, let known = store.sessions.first(where: { $0.id == id }) {
+            trace?.record("resolve", state: "listed_session")
             session = known
         } else {
+            trace?.record("resolve", state: "remote_session")
             session = await board.session(of: issue, using: store)
         }
         guard origin == destination, navigationRevision == sidebarNavigationRevision,
-              computer == store.activeComputer?.id, !isBoardTransitioning else { return }
+              computer == store.activeComputer?.id, !isBoardTransitioning else {
+            trace?.record("blocked", state: "origin_changed"); return
+        }
         guard let session else {
+            trace?.record("detail", state: "resolve_unavailable")
             issueDetail = issue
             return
         }
-        await selectIssueSession(session, returningToAssistant: fromAssistant)
+        await selectIssueSession(session, returningToAssistant: fromAssistant, trace: trace)
     }
 
     /// The conversation of an issue known by its number, opened from 嘟嘟's chat: the way back is that chat (the same chrome as one opened from a card).
     private func openIssueConversation(id: Int) async {
         guard !isBoardTransitioning else { return }
         dismissKeyboard()
-        let fromAssistant = conversationFromBoard ? returnsToAssistant : (destination.showsChat && store.isAssistantConversation)
+        let fromAssistant = destination.showsChat && (store.isAssistantConversation || (conversationFromBoard && returnsToAssistant))
         let origin = destination
         let navigationRevision = sidebarNavigationRevision
         let computer = store.activeComputer?.id
@@ -1341,25 +1314,32 @@ struct DSBotRootView: View {
         await selectIssueSession(session, returningToAssistant: fromAssistant)
     }
 
-    private func selectIssueSession(_ session: SessionSummary, returningToAssistant: Bool) async {
+    private func selectIssueSession(_ session: SessionSummary, returningToAssistant: Bool, trace: BoardOpenTrace? = nil) async {
+        trace?.record("select_begin")
         if destination.target == .board {
             let navigationRevision = sidebarNavigationRevision
             let computer = store.activeComputer?.id
             await store.selectSession(session) {
                 guard destination.target == .board, navigationRevision == sidebarNavigationRevision,
-                      let computer, computer == store.activeComputer?.id, !isBoardTransitioning else { return }
+                      let computer, computer == store.activeComputer?.id, !isBoardTransitioning else {
+                    trace?.record("blocked", state: "preparation_stale"); return
+                }
                 // Prepare the history and its actual bars while the board still covers the page.
                 boardConversationPreparation = BoardConversationPreparation(
                     target: DraftTarget(computerID: computer, sessionID: session.id),
-                    navigationRevision: navigationRevision
+                    navigationRevision: navigationRevision, trace: trace
                 )
+                trace?.record("layout_wait")
             }
         } else {
+            let assistantOrigin = returningToAssistant && assistantReturnsToBoard
             showConversation()
+            assistantReturnsToBoard = assistantOrigin
             conversationFromBoard = true
             returnsToAssistant = returningToAssistant
             await store.selectSession(session)
         }
+        trace?.record("select_finished")
     }
 
     /// Present before requesting data; the main conversation and its draft stay mounted beneath.

@@ -198,21 +198,10 @@ export function CollectorWidget({ request, openIssue }) {
         event.preventDefault();
         openFilter(filterButton.current, 'end');
       }}>
-      {/* The filter sits in the title row, at the right edge the tab row kept it at (the owner moved it up, 2026-11-05). */}
-      <header className="flex h-12 shrink-0 items-center gap-2 pr-3 pl-4">
-        <h2 className="font-semibold">{T.widgets.titles.collector}</h2>
-        <div className="ml-auto flex items-center gap-1.5">
-          <Button
-            ref={filterButton} variant="outline" size="icon-sm" className={cn('size-7 rounded-full', menu.open && 'bg-accent')}
-            aria-label={T.filterButton} aria-haspopup="dialog" aria-expanded={menu.open} onClick={(event) => openFilter(event.currentTarget, 'end')}
-          >
-            <ListFilter />
-          </Button>
-        </div>
-      </header>
       <Tabs.Root value={tab} onValueChange={view.setTab} className="flex min-h-0 flex-1 flex-col">
-        <div className="flex h-11 shrink-0 items-center gap-1.5 px-3">
-          {/* In the narrowest widget the three tabs are wider than it: they scroll sideways in their own row, with no bar. */}
+        {/* No title: the three tabs and the filter are the first row (owner, 2026-11-16), the filter at the right edge it was moved to on 2026-11-05; the section's name is for the screen reader.
+            In the narrowest widget the tabs are wider than their room: they scroll sideways, with no bar, and the filter stays where it is. */}
+        <div className="flex h-12 shrink-0 items-center gap-2 pr-3 pl-3">
           <Tabs.List className="-mx-1 flex min-w-0 items-center gap-1.5 overflow-x-auto px-1 [scrollbar-width:none]" aria-label={T.widgets.titles.collector}>
             {TABS.map((id) => (
               <Tabs.Trigger key={id} value={id} asChild>
@@ -220,6 +209,14 @@ export function CollectorWidget({ request, openIssue }) {
               </Tabs.Trigger>
             ))}
           </Tabs.List>
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            <Button
+              ref={filterButton} variant="outline" size="icon-sm" className={cn('size-7 rounded-full', menu.open && 'bg-accent')}
+              aria-label={T.filterButton} aria-haspopup="dialog" aria-expanded={menu.open} onClick={(event) => openFilter(event.currentTarget, 'end')}
+            >
+              <ListFilter />
+            </Button>
+          </div>
         </div>
         {filtered && (
           <FilterBar
@@ -270,7 +267,7 @@ export function CollectorWidget({ request, openIssue }) {
       {opened && (
         <RecordDialog
           key={opened.id} card={opened} tab={tab} request={request} actions={actions} marking={marking.has(opened.id)}
-          completing={completion.running.has(opened.id)} finished={completion.ended.get(opened.id) ?? 0} onClose={() => { setOpened(null); refresh(); }}
+          completing={completion.running.has(opened.id)} onClose={() => { setOpened(null); refresh(); }}
         />
       )}
       {creating && (

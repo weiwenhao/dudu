@@ -50,57 +50,44 @@ struct ComputerListView: View {
                     .accessibilityIdentifier("computers.reconnect")
                     .padding(.top, 14)
                 }
-
-                Button {
-                    isPairingPresented = true
-                    DSBotLog.record("pairing.add.open")
-                } label: {
-                    HStack(spacing: 12) {
-                        DSBotIcon(.add)
-                            .foregroundStyle(DSBotStyle.ink)
-                            .frame(width: 28)
-                        Text(L10n.text("添加电脑"))
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundStyle(DSBotStyle.ink)
-                        Spacer()
-                        DSBotIcon(.right, size: 16)
-                            .foregroundStyle(DSBotStyle.muted)
-                    }
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 58)
-                    .frame(maxWidth: 640)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(DSBotRowButtonStyle())
-                .accessibilityIdentifier("computers.add")
-                .padding(.top, 14)
-                .padding(.bottom, 28)
             }
             .padding(.horizontal, 18)
+            .padding(.bottom, 28)
         }
         .accessibilityIdentifier("computers.list")
         .background(DSBotStyle.settingsBackground.ignoresSafeArea())
-        .navigationBarBackButtonHidden(true)
+        .navigationBarBackButtonHidden(onClose != nil)
+        .toolbarRole(.editor)
+        .tint(DSBotStyle.ink)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(DSBotStyle.settingsBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.light, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button(action: close) {
-                    DSBotIcon(onClose == nil ? .back : .close, size: 20)
-                        .foregroundStyle(DSBotStyle.ink)
+            if onClose != nil {
+                ToolbarItem(placement: .topBarLeading) {
+                    SheetCloseButton(label: L10n.text("关闭电脑连接"), action: close)
+                    .accessibilityIdentifier("computers.close")
                 }
-                .accessibilityLabel(onClose == nil ? L10n.text("返回") : L10n.text("关闭电脑连接"))
-                .accessibilityIdentifier("computers.close")
             }
             ToolbarItem(placement: .principal) {
                 Text(L10n.text("电脑连接"))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(DSBotStyle.ink)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    isPairingPresented = true
+                    DSBotLog.record("pairing.add.open")
+                } label: {
+                    DSBotIcon(.plus, size: 22)
+                        .foregroundStyle(DSBotStyle.ink)
+                        .frame(width: DSBotLayout.toolbarButtonSize, height: DSBotLayout.toolbarButtonSize)
+                        .contentShape(Circle())
+                }
+                .accessibilityLabel(L10n.text("添加电脑"))
+                .accessibilityIdentifier("computers.add")
             }
         }
         .navigationDestination(isPresented: $isPairingPresented) {

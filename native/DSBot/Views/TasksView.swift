@@ -173,14 +173,8 @@ struct TasksView: View {
                 scrollID: Binding(get: { sheet.scrollID }, set: { sheet.scrollID = $0 })
             ) {
                 Button { model.isMaking = true } label: {
-                    DSBotIcon(.plus, size: 14)
-                        .foregroundStyle(DSBotStyle.chatSecondary)
-                        .frame(width: 28, height: 28)
-                        .background(DSBotStyle.selected, in: Circle())
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
+                    DSBotIcon(.plus, size: 20)
                 }
-                .buttonStyle(DSBotQuietPressStyle())
                 .accessibilityLabel(L10n.text("新建任务"))
             } filters: {
                 GlassTabs(tabs: TaskTab.allCases, title: \.title, selection: model.tab, identifier: "tasks.tab", onSelect: model.select)
@@ -232,11 +226,15 @@ struct TasksView: View {
                 Text(L10n.text("任务没能加载"))
                     .font(.system(size: 15))
                     .foregroundStyle(DSBotStyle.muted)
-                Button(L10n.text("重试")) { Task { await model.refresh(using: store) } }
-                    .font(.system(size: 15, weight: .medium))
-                    .buttonStyle(DSBotGlassCapsuleButtonStyle())
-                    .padding(.horizontal, 20)
-                    .frame(height: 44)
+                Button { Task { await model.refresh(using: store) } } label: {
+                    Text(L10n.text("重试"))
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(DSBotStyle.ink)
+                        .padding(.horizontal, 20)
+                        .frame(height: 44)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(DSBotGlassCapsuleButtonStyle())
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .loaded:

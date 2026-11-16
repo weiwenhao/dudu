@@ -97,7 +97,7 @@ struct CollectorView: View {
     private func quickContent(_ sheet: AssistantQuickSheetState) -> some View {
         ZStack {
             QuickSheetPage(
-                title: model.isSelecting ? L10n.text("已选 {0} 条", "\(model.selection.count)") : L10n.text("信息"),
+                title: model.isSelecting ? L10n.text("已选 {0} 条", "\(model.selection.count)") : L10n.text("收件箱"),
                 count: model.isSelecting || model.state != .loaded ? nil : model.totals[model.tab],
                 onClose: { if model.isSelecting { model.stopSelecting() } else { dismiss() } },
                 closeLabel: model.isSelecting ? L10n.text("取消选择") : L10n.text("关闭"),
@@ -178,11 +178,15 @@ struct CollectorView: View {
                 Text(L10n.text("信息没能加载"))
                     .font(.system(size: 15))
                     .foregroundStyle(DSBotStyle.muted)
-                Button(L10n.text("重试")) { Task { await model.refresh(using: store) } }
-                    .font(.system(size: 15, weight: .medium))
-                    .buttonStyle(DSBotGlassCapsuleButtonStyle())
-                    .padding(.horizontal, 20)
-                    .frame(height: 44)
+                Button { Task { await model.refresh(using: store) } } label: {
+                    Text(L10n.text("重试"))
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(DSBotStyle.ink)
+                        .padding(.horizontal, 20)
+                        .frame(height: 44)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(DSBotGlassCapsuleButtonStyle())
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .loaded:
@@ -474,16 +478,16 @@ struct GlassActionBar: View {
     /// blurred (owner, 2026-11-07: "上部不要模糊，左右下模糊"; the first try faded it upwards from the bar, over the page above).
     private var blurHeight: CGFloat { Self.reservedHeight + max(homeInset, 20) }
     var body: some View {
-        ZStack(alignment: .bottom) {
-            if !DSBotScrollEdges.usesSystemEffect {
-                DSBotEdgeBlur(edge: .bottom, height: blurHeight, strength: 0.9)
-                    .frame(height: blurHeight)
-                    .ignoresSafeArea(edges: .bottom)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+        bar
+            .background(alignment: .bottom) {
+                if !DSBotScrollEdges.usesSystemEffect {
+                    DSBotEdgeBlur(edge: .bottom, height: blurHeight, strength: 0.9)
+                        .frame(height: blurHeight)
+                        .ignoresSafeArea(edges: .bottom)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
-            bar
-        }
     }
 
     /// A small glass pill of icons, no words (each keeps its word for VoiceOver).
@@ -519,6 +523,19 @@ struct GlassActionBar: View {
 }
 
 /// A record in full, as a sheet over the list: what it says, what was around it, who it is from and when, and what can be done with it.
+#if DEBUG && targetEnvironment(simulator)
+struct SimulatorCollectorRecordReview: View {
+    let record: CollectorRecord
+    @ObservedObject var model: CollectorModel
+    @ObservedObject var board: BoardModel
+    @ObservedObject var store: DSBotStore
+
+    var body: some View {
+        CollectorRecordSheet(record: record, tab: model.tab, model: model, board: board, store: store, onOpenIssue: { _ in })
+    }
+}
+#endif
+
 private struct CollectorRecordSheet: View {
     let record: CollectorRecord
     let tab: CollectorTab
@@ -624,31 +641,25 @@ private struct CollectorRecordSheet: View {
     }
 
     private var standalone: some View {
-        ZStack(alignment: .top) {
-            ScrollView {
-                recordContent
-                .padding(.horizontal, 24)
-                .padding(.top, 84)
-                .padding(.bottom, DSBotScrollEdges.usesSystemEffect ? 100 - GlassActionBar.reservedHeight : 100)
-            }
-            header
-        }
-        .modifier(DSBotScrollEdgeBar(edge: .bottom) {
+        QuickSheetPage(title: L10n.text("收件箱"), onClose: { dismiss() }) {
+            quickActions
+        } filters: {} content: {
+            recordContent.padding(.horizontal, 4).padding(.top, 14)
+        } footer: {
             GlassActionBar(items: barItems)
                 .padding(.bottom, GlassActionBar.bottomGap)
-        })
-        .background(DSBotStyle.canvas.ignoresSafeArea())
+        }
         .presentationDetents([.large])
-        .presentationDragIndicator(.hidden)
-        .presentationCornerRadius(32)
-        .presentationBackground(DSBotStyle.canvas)
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(28)
+        .presentationBackground(DSBotStyle.sheet)
     }
 
     var body: some View {
         Group {
             if let quickNavigation {
                 QuickSheetPage(
-                    title: L10n.text("信息"), onBack: quickNavigation.back, onClose: quickNavigation.close,
+                    title: L10n.text("收件箱"), onBack: quickNavigation.back, onClose: quickNavigation.close,
                     allowsExpansion: true
                 ) {
                     quickActions
@@ -730,66 +741,8 @@ private struct CollectorRecordSheet: View {
     }
 
     private func quickActionIcon(_ glyph: DSBotGlyph) -> some View {
-        DSBotIcon(glyph, size: 14)
+        DSBotIcon(glyph, size: 20)
             .foregroundStyle(DSBotStyle.chatSecondary)
-            .frame(width: 28, height: 28)
-            .background(DSBotStyle.selected, in: Circle())
-            .frame(width: 44, height: 44)
-            .contentShape(Rectangle())
-    }
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            Button { dismiss() } label: {
-                DSBotIcon(.close, size: 20)
-                    .foregroundStyle(DSBotStyle.ink)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(DSBotGlassButtonStyle())
-            .accessibilityLabel(L10n.text("关闭"))
-            .accessibilityIdentifier("collector.record.close")
-            Spacer(minLength: 0)
-            if let url = shown.url.flatMap(URL.init(string:)), ["http", "https"].contains(url.scheme?.lowercased()) {
-                Button { openURL(url) } label: {
-                    DSBotIcon(.openLink, size: 20)
-                        .foregroundStyle(DSBotStyle.ink)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(DSBotGlassButtonStyle())
-                .accessibilityLabel(L10n.text("打开来源"))
-                .accessibilityIdentifier("collector.record.source")
-            }
-            if !moreActions.isEmpty {
-                Menu {
-                    Button { completeContext() } label: { DSBotLabel(L10n.text("补全上下文"), icon: .completeContext) }
-                        .disabled(isCompleting)
-                    ForEach(moreActions, id: \.title) { item in
-                        Button(role: item.glyph == .trash ? .destructive : nil) {
-                            Task {
-                                if await model.mark(item.mark, [record], using: store) { finish() }
-                            }
-                        } label: {
-                            DSBotLabel(item.title, icon: item.glyph)
-                        }
-                    }
-                } label: {
-                    DSBotIcon(.options, size: 22)
-                        .foregroundStyle(DSBotStyle.ink)
-                        .frame(width: 44, height: 44)
-                        .dsbotGlass(in: Circle(), interactive: true)
-                        .contentShape(Circle())
-                }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .accessibilityLabel(L10n.text("更多"))
-                .accessibilityIdentifier("collector.record.more")
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
     }
 
     private struct MoreAction {

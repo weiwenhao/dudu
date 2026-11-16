@@ -22,7 +22,7 @@ const reply = (uuid: string, parentUuid: string, messageId: string, text: string
 const lines = (records: unknown[]) => records.map((record) => `${JSON.stringify(record)}\n`).join('');
 
 // Three Claude sessions on disk, a DSH store that remembers what is written to it, and a workspace registry.
-async function setup(t: { after: (cleanup: () => Promise<void>) => void }, { persistence = true, now, cached = false, codex }: { persistence?: boolean; now?: () => number; cached?: boolean; codex?: any } = {}) {
+async function setup(t: { after: (cleanup: () => Promise<void>) => void }, { persistence = true, now, cached = false, codex, onHistoryAppended }: { persistence?: boolean; now?: () => number; cached?: boolean; codex?: any; onHistoryAppended?: (id: string, events: any[]) => void } = {}) {
   const base = await mkdtemp(join(tmpdir(), 'dudu-native-'));
   const root = join(base, 'projects');
   await mkdir(join(root, 'app'), { recursive: true });
@@ -58,6 +58,7 @@ async function setup(t: { after: (cleanup: () => Promise<void>) => void }, { per
   };
   const source = { id: 'claude', name: 'Claude', route: 'claude', driver };
   const service = createNativeSessions({
+    onHistoryAppended,
     sources: () => (codex ? [source, codex] : [source]), links, claude: { root }, persistence: () => (persistence ? store : undefined), workspaces: () => registry, ...(now ? { now } : {}),
     ...(cached ? { cacheFile: join(base, 'state', 'search.sqlite') } : {}),
   });
@@ -248,19 +249,25 @@ test('loading a session twice opens the one that is there, even when both clicks
 });
 
 test('loading again reads TUI changes immediately into the same DSH session, without duplicating them', async (t) => {
-  const { service, stored, put } = await setup(t);
+  const published: { id: string; events: any[] }[] = [];
+  const { service, stored, put } = await setup(t, { onHistoryAppended: (id, events) => { published.push({ id, events }); } });
   const original = [user('a', null, 'sync this'), reply('b', 'a', 'm1', 'first answer')];
   await put(5, original);
   const first = await service.load({ provider: 'claude', id: id(5) });
+  assert.equal(published.length, 1, 'initial import publishes its committed incoming boundary');
   await put(5, [...original, user('c', 'b', 'continue'), reply('d', 'c', 'm2', 'new TUI answer')]);
   const updated = await service.load({ provider: 'claude', id: id(5) });
   assert.equal(updated.sessionId, first.sessionId);
   assert.equal(updated.updated, true);
+  assert.equal(published.length, 2, 'a cold append updates session attention without a live event');
+  assert.equal(published[1].id, first.sessionId);
+  assert.ok(JSON.stringify(published[1].events).includes('new TUI answer'));
   const entry = stored.get(first.sessionId)!;
   assert.equal(entry.events.filter((event: any) => event.type === 'user/message').length, 2);
   assert.ok(JSON.stringify(entry.events).includes('new TUI answer'));
   const length = entry.events.length;
   await service.load({ provider: 'claude', id: id(5) });
+  assert.equal(published.length, 2, 'an unchanged sync does not manufacture new attention');
   assert.equal(entry.events.length, length);
   assert.ok(entry.events.every((event: any, index: number) => event.seq === index));
 });

@@ -17,7 +17,7 @@ function world(options: { catalog?: unknown; turns?: Map<string, unknown>; acces
   const fake = baseDsh({ catalog: (options.catalog ?? CATALOG) as any, turns: (options.turns ?? new Map()) as any });
   const agentSessions = createAgentSessions({ dsh: fake.dsh, log: quiet });
   let assignment: any;
-  const issues = createIssues({ file: ':memory:', sessionState: (key: string) => assignment?.sessionState(key) ?? null });
+  const issues = createIssues({ file: ':memory:', lifecycleState: (key: string) => assignment?.sessionState(key) ?? null });
   assignment = createAssignment({
     issues, agentSessions, log: quiet, waitMs: 2000,
     // Legacy summary dependencies must remain unused, even when an older caller supplies them.
@@ -45,7 +45,6 @@ test('an issue given to an agent gets a read-only session in its project folder 
   assert.equal(after.session, 'dsh:s1');
   assert.equal(after.status, 'backlog');
   assert.equal(after.agent, 'deepseek');
-  assert.equal(after.agentState, 'working', 'the issue is as busy as its session');
   const [created] = w.ofKind('createSession');
   assert.deepEqual(created[1], { cwd: folder, title: `${issue.ref} 回复供应商合同的修改意见`, workspaceTitle: 'docs' });
   assert.deepEqual(w.ofKind('setAccess')[0].slice(1), ['s1', 'read-only'], 'the mode is read-only unless ASSIGN.md says otherwise (3.3)');
@@ -64,7 +63,7 @@ test('an issue given to an agent gets a read-only session in its project folder 
   w.stop();
 });
 
-test('a session read from two places keeps the owner\'s word and its handled time steady: the word holds on either place\'s "since", and whoever handled it last, in either, handled it (owner, 2026-11-07)', async () => {
+test('a session read from two places keeps the latest handled time for sleep, regardless of which snapshot supplies lifecycle', async () => {
   // what DSH says of it (followed here) and what its harness wrote (the index) agree on the state and not on since when it has lasted
   const indexed = { key: 'claude:abc', provider: 'claude', id: 'abc', dshSessionId: 's1', state: 'finished', stateSince: 100, lastActivityAt: Date.now() + 60_000 };
   const w = world({ snapshotOf: (key: string) => (key === 'dsh:s1' ? indexed : null) });
@@ -75,9 +74,8 @@ test('a session read from two places keeps the owner\'s word and its handled tim
     w.say.status('s1', false);
     const live = w.agentSessions.snapshotOf('dsh:s1')!;
     assert.equal(live.state, 'finished');
-    assert.deepEqual([...w.assignment.sessionBases('dsh:s1')].sort(), [`finished@${live.stateSince}`, 'finished@100'].sort(), 'both places say what it is, since when');
     assert.equal(w.assignment.sessionHandledAt('dsh:s1'), indexed.lastActivityAt, 'the later of the two handlings, whichever place is the session\'s snapshot');
-    assert.deepEqual(w.assignment.sessionBases('dsh:nobody'), [], 'a session nobody knows has no basis');
+    assert.equal(w.assignment.sessionHandledAt('dsh:nobody'), null);
   } finally { w.stop(); }
 });
 
@@ -126,7 +124,6 @@ test('a question of the agent is the issue\'s ask; the owner\'s answer on the pa
   const asked = w.say.ask('s1', '第 3 条接受还是回绝？ (接受 / 回绝)')!;
   await tick();
   assert.equal(w.get(issue.id).ask, '第 3 条接受还是回绝？ (接受 / 回绝)');
-  assert.equal(w.get(issue.id).agentState, 'blocked');
   assert.equal(w.get(issue.id).status, 'todo');
 
   // What the page does with the card: the API logs the owner's words, clears the ask, and hands the words on.
@@ -137,7 +134,6 @@ test('a question of the agent is the issue\'s ask; the owner\'s answer on the pa
   await tick();
   assert.equal(w.ofKind('prompt').length, 1, 'no second message: it was an answer');
   assert.equal(w.get(issue.id).ask, '');
-  assert.equal(w.get(issue.id).agentState, 'working');
   assert.deepEqual(w.log(issue.id).filter((entry: any) => entry.kind === 'decision').map((entry: any) => [entry.actor, entry.text]), [['owner', '接受']]);
   w.stop();
 });
@@ -156,7 +152,6 @@ test('a reply to stopped work resumes the agent and preserves the owner-selected
   const after = w.get(issue.id);
   assert.equal(after.status, 'in_review');
   assert.equal(after.ask, '');
-  assert.equal(after.agentState, 'working');
   w.stop();
 });
 
@@ -169,7 +164,6 @@ test('stopping the session preserves Backlog; Done is the owner\'s word and is n
   w.say.status('s1', false);
   await tick();
   assert.equal(w.get(issue.id).status, 'backlog');
-  assert.equal(w.get(issue.id).agentState, 'blocked', 'a stopped session needs the owner (2026-11-05)');
 
   w.say.status('s1', true);
   w.issues.complete(issue.id, { outcome: '已回复供应商' });
@@ -258,14 +252,11 @@ test('after a restart session activity is restored while manual issue statuses a
   assert.equal(w.assignment.sessionState('dsh:old3'), null, 'a finished issue is not followed');
   assert.equal(w.get(two.id).status, 'in_progress', 'restoration does not move stopped work');
   assert.equal(w.get(one.id).status, 'backlog');
-  assert.equal(w.get(two.id).agentState, 'blocked');
-  assert.equal(w.get(one.id).agentState, 'blocked', 'a finished run waits for the boss as a failed one does');
 
   // And from here on they are followed like the others.
   w.say.status('old1', true);
   await tick();
   assert.equal(w.get(one.id).status, 'backlog');
-  assert.equal(w.get(one.id).agentState, 'working');
   w.stop();
 });
 
@@ -286,7 +277,6 @@ test('a working agent preserves all manual workflow choices without automatic up
         const events = w.issues.events({ issueId: issue.id }).events.length;
         await reconcile();
         assert.equal(w.get(issue.id).status, status);
-        assert.equal(w.get(issue.id).agentState, 'working');
         await reconcile();
         assert.equal(w.issues.events({ issueId: issue.id }).events.length, events, 'observing running work never rewrites workflow');
       }

@@ -18,11 +18,11 @@ export function reminders(issues, now, limit = 20) {
     found.push({ key: `${issue.id}:${kind}:${key}`, kind, id: issue.id, ref: issue.ref, title: words(issue.title, 160), text: words(text, 200), agent: issue.agent ?? null, ...extra });
   };
   for (const issue of find({ status: ['in_review'] }, 'priority')) {
-    if (issue.agentState === 'working' || (issue.snoozeUntil != null && issue.snoozeUntil > now)) continue;
+    if (issue.sessionState === 'processing' || (issue.snoozeUntil != null && issue.snoozeUntil > now)) continue;
     add(issue, 'needs_you', issue.ask || issue.title, digest(issue.ask || issue.session));
   }
   for (const issue of find({ hasQuestion: true }, 'priority')) {
-    if (issue.agentState === 'working' || (issue.snoozeUntil != null && issue.snoozeUntil > now)) continue;
+    if (issue.sessionState === 'processing' || (issue.snoozeUntil != null && issue.snoozeUntil > now)) continue;
     add(issue, 'needs_you', issue.ask, digest(issue.ask));
   }
   // Days are counted on the local calendar, as the list counts them: due yesterday is "1 day overdue" from midnight on.
@@ -31,7 +31,7 @@ export function reminders(issues, now, limit = 20) {
     if (issue.snoozeUntil != null && issue.snoozeUntil > now) continue;
     add(issue, 'overdue', issue.title, String(issue.dueAt), { daysLate: Math.max(1, Math.round((today - startOfDay(issue.dueAt)) / DAY)) });
   }
-  for (const issue of find({ sessionState: ['waiting_owner', 'error'] }, 'priority')) {
+  for (const issue of find({ lifecycleState: ['waiting_owner', 'error'] }, 'priority')) {
     if (issue.snoozeUntil != null && issue.snoozeUntil > now) continue;
     add(issue, 'blocked', issue.ask || issue.title, digest(issue.session));
   }

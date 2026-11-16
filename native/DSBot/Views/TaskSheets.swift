@@ -79,14 +79,8 @@ struct TaskSheet: View {
                     allowsExpansion: true
                 ) {
                     Button { editing = true } label: {
-                        DSBotIcon(.editLine, size: 14)
-                            .foregroundStyle(DSBotStyle.chatSecondary)
-                            .frame(width: 28, height: 28)
-                            .background(DSBotStyle.selected, in: Circle())
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
+                        DSBotIcon(.editLine, size: 20)
                     }
-                    .buttonStyle(DSBotQuietPressStyle())
                     .accessibilityLabel(L10n.text("编辑"))
                 } filters: {} content: {
                     sections.padding(.top, 14)
@@ -151,24 +145,20 @@ struct TaskSheet: View {
     }
 
     private var standalone: some View {
-        ZStack(alignment: .top) {
-            ScrollView {
-                sections
-                .padding(.horizontal, 18)
-                .padding(.top, 84)
-                .padding(.bottom, DSBotScrollEdges.usesSystemEffect ? 100 - GlassActionBar.reservedHeight : 100)
-            }
-            header
-        }
-        .modifier(DSBotScrollEdgeBar(edge: .bottom) {
+        QuickSheetPage(title: L10n.text("任务"), onClose: { dismiss() }) {
+            Button { editing = true } label: { DSBotIcon(.editLine, size: 20) }
+                .accessibilityLabel(L10n.text("编辑"))
+                .accessibilityIdentifier("task.edit")
+        } filters: {} content: {
+            sections.padding(.top, 14)
+        } footer: {
             GlassActionBar(items: barItems)
                 .padding(.bottom, GlassActionBar.bottomGap)
-        })
-        .background(DSBotStyle.settingsBackground.ignoresSafeArea())
+        }
         .presentationDetents([.large])
-        .presentationDragIndicator(.hidden)
-        .presentationCornerRadius(32)
-        .presentationBackground(DSBotStyle.settingsBackground)
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(28)
+        .presentationBackground(DSBotStyle.sheet)
     }
 
     private func finish() {
@@ -301,32 +291,6 @@ struct TaskSheet: View {
         let known = Set(runs.map(\.id))
         runs += page.runs.filter { !known.contains($0.id) }
         nextCursor = page.nextCursor
-    }
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            Button { dismiss() } label: {
-                DSBotIcon(.close, size: 20)
-                    .foregroundStyle(DSBotStyle.ink)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(DSBotGlassButtonStyle())
-            .accessibilityLabel(L10n.text("关闭"))
-            .accessibilityIdentifier("task.close")
-            Spacer(minLength: 0)
-            Button { editing = true } label: {
-                DSBotIcon(.editLine, size: 20)
-                    .foregroundStyle(DSBotStyle.ink)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(DSBotGlassButtonStyle())
-            .accessibilityLabel(L10n.text("编辑"))
-            .accessibilityIdentifier("task.edit")
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
     }
 
     /// What can be done with the task: pause or resume it (not one that is over), run it now, copy it, delete it.

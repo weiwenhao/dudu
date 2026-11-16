@@ -27,20 +27,26 @@ final class BoardPageMotion {
     ) {
         revision &+= 1
         let current = revision
+        let started = ProcessInfo.processInfo.systemUptime
+        DSBotLog.record("board.input.lock", state: showingConversation ? "enter" : "return")
         // Keep the history covered when the finger hands the page over to its spring.
         isAnimating = true
         isInteracting = false
-        withAnimation(animation, completionCriteria: .removed) {
+        // Unlock when the page reaches its destination, not after the spring's invisible tail.
+        withAnimation(animation, completionCriteria: .logicallyComplete) {
             progress = showingConversation ? 1 : 0
             updates()
         } completion: {
             guard self.revision == current else { return }
+            DSBotLog.record("board.input.unlock", elapsedMs: (ProcessInfo.processInfo.systemUptime - started) * 1_000,
+                            state: showingConversation ? "enter" : "return")
             completion()
             if self.revision == current { self.isAnimating = false }
         }
     }
 
     func reset(showingConversation: Bool) {
+        if isAnimating { DSBotLog.record("board.input.unlock", state: "reset") }
         revision &+= 1
         var transaction = Transaction()
         transaction.disablesAnimations = true

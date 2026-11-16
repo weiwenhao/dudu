@@ -12,11 +12,10 @@ import { PlusMenu } from './PlusMenu.jsx';
 import { Suggestions, useSuggestions } from './Suggestions.jsx';
 import { addressedMessage, highlightParts, issueAddress, replyDraft } from './completion.mjs';
 import { requestIssue } from '../lib/open-issue.js';
-import { requestDashboard } from '../lib/use-page-history.js';
-import { cardEvent, repeatableCard } from './card-events.mjs';
+import { cardEvent } from './card-events.mjs';
 import { groupEvent, placeReplies, waitingLines } from './group-events.mjs';
 import { AtMessage, GuestMessage, MessageRow, TaskMessage, WaitingMessage, lineText } from './GroupChat.jsx';
-import { CardMessage, QuickChips } from './QuickCards.jsx';
+import { CardMessage } from './QuickCards.jsx';
 import { RunningStatus } from './RunningStatus.jsx';
 import { turnStart } from './running.mjs';
 import { isPetInteraction } from './overlays.js';
@@ -142,7 +141,6 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
     if (expanded) next.add(id); else next.delete(id);
     return next;
   }), []);
-  const [quickBusy, setQuickBusy] = useState('');
   // The lines the owner hid (删除: only what this thread shows; DSH's log and what 嘟嘟 was told stay), by the sequence number of their event; and the grey title after the @ID that 回复 put in the box.
   const [hidden, setHidden] = useState(() => new Set());
   const [replyHint, setReplyHint] = useState(null);
@@ -339,32 +337,6 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
     void poll();
     return () => { active = false; clearTimeout(timer); };
   }, [open, conversation?.sessionId, ensure, read, rememberCards, request, settings.enabled, suppressed]);
-
-  // A quick button: the plugin makes the card as a command of the conversation (no model turn) and it comes into the thread like any event; it is read at once, not at the next poll.
-  const sendCard = useCallback(async (kind) => {
-    if (quickBusy) return;
-    setQuickBusy(kind);
-    setProblem('');
-    setNotice('');
-    try {
-      const ready = await ensure();
-      // A tap that would only repeat the card the thread ends with makes no new one (owner, 2026-11-10): the plugin compares the lists and says `unchanged`; that card is in view then.
-      const since = repeatableCard(visibleMessages, kind);
-      const made = await request('assistant/card', since ? { kind, since } : { kind });
-      if (made.outcome !== 'success') throw new Error(made.message || P.failed);
-      if (made.unchanged) { if (list.current) list.current.scrollTop = list.current.scrollHeight; return; }
-      const value = await request('assistant/state');
-      await read(value.conversation?.sessionId ? value.conversation : ready);
-    } catch { if (alive.current) setProblem(P.failed); }
-    finally { if (alive.current) setQuickBusy(''); }
-  }, [ensure, visibleMessages, quickBusy, read, request]);
-
-  // 信息 and 定时任务 have no card: they go to their pages (owner, 2026-11-10). On the desktop that is 嘟嘟's panel, with the tasks window or the dashboard (where the Collector is) in front.
-  const goTo = useCallback((kind) => {
-    if (kind === 'task') requestTask(true); else requestDashboard();
-    try { actions?.openPanel?.(); } catch { /* the page takes the request when it next shows */ }
-    setOpen(false);
-  }, [actions]);
 
   // 删除 hides a line from this thread, nothing more (owner, 2026-11-10: "删除只是在会话界面删除这个消息，实际是没有删除"). The plugin keeps the list, and the phone's thread hides the same lines.
   const hideMessage = useCallback(async (message) => {
@@ -707,10 +679,6 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
               <Button variant="ghost" size="icon-sm" aria-label={P.close} onClick={() => { setOpen(false); button.current?.focus(); }}><X /></Button>
             </div>
           </header>
-          {/* The thread and, floating over its bottom, the quick buttons of the chat: they stay while something is being written (taking them away on the first letter made the thread jump by their height, and putting
-              them back covered its last lines: owner, 2026-11-10, "我在这里输入的时候，上面的这一排图标就不见了 … 显示也很突兀") and are glass, as the phone's are, not white buttons in a row of their own that cut the
-              thread off (owner, 2026-11-11: "使用和手机一样的悬浮按钮吧，而不是背景白色"; design B, the clearer glass). They are outside the log: a live region holds messages, not buttons. */}
-          <div className="dudu-pet-stage">
           <div className="dudu-pet-messages" ref={list} role="log" aria-live="polite" aria-relevant="additions text">
             <div className="dudu-pet-thread">
             {earlier && hasMore && <Button variant="ghost" size="sm" onClick={loadEarlier}>{T.detail.loadEarlier}</Button>}
@@ -721,8 +689,6 @@ export function Pet({ request, actions = {}, renderPermission, version = 0, supp
             {(conversation?.running || compacting) && <RunningStatus since={compacting ? undefined : began} />}
             {notice && <div className="dudu-pet-day" role="status">{notice}</div>}
             </div>
-          </div>
-          <QuickChips busy={quickBusy} disabled={sending} onPick={(kind) => void sendCard(kind)} onGo={goTo} />
           </div>
           {(sendProblem || problem) && <div role="alert" className="dudu-pet-error">
               <AlertCircle className="size-3.5 shrink-0" aria-hidden="true" />

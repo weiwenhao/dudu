@@ -10,7 +10,7 @@ import { PriorityIcon, ProgressRing, StatusIcon, SUB_ISSUE_CHIP } from './icons.
  * The count of sub-issues on a card or a row (a ring and "done/total"), as Linear's: it is a button, and it opens a small list of the sub-issues, one line each with its
  * status, id, title and priority; Enter or a click on one goes to that issue. The list is read when it opens (`issues/get` has the children), so the lists of issues stay light.
  */
-export function SubIssueChipMenu({ progress, issueId, request, onOpen }) {
+export function SubIssueChipMenu({ progress, issueId, request, onOpen, plain = false }) {
   const [open, setOpen] = useState(false);
   const [children, setChildren] = useState(null); // null: being read
   const [failed, setFailed] = useState(false);
@@ -29,7 +29,8 @@ export function SubIssueChipMenu({ progress, issueId, request, onOpen }) {
     <PopoverTrigger asChild>
       <button type="button" data-issue-subissues="" aria-label={T.subIssues.title} title={T.subIssues.title}
         onClick={(event) => event.stopPropagation()}
-        className={cn(SUB_ISSUE_CHIP, 'cursor-pointer outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=open]:bg-accent')}>
+        className={cn(SUB_ISSUE_CHIP, 'cursor-pointer outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+          plain ? 'dudu-conversation-subissues' : 'hover:bg-accent data-[state=open]:bg-accent')}>
         <ProgressRing done={progress.done} total={progress.total} />
         {T.subIssues.progress(progress.done, progress.total)}
       </button>

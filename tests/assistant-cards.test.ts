@@ -8,8 +8,8 @@ import { CARD_COMMAND, cardCommand, cardText, createCards } from '../host/assist
 // The cards of the quick buttons of 嘟嘟's chat: what each lists, that a list that cannot be read is an error and never an empty card, and that a card is kept under its command's id across a restart.
 
 const issue = (id: number, over: Record<string, unknown> = {}) => ({
-  id, ref: `DUD-${id}`, title: `事项 ${id}`, agent: 'codex', agentState: 'blocked', status: 'todo', statusType: 'todo', priority: 'none', updatedAt: 1000 + id,
-  project: { name: 'dudu' }, session: id === 9 ? 'dsh:abc' : null, brief: 'never sent', ...over,
+  id, ref: `DUD-${id}`, title: `事项 ${id}`, agent: 'codex', sessionState: 'unread', status: 'todo', statusType: 'todo', priority: 'none', updatedAt: 1000 + id,
+  project: { name: 'dudu' }, session: id === 9 ? 'dsh:abc' : `dsh:session-${id}`, brief: 'never sent', ...over,
 });
 
 function services(over: Record<string, unknown> = {}) {
@@ -17,6 +17,8 @@ function services(over: Record<string, unknown> = {}) {
   const make = (name: string, answers: Record<string, unknown>) => () => ({ execute: async (action: string, body: unknown) => { asked.push([name, action, body]); return answers[action] ?? { outcome: 'error' }; } });
   return {
     asked,
+    activity: () => ({ unread: true, sessionState: 'unread', attention: { messageAt: 0 } }),
+    warm: async () => {},
     issues: make('issues', { list: { outcome: 'success', total: 8, items: [issue(9), issue(10)] } }),
     inbox: make('inbox', { list: { outcome: 'success', items: [
       { id: 3, ref: 'r3', connector: 'c1', connectorName: 'Lark', connectorIcon: 'lark', title: '私聊', from: 'Zhoukai Lin', at: 5, url: 'https://x', verdict: null },
@@ -34,13 +36,13 @@ function services(over: Record<string, unknown> = {}) {
 
 const folder = () => mkdtempSync(join(tmpdir(), 'dudu-cards-'));
 
-test('a todo card lists the issues that need the owner (the board\'s 需要你, in its default scope) as the board\'s own rows, with the real total, and nothing of their descriptions', async () => {
+test('a todo card lists unread issue conversations as board rows, counts only unread rows, and omits descriptions', async () => {
   const s = services();
   const cards = createCards({ ...s, now: () => 7 });
   const card = await cards.build('todo');
-  assert.deepEqual(s.asked[0], ['issues', 'list', { tab: 'active', filter: { agentState: ['blocked'] }, order: 'priority', limit: 30 }], 'the 需要你 group of the 进行中 scope, in the board\'s order, not the status Todo');
-  assert.deepEqual([card.kind, card.at, card.total, card.rows.length], ['todo', 7, 8, 2]);
-  assert.deepEqual(card.rows[0], { id: 9, ref: 'DUD-9', title: '事项 9', agent: 'codex', agentState: 'blocked', status: 'todo', statusType: 'todo', priority: 'none', project: 'dudu', updatedAt: 1009, sessionId: 'abc' });
+  assert.equal((s.asked[0][2] as { tab: string }).tab, 'all', 'manual workflow never filters unread conversations');
+  assert.deepEqual([card.kind, card.at, card.total, card.rows.length], ['todo', 7, 2, 2]);
+  assert.deepEqual(card.rows[0], { id: 9, ref: 'DUD-9', title: '事项 9', agent: 'codex', sessionState: 'unread', status: 'todo', statusType: 'todo', priority: 'none', project: 'dudu', updatedAt: 1009, sessionId: 'abc' });
   assert.equal(JSON.stringify(card).includes('never sent'), false);
 });
 
@@ -48,20 +50,61 @@ test('a todo row carries the latest message of its session, and the sessions wit
   const asked: string[][] = [];
   const latest = { ensure: async (ids: string[]) => { asked.push(ids); }, get: (id: string) => (id === 'abc' ? { who: 'agent', text: '结论：先用 SQLite', at: 9 } : null) };
   const card = await createCards({ ...services(), latest, now: () => 7 }).build('todo');
-  assert.deepEqual(asked, [['abc']]);
+  assert.deepEqual(asked, [['abc', 'session-10']]);
   assert.deepEqual(card.rows[0].latest, { who: 'agent', text: '结论：先用 SQLite', at: 9 });
   assert.equal('latest' in card.rows[1], false);
 });
 
-test('the sheet can page the same needs-you list without storing a transcript card', async () => {
-  const asked: unknown[] = [];
-  const cards = createCards({ issues: () => ({ execute: async (action, body) => {
-    asked.push([action, body]);
-    return { outcome: 'success', total: 31, items: [issue(10)], nextCursor: 'next' };
-  } }) });
-  assert.equal((await cards.todos('after')).nextCursor, 'next');
-  assert.deepEqual(asked, [['list', { tab: 'active', filter: { agentState: ['blocked'] }, order: 'priority', limit: 30, cursor: 'after' }]]);
-  assert.deepEqual(cards.many(['after']), {});
+test('the sheet warms unread boundaries before filtering all pages and keeps working unread conversations without reading them', async () => {
+  let warmed = false;
+  const read: unknown[] = [];
+  const cards = createCards({
+    ...services(),
+    issues: () => ({ execute: async (_action, body) => {
+      // A state-filtered query would return zero before the projections have been read.
+      read.push(body);
+      if (body.filter) return { outcome: 'success', items: [], total: 0 };
+      return body.cursor ? {
+        outcome: 'success', items: [issue(3, { status: 'backlog', sessionState: 'idle' }), issue(4, { session: null })],
+      } : {
+        outcome: 'success', items: [issue(1), issue(2, { status: 'done', sessionState: 'idle' })], nextCursor: 'page-2',
+      };
+    } }),
+    warm: async (ids) => { assert.deepEqual(ids, ['session-1', 'session-2', 'session-3']); warmed = true; },
+    activity: (id) => {
+      assert.equal(warmed, true);
+      const number = Number(id.split('-').at(-1));
+      return { unread: number !== 1, sessionState: number === 3 ? 'processing' : 'unread', attention: { messageAt: number } };
+    },
+  });
+  const list = await cards.todos();
+  assert.deepEqual(list.rows.map((row) => [row.id, row.sessionState]), [[3, 'processing'], [2, 'unread']]);
+  assert.equal(list.total, 2);
+  assert.equal(read.length, 2, 'every issue page is read before selecting unread rows');
+  assert.deepEqual(cards.many(['page-2']), {}, 'opening a sheet writes no transcript card');
+});
+
+test('unread todo cursors keep the received-message order after earlier rows are read', async () => {
+  const items = Array.from({ length: 36 }, (_, index) => issue(index + 1));
+  const read = new Set();
+  const cards = createCards({
+    ...services(),
+    issues: () => ({ execute: async () => ({ outcome: 'success', items }) }),
+    activity: (id) => {
+      const number = id === 'abc' ? 9 : Number(id.split('-').at(-1));
+      return { unread: !read.has(number), sessionState: 'unread', attention: { messageAt: Math.floor(number / 2) } };
+    },
+  });
+  const first = await cards.todos();
+  assert.equal(first.total, 36);
+  assert.equal(first.rows.length, 30);
+  read.add(first.rows[0].id);
+  const second = await cards.todos(first.nextCursor);
+  assert.equal(second.total, 35);
+  assert.equal(second.rows.length, 6);
+  assert.equal(second.nextCursor, undefined);
+  assert.equal(new Set([...first.rows, ...second.rows].map((row) => row.id)).size, 36);
+  await assert.rejects(cards.todos('not-a-cursor'), /cursor/);
 });
 
 test('an information card lists the records still to handle, and counts them from the collectors\' own totals', async () => {
@@ -134,11 +177,11 @@ test('a card repeats the one before it only when the list is the same row for ro
   assert.equal(await first.repeats('info', 'earlier'), false, 'a card of another kind is no repeat');
   assert.equal(await first.repeats('todo', 'unknown'), false);
   assert.equal(await first.repeats('todo', undefined as any), false);
-  const listing = (items: unknown[], total = 8) => createCards({ ...services({ issues: () => ({ execute: async () => ({ outcome: 'success', total, items }) }) }), now: () => 2 });
+  const listing = (items: unknown[]) => createCards({ ...services({ issues: () => ({ execute: async () => ({ outcome: 'success', items }) }) }), now: () => 2 });
   for (const [what, later] of [
     ['a row that is another issue', listing([issue(9), issue(11)])],
     ['a row that was touched since', listing([issue(9, { updatedAt: 5000 }), issue(10)])],
-    ['the same rows of a longer list', listing([issue(9), issue(10)], 9)],
+    ['the same rows of a longer list', listing([issue(9), issue(10), issue(11)])],
     ['one row fewer', listing([issue(9)])],
   ] as const) {
     later.put('earlier', await first.build('todo'));

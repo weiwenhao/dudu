@@ -3,6 +3,8 @@ import http from 'node:http';
 import { Buffer } from 'node:buffer';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { NATIVE_METHODS } from './native-bridge.mjs';
 
 const PATH = '/dsbot';
@@ -13,6 +15,8 @@ const ROUTES = Object.freeze({
   events: `${API}/events`,
   probe: `${API}/probe`,
   request: `${API}/request`,
+  upload: `${API}/file/upload`,
+  video: `${API}/file/video`,
 });
 const MAX_REQUEST_BYTES = 28 * 1024 * 1024;
 const MAX_PREAUTH_BYTES = 4 * 1024;
@@ -163,6 +167,8 @@ export async function createNativeServer({
   computer,
   pairingStore,
   dispatch,
+  uploadFile,
+  openVideo,
   onDisconnect,
   httpHandler,
   runRequest = (operation) => operation(),
@@ -185,6 +191,7 @@ export async function createNativeServer({
     if (!connection || connection.closed) return;
     connection.closed = true;
     connection.watchGeneration++;
+    for (const transfer of connection.transfers) transfer.abort();
     clearTimeout(connection.idleTimer);
     connection.wakeEvents();
     if (connections.get(connection.deviceId) === connection) connections.delete(connection.deviceId);
@@ -209,6 +216,7 @@ export async function createNativeServer({
     void runRequest(() => withNativeLocale(language, () => handle(request, response)))
       .catch((error) => withNativeLocale(language, () => {
         if (response.writableEnded || response.destroyed) return;
+        if (response.headersSent) { response.destroy(); return; }
         const status = error instanceof HTTPError ? error.status : 503;
         const body = errorValue(error);
         reply(response, status, { ok: false, error: body });
@@ -223,6 +231,7 @@ export async function createNativeServer({
       authenticated: true,
       closed: false,
       inFlight: new Set(),
+      transfers: new Set(),
       selectedSessionId: undefined,
       watchGeneration: 0,
       clearWatch: undefined,
@@ -396,6 +405,79 @@ export async function createNativeServer({
       request.once('aborted', () => abort.abort());
       const result = await connection.waitEvents(body.cursor, body.waitMs, abort.signal);
       if (!response.destroyed) reply(response, 200, result);
+      return;
+    }
+
+    if (url.pathname === ROUTES.upload || url.pathname === ROUTES.video) {
+      const deviceId = await authenticate(request);
+      const connection = connections.get(deviceId);
+      if (!connection || connection.closed) throw new HTTPError(409, 'DISCONNECTED');
+      const id = request.headers['x-dudu-request-id'];
+      if (typeof id !== 'string' || !REQUEST_ID.test(id)) throw new HTTPError(400, 'BAD_REQUEST');
+      if (connection.inFlight.has(id)) throw new HTTPError(409, 'DUPLICATE_REQUEST');
+      if (connection.inFlight.size >= maxInflightPerClient || connection.transfers.size >= 4) {
+        throw new HTTPError(429, 'TOO_MANY_REQUESTS');
+      }
+      const abort = new AbortController();
+      const cancel = () => { if (!response.writableFinished) abort.abort(); };
+      connection.inFlight.add(id);
+      connection.transfers.add(abort);
+      response.once('close', cancel);
+      request.once('aborted', cancel);
+      touchConnection(connection);
+      try {
+        if (url.pathname === ROUTES.upload) {
+          if (typeof uploadFile !== 'function') throw new HTTPError(400, 'UNSUPPORTED');
+          if (String(request.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase() !== 'application/octet-stream'
+            || [...url.searchParams.keys()].some((key) => !['id', 'name'].includes(key))) throw new HTTPError(400, 'BAD_REQUEST');
+          const expected = request.headers['content-length'];
+          if (expected !== undefined && (!/^\d+$/u.test(expected) || !Number.isSafeInteger(Number(expected)) || Number(expected) < 1)) {
+            throw new HTTPError(400, 'BAD_REQUEST');
+          }
+          const data = (async function* () {
+            let bytes = 0;
+            for await (const chunk of request) {
+              abort.signal.throwIfAborted();
+              if (connection.closed) throw new HTTPError(409, 'DISCONNECTED');
+              bytes += chunk.byteLength;
+              if (!Number.isSafeInteger(bytes)) throw new HTTPError(413, 'LIMIT_EXCEEDED');
+              touchConnection(connection);
+              yield chunk;
+            }
+            if (!bytes || expected !== undefined && bytes !== Number(expected)) throw new HTTPError(400, 'BAD_REQUEST');
+          })();
+          const result = await uploadFile({ id: url.searchParams.get('id'), name: url.searchParams.get('name') }, data, connection, abort.signal);
+          reply(response, 200, { id, ok: true, result });
+        } else {
+          if (typeof openVideo !== 'function') throw new HTTPError(400, 'UNSUPPORTED');
+          const params = await readJson(request, MAX_PREAUTH_BYTES);
+          if (!isRecord(params)) throw new HTTPError(400, 'BAD_REQUEST');
+          const video = await openVideo(params, connection, abort.signal);
+          response.writeHead(200, {
+            'content-type': video.mediaType, 'x-dudu-file-bytes': String(video.bytes),
+            'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+            'content-security-policy': "default-src 'none'; sandbox",
+          });
+          const data = (async function* () {
+            for await (const chunk of video.data) {
+              abort.signal.throwIfAborted();
+              touchConnection(connection);
+              yield chunk;
+            }
+          })();
+          await pipeline(Readable.from(data), response, { signal: abort.signal });
+        }
+      } catch (error) {
+        if (response.headersSent) { response.destroy(); return; }
+        if (response.destroyed) return;
+        reply(response, error instanceof HTTPError ? error.status : 200, { id, ok: false, error: errorValue(error) });
+      } finally {
+        response.off('close', cancel);
+        request.off('aborted', cancel);
+        abort.abort();
+        connection.inFlight.delete(id);
+        connection.transfers.delete(abort);
+      }
       return;
     }
 

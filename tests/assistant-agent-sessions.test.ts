@@ -78,7 +78,6 @@ test('the state follows DSH: working, an answer is finished, a failure is an err
   world.say.assistant('s1', '做完了：第 3 条建议接受。');
   world.say.turnEnd('s1', { kind: 'completed' }); // the turn ends before DSH's loop reports itself idle
   assert.equal(sessions.stateOf('dsh:s1'), 'finished', 'a committed turn end immediately ends the working state');
-  assert.equal(sessions.snapshotOf('dsh:s1')!.agentState, 'blocked');
   assert.deepEqual(heard, [['running', 'finished']]);
   world.say.status('s1', false);
   assert.equal(sessions.stateOf('dsh:s1'), 'finished');
@@ -123,7 +122,6 @@ test('a queued DSH turn resumes working without another loop status event; repla
   // DSH consumes the queued message in the same driver: no second api-session/status true.
   event('turn/start', { turn: 2 });
   assert.equal(sessions.stateOf('dsh:s1'), 'running');
-  assert.equal(sessions.snapshotOf('dsh:s1')!.agentState, 'working');
   event('turn/end', { reason: { kind: 'completed' } });
   agent.status = 'idle';
   listeners.get('api-session/status')!('s1', false);

@@ -12,7 +12,7 @@
 //   stop(key)                        ends the turn that runs; the session stays
 //   close(key, { stop? }) / resume(key)   fold the session away in DSH's sidebar and put it back (resume says where it lives: `workspaceId`);
 //                                    closing one that runs needs stop: true
-//   stateOf(key)   -> 'running' | 'waiting_owner' | 'finished' | 'idle' | 'error' | 'stopped' | null    synchronous: createIssues' `sessionState`
+//   stateOf(key)   -> 'running' | 'waiting_owner' | 'finished' | 'idle' | 'error' | 'stopped' | null    synchronous: createIssues' `lifecycleState`
 //   snapshotOf(key) -> { key, id, agent, cwd, closed, state, stateSince, lastActivityAt, touchedAt, pending, error, ending, excerpt } | null
 //                                    (touchedAt: when the owner last started, spoke to or opened the session, ms, or null: it is what keeps an agent awake, deep-sleep.mjs)
 //   onChange(cb)   -> unsubscribe; cb({ key, from, to, snapshot }) for every change of a session's state ({ from: null } the first time)
@@ -45,7 +45,6 @@
 //     request for a wider mode (kind 'approval'); the adapter waits for `answer` (the owner's words) and calls close() once it is settled by
 //     anyone, in DSH's own window as well
 
-import { agentStateForSession } from '../sessions/work-state.mjs';
 import { HARNESS_IDS } from '../../providers/catalog.mjs';
 
 export const ACCESS_MODES = Object.freeze(['read-only', 'workspace-write', 'danger-full-access']);
@@ -130,7 +129,6 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
   const snapshot = (entry) => ({
     key: entry.key, id: entry.sessionId, agent: entry.agent, cwd: entry.cwd, closed: entry.closed, state: entry.state, stateSince: entry.since,
     turnActive: Boolean(entry.running || entry.waiters.length),
-    agentState: agentStateForSession(entry.state),
     lastActivityAt: entry.activityAt, touchedAt: entry.touchedAt, pending: entry.waiters[0] ? { kind: entry.waiters[0].kind, text: entry.waiters[0].text } : null,
     error: entry.error, ending: entry.ending, excerpt: oneLine(entry.ending, EXCERPT_CHARS),
   });

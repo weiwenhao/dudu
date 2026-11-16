@@ -347,13 +347,13 @@ test('the plugin adds native primary routes and grouped settings ahead of regist
   await store.ingest(snapshot);
   const { sidebar, settings } = store.get();
   assert.deepEqual(sidebar.filter((item: any) => item.group === 'primary').map((item: any) => [item.id, item.open.native]), [
-    ['dudu.conversation', 'assistant'], ['dudu.board', 'board'], ['dudu.collector', 'collector'], ['dudu.tasks', 'schedule'],
+    ['dudu.board', 'board'], ['dudu.collector', 'collector'], ['dudu.tasks', 'schedule'],
   ]);
-  assert.deepEqual(sidebar.slice(4).map((item: any) => item.id), ['plugins', 'schedules', 'insight']);
+  assert.deepEqual(sidebar.slice(3).map((item: any) => item.id), ['plugins', 'schedules', 'insight']);
   // Dudu's tasks stay native; DSH's schedule panel uses DSH's actual UI.
   assert.deepEqual(sidebar.find((item: any) => item.id === 'dudu.tasks')?.open, { native: 'schedule', target: 'dudu-tasks' });
   assert.deepEqual(sidebar.find((item: any) => item.id === 'schedules')?.open, { web: { page: 'panel', target: 'schedules' } });
-  assert.ok(sidebar.slice(1, 4).every((item: any) => sanitizeIcon(item.icon) !== undefined), 'native route icons pass the same validation as registry icons');
+  assert.ok(sidebar.slice(0, 3).every((item: any) => sanitizeIcon(item.icon) !== undefined), 'native route icons pass the same validation as registry icons');
   const own = settings.filter((item: any) => item.group === 'dudu');
   assert.deepEqual(own.map((item: any) => item.id), ['dudu.general', 'dudu.statuses', 'dudu.connectors', 'dudu.collectors', 'dudu.rules', 'dudu.memory', 'dudu.skills', 'dudu.dsh']);
   assert.deepEqual(own.slice(0, 7).map((item: any) => item.open), ['general', 'statuses', 'connectors', 'collectors', 'rules', 'memory', 'skills'].map((section) => ({

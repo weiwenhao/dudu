@@ -82,7 +82,9 @@ export async function acquireUpdateLock(lockPath, alive = processAlive) {
 export async function activateDesktopUpdate({ running, restartRequired, requestReload, waitForRuntime, restart }) {
   if (running && !restartRequired) {
     await requestReload();
-    const runtime = await waitForRuntime(20_000);
+    // A normal profile reconciliation can take longer than 20 s. Use the same
+    // bounded readiness window as a launch; this still never restarts Desktop.
+    const runtime = await waitForRuntime(90_000);
     if (runtime) return { mode: 'hot', runtime };
     throw new Error('Plugin hot reload did not become ready. DSH was left open; use --restart only when you want to restart it.');
   }

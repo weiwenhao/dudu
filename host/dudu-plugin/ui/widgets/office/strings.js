@@ -1,4 +1,4 @@
-// The Office widget's own words. The ones everyone shares (status names, the four agent states, "No agent") are in ../../strings.js.
+// The Office widget's own words. Shared session statuses and "No agent" are in ../../strings.js.
 // Words marked NEW are not in the design doc and wait for the owner's review.
 import { STATE_ORDER } from './layout.js';
 import { localized } from '../../lib/locale.mjs';
@@ -11,12 +11,12 @@ const en = {
   // The legend in the title row: the clothes of the three agents.
   agents: { claude: 'Claude', codex: 'ChatGPT', pi: 'Pi', deepseek: 'DeepSeek' },
   /**
-   * The one sentence that stands for the whole picture, using the shared worker state names.
+   * The one sentence that stands for the whole picture, using the shared session state names.
    * A state nobody is in is left out.
    */
   summary: (counts) => {
     const parts = STATE_ORDER.filter((state) => counts[state] > 0).map((state) => (
-      `${counts[state]} ${T.agentState[state]}`
+      `${counts[state]} ${T.sessionState[state]}`
     ));
     return `Office: ${[count(counts.total, 'issue', 'issues'), ...parts].join(', ')}`;
   },
@@ -26,5 +26,5 @@ const en = {
 
 export const O = localized(en, {
   title: '办公室',
-  summary: (counts) => `办公室：${[`${counts.total} 条事项`, ...STATE_ORDER.filter((state) => counts[state] > 0).map((state) => `${counts[state]} ${T.agentState[state]}`)].join('，')}`,
+  summary: (counts) => `办公室：${[`${counts.total} 条事项`, ...STATE_ORDER.filter((state) => counts[state] > 0).map((state) => `${counts[state]} ${T.sessionState[state]}`)].join('，')}`,
 });

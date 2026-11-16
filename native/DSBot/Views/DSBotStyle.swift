@@ -5,9 +5,6 @@ enum DSBotLayout {
     static let toolbarButtonSize: CGFloat = 44
     static let toolbarHorizontalPadding: CGFloat = 20
     static let toolbarHeight: CGFloat = toolbarButtonSize
-    static let issuePagerButtonWidth: CGFloat = 46
-    static let issuePagerDividerWidth: CGFloat = 0.5
-    static let issuePagerWidth: CGFloat = issuePagerButtonWidth * 2 + issuePagerDividerWidth
     static let sidebarPadding: CGFloat = 16
     static let actionColumnWidth: CGFloat = 44
     static let drawerCornerRadius: CGFloat = 45

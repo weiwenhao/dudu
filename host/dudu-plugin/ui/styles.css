@@ -8,6 +8,7 @@
 @import "./dashboard/dashboard.css";
 @import "./pet/pet.css";
 @import "./tasks/tasks.css";
+@import "./issues/conversations.css";
 @import "../widget.css";
 @source "./";
 
@@ -56,6 +57,7 @@
   --warning-foreground: #8a5300;
   --danger-foreground: #b91c1c;
   --dudu-soft: #eef3fd;
+  --dudu-conversation-selected: #e4edfc;
   --dudu-strong: #2f5fd0;
   --dudu-on: #ffffff;
   --dudu-success: #177a3c;
@@ -80,6 +82,7 @@ body[data-ds-dark-theme] .dudu {
   --warning-foreground: #f59e0b;
   --danger-foreground: #f25a5a;
   --dudu-soft: #2b3347;
+  --dudu-conversation-selected: color-mix(in srgb, var(--ring) 20%, var(--background));
   --dudu-strong: #5686fe;
   --dudu-on: #0f1115;
   --dudu-success: #22c55e;

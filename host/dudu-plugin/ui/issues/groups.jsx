@@ -2,16 +2,16 @@ import { Box, Plus } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
-import { AgentAvatar, AgentStateIcon, PriorityIcon, projectColor, StatusIcon, Triangle } from './icons.jsx';
+import { AgentAvatar, SessionStateIcon, PriorityIcon, projectColor, StatusIcon, Triangle } from './icons.jsx';
 import { groupLabel } from './flatten.js';
 import { NeedsYouColorPicker } from './NeedsYouColor.jsx';
 
 /** `count`: how many issues the group has; a Working group turns its icon only when it is not empty. */
 export function GroupIcon({ field, groupKey, className = 'size-4', count = 0, pickColor = false }) {
   if (field === 'status') return <StatusIcon status={groupKey} className={className} />;
-  if (field === 'agentState') {
-    const icon = <AgentStateIcon state={groupKey} className={className} active={count > 0} />;
-    return pickColor && groupKey === 'blocked' ? <NeedsYouColorPicker className={className}>{icon}</NeedsYouColorPicker> : icon;
+  if (field === 'sessionState') {
+    const icon = <SessionStateIcon state={groupKey} className={className} active={count > 0} />;
+    return pickColor && groupKey === 'unread' ? <NeedsYouColorPicker className={className}>{icon}</NeedsYouColorPicker> : icon;
   }
   if (field === 'priority') return <PriorityIcon priority={groupKey} className={className} />;
   if (field === 'agent') return <AgentAvatar agent={groupKey} state="idle" />;

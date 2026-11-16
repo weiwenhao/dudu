@@ -34,10 +34,32 @@ struct ComposerAttachmentTiles: View {
 private struct FileAttachmentTile: View {
     let file: UploadedFile
     let onRemove: () -> Void
+    @State private var previewing = false
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            VStack(spacing: 6) {
+            if let video = file.video {
+                Button { previewing = true } label: {
+                    VideoThumbnail(video: video, playSize: 28)
+                        .frame(width: AttachmentTile.size, height: AttachmentTile.size)
+                        .clipShape(AttachmentTile.shape)
+                        .contentShape(AttachmentTile.shape)
+                }
+                .buttonStyle(DSBotQuietPressStyle())
+                .accessibilityLabel(file.name)
+            } else {
+                fileContent
+            }
+            AttachmentRemoveBadge(label: L10n.text("移除文件"), identifier: "file.remove.\(file.id)", action: onRemove)
+        }
+        .frame(width: AttachmentTile.size, height: AttachmentTile.size)
+        .fullScreenCover(isPresented: $previewing) {
+            if let video = file.video { VideoFullScreenPreview(video: video) { previewing = false } }
+        }
+    }
+
+    private var fileContent: some View {
+        VStack(spacing: 6) {
                 DSBotIcon(.file, size: 24)
                     .foregroundStyle(DSBotStyle.chatTertiary)
                 Text(file.name)
@@ -54,9 +76,6 @@ private struct FileAttachmentTile: View {
             .accessibilityLabel(L10n.text("文件 {0}", "\(file.name)"))
             .accessibilityIdentifier("file.tile.\(file.id)")
 
-            AttachmentRemoveBadge(label: L10n.text("移除文件"), identifier: "file.remove.\(file.id)", action: onRemove)
-        }
-        .frame(width: AttachmentTile.size, height: AttachmentTile.size)
     }
 }
 

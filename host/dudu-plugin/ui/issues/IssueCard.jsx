@@ -79,7 +79,7 @@ export function IssueCard({ issue, now, show, menuOpen, onMenuOpenChange, onStat
       <div className={issue.parent ? 'h-10' : 'h-[60px]'}>{issue.progressSummary && <Summary text={issue.progressSummary} lines={issue.parent ? 2 : 3} />}</div>
       <footer className="flex h-6 items-center gap-1.5 text-xs text-muted-foreground">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          {show.agent && <AgentAvatar agent={issue.agent} state={issue.agentState} finished={issue.agentFinished} asleep={issue.deepSleep} compact showTitle={false} />}
+          {show.agent && <AgentAvatar agent={issue.agent} state={issue.sessionState} asleep={issue.deepSleep} compact showTitle={false} />}
           {show.priority && (
             // As in Linear: a round chip, the same height and border as the due date and the project beside it, the icon at its full 16px; a click opens the priority menu.
             <PriorityMenu priority={issue.priority} onSelect={(next) => onChange(issue, { priority: next })}>
@@ -100,7 +100,7 @@ export function IssueCard({ issue, now, show, menuOpen, onMenuOpenChange, onStat
       {(show.source || show.created || show.updated) && <div className="flex flex-col gap-1 text-xs text-muted-foreground">
         {show.source && <span>{T.source[issue.source] ?? issue.source}</span>}
         {show.created && <span title={formatDateTime(issue.createdAt)}>{T.display.property.created} {shortDate(issue.createdAt, now)}</span>}
-        {show.updated && <span title={formatDateTime(issue.updatedAt)}>{T.display.property.updated} {shortDate(issue.updatedAt, now)}</span>}
+        {show.updated && issue.receivedAt > 0 && <span title={formatDateTime(issue.receivedAt)}>{T.display.property.updated} {shortDate(issue.receivedAt, now)}</span>}
       </div>}
     </article>;
   // The card as it is lifted while it is dragged is only a picture of it: no menu, no shortcuts.

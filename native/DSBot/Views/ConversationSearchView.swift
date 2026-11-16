@@ -141,8 +141,8 @@ struct ConversationSearchView: View {
                 Group {
                     if let agent = hit.session.agent {
                         AgentAvatar(
-                            agent: agent, state: hit.session.agentState ?? .idle,
-                            finished: hit.session.agentFinished == true, asleep: hit.session.deepSleep == true
+                            agent: agent, state: hit.session.sessionState ?? .idle,
+                            asleep: hit.session.deepSleep == true
                         )
                     } else {
                         DSBotIcon(.message, size: 18, scalesStroke: true)

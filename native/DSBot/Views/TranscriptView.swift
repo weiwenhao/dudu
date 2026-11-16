@@ -63,12 +63,16 @@ private struct UserBubbleRow: View {
                 )
                 .messageActions(text: "", isUser: true, seq: row.seq)
             }
+            ForEach(Array(row.attachments.enumerated()).filter { $0.element.kind == "video" }, id: \.offset) { _, attachment in
+                ConversationVideoThumbnail(attachment: attachment, target: attachmentTarget, canLoadAttachment: canLoadAttachments)
+                    .id(attachmentTarget)
+            }
             if !row.text.isEmpty {
                 UserMessageBubble(text: row.text, seq: row.seq)
             }
-            if row.attachments.contains(where: { $0.kind != "image" }) {
+            if row.attachments.contains(where: { $0.kind != "image" && $0.kind != "video" }) {
                 HStack(spacing: 6) {
-                    ForEach(Array(row.attachments.enumerated()).filter { $0.element.kind != "image" }, id: \.offset) { _, attachment in
+                    ForEach(Array(row.attachments.enumerated()).filter { $0.element.kind != "image" && $0.element.kind != "video" }, id: \.offset) { _, attachment in
                         HStack(spacing: 5) {
                             DSBotIcon(attachment.kind == "image" ? .image : .attach, size: 13, scalesStroke: true)
                             Text(attachment.name).lineLimit(1).frame(maxWidth: 120)
@@ -181,7 +185,7 @@ private struct TurnRowView: View {
                     )
                 case let .reply(id, text):
                     if id.hasPrefix("live:") {
-                        StreamingReplyText(text: text)
+                        StreamingReplyText(text: text, id: id)
                             .messageActions(text: text, seq: row.messageSequences[id])
                     } else {
                         MessageMarkdown(text: text, allowsTextSelection: false, sourceSequence: row.messageSequences[id])

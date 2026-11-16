@@ -16,9 +16,9 @@ let browser: Browser;
 let code: string;
 type Person = { id: number; seat: number; state: string; zone: string; place: string; pose: string; walking: boolean; route: boolean; hop: boolean; sleeping: boolean; at: { x: number; y: number } };
 type Snapshot = { people: Person[]; ball: { visible: boolean }; screens: (string | null)[] };
-const issue = (id: number, agentState: string, status = 'in_progress') => ({ id, status, agentState, agent: 'claude' });
+const issue = (id: number, sessionState: string, status = 'in_progress') => ({ id, status, sessionState: ({ working: 'processing', blocked: 'unread' }[sessionState] ?? sessionState), agent: 'claude' });
 /** An agent in deep sleep (an idle one, or a finished run that waits for a look, which is `blocked`): the server says so with `deepSleep`. */
-const asleep = (id: number, agentState = 'idle') => ({ ...issue(id, agentState), deepSleep: true });
+const asleep = (id: number, sessionState = 'idle') => ({ ...issue(id, sessionState), deepSleep: true });
 const inBed = (one: Person) => one.place.startsWith('bed-');
 
 before(async () => {

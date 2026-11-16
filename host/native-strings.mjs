@@ -32,7 +32,7 @@ export const NATIVE_ENGLISH = Object.freeze({
   "任务": "Tasks",
   "任务分配": "Issue assignment",
   "保存": "Save",
-  "信息": "Collector",
+  "收件箱": "Inbox",
   "先添加一个连接器": "Add a connector first",
   "其他设置": "Other settings",
   "创建": "Create",

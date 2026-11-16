@@ -256,15 +256,14 @@ function keepKnownIcons(previous, lists) {
 // ---- What 嘟嘟 adds itself ----------------------------------------------------------------------
 //
 // Besides what DSH reports, the phone's lists carry what the plugin itself has to offer. The owner
-// approved the aligned disclosure on 2026-11-08, with 嘟嘟, 看板, 信息 as the primary entries, and on 2026-11-10 the tasks (定时任务, 任务 since 2026-11-11) as the fourth.
-// Other sidebar entries remain the registry's, folded under 查看更多 by the app. "信息" is the owner's phone page name;
+// approved the aligned disclosure on 2026-11-08, with 嘟嘟, 看板, 信息 (收件箱 since 2026-11-16) as the primary entries, and on 2026-11-10 the tasks (定时任务, 任务 since 2026-11-11) as the fourth.
+// Other sidebar entries remain the registry's, folded under 查看更多 by the app. "收件箱" is the owner's phone page name (信息 until 2026-11-16);
 // the settings pages keep the desktop's names, and "其他设置" is the owner's: one entry that leads to
 // DSH's own settings pages, so that those are no longer listed beside 嘟嘟's. A settings entry of 嘟嘟's has `group: 'dudu'`; DSH's have none.
 const DUDU_SIDEBAR = Object.freeze([
-  Object.freeze({ id: 'dudu.conversation', title: '嘟嘟', order: -1000, group: 'primary', open: { native: 'assistant' }, source: 'dudu' }),
   // The board remains the start page; it is not the parent of the other sidebar entries.
   Object.freeze({ id: 'dudu.board', title: '看板', order: -999, group: 'primary', icon: DUDU_ICONS.board, open: { native: 'board' }, source: 'dudu' }),
-  Object.freeze({ id: 'dudu.collector', title: '信息', order: -998, group: 'primary', icon: DUDU_ICONS.information, open: { native: 'collector' }, source: 'dudu' }),
+  Object.freeze({ id: 'dudu.collector', title: '收件箱', order: -998, group: 'primary', icon: DUDU_ICONS.inbox, open: { native: 'collector' }, source: 'dudu' }),
   // Only Dudu's own task entry uses this native screen; DSH panels retain their registered web route.
   Object.freeze({ id: 'dudu.tasks', title: '任务', order: -997, group: 'primary', icon: DUDU_ICONS.tasks, open: { native: 'schedule', target: 'dudu-tasks' }, source: 'dudu' }),
 ]);

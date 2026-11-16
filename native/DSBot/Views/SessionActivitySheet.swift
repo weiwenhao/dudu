@@ -24,12 +24,12 @@ struct SessionActivitySheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-                .padding(.horizontal, 24)
-                .padding(.top, 20)
-                .padding(.bottom, selectedJobID == nil ? 28 : 24)
-            ScrollView {
+        QuickSheetPage(
+            title: request.panel.title,
+            onBack: selectedJobID == nil ? nil : { selectedJobID = nil },
+            onClose: { dismiss() },
+            actions: {}, filters: {}
+        ) {
                 VStack(alignment: .leading, spacing: 22) {
                     if let job { jobDetail(job) }
                     else if request.panel == .team { teamList }
@@ -41,11 +41,7 @@ struct SessionActivitySheet: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 24)
-            }
-            .scrollBounceBehavior(.basedOnSize)
-        }
+        } footer: {}
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(DSBotStyle.sheet)
         .presentationDetents([.height(sheetHeight), .large])
@@ -57,36 +53,16 @@ struct SessionActivitySheet: View {
             await model.read(request, jobID: selectedJobID, using: store)
         }
         .accessibilityIdentifier("session.activity.\(request.panel.rawValue)")
-    }
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            if selectedJobID != nil {
-                Button { selectedJobID = nil } label: {
-                    DSBotIcon(.back, size: 21)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(DSBotQuietPressStyle())
-                .accessibilityLabel(L10n.text("返回"))
-                Spacer(minLength: 8)
-            }
-            Text(request.panel.title)
-                .font(.system(size: selectedJobID == nil ? 21 : 16, weight: .semibold))
-                .foregroundStyle(DSBotStyle.ink)
-                .accessibilityAddTraits(.isHeader)
-            Spacer(minLength: 8)
-            Button { dismiss() } label: {
-                DSBotIcon(.close, size: 12)
-                    .foregroundStyle(DSBotStyle.chatSecondary)
-                    .frame(width: 28, height: 28)
-                    .background(DSBotStyle.selected, in: Circle())
-                    .contentShape(Circle())
-            }
-            .buttonStyle(DSBotQuietPressStyle())
-            .accessibilityLabel(L10n.text("关闭"))
+        #if DEBUG && targetEnvironment(simulator)
+        .task(id: model.jobs.first?.id) {
+            let args = ProcessInfo.processInfo.arguments
+            guard args.contains("-dsbot-ui-review"),
+                  let index = args.firstIndex(of: "-dsbot-review-sheet"), args.indices.contains(index + 1),
+                  args[index + 1] == "job-detail", selectedJobID == nil,
+                  let job = model.jobs.first else { return }
+            selectedJobID = job.id
         }
-        .frame(height: 30)
+        #endif
     }
 
     @ViewBuilder

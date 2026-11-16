@@ -158,7 +158,10 @@ function lastWords(records) {
 /** The facts about the end of a transcript, from its last records. */
 function tailFacts(records) {
   const { kind, at, turnEnded, question = '', tool = '' } = lastConversation(records);
-  return { last: kind, at, turnEnded, question, tool, ...lastWords(records) };
+  const incoming = records.findLast((record) => !record.isSidechain && record.type === 'assistant'
+    && (record.isApiErrorMessage || blocksOf(record.message?.content).some((block) =>
+      (block.type === 'text' && block.text) || block.type === 'image' || (block.type === 'tool_use' && block.name === 'AskUserQuestion'))));
+  return { last: kind, at, turnEnded, question, tool, incomingAt: incoming ? ms(incoming.timestamp) : null, ...lastWords(records) };
 }
 
 const NO_TAIL = Object.freeze({ last: 'none', at: null, turnEnded: false, question: '', tool: '', excerpt: '', ending: '' });
@@ -210,7 +213,7 @@ export function claudeReader({ root = claudeProjectsRoot(), registry = claudeSes
     const process = processes.get(summary.id) ?? null;
     return {
       id: summary.id, title: summary.title, cwd: summary.cwd, branch: summary.branch, updatedAt: mtimeMs,
-      lastActivityAt: Math.max(tail?.at ?? 0, process?.since ?? 0) || mtimeMs, excerpt: tail?.excerpt ?? '', process, tail: tail ?? null,
+      lastActivityAt: Math.max(tail?.at ?? 0, process?.since ?? 0) || mtimeMs, excerpt: tail?.excerpt ?? '', incomingAt: tail?.incomingAt ?? null, process, tail: tail ?? null,
     };
   });
 
@@ -322,7 +325,7 @@ export function codexReader({ command, environment, spawnProcess } = {}) {
   };
   const facts = (skip) => listed.filter((thread) => !skip(thread.id)).map((thread) => {
     const turn = turns.get(thread.id)?.turn ?? null;
-    return { id: thread.id, title: thread.title, cwd: thread.cwd, branch: thread.branch, updatedAt: thread.updatedAt, lastActivityAt: thread.updatedAt, excerpt: turn?.excerpt ?? '', turn };
+    return { id: thread.id, title: thread.title, cwd: thread.cwd, branch: thread.branch, updatedAt: thread.updatedAt, lastActivityAt: thread.updatedAt, excerpt: turn?.excerpt ?? '', incomingAt: turn?.excerpt || turn?.question || turn?.error ? turn.completedAt ?? turn.startedAt : null, turn };
   });
 
   /** The last turn of each thread, through the app-server's turn paging (one turn, not the whole thread). */

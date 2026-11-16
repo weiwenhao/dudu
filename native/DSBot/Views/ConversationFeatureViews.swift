@@ -7,6 +7,7 @@ struct ConversationAccess {
     var request: @MainActor (String, [String: JSONValue]) async throws -> JSONValue
     var fork: @MainActor (Double) async throws -> Void
     var loadImage: @MainActor (TranscriptAttachment, DraftTarget, Bool) async -> PreparedPhotoImage?
+    var downloadVideo: @MainActor ([String: JSONValue]) async throws -> URL = { _ in throw DSBotFailure.remote("UNSUPPORTED") }
 
     private static let json = DSBotJSON()
 
@@ -287,12 +288,7 @@ struct ConversationDiffContent: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { dismiss() } label: {
-                    DSBotIcon(.close, size: 20)
-                        .frame(width: 32, height: 32)
-                        .contentShape(Circle())
-                }
-                .accessibilityLabel(L10n.text("关闭"))
+                SheetCloseButton { dismiss() }
                 .accessibilityIdentifier("changes.diff.close")
             }
         }

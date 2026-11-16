@@ -19,6 +19,7 @@ struct UploadedFile: Identifiable, Sendable, Equatable {
     let receiptId: String
     let name: String
     let bytes: Int
+    var video: PreparedVideo? = nil
 
     var id: String { receiptId }
 }

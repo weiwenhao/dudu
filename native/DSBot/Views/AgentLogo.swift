@@ -62,84 +62,51 @@ private struct PiMark: View {
 
 struct AgentAvatar: View {
     let agent: SessionAgent
-    let state: AgentWorkState
-    /// A `blocked` state that is a finished run: a green disc with a check, not red.
-    var finished = false
-    /// Deep sleep (the owner picked the picture on 2026-11-05): an agent that nobody has handled for a while. The crescent takes the place of whatever mark the agent has (owner,
-    /// 2026-11-07: "进入到睡眠状态，右下角的图标应该都变成月亮才对。重新激活后再恢复到原来的状态"): the ring, the check or the red dot is only covered, and is there again when the agent wakes.
+    let state: SessionActivityState
+    /// Sleep remains available to accessibility; the phone does not draw its old crescent.
     var asleep = false
     /// 20 on the board; the marks grow with it.
     var size: CGFloat = 20
 
-    private var sleeping: Bool { asleep && state != .working }
-    private var unit: CGFloat { size / 20 }
+    private var sleeping: Bool { asleep && state == .idle }
 
     var body: some View {
         AgentLogo(agent: agent, size: size * 0.9)
             .frame(width: size, height: size)
-            .overlay(alignment: .bottomTrailing) {
-                if sleeping {
-                    // One point larger than the mark's box on every side, centred where the ring is centred, as on the Desktop.
-                    AgentSleepMark()
-                        .frame(width: 10 * unit, height: 10 * unit)
-                        .offset(x: 3 * unit, y: 3 * unit)
-                } else {
-                    activity
-                        .frame(width: 8 * unit, height: 8 * unit)
-                        .offset(x: 2 * unit, y: 2 * unit)
-                }
-            }
+            .modifier(ConversationAvatarStatus(state: state, size: size))
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(agent.name) · \(sleeping ? L10n.text("深度睡眠") : state.name)")
     }
 
-    @ViewBuilder
-    private var activity: some View {
-        switch state {
-        case .idle:
-            Circle().strokeBorder(DSBotStyle.muted.opacity(0.6), lineWidth: 1)
-        case .working:
-            AgentWorkingRing()
-        case .blocked:
-            if finished {
-                AgentDoneMark()
-            } else {
-                // DSH's own error colour (`--dsw-alias-state-error-primary`, #EC1313 in the light theme), as the Desktop's mark.
-                Circle().fill(Color(red: 236.0 / 255, green: 19.0 / 255, blue: 19.0 / 255))
-            }
-        }
-    }
 }
 
-/// Deep sleep: a crescent in moon yellow #E8B923 (owner, 2026-11-05), the Desktop's (`CRESCENT` in `icons.jsx`): the moon, a circle of radius 6.8 on a 16 grid centred at (8.214, 7.803), with a bite of
-/// radius 5.2 centred at (12.032, 3.985) taken out toward the upper right, so that the full circle is concentric with the mark's box.
-private struct AgentSleepMark: View {
-    var body: some View {
-        Canvas { context, size in
-            let unit = size.width / 16
-            func circle(_ x: Double, _ y: Double, _ radius: Double) -> Path {
-                Path(ellipseIn: CGRect(x: (x - radius) * unit, y: (y - radius) * unit, width: radius * 2 * unit, height: radius * 2 * unit))
-            }
-            context.fill(circle(8.214, 7.803, 6.8).subtracting(circle(12.032, 3.985, 5.2)), with: .color(Color(red: 232.0 / 255, green: 185.0 / 255, blue: 35.0 / 255)))
-        }
-    }
-}
+/// Working and unread share the upper-right anchor; idle and sleep have no mark on the phone.
+struct ConversationAvatarStatus: ViewModifier {
+    let state: SessionActivityState
+    let size: CGFloat
 
-/// A finished run: DSH's success colour (`--dsw-alias-state-success-primary`, #22C55E) with a white check, as the Desktop's mark.
-private struct AgentDoneMark: View {
-    var body: some View {
-        Circle().fill(Color(red: 34.0 / 255, green: 197.0 / 255, blue: 94.0 / 255))
-            .overlay {
-                GeometryReader { proxy in
-                    Path { path in
-                        let side = min(proxy.size.width, proxy.size.height)
-                        path.move(to: CGPoint(x: side * 0.25, y: side * 0.51))
-                        path.addLine(to: CGPoint(x: side * 0.42, y: side * 0.68))
-                        path.addLine(to: CGPoint(x: side * 0.75, y: side * 0.34))
-                    }
-                    .stroke(.white, style: StrokeStyle(lineWidth: max(1, proxy.size.width * 0.17), lineCap: .round, lineJoin: .round))
-                }
+    private var markSize: CGFloat { max(6, size * 13 / 49) }
+    private var center: CGFloat { size / 2 + (size / 2 - 0.5) / sqrt(2) }
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .topLeading) {
+            // Keep the mark mounted in the avatar's local coordinates. Do not cancel the
+            // inherited transaction here: it also carries the enclosing row's swipe.
+            ZStack {
+                Circle().fill(.white)
+                    .padding(-max(1, size * 1.6 / 49))
+                    .opacity(state == .idle ? 0 : 1)
+                Circle()
+                    .fill(Color(red: 236.0 / 255, green: 19.0 / 255, blue: 19.0 / 255))
+                    .opacity(state == .unread ? 1 : 0)
+                if state == .processing { AgentWorkingRing() }
             }
+            .frame(width: markSize, height: markSize)
+            .offset(x: center - markSize / 2, y: size - center - markSize / 2)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+        .compositingGroup()
     }
 }
 
@@ -147,19 +114,77 @@ private struct AgentWorkingRing: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.conversationIsCovered) private var covered
     @Environment(\.scenePhase) private var scenePhase
-    @State private var spinning = false
-
     private var animates: Bool { !reduceMotion && !covered && scenePhase == .active }
 
     var body: some View {
-        Circle().strokeBorder(DSBotStyle.muted.opacity(0.3), lineWidth: 1.5)
-            .overlay {
-                Circle().trim(from: 0, to: 0.28)
-                    .stroke(DSBotStyle.muted, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-                    .padding(0.75)
-            }
-            .rotationEffect(.degrees(spinning && animates ? 360 : 0))
-            .animation(animates ? .linear(duration: 1).repeatForever(autoreverses: false) : nil, value: spinning)
-            .onChange(of: animates, initial: true) { _, active in spinning = active }
+        WorkingRingSurface(animates: animates)
+    }
+}
+
+/// One compositor animation, independent of row refreshes and ancestor spring transactions.
+/// Updating an existing view never restarts the rotation and needs no per-frame SwiftUI work.
+private struct WorkingRingSurface: UIViewRepresentable {
+    let animates: Bool
+
+    func makeUIView(context: Context) -> WorkingRingView { WorkingRingView() }
+    func updateUIView(_ view: WorkingRingView, context: Context) {
+        view.setAnimating(animates)
+    }
+    static func dismantleUIView(_ view: WorkingRingView, coordinator: ()) { view.setAnimating(false) }
+}
+
+private final class WorkingRingView: UIView {
+    private let track = CAShapeLayer()
+    private let arc = CAShapeLayer()
+    private var animates = false
+    private let rotationKey = "working.rotation"
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        let color = UIColor(DSBotStyle.muted)
+        for shape in [track, arc] {
+            shape.fillColor = UIColor.clear.cgColor
+            shape.lineWidth = 1.5
+            layer.addSublayer(shape)
+        }
+        track.strokeColor = color.withAlphaComponent(0.3).cgColor
+        arc.strokeColor = color.cgColor
+        arc.strokeEnd = 0.28
+        arc.lineCap = .round
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for shape in [track, arc] {
+            shape.bounds = bounds
+            shape.position = CGPoint(x: bounds.midX, y: bounds.midY)
+            shape.path = UIBezierPath(ovalIn: bounds.insetBy(dx: 0.75, dy: 0.75)).cgPath
+        }
+        CATransaction.commit()
+    }
+
+    override func didMoveToWindow() { super.didMoveToWindow(); updateRotation() }
+
+    func setAnimating(_ value: Bool) {
+        guard animates != value else { return }
+        animates = value
+        updateRotation()
+    }
+
+    private func updateRotation() {
+        guard animates, window != nil else { arc.removeAnimation(forKey: rotationKey); return }
+        guard arc.animation(forKey: rotationKey) == nil else { return }
+        let rotation = CABasicAnimation(keyPath: "transform.rotation.z")
+        rotation.fromValue = 0
+        rotation.toValue = Double.pi * 2
+        rotation.duration = 1
+        rotation.timingFunction = CAMediaTimingFunction(name: .linear)
+        rotation.repeatCount = .infinity
+        arc.add(rotation, forKey: rotationKey)
     }
 }

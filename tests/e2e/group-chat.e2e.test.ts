@@ -35,9 +35,9 @@ before(async () => {
 after(async () => { await dudu?.stop(); });
 afterEach(async (context) => { await dudu.settle(context.name, context.passed === false); });
 
-type Issue = { id: number; ref: string; title: string; session: string | null; agentState: string; ask: string; sessions?: { key: string; state: string }[] };
+type Issue = { id: number; ref: string; title: string; session: string | null; sessionState: string; ask: string; sessions?: { key: string; state: string }[] };
 const get = async (id: number) => (await dudu.api('issues/get', { id })).issue as Issue;
-const turnDone = (issue: Issue) => Boolean(issue.session) && issue.agentState === 'blocked' && issue.ask === '' && Boolean(issue.sessions?.some((one) => one.key === issue.session && one.state === 'finished'));
+const turnDone = (issue: Issue) => Boolean(issue.session) && issue.sessionState === 'unread' && issue.ask === '' && Boolean(issue.sessions?.some((one) => one.key === issue.session && one.state === 'finished'));
 
 /** An issue in Todo given to DeepSeek, waited for until its first turn is over (a line written to an agent that is already working is another story). */
 async function issueWithAgent(title: string, brief = 'Say received.') {

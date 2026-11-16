@@ -1,4 +1,4 @@
-export { agentMarkForActivity as sidebarAgentMark, agentStateForActivity as sidebarAgentState, stateOfMark } from '../../../assistant/sessions/work-state.mjs';
+export { sessionStateForActivity as sidebarSessionState } from '../../../assistant/sessions/session-state.mjs';
 
 /** One bounded read for the mounted sidebar rows, shared across their subscriptions. */
 export function createSidebarActivity(request) {
@@ -43,9 +43,11 @@ export function createSidebarActivity(request) {
     clearInterval(timer);
     timer = undefined;
     window.removeEventListener('focus', focus);
+    window.removeEventListener('dudu:session-read', focus);
     document.removeEventListener('visibilitychange', focus);
   };
   return {
+    refresh,
     forSession(id) {
       return {
         getSnapshot: () => entries.get(id)?.snapshot ?? null,
@@ -56,6 +58,7 @@ export function createSidebarActivity(request) {
           if (!timer) {
             timer = setInterval(() => { void refresh(); }, 5000);
             window.addEventListener('focus', focus);
+            window.addEventListener('dudu:session-read', focus);
             document.addEventListener('visibilitychange', focus);
           }
           schedule();

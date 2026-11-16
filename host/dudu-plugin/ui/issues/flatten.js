@@ -1,5 +1,5 @@
 import { T } from '../strings.js';
-import { AGENT_NAMES, AGENT_STATE_ORDER } from './model.js';
+import { AGENT_NAMES, SESSION_STATE_ORDER } from './model.js';
 import { statusLabel, statusOrder } from './workflow.js';
 
 // The heights of what the list is made of (px). A group bar has 4px of air above it, a sub-group's too.
@@ -8,7 +8,7 @@ export const SIZES = { group: 40, subgroup: 36, issue: 44, more: 44 };
 export const groupLabel = (field, key) => {
   if (field === 'status') return statusLabel(key);
   if (field === 'priority') return T.priority[key] ?? String(key);
-  if (field === 'agentState') return T.agentState[key] ?? String(key);
+  if (field === 'sessionState') return T.sessionState[key] ?? String(key);
   if (field === 'agent') return key == null ? T.noAgent : (AGENT_NAMES[key] ?? key);
   return key == null ? T.noProject : key;
 };
@@ -46,7 +46,7 @@ const EMPTY_GROUPS = {
 };
 
 export function withEmptyGroups(groups, field, tab) {
-  const wanted = field === 'status' ? statusOrder(tab, true) : field === 'agentState' ? AGENT_STATE_ORDER : EMPTY_GROUPS[field]?.[tab];
+  const wanted = field === 'status' ? statusOrder(tab, true) : field === 'sessionState' ? SESSION_STATE_ORDER : EMPTY_GROUPS[field]?.[tab];
   if (!wanted) return groups;
   const have = new Map(groups.map((group) => [group.key, group]));
   return wanted.map((key) => have.get(key) ?? { key, count: 0, items: [], cursor: null });

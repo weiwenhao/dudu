@@ -52,8 +52,10 @@ struct ComposerAttachmentSheet: View {
 
     @ObservedObject var store: DSBotStore
     let canAddPhotos: Bool
+    let canAddVideos: Bool
     let canAddFiles: Bool
     let onAddPhotos: () -> Void
+    let onAddVideos: () -> Void
     let onAddFiles: () -> Void
     let onGoal: () -> Void
     let onPlan: () -> Void
@@ -69,8 +71,10 @@ struct ComposerAttachmentSheet: View {
         store: DSBotStore,
         initialPage: Page = .root,
         canAddPhotos: Bool,
+        canAddVideos: Bool,
         canAddFiles: Bool,
         onAddPhotos: @escaping () -> Void,
+        onAddVideos: @escaping () -> Void,
         onAddFiles: @escaping () -> Void,
         onGoal: @escaping () -> Void,
         onPlan: @escaping () -> Void,
@@ -80,8 +84,10 @@ struct ComposerAttachmentSheet: View {
     ) {
         self.store = store
         self.canAddPhotos = canAddPhotos
+        self.canAddVideos = canAddVideos
         self.canAddFiles = canAddFiles
         self.onAddPhotos = onAddPhotos
+        self.onAddVideos = onAddVideos
         self.onAddFiles = onAddFiles
         self.onGoal = onGoal
         self.onPlan = onPlan
@@ -251,6 +257,7 @@ struct ComposerAttachmentSheet: View {
     private var tileRow: some View {
         HStack(spacing: Layout.tileSpacing) {
             tile(.image, label: L10n.text("照片"), identifier: "composer.photos", isEnabled: canAddPhotos, action: onAddPhotos)
+            tile(.video, label: L10n.text("发送视频"), identifier: "composer.videos", isEnabled: canAddVideos, action: onAddVideos)
             tile(.attach, label: L10n.text("文件"), identifier: "composer.files", isEnabled: canAddFiles, action: onAddFiles)
         }
     }

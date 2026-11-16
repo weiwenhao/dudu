@@ -303,7 +303,7 @@ export function employeesOf(issues) {
  * Where somebody is: at a desk (`working`: their agent works), in a bed (`sleeping`: their agent is in deep sleep, so nothing of it is running; owner, 2026-11-07:
  * "only deep sleep goes to the sleeping area") or in the activity area (`resting`: anything else, whether the work waits for the owner or the agent is Idle).
  */
-export const zoneOf = (issue) => (stateOf(issue) === 'working' ? 'working' : issue?.deepSleep === true ? 'sleeping' : 'resting');
+export const zoneOf = (issue) => (stateOf(issue) === 'processing' ? 'working' : issue?.deepSleep === true ? 'sleeping' : 'resting');
 
 /**
  * How many people each part of the office can place (owner, 2026-11-05: "the desks are all free now", with a ninth who had no place): a desk for each who works, a
@@ -342,19 +342,14 @@ export function seating(issues, prev = []) {
   return { seated, overflow };
 }
 
-// --- how an agent state reads
-export const STATES = {
-  working: { tone: 'muted' },
-  blocked: { tone: 'warning' },
-  idle: { tone: 'muted' },
-};
-export const STATE_ORDER = ['blocked', 'working', 'idle'];
+// --- shared session state; process sleep only chooses a scene zone above
+export const STATE_ORDER = ['unread', 'processing', 'idle'];
 
-export const stateOf = (issue) => (Object.hasOwn(STATES, issue?.agentState) ? issue.agentState : 'idle');
+export const stateOf = (issue) => (STATE_ORDER.includes(issue?.sessionState) ? issue.sessionState : 'idle');
 
 /** How many of the employees are in each state, for the one sentence that stands for the picture. */
 export function summarize(issues) {
-  const counts = { total: 0, working: 0, blocked: 0, idle: 0 };
+  const counts = { total: 0, processing: 0, unread: 0, idle: 0 };
   for (const issue of employeesOf(issues)) {
     counts.total += 1;
     counts[stateOf(issue)] += 1;

@@ -16,7 +16,7 @@ before(async () => {
 });
 after(async () => { await dudu?.stop(); });
 
-type Issue = { id: number; agentState: string; ask: string; session: string | null; sessions?: { key: string; state: string }[] };
+type Issue = { id: number; sessionState: string; ask: string; session: string | null; sessions?: { key: string; state: string }[] };
 /** An issue given to DeepSeek, waited for until its first turn is over: its agent then waits for the owner (Needs you). */
 async function waitingForYou(title: string) {
   const { issue } = await dudu.api('issues/add', { fields: { project, title, brief: 'Say received.', status: 'todo' } });
@@ -24,7 +24,7 @@ async function waitingForYou(title: string) {
   const started = Date.now();
   for (;;) {
     const now = (await dudu.api('issues/get', { id: issue.id })).issue as Issue;
-    if (now.session && now.agentState === 'blocked' && now.ask === '' && now.sessions?.some((one) => one.key === now.session && one.state === 'finished')) return now;
+    if (now.session && now.sessionState === 'unread' && now.ask === '' && now.sessions?.some((one) => one.key === now.session && one.state === 'finished')) return now;
     if (Date.now() - started > 60_000) assert.fail(`${title} did not finish its first turn: ${JSON.stringify(now)}`);
     await new Promise((done) => setTimeout(done, 250));
   }

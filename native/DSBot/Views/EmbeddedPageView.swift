@@ -140,11 +140,6 @@ struct EmbeddedPageView: View {
         )
     }
 
-    @MainActor
-    static func preload(session: EmbeddedPageSession, page: EmbeddedDSHPage, viewport: CGSize) {
-        EmbeddedWebSurface.preload(session: session, page: page, viewport: viewport)
-    }
-
     private var isCurrentPage: Bool {
         session.location == location && session.isCurrent
     }
@@ -242,24 +237,9 @@ private struct EmbeddedWebSurface: UIViewRepresentable {
     }
 
     @MainActor
-    static func preload(session: EmbeddedPageSession, page: EmbeddedDSHPage, viewport: CGSize) {
-        guard session.hasPage else { return }
-        if let kept = session.surfaceHost as? Coordinator, !kept.isDestroyed { return }
-        let coordinator = Coordinator(session: session, page: page)
-        session.surfaceHost = coordinator
-        let view = makeWebView(coordinator: coordinator)
-        view.frame = CGRect(origin: .zero, size: viewport)
-        view.isHidden = true
-        view.isUserInteractionEnabled = false
-        view.accessibilityElementsHidden = true
-        coordinator.load(session, in: view)
-    }
-
-    @MainActor
     private static func makeWebView(coordinator: Coordinator) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        // Off-window preparation must finish even after the document's load event.
         configuration.preferences.inactiveSchedulingPolicy = .none
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.mediaTypesRequiringUserActionForPlayback = .all

@@ -230,8 +230,9 @@ test('Claude: every state rule, over a Claude Code home on disk (registry status
     'registry work and dialogs are live; questions left in a completed turn are history');
   // The rest of the snapshot, as docs/assistant.md 3.4 shapes it.
   const done = found[id(8)];
-  assert.deepEqual(Object.keys(done), ['key', 'provider', 'id', 'dshSessionId', 'title', 'cwd', 'state', 'stateSince', 'lastActivityAt', 'excerpt', 'pending', 'turnActive', 'agentState']);
-  assert.equal(done.agentState, 'blocked', 'a finished run is the boss\'s turn');
+  assert.equal(done.incomingAt, recent);
+  assert.equal(found[id(2)].foregroundActive, false, 'a background shell keeps lifecycle safety without occupying the foreground');
+  assert.equal(found[id(1)].foregroundActive, true);
   assert.deepEqual([done.key, done.provider, done.dshSessionId, done.title, done.cwd, done.excerpt, done.lastActivityAt], [`claude:${id(8)}`, 'claude', null, 'Build repair', '/work/app', 'Done. The build passes.', recent]);
   const long = found[id(20)];
   assert.ok([...long.excerpt].length <= 300 && long.excerpt.startsWith('The cause is in the cache layer.'), 'the excerpt is the start of the last message, cut to 300');
@@ -283,6 +284,8 @@ test('Codex: the last turn of each thread through a fake app-server, and only a 
   assert.deepEqual(state('c-stopped')[0], 'stopped');
   assert.deepEqual(state('c-live'), ['running', sec(T0 - 10 * MINUTE) * 1000, null]);
   assert.deepEqual(state('c-dead')[0], 'idle', 'a turn that says it is in progress in a thread nobody has written to for two hours is not running');
+  assert.equal(byId(snapshots)['c-live'].foregroundActive, true);
+  assert.equal(byId(snapshots)['c-dead'].foregroundActive, false);
   assert.deepEqual(state('c-empty')[0], 'idle');
   assert.deepEqual(state('c-old')[0], 'idle', 'a question from ten days ago');
   const shown = byId(snapshots)['c-done'];
@@ -413,16 +416,14 @@ test('a question arrives, a session starts and one is deleted: exact change even
   const sessions = open();
   const events: any[] = [];
   sessions.onChange((event: any) => events.push(event));
-  const issues = createIssues({ file: ':memory:', sessionState: sessions.stateOf, now });
+  const issues = createIssues({ file: ':memory:', lifecycleState: sessions.stateOf, now });
   t.after(() => issues.close());
   const issue = issues.add({ project: { name: 'work', path: '/work' }, title: 'Fix the build', status: 'in_progress', agent: 'claude', session: `claude:${id(1)}` }).issue;
 
   // The first read on an empty index is the baseline: it holds three sessions and says nothing.
-  assert.equal(issues.get(issue.id).issue.agentState, 'idle', 'before the first read the session is unknown');
   await sessions.poll();
   assert.deepEqual(events, []);
   assert.equal(sessions.snapshots().total, 3);
-  assert.equal(issues.get(issue.id).issue.agentState, 'working', 'stateOf is the sessionState hook as it is');
 
   // The agent asks a question and stops; a new session appears; one is deleted.
   await home.append(1, [said(T0 - 5 * MINUTE, 'The suite needs a database.\n\nShall I start the test one?'), turnEnd(T0 - 4 * MINUTE)]);
@@ -437,7 +438,6 @@ test('a question arrives, a session starts and one is deleted: exact change even
   ]);
   const changed = events.find((event) => event.key === `claude:${id(1)}`);
   assert.deepEqual([changed.snapshot.state, changed.snapshot.pending, changed.snapshot.stateSince], ['waiting_owner', asked, T0 - 5 * MINUTE]);
-  assert.equal(issues.get(issue.id).issue.agentState, 'blocked', 'the issue shows it with no help');
   events.length = 0;
   await sessions.poll();
   assert.deepEqual(events, [], 'a read that finds nothing new says nothing');

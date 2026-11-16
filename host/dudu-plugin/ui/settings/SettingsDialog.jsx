@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bot, CircleDot, Inbox, X } from 'lucide-react';
+import { Bot, CircleDot, Rss, X } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '../components/dialog.jsx';
 import { ConnectorsPage } from '../connectors/ConnectorsPage.jsx';
@@ -20,7 +20,7 @@ const PAGES = {
   general: { Icon: SlidersHorizontal, Page: GeneralSection },
   statuses: { Icon: CircleDot, Page: StatusesSection },
   connectors: { Icon: Plug, Page: ConnectorsPage },
-  collectors: { Icon: Inbox, Page: CollectorsSection },
+  collectors: { Icon: Rss, Page: CollectorsSection },
   rules: { Icon: ListChecks, Page: RulesSection },
   memory: { Icon: FileText, Page: MemorySection },
   skills: { Icon: Sparkles, Page: SkillsSection },

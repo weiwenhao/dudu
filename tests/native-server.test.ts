@@ -114,6 +114,80 @@ test('native API uses authenticated HTTP only and limits the public probe to a m
   })).status, 401);
 });
 
+test('native file transfers authenticate before streaming and bypass only the JSON body budget', async (t) => {
+  const content = Buffer.alloc(20 * 1024 * 1024 + 7, 0x71);
+  let uploads = 0;
+  let uploadChunks = 0;
+  let downloads = 0;
+  let failRead = false;
+  const { pairingStore, server } = await setup(t, {
+    maxRequestBytes: 4096,
+    async uploadFile(params, data, connection, signal) {
+      uploads++;
+      assert.deepEqual(params, { id: 'current', name: 'large.mov' });
+      assert.equal(connection.authenticated, true);
+      let bytes = 0;
+      for await (const part of data) {
+        signal.throwIfAborted();
+        uploadChunks++;
+        assert.ok(part.every((byte) => byte === 0x71));
+        bytes += part.length;
+      }
+      assert.equal(bytes, content.length);
+      return { receiptId: 'file-receipt', name: 'large.mov', bytes };
+    },
+    async openVideo(params, connection) {
+      downloads++;
+      assert.deepEqual(params, { id: 'current', attachmentId: 'message:0', seq: 4 });
+      assert.equal(connection.authenticated, true);
+      return { bytes: content.length, mediaType: 'video/quicktime', data: (async function* () {
+        for (let offset = 0; offset < content.length; offset += 64 * 1024) yield content.subarray(offset, offset + 64 * 1024);
+        if (failRead) throw new Error('Provider integrity check failed');
+      })() };
+    },
+  });
+  const uploadPath = `${API}/file/upload?id=current&name=large.mov`;
+  for (const path of [uploadPath, `${API}/file/video`]) {
+    const denied = await fetch(`${server.address}${path}`, { method: 'POST' });
+    assert.equal(denied.status, 401);
+  }
+  assert.equal(uploads + downloads, 0);
+  const code = await pairingStore.issue({ address: `${server.address}/dsbot` });
+  const token = tokenFrom(code);
+  await connect(server, token);
+  const id = randomUUID();
+  const uploaded = await fetch(`${server.address}${uploadPath}`, {
+    method: 'POST', headers: headers(token, { 'content-type': 'application/octet-stream', 'x-dudu-request-id': id }), body: content,
+  });
+  assert.deepEqual(await uploaded.json(), { id, ok: true, result: { receiptId: 'file-receipt', name: 'large.mov', bytes: content.length } });
+  assert.ok(uploadChunks > 1);
+  const downloaded = await fetch(`${server.address}${API}/file/video`, {
+    method: 'POST',
+    headers: headers(token, { 'content-type': 'application/json', 'x-dudu-request-id': randomUUID() }),
+    body: JSON.stringify({ id: 'current', attachmentId: 'message:0', seq: 4 }),
+  });
+  assert.equal(downloaded.headers.get('content-type'), 'video/quicktime');
+  assert.equal(downloaded.headers.get('x-dudu-file-bytes'), String(content.length));
+  assert.equal(downloaded.headers.get('content-length'), null, 'HTTP completion waits for the provider final integrity check');
+  assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), content);
+  failRead = true;
+  await assert.rejects(async () => {
+    const failed = await fetch(`${server.address}${API}/file/video`, {
+      method: 'POST', headers: headers(token, { 'content-type': 'application/json', 'x-dudu-request-id': randomUUID() }),
+      body: JSON.stringify({ id: 'current', attachmentId: 'message:0', seq: 4 }),
+    });
+    await failed.arrayBuffer();
+  });
+  const jsonTooLarge = await post(server, `${API}/request`, token, {
+    id: randomUUID(), method: 'session.send', params: { text: 'x'.repeat(5000) },
+  });
+  assert.equal(jsonTooLarge.status, 413);
+  await pairingStore.revoke(code.id);
+  assert.equal((await fetch(`${server.address}${uploadPath}`, { method: 'POST', headers: headers(token) })).status, 401);
+  assert.equal(uploads, 1);
+  assert.equal(downloads, 2);
+});
+
 test('authenticated long polling delivers watch events and disconnect cancels the watch', async (t) => {
   let releaseWatch;
   let watchCancelled;

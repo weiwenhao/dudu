@@ -4,7 +4,7 @@ import UIKit
 
 final class ConversationHistoryTests: XCTestCase {
     @MainActor
-    func testBlankHistoryUsesItsMaterializedAnchorAndCanRecoverAfterTheRowsDisappear() {
+    func testBlankHistoryUsesItsMaterializedAnchorAndCanRecoverAfterTheRowsDisappear() throws {
         let history = UIScrollView(frame: CGRect(x: 0, y: 0, width: 400, height: 912))
         history.contentSize = CGSize(width: 400, height: 13_739.67)
         history.contentOffset.y = 12_827.67
@@ -16,13 +16,16 @@ final class ConversationHistoryTests: XCTestCase {
         content.addSubview(latest)
         let metrics = ScrollMetrics()
         metrics.locator = locator
+        metrics.itemIDs = ["first", "latest"]
+        metrics.latestID = "latest"
+        metrics.positioning.setAccess(.visible)
         metrics.register(latest, id: "latest")
-        let built = metrics.followingTarget(latestID: "latest", firstID: "first")
+        let built = try XCTUnwrap(metrics.positioningTarget(followsLatest: true))
         XCTAssertTrue(built.isRecovery)
         XCTAssertEqual(built.readerID, AnyHashable(RealizedHistoryAnchor(id: "latest")),
                        "Recovery must use the built background, not the lazy occurrence's estimated rectangle.")
         latest.removeFromSuperview()
-        let empty = metrics.followingTarget(latestID: "latest", firstID: "first")
+        let empty = try XCTUnwrap(metrics.positioningTarget(followsLatest: true))
         XCTAssertTrue(empty.isRecovery)
         XCTAssertEqual(empty.readerID, AnyHashable("first"))
         XCTAssertEqual(empty.anchor, 0)

@@ -3,7 +3,6 @@ import SwiftUI
 struct ComputerConnectionView: View {
     @ObservedObject var store: DSBotStore
     let computerID: String
-    @Environment(\.dismiss) private var dismiss
     @State private var isEditing = false
 
     private var computer: Computer? { store.computers.first { $0.id == computerID } }
@@ -87,15 +86,13 @@ struct ComputerConnectionView: View {
             }
         }
         .background(DSBotStyle.settingsBackground.ignoresSafeArea())
-        .navigationBarBackButtonHidden(true)
+        .navigationBarBackButtonHidden(false)
+        .toolbarRole(.editor)
+        .tint(DSBotStyle.ink)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(DSBotStyle.settingsBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button { dismiss() } label: { DSBotIcon(.back, size: 20) }
-                    .accessibilityLabel(L10n.text("返回电脑连接"))
-            }
             ToolbarItem(placement: .principal) {
                 Text(computer?.name ?? "").font(.system(size: 16, weight: .semibold))
             }

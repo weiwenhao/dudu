@@ -52,10 +52,8 @@ struct SessionSummary: Codable, Identifiable, Sendable, Equatable {
     var pinRank: Int?
     var providerId: String?
     var agent: SessionAgent?
-    var agentState: AgentWorkState?
-    /// `agentState` is `blocked` because the run finished (the Desktop draws a green check, not red). Absent from a plugin that does not say.
-    var agentFinished: Bool?
-    /// The agent is in deep sleep: idle, and nobody has handled it for half an hour (the plugin says so; absent from one that does not, and when it is awake). The avatar's grey crescent takes the place of the idle ring.
+    var sessionState: SessionActivityState?
+    /// Sleep is independent of read status. Only idle's ring is replaced by the yellow crescent.
     var deepSleep: Bool?
     /// A child history must retain DSH's parent address, including across cache restoration.
     var subagent: SubagentHistoryAddress? = nil
@@ -117,24 +115,15 @@ struct SessionAgent: RawRepresentable, Codable, Hashable, Sendable {
     }
 }
 
-/// A question, a failure and a finished run are all `blocked`: it needs you (the owner merged "done" into it on 2026-11-03, and named it "需要你" on 2026-11-04).
-enum AgentWorkState: String, Codable, Sendable {
-    case idle, working, blocked
-
-    /// A Desktop plugin that has not been updated yet still says "done" for a finished run.
-    init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        guard let state = raw == "done" ? Self.blocked : Self(rawValue: raw) else {
-            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown agent state \(raw)"))
-        }
-        self = state
-    }
+/// The session's unread content and foreground activity; independent of issue workflow and deep sleep.
+enum SessionActivityState: String, Codable, Sendable {
+    case idle, processing, unread
 
     var name: String {
         switch self {
-        case .idle: return L10n.text("空闲中")
-        case .working: return L10n.text("工作中")
-        case .blocked: return L10n.text("需要你")
+        case .idle: return L10n.text("空闲")
+        case .processing: return L10n.text("工作")
+        case .unread: return L10n.text("未读")
         }
     }
 }
@@ -284,6 +273,16 @@ struct QueuedMessage: Codable, Identifiable, Sendable, Equatable {
     var isSubmissionEcho: Bool { requestId.map { id == "submission:\($0)" } ?? false }
 }
 
+struct SessionReadPosition: Codable, Sendable, Equatable, Hashable {
+    struct Stream: Codable, Sendable, Equatable, Hashable {
+        var turn: Int
+        var step: Int
+        var digest: String
+    }
+    var seq: Int
+    var stream: Stream?
+}
+
 struct SessionDetail: Codable, Sendable, Equatable {
     var session: SessionSummary
     var messages: [ChatMessage]
@@ -305,11 +304,12 @@ struct SessionDetail: Codable, Sendable, Equatable {
     var reasoningEffort: String?
     var agentPreset: String?
     var canceledRequestIds: [String]
+    var readPosition: SessionReadPosition?
 
     private enum CodingKeys: String, CodingKey {
         case session, messages, modelId, permissionId, context, trace, team, approvals
         case transcript, goal, todos, queuedMessages, questions, planMode, reasoningEffort, agentPreset
-        case canceledRequestIds
+        case canceledRequestIds, readPosition
     }
 
     init(
@@ -329,7 +329,8 @@ struct SessionDetail: Codable, Sendable, Equatable {
         planMode: Bool = false,
         reasoningEffort: String? = nil,
         agentPreset: String? = nil,
-        canceledRequestIds: [String] = []
+        canceledRequestIds: [String] = [],
+        readPosition: SessionReadPosition? = nil
     ) {
         self.session = session
         self.messages = messages
@@ -348,6 +349,7 @@ struct SessionDetail: Codable, Sendable, Equatable {
         self.reasoningEffort = reasoningEffort
         self.agentPreset = agentPreset
         self.canceledRequestIds = canceledRequestIds
+        self.readPosition = readPosition
     }
 
     init(from decoder: Decoder) throws {
@@ -369,6 +371,7 @@ struct SessionDetail: Codable, Sendable, Equatable {
         reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
         agentPreset = try container.decodeIfPresent(String.self, forKey: .agentPreset)
         canceledRequestIds = try container.decodeIfPresent([String].self, forKey: .canceledRequestIds) ?? []
+        readPosition = try container.decodeIfPresent(SessionReadPosition.self, forKey: .readPosition)
     }
 }
 

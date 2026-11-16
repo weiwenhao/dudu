@@ -25,6 +25,29 @@ final class AppNotifications: ObservableObject {
     @Published private(set) var token: String?
     @Published private(set) var target: CollectorNotificationTarget?
     private let center = UNUserNotificationCenter.current()
+    private var unreadCount: Int?
+    private var desiredUnreadCount = 0
+    private var badgeTask: Task<Void, Never>?
+
+    func setUnreadCount(_ count: Int) {
+        desiredUnreadCount = max(0, count)
+        guard badgeTask == nil, unreadCount != desiredUnreadCount else { return }
+        // Serialize system writes so a delayed old-computer result cannot restore its badge.
+        badgeTask = Task {
+            defer { badgeTask = nil }
+            do {
+                let settings = await center.notificationSettings()
+                if settings.authorizationStatus == .notDetermined, desiredUnreadCount > 0 {
+                    _ = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+                }
+                while unreadCount != desiredUnreadCount {
+                    let next = desiredUnreadCount
+                    try await center.setBadgeCount(next)
+                    unreadCount = next
+                }
+            } catch { DSBotLog.record("notifications.badge.fail", level: "warn") }
+        }
+    }
 
     func receivedToken(_ data: Data) {
         token = data.map { String(format: "%02x", $0) }.joined()
@@ -42,7 +65,7 @@ final class AppNotifications: ObservableObject {
             let allowed: Bool
             switch settings.authorizationStatus {
             case .notDetermined:
-                allowed = try await center.requestAuthorization(options: [.alert, .sound])
+                allowed = try await center.requestAuthorization(options: [.alert, .sound, .badge])
             case .authorized, .provisional, .ephemeral:
                 allowed = true
             default:

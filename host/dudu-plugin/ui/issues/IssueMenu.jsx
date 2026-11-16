@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Activity, Box, CircleDot, Copy, CopyPlus, CornerDownRight, Pencil, Signal, SquareArrowOutUpRight, Tag, Trash2, User } from 'lucide-react';
+import { ArrowDownFromLine, ArrowUpToLine, Box, CircleDot, Copy, CopyPlus, CornerDownRight, ListTodo, LoaderCircle, Pencil, Signal, SquareArrowOutUpRight, Tag, Trash2, User } from 'lucide-react';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from '../components/context-menu.jsx';
 import { Command, CommandInput, CommandItem, CommandList, CommandSeparator } from '../components/command.jsx';
 import { Popover, PopoverAnchor, PopoverContent } from '../components/popover.jsx';
@@ -11,7 +11,6 @@ import { useAgentIds } from './agents.js';
 import { AgentAvatar, DueIcon } from './icons.jsx';
 import { DueChoices, DueDateDialog } from './DueMenu.jsx';
 import { ProjectChoices } from './ProjectMenu.jsx';
-import { AgentStateChoices } from './AgentStateMenu.jsx';
 import { StatusChoices } from './StatusMenu.jsx';
 import { PriorityChoices } from './PriorityMenu.jsx';
 import { LabelChoices } from './LabelMenu.jsx';
@@ -40,7 +39,7 @@ function AssignmentChoices({ issue, request, onSelect }) {
 }
 
 /** Cards and list rows share the same single-issue actions and property pickers. */
-export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpenIssue, onAddSub, onDuplicate, children }) {
+export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpenIssue, onAddSub, onDuplicate, onPin, pinning = false, selected = false, onSelectIssue, children }) {
   const [open, setOpen] = useState(false);
   const [shortcut, setShortcut] = useState(null);
   const [customDue, setCustomDue] = useState(false);
@@ -64,7 +63,6 @@ export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpen
   const choices = (field) => {
     if (field === 'status') return <StatusChoices status={issue.status} shortcut={Boolean(shortcut)} onSelect={(status) => change({ status })} />;
     if (field === 'priority') return <PriorityChoices priority={issue.priority} onSelect={(priority) => change({ priority })} />;
-    if (field === 'agentState') return <AgentStateChoices state={issue.agentState} onSelect={(agentState) => change({ agentState })} />;
     if (field === 'agent') return <AssignmentChoices issue={issue} request={request}
       onSelect={(agent, project) => { close(); onAssign(issue, agent, project); }} />;
     if (field === 'project') return <ProjectChoices request={request} project={issue.project} allowClear
@@ -90,19 +88,30 @@ export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpen
           event.preventDefault();
           if (!renaming && !customDue) card.current?.focus({ preventScroll: true });
         }}>
+          {/* Select begins the menu of a row of the list, as it does in the Collector (owner, 2026-11-16): it ticks this row for bulk changes, and the boxes appear on every row. The board has none. */}
+          {onSelectIssue && <>
+            <ContextMenuItem onSelect={() => onSelectIssue()}><ListTodo aria-hidden="true" />{selected ? T.bulk.clear : T.collector.select}</ContextMenuItem>
+            <ContextMenuSeparator />
+          </>}
+          {onPin && <>
+            <ContextMenuItem disabled={pinning} onSelect={() => onPin(issue)}>
+              {pinning ? <LoaderCircle className="animate-spin" /> : issue.pinned ? <ArrowDownFromLine strokeWidth={1.8} /> : <ArrowUpToLine strokeWidth={1.8} />}
+              {issue.pinned ? T.issuePin.off : T.issuePin.on}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>}
           {[
-            ['agentState', T.fields.agentState, Activity],
+            ['status', T.fields.status, CircleDot, 'S'],
             ['priority', T.fields.priority, Signal, 'P'],
             ['agent', T.fields.agent, User, 'A'],
-            ['status', T.fields.status, CircleDot, 'S'],
             ['due', T.detail.dueDate, DueIcon, '⇧ D'],
             ['labels', T.labels.name, Tag, 'L'],
             ['project', T.detail.project, Box, '⇧ P'],
           ].map(([field, label, Icon, key]) => <ContextMenuSub key={field}>
-            <ContextMenuSubTrigger disabled={(Boolean(issue.agent) && ['agent', 'project'].includes(field)) || (field === 'agentState' && (!issue.agent || issue.agentState === 'working'))} shortcut={key}>
+            <ContextMenuSubTrigger disabled={(Boolean(issue.agent) && ['agent', 'project'].includes(field))} shortcut={key}>
               <Icon aria-hidden="true" /><span>{label}</span>
             </ContextMenuSubTrigger>
-            <ContextMenuSubContent className={field === 'due' ? 'w-auto overflow-hidden p-0' : field === 'project' ? 'w-80' : field === 'labels' ? 'w-[272px]' : ['status', 'priority', 'agentState'].includes(field) ? 'w-[180px]' : undefined}
+            <ContextMenuSubContent className={field === 'due' ? 'w-auto overflow-hidden p-0' : field === 'project' ? 'w-80' : field === 'labels' ? 'w-[272px]' : ['status', 'priority'].includes(field) ? 'w-[180px]' : undefined}
               onKeyDown={pickerKeys}>{choices(field)}</ContextMenuSubContent>
           </ContextMenuSub>)}
           <ContextMenuSeparator />

@@ -31,7 +31,7 @@ export interface WidgetIssue {
   status: 'backlog' | 'todo' | 'in_progress' | 'in_review' | 'done' | 'canceled';
   priority: 'none' | 'low' | 'medium' | 'high' | 'urgent';
   agent: string | null;
-  agentState: 'idle' | 'working' | 'blocked';
+  sessionState: 'idle' | 'processing' | 'unread' | 'unassigned';
   ask: string;
   dueAt: number | null;
   project: { name: string; path: string | null } | null;

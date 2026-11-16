@@ -164,6 +164,9 @@ const MIGRATIONS = [
   UPDATE issue_statuses SET icon_progress = CASE WHEN type = 'in_review' THEN 0.75 ELSE 0.5 END
     WHERE category = 'started';
   `,
+  // Session status now follows shared read receipts. Discard only obsolete manual overrides.
+  `ALTER TABLE issues DROP COLUMN agent_state_basis;
+   ALTER TABLE issues DROP COLUMN agent_state;`,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

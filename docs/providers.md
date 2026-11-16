@@ -188,7 +188,7 @@ DSH 集成回归使用 Desktop 0.2.2-rc.1 自带 CLI 的隔离 web
 会收尾其任务记录，不将它们声明为可以跨进程恢复的守护进程。
 
 `HarnessBridge` 每个会话保留最近一轮的 `HarnessRun`（工具结果每个最多 256 KB、活动记录、团队观察），
-直到下一轮开始才换掉。深度睡眠（`docs/assistant.md` 3.4：智能体空闲或正常结束在等你看（不是红点）、这一轮结束、30 分钟没人处理）
+直到下一轮开始才换掉。深度睡眠（2026-11-15：会话空闲 30 分钟或未读 1 小时，且真实轮次已结束，见 `docs/session-status.md`）
 调用 `bridge.release(sessionId)`：只释放已经结束且没有原生后台任务的一轮，在跑的、后台工作中、
 正在手动压缩的会话不碰。`createProviders().release(sessionId)` 对所有已注册 harness 调用同一入口。
 DSH 的 Agent 对象不归这里管，DSH 没有给插件卸载它的办法（实测见 `docs/assistant.md`
@@ -468,9 +468,8 @@ DeepSeek Account、官方与其他普通模型路由归在 DeepSeek 组；不列
 按供应商筛选。已有内容的会话不提供跨供应商切换。切换空会话供应商期间阻止发送，
 迟到的回复不能覆盖另一个会话或电脑。
 
-会话摘要增加可选的 `providerId`、`agent`、`agentState`，旧缓存与旧插件可继续读取。
-桌面和原生共用 `agentStateForActivity`：实际等待交互优先于运行，正在运行优先于历史，
-其后比较 DSH 持久状态和已有原生索引的时间。仅为缺少展示投影的会话读取投影，
+会话摘要保留可选的 `providerId`、`agent`，2026-11-15 起用 `sessionState` 替代 `agentState` 和完成标记；旧缓存可以读取，但不把旧标记当成已读凭据。
+桌面和原生共用 `sessionStateForActivity`：现场等待不算前台处理中，前台处理优先于未读，其后依据独立持久已读记录显示未读或空闲，见 `docs/session-status.md`。仅为缺少标题或供应商的会话读取展示投影，
 使用短缓存及并发上限，读取失败不阻断整份列表。不为此读取工作对话做审核或调用模型。
 原生 Logo 由 `scripts/sync-agent-assets.mjs` 从桌面当前矢量生成，构建时自动同步并带上许可。
 
