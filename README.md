@@ -13,7 +13,7 @@ If Dudu is useful to you, a star on GitHub helps others find it.
 
 [Features](#features) • [Quick start](#quick-start) • [Docs](#docs) • [App Store][app-store] • **English** · [简体中文](README.zh-CN.md)
 
-<img src="docs/images/hero.en.png" width="900" alt="Dudu inside DSH Desktop: the Issues widget on the left, the Office on the top right and the Collector on the bottom right; the small blue icon at the bottom right opens the chat">
+<img src="docs/images/hero.en.png" width="900" alt="Dudu inside DSH Desktop: the conversations of the issues on the left with one of them open, the Inbox on the top right and the Office below it">
 
 </div>
 
@@ -24,27 +24,27 @@ Dudu is a plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-
 
 ## Features
 
-- **Board**: every task is an Issue, with statuses, priorities and labels, as a list or a board like Linear's. Issues are grouped by the Agent's state, **Needs you** first.
+- **Issues**: every task is an Issue, with statuses, priorities and labels, as a list, a board like Linear's, or a list of conversations. Each conversation shows whether its Agent is working, has an unread reply, or is idle.
 - **Agents**: Claude Code, Codex, Pi and DeepSeek. Claude Code and Codex run as the programs installed on your computer, with your login, settings, skills and MCP servers; Pi runs the installed `pi` (1.4.0 or later). Import the Claude Code and Codex sessions you already have, or take one over as an Issue.
 - **Terminal**: copy a Claude Code or Codex session's resume command from its Issue and continue in a terminal. Use a session in one place at a time, DSH or the terminal.
-- **Mobile app**: the same board in your pocket, with voice input.
-- **Collector**: a DSH model reads Lark, Notion, Linear and more on a schedule you set, so each collection costs tokens. Each item can become an Issue, go to an Agent as a message, or be ignored.
+- **Mobile app**: the same conversations in your pocket, with voice input.
+- **Inbox**: a DSH model reads Lark, Notion, Linear and more through the collectors you set up, on a schedule you choose, so each collection costs tokens. Each record can become an Issue, go to an Agent as a message, or be ignored.
 - **Chat**: ask Dudu to create an Issue, or type `@` to message an Issue's Agent. Open it from the blue icon at the bottom right.
 - **Scheduled tasks**: run a prompt on a schedule.
 - **Quota**: click the Quota icon at the top right to see what is left on Claude, ChatGPT and DeepSeek.
-- **Office**: every active Issue is a little person, at a desk when working, in the lounge when waiting, in bed when asleep.
+- **Office**: every active Issue is a little person: at a desk while its Agent works, in a bed when the session is asleep, in the lounge otherwise.
 - **Dashboard**: drag and resize every widget.
 
-**Mobile app.** From left to right: the board, the chat, the chat's "+" menu, tasks.
+**Mobile app.** From left to right: the conversation list, the chat, the chat's "+" menu, tasks.
 
 <div align="center">
-  <img src="docs/images/phone.en.png" alt="The mobile app, from left to right: the board; the chat; the menu that opens from + in the chat; tasks" width="900">
+  <img src="docs/images/phone.en.png" alt="The mobile app, from left to right: the conversation list; the chat; the menu that opens from + in the chat; tasks" width="900">
 </div>
 
-**Dashboard.** Drag and resize widgets from "Edit layout" at the top right. Here the Issues widget uses the board layout and the Collector is being resized.
+**Dashboard.** Drag and resize widgets from "Edit layout" at the top right. Here the Issues widget uses the board layout and the widget on the right is being resized.
 
 <div align="center">
-  <img src="docs/images/dashboard.en.png" alt="The dashboard in edit mode: the Issues widget on the left uses the board layout, the Collector widget on the right is being resized, and the blue frame and 6×4 show its new size" width="900">
+  <img src="docs/images/dashboard.en.png" alt="The dashboard in edit mode: the Issues widget on the left uses the board layout, the widget on the right is being resized, and the blue frame and 6×4 show its new size" width="900">
 </div>
 
 ## Quick start
@@ -70,9 +70,9 @@ Then open "Dudu" in DSH's left sidebar. `desktop:update` needs DSH Desktop in `/
 
 On the Dudu page click "New issue", enter a title, pick a project (a DSH workspace folder) and an Agent, and click "Create issue".
 
-### 3. Follow it on the board
+### 3. Follow it
 
-The Issue starts in **Working**. When the Agent asks a question, fails, is stopped or finishes its turn, the Issue moves to **Needs you**, at the top: open it, answer, or set the status yourself.
+The Agent starts working on the Issue. When it finishes its turn or asks a question, its conversation shows a red dot until you have read it: open it and answer, or set the Issue's status yourself. The status is always yours; an Agent never changes it.
 
 ### 4. Connect the mobile app (optional)
 
