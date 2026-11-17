@@ -10,7 +10,7 @@
 
 </div>
 
-Dudu 是基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 开发的多智能体协作工作台，可以通过 DSH 插件搜索 dsh-dudu 快速安装。
+Dudu 是基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 开发的多智能体协作工作台，可以在 DSH 的「添加插件」中输入 dsh-dudu 快速安装。
 
 <div align="center">
     <img src="docs/images/hero.zh-CN.png" width="900" alt="Dudu 在 DSH Desktop 里：左边是各个事项的对话和打开的一段对话，右上是收件箱，右下是办公室">
@@ -40,18 +40,18 @@ Dudu 将多个 TUI 所有会话聚合在一个 GUI 界面中解决多 Agent 的�
 
 ## 功能
 
-- 支持 DSH、Claude、Codex、Pi，并深度集成到了 GUI 中。
-- 方便地导入 DSH/Claude/Codex 会话。
-- 通过个人助理嘟嘟管理所有插件功能。
-- 不活跃的智能体会进入深度休眠，避免内存占用。
-- 基于 Issue 看板进行协作与会话管理。
-- 类似聊天软件一样的会话管理方式，可以快速定位到工作完成的会话。
-- 通过手机管理 DSH 会话，本质上也是 DSH 的手机端，支持 iOS 和安卓。
-- 使用收集器将你所有的信息都收集起来管理。
-- 通过定时任务你可以派任何 Agent 做任何事情，比如邮件管理，日常巡检等。
-- 可以快速查看 Claude/Codex/DeepSeek 额度。
-- 仪表盘的每个小组件都可以拖动、调整大小，并且可以开发自己的小组件添加进来。
-- 包含一个可爱的办公室，可以在无聊的时候看看你的 Agent 在干什么。
+- 支持 DSH、Claude、Codex、Pi 四种 Agent，并深度集成到了 GUI 中。
+- 可以方便地导入已有的 DSH、Claude、Codex 会话。
+- 通过个人助理嘟嘟，用对话的方式管理所有插件功能。
+- 不活跃的智能体会自动进入深度休眠，避免占用内存。
+- 以 Issue 看板为核心，进行协作和会话管理。
+- 会话像聊天软件一样管理，可以快速定位到已经完成工作的会话。
+- 在手机上也能管理 DSH 会话，相当于 DSH 的手机端，同时支持 iOS 和安卓。
+- 用收集器把你所有的信息收集起来，统一管理。
+- 通过定时任务，可以派任意 Agent 去做任何事情，比如邮件管理、日常巡检。
+- 可以快速查看 Claude、Codex、DeepSeek 的额度。
+- 仪表盘上的每个小组件都可以拖动、调整大小，你也可以开发自己的小组件添加进来。
+- 还有一个可爱的办公室，无聊的时候可以看看你的 Agent 都在干什么。
 
 
 ## 贡献指南
