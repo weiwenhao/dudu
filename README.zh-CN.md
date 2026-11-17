@@ -50,7 +50,7 @@ Dudu 将多个 TUI 里的所有会话聚合在一个 GUI 界面中，解决多 A
 - 用收集器把你所有的信息收集起来，统一管理。
 - 通过定时任务，可以派任意 Agent 去做任何事情，比如邮件管理、日常巡检。
 - 可以快速查看 Claude、Codex、DeepSeek 的额度。
-- 仪表盘上的每个小组件都可以拖动、调整大小，你也可以开发自己的小组件添加进来。
+- 仪表盘上的每个小组件都可以拖动、调整大小，也可以让嘟嘟写自己的小组件。
 - 还有一个可爱的办公室，无聊的时候可以看看你的 Agent 都在干什么。
 
 
@@ -93,7 +93,7 @@ npm install
 | 目录 | 内容 |
 | :-- | :-- |
 | `~/.dsh` | DSH 的数据目录，即 `DSH_HOME` |
-| `~/.dsh/dudu/home` | 嘟嘟的家目录，也是嘟嘟会话的工作目录，放嘟嘟自己的 Markdown 文件（`AGENTS.md`、`SOUL.md`、`USER.md`、`MEMORY.md` 等），可以在设置里改位置 |
+| `~/.dsh/dudu/home` | 嘟嘟的家目录，也是嘟嘟会话的工作目录，放嘟嘟自己的 Markdown 文件（`AGENTS.md`、`SOUL.md`、`USER.md`、`MEMORY.md` 等）和它写的小组件（`widgets/`），可以在设置里改位置 |
 | `~/.dsh/dudu/assistant/` | 嘟嘟的设置和数据库（`settings.json`、`issues.db` 等） |
 | `.local/` | 仓库里被 git 忽略的工作目录，打包出的插件在 `.local/release/`，更新日志和 profile 备份在 `.local/desktop-updates/` |
 
@@ -135,15 +135,9 @@ npm run test:e2e           # 端到端，较慢
 
 ### 开发小组件
 
-```sh
-cp -r examples/dudu-widget /你的路径/my-widget
-cd /你的路径/my-widget
-npm install /绝对路径/dsh-dudu-<版本>.tgz    # npm run package:desktop 打出的包
-npm run dev                                 # 构建
-npm test                                    # 在 Chrome 里检查布局
-```
+直接让嘟嘟写。它会在家目录的 `widgets/` 下写一个 `.mjs` 文件，几秒后就能在「编辑版面」的「添加小组件」里看到，不用装插件，也不用克隆代码。写法见 [WIDGETS.md](host/dudu-plugin/WIDGETS.md)。
 
-详细步骤见[小组件模板](examples/dudu-widget/README.md)（英文），接口和设计见[设计文档](docs/assistant.md)的 3.8 和 4.1 节。装好后，在仪表盘的「编辑版面」里点「添加小组件」。
+要发布给别人用的话，做成 DSH 插件，见[小组件模板](examples/dudu-widget/README.md)（英文）。
 
 ## 社区推荐
 
