@@ -116,8 +116,6 @@ npm run android:build      # 构建 debug APK，并运行单元测试和 lint
 npm run android:install    # 装进正在运行的模拟器
 ```
 
-`android:install` 只会选择正在运行的模拟器，不会选择真机；同时开着多个时用 `ANDROID_SERIAL=emulator-5554` 指定。默认使用 Android Studio 自带的 JDK 和 `~/Library/Android/sdk`，可用 `JAVA_HOME`、`ANDROID_HOME` 覆盖。APK 在 `native-android/app/build/outputs/apk/debug/app-debug.apk`。`npm run android:test` 只跑单元测试，`npm run android:e2e` 在模拟器里对隔离的测试环境跑关键界面流程。
-
 ### 测试
 
 ```sh
@@ -125,12 +123,6 @@ npm run typecheck
 npm test                   # 单元测试，很快
 npm run test:e2e           # 端到端，较慢
 ```
-
-提交前至少运行 `npm run typecheck` 和与改动相关的单元测试。
-
-- 单个单元测试文件可以用 `node --experimental-strip-types --test tests/文件名.test.ts` 运行。
-- 端到端测试会先打包插件，再让每个测试文件在自己的 `DSH_HOME` 里启动一个真实的 `dsh web`，用已安装的 Chrome 操作界面。只有模型是假的，不会碰你自己的 DSH。它需要 `dsh` 命令（或用 `DUDU_E2E_DSH` 指向另一个 DSH，比如 Desktop 自带的 CLI）和 Chrome；只跑指定文件：`npm run test:e2e -- tests/e2e/issues.e2e.test.ts`。
-- 新增测试要精简，只为「坏了、又没有更便宜的办法发现」的东西写，比如数据安全、安全和隐私、进程之间的约定、复杂的纯逻辑、每个主要功能的一条端到端流程，以及真的造成过麻烦的回归。不写外观和交互细节（尺寸、间距、颜色、文案）的测试，也不写要等真实计时器的测试。
 
 ## 社区推荐
 
