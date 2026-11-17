@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -58,6 +58,8 @@ for (const file of roots) await copyRuntime(file);
 noticeBlocks.push(...(await writeClient(join(runtime, 'client.js'))).notices);
 // The settings pages the phone opens in its web view: a script and a stylesheet next to the client, served by host/phone-pages.mjs.
 await writePhonePages(join(runtime, 'phone'));
+// The widget guide (WIDGETS.md, in the package root) and the template travel with the package, so that 嘟嘟 or any agent can write a widget without the repository.
+await cp(join(root, 'examples', 'dudu-widget'), join(runtime, 'widget-template'), { recursive: true, filter: (source) => !/(?:^|\/)(?:node_modules|dist|README\.md)$/.test(source) });
 noticeBlocks.push(`Lobe Icons - Claude, OpenAI and DeepSeek brand marks\n\n${await readFile(join(root, 'licenses', 'lobe-icons.txt'), 'utf8')}`);
 noticeBlocks.push(`Connector icons - the logos of the connectors page\n\n${await readFile(join(plugin, 'ui', 'connectors', 'icons', 'NOTICE.md'), 'utf8')}`);
 for (const [title, file] of [['Cline - the sign-in of hosted MCP servers', 'cline.txt'], ['OpenClaw - the loopback callback of that sign-in', 'openclaw.txt'], ['opencode - the token handling of that sign-in', 'opencode.txt']]) {
@@ -88,6 +90,9 @@ try {
     'const plugin = await import(process.argv[1]); if (plugin.name !== "dudu" || typeof plugin.apply !== "function") throw new Error("Invalid desktop plugin entry.");',
     pathToFileURL(join(check, 'node_modules', 'dsh-dudu', 'index.mjs')).href,
   ], { cwd: check, env: { ...process.env, NODE_PATH: '' }, timeout: 20_000, stdio: ['ignore', 'pipe', 'pipe'] });
+  for (const file of ['WIDGETS.md', join('dist', 'widget-template', 'package.json'), join('dist', 'widget-template', 'build.mjs')]) {
+    await readFile(join(check, 'node_modules', 'dsh-dudu', file));
+  }
   console.log('Packaged desktop plugin imports successfully outside the source repository.');
   await copyFile(join(root, 'desktop', 'README.md'), join(folder, 'README.md'));
   const archive = join(output, `dudu-desktop-${version}.zip`);

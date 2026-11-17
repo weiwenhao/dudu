@@ -78,7 +78,7 @@ Do not mark work Done without the owner's confirmation. Do not change the dashbo
 /** What the prompt of a scheduled task's run adds to 嘟嘟's own: it is not a chat, nobody is there, and its last message is the result (task-session.mjs). */
 const taskSection = (task, at) => `This is a scheduled task of the owner's, run by you in a conversation of its own: the owner is not here and cannot answer, and this conversation has no earlier chat in it. Do what the task says, using your tools. Your last message here is delivered to the owner's chat as one message from you: in their language, short and plain, the result and nothing about how you worked. Do not ask a question unless the task cannot be done without an answer, and do not say that this is a scheduled task. When there is nothing worth telling the owner (nothing new, nothing wrong, nothing found), answer exactly [SILENT] and nothing else: then the owner is told nothing. A result you showed with show_todo_card needs no repeating in words.\nScheduled task: ${task.title}\nScheduled for: ${new Date(at).toLocaleString('sv-SE')}`;
 
-export function createConversation({ ctx, assistant, issues, assignment, dashboard, nativeSessions, dsh, tidyIssues, cards = null, group = null, file, now = Date.now, idleMs }) {
+export function createConversation({ ctx, assistant, issues, assignment, dashboard, nativeSessions, dsh, tidyIssues, cards = null, group = null, widgets = null, file, now = Date.now, idleMs }) {
   let record = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : { sessionId: `${SESSION_PREFIX}${randomUUID()}`, created: false };
   if (typeof record.sessionId !== 'string' || !record.sessionId.startsWith(SESSION_PREFIX) || typeof record.created !== 'boolean') throw new Error('The assistant session identity is invalid.');
   let handle = null;
@@ -163,7 +163,9 @@ export function createConversation({ ctx, assistant, issues, assignment, dashboa
     const summary = conversationSummary(issues, now());
     const skills = memory?.skills ?? [];
     const date = new Date(now()).toLocaleString('sv-SE');
-    return `${remembered}\n\n${IDENTITY}\n\nProject folder: ${assistant.folder}\nCurrent local date and time: ${date}\n\nIssue summary (material):\n${JSON.stringify(summary)}\n\nSaved connectors (how to reach a service):\n${JSON.stringify(sources?.connectors ?? [])}\n\nSaved collectors (what to collect, through which connector):\n${JSON.stringify(reading?.collectors ?? [])}\n\nAssistant skills (names and descriptions):\n${JSON.stringify(skills)}\n\nRecalled history (material):\n${JSON.stringify(recalled?.hits ?? [])}`;
+    // The guide and the template ship in the plugin's package (WIDGETS.md, dist/widget-template): the owner needs no clone of the repository for 嘟嘟 to write a widget.
+    const widgetNote = widgets ? `\n\nWidgets: writing a widget for the dashboard is the one piece of project work you do yourself, not through an issue. Read ${widgets.guide} first, copy ${widgets.template} to ${join(assistant.folder, 'widgets')}/<name> and follow the guide. Do not install the plugin yourself: tell boss the folder; boss adds it under Plugins > Add plugin, then Edit layout > Add widget.` : '';
+    return `${remembered}\n\n${IDENTITY}\n\nProject folder: ${assistant.folder}${widgetNote}\nCurrent local date and time: ${date}\n\nIssue summary (material):\n${JSON.stringify(summary)}\n\nSaved connectors (how to reach a service):\n${JSON.stringify(sources?.connectors ?? [])}\n\nSaved collectors (what to collect, through which connector):\n${JSON.stringify(reading?.collectors ?? [])}\n\nAssistant skills (names and descriptions):\n${JSON.stringify(skills)}\n\nRecalled history (material):\n${JSON.stringify(recalled?.hits ?? [])}`;
   }
 
   /** The 待办 card is also something 嘟嘟 can send by itself (owner, 2026-11-10: "这样嘟嘟自己也能触发并发送这个待办卡片"): the same card as the button's, through the same door. A run of a scheduled task has it too: the card comes into this conversation. */

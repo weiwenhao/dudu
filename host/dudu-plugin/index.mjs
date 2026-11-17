@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -77,6 +78,8 @@ const deepSleepAfter = Number(process.env.DUDU_DEEP_SLEEP_MS) > 0 ? Number(proce
 
 // Capture the loaded package once, so an old runtime cannot report newly installed files as its own.
 const runtimeIdentity = await desktopPackageIdentity(dirname(fileURLToPath(import.meta.url)));
+// What 嘟嘟 needs to write a widget travels in this package: the guide next to index.mjs and the template under dist/ (absent in an unpackaged checkout).
+const widgetKit = { guide: join(dirname(fileURLToPath(import.meta.url)), 'WIDGETS.md'), template: join(dirname(fileURLToPath(import.meta.url)), 'dist', 'widget-template') };
 
 
 // The routes the plugin registers with DSH, by path: the plugin's own pages in the phone's web view (phone-pages.mjs) ask for a few of them through the same handlers
@@ -821,6 +824,7 @@ async function startConversation(ctx, folder, assignment) {
   const conversation = createConversation({
     ctx, assistant: assignment.assistant, issues: assignment.issues, assignment, dashboard: assignment.dashboard,
     nativeSessions: assignment.nativeSessions, dsh, cards, group,
+    widgets: existsSync(widgetKit.guide) && existsSync(widgetKit.template) ? widgetKit : null,
     tidyIssues: (options) => assignment.issueTidy.run(options),
     file: join(folder, 'assistant', 'conversation.json'),
   });

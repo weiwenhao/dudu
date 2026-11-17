@@ -25,7 +25,7 @@
   "description": "An efficient multi-agent collaboration assistant built on DSH",
   "icon": "./icon.png",
   "license": "MIT",
-  "files": ["index.mjs", "client.js", "widget.mjs", "widget.d.ts", "widget-ui.mjs", "widget-ui.d.ts", "widget-testing.mjs", "widget-testing.d.ts", "widget.css", "icon.png", "cordis.patch.yml", "locale/", "dist/"],
+  "files": ["index.mjs", "client.js", "widget.mjs", "widget.d.ts", "widget-ui.mjs", "widget-ui.d.ts", "widget-testing.mjs", "widget-testing.d.ts", "widget.css", "icon.png", "cordis.patch.yml", "locale/", "WIDGETS.md", "dist/"],
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {
