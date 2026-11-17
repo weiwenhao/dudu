@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -51,7 +52,9 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
   };
   vm.runInNewContext(built.text, sandbox);
   assert.equal(loaded.length, 1);
-  assert.equal(loaded[0].id, 'dudu');
+  // DSH's loader waits for the script to register under the package's own name; any other id and the whole interface never starts
+  // (the panel vanished from the sidebar when the package became dsh-dudu and this id stayed dudu).
+  assert.equal(loaded[0].id, JSON.parse(readFileSync(new URL('../host/dudu-plugin/package.json', import.meta.url), 'utf8')).name);
   const plugin = loaded[0].factory((name) => {
     asked.push(name);
     if (!(name in seeds)) throw new Error(`require("${name}") is not in DSH's seed table`);

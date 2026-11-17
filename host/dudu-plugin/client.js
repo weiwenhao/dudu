@@ -1,5 +1,6 @@
 window.__ModuleLoader__.load({
-  id: 'dudu',
+  // DSH starts a package's interface only when its script registers under the package's own name (package.json "name").
+  id: 'dsh-dudu',
   factory(require) {
     const { createElement: h, Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } = require('react');
     const { Button, Input, Tooltip } = require('@deepseek-ai/dsh-client-ui-primitives');
