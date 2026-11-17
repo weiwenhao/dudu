@@ -36,7 +36,7 @@ Dudu 将多个 TUI 里的所有会话聚合在一个 GUI 界面中，解决多 A
 
 还有一种流行的会话管理方式是 Bot，人类只需要和少量的 Bot 聊天就能完成大量的任务，但实际工作中直接和 Agent 对话比通过 Bot 转发更准确。当然，人类需要参与得更多，效率上会差一些。
 
-此外，基于 DSH 可以非常方便地打造个人智能体，所以我也把类似 Muse 的个人助理**嘟嘟**集成了进来。嘟嘟可以操作 Issue、连接器、收集器、定时任务等所有功能。日常创建 Issue 或定时任务，我都是直接让嘟嘟帮我创建，不需要自己手动填表单、写提示词。
+此外，基于 DSH 底座打造个人智能体非常便捷，所以**嘟嘟**它来了，这是一个和 Muse 类似的个人智能体，有着自己的记忆管理系统。嘟嘟可以操作会话看板、编写小组件、连接器、收集器、定时任务等所有功能。
 
 ## 功能
 
@@ -88,6 +88,15 @@ npm install
 
 根目录的 Expo / React Native 文件（`App.tsx`、`src/` 等）是早期的原型，现在的手机 App 在 `native/` 里。
 
+### 目录
+
+| 目录 | 内容 |
+| :-- | :-- |
+| `~/.dsh` | DSH 的数据目录，即 `DSH_HOME` |
+| `~/.dsh/dudu/home` | 嘟嘟的家目录，也是嘟嘟会话的工作目录，放嘟嘟自己的 Markdown 文件（`AGENTS.md`、`SOUL.md`、`USER.md`、`MEMORY.md` 等），可以在设置里改位置 |
+| `~/.dsh/dudu/assistant/` | 嘟嘟的设置和数据库（`settings.json`、`issues.db` 等） |
+| `.local/` | 仓库里被 git 忽略的工作目录，打包出的插件在 `.local/release/`，更新日志和 profile 备份在 `.local/desktop-updates/` |
+
 ### 在 DSH Desktop 里运行
 
 ```sh
@@ -123,6 +132,18 @@ npm run typecheck
 npm test                   # 单元测试，很快
 npm run test:e2e           # 端到端，较慢
 ```
+
+### 开发小组件
+
+```sh
+cp -r examples/dudu-widget /你的路径/my-widget
+cd /你的路径/my-widget
+npm install /绝对路径/dsh-dudu-<版本>.tgz    # npm run package:desktop 打出的包
+npm run dev                                 # 构建
+npm test                                    # 在 Chrome 里检查布局
+```
+
+详细步骤见[小组件模板](examples/dudu-widget/README.md)（英文），接口和设计见[设计文档](docs/assistant.md)的 3.8 和 4.1 节。装好后，在仪表盘的「编辑版面」里点「添加小组件」。
 
 ## 社区推荐
 
