@@ -15,7 +15,7 @@ import { DIRECT_REGISTRY, REGISTRY } from './widgets/index.js';
 import { warmSessions } from './widgets/data.jsx';
 import { Pet } from './pet/Pet.jsx';
 import { beginPetInteraction, petOwnsOverlay } from './pet/overlays.js';
-import { createWidgetSource, useWidgetCatalog } from './widgets/catalog.jsx';
+import { createWidgetSource, isBuiltInWidget, useWidgetCatalog } from './widgets/catalog.jsx';
 import { createLocalWidgets } from './widgets/local.js';
 import { Button } from './components/button.jsx';
 import { T } from './strings.js';
@@ -141,7 +141,7 @@ export function SlotPage({ widgetSource, renderSlot, request, ...props }) {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let active = true;
-    const widgets = catalog.widgets.filter((widget) => widget.source).map(({ Component: _component, failed: _failed, ...declaration }) => declaration);
+    const widgets = catalog.widgets.filter((widget) => !isBuiltInWidget(widget.id)).map(({ Component: _component, failed: _failed, ...declaration }) => declaration);
     request('dashboard/catalog', { widgets }).then((result) => {
       if (active) setSynced(result.outcome === 'success' ? 'ready' : 'error');
     }).catch(() => { if (active) setSynced('error'); });

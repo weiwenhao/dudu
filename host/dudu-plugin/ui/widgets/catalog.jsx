@@ -5,6 +5,8 @@ import { useWidgetData } from './data.jsx';
 import { localizedWidget } from './localized.js';
 
 const builtIn = new Set(BUILT_IN_WIDGETS.map((widget) => widget.id));
+/** The plugin's layout knows the built-in widgets by itself; every other widget (a plugin's, or one 嘟嘟 wrote) is announced to it with its declaration. */
+export const isBuiltInWidget = (id) => builtIn.has(id);
 
 export function createWidgetSource(slots) {
   let previous;
