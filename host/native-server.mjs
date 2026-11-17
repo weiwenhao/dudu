@@ -18,7 +18,8 @@ const ROUTES = Object.freeze({
   upload: `${API}/file/upload`,
   video: `${API}/file/video`,
 });
-const MAX_REQUEST_BYTES = 28 * 1024 * 1024;
+// What one request of the phone may weigh: nine pictures with no limit of their own (owner, 2026-11-17) can be a few tens of megabytes, which the 28 MB that stood here refused.
+const MAX_REQUEST_BYTES = 128 * 1024 * 1024;
 const MAX_PREAUTH_BYTES = 4 * 1024;
 const DEFAULT_BUFFERED_BYTES = 8 * 1024 * 1024;
 const MAX_EVENTS = 128;
@@ -332,7 +333,7 @@ export async function createNativeServer({
     const token = bearerToken(request);
     if (!token) throw new HTTPError(401, 'AUTH_FAILED');
     let deviceId;
-    try { deviceId = await pairingStore.authenticate(token, 'iPhone'); }
+    try { deviceId = await pairingStore.authenticate(token, request.headers['x-dudu-client'] === 'android' ? 'Android' : 'iPhone'); }
     catch { throw new HTTPError(503, 'UPSTREAM_UNAVAILABLE'); }
     if (!deviceId) throw new HTTPError(401, 'AUTH_FAILED');
     return deviceId;
@@ -372,7 +373,7 @@ export async function createNativeServer({
         throw new HTTPError(429, 'TOO_MANY_REQUESTS');
       }
       await closeConnection(connections.get(deviceId));
-      const clientName = 'iPhone';
+      const clientName = request.headers['x-dudu-client'] === 'android' ? 'Android' : 'iPhone';
       const connection = makeConnection(deviceId, clientName);
       connections.set(deviceId, connection);
       const readyComputer = typeof computer === 'function' ? computer() : computer;

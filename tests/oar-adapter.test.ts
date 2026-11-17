@@ -35,7 +35,7 @@ test('the OAR adapter reproduces its runtime, repairs changed output and leaves 
   const first = await sample.prepare();
   assert.equal(first.rebuilt, true);
   assert.equal(first.treeSha256, reference.treeSha256);
-  assert.equal(first.patches.length, 6);
+  assert.equal(first.patches.length, 7);
   const receipt = await readFile(sample.receipt, 'utf8');
   const prepared = await readFile(join(sample.outputRoot, ownership), 'utf8');
   assert.match(prepared, /onExit/);
@@ -90,7 +90,7 @@ test('the OAR prepare CLI also builds when invoked through a directory alias', a
   const alias = join(sample.adapterRoot, '../adapter-alias');
   await symlink(sample.adapterRoot, alias, 'junction');
   const { stdout } = await exec(process.execPath, [join(alias, 'build.mjs')], { timeout: 30_000 });
-  assert.ok(stdout.includes(`Prepared ${reference.upstream} with 6 Dudu patches`), stdout);
+  assert.ok(stdout.includes(`Prepared ${reference.upstream} with 7 Dudu patches`), stdout);
   const receipt = JSON.parse(await readFile(join(alias, '.generated/build.json'), 'utf8'));
   assert.equal(receipt.treeSha256, reference.treeSha256);
   assert.equal(await readFile(join(alias, '.generated/oar', ownership), 'utf8'),

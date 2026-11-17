@@ -14,12 +14,18 @@ const OUTPUT = {
   },
   render: (_args, value) => [{ type: 'text', text: value.output }],
   // Structured data for the cards travels as JSON text; the card reads it back as `meta.data`.
-  presentationMeta: (_args, value) => ({ output: value.output, ...(value.data ? { data: JSON.parse(value.data) } : {}) }),
+  // The transcript already stores `render`'s content. Repeating it here doubled large tool results.
+  presentationMeta: (_args, value) => (value.data ? { data: JSON.parse(value.data) } : {}),
 };
 
 /** One mirror tool for one harness tool; `spec` comes from the harness's tool catalog. */
 export function createMirrorTool({ bridge, spec }) {
-  const outcomeOf = (result) => ({ output: String(result.meta?.output ?? ''), data: result.meta?.data, isError: result.isError === true });
+  const outcomeOf = (result) => ({
+    output: Array.isArray(result.content)
+      ? result.content.filter((block) => block?.type === 'text' && typeof block.text === 'string').map((block) => block.text).join('\n')
+      : String(result.meta?.output ?? ''), // previously stored results
+    data: result.meta?.data, isError: result.isError === true,
+  });
   return {
     name: spec.name,
     description: spec.description ?? `${bridge.driver.name} tool ${spec.name}, run by the harness itself.`,

@@ -65,12 +65,6 @@ struct ComputerListView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.light, for: .navigationBar)
         .toolbar {
-            if onClose != nil {
-                ToolbarItem(placement: .topBarLeading) {
-                    SheetCloseButton(label: L10n.text("关闭电脑连接"), action: close)
-                    .accessibilityIdentifier("computers.close")
-                }
-            }
             ToolbarItem(placement: .principal) {
                 Text(L10n.text("电脑连接"))
                     .font(.system(size: 16, weight: .semibold))
@@ -88,6 +82,16 @@ struct ComputerListView: View {
                 }
                 .accessibilityLabel(L10n.text("添加电脑"))
                 .accessibilityIdentifier("computers.add")
+            }
+            if onClose != nil {
+                // Close sits last on the right, apart from the add button (the same spacing as QuickSheetPage).
+                if #available(iOS 26.0, *) {
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton(label: L10n.text("关闭电脑连接"), action: close)
+                    .accessibilityIdentifier("computers.close")
+                }
             }
         }
         .navigationDestination(isPresented: $isPairingPresented) {

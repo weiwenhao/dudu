@@ -1,0 +1,183 @@
+--- a/dist/runtimes/claude/launch.js
++++ b/dist/runtimes/claude/launch.js
+@@ -45,6 +45,7 @@
+         // On Windows an npm .cmd wrapper can exit while native claude keeps
+         // the provider request and stdio alive. Teardown must reach both.
+         killTree: true,
++        ownershipKey: `claude:${sessionId}`,
+     });
+ }
+ /**
+--- /dev/null
++++ b/dist/shared/executable/process-recovery.d.ts
+@@ -0,0 +1,11 @@
++import type { ChildProcess } from "node:child_process";
++import { signalEntries } from "./process-tree.js";
++import { observeProcessTableAsync } from "./process-table-async.js";
++type Identity = { pid: number; ppid: number; pgid: number; start: string };
++type ReadTable = () => Map<number, Identity> | Promise<Map<number, Identity>>;
++export declare function recoveryDecision(record: unknown, key: string, table: Map<number, Identity>, host?: number): "unknown" | "gone" | "active" | "orphan";
++export declare function rememberOwnedProcess(child: Pick<ChildProcess, "pid">, key: string, options?: { folder?: string; table?: ReadTable }): Promise<() => void>;
++export declare function recoverOwnedProcess(key: string, options?: {
++    folder?: string; table?: ReadTable; stop?: typeof signalEntries;
++    observe?: typeof observeProcessTableAsync; pause?: (ms: number) => Promise<unknown>; now?: () => number;
++}): Promise<boolean>;
+--- /dev/null
++++ b/dist/shared/executable/process-recovery.js
+@@ -0,0 +1,98 @@
++import { createHash } from "node:crypto";
++import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { setTimeout as delay } from "node:timers/promises";
++import { descendantsOf, signalEntries } from "./process-tree.js";
++import { observeProcessTableAsync } from "./process-table-async.js";
++
++const directory = () => process.env.DUDU_OAR_OWNERSHIP_DIR || join(tmpdir(), `dudu-oar-owned-${process.getuid?.() ?? "user"}`);
++const pathFor = (key, folder) => join(folder, `${createHash("sha256").update(key).digest("hex")}.json`);
++const identity = (value) => Number.isInteger(value?.pid) && value.pid > 1 && typeof value.start === "string" && value.start.length > 0;
++const same = (left, right) => identity(left) && left.pid === right?.pid && left.start === right?.start;
++async function currentTable() {
++    const result = await observeProcessTableAsync();
++    if (!result.ok) throw new Error(`OAR process recovery observation: ${result.reason}`);
++    return result.table;
++}
++
++/** Pure decision: a live owner, a reused pid, or an unrecorded process never grants permission to kill. */
++export function recoveryDecision(record, key, table, host = process.pid) {
++    if (record?.v !== 1 || record.key !== key || !identity(record.owner) || !identity(record.child)
++        || record.child.ppid !== record.owner.pid || record.child.pid === host) return "unknown";
++    const current = table.get(record.child.pid);
++    if (!same(record.child, current)) return "gone";
++    if (same(record.owner, table.get(record.owner.pid))) return "active";
++    // POSIX children started by OAR have their own group. An unrelated or reparented live tree is never adopted.
++    if (process.platform !== "win32" && (record.child.pgid !== record.child.pid || current.pgid !== record.child.pid || current.ppid !== 1)) return "unknown";
++    return "orphan";
++}
++
++function readRecord(file) {
++    let fd;
++    try {
++        fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
++        const info = fstatSync(fd);
++        if (!info.isFile() || info.size > 4096 || (process.getuid && info.uid !== process.getuid()) || (info.mode & 0o077)) throw new Error("Unsafe OAR ownership record");
++        return JSON.parse(readFileSync(fd, "utf8"));
++    }
++    catch (error) {
++        if (error.code === "ENOENT") return undefined;
++        throw error;
++    }
++    finally { if (fd !== undefined) closeSync(fd); }
++}
++
++/** Remember only a child that this host actually started, before any native prompt can be delivered. */
++export async function rememberOwnedProcess(child, key, { folder = directory(), table = currentTable } = {}) {
++    if (typeof key !== "string" || key.length > 256 || !key.length) throw new Error("Invalid OAR ownership key");
++    const snapshot = await table();
++    const owner = snapshot.get(process.pid);
++    const entry = snapshot.get(child.pid);
++    if (!identity(owner) || !identity(entry) || entry.ppid !== owner.pid) throw new Error("OAR child ownership could not be recorded");
++    mkdirSync(folder, { recursive: true, mode: 0o700 });
++    const file = pathFor(key, folder);
++    const previous = readRecord(file);
++    if (previous) {
++        if (recoveryDecision(previous, key, snapshot) !== "gone") throw new Error("OAR session already has a process owner");
++        unlinkSync(file);
++    }
++    const record = { v: 1, key, owner, child: entry };
++    writeFileSync(file, JSON.stringify(record), { flag: "wx", mode: 0o600 });
++    return () => {
++        try {
++            const current = readRecord(file);
++            if (same(record.child, current?.child) && same(record.owner, current?.owner)) unlinkSync(file);
++        }
++        catch { /* Never remove a later owner's record. */ }
++    };
++}
++
++/** Reclaim a verified crash survivor before resume; this never sends or retries a user message. */
++export async function recoverOwnedProcess(key, {
++    folder = directory(), table = currentTable, stop = signalEntries,
++    observe = observeProcessTableAsync, pause = delay, now = Date.now,
++} = {}) {
++    const file = pathFor(key, folder);
++    const record = readRecord(file);
++    if (!record) return false;
++    const snapshot = await table();
++    const decision = recoveryDecision(record, key, snapshot);
++    if (decision === "active" || decision === "unknown") return false;
++    if (decision === "orphan") {
++        const result = stop([record.child, ...descendantsOf(snapshot, record.child.pid)], snapshot);
++        if (!result.hostIdentified || result.failed) throw new Error("OAR could not release its previous process");
++        const deadline = now() + 2000;
++        // Await actual release, so two native writers can never overlap after SIGKILL was accepted.
++        for (;;) {
++            const observation = await observe();
++            if (!observation.ok) throw new Error("OAR could not verify its previous process exit");
++            if (!same(record.child, observation.table.get(record.child.pid))) break;
++            if (now() >= deadline) throw new Error("OAR previous process has not exited");
++            await pause(25);
++        }
++    }
++    const current = readRecord(file);
++    if (same(record.owner, current?.owner) && same(record.child, current?.child)) unlinkSync(file);
++    return decision === "orphan";
++}
+--- a/dist/shared/executable/process.d.ts
++++ b/dist/shared/executable/process.d.ts
+@@ -5,6 +5,8 @@
+ export { trackOwnedProcess } from "./ownership.js";
+ export { killGraceMs, KILL_GRACE_MS, killProcessTree, signalProcessGroup, OWN_PROCESS_GROUP } from "./process-signals.js";
+ export interface LineProcessOptions {
++    /** Private crash-recovery identity; only processes OAR records may be reclaimed after their owner dies. */
++    readonly ownershipKey?: string;
+     readonly cwd?: string;
+     readonly env?: NodeJS.ProcessEnv;
+     /**
+@@ -79,4 +81,4 @@
+  * Line parsing is attached lazily; protocol SDKs can consume the raw streams.
+  */
+ export declare function spawnLineProcess(command: string, args: readonly string[], options?: LineProcessOptions): LineProcess;
+-//# sourceMappingURL=process.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=process.d.ts.map
+--- a/dist/shared/executable/process.js
++++ b/dist/shared/executable/process.js
+@@ -8,6 +8,7 @@
+ import { processShutdown } from "./process-shutdown.js";
+ import { OWN_PROCESS_GROUP } from "./process-signals.js";
+ import { windowsSpawnTarget } from "./windows-shim.js";
++import { rememberOwnedProcess } from "./process-recovery.js";
+ import { prepareProcessTable, processTablePreparation } from "./process-table-preparation.js";
+ export { trackOwnedProcess } from "./ownership.js";
+ export { killGraceMs, KILL_GRACE_MS, killProcessTree, signalProcessGroup, OWN_PROCESS_GROUP } from "./process-signals.js";
+@@ -64,7 +65,21 @@
+         }
+         return exitCode;
+     })();
+-    child.once("spawn", () => {
++    child.once("spawn", async () => {
++        if (options.ownershipKey !== undefined) {
++            try {
++                const release = await rememberOwnedProcess(child, options.ownershipKey);
++                child.once("close", release);
++            }
++            catch (error) {
++                console.warn("[oar] process ownership recording failed", error.code ?? error.message);
++                shutdown.stop();
++                // Failed admission still owns its child until the normal OAR teardown has finished.
++                const rejectOwnership = () => spawnFailed(Object.assign(new Error("busy"), { code: "OAR_PROCESS_RECOVERY" }));
++                void exited.then(rejectOwnership, rejectOwnership);
++                return;
++            }
++        }
+         spawnOk();
+         if (options.killTree === true) {
+             prepareProcessTable();
+@@ -148,4 +163,4 @@
+         kill: () => { shutdown.stop(); },
+     };
+ }
+-//# sourceMappingURL=process.js.map
+\ No newline at end of file
++//# sourceMappingURL=process.js.map

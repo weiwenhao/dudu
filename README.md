@@ -4,12 +4,7 @@
 
 ### An efficient multi-agent collaboration assistant built on DSH
 
-**Run many Claude Code, Codex, Pi and DeepSeek tasks at once and see which one is waiting for you.**<br>
-Every task is an Issue on one board, on your desktop and on your phone.
-
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) ![version](https://img.shields.io/badge/version-0.1.0%20beta-orange?style=flat-square) ![macOS](https://img.shields.io/badge/macOS-000000?style=flat-square&logo=apple&logoColor=white) ![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2024-339933?style=flat-square&logo=node.js&logoColor=white) ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-0.2.2--rc.1-4D6BFE?style=flat-square)
-
-If Dudu is useful to you, a star on GitHub helps others find it.
 
 [Features](#features) • [Quick start](#quick-start) • [Docs](#docs) • [App Store][app-store] • **English** · [简体中文](README.zh-CN.md)
 
@@ -64,7 +59,7 @@ npm install
 npm run desktop:update       # package, install into DSH Desktop and reload it
 ```
 
-Then open "Dudu" in DSH's left sidebar. `desktop:update` needs DSH Desktop in `/Applications`, started once; its log is in `.local/desktop-updates/`. Without it, run `npm run package:desktop` and install `.local/release/dudu-<version>.tgz` from DSH Desktop's Plugins page.
+Then open "Dudu" in DSH's left sidebar. `desktop:update` needs DSH Desktop in `/Applications`, started once; its log is in `.local/desktop-updates/`. Without it, run `npm run package:desktop` and install `.local/release/dsh-dudu-<version>.tgz` from DSH Desktop's Plugins page.
 
 ### 2. Create an Issue
 

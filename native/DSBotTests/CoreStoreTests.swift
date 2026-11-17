@@ -67,6 +67,40 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertEqual(watches, 2, "Reopening the retained page must not start another watch.")
     }
 
+    func testCachedSelectionOpensWhileReconnectingAndWatchesOnlyAfterConnectionReturns() async {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await store.selectSession(session("b"))
+        let before = await transport.watchCount("a")
+        store.suspend()
+        await transport.holdNextConnection()
+        let reconnect = Task { await store.start() }
+        await transport.waitForConnection()
+        XCTAssertEqual(store.status, .connecting)
+
+        var preparations = 0
+        await store.selectSession(session("a")) {
+            preparations += 1
+            XCTAssertEqual(store.selectedSession?.id, "a")
+            XCTAssertEqual(store.messages.first?.text, "a")
+        }
+        XCTAssertEqual(preparations, 1, "The board must be able to present the local history while reconnecting.")
+        XCTAssertFalse(store.isLoadingSession)
+        XCTAssertFalse(store.canReadConversation, "Offline content cannot acknowledge new messages or read remote files.")
+        let offlineWatches = await transport.watchCount("a")
+        XCTAssertEqual(offlineWatches, before)
+        await store.selectSession(session("a")) { preparations += 1 }
+        XCTAssertEqual(preparations, 2, "Reopening a retained local conversation also prepares navigation.")
+
+        await transport.finishConnection()
+        await reconnect.value
+        let resumedWatches = await transport.watchCount("a")
+        XCTAssertEqual(resumedWatches, before + 1)
+        XCTAssertEqual(store.selectedSession?.id, "a")
+        XCTAssertTrue(store.canReadConversation)
+    }
+
     func testAssistantOpensPersistedHistoryBeforeItsWatchRefresh() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -263,7 +297,7 @@ final class CoreStoreTests: XCTestCase {
         let sending = Task { try await store.send(text: "continue") }
         await transport.waitForRequest("session.send")
         XCTAssertTrue(store.isSending)
-        // The computer may take seconds to answer (owner, 2026-11-07): the message is in the conversation from the moment it is sent, dimmed like any input not yet admitted.
+        // The computer may take seconds to answer: its pending message is visible immediately, before admission.
         guard case let .user(pendingRow) = try XCTUnwrap(store.displayedTranscriptRows.last) else { return XCTFail("Missing the pending message") }
         XCTAssertEqual(pendingRow.text, "continue")
         XCTAssertTrue(pendingRow.isPending)
@@ -360,7 +394,7 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertTrue(store.displayedQueuedMessages.isEmpty)
     }
 
-    func testFailedOrSwitchedSendsDoNotCreateSubmissionEchoes() async throws {
+    func testRejectedSendsRetireAndOtherConversationEchoesKeepTheirOwnIdentity() async throws {
         let transport = StoreTransportFixture()
         let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
         await store.start()
@@ -386,7 +420,9 @@ final class CoreStoreTests: XCTestCase {
         try await store.send(text: "new session")
         XCTAssertEqual(store.acceptedSubmissions.count, 1)
         await store.selectSession(session("a"))
-        XCTAssertTrue(store.acceptedSubmissions.isEmpty)
+        XCTAssertEqual(store.acceptedSubmissions.map(\.text), ["old session"])
+        await store.selectSession(session("b"))
+        XCTAssertEqual(store.acceptedSubmissions.map(\.text), ["new session"])
     }
 
     func testAnOlderPluginsReceiptHasNoIdentityToRetireTheEchoBy() async throws {
@@ -719,6 +755,55 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertFalse(store.showsConnectionGuide)
     }
 
+    func testConnectionAvailabilityDistinguishesSuspensionFromConfirmedFailure() async {
+        let transport = StoreTransportFixture()
+        await transport.holdNextConnection()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        XCTAssertFalse(store.isComputerUnavailable)
+
+        let startup = Task { await store.start() }
+        await transport.waitForConnection()
+        XCTAssertEqual(store.status, .connecting)
+        XCTAssertFalse(store.isComputerUnavailable, "The initial connection has not failed.")
+        await transport.finishConnection()
+        await startup.value
+
+        await transport.emitDisconnect()
+        XCTAssertTrue(store.isComputerUnavailable, "A foreground connection loss is a confirmed failure.")
+        await transport.failConnections(with: .connectionFailed)
+        await transport.holdNextConnection()
+        let retry = Task { await store.reconnect() }
+        await transport.waitForConnection()
+        XCTAssertNil(store.connectionFailure)
+        XCTAssertTrue(store.isComputerUnavailable, "Retrying must retain the confirmed failure.")
+        await transport.finishConnection()
+        await retry.value
+        XCTAssertTrue(store.isComputerUnavailable)
+
+        store.suspend()
+        XCTAssertEqual(store.status, .disconnected)
+        XCTAssertFalse(store.isComputerUnavailable, "Background suspension is not an unavailable computer.")
+
+        await transport.holdNextConnection()
+        let resumed = Task { await store.start() }
+        await transport.waitForConnection()
+        XCTAssertFalse(store.isComputerUnavailable, "A new foreground visit checks the connection first.")
+        await transport.finishConnection()
+        await resumed.value
+        XCTAssertTrue(store.isComputerUnavailable, "A failed foreground check must still report the outage.")
+
+        await transport.failConnections(with: nil)
+        await transport.holdNextConnection()
+        let recovered = Task { await store.reconnect() }
+        await transport.waitForConnection()
+        XCTAssertTrue(store.isComputerUnavailable)
+        await transport.finishConnection()
+        await recovered.value
+        XCTAssertEqual(store.status, .connected)
+        XCTAssertFalse(store.isComputerUnavailable)
+        store.suspend()
+    }
+
     func testFirstLaunchWithoutSavedComputerShowsGuideAfterRestore() async {
         let store = DSBotStore(repository: StoreComputerFixture(paired: false), client: StoreTransportFixture())
         XCTAssertFalse(store.showsConnectionGuide)
@@ -795,8 +880,148 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertEqual(store.connectionFailure, .remote("AUTH_FAILED"))
     }
 
-    func testUnknownSendResultSurvivesDisconnectWithoutLeakingToAnotherSession() async throws {
-        for switchSession in [false, true] {
+    func testOfflineSendWaitsThroughBackgroundingAndReconnectsWithTheSameIdentity() async throws {
+        let transport = StoreTransportFixture()
+        let cache = MemoryConversationStorage()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport, conversationStorage: cache)
+        await store.start()
+        await transport.emitDisconnect()
+        let target = DraftTarget(computerID: "local-fixture", sessionID: "a")
+        store.messageDrafts[target] = "send when connected"
+        let visible = expectation(description: "The offline message is handed to its pending row.")
+        let observation = store.$acceptedSubmissions.filter { !$0.isEmpty }.prefix(1)
+            .sink { _ in visible.fulfill() }
+        let sending = Task {
+            try await store.send(text: "send when connected", draftText: "send when connected") {
+                store.messageDrafts[target] = nil
+            }
+        }
+        await fulfillment(of: [visible], timeout: 2)
+        let submission = try XCTUnwrap(store.acceptedSubmissions.first)
+        XCTAssertTrue(store.isSending)
+        XCTAssertNil(store.error)
+        let offlineSends = await transport.requestCount("session.send")
+        XCTAssertEqual(offlineSends, 0, "A disconnected route must not receive a request.")
+        await store.flushConversationCache()
+        let recovery = await cache.load(for: target.computerID)
+        XCTAssertEqual(recovery?.drafts[target.sessionID], "send when connected")
+
+        store.suspend()
+        XCTAssertEqual(store.acceptedSubmissions.first?.requestId, submission.requestId)
+        await transport.holdNextRequest("session.send")
+        let reconnect = Task { await store.start() }
+        await transport.waitForRequest("session.send")
+        let params = await transport.sendParams()
+        XCTAssertEqual(params.last?["requestId"]?.stringValue, submission.requestId)
+        XCTAssertEqual(params.last?["id"]?.stringValue, target.sessionID)
+        await transport.finishRequest("session.send")
+        try await sending.value
+        await reconnect.value
+        XCTAssertFalse(store.isSending)
+        XCTAssertNil(store.error)
+        await transport.emitSubmissionSnapshot("a", admitted: [(submission.requestId, submission.text)])
+        XCTAssertTrue(store.acceptedSubmissions.isEmpty)
+        XCTAssertEqual(store.displayedTranscriptRows.count, 1)
+        XCTAssertNil(store.messageDrafts[target])
+        observation.cancel()
+        store.suspend()
+    }
+
+    func testOfflineSendStaysWithItsConversationWhileOtherConversationsAreOpened() async throws {
+        let transport = StoreTransportFixture()
+        let cache = MemoryConversationStorage()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport, conversationStorage: cache)
+        await store.start()
+        await transport.emitDisconnect()
+        let target = DraftTarget(computerID: "local-fixture", sessionID: "a")
+        let images = [UploadAttachment(id: "photo", name: "photo.png", mimeType: "image/png", dataBase64: "AAAA")]
+        let files = [UploadedFile(receiptId: "receipt", name: "video.mp4", bytes: 3)]
+        let visible = expectation(description: "The disconnected send is visible before navigating away.")
+        let observation = store.$acceptedSubmissions.filter { !$0.isEmpty }.prefix(1)
+            .sink { _ in visible.fulfill() }
+        let sending = Task {
+            try await store.send(text: "keep sending", attachments: images, files: files, draftText: "keep sending") {
+                store.messageDrafts[target] = nil
+            }
+        }
+        await fulfillment(of: [visible], timeout: 2)
+        let original = try XCTUnwrap(store.acceptedSubmissions.first)
+        await store.selectSession(session("b"))
+        XCTAssertTrue(store.acceptedSubmissions.isEmpty, "Another conversation cannot show this pending message.")
+        XCTAssertFalse(store.isSending)
+        await store.selectSession(session("a"))
+        XCTAssertEqual(store.acceptedSubmissions, [original], "Navigation must retain the message and attachments.")
+        XCTAssertTrue(store.isSending)
+        XCTAssertNil(store.messageDrafts[target], "An in-flight message cannot reappear in the composer.")
+        guard store.isSending, store.acceptedSubmissions.first?.requestId == original.requestId else {
+            _ = try? await sending.value
+            observation.cancel()
+            store.suspend()
+            return
+        }
+        await store.selectSession(session("b"))
+        await store.flushConversationCache()
+        let recovery = await cache.load(for: target.computerID)
+        XCTAssertEqual(recovery?.drafts[target.sessionID], "keep sending", "Crash recovery still retains the original text.")
+
+        await transport.holdNextRequest("session.send")
+        let reconnect = Task { await store.reconnect() }
+        await transport.waitForRequest("session.send")
+        let requests = await transport.sendParams()
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests.first?["id"]?.stringValue, target.sessionID)
+        XCTAssertEqual(requests.first?["requestId"]?.stringValue, original.requestId)
+        XCTAssertEqual(requests.first?["attachments"]?.arrayValue?.count, 2)
+        XCTAssertEqual(store.selectedSession?.id, "b", "Delivering must not navigate back to the destination.")
+        XCTAssertFalse(store.isSending, "The active conversation has no pending send.")
+        await transport.finishRequest("session.send")
+        try await sending.value
+        await reconnect.value
+        await store.selectSession(session("a"))
+        XCTAssertEqual(store.acceptedSubmissions, [original], "The receipt waits for matching history confirmation.")
+        await transport.emitSubmissionSnapshot("a", admitted: [(original.requestId, original.text)])
+        XCTAssertTrue(store.acceptedSubmissions.isEmpty)
+        XCTAssertNil(store.messageDrafts[target])
+        observation.cancel()
+        store.suspend()
+    }
+
+    func testUnloadedOfflineConversationIsNotBlankAndIsNotSavedAsEmptyHistory() async throws {
+        let transport = StoreTransportFixture()
+        let cache = MemoryConversationStorage()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport, conversationStorage: cache)
+        await store.start()
+        store.suspend()
+        await store.selectSession(session("uncached"))
+        XCTAssertTrue(store.messages.isEmpty)
+        XCTAssertNil(store.transcript)
+        XCTAssertFalse(store.isLoadingSession)
+        XCTAssertFalse(store.isBlankSession, "Missing offline history is unknown, not an editable new conversation.")
+        await store.flushConversationCache()
+        let snapshot = await cache.load(for: "local-fixture")
+        XCTAssertNil(snapshot?.detail, "An unreceived detail must not become authoritative empty history on disk.")
+        XCTAssertEqual(snapshot?.selection?.id, "uncached")
+        XCTAssertFalse(snapshot?.recentDetails?.contains { $0.session.id == "uncached" } ?? true)
+        let offlineTransport = StoreTransportFixture()
+        await offlineTransport.failConnections(with: .connectionFailed)
+        let restored = DSBotStore(repository: StoreComputerFixture(), client: offlineTransport, conversationStorage: cache)
+        await restored.start()
+        XCTAssertEqual(restored.selectedSession?.id, "uncached", "Restoration retains the selection separately from received history.")
+        XCTAssertFalse(restored.isBlankSession)
+        restored.suspend()
+
+        await store.start()
+        await store.selectSession(session("uncached"))
+        await transport.emitEmptySnapshot("uncached")
+        XCTAssertTrue(store.isBlankSession, "A received empty snapshot still allows choosing the new conversation's context.")
+        await store.selectSession(session("b"))
+        store.suspend()
+        await store.selectSession(session("uncached"))
+        XCTAssertTrue(store.isBlankSession, "Confirmed empty history can be retained like every other loaded conversation.")
+    }
+
+    func testUnknownSendResultWaitsForReconnectWithoutLeakingToAnotherComputer() async throws {
+        for switchComputer in [false, true] {
             let transport = StoreTransportFixture()
             let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
             await store.start()
@@ -806,26 +1031,77 @@ final class CoreStoreTests: XCTestCase {
             await transport.holdNextRequest("session.send")
             let sending = Task { () -> DSBotFailure? in
                 do {
-                    try await store.send(text: "keep this draft")
+                    try await store.send(text: "keep this draft", draftText: "keep this draft") {
+                        store.messageDrafts[target] = nil
+                    }
                     return nil
                 } catch {
                     return error as? DSBotFailure
                 }
             }
             await transport.waitForRequest("session.send")
-            if switchSession { await store.selectSession(session("b")) }
+            let originalParams = await transport.sendParams()
+            if switchComputer { store.activeComputer?.id = "another-computer" }
             await transport.finishRequest("session.send")
-            let failure = await sending.value
-
-            XCTAssertEqual(failure, .resultUnknown)
-            XCTAssertTrue(store.acceptedSubmissions.isEmpty, "A message whose fate is unknown is not shown as sent; its text is kept in the draft.")
-            XCTAssertEqual(store.status, .disconnected)
-            XCTAssertEqual(store.messageDrafts[target], "keep this draft")
-            XCTAssertEqual(store.error, switchSession ? nil : DSBotFailure.resultUnknown.localizedDescription)
-            let sends = await transport.requestCount("session.send")
-            XCTAssertEqual(sends, 1)
+            if switchComputer {
+                let failure = await sending.value
+                XCTAssertEqual(failure, .resultUnknown)
+                XCTAssertTrue(store.acceptedSubmissions.isEmpty)
+                XCTAssertEqual(store.messageDrafts[target], "keep this draft")
+                XCTAssertNil(store.error, "An earlier computer's failure must not appear here.")
+                let sends = await transport.requestCount("session.send")
+                XCTAssertEqual(sends, 1)
+            } else {
+                await transport.holdNextRequest("session.send")
+                let reconnect = Task { await store.reconnect() }
+                await transport.waitForRequest("session.send")
+                let retriedParams = await transport.sendParams()
+                XCTAssertEqual(retriedParams.count, 2)
+                XCTAssertEqual(retriedParams.first, retriedParams.last, "Retry the same identified input, including attachments.")
+                XCTAssertEqual(store.acceptedSubmissions.count, 1)
+                XCTAssertTrue(store.isSending)
+                XCTAssertNil(store.error)
+                await transport.finishRequest("session.send")
+                let failure = await sending.value
+                await reconnect.value
+                XCTAssertNil(failure)
+                let requestID = try XCTUnwrap(originalParams.first?["requestId"]?.stringValue)
+                await transport.emitSubmissionSnapshot("a", admitted: [(requestID, "keep this draft")])
+                XCTAssertTrue(store.acceptedSubmissions.isEmpty)
+                XCTAssertEqual(store.displayedTranscriptRows.count, 1)
+                XCTAssertNil(store.messageDrafts[target])
+            }
             store.suspend()
         }
+    }
+
+    func testOfflineSendRestoresTheDraftWhenPairingIsRejected() async throws {
+        let transport = StoreTransportFixture()
+        let store = DSBotStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await transport.emitDisconnect()
+        let target = DraftTarget(computerID: "local-fixture", sessionID: "a")
+        let visible = expectation(description: "The offline input is visible.")
+        let observation = store.$acceptedSubmissions.filter { !$0.isEmpty }.prefix(1)
+            .sink { _ in visible.fulfill() }
+        let sending = Task { () -> DSBotFailure? in
+            do {
+                try await store.send(text: "keep this", draftText: "keep this")
+                return nil
+            } catch { return error as? DSBotFailure }
+        }
+        await fulfillment(of: [visible], timeout: 2)
+        await transport.failConnections(with: .remote("AUTH_FAILED"))
+        await store.reconnect()
+        let failure = await sending.value
+        XCTAssertEqual(failure, .remote("AUTH_FAILED"))
+        XCTAssertTrue(store.acceptedSubmissions.isEmpty)
+        XCTAssertFalse(store.isSending)
+        XCTAssertEqual(store.messageDrafts[target], "keep this")
+        let sends = await transport.requestCount("session.send")
+        XCTAssertEqual(sends, 0)
+        observation.cancel()
+        store.suspend()
     }
 
     func testNetworkCallbackDuringReconnectCannotCancelTheConnection() async throws {

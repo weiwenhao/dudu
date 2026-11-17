@@ -2,9 +2,10 @@ import { chmod, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promise
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { getHeapStatistics } from 'node:v8';
 import { listClaudeSessions, readClaudeSummary } from './claude-store.mjs';
 import { readClaudeHistory } from './claude-history.mjs';
-import { listCodexThreads, readCodexThread, readCodexThreads } from './codex-store.mjs';
+import { listCodexThreads, readCodexThread, readCodexThreads, readCodexThreadTail } from './codex-store.mjs';
 import { codexHistory } from './codex-history.mjs';
 import { readCodexMetrics } from './codex-metrics.mjs';
 import { codexSearchText } from './content-index.mjs';
@@ -17,14 +18,31 @@ import { createImportRepair } from './repair.mjs';
 import { nativeIdentity } from './session-info.mjs';
 import { canReadSessionHistory, readSessionHistory } from '../../dsh-session-history.mjs';
 import { withAbort } from '../async.mjs';
+import { sessionStorageCheckpoint, sessionStorageWitness } from '../../session-storage-witness.mjs';
 
 // The sessions the harnesses on this computer already have, to browse, search and load into DSH. A loaded session is a
 // DSH session whose log holds the conversation and whose assistant messages name the harness's own session, so
 // the next message resumes that session and a terminal's `claude --resume` or `codex resume` still finds it.
 
 const LIST_TTL = 15_000;
+// Codex lists its threads through a program that is started for the question (80 to 400 MB while it answers): the list asks it at most this often, unless the person asked for a refresh.
+const CODEX_LIST_TTL = 60_000;
 const HISTORY_TTL = 2 * 60_000;
 const HISTORY_KEPT = 4;
+// A conversation that is bigger than this many characters of text is not kept for reuse: reading it again costs seconds, keeping it costs hundreds of megabytes of DSH's heap.
+const HISTORY_KEPT_CHARS = 6 * 1024 * 1024;
+// A transcript of this many bytes on disk is long: Codex's is read from its end (the newest turns), and neither is synchronized in the background more than once in this long
+// (reading it, and the DSH session it was loaded into, takes seconds and hundreds of megabytes each time). A compressed rollout counts for what it holds.
+const HUGE_BYTES = 128 * 1024 * 1024;
+const HUGE_SYNC_EVERY = 10 * 60_000;
+const COMPRESSED_RATIO = 6;
+// A session that is not in the list is looked for in a fresh listing at most this often (a listing starts a Codex program and reads every transcript that changed).
+const LOOKUP_EVERY = 2 * 60_000;
+const WARN_EVERY = 10 * 60_000;
+// The host that DSH runs plugins in died of its heap four times (heap limit about 3.3 GB). From this much heap on, the log says how much the host holds and what is kept here, at most
+// this often: the crash report of DSH keeps the last lines of the log, and says nothing of what was holding the memory.
+const HEAP_WATCH_BYTES = 2 * 1024 ** 3;
+const HEAP_WATCH_EVERY = 10 * 60_000;
 // A synchronization that was put off is not tried again for the same transcript before this long: a minute when it is for the moment (the agent was working, a
 // write was in the way), ten when this DSH cannot be synchronized into at all (sync.mjs says `unsupported`): every try reads the transcript and the whole DSH session.
 const PUT_OFF_FOR = { busy: 60_000, unsupported: 10 * 60_000 };
@@ -51,6 +69,15 @@ export async function createLinkStore(folder) {
   return {
     get: (provider, id) => links[`${provider}:${id}`]?.removed ? undefined : links[`${provider}:${id}`]?.sessionId,
     nativeKey: (sessionId) => Object.entries(links).find(([key, link]) => !key.startsWith('dsh:') && !link.removed && link.sessionId === sessionId)?.[0] ?? null,
+    synchronized: (provider, id) => links[`${provider}:${id}`]?.removed ? undefined : links[`${provider}:${id}`]?.synchronized,
+    async rememberSynchronized({ route, nativeSessionId, sessionId, stamp, witness, header }) {
+      const link = links[`${route}:${nativeSessionId}`];
+      if (!link || link.removed || link.sessionId !== sessionId) return;
+      const synchronized = { version: 2, sessionId, stamp, witness, header };
+      if (JSON.stringify(link.synchronized) === JSON.stringify(synchronized)) return;
+      link.synchronized = synchronized;
+      await save();
+    },
     // Suppress automatic inbox adoption; the original conversation stays available for manual import.
     hidden: (provider, id) => links[`${provider}:${id}`]?.removed === true || links[`${provider}:${id}`]?.dismissed === true,
     removed: (sessionId) => Object.values(links).some((link) => link.sessionId === sessionId && link.removed),
@@ -96,6 +123,21 @@ const keyOf = (session) => `${session.provider}:${session.id}`;
 // a transcript of hundreds of megabytes each time would keep the computer busy for nothing. (This was lost in the move to the disk index; the test of it said so.)
 const REINDEX_MS = 5 * 60_000;
 const stampOf = (session) => `${session.size ?? ''}:${session.mtimeMs ?? session.updatedAt}`;
+/** How long a conversation that changed waits before it is read again for the search: longer the bigger its transcript is (a second and a half per megabyte, up to half an hour). */
+const reindexAfter = (session) => Math.min(30 * 60_000, Math.max(REINDEX_MS, (session.size ?? 0) / 1048576 * 1500));
+/** About how much text a conversation holds: what it is kept for reuse by. */
+function historyChars(history) {
+  let chars = 0;
+  for (const turn of history?.turns ?? []) {
+    chars += turn.prompt?.length ?? 0;
+    for (const step of turn.steps ?? []) {
+      chars += step.input?.prompt?.length ?? 0;
+      for (const block of step.blocks ?? []) chars += (block.text?.length ?? 0) + (block.arguments?.length ?? 0);
+    }
+    for (const result of turn.results?.values?.() ?? []) chars += result.output?.length ?? 0;
+  }
+  return chars;
+}
 
 /** How much one search term says about a session's own details: the title counts most. 0 when it is not in them. */
 export function metadataWeight(session, term) {
@@ -143,6 +185,33 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
   const checked = new Map();
   const putOff = new Map(); // DSH session id -> { stamp, until }: the transcript as it was when its synchronization was put off, and when it may be tried again
   const unlinked = new Map();
+  const lookedFor = new Map(); // key -> when it was last looked for in a fresh listing and was not there
+  const warned = new Map(); // `${DSH session id}:${reason}` -> when the log last said that a synchronization could not be done
+  const syncRead = new Map(); // DSH session id -> { at, wait }: when its transcript was last read for a synchronization, and how long to leave it after that
+  let codexListedAt = 0;
+  /** How many bytes of conversation a Codex thread's rollout holds (a compressed one counts for what it holds), or 0 when that cannot be told. */
+  async function rolloutBytes(session) {
+    if (session.provider !== 'codex' || !session.file) return 0;
+    const compressed = session.file.endsWith('.zst');
+    for (const [file, ratio] of [[session.file, compressed ? COMPRESSED_RATIO : 1], ...(compressed ? [] : [[`${session.file}.zst`, COMPRESSED_RATIO]])]) {
+      try { const info = await stat(file); if (info.isFile()) return info.size * ratio; } catch { /* the other name, or nothing */ }
+    }
+    return 0;
+  }
+  /** Whether a conversation is too long to be read whole in the background (see HUGE_BYTES). */
+  async function isHuge(session) {
+    if (session.provider === 'codex') return (await rolloutBytes(session)) >= HUGE_BYTES;
+    return (session.size ?? 0) >= HUGE_BYTES;
+  }
+  let heapSaidAt = -Infinity;
+  const heapWatch = setInterval(() => {
+    const { heapUsed } = process.memoryUsage();
+    if (heapUsed < HEAP_WATCH_BYTES || now() - heapSaidAt < HEAP_WATCH_EVERY) return;
+    heapSaidAt = now();
+    const MB = (bytes) => Math.round(bytes / 1048576);
+    console.warn(`[dudu] The host holds ${MB(heapUsed)} MB of heap (limit ${MB(getHeapStatistics().heap_size_limit)} MB). Native sessions keep ${histories.size} histories and ${withImagesCache.size} with pictures, ${claudeCache.size} Claude summaries, ${listed?.sessions.length ?? 0} listed.`);
+  }, 60_000);
+  heapWatch.unref();
   const synchronize = createNativeSync({
     persistence, controller, query, agents, onHistoryAppended,
     refresh: ({ history, route }) => load({ provider: history.provider ?? route, id: history.id, syncOnly: true, fresh: false }),
@@ -152,18 +221,18 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
   const sourceOf = (provider) => sources().find((source) => source.id === provider);
 
   /** Read the conversations that are new or changed, in the background: a search looks inside them once they are in. */
-  function startIndexing(snapshot, { refresh = false } = {}) {
+  function startIndexing(snapshot, { retry = false } = {}) {
     if (indexing || closed) return;
     const wanted = new Map(snapshot.sessions.map((session) => [keyOf(session), session]));
     for (const key of content.keys()) if (!wanted.has(key)) content.delete(key);
     for (const key of unreadable.keys()) if (!wanted.has(key)) unreadable.delete(key);
-    if (refresh) { unreadable.clear(); indexedAt.clear(); } // asked for by the person: read everything that changed, and try what could not be read again
+    if (retry) { unreadable.clear(); indexedAt.clear(); } // asked for by the person: read everything that changed, and try what could not be read again
     const current = (session) => content.stamp(keyOf(session)) === stampOf(session) && content.messageStamp(keyOf(session)) === stampOf(session);
     // A failed ordered-preview backfill must not make an existing searchable document count as unreadable.
     const unsearchable = () => [...wanted.values()].filter((session) => unreadable.has(keyOf(session)) && !content.has(keyOf(session))).length;
     const settle = () => { const missing = unsearchable(); progress = { running: false, done: wanted.size - missing, total: wanted.size, unsearchable: missing, failed: missing > 0 }; };
     const todo = [...wanted.values()].filter((session) => !current(session) && !unreadable.has(keyOf(session))
-      && (content.stamp(keyOf(session)) === undefined || now() - (indexedAt.get(keyOf(session)) ?? 0) >= REINDEX_MS));
+      && (content.stamp(keyOf(session)) === undefined || now() - (indexedAt.get(keyOf(session)) ?? 0) >= reindexAfter(session)));
     if (!todo.length) { settle(); return; }
     progress = { running: true, done: wanted.size - todo.length - unsearchable(), total: wanted.size, unsearchable: unsearchable(), failed: unsearchable() > 0 };
     indexing = (async () => {
@@ -226,7 +295,24 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
           waiting.set(session.id, task);
           readingMessages.set(keyOf(session), task.promise);
         }
-        await readCodexThreads({ command: source.command, env: source.environment?.(), spawnProcess: source.spawnProcess }, [...byId.keys()], async (id, thread) => {
+        // A thread that is hundreds of megabytes long is searched by its newest turns: reading it whole costs the host's heap (see codex-store.mjs).
+        const server = { command: source.command, env: source.environment?.(), spawnProcess: source.spawnProcess };
+        for (const session of [...byId.values()]) {
+          if (closed || !(await isHuge(session))) continue;
+          byId.delete(session.id);
+          try {
+            const thread = await readCodexThreadTail(server, session.id);
+            await content.set(keyOf(session), stampOf(session), codexSearchText(thread, { includeMessages: true }));
+            indexedAt.set(keyOf(session), now());
+            unreadable.delete(keyOf(session));
+            progress.done++;
+            waiting.get(session.id).resolve();
+          } catch (error) {
+            cannotRead(session, sentence(error));
+            waiting.get(session.id).reject(error);
+          }
+        }
+        await readCodexThreads(server, [...byId.keys()], async (id, thread) => {
           const session = byId.get(id);
           await content.set(`codex:${id}`, stampOf(session), codexSearchText(thread, { includeMessages: true }));
           indexedAt.set(keyOf(session), now());
@@ -256,16 +342,23 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
     }).finally(() => { if (closed) progress = { ...progress, running: false }; else settle(); indexing = undefined; });
   }
 
-  async function rescan({ refresh }) {
+  // `refresh`: list again whatever the age of the last listing. `retry`: also read again what could not be read, and everything that changed (the person asked for it;
+  // finding a session that is not in the list is not a reason to).
+  async function rescan({ refresh, retry = refresh }) {
     if (!refresh && listed && now() - listed.at < LIST_TTL) return listed;
     const providers = [];
     const sessions = [];
     // Only Claude and Codex keep sessions that the plugin reads itself (OAR cannot list a harness's sessions, so these two have readers here).
     for (const source of sources().filter((candidate) => ['claude', 'codex'].includes(candidate.id))) {
       try {
-        const found = source.id === 'claude'
-          ? await listClaudeSessions({ cache: claudeCache, ...claude })
-          : await listCodexThreads({ command: source.command, env: source.environment?.(), spawnProcess: source.spawnProcess });
+        let found;
+        if (source.id === 'claude') found = await listClaudeSessions({ cache: claudeCache, ...claude });
+        else if (!refresh && listed?.providers.some((provider) => provider.id === 'codex' && !provider.error) && now() - codexListedAt < CODEX_LIST_TTL) {
+          found = listed.sessions.filter((session) => session.provider === 'codex');
+        } else {
+          found = await listCodexThreads({ command: source.command, env: source.environment?.(), spawnProcess: source.spawnProcess });
+          codexListedAt = now();
+        }
         sessions.push(...found);
         providers.push({ id: source.id, name: source.name, count: found.length });
       } catch (error) {
@@ -275,18 +368,18 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
     }
     listed = { at: now(), sessions, providers };
     await content.saveSnapshot(listed);
-    startIndexing(listed, { refresh });
+    startIndexing(listed, { retry });
     return listed;
   }
 
-  async function scan({ refresh }) {
+  async function scan({ refresh, retry = refresh }) {
     await content.ready;
     if (!restored) {
       const cached = await content.snapshot();
       if (cached && Array.isArray(cached.sessions) && Array.isArray(cached.providers)) listed = { ...cached, at: 0 };
       restored = true;
     }
-    const run = () => (scanning ??= rescan({ refresh }).finally(() => { scanning = undefined; }));
+    const run = () => (scanning ??= rescan({ refresh, retry }).finally(() => { scanning = undefined; }));
     if (listed && !refresh) {
       if (now() - listed.at >= LIST_TTL) void run().catch(() => {});
       return listed;
@@ -338,8 +431,16 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
   }
 
   async function summaryOf(provider, id) {
-    let found = (await scan({ refresh: false })).sessions.find((session) => session.provider === provider && session.id === id);
-    if (!found) found = (await scan({ refresh: true })).sessions.find((session) => session.provider === provider && session.id === id);
+    const key = `${provider}:${id}`;
+    const find = (snapshot) => snapshot.sessions.find((session) => session.provider === provider && session.id === id);
+    let found = find(await scan({ refresh: false }));
+    // Not in the list (a session that was just made, or that is gone): look in a fresh listing, but only now and then, and without reading everything again (this ran
+    // for every linked session that had vanished, every five seconds, and each run started Codex and re-read the transcripts that had changed).
+    if (!found && now() - (lookedFor.get(key) ?? -Infinity) >= LOOKUP_EVERY) {
+      lookedFor.set(key, now());
+      found = find(await scan({ refresh: true, retry: false }));
+    }
+    if (found) lookedFor.delete(key);
     if (!found) throw new Error('That session is no longer on this computer.');
     // A list can stay cached while a TUI writes more. The transcript's own stamp is authoritative for synchronization.
     if (found.file) {
@@ -368,9 +469,10 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
         const source = sourceOf(summary.provider);
         if (!source) throw new Error('That harness is unavailable.');
         await checkTranscript(summary);
-        const thread = await readCodexThread({
-          command: source.command, env: source.environment?.(), spawnProcess: source.spawnProcess, timeoutMs: 25_000,
-        }, summary.id);
+        const server = { command: source.command, env: source.environment?.(), spawnProcess: source.spawnProcess };
+        const thread = (await isHuge(summary))
+          ? await readCodexThreadTail(server, summary.id)
+          : await readCodexThread({ ...server, timeoutMs: 25_000 }, summary.id);
         text = codexSearchText(thread, { includeMessages: true });
       }
       if (closed) throw new Error('Conversation indexing stopped.');
@@ -384,20 +486,29 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
   // one that was read for a session as it was stays for a while, so choosing a session again, or loading what was just previewed,
   // does not read it again. Reads that overlap share one.
   const histories = new Map(); // `${provider}:${id}` -> { stamp, promise, at }
-  function readHistory(source, summary, fresh = false) {
-    const key = `${summary.provider}:${summary.id}`;
+  // `bounded` (a synchronization, which only needs what is new): a Codex thread of hundreds of megabytes is read from its end, the newest turns, and the history says `partial`.
+  // A person's load reads it whole.
+  function readHistory(source, summary, fresh = false, bounded = false) {
+    const key = `${summary.provider}:${summary.id}${bounded ? ':bounded' : ''}`;
     const stamp = stampOf(summary);
     const cached = histories.get(key);
     if (!fresh && cached && cached.stamp === stamp && now() - cached.at < HISTORY_TTL) return cached.promise;
     const promise = (async () => {
       if (source.id === 'claude') return readClaudeHistory({ file: summary.file, id: summary.id });
+      if (bounded && await isHuge(summary)) {
+        const thread = await readCodexThreadTail({ command: source.command, env: source.environment?.(), spawnProcess: source.spawnProcess }, summary.id);
+        // No per-turn timing: it is read by streaming the whole rollout.
+        return { ...codexHistory(thread), ...(thread.partial ? { partial: true } : {}) };
+      }
       const thread = await readCodexThread({ command: source.command, env: source.environment?.() }, summary.id);
       return codexHistory(thread, { metrics: await readCodexMetrics(thread.path ?? summary.file) });
     })();
     histories.delete(key);
     histories.set(key, { stamp, promise, at: now() });
     while (histories.size > HISTORY_KEPT) histories.delete(histories.keys().next().value);
-    promise.catch(() => { if (histories.get(key)?.promise === promise) histories.delete(key); });
+    promise.then((history) => {
+      try { if (historyChars(history) > HISTORY_KEPT_CHARS && histories.get(key)?.promise === promise) histories.delete(key); } catch { /* it stays kept */ }
+    }, () => { if (histories.get(key)?.promise === promise) histories.delete(key); });
     return promise;
   }
 
@@ -405,7 +516,8 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
   // transcript for them every time it ran, whether or not anything had changed. One read is kept, as the history is, for as long as the transcript is as it was.
   const withImagesCache = new Map(); // `${provider}:${id}` -> { stamp, promise, at }
   function picturedHistory(source, summary, history, fresh = false) {
-    const key = `${summary.provider}:${summary.id}`;
+    // A history that is only the end of a conversation is a different read from the whole of it: they must not stand in for each other.
+    const key = `${summary.provider}:${summary.id}${history.partial ? ':partial' : ''}`;
     const stamp = stampOf(summary);
     const cached = withImagesCache.get(key);
     if (!fresh && cached && cached.stamp === stamp && now() - cached.at < HISTORY_TTL) return cached.promise;
@@ -413,7 +525,9 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
     withImagesCache.delete(key);
     withImagesCache.set(key, { stamp, promise, at: now() });
     while (withImagesCache.size > HISTORY_KEPT) withImagesCache.delete(withImagesCache.keys().next().value);
-    promise.catch(() => { if (withImagesCache.get(key)?.promise === promise) withImagesCache.delete(key); });
+    promise.then((pictured) => {
+      try { if (historyChars(pictured) > HISTORY_KEPT_CHARS && withImagesCache.get(key)?.promise === promise) withImagesCache.delete(key); } catch { /* it stays kept */ }
+    }, () => { if (withImagesCache.get(key)?.promise === promise) withImagesCache.delete(key); });
     return promise;
   }
 
@@ -448,7 +562,7 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
     } catch { return history; }
   }
 
-  async function loadOnce({ provider, id, syncOnly = false, fresh = true }) {
+  async function loadOnce({ provider, id, syncOnly = false, fresh = true, foreground = false }) {
     const source = sourceOf(provider);
     if (!source) throw new Error('That harness is not available. Check Settings > 供应商.');
     const store = persistence();
@@ -459,6 +573,35 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
     if (syncOnly && !existing) return { updated: false };
     const stamp = stampOf(summary);
     if (existing && !fresh && checked.get(existing) === stamp) return { sessionId: existing, reused: true, updated: false, title: summary.title };
+    if (existing && !fresh) {
+      const saved = links.synchronized?.(source.route, summary.id);
+      if (saved?.version === 2 && saved.sessionId === existing && saved.stamp === stamp && saved.witness) {
+        const target = await store.stat(existing);
+        // The native file AND the DSH journal must be unchanged. A deleted/repaired/recreated
+        // journal or a new native message must still take the normal synchronization path.
+        if (JSON.stringify(target?.header) === saved.header && await sessionStorageWitness(target) === saved.witness) {
+          checked.set(existing, stamp);
+          return { sessionId: existing, reused: true, updated: false, title: summary.title };
+        }
+      }
+    }
+    const capture = async (sessionId, history) => {
+      if (agents()?.get(sessionId) || history.turns.some((turn) => turn.complete === false)) return null;
+      try { return await sessionStorageCheckpoint(store, sessionId); }
+      catch { console.warn('[dudu] Native synchronization checkpoint could not be captured.'); return null; }
+    };
+    const remember = async (sessionId, history, checkpoint) => {
+      checked.set(sessionId, stamp);
+      // A live or incomplete history is still being written. Only a settled cold import has
+      // a durable cut that is safe to reuse after a host restart.
+      if (!checkpoint || agents()?.get(sessionId) || history.turns.some((turn) => turn.complete === false)) return;
+      try {
+        await links.rememberSynchronized?.({
+          route: source.route, nativeSessionId: summary.id, sessionId, stamp,
+          ...checkpoint,
+        });
+      } catch { console.warn('[dudu] Native synchronization checkpoint could not be saved.'); }
+    };
     // Reading a transcript is the expensive part (a conversation of 659 MB takes five seconds of DSH's main thread, and a second read for its pictures), and it is
     // pointless when the synchronization will be put off anyway. It is put off while the session's agent works in DSH (sync.mjs), and the transcript of a turn that
     // runs grows all the time, so that it was read again every five seconds the panel asked, for the whole turn (2026-11-07: a phone's message waited 3.9 seconds
@@ -467,18 +610,30 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
       if (busy(agents()?.get(existing))) return { sessionId: existing, reused: true, updated: false, deferred: true, title: summary.title };
       const wait = putOff.get(existing);
       if (!fresh && wait && wait.stamp === stamp && now() < wait.until) return { sessionId: existing, reused: true, updated: false, deferred: true, title: summary.title };
+      // Reading costs as much as it costs: a transcript that took long to read is left alone for a multiple of that (thirty times in the background, six for the session
+      // the person has open), so that one that is written to all the time cannot keep the host busy; a long one is read in the background once in ten minutes.
+      const last = syncRead.get(existing);
+      if (!fresh && last && now() - last.at < last.wait) return { sessionId: existing, reused: true, updated: false, deferred: true, title: summary.title };
     }
-    const history = await readHistory(source, summary, fresh);
+    const began = now();
+    const history = await readHistory(source, summary, fresh, syncOnly);
+    if (syncOnly && existing) {
+      const wait = Math.min(5 * 60_000, (now() - began) * (foreground ? 6 : 30));
+      syncRead.set(existing, { at: now(), wait: !foreground && await isHuge(summary) ? Math.max(wait, HUGE_SYNC_EVERY) : wait });
+    }
     if (existing) {
       const withImages = await picturedHistory(source, summary, history, fresh);
-      const repaired = await repair({ sessionId: existing, history: withImages, route: source.route });
+      // Only the end of the conversation was read: it can append what is new, but it is not what a copy is rebuilt from.
+      const repaired = history.partial ? null : await repair({ sessionId: existing, history: withImages, route: source.route });
       if (repaired) {
-        await synchronize({ sessionId: repaired.sessionId, history: withImages, route: source.route });
+        await synchronize({ sessionId: repaired.sessionId, history: withImages, route: source.route,
+          checkpoint: async () => remember(repaired.sessionId, withImages, await capture(repaired.sessionId, withImages)) });
         checked.delete(existing);
         checked.set(repaired.sessionId, stamp);
         return { ...repaired, reused: false };
       }
-      const result = await synchronize({ sessionId: existing, history: withImages, route: source.route });
+      const result = await synchronize({ sessionId: existing, history: withImages, route: source.route,
+        checkpoint: async () => remember(existing, withImages, await capture(existing, withImages)) });
       if (!result.deferred) { checked.set(existing, stamp); putOff.delete(existing); } else putOff.set(existing, { stamp, until: now() + (PUT_OFF_FOR[result.reason] ?? PUT_OFF_FOR.busy) });
       return { sessionId: existing, reused: true, title: summary.title, ...result };
     }
@@ -496,9 +651,11 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
       route: source.route, model, effort, sessionId, title: summary.title,
     });
     const handle = await store.create(header);
+    let checkpoint;
     try {
       await handle.append(events);
       await handle.flush();
+      checkpoint = await capture(sessionId, pictured);
     } finally {
       await handle.close();
     }
@@ -506,7 +663,7 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
     try { await workspace.attachSession(sessionId); } catch (error) { console.warn(`[dudu] Could not attach the loaded session to its workspace: ${error.message}`); }
     links.record({ route: source.route, nativeSessionId: summary.id, sessionId });
     if (pictured.turns.some((turn) => turn.complete === false)) await synchronize({ sessionId, history: pictured, route: source.route });
-    checked.set(sessionId, stamp);
+    await remember(sessionId, pictured, checkpoint);
     return { sessionId, workspaceId: workspace.id, reused: false, title: summary.title };
   }
 
@@ -544,6 +701,7 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
     list, load,
     close: async () => {
       closed = true;
+      clearInterval(heapWatch);
       await scanning;
       await Promise.allSettled([...previewWorkers].map((worker) => worker.stop()));
       await indexing;
@@ -558,10 +716,18 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
           const native = await nativeKey(sessionId, recover);
           if (!native) continue;
           const [provider, ...parts] = native.split(':');
-          const result = await load({ provider, id: parts.join(':'), syncOnly: true, fresh });
+          const result = await load({ provider, id: parts.join(':'), syncOnly: true, fresh, foreground: recover });
           if (result.updated) updated.push(result.sessionId ?? sessionId);
           if (result.repaired) replacements.push({ previousId: result.previousId, sessionId: result.sessionId, workspaceId: result.workspaceId });
-        } catch (error) { console.warn(`[dudu] Could not synchronize a native session: ${error.message}`); }
+        } catch (error) {
+          // Said once in a while per session and reason, not at every try (the panel tries every five seconds, and the log of DSH's host keeps only the last lines).
+          const said = `${sessionId}:${error.message}`;
+          if (now() - (warned.get(said) ?? -Infinity) >= WARN_EVERY) {
+            warned.set(said, now());
+            if (warned.size > MAX_LIMIT) warned.delete(warned.keys().next().value);
+            console.warn(`[dudu] Could not synchronize a native session: ${error.message}`);
+          }
+        }
       }
       return { updated, ...(replacements.length ? { replacements } : {}) };
     },

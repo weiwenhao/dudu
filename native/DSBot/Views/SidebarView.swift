@@ -270,13 +270,14 @@ struct SidebarView: View {
     }
 
     private func libraryButton(_ item: NavigationItem) -> some View {
-        Button {
+        let title = item.target == .tasks ? L10n.text("定时任务") : item.title
+        return Button {
             onChooseItem(item)
         } label: {
             HStack(spacing: 12) {
                 libraryIcon(item)
                     .frame(width: 24, height: 24)
-                Text(item.title)
+                Text(title)
                     .lineLimit(1)
                 if item.target == .assistant, store.isOpeningAssistant {
                     Spacer(minLength: 0)
@@ -306,7 +307,7 @@ struct SidebarView: View {
         }
         .buttonStyle(DSBotRowButtonStyle())
         .disabled(item.target == .assistant && (store.isOpeningAssistant || store.status != .connected))
-        .accessibilityLabel(item.title)
+        .accessibilityLabel(title)
         .accessibilityIdentifier("library.\(item.id)")
     }
 

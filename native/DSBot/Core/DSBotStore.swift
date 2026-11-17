@@ -15,9 +15,24 @@ private struct AssistantRecipientsResult: Decodable, Sendable { var outcome: Str
 @MainActor
 final class DSBotStore: ObservableObject {
     @Published var computers: [Computer] = []
-    @Published var activeComputer: Computer?
+    @Published var activeComputer: Computer? {
+        didSet {
+            if oldValue?.id != activeComputer?.id {
+                if hasForegroundConnectionFailure { hasForegroundConnectionFailure = false }
+                loadedConversationTarget = nil
+                submissionComputerChanged()
+            }
+        }
+    }
     @Published var sessions: [SessionSummary] = []
-    @Published var selectedSession: SessionSummary?
+    @Published var selectedSession: SessionSummary? {
+        didSet {
+            if oldValue?.id != selectedSession?.id {
+                loadedConversationTarget = nil
+                refreshSubmissionPresentation()
+            }
+        }
+    }
     @Published var messages: [ChatMessage] = []
     /// Structured chat from a transcript-capable desktop plugin; nil means render `messages`.
     @Published var transcript: Transcript?
@@ -26,9 +41,20 @@ final class DSBotStore: ObservableObject {
     @Published var todos: [TodoItem] = []
     @Published private(set) var queuedMessages: [QueuedMessage] = []
     @Published private(set) var acceptedSubmissions: [AcceptedSubmission] = []
+    private var submissionsByTarget: [DraftTarget: [AcceptedSubmission]] = [:]
     private var canceledRequestIds: Set<String> = []
     private var sendingSubmissionIDs: Set<String> = []
+    private var sendingDraftTargets: [UUID: DraftTarget] = [:]
     private var observedSendingSubmissionIDs: Set<String> = []
+    /// Navigation and watch generations do not cancel delivery to another session on this computer.
+    private var submissionComputerRevision = 0
+    private var sendConnectionWaiters: [UUID: CheckedContinuation<Void, Error>] = [:]
+    /// Empty local arrays do not establish that the computer's conversation is empty.
+    @Published private var loadedConversationTarget: DraftTarget?
+    private var selectedDraftTarget: DraftTarget? {
+        guard let computer = activeComputer?.id, let session = selectedSession?.id else { return nil }
+        return DraftTarget(computerID: computer, sessionID: session)
+    }
     var displayedQueuedMessages: [QueuedMessage] {
         guard !acceptedSubmissions.isEmpty else { return queuedMessages }
         return queuedMessages + acceptedSubmissions.filter { $0.placement == .queued }.map(\.queuedMessage)
@@ -76,7 +102,12 @@ final class DSBotStore: ObservableObject {
     @Published var team: [LibraryEntry] = []
     @Published var approvals: [Approval] = []
     @Published var isRespondingApprovals: Set<String> = []
-    @Published var status: ConnectionStatus = .disconnected
+    @Published var status: ConnectionStatus = .disconnected {
+        didSet {
+            if status == .connected, hasForegroundConnectionFailure { hasForegroundConnectionFailure = false }
+            resumeSendConnectionWaiters()
+        }
+    }
     @Published var isLoading = false
     @Published private(set) var isLoadingSessions = false
     @Published private(set) var sessionsError: String?
@@ -97,7 +128,20 @@ final class DSBotStore: ObservableObject {
     @Published private(set) var isChangingPlanMode = false
     @Published var error: String?
     @Published var notice: String?
-    @Published private(set) var connectionFailure: DSBotFailure?
+    @Published private(set) var connectionFailure: DSBotFailure? {
+        didSet {
+            if connectionFailure != nil, isForeground, !hasForegroundConnectionFailure {
+                hasForegroundConnectionFailure = true
+            }
+            resumeSendConnectionWaiters()
+        }
+    }
+    /// Retain a confirmed failure across retries, but never infer one from lifecycle suspension.
+    @Published private var hasForegroundConnectionFailure = false
+    var isComputerUnavailable: Bool {
+        isForeground && activeComputer != nil && status != .connected
+            && hasForegroundConnectionFailure && connectionFailure?.shouldRetryConnection != false
+    }
     var messageDrafts: [DraftTarget: String] = [:] {
         didSet { scheduleConversationSave() }
     }
@@ -125,14 +169,18 @@ final class DSBotStore: ObservableObject {
     private var sessionSelectionGeneration = 0 {
         didSet {
             isChoosingProvider = false
-            acceptedSubmissions = []
             canceledRequestIds = []
         }
     }
     private var loadingTokens: Set<UUID> = []
     private var operationHeld = false
     private var operationWaiters: [CheckedContinuation<Void, Never>] = []
-    private var isForeground = false
+    private var isForeground = false {
+        didSet {
+            if !isForeground, hasForegroundConnectionFailure { hasForegroundConnectionFailure = false }
+            resumeSendConnectionWaiters()
+        }
+    }
     private var reconnectAttempt = 0
     private var reconnectTask: Task<Void, Never>?
     private var snapshotVersion = 0
@@ -234,7 +282,7 @@ final class DSBotStore: ObservableObject {
                     return
                 }
                 connectionFailure = safeFailure(for: error)
-                if reportsFailure || !safeFailure(for: error).shouldRetryConnection {
+                if !safeFailure(for: error).shouldRetryConnection {
                     self.error = safeMessage(for: error)
                 }
                 showsConnectionGuide = needsConnectionGuide
@@ -551,10 +599,6 @@ final class DSBotStore: ObservableObject {
         }
         let currentGeneration = generation
         let currentSelection = sessionSelectionGeneration
-        isSending = true
-        defer {
-            if generation == currentGeneration, currentSelection == sessionSelectionGeneration { isSending = false }
-        }
         do {
             var params: [String: JSONValue] = [
                 "sessionId": .string(session.id), "id": .string(addressed.id), "text": .string(addressed.body),
@@ -602,7 +646,7 @@ final class DSBotStore: ObservableObject {
     }
 
     func selectSession(_ session: SessionSummary, onPrepared: () -> Void = {}) async {
-        guard status == .connected else {
+        guard let computerID = activeComputer?.id else {
             error = DSBotFailure.disconnected.localizedDescription
             return
         }
@@ -611,7 +655,8 @@ final class DSBotStore: ObservableObject {
         readVisitID = UUID()
         lastAcknowledgedRead = nil
         pendingReads = [:]
-        if var current = selectedSession, current.id == session.id, currentWatchID != nil {
+        if var current = selectedSession, current.id == session.id,
+           currentWatchID != nil || status != .connected {
             if session.isAssistant == true, current.isAssistant != true {
                 current.isAssistant = true
                 selectedSession = current
@@ -626,6 +671,8 @@ final class DSBotStore: ObservableObject {
         sessionSelectionGeneration &+= 1
         let currentSelection = sessionSelectionGeneration
         let watchID = UUID().uuidString
+        // Reserve this selection while local history prepares. A reconnect that
+        // finishes meanwhile must not replace it with a second selection.
         currentWatchID = watchID
         let loadingToken = beginLoading()
         defer { endLoading(loadingToken) }
@@ -641,7 +688,7 @@ final class DSBotStore: ObservableObject {
         planCommandID = nil
         isChangingPlanMode = false
         isChoosingWorkspace = false
-        isSending = false
+        refreshSubmissionPresentation()
         error = nil
         if previousSession?.id != session.id {
             messages = []
@@ -677,11 +724,20 @@ final class DSBotStore: ObservableObject {
            var cached = recentConversationDetails.first(where: { $0.session.id == session.id }) {
             cached.session = session
             await apply(cached)
-            guard currentGeneration == generation, currentSelection == sessionSelectionGeneration else { return }
+            guard activeComputer?.id == computerID, currentSelection == sessionSelectionGeneration else { return }
         }
         // Navigation may now lay out the cached history, without waiting for the remote watch.
         onPrepared()
         scheduleConversationSave()
+        guard currentGeneration == generation, status == .connected else {
+            if currentWatchID == watchID { currentWatchID = nil }
+            DSBotLog.record(
+                "session.select.local",
+                elapsedMs: (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000,
+                state: status.rawValue
+            )
+            return
+        }
         do {
             // session.watch replaces the prior watch without waiting for its stream to close.
             var parameters = session.historyParameters
@@ -864,7 +920,9 @@ final class DSBotStore: ObservableObject {
     /// The open conversation has nothing in it yet, so project and mode can still be chosen.
     var isBlankSession: Bool {
         if isAssistantConversation { return false }
-        guard let session = selectedSession, !isLoadingSession, session.status == "idle" else { return false }
+        guard let session = selectedSession, !isLoadingSession, session.status == "idle",
+              loadedConversationTarget != nil, loadedConversationTarget == selectedDraftTarget,
+              session.blank != false, transcript?.hasMore != true else { return false }
         guard acceptedSubmissions.isEmpty, (transcript?.pendingInputs ?? []).isEmpty else { return false }
         return transcript != nil ? (transcript?.entries.isEmpty ?? true) : messages.isEmpty
     }
@@ -943,6 +1001,12 @@ final class DSBotStore: ObservableObject {
         guard !isSending, !isChoosingProvider else { throw DSBotFailure.remote("BUSY") }
         let target = DraftTarget(computerID: computerID, sessionID: selectedSession.id)
         let draftID = UUID()
+        sendingDraftTargets[draftID] = target
+        refreshSubmissionPresentation()
+        defer {
+            sendingDraftTargets.removeValue(forKey: draftID)
+            refreshSubmissionPresentation()
+        }
         if let draftText {
             submittedDrafts.append((draftID, target, MessageDraftRecovery(text: draftText), nil))
         }
@@ -967,6 +1031,7 @@ final class DSBotStore: ObservableObject {
         let submitted = submittedDrafts.remove(at: index)
         if restoring {
             messageDrafts[submitted.target] = submitted.recovery.restoring(before: messageDrafts[submitted.target])
+            DSBotLog.record("message.draft.restored", requestId: submitted.requestID)
         }
         scheduleConversationSave()
     }
@@ -974,11 +1039,9 @@ final class DSBotStore: ObservableObject {
     private func sendConversation(
         text: String, attachments: [UploadAttachment], files: [UploadedFile], draftID: UUID
     ) async throws {
-        guard let selectedSession else { throw DSBotFailure.disconnected }
-        let currentGeneration = generation
-        let currentSelection = sessionSelectionGeneration
+        guard let selectedSession, let target = selectedDraftTarget else { throw DSBotFailure.disconnected }
+        let computerRevision = submissionComputerRevision
         let sessionId = selectedSession.id
-        let computerId = activeComputer?.id
         let submission = AcceptedSubmission(
             requestId: UUID().uuidString, text: text, time: Date().timeIntervalSince1970 * 1_000,
             placement: selectedSession.status == "running" ? .queued : .transcript,
@@ -987,27 +1050,20 @@ final class DSBotStore: ObservableObject {
         if let index = submittedDrafts.firstIndex(where: { $0.id == draftID }) {
             submittedDrafts[index].requestID = submission.requestId
         }
-        isSending = true
-        // The message is on screen from the moment it is sent, dimmed like every input the host has not admitted yet (owner, 2026-11-07: a send
-        // that waited seconds for the computer looked like one that was stuck). A request still outstanding is not proof that the computer has
-        // the message, so it leaves again, with the error, the moment the send fails; otherwise the host's snapshot retires it by its request id.
+        // Ordinary disconnects retain this echo and its recovery draft. The existing connection
+        // lifecycle wakes the send; every attempt carries the same id for DSH's durable deduplication.
         sendingSubmissionIDs.insert(submission.requestId)
-        acceptedSubmissions.append(submission)
-        contentRevision &+= 1
+        setSubmissions(submissionsByTarget[target, default: []] + [submission], for: target)
+        DSBotLog.record("message.delivery.pending", requestId: submission.requestId, state: status.rawValue)
         defer {
             sendingSubmissionIDs.remove(submission.requestId)
             observedSendingSubmissionIDs.remove(submission.requestId)
-            if currentGeneration == generation, currentSelection == sessionSelectionGeneration {
-                isSending = false
-            }
         }
         do {
             var attachmentItems = try await json.encode(attachments).arrayValue ?? []
             attachmentItems += files.map { .object(["receiptId": .string($0.receiptId), "name": .string($0.name)]) }
             let attachmentValue = JSONValue.array(attachmentItems)
-            guard currentGeneration == generation,
-                  currentSelection == sessionSelectionGeneration,
-                  self.selectedSession?.id == sessionId else {
+            guard computerRevision == submissionComputerRevision else {
                 throw DSBotFailure.switchedComputer
             }
             let params: [String: JSONValue] = [
@@ -1016,36 +1072,108 @@ final class DSBotStore: ObservableObject {
                 "text": .string(text),
                 "attachments": attachmentValue
             ]
-            let receipt = try await request("session.send", params)
-            guard currentGeneration == generation, currentSelection == sessionSelectionGeneration,
-                  self.selectedSession?.id == sessionId, activeComputer?.id == computerId else {
-                retire(submission)
-                return
+            while true {
+                try await waitForSendConnection(computerRevision: computerRevision, requestID: submission.requestId)
+                if observedSendingSubmissionIDs.contains(submission.requestId) { return }
+                let attemptGeneration = generation
+                do {
+                    DSBotLog.record("message.delivery.attempt", requestId: submission.requestId)
+                    let receipt = try await request("session.send", params)
+                    guard computerRevision == submissionComputerRevision else {
+                        retire(submission, target: target)
+                        return
+                    }
+                    // Older plugins cannot reconcile an echo by its request identity.
+                    if receipt["requestId"]?.stringValue != submission.requestId { retire(submission, target: target) }
+                    DSBotLog.record("message.delivery.accepted", requestId: submission.requestId)
+                    return
+                } catch {
+                    if observedSendingSubmissionIDs.contains(submission.requestId) { return }
+                    try Task.checkCancellation()
+                    let failure = safeFailure(for: error)
+                    guard computerRevision == submissionComputerRevision,
+                          failure.isConnectionInterruption || failure == .switchedComputer else { throw error }
+                    // A transport normally invalidates its failed route first. If it did not,
+                    // hand the failure to the same reconnect lifecycle rather than retrying in a loop.
+                    if generation == attemptGeneration, status == .connected {
+                        await handleDisconnect(generation: attemptGeneration, failure: failure)
+                    }
+                }
             }
-            // Older plugins have no request identity, so their watch remains authoritative: nothing would ever retire the echo.
-            if receipt["requestId"]?.stringValue != submission.requestId { retire(submission) }
         } catch {
-            retire(submission)
+            retire(submission, target: target)
             // A watch can confirm admission (or cancellation) before a lost HTTP reply.
             // That message must not be put back into the composer as an unsent draft.
             if observedSendingSubmissionIDs.contains(submission.requestId) { return }
             let failure = safeFailure(for: error)
-            // The transport invalidates a stalled route before returning its send
-            // error. Keep that warning on its conversation across the reconnect.
-            if currentSelection == sessionSelectionGeneration,
-               self.selectedSession?.id == sessionId, activeComputer?.id == computerId,
-               currentGeneration == generation || failure == .resultUnknown {
+            DSBotLog.record("message.delivery.fail", level: "warn", requestId: submission.requestId, code: failure.logCode)
+            if computerRevision == submissionComputerRevision,
+               selectedDraftTarget == target,
+               !(error is CancellationError) {
                 self.error = safeMessage(for: failure)
             }
             throw failure
         }
     }
 
+    /// Suspend a send without polling. Reconnect, foregrounding, confirmation or a destination
+    /// change resumes it. Session navigation keeps delivery addressed to the original target;
+    /// a genuine change of computer restores its unconfirmed drafts.
+    private func waitForSendConnection(computerRevision: Int, requestID: String) async throws {
+        while true {
+            try Task.checkCancellation()
+            guard computerRevision == submissionComputerRevision else { throw DSBotFailure.switchedComputer }
+            if observedSendingSubmissionIDs.contains(requestID) { return }
+            if let failure = connectionFailure, !failure.shouldRetryConnection { throw failure }
+            if isForeground, status == .connected { return }
+            let id = UUID()
+            try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                try await withCheckedThrowingContinuation { continuation in
+                    sendConnectionWaiters[id] = continuation
+                }
+            } onCancel: {
+                Task { @MainActor [weak self] in
+                    self?.sendConnectionWaiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
+                }
+            }
+        }
+    }
+
+    private func resumeSendConnectionWaiters() {
+        let waiters = sendConnectionWaiters.values
+        sendConnectionWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+
+    private func submissionComputerChanged() {
+        submissionComputerRevision &+= 1
+        submissionsByTarget = [:]
+        sendingDraftTargets = [:]
+        if !acceptedSubmissions.isEmpty { acceptedSubmissions = [] }
+        isSending = false
+        resumeSendConnectionWaiters()
+    }
+
+    private func refreshSubmissionPresentation() {
+        let submissions = selectedDraftTarget.flatMap { submissionsByTarget[$0] } ?? []
+        if acceptedSubmissions != submissions {
+            acceptedSubmissions = submissions
+            contentRevision &+= 1
+        }
+        let sending = selectedDraftTarget.map { sendingDraftTargets.values.contains($0) } ?? false
+        if isSending != sending { isSending = sending }
+    }
+
+    private func setSubmissions(_ submissions: [AcceptedSubmission], for target: DraftTarget) {
+        submissionsByTarget[target] = submissions.isEmpty ? nil : submissions
+        refreshSubmissionPresentation()
+    }
+
     /// A sent message stops being shown as an echo: its send failed, or the host answered without the request identity its snapshot would retire it by.
-    private func retire(_ submission: AcceptedSubmission) {
-        guard acceptedSubmissions.contains(where: { $0.requestId == submission.requestId }) else { return }
-        acceptedSubmissions.removeAll { $0.requestId == submission.requestId }
-        contentRevision &+= 1
+    private func retire(_ submission: AcceptedSubmission, target: DraftTarget) {
+        guard let submissions = submissionsByTarget[target], submissions.contains(where: { $0.requestId == submission.requestId }) else { return }
+        setSubmissions(submissions.filter { $0.requestId != submission.requestId }, for: target)
     }
 
     func updateQueuedMessage(_ message: QueuedMessage, action: String, text: String? = nil) async throws {
@@ -1652,7 +1780,7 @@ final class DSBotStore: ObservableObject {
         networkChangeTask = nil
         let suspendedGeneration = nextGeneration()
         sessionSelectionGeneration &+= 1
-        isSending = false
+        refreshSubmissionPresentation()
         isRespondingApprovals = []
         status = .disconnected
         Task { await client.disconnect(throughGeneration: suspendedGeneration) }
@@ -1989,7 +2117,7 @@ final class DSBotStore: ObservableObject {
         guard eventGeneration == generation else { return }
         let disconnectedGeneration = nextGeneration()
         status = .disconnected
-        isSending = false
+        refreshSubmissionPresentation()
         updatingQueueItemID = nil
         isRespondingApprovals = []
         connectionFailure = failure
@@ -2027,6 +2155,7 @@ final class DSBotStore: ObservableObject {
         }
         let commitStartedAt = ProcessInfo.processInfo.systemUptime
         if selectedSession != detail.session { selectedSession = detail.session }
+        if loadedConversationTarget != selectedDraftTarget { loadedConversationTarget = selectedDraftTarget }
         if messages != detail.messages {
             messages = detail.messages
             contentRevision &+= 1
@@ -2051,10 +2180,11 @@ final class DSBotStore: ObservableObject {
         canceledRequestIds = Set(detail.canceledRequestIds)
         let observed = observedSubmissionIds
         observedSendingSubmissionIDs.formUnion(observed.intersection(sendingSubmissionIDs))
-        submittedDrafts.removeAll { $0.requestID.map(observed.contains) == true }
-        if acceptedSubmissions.contains(where: { observed.contains($0.requestId) }) {
-            acceptedSubmissions.removeAll { observed.contains($0.requestId) }
-            contentRevision &+= 1
+        if !observedSendingSubmissionIDs.isEmpty { resumeSendConnectionWaiters() }
+        submittedDrafts.removeAll { $0.target == selectedDraftTarget && $0.requestID.map(observed.contains) == true }
+        if let target = selectedDraftTarget, let submissions = submissionsByTarget[target],
+           submissions.contains(where: { observed.contains($0.requestId) }) {
+            setSubmissions(submissions.filter { !observed.contains($0.requestId) }, for: target)
         }
         if planMode != detail.planMode { planMode = detail.planMode }
         if selectedModelId != detail.modelId { selectedModelId = detail.modelId }
@@ -2157,6 +2287,7 @@ final class DSBotStore: ObservableObject {
 
     private var needsConnectionGuide: Bool {
         selectedSession == nil && !isChoosingWorkspace
+            && (activeComputer == nil || connectionFailure?.shouldRetryConnection == false)
     }
 
     private func restoreConversation(for computer: Computer?, generation currentGeneration: Int) async {
@@ -2202,6 +2333,7 @@ final class DSBotStore: ObservableObject {
             detail.questions = []
             await apply(detail)
         } else {
+            if !snapshot.isChoosingWorkspace { selectedSession = snapshot.selection }
             selectedPresetId = snapshot.selectedPresetID
         }
         DSBotLog.record(
@@ -2242,7 +2374,8 @@ final class DSBotStore: ObservableObject {
             isChoosingWorkspace: isChoosingWorkspace, drafts: drafts,
             models: models, permissions: permissions, presets: presets, selectedPresetID: selectedPresetId,
             providers: providers,
-            recentDetails: recentConversationDetails.filter { $0.session.id != detail?.session.id }
+            recentDetails: recentConversationDetails.filter { $0.session.id != detail?.session.id },
+            selection: selectedSession
         )
         let precedingWrite = conversationWriteTask
         let storage = conversationStorage
@@ -2257,7 +2390,8 @@ final class DSBotStore: ObservableObject {
     }
 
     private var currentConversationDetail: SessionDetail? {
-        selectedSession.map {
+        guard loadedConversationTarget != nil, loadedConversationTarget == selectedDraftTarget else { return nil }
+        return selectedSession.map {
             SessionDetail(
                 session: $0, messages: messages, modelId: selectedModelId, permissionId: selectedPermissionId,
                 context: context, trace: trace, team: team, transcript: transcript, goal: goal, todos: todos,
@@ -2268,8 +2402,7 @@ final class DSBotStore: ObservableObject {
     }
 
     private func rememberCurrentConversation() {
-        guard let detail = currentConversationDetail,
-              !messages.isEmpty || transcript != nil else { return }
+        guard let detail = currentConversationDetail else { return }
         recentConversationDetails.removeAll { $0.session.id == detail.session.id }
         recentConversationDetails.insert(detail, at: 0)
         if recentConversationDetails.count > 12 { recentConversationDetails.removeLast() }

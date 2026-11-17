@@ -141,6 +141,16 @@ export function runCommand(command, args, { env, timeoutMs = 30_000, signal, cwd
 }
 
 /**
+ * `claude -p /usage`. Claude Code keeps every `-p` run as a conversation of its own, so each reading left a session named "/usage" in the owner's Claude folder (40 of them in six days, listed in DSH's and
+ * Dudu's session windows and in `claude --resume`; owner, 2026-11-17: "感觉我 claude 会话被污染了"). `--no-session-persistence` keeps nothing; a Claude Code old enough not to know the flag is asked again without it.
+ */
+async function readUsage(run, command, options) {
+  const result = await run(command, ['-p', '/usage', '--no-session-persistence'], options);
+  if (result.code !== 0 && /unknown option|no-session-persistence/i.test(`${result.stdout}\n${result.stderr}`)) return run(command, ['-p', '/usage'], options);
+  return result;
+}
+
+/**
  * What a Claude account has left: `{ state: 'ok', plan, windows }`, `{ state: 'login' }` when it is signed out, and an error when it could not be read this time.
  * `command` is the `claude` found on this computer, `environment` the harness's overlay (`createOarProvider`).
  */
@@ -148,7 +158,7 @@ export async function readClaudeQuota({ command, environment, signal, run = runC
   const env = childEnvironment(environment?.());
   const [status, usage] = await Promise.all([
     run(command, ['auth', 'status', '--json'], { env, timeoutMs: 8_000, signal }).catch(() => undefined),
-    run(command, ['-p', '/usage'], { env, timeoutMs: 30_000, signal }),
+    readUsage(run, command, { env, timeoutMs: 30_000, signal }),
   ]);
   let identity;
   try { identity = JSON.parse(status?.stdout ?? ''); } catch { /* the plan is a label: it can be left out */ }

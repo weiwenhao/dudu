@@ -14,13 +14,15 @@ export async function desktopPackageIdentity(folder) {
     }
   }
   await visit('dist');
+  // The titles and descriptions DSH's plugin list shows: a change to them is a change to the package.
+  await visit('locale').catch((error) => { if (error.code !== 'ENOENT') throw error; });
   const hash = createHash('sha256');
   for (const file of files.sort()) {
     hash.update(file).update('\0').update(await readFile(join(folder, file))).update('\0');
   }
   const metadata = JSON.parse(await readFile(join(folder, 'package.json'), 'utf8'));
-  if (metadata.name !== 'dudu' || typeof metadata.version !== 'string') {
-    throw new Error('Expected a dudu desktop package.');
+  if (metadata.name !== 'dsh-dudu' || typeof metadata.version !== 'string') {
+    throw new Error('Expected a dsh-dudu desktop package.');
   }
   return { version: metadata.version, fingerprint: hash.digest('hex') };
 }
@@ -46,7 +48,7 @@ export function matchesDesktopRuntime(runtime, expected, after = 0) {
 }
 
 export async function waitForDesktopRuntime({
-  folder, expected, after = 0, timeoutMs, intervalMs = 250, probe,
+  folder, expected, after = 0, timeoutMs, intervalMs = 250, probe, assertRunning,
   alive = (pid) => {
     try { process.kill(pid, 0); return true; }
     catch (error) { if (error.code === 'ESRCH') return false; throw error; }
@@ -54,10 +56,12 @@ export async function waitForDesktopRuntime({
 }) {
   const deadline = Date.now() + timeoutMs;
   while (true) {
+    await assertRunning?.();
     let runtime;
     try { runtime = JSON.parse(await readFile(join(folder, 'runtime.json'), 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (matchesDesktopRuntime(runtime, expected, after) && alive(runtime.pid) && await probe(runtime.port)) {
+      await assertRunning?.(runtime);
       return runtime;
     }
     if (Date.now() >= deadline) return undefined;

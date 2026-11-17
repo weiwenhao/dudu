@@ -9,7 +9,7 @@ export const PROPERTY_ORDER = ['id', 'status', 'agent', 'priority', 'project', '
 // What one tab shows besides its rows. Issue workflow is the default grouping; each tab remembers the owner's choices.
 export const DEFAULT_VIEW = {
   filter: {},
-  layout: 'list', // 'list' | 'board' | 'chat'
+  layout: 'chat', // 'list' | 'board' | 'chat'
   group: 'status', // list: Grouping; board: Columns (null reads as issue workflow)
   subGroup: null, // list: Sub-grouping; board: Rows
   reverseGroups: false,

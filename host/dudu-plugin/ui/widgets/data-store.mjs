@@ -7,6 +7,7 @@ export function createReadStore(request, action, body, {
 } = {}) {
   let snapshot = { status: 'loading', value: null, ...(trackRefresh ? { refreshing: false, updatedAt: null } : {}) };
   let pending = null;
+  let invalidation = null;
   let timer = null;
   let controller = null;
   let failures = 0;
@@ -51,6 +52,15 @@ export function createReadStore(request, action, body, {
   return {
     getSnapshot: () => snapshot,
     refresh: (override) => load(override, true),
+    invalidate() {
+      if (!pending) return load();
+      // A pushed completion may arrive while an older response is in flight. Read again after it,
+      // instead of treating that older response as the answer to the new event.
+      return invalidation ??= pending.then(() => {
+        invalidation = null;
+        if (listeners.size && visible()) return load();
+      });
+    },
     subscribe(listener, cadence = every) {
       listeners.add(listener);
       cadences.set(listener, cadence);

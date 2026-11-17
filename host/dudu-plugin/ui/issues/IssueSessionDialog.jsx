@@ -8,6 +8,7 @@ import { T } from '../strings.js';
 import { AgentLogo } from './AgentLogo.jsx';
 import { useIssueSession } from './use-issue-session.js';
 import { useRetainedSession } from './use-retained-session.js';
+import { useConversationFind } from './use-conversation-find.jsx';
 
 export function CopyResume({ command }) {
   const toast = useToast();
@@ -44,6 +45,7 @@ export function IssueSessionDialog({ issue, resolveSession, actions, renderConve
   const { reference } = retained;
   const [expanding, setExpanding] = useState(false);
   const surface = useRef(null);
+  const find = useConversationFind({ root: surface, reference, actions });
   const backdrop = useRef(null);
   const opener = useRef(null);
   const expand = async () => {
@@ -57,7 +59,7 @@ export function IssueSessionDialog({ issue, resolveSession, actions, renderConve
   };
   // DSH portals its model menus to body. Radix's modal trap would hide them and block their pointer/focus events.
   return <Dialog open modal={false} onOpenChange={(open) => { if (!open) onClose(); }}>
-    <DialogContent ref={surface} overlayRef={backdrop} data-dudu-conversation-dialog
+    <DialogContent ref={surface} overlayRef={backdrop} data-dudu-conversation-dialog data-dudu-find-surface
       className="h-[min(900px,calc(100dvh-4rem))] w-[min(1008px,calc(100vw-4rem))] gap-0 overflow-hidden p-0 sm:max-w-none"
       onOpenAutoFocus={() => { opener.current = document.activeElement; }}
       onCloseAutoFocus={(event) => {
@@ -70,6 +72,7 @@ export function IssueSessionDialog({ issue, resolveSession, actions, renderConve
         if (original.type !== 'pointerdown' || original.button !== 0 || original.ctrlKey || event.target !== backdrop.current) event.preventDefault();
       }}
       onEscapeKeyDown={(event) => {
+        if (find.open) { event.preventDefault(); find.close(); return; }
         const hostMenu = [...(surface.current?.querySelectorAll('[aria-expanded="true"][aria-controls]') ?? [])]
           .some((trigger) => document.getElementById(trigger.getAttribute('aria-controls')));
         if (hostMenu || document.querySelector('[data-context-menu]') || surface.current?.querySelector('[data-dudu-session-header-action] [aria-expanded="true"]')) event.preventDefault();
@@ -79,14 +82,16 @@ export function IssueSessionDialog({ issue, resolveSession, actions, renderConve
         <AgentLogo agent={issue.agent} className="size-4" />
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <DialogTitle className="min-w-0 truncate text-sm font-medium">{issue.ref ? `${issue.ref} ` : ''}{issue.title}</DialogTitle>
-          {reference && renderSessionHeader?.(reference, { onNavigate: onClose })}
+          {reference && renderSessionHeader?.(reference, { onNavigate: onClose, sessionId: reference.sessionId })}
         </div>
+        {find.button}
         {session?.command && <CopyResume key={session.command} command={session.command} />}
         <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={T.detail.openSession} title={T.detail.openSession}
           disabled={!reference || expanding} onClick={expand}>{expanding ? <LoaderCircle className="animate-spin" /> : <Expand />}</Button>
         <DialogClose asChild><Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={T.pet.close}><X /></Button></DialogClose>
       </header>
-      {reference && <div className="dudu-host-conversation flex min-h-0 flex-1 flex-col">{renderConversation(reference)}</div>}
+      {find.bar}
+      {reference && <div data-dudu-find-content className="dudu-host-conversation flex min-h-0 flex-1 flex-col">{renderConversation(reference)}</div>}
       {failed || retained.failed ? <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-3 p-5 text-muted-foreground">
         <span>{T.widgets.sessions.openFailed}</span>
         <Button variant="outline" size="sm" onClick={() => { setFailed(false); setAttempt((value) => value + 1); }}>{T.retry}</Button>

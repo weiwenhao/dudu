@@ -103,7 +103,7 @@ struct PairingView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if embeddedInSettings && showsCancelButton {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button(L10n.text("取消")) { dismiss() }
                         .foregroundStyle(DSBotStyle.ink)
                 }

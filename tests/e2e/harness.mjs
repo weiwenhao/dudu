@@ -49,7 +49,7 @@ async function packagedPlugin() {
   if (process.env.DUDU_E2E_TGZ) return process.env.DUDU_E2E_TGZ;
   const { version } = JSON.parse(await readFile(join(root, 'host', 'dudu-plugin', 'package.json'), 'utf8'));
   await run('node', [join(root, 'scripts', 'package-desktop.mjs')], { cwd: root, maxBuffer: 16 * 1024 * 1024 });
-  return join(root, '.local', 'release', `dudu-${version}.tgz`);
+  return join(root, '.local', 'release', `dsh-dudu-${version}.tgz`);
 }
 
 async function waitForUrl(child, output) {

@@ -56,19 +56,20 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   const list = useIssueList(request, query, !chat);
   const homeQuery = useMemo(() => ({ tab: query.tab, ...(query.filter ? { filter: query.filter } : {}) }), [query]);
   const home = usePolled(request, 'home/list', homeQuery, { every: 5000, enabled: chat });
+  const invalidateHome = home.invalidate;
   useEffect(() => { if (chat && home.value?.statuses) receiveStatuses(home.value.statuses); }, [chat, home.value]);
   const { patch, move } = list;
   const refresh = useCallback(() => window.dispatchEvent(new Event('dudu:home-changed')), []);
   useEffect(() => {
     if (!chat) return undefined;
-    const changed = () => { void home.refresh(); };
+    const changed = () => { void invalidateHome(); };
     window.addEventListener('dudu:home-changed', changed);
     window.addEventListener('dudu:session-read', changed);
     return () => {
       window.removeEventListener('dudu:home-changed', changed);
       window.removeEventListener('dudu:session-read', changed);
     };
-  }, [chat, home.refresh]);
+  }, [chat, invalidateHome]);
   const pinRequests = useRef(new Set());
   const [pinning, setPinning] = useState(() => new Set());
   const pin = useCallback(async (issue) => {

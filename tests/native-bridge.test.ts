@@ -786,6 +786,67 @@ test('native submission receipts preserve the caller request identity and reject
   assert.equal(calls.length, before);
 });
 
+test('native sends restore an archived session before intake and fail without submitting when restore fails', async () => {
+  let archived = true;
+  const restore = Promise.withResolvers<void>();
+  const restoring = Promise.withResolvers<void>();
+  const admitted: unknown[] = [];
+  const { bridge, calls } = commandHarness({
+    'workspace/unarchiveSession': async ({ sessionId }) => {
+      assert.equal(sessionId, 'session-1');
+      restoring.resolve();
+      await restore.promise;
+      archived = false;
+    },
+    'session/prompt': (request) => {
+      // DSH's archive gate otherwise consumes the inbox item without a user/message.
+      if (!archived) admitted.push(request);
+      return {};
+    },
+  });
+  const requestId = '37bd2a22-c518-4c8f-b7af-35cf42440998';
+  const sending = bridge.dispatch('session.send', { text: 'follow-up', requestId }, connection());
+  await restoring.promise;
+  assert.equal(calls.some(({ endpoint }) => endpoint === 'session/prompt'), false);
+  restore.resolve();
+  assert.deepEqual(await sending, { requestId });
+  assert.deepEqual(admitted, [{
+    requestId, sessionId: 'session-1', mode: 'queue', content: [{ type: 'text', text: 'follow-up' }],
+  }]);
+  assert.deepEqual(calls.map(({ endpoint }) => endpoint), ['workspace/unarchiveSession', 'session/prompt']);
+  const attachmentRequestId = 'f63f532c-a8b8-4b59-af17-931e3b27e0b5';
+  await bridge.dispatch('session.send', {
+    requestId: attachmentRequestId, attachments: [{ receiptId: 'staged-video' }],
+  }, connection());
+  assert.deepEqual(admitted[1], {
+    requestId: attachmentRequestId, sessionId: 'session-1', mode: 'queue',
+    content: [{ type: 'file', receiptId: 'staged-video' }],
+  }, 'Restoring an already open conversation preserves attachment-only intake.');
+
+  const failed = commandHarness({
+    'workspace/unarchiveSession': () => { throw new Error('Restore failed'); },
+  });
+  await assert.rejects(
+    failed.bridge.dispatch('session.send', { text: 'keep this draft', requestId }, connection()),
+    { code: 'UPSTREAM_UNAVAILABLE' },
+  );
+  assert.equal(failed.calls.some(({ endpoint }) => endpoint === 'session/prompt'), false);
+});
+
+// Owner, 2026-11-17: nine pictures, whatever their size (the 3, 10 MB each and 20 MB in all that stood here were never asked for).
+test('a message from the phone may carry nine pictures of any size, and a tenth is refused', async () => {
+  const admitted: any[] = [];
+  const { bridge } = commandHarness({ 'session/prompt': (request) => { admitted.push(request); return {}; } });
+  const big = Buffer.alloc(11 * 1024 * 1024, 7).toString('base64'); // over what used to be the limit of one picture, and nine of them over the one of all
+  const picture = (data: string) => ({ dataBase64: data, mimeType: 'image/jpeg', name: 'photo.jpg' });
+  await bridge.dispatch('session.send', { text: 'look', requestId: crypto.randomUUID(), attachments: Array.from({ length: 9 }, () => picture(big)) }, connection());
+  assert.equal(admitted[0].content.filter((part: any) => part.type === 'image').length, 9);
+  await assert.rejects(
+    bridge.dispatch('session.send', { text: 'look', requestId: crypto.randomUUID(), attachments: Array.from({ length: 10 }, () => picture('QQ==')) }, connection()),
+    { code: 'INVALID_ATTACHMENT' },
+  );
+});
+
 function surface(type, seq, time, data, extra = {}) {
   return { type: 'event', event: { type, seq, time, surfaceOp: 'append', data, ...extra } };
 }
@@ -1216,7 +1277,6 @@ test('Markdown images read only persisted assistant destinations and reject a ch
     for (const invalid of [
       { mediaType: 'text/html', dataBase64: data },
       { mediaType: 'image/png', dataBase64: 'not!base64' },
-      { mediaType: 'image/png', dataBase64: 'A'.repeat(14 * 1024 * 1024) },
     ]) {
       reply = invalid;
       await assert.rejects(bridge.dispatch('session.attachment', params, connection),
@@ -1228,7 +1288,7 @@ test('Markdown images read only persisted assistant destinations and reject a ch
   } finally { await connection.cancel(); }
 });
 
-test('conversation images reject injected context, external URLs and excessive or invalid data', async () => {
+test('conversation images reject injected context, external URLs and invalid data', async () => {
   const data = Buffer.from('image').toString('base64');
   const { bridge } = makeHarness({ snapshot: {
     type: 'snapshot', projections: { values: {} }, records: [
@@ -1239,7 +1299,6 @@ test('conversation images reject injected context, external URLs and excessive o
         id: 'bad', source: { kind: 'user' }, content: [
           { type: 'image', mediaType: 'image/svg+xml', data },
           { type: 'image', mediaType: 'image/png', url: 'https://example.com/image.png' },
-          { type: 'image', mediaType: 'image/png', data: 'A'.repeat(14 * 1024 * 1024) },
           { type: 'image', mediaType: 'image/png', data: 'not!base64' },
         ],
       }),
@@ -1247,10 +1306,10 @@ test('conversation images reject injected context, external URLs and excessive o
   } });
   const connection = attachmentConnection();
   await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, connection, { watchGeneration: 1 });
-  for (const attachmentId of ['context:0', 'bad:0', 'bad:1', 'bad:2']) {
+  for (const attachmentId of ['context:0', 'bad:0', 'bad:1']) {
     await assert.rejects(bridge.dispatch('session.attachment', { id: 'session-1', attachmentId }, connection), { code: 'NOT_FOUND' });
   }
-  await assert.rejects(bridge.dispatch('session.attachment', { id: 'session-1', attachmentId: 'bad:3' }, connection), { code: 'INVALID_ATTACHMENT' });
+  await assert.rejects(bridge.dispatch('session.attachment', { id: 'session-1', attachmentId: 'bad:2' }, connection), { code: 'INVALID_ATTACHMENT' });
   await connection.cancel();
 });
 
@@ -1461,4 +1520,21 @@ test('a session of a harness other than Claude and Codex is told to the phone wi
   const { bridge } = makeHarness({ rows });
   const [session] = await bridge.dispatch('session.list', {}, {});
   assert.equal(session.agent, 'pi');
+});
+
+test('a conversation opens from the session row the bridge already holds, and a slow list of all sessions is not waited for', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  let lists = 0;
+  const row = { sessionId: 'session-1', title: 'Current session', status: 'running', updatedAt: 123 };
+  const { bridge, calls } = makeHarness({
+    snapshot: { type: 'snapshot', projections: { values: {} }, records: [] },
+    responses: { 'session/list': () => (++lists === 1 ? { items: [row] } : new Promise(() => {})) },
+  });
+  assert.equal((await bridge.dispatch('session.open', { id: 'session-1' }, {}) as any).session.id, 'session-1');
+  t.mock.timers.tick(5_000); // the list the bridge holds is now older than its cache allows
+  // DSH's list does not come (it took 12 to 27 seconds under load): the held row opens the conversation at once.
+  const again = bridge.dispatch('session.open', { id: 'session-1' }, {});
+  const outcome = await Promise.race([again, new Promise((done) => setImmediate(() => done('still waiting for the list')))]);
+  assert.equal((outcome as any).session?.id, 'session-1', String(outcome));
+  assert.equal(calls.filter(({ endpoint }) => endpoint === 'session/list').length, 2, 'and the list is asked for again in the background');
 });

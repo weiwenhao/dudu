@@ -115,3 +115,24 @@ test('a query locates an older exact passage across pages, and explicit cursors 
   await assert.rejects(catalog.read({ provider: 'claude', id: 'original', query }, { signal: stopped.signal }), { name: 'AbortError' });
   assert.equal(calls.length, 3);
 });
+
+test('the task window asks for the conversations DSH has (inDsh): each DSH row once, from any workspace, newest first, with its agent and model, and the harnesses own stores are not read', async () => {
+  const rows = [
+    { key: 'dsh:a', id: 'a', provider: 'dsh', dshSessionId: 'a', title: 'Older', updatedAt: 1, workspaceId: 'w1', agent: 'claude', model: 'opus' },
+    { key: 'dsh:b', id: 'b', provider: 'dsh', dshSessionId: 'b', title: 'Newer', updatedAt: 3, workspaceId: 'w2', agent: 'deepseek', model: 'deepseek-v4' },
+  ];
+  const asked: any[] = [];
+  let nativeRead = false;
+  const catalog = createSessionCatalog({
+    native: { list: async () => { nativeRead = true; return { sessions: [{ key: 'claude:x', id: 'x', provider: 'claude', title: 'Only in the CLI', updatedAt: 9 }] }; } },
+    dsh: { catalog: async (options: unknown) => { asked.push(options); return rows; } },
+    issues: { findBySession: (key: string) => (key === 'dsh:a' ? { issue: { id: 'i', ref: 'DUD-1' } } : null) },
+  });
+  const result = await catalog.list({ inDsh: true, query: 'ab' });
+  assert.deepEqual(result.sessions.map((row: any) => row.id), ['b', 'a']);
+  assert.equal(result.sessions[0].model, 'deepseek-v4');
+  assert.equal(result.sessions[1].issue.ref, 'DUD-1');
+  assert.equal(result.total, 2);
+  assert.equal(nativeRead, false, 'a conversation that is only in a harness store cannot be the place of a task');
+  assert.equal(asked[0].query, 'ab');
+});

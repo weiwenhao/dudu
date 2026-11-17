@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { desktopPackageIdentity, matchesDesktopRuntime, waitForDesktopRuntime, writeDesktopRuntime } from '../host/desktop-runtime.mjs';
-import { acquireUpdateLock, activateDesktopUpdate, parseUpdateArguments, requestDesktopReload, runsInsideDesktop } from '../scripts/update-desktop.mjs';
+import { acquireUpdateLock, activateDesktopUpdate, assertDesktopContinuity, parseUpdateArguments, requestDesktopReload, runsInsideDesktop } from '../scripts/update-desktop.mjs';
 
 async function temporary(t: any) {
   const folder = await mkdtemp(join(tmpdir(), 'dsbot-update-test-'));
@@ -16,7 +16,7 @@ test('desktop identity detects code changes even when the package version stays 
   const folder = await temporary(t);
   await mkdir(join(folder, 'dist'));
   for (const [name, text] of Object.entries({
-    'package.json': JSON.stringify({ name: 'dudu', version: '0.4.0' }),
+    'package.json': JSON.stringify({ name: 'dsh-dudu', version: '0.4.0' }),
     'index.mjs': 'export const name = "dsbot";',
     'client.js': 'window.ready = true;',
     'cordis.patch.yml': '[]',
@@ -64,9 +64,11 @@ test('readiness requires the expected live runtime and a responding native servi
 
 test('successful plugin hot reload leaves the desktop application running', async () => {
   const actions: string[] = [];
-  const runtime = { version: '0.3.21' };
+  const processes = [{ pid: 30, parent: 20, command: '/DSH', startedAt: 'before' }];
+  const runtime = { version: '0.3.21', pid: 30 };
   const result = await activateDesktopUpdate({
     running: true, restartRequired: false,
+    assertHotRuntime: async (loaded?: { pid: number }) => assertDesktopContinuity(processes, [...processes], loaded),
     requestReload: async () => { actions.push('reload'); },
     waitForRuntime: async () => { actions.push('ready'); return runtime; },
     restart: async () => { throw new Error('Must not restart an already updated runtime.'); },
@@ -79,6 +81,7 @@ test('an unsuccessful hot reload leaves Desktop open and never reports an unread
   const actions: string[] = [];
   await assert.rejects(activateDesktopUpdate({
     running: true, restartRequired: false,
+    assertHotRuntime: async () => {},
     requestReload: async () => { actions.push('reload'); },
     waitForRuntime: async () => { actions.push('wait'); return undefined; },
     restart: async () => { actions.push('restart'); },
@@ -86,11 +89,61 @@ test('an unsuccessful hot reload leaves Desktop open and never reports an unread
   assert.deepEqual(actions, ['reload', 'wait']);
 });
 
+test('a ready replacement host or restarted Desktop cannot be reported as a successful hot reload', async () => {
+  const before = [
+    { pid: 20, parent: 1, command: '/DSH', startedAt: 'before' },
+    { pid: 30, parent: 20, command: '/DSH', startedAt: 'before' },
+  ];
+  assert.doesNotThrow(() => assertDesktopContinuity(before, [...before], { pid: 30 }));
+  for (const after of [
+    [],
+    [before[0], { ...before[1], pid: 31 }],
+    before.map((entry) => ({ ...entry, pid: entry.pid + 100, parent: entry.parent === 1 ? 1 : 120 })),
+    [before[0], { ...before[1], startedAt: 'reused PID' }],
+  ]) {
+    const actions: string[] = [];
+    await assert.rejects(activateDesktopUpdate({
+      running: true, restartRequired: false,
+      assertHotRuntime: async (runtime?: { pid: number }) => assertDesktopContinuity(before, actions.includes('wait') ? after : before, runtime),
+      requestReload: async () => { actions.push('reload'); },
+      waitForRuntime: async () => { actions.push('wait'); return { pid: 31 }; },
+      restart: async () => { assert.fail('A crash must never trigger an automatic restart.'); },
+    }), { code: 'DESKTOP_PROCESS_CHANGED' });
+    assert.deepEqual(actions, ['reload', 'wait']);
+  }
+  assert.throws(() => assertDesktopContinuity(before, [...before], { pid: 99 }), { code: 'DESKTOP_PROCESS_CHANGED' });
+  await assert.rejects(activateDesktopUpdate({
+    running: true, restartRequired: false,
+    assertHotRuntime: async () => assertDesktopContinuity(before, []),
+    requestReload: async () => { assert.fail('A host lost during installation must be reported before requesting another reload.'); },
+    waitForRuntime: async () => { assert.fail('Do not wait for a new app after the original host has exited.'); },
+    restart: async () => { assert.fail('Do not restart Desktop automatically.'); },
+  }), { code: 'DESKTOP_PROCESS_CHANGED' });
+});
+
+test('readiness checks host continuity before waiting and again after the service responds', async (t) => {
+  const folder = await temporary(t);
+  const expected = { version: '0.3.21', fingerprint: 'a'.repeat(64) };
+  await writeDesktopRuntime(folder, expected, 3170);
+  let changed = false;
+  const options = {
+    folder, expected, timeoutMs: 0, alive: () => true,
+    probe: async () => { changed = true; return true; },
+    assertRunning: async () => { if (changed) throw Object.assign(new Error('Host exited'), { code: 'DESKTOP_PROCESS_CHANGED' }); },
+  };
+  await assert.rejects(waitForDesktopRuntime(options), { code: 'DESKTOP_PROCESS_CHANGED' });
+  await assert.rejects(waitForDesktopRuntime({
+    ...options,
+    probe: async () => { assert.fail('An interrupted hot reload must not keep waiting for a replacement.'); },
+  }), { code: 'DESKTOP_PROCESS_CHANGED' });
+});
+
 test('only an explicit restart bypasses hot reload; an unopened Desktop can be started', async () => {
   for (const options of [{ running: true, restartRequired: true }, { running: false, restartRequired: false }]) {
     const actions: string[] = [];
     const result = await activateDesktopUpdate({
       ...options,
+      assertHotRuntime: async () => { assert.fail('An explicit launch does not require the previous host to survive.'); },
       requestReload: async () => { assert.fail('No running profile should be reloaded.'); },
       waitForRuntime: async () => { actions.push('ready'); return { pid: 123 }; },
       restart: async () => { actions.push('start'); },

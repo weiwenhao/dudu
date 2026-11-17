@@ -66,6 +66,58 @@ async function setup(t: { after: (cleanup: () => Promise<void>) => void }, { per
   return { service, stored, attached, links, base, root, put, source, store, registry };
 }
 
+test('unchanged native imports survive restart without rereading the DSH log, while either store changing invalidates the checkpoint', async (t) => {
+  const { service, stored, links, base, root, put, source, store, registry } = await setup(t);
+  const journal = join(base, 'target-journal');
+  const durable = async () => writeFile(journal, JSON.stringify([...stored.values()].map((entry) => entry.events)));
+  const create = store.create;
+  store.create = async (header: any) => {
+    const handle = await create(header);
+    return { ...handle, flush: async () => { await handle.flush(); await durable(); } };
+  };
+  store.stat = async (sessionId: string) => {
+    const entry = stored.get(sessionId);
+    return entry ? { header: entry.header, revision: `r${entry.events.length}`, location: { kind: 'jsonl', path: journal } } : undefined;
+  };
+  let opens = 0;
+  const originalOpen = store.open;
+  store.open = async (sessionId: string) => {
+    opens++;
+    const handle = await originalOpen(sessionId);
+    return { ...handle, flush: async () => { await handle.flush(); await durable(); } };
+  };
+  const loaded = await service.load({ provider: 'claude', id: id(1) });
+  await links.flush();
+  const reopen = async () => {
+    const savedLinks = await createLinkStore(join(base, 'state'));
+    return createNativeSessions({
+      sources: () => [source], links: savedLinks, claude: { root },
+      persistence: () => store, workspaces: () => registry,
+    });
+  };
+  let reopened = await reopen();
+  try {
+    const reused = await reopened.load({ provider: 'claude', id: id(1), fresh: false });
+    assert.equal(reused.sessionId, loaded.sessionId);
+    assert.equal(reused.updated, false);
+    assert.equal(opens, 0, 'a stable native file and target revision need no repair or full log read');
+    await put(1, [user('a', null, 'fix the failing build'), reply('b', 'a', 'm1', 'The zebra in the config was wrong.'),
+      user('c', 'b', 'Continue'), reply('d', 'c', 'm2', 'New answer')]);
+    await reopened.load({ provider: 'claude', id: id(1), fresh: false });
+    assert.ok(opens > 0, 'a changed native file must append its new messages');
+    assert.equal(stored.get(loaded.sessionId)!.events.filter((event: any) => event.type === 'assistant/message'
+      && event.data.message.content.some((block: any) => block.text === 'New answer')).length, 1);
+    await reopened.close();
+    const events = stored.get(loaded.sessionId)!.events;
+    events.push({ type: 'session/title', seq: events.length, time: clock + 1, data: { title: 'Edited in DSH' } });
+    await durable();
+    const before = opens;
+    reopened = await reopen();
+    await reopened.load({ provider: 'claude', id: id(1), fresh: false });
+    assert.ok(opens > before, 'an altered DSH journal cannot be certified by the old native checkpoint');
+  } finally { await reopened.close(); }
+});
+
 test('the sessions of a harness are listed newest first, with what shows them apart', async (t) => {
   const { service } = await setup(t);
   const result = await service.list();
@@ -588,4 +640,89 @@ test('the synchronization does not read the transcript of a session whose agent 
   assert.equal(await lookedAtBy(), 1, 'not within the minute');
   time += 31_000;
   assert.equal(await lookedAtBy(), 2, 'and a minute later it is');
+});
+
+// A fake `codex app-server` for the catalog: what it lists, what it answers for a thread, and a count of its starts and of what it was asked.
+async function codexFake(options: { threads: any[]; read?: (params: any) => unknown; turns?: (params: any) => unknown }) {
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough } = await import('node:stream');
+  const state = { starts: 0, asked: [] as { method: string; params: any }[] };
+  const spawnProcess = () => {
+    state.starts++;
+    const child: any = new EventEmitter();
+    child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+    child.kill = () => { queueMicrotask(() => child.emit('exit', 0)); };
+    let buffer = '';
+    child.stdin.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString();
+      let at;
+      while ((at = buffer.indexOf('\n')) >= 0) {
+        const message = JSON.parse(buffer.slice(0, at));
+        buffer = buffer.slice(at + 1);
+        if (message.id === undefined) continue;
+        state.asked.push({ method: message.method, params: message.params });
+        const result = message.method === 'thread/list' ? { data: options.threads, nextCursor: null }
+          : message.method === 'thread/read' ? options.read?.(message.params)
+          : message.method === 'thread/turns/list' ? options.turns?.(message.params) : {};
+        child.stdout.write(`${JSON.stringify({ id: message.id, result: result ?? {} })}\n`);
+      }
+    });
+    return child;
+  };
+  return { spawnProcess, state };
+}
+
+// The panel asks every five seconds (the open conversation) and every fifteen (all of them) to synchronize the sessions it shows. A session whose native conversation had gone
+// used to start a fresh listing each time (a Codex program, and every conversation that had changed read again, whatever had failed before): the crash logs of DSH's host are full of it.
+test('a linked session that is no longer in the list is looked for in a fresh listing now and then, not at every synchronization', async (t) => {
+  const warn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (line: string) => { warnings.push(String(line)); };
+  t.after(() => { console.warn = warn; });
+  const codex = await codexFake({ threads: [] });
+  let clock = Date.parse('2026-11-17T10:00:00.000Z');
+  const { service, stored, links } = await setup(t, { now: () => clock, codex: { id: 'codex', name: 'Codex', command: 'codex', spawnProcess: codex.spawnProcess } });
+  stored.set('session-gone', { header: { id: 'session-gone' }, events: [] });
+  links.record({ route: 'claude', nativeSessionId: 'vanished', sessionId: 'session-gone' });
+  for (let step = 0; step < 8; step++) {
+    assert.deepEqual(await service.sync({ sessionIds: ['session-gone'] }), { updated: [] });
+    clock += 4000;
+  }
+  assert.equal(codex.state.starts, 2, 'one listing, and one more to look for it: not one for each of the eight');
+  assert.equal(warnings.filter((line) => /Could not synchronize/.test(line)).length, 1, 'and the log says so once, not eight times');
+  clock += 3 * 60_000;
+  await service.sync({ sessionIds: ['session-gone'] });
+  await service.settled();
+  assert.ok(codex.state.starts > 2 && codex.state.starts <= 4, `a few minutes on it is looked for again (${codex.state.starts})`);
+});
+
+// A thread of a gigabyte answers `thread/read` with a hundred megabytes of JSON. The background reads (the search, a preview) take its newest turns instead.
+test('a long Codex thread is searched and previewed by its newest turns, and is never read whole in the background', async (t) => {
+  const { truncate } = await import('node:fs/promises');
+  const turnOf = (n: number, text: string) => ({ id: `turn-${n}`, startedAt: 1_790_000_000 + n, completedAt: 1_790_000_001 + n, status: 'completed', items: [
+    { type: 'userMessage', id: `u${n}`, content: [{ type: 'text', text: `question ${n}` }] },
+    { type: 'agentMessage', id: `a${n}`, text },
+  ] });
+  let rolloutFile = '';
+  const threads: any[] = [];
+  const codex = await codexFake({
+    threads,
+    read: (params) => ({ thread: { id: params.threadId, preview: 'a long one', cwd: '/work/app', path: rolloutFile, turns: params.includeTurns ? [turnOf(1, 'the whole thread')] : [] } }),
+    turns: () => ({ data: [turnOf(30, 'a needle in the newest turn'), turnOf(29, 'older')], nextCursor: 'older-ones' }),
+  });
+  const { service, base } = await setup(t, { codex: { id: 'codex', name: 'Codex', command: 'codex', spawnProcess: codex.spawnProcess } });
+  rolloutFile = join(base, 'rollout-long.jsonl');
+  await writeFile(rolloutFile, '');
+  await truncate(rolloutFile, 130 * 1024 * 1024); // a sparse file: it is as long as a long conversation, and costs nothing
+  threads.push({ id: 'long', preview: 'a long one', name: null, cwd: '/work/app', ephemeral: false, parentThreadId: null, source: 'vscode', createdAt: 1_790_000_000, updatedAt: 1_790_000_100, path: rolloutFile });
+  await service.list();
+  await service.settled();
+  const found = await service.list({ query: 'needle', provider: 'codex' });
+  assert.deepEqual(found.sessions.map((session: any) => session.id), ['long'], 'the newest turns are searchable');
+  const whole = () => codex.state.asked.filter((ask) => ask.method === 'thread/read' && ask.params.includeTurns === true).length;
+  assert.equal(whole(), 0, 'the whole thread was not asked for');
+  assert.ok(codex.state.asked.some((ask) => ask.method === 'thread/turns/list' && ask.params.sortDirection === 'desc'), 'its newest turns were');
+  const preview = await service.read({ provider: 'codex', id: 'long' });
+  assert.ok(preview.messages.some((message: any) => /needle/.test(message.text)), 'the preview shows the newest turns');
+  assert.equal(whole(), 0);
 });

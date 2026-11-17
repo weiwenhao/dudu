@@ -86,12 +86,15 @@ enum DSBotStyle {
     static let chatTertiary = Color(red: 0x81 / 255, green: 0x85 / 255, blue: 0x8c / 255)
     static let chatCaption = Color(red: 0xad / 255, green: 0xb2 / 255, blue: 0xb8 / 255)
     static let chatBubble = Color(red: 0xed / 255, green: 0xf2 / 255, blue: 0xfe / 255)
+    /// Pale-blue delivery progress from the owner's approved connection-state proposal.
+    static let chatSending = Color(red: 0xa6 / 255, green: 0xcf / 255, blue: 0xe7 / 255)
     static let chatPanel = Color(red: 0xf9 / 255, green: 0xfa / 255, blue: 0xfb / 255)
     static let chatBorder = Color.black.opacity(0.04)
     static let chatDivider = Color.black.opacity(0.10)
     static let chatRunning = Color(red: 0x3a / 255, green: 0x62 / 255, blue: 0xd6 / 255)
     static let chatWarning = Color(red: 0xf5 / 255, green: 0x9e / 255, blue: 0x0b / 255)
     static let chatError = Color(red: 0xec / 255, green: 0x13 / 255, blue: 0x13 / 255)
+    static let connectionNotice = Color(red: 0xff / 255, green: 0xe7 / 255, blue: 0xe9 / 255)
 }
 
 /// One continuous backing across the status bar and title, fading only below the controls.

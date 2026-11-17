@@ -14,7 +14,8 @@ async function observeHistory(query, sessionId, signal) {
     try {
       signal?.throwIfAborted();
       const header = observation.header;
-      return { session: header, meta: header, header, inheritedEventCount: observation.inheritedEventCount, events: observation.events };
+      return { session: header, meta: header, header, inheritedEventCount: observation.inheritedEventCount, events: observation.events,
+        source: observation.source, revision: observation.revision, cursor: observation.cursor };
     } finally { observation[Symbol.dispose](); }
   } finally {
     // A host can finish after its caller stops waiting. That late lease must not pin the prepared history.

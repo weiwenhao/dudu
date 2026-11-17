@@ -156,49 +156,28 @@ struct BoardConversationAvatar: View {
     let entry: BoardConversation
     let size: CGFloat
 
-    private var reference: String { entry.issue?.reference ?? "" }
-    private var parts: [String] {
-        guard let dash = reference.lastIndex(of: "-"), reference[reference.index(after: dash)...].allSatisfy(\.isNumber) else { return [reference] }
-        return [String(reference[..<dash]), String(reference[reference.index(after: dash)...])]
-    }
-    private var color: Color {
-        var hash: UInt32 = 2_166_136_261
-        for code in reference.utf16 { hash = (hash ^ UInt32(code)) &* 16_777_619 }
-        hash ^= hash >> 16
-        hash = hash &* 0x7feb352d
-        hash ^= hash >> 15
-        hash = hash &* 0x846ca68b
-        hash ^= hash >> 16
-        let colors: [UInt32] = [0x338d29, 0x22a58f, 0x753fcf, 0x9eb126, 0xc4821c, 0x3a83ba]
-        let hex = colors[Int(hash % UInt32(colors.count))]
-        return Color(red: Double(hex >> 16 & 255) / 255, green: Double(hex >> 8 & 255) / 255, blue: Double(hex & 255) / 255)
-    }
-
     var body: some View {
         Group {
             if entry.isAssistant {
                 DuduLogo(size: size * 0.94).frame(width: size, height: size)
             } else {
-                ZStack {
-                    Circle().fill(.white)
-                    Circle().strokeBorder(color, lineWidth: 1)
-                    VStack(spacing: 0) {
-                        ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
-                            Text(part)
-                                .font(.system(size: size * (index == 0 ? 0.2625 : part.count >= 4 ? 0.3125 : 0.35), weight: .medium))
-                                .monospacedDigit()
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.5)
-                                .frame(height: size * 0.305)
-                        }
+                let initials = ConversationIdentity.initials(of: entry.title)
+                let tone = ConnectorAvatar.colors(of: entry.title)
+                RoundedRectangle(cornerRadius: (size * 0.25).rounded(), style: .circular)
+                    .fill(tone.background)
+                    .overlay {
+                        Text(initials)
+                            .font(.system(size: size * (initials.unicodeScalars.count > 2 ? 0.32 : 0.37), weight: .medium))
+                            .foregroundStyle(tone.letter)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+                            .frame(maxWidth: size * 0.79)
+                            .offset(y: size * 0.015)
                     }
-                    .foregroundStyle(color)
-                    .padding(.horizontal, 3)
-                }
-                .frame(width: size, height: size)
+                    .frame(width: size, height: size)
             }
         }
-        .modifier(ConversationAvatarStatus(state: entry.sessionState, size: size))
+        .modifier(ConversationAvatarStatus(state: entry.sessionState, size: size, roundedSquare: !entry.isAssistant))
         .accessibilityHidden(true)
     }
 }

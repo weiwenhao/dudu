@@ -6,6 +6,7 @@ import { createInboxApi } from '../host/assistant/inbox/api.mjs';
 import { normalizeRecords } from '../host/assistant/inbox/records.mjs';
 import { createIssues } from '../host/assistant/issues/index.mjs';
 import { createIssuesApi } from '../host/assistant/issues/api.mjs';
+import { createIssueAttachmentApi } from '../host/assistant/issues/attachments.mjs';
 import { NATIVE_METHODS, createNativeBridge } from '../host/native-bridge.mjs';
 import { createNativeBoard, NATIVE_BOARD_METHODS } from '../host/native-board.mjs';
 
@@ -13,14 +14,17 @@ const NOW = new Date(2026, 10, 7, 12).getTime();
 const fail = (code: string) => { throw Object.assign(new Error(code), { code }); };
 const raw = (id: string, extra: any = {}) => ({ id, title: `来信 ${id}`, text: `${id} 的原文`, from: 'Alice', url: `https://mail.test/${id}`, ...extra });
 
-function world(t: any, { onResume, onAssign, onDelete, projects, sessionState }: { onResume?: (issue: any) => unknown; onAssign?: (issue: any) => unknown; onDelete?: (issue: any) => unknown; projects?: any; sessionState?: (key: string) => string | null } = {}) {
+function world(t: any, { onResume, onAssign, onDelete, projects, sessionState, attachments }: { onResume?: (issue: any) => unknown; onAssign?: (issue: any) => unknown; onDelete?: (issue: any) => unknown; projects?: any; sessionState?: (key: string) => string | null; attachments?: any } = {}) {
   const issues = createIssues({ file: ':memory:', now: () => NOW, sessionState });
   t.after(() => issues.close());
   const api = createIssuesApi({ issues, onResume, onAssign, onDelete });
   const via = new Map([['lark', { id: 'lark-cli', via: 'lark' }]]);
   const collectors = () => ({ resolve: () => ({ outcome: 'success', collectors: [{ id: 'lark', name: '飞书', via: via.get('lark') }, { id: 'mail', name: '邮箱', via: null }] }) });
   const inbox = createInboxApi({ issues, collectors, now: () => NOW, forward: async () => ({ outcome: 'success' }), fill: async () => ({ outcome: 'success', added: 0 }) });
-  const board = createNativeBoard({ issues: (action: string, body: any) => api.execute(action, body), inbox: (action: string, body: any) => inbox.execute(action, body), projects, fail });
+  // DSH's attachment store is the one thing a test fakes: the plugin gives the board these three (host/dudu-plugin/index.mjs).
+  const issueAttachments = createIssueAttachmentApi({ issues, attachments: () => attachments });
+  const pictures = { available: () => issueAttachments.available(), save: (images: any[]) => issueAttachments.saveImages(images), stage: (id: number, refs: any[]) => issueAttachments.stage(id, refs) };
+  const board = createNativeBoard({ issues: (action: string, body: any) => api.execute(action, body), inbox: (action: string, body: any) => inbox.execute(action, body), projects, pictures, fail });
   const ingest = (connector: string, list: any[]) => issues.inbox.ingest(connector, normalizeRecords(list).records).added;
   const call = (method: string, params: any = {}) => board.dispatch(method, params);
   return { issues, api, inbox, call, ingest };
@@ -277,6 +281,38 @@ test('a new issue from the phone has a title and may have a description; one mad
   assert.deepEqual(handled.items.map((card: any) => card.title), ['补两张票据']);
   assert.equal(handled.items[0].issue.id, fromRecord.issue.id);
   assert.equal((await call('issue.create', { title: 'x', record: 4242 }) as any).outcome, 'needs_clarification');
+});
+
+test('a new issue from the phone may bring pictures: kept before the issue exists, shown by its first note, and one that cannot be kept leaves no issue', async (t) => {
+  const kept: string[] = [];
+  const store = { imageLimits: { maxImageBytes: 100 }, saveImage: async ({ data, mediaType, name }: any) => { kept.push(name); return { attachmentId: `a${kept.length}`, bytes: data.length, mediaType, name }; } };
+  const projects = { list: () => ({ outcome: 'success', projects: [] }) };
+  const { issues, call } = world(t, { attachments: store, projects });
+  const picture = (name: string, size = 10) => ({ name, mimeType: 'image/jpeg', dataBase64: Buffer.alloc(size, 7).toString('base64') });
+  const count = () => (issues.list({ tab: 'all', limit: 100 }) as any).items.length;
+  assert.equal(((await call('issue.options')) as any).attachments, true);
+
+  const made: any = await call('issue.create', { title: '带图', attachments: [picture('a.jpg'), picture('b.jpg', 50)] });
+  assert.equal(made.outcome, 'success');
+  assert.equal(made.attachmentsFailed, undefined);
+  assert.deepEqual(kept, ['a.jpg', 'b.jpg']);
+  const note = (issues.get(made.issue.id, { logLimit: 10 }) as any).log.find((entry: any) => entry.kind === 'note');
+  assert.equal(note.text, '');
+  assert.equal(note.data.attachments.length, 2);
+  for (const { id } of note.data.attachments) assert.equal(issues.attachment(made.issue.id, id).item.type, 'image');
+
+  // A picture DSH will not keep (its own limit), or one that is not a picture, is refused with the whole request: no issue is made and the phone still has its draft.
+  const before = count();
+  await assert.rejects(call('issue.create', { title: '太大', attachments: [picture('big.jpg', 500)] }), { code: 'INVALID_ATTACHMENT' });
+  for (const attachments of [[{ ...picture('x.txt'), mimeType: 'text/plain' }], [{ mimeType: 'image/png', dataBase64: 'not base64!' }], 'x', [5]]) {
+    await assert.rejects(call('issue.create', { title: '坏的', attachments }), { code: 'INVALID_ATTACHMENT' });
+  }
+  assert.equal(count(), before);
+
+  // Without a store in DSH the phone is not offered pictures, and asking for them anyway is refused.
+  const plain = world(t, { projects });
+  assert.equal(((await plain.call('issue.options')) as any).attachments, undefined);
+  await assert.rejects(plain.call('issue.create', { title: '无处可存', attachments: [picture('a.jpg')] }), { code: 'UPSTREAM_UNAVAILABLE' });
 });
 
 test('phone creation reads the real default and custom statuses and saves Desktop values without moving the workflow when assigning', async (t) => {

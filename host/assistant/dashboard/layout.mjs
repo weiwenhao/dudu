@@ -2,8 +2,8 @@
 //
 //   layout = { v: 3, widgets: [{ id, type, x, y, w, h }] }
 //
-// x and y count columns and rows from 0, w and h count cells. `w` is the string "fill" while Issues has never been resized: it then
-// takes every column, whatever the window; `h` is "fill" the same way: every row the window shows (a widget that fills its height is at
+// x and y count columns and rows from 0, w and h count cells. A `w` of "fill" takes every column, whatever the window;
+// `h` of "fill" takes every row the window shows (a widget that fills its height is at
 // row 0, as one that fills its width is at column 0). Only the page knows how many rows the window shows, so it says (`rows`, see below);
 // where it has not been said, a filling height counts FILL_ROWS rows. There is one widget per type and `id` is that type. Widgets are kept
 // in reading order (row, then column). The functions below take a layout that normalize() produced and return a new one; nothing is
@@ -11,7 +11,8 @@
 //
 // Version 1 was a grid of ten columns, version 2 had twenty and version 3 has fifteen, each with rows as tall as a column is wide. A layout of
 // an older version is read with every cell count scaled to fifteen columns (migrate(): version 1 by a half more, version 2 by a quarter fewer,
-// the same place and size in pixels), and the old default Issues (full width, six rows of version 1) is the new default (full width, full height).
+// the same place and size in pixels), and the old default Issues (full width, six rows of version 1) keeps filling its saved layout.
+// New/reset layouts instead use Issues at the left, with Inbox above Office at the right.
 //
 // The grid rules are gridstack's and are not written again here. Every push is done by its engine (the GridStackEngine class passed
 // in, see engine.mjs), driven the way GridStack itself drives it, so the plugin process puts widgets where the page does. Two things
@@ -50,8 +51,15 @@ export const rowsOf = (value) => (Number.isInteger(value) && value >= 1 && value
 const fillHeight = (declaration, rows) => Math.max(declaration?.min.h ?? 1, rowsOf(rows));
 
 export function defaultLayout() {
-  const { id, size } = BUILT_IN_WIDGETS.find((widget) => widget.id === 'issues');
-  return { v: VERSION, widgets: [entry(id, 0, 0, size.w, size.h)] };
+  const sizes = new Map(BUILT_IN_WIDGETS.map(({ id, size }) => [id, size]));
+  const issues = sizes.get('issues');
+  const collector = sizes.get('collector');
+  const office = sizes.get('office');
+  return { v: VERSION, widgets: [
+    entry('issues', 0, 0, issues.w, issues.h),
+    entry('collector', issues.w, 0, collector.w, collector.h),
+    entry('office', issues.w, collector.h, office.w, office.h),
+  ] };
 }
 
 const sameLayout = (a, b) => JSON.stringify(a.widgets) === JSON.stringify(b.widgets);
@@ -359,7 +367,7 @@ export const remove = guarded((layout, request, { known }) => {
   return success(layout.widgets.filter((item) => item.type !== type).map((item) => ({ ...item })), { kind: 'remove', type });
 });
 
-/** reset: back to the default layout, a lone Issues that fills. */
+/** reset: Issues on the left, Inbox above Office on the right. */
 export function reset(layout) {
   const fresh = defaultLayout();
   return sameLayout(layout, fresh) ? noOp(layout, 'The dashboard is already the default.') : success(fresh.widgets, { kind: 'reset' });

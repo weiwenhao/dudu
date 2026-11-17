@@ -42,7 +42,7 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
     // This loader VM has no rendered conversation; provide only the observer lifecycle it installs.
     MutationObserver: class { observe() {} disconnect() {} },
     requestAnimationFrame: () => 1, cancelAnimationFrame() {},
-    console, clearTimeout, clearInterval, URL,
+    console, clearTimeout, clearInterval, queueMicrotask, URL,
     // The grid library reads the browser's identity when it loads.
     navigator: { userAgent: 'node', platform: 'node' },
     // The shell's own timers (navigation reporting retries) must not keep the test process alive.
@@ -61,11 +61,18 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
   assert.deepEqual(asked.filter((name) => !(name in seeds)), []);
 
   // Apply the shell the way DSH does and look at what the panel registers in the `main` slot.
-  let main: (() => { type: unknown; props: { request: unknown; logo?: string; actions?: { openSession?: (target: unknown) => Promise<void>; pickProjectDirectory?: () => Promise<string | null> } } }) | undefined;
+  let main: (() => { type: unknown; props: { request: unknown; logo?: string; actions?: {
+    openSession?: (target: unknown) => Promise<void>;
+    retainSession?: (target: unknown, options?: unknown) => Promise<any>;
+    pickProjectDirectory?: () => Promise<string | null>;
+  } } }) | undefined;
   const disposers: Array<() => void> = [];
   const nativeCalls: string[] = [];
   const opened: string[] = [];
   let restored = false;
+  let sessionList = { ids: ['cached'], byId: { cached: { id: 'cached' } } as Record<string, { id: string }> };
+  let refreshSessions = async () => {};
+  let retainSession = (_id: string, _options: unknown): any => { throw new Error('Unexpected retain'); };
   let directoryPicks = 0;
   const nativeLeading = {
     registrant: 'dsh-sidebar', locale: 'sidebar',
@@ -91,6 +98,18 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
   const ctx: Record<string, unknown> = {
     locale: { getLocale: () => ({ active: 'en' }), subscribe: () => () => {} },
     effect: (work: () => unknown) => { const dispose = work(); if (typeof dispose === 'function') disposers.push(dispose as () => void); },
+    inject: (services: string[], work: (child: unknown) => void) => {
+      assert.deepEqual([...services], ['sidebarRight']);
+      work({
+        ...ctx,
+        layout: { panelInfo: { getSnapshot: () => ({ activePanelId: 'dudu' }) } },
+        uiWorkspace: { openSession() {} },
+        sidebarRight: {
+          mounted: { getSnapshot: () => undefined, subscribe: () => () => {} },
+          openResource() {}, openTab() {},
+        },
+      });
+    },
     slots: {
       inject: (_name: string, work: () => unknown) => { const dispose = work(); if (typeof dispose === 'function') disposers.push(dispose as () => void); return dispose; },
       register: (options: { name: string }, component: typeof main) => {
@@ -112,7 +131,7 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
     plugin: (child: { name?: string; apply: (ctx: unknown) => void }) => {
       if (child.name === 'dudu-sessions') child.apply({
         ...ctx,
-        sessions: { list: { getSnapshot: () => ({ ids: ['cached'], byId: { cached: { id: 'cached' } } }) } },
+        sessions: { list: { getSnapshot: () => sessionList }, refresh: () => refreshSessions(), retain: (id: string, options: unknown) => retainSession(id, options) },
         layout: { selectPanel() {} },
         uiWorkspace: {
           openSession: (id: string) => { assert.ok(restored, 'cached history does not lift the archived-session gate'); opened.push(id); },
@@ -146,6 +165,39 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
     sandbox.fetch = async () => ({ ok: true, json: async () => ({ outcome: 'error', message: 'Restore refused' }) });
     await assert.rejects(page.props.actions!.openSession!({ sessionId: 'cached' }), /Restore refused/);
     assert.deepEqual(opened, ['cached'], 'a refused restore never opens a composer that cannot send');
+    // Home is independent of DSH's initial catalog. A cold entry must await discovery, not
+    // synchronously read/repair its complete native transcript before the first history page.
+    const initialCatalog = Promise.withResolvers<void>();
+    const history = Promise.withResolvers<void>();
+    const stages: string[] = [];
+    let refreshes = 0;
+    let retains = 0;
+    let releases = 0;
+    sessionList = { ids: [], byId: {} };
+    refreshSessions = async () => {
+      refreshes++;
+      await initialCatalog.promise;
+      sessionList = { ids: ['cold'], byId: { cold: { id: 'cold' } } };
+    };
+    const reference = { sessionId: 'cold', ready: history.promise, release: () => { releases++; } };
+    retainSession = (id, options) => {
+      assert.equal(id, 'cold');
+      assert.deepEqual(JSON.parse(JSON.stringify(options)), { source: 'duduIssuePreview' });
+      retains++;
+      return reference;
+    };
+    sandbox.fetch = async (path: string) => { assert.fail(`Initial discovery must not synchronize native history: ${path}`); };
+    const opening = page.props.actions!.retainSession!({ sessionId: 'cold' }, { onStage: (stage: string) => stages.push(stage) });
+    assert.equal(refreshes, 1);
+    assert.equal(retains, 0);
+    initialCatalog.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(retains, 1);
+    history.resolve();
+    assert.equal(await opening, reference);
+    assert.deepEqual(stages, ['catalog', 'history']);
+    assert.equal(releases, 0);
+    reference.release();
     assert.ok(styles.some((css) => css.includes('.dudu ')), 'the interface\'s stylesheet is injected');
     // shell.leading is single: the plugin must keep the host's component, injection and locale when composing Home with the native controls.
     const leading = registrations.find(({ options }) => options.name === 'shell.leading');

@@ -27,3 +27,21 @@ export function keepVisible(selected, ids) {
 export function chooseConversation(entries, current = null) {
   return current ?? entries.find((entry) => entry.issue ? Boolean(entry.issue.session) : Boolean(entry.sessionId))?.id ?? null;
 }
+
+/** The conversation the person had open when the panel was left (the expand button opens DSH's own page, which closes the panel), if it is still in the list and can be opened; else the usual choice. */
+export function pickConversation(entries, remembered = null) {
+  const kept = remembered == null ? undefined : entries.find((entry) => entry.id === remembered);
+  return kept && (kept.issue ? Boolean(kept.issue.session) : Boolean(kept.sessionId)) ? kept.id : chooseConversation(entries);
+}
+
+const REMEMBERED = 'dudu.conversations.open';
+export function rememberedConversation(scope) {
+  try { return JSON.parse(localStorage.getItem(REMEMBERED) ?? '{}')[scope] ?? null; } catch { return null; }
+}
+export function rememberConversation(scope, id) {
+  try {
+    const all = JSON.parse(localStorage.getItem(REMEMBERED) ?? '{}');
+    if (all[scope] === id) return;
+    localStorage.setItem(REMEMBERED, JSON.stringify({ ...all, [scope]: id }));
+  } catch { /* private window or blocked storage: it just is not remembered */ }
+}

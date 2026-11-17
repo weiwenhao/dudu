@@ -22,6 +22,7 @@ struct CollectorView: View {
     var quickSheet: AssistantQuickSheetState? = nil
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.conversationIsCovered) private var isCovered
     @State private var opened: CollectorRecord?
     @State private var picking: PickRequest?
     @State private var making: NewIssueDraft?
@@ -60,7 +61,10 @@ struct CollectorView: View {
         .animation(.easeOut(duration: 0.2), value: model.isSelecting)
         .accessibilityIdentifier("collector.page")
         // Read when the tab is shown and when the computer connects (a read before that is skipped, and the page would stay empty until it was pulled).
-        .task(id: CollectorLoad(tab: model.tab, connected: store.status == .connected)) { await model.refresh(using: store) }
+        .task(id: CollectorLoad(tab: model.tab, connected: store.status == .connected && !isCovered)) {
+            guard store.status == .connected, !isCovered else { return }
+            await model.refresh(using: store)
+        }
         .sheet(item: $opened) { record in
             CollectorRecordSheet(record: record, tab: model.tab, model: model, board: board, store: store, onOpenIssue: onOpenIssue)
         }

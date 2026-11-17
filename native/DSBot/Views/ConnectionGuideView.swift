@@ -31,20 +31,23 @@ struct ConnectionGuideView: View {
                         DuduLogo(size: 76)
 
                         VStack(spacing: 12) {
-                            Text(L10n.text("连接电脑上的 DSH"))
+                            Text(L10n.text("连接嘟嘟"))
                                 .font(.system(size: 29, weight: .medium))
                                 .tracking(-0.7)
                                 .foregroundStyle(DSBotStyle.ink)
                                 .multilineTextAlignment(.center)
 
-                            Text(L10n.text("在电脑的「设置 → 手机控制」中生成配对码"))
+                            Text(L10n.text("打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码"))
                                 .font(.system(size: 14))
                                 .foregroundStyle(DSBotStyle.muted)
                                 .multilineTextAlignment(.center)
+                                .frame(maxWidth: .infinity)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .opacity(store.computers.isEmpty || needsNewPairing ? 1 : 0)
                                 .accessibilityHidden(!store.computers.isEmpty && !needsNewPairing)
                         }
                     }
+                    .frame(maxWidth: 380)
 
                     VStack(alignment: .leading, spacing: 20) {
                         if let computer = store.activeComputer ?? store.computers.first {

@@ -1,9 +1,10 @@
+import { Buffer } from 'node:buffer';
 import { appendFile, chmod, mkdir, rename, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const MAX_BYTES = 256 * 1024;
 const MAX_PENDING = 128;
-const EVENTS = new Set(['session.index.failure', 'session.preview.read']);
+const EVENTS = new Set(['session.index.failure', 'session.preview.read', 'session.activity.list', 'session.activity.read']);
 const PROVIDERS = new Set(['claude', 'codex', 'dsh']);
 
 function reasonOf(error) {

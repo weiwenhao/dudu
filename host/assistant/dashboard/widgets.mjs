@@ -5,7 +5,7 @@
 //   { id, label, description, min: { w, h }, size: { w: number | 'fill', h: number | 'fill' }, needs: [...] }
 // `min` is the smallest size (columns x rows) whose content still reads; `size` is the recommended size that "add" uses, never
 // smaller than `min`; 'fill' as a width means every column of the dashboard and 'fill' as a height every row the window shows, which is
-// how Issues starts: one screen, no scrolling. `needs` is what the widget reads (the data hooks of 3.8).
+// how Issues starts in height, beside Inbox and Office. `needs` is what the widget reads (the data hooks of 3.8).
 //
 // The grid is fifteen columns, and as many rows as the window holds, each about as tall as a column is wide (2026-11-01: it was ten, which
 // on a large window made every cell enormous, then twenty, which the owner found too dense). A size counts those cells: a widget has the
@@ -32,9 +32,9 @@ const declare = (id, label, description, min, size, needs) => Object.freeze({
 
 // The table in 4.1. The names are the doc's; the one-line descriptions are for the add list and are NEW wording for the owner to review.
 export const BUILT_IN_WIDGETS = Object.freeze([
-  declare('issues', 'Issues', 'Every issue, as a list or a board', [6, 3], [FILL, FILL], ['issues']), // NEW description
-  declare('office', 'Office', 'Each active issue as someone at a desk', [5, 3], [5, 3], ['issues']), // NEW description
-  declare('collector', 'Inbox', 'What the connectors collected, to share, make issues of or ignore', [4, 3], [6, 5], ['inputs']), // NEW description (2026-11-05: 6 columns, 5 rows is the owner's size)
+  declare('issues', 'Issues', 'Every issue, as a list or a board', [6, 3], [10, FILL], ['issues']), // NEW description
+  declare('office', 'Office', 'Each active issue as someone at a desk', [5, 3], [5, 4], ['issues']), // NEW description
+  declare('collector', 'Inbox', 'What the connectors collected, to share, make issues of or ignore', [4, 3], [5, 5], ['inputs']), // NEW description
 ]);
 
 const refuse = (reason) => ({ ok: false, reason });

@@ -55,7 +55,7 @@ struct SettingsView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.light, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .topBarTrailing) {
                 SheetCloseButton(label: L10n.text("关闭设置")) {
                     refreshCatalogAfterEmbeddedSettings()
                     dismiss()

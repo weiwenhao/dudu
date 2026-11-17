@@ -130,6 +130,7 @@ export function NewIssueDialog({ open, onOpenChange, onCreate, request, preset =
         {/* A long description (a Collector record's whole text) scrolls inside its own box: the window stays within the screen, with the title, the values and Create issue in view. */}
         <RichText className="max-h-[min(50dvh,420px)] min-h-24 overflow-y-auto [&_.dudu-rich]:min-h-24" value={brief} onChange={setBrief} onSubmit={create} label={T.newIssue.briefPlaceholder} placeholder={T.newIssue.briefPlaceholder} />
         {drafts.length > 0 && <AttachmentDrafts drafts={drafts} disabled={busy} onRemove={removeDraft} />}
+        {problem && <p className="text-xs text-danger-foreground" role="alert">{problem}</p>}
         <div className="flex flex-wrap items-center gap-1.5" data-new-issue-values="">
           <StatusMenu status={chosenStatus} onSelect={setStatus}>
             <button type="button" className={chip} aria-label={statusLabel(chosenStatus)}><StatusIcon status={chosenStatus} /><span className="truncate">{statusLabel(chosenStatus)}</span></button>
@@ -171,11 +172,11 @@ export function NewIssueDialog({ open, onOpenChange, onCreate, request, preset =
                 </div>}
             </PopoverContent>
           </Popover>}
-        </div>
-        {problem && <p className="text-xs text-danger-foreground" role="alert">{problem}</p>}
-        <div className="flex items-center justify-end gap-3">
-          <DialogClose asChild><Button variant="ghost" size="sm">{T.newIssue.cancel}</Button></DialogClose>
-          <Button size="sm" disabled={!title.trim() || busy} aria-busy={busy || undefined} onClick={create}>{busy && <LoaderCircle className="animate-spin" />}{T.newIssue.create}</Button>
+          {/* Cancel and Create issue end the same row as the values (owner, 2026-11-17: the values and the buttons did not line up): they stay on its last line when there is room and take a line of their own, at the right end, when there is not. */}
+          <div className="ml-auto flex items-center gap-3">
+            <DialogClose asChild><Button variant="ghost" size="sm">{T.newIssue.cancel}</Button></DialogClose>
+            <Button size="sm" disabled={!title.trim() || busy} aria-busy={busy || undefined} onClick={create}>{busy && <LoaderCircle className="animate-spin" />}{T.newIssue.create}</Button>
+          </div>
         </div>
         {customDue && <DueDateDialog dueAt={dueAt} onClose={() => setCustomDue(false)} onSelect={setDueAt} />}
         <ParentDialog request={request} open={choosingParent} onOpenChange={setChoosingParent} onSelect={(issue) => setParent({ id: issue.id, ref: issue.ref, title: issue.title, status: issue.status })} />

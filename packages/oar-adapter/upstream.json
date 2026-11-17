@@ -134,6 +134,32 @@
           "after": "5b75782f869e97c7cc7e9376008b600a55edba3edc82439c997c16a70161bd61"
         }
       }
+    },
+    {
+      "file": "patches/crash-recovery.patch",
+      "purpose": "Record native process identities and reclaim only verified orphans after a host crash before Claude resume.",
+      "files": {
+        "dist/runtimes/claude/launch.js": {
+          "before": "59a137311e3f735190868651ead66899408fff272d97c649069a0b5aadad2de6",
+          "after": "79b83ebc11aa83031dd1eaf48051b2b432fa255a6762a147a89ec1794f60ce8e"
+        },
+        "dist/shared/executable/process-recovery.d.ts": {
+          "before": null,
+          "after": "5f0b553182fc85b1d15c9423594687b2d16014d9de6e9141caaac33897c7ec07"
+        },
+        "dist/shared/executable/process-recovery.js": {
+          "before": null,
+          "after": "d2fcf8655a21c95f65f75ef34b0a5b1da9071abec51233fb97c6dd36d8da737c"
+        },
+        "dist/shared/executable/process.d.ts": {
+          "before": "9b79dc8a1435c039d5a2e497655314f38ae25f5b72a7cc6d17046dbdfe718f29",
+          "after": "50cbb6b474cb83394e32efe5230e9b09099beacef6f627e7e8207da925551ffb"
+        },
+        "dist/shared/executable/process.js": {
+          "before": "0b7ace01f6890a83d837b5c540f5154c890ffa438d81b91efe6206ec6df4384f",
+          "after": "a14879919392cb9a8720b7ea0ce2a174b81edc8d84fbb5262f12c2bacdc36b27"
+        }
+      }
     }
   ]
 }

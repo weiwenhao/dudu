@@ -489,6 +489,19 @@ enum DSBotFailure: Error, LocalizedError, Sendable, Equatable {
         }
     }
 
+    /// These failures leave an identified message waiting for the existing reconnect lifecycle.
+    /// A server rejection still fails normally and restores the draft.
+    var isConnectionInterruption: Bool {
+        switch self {
+        case .connectionFailed, .routesUnavailable, .timedOut, .resultUnknown, .disconnected:
+            return true
+        case .remote("DISCONNECTED"):
+            return true
+        default:
+            return false
+        }
+    }
+
     var logCode: String {
         switch self {
         case .invalidLink: return "INVALID_LINK"

@@ -233,6 +233,33 @@ test('a reused conversation is checked against the model it recorded, not the de
   } finally { await rm(folder, { recursive: true, force: true }); }
 });
 
+test('a task that goes into an existing conversation and names no model goes in on the model the conversation has, and one that names a model is still checked', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-task-host-'));
+  const task: any = { ...base(), project: { name: 'dudu', path: folder }, target: { mode: 'existing', sessionId: 's' }, sessionId: null };
+  let on = 'other';
+  const host = createTaskHost({
+    registry: { list: () => [{ id: 'w', title: 'dudu', path: folder, sessionIds: ['s'] }] },
+    controller: {}, agents: { get: () => ({ options: { provider: 'claude', model: 'the-default' } }) }, modelOf: () => ({ provider: 'claude', model: on }),
+    dsh: { models: async () => ({ groups: [{ id: 'claude', models: [{ id: 'default' }, { id: 'other' }] }] }), prompt: async () => {}, workspaceOf: async () => 'w', unarchive: async () => {} },
+  });
+  const records: any[] = [];
+  const checkpoint = async (_id: string, record: any) => { records.push(record); };
+  try {
+    await host.validate(task);
+    await host.deliver(task, { id: 'run' }, checkpoint);
+    on = 'default';
+    await host.deliver(task, { id: 'run' }, checkpoint);
+    assert.deepEqual(records.map((record) => record.model), ['other', 'default'], 'the record says the model the conversation really has, whichever it is when the time comes');
+    on = 'other';
+    await assert.rejects(host.deliver({ ...task, model: 'default' }, { id: 'run' }, checkpoint), (error: any) => error.beforeSend && error.code === 'session_model_mismatch');
+    on = 'one-the-plugin-does-not-list';
+    await assert.rejects(host.deliver(task, { id: 'run' }, checkpoint), (error: any) => error.beforeSend && error.code === 'session_model_mismatch');
+    on = 'other';
+    await assert.rejects(host.deliver({ ...task, target: { mode: 'reuse' }, sessionId: 's' }, { id: 'run' }, checkpoint), (error: any) => error.code === 'session_model_mismatch',
+      'a conversation the task made itself is still checked against the model the task chose');
+  } finally { await rm(folder, { recursive: true, force: true }); }
+});
+
 test('opening task creation does not wait for the DSH conversation catalog', async () => {
   let scans = 0;
   const host = createTaskHost({

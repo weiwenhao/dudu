@@ -11,7 +11,12 @@ const NEEDS_YOU_COLORS = {
   blue: '亮蓝', violet: '电光紫', orange: '鲜橙', rose: '玫红', green: '墨绿', graphite: '石墨黑',
 };
 
+// Current-conversation find proposal approved by the owner, 2026-11-17.
+// Keep the reviewed Chinese wording in both locales until English wording is reviewed.
+const CONVERSATION_FIND = { label: '搜索当前会话', empty: '无匹配', previous: '上一处', next: '下一处' };
+
 const en = {
+  conversationFind: CONVERSATION_FIND,
   needsYouColors: NEEDS_YOU_COLORS,
   // Scheduled-task modal design approved by the owner, 2026-11-10.
   // NEW: targets.new/existing, kinds.weekly/monthly/interval/cron, delivery.delivering/failed/uncertain await review (docs/issues-ui-wording.md).
@@ -27,6 +32,13 @@ const en = {
     linked: 'Linked conversation', unsaved: 'You have unsaved changes', discard: 'Discard', save: 'Save changes', more: 'Load more',
     delivery: { delivered: 'Delivered', delivering: 'Delivering', failed: 'Delivery failed', uncertain: 'Needs confirmation' },
     runFailed: 'Run failed', // NEW
+  },
+  // The scheduled tasks of a conversation, in its header (owner, 2026-11-17; `.local/designs/session-schedules-2026-11-17/`). count ("{N} 个定时任务"), list and confirmDelete (DSH's own "Click again to confirm"
+  // of its stop button, for delete) were shown to the owner with the design and approved on 2026-11-17 ("就按你定的来吧"). copy, copied and noOutput are the words of DSH's own terminal block. Everything else
+  // in the control is the tasks window's words (T.tasks).
+  sessionTasks: {
+    count: (n) => (n === 1 ? '1 scheduled task' : `${n} scheduled tasks`), list: 'Scheduled tasks',
+    copy: 'Copy', copied: 'Copied', noOutput: '(no output)', confirmDelete: 'Click again to confirm delete',
   },
   brand: 'Dudu',
   issues: 'Issues',
@@ -390,6 +402,7 @@ const en = {
 };
 
 const zh = {
+  conversationFind: CONVERSATION_FIND,
   needsYouColors: NEEDS_YOU_COLORS,
   tasks: {
     title: '任务', search: '搜索任务', create: '新建任务', manual: '手动创建', inConversation: '在对话中创建',
@@ -402,6 +415,11 @@ const zh = {
     linked: '关联会话', unsaved: '有未保存的修改', discard: '放弃', save: '保存修改', more: '加载更多',
     delivery: { delivered: '已投递', delivering: '正在投递', failed: '投递失败', uncertain: '待确认' },
     runFailed: '运行失败', // NEW (2026-11-11): 待主人审核
+  },
+  // 对话头部的定时任务（主人，2026-11-17）。count（“{N} 个定时任务”）、list、confirmDelete（照 DSH 停止任务的“再次点击确认停止”）连同设计稿给主人看过，2026-11-17 主人说“就按你定的来吧”；copy、copied、noOutput 是 DSH 终端块自己的字。其余都是任务窗口里的字（T.tasks）。
+  sessionTasks: {
+    count: (n) => `${n} 个定时任务`, list: '定时任务',
+    copy: '复制', copied: '已复制', noOutput: '（无输出）', confirmDelete: '再次点击确认删除',
   },
   brand: '嘟嘟', issues: '看板',
   tabs: { active: '进行中', backlog: '待规划', all: '全部事项' },

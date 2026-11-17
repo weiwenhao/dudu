@@ -19,19 +19,11 @@ struct ConversationEmptyState: View {
     }
 }
 
-/// The spinner and its caption, centred where the history will be, while the conversation (or the first one
-/// after connecting) is on its way.
+/// The approved loading state keeps only a spinner where the history will appear.
 struct ConversationLoadingState: View {
     var body: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-                .tint(DSBotStyle.muted)
-            Text(L10n.text("正在连接…"))
-                .font(.system(size: 14))
-                .foregroundStyle(DSBotStyle.muted)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(L10n.text("正在连接"))
-        .accessibilityIdentifier("chat.loading")
+        DSBotLoadingRing()
+            .accessibilityLabel(L10n.text("正在连接"))
+            .accessibilityIdentifier("chat.loading")
     }
 }

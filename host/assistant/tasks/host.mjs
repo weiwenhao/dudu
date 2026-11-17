@@ -31,9 +31,16 @@ export function createTaskHost({ dsh, registry, controller, agents, access = () 
       if (resolved?.error) reject('invalid_session');
       agent = resolved?.agent ?? resolved;
     }
-    const model = await chosen(task);
+    const catalog = await read(dsh.models());
+    const model = modelFor(task.agent, catalog, task.model ?? undefined) ?? reject('provider_unavailable');
     // Existing conversations keep their model and permissions. A timer never changes a busy conversation's configuration.
     const current = modelOf(agent);
+    // A task that goes into an existing conversation and names no model of its own (the cron tools Claude is given make such tasks, providers/cron-tools.mjs) goes in on the model the conversation has: asking for the
+    // provider's default would refuse it whenever the conversation is on another model, which the owner changes at will. A model of the task's own is still checked.
+    if (task.model == null && task.target?.mode === 'existing') {
+      const own = current?.model ? modelFor(task.agent, catalog, current.model) : null;
+      if (own && own.provider === current.provider) return { project, model: own };
+    }
     if (current?.provider !== model.provider || current?.model !== model.model) reject('session_model_mismatch');
     return { project, model };
   }
@@ -75,9 +82,10 @@ export function createTaskHost({ dsh, registry, controller, agents, access = () 
       let permission;
       try {
         await workspace(task);
-        const model = await chosen(task);
+        let model = await chosen(task);
         if (sessionId) {
-          await existing(task, sessionId);
+          // The conversation's own model when the task names none (see `existing`): that is what the record keeps.
+          ({ model } = await existing(task, sessionId));
           await dsh.unarchive(sessionId);
         } else {
           ({ sessionId } = await dsh.createSession({ cwd: task.project.path, title: task.title, workspaceTitle: task.project.name }));

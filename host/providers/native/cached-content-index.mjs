@@ -4,10 +4,15 @@ import { createContentIndex } from './content-index.mjs';
 import { contentCacheWorker } from './content-cache-worker.mjs';
 
 export function createCachedContentIndex({ file } = {}) {
-  if (!file) return Object.assign(createContentIndex(), {
-    ready: Promise.resolve(), snapshot: async () => null,
-    saveSnapshot: async () => {}, flush: async () => {}, close: async () => {},
-  });
+  if (!file) {
+    const metadata = new Map();
+    return Object.assign(createContentIndex(), {
+      ready: Promise.resolve(), snapshot: async () => null,
+      saveSnapshot: async () => {}, flush: async () => {}, close: async () => {},
+      metadata: async (key) => metadata.get(key) ?? null,
+      saveMetadata: async (key, value) => { metadata.set(key, value); },
+    });
+  }
   const worker = new Worker(contentCacheWorker, { workerData: { file } });
   const stamps = new Map();
   const messageStamps = new Map();
@@ -78,6 +83,8 @@ export function createCachedContentIndex({ file } = {}) {
     snippet: (_key, hit) => hit.text,
     async snapshot() { await ready; return request('snapshot'); },
     saveSnapshot: (value) => request('saveSnapshot', value),
+    async metadata(key) { await ready; return request('metadata', { key }); },
+    saveMetadata: (key, value) => request('saveMetadata', { key, value }),
     flush: () => request('flush'),
     async close() {
       if (closed) return;

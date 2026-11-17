@@ -14,6 +14,6 @@ const files = named.length ? named : readdirSync(join(root, 'tests', 'e2e')).fil
 // Each file starts a DSH and a Chrome of its own. Keep them serial on the owner's machine (--test-concurrency=N overrides).
 const flags = process.argv.slice(2).filter((argument) => argument.startsWith('-'));
 const result = spawnSync('node', ['--experimental-strip-types', '--test', ...(flags.some((flag) => flag.startsWith('--test-concurrency')) ? [] : ['--test-concurrency=1']), ...flags, ...files], {
-  cwd: root, stdio: 'inherit', env: { ...process.env, DUDU_E2E_TGZ: join(root, '.local', 'release', `dudu-${version}.tgz`) },
+  cwd: root, stdio: 'inherit', env: { ...process.env, DUDU_E2E_TGZ: join(root, '.local', 'release', `dsh-dudu-${version}.tgz`) },
 });
 process.exit(result.status ?? 1);

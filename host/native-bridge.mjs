@@ -9,7 +9,7 @@ import { createNativeFiles } from './native-files.mjs';
 import { createNativeSessionActivity, NATIVE_SESSION_ACTIVITY_METHODS } from './native-session-activity.mjs';
 import { sessionChildren } from './dsh-subagents.mjs';
 import { createNativePages, NATIVE_PAGE_METHODS } from './native-pages.mjs';
-import { imageFromBlock, MAX_IMAGE_BYTES } from './native-images.mjs';
+import { imageFromBlock } from './native-images.mjs';
 import { videoFromBlock } from './native-videos.mjs';
 import { markdownImagePath } from './native-markdown-images.mjs';
 import { mapLimit } from './providers/async.mjs';
@@ -26,7 +26,9 @@ import {
   performanceEvent, toolPayload, toolReference, turnPerformance, validateAnswers,
 } from './native-conversation.mjs';
 
-const MAX_IMAGES = 3;
+// Pictures that one message of the phone may carry (owner, 2026-11-17: nine, and no limit on their size; the 3 pictures, 10 MB each and 20 MB in all that stood here were never asked for).
+const MAX_IMAGES = 9;
+// How much of the pictures of a conversation the bridge keeps in memory at once (a cache: one that is not kept is read from DSH's store when asked for). Not a limit on what can be sent or shown.
 const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_ENTRIES = 400;
 const MAX_ENTRY_TEXT = 60_000;
@@ -35,7 +37,6 @@ const TOOL_DETAIL_MAX = 160;
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_FILES = 5;
 const MAX_COMMAND_ARGUMENT_CHARS = 4000;
-const MAX_MESSAGE_BYTES = 28 * 1024 * 1024;
 const MAX_MESSAGES = 100;
 const MAX_HISTORY_CHARS = 250_000;
 const MAX_TRACE = 200;
@@ -43,6 +44,9 @@ const MAX_STREAM_CHARS = 200_000;
 const MAX_STREAM_BLOCKS = 128;
 const MAX_WINDOW_CHARS = 100_000;
 const SESSION_ROWS_CACHE_MS = 1_000;
+// How long a request waits for DSH's list of all sessions when the bridge already holds an older one. Under load that list took 12 to 27 seconds
+// (2026-11-17, from the phone's own log: opening a conversation waited 16 s, the sidebar 27 s), and every request waited for all of it.
+const SESSION_ROWS_WAIT_MS = 2_500;
 const WORKSPACE_CACHE_MS = 5_000;
 const WATCH_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PRESET_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -1461,7 +1465,7 @@ function librarySchedule(task) {
 // Canonical base64 only: the same bytes must come back out of a decode/encode round trip.
 // The alphabet check is a flat character class; a nested-group regex overflows V8's stack on
 // multi-megabyte strings.
-function decodeBase64(value, maxBytes) {
+function decodeBase64(value, maxBytes = Infinity) {
   if (typeof value !== 'string' || !value || value.length > Math.ceil(maxBytes / 3) * 4
     || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
     fail('INVALID_ATTACHMENT');
@@ -1482,7 +1486,6 @@ const RECEIPT_TOKEN = /^[\x21-\x7e]{1,512}$/;
 function validateAttachments(input) {
   if (input === undefined) return [];
   if (!Array.isArray(input) || input.length > MAX_IMAGES + MAX_FILES) fail('INVALID_ATTACHMENT');
-  let totalBytes = 0;
   let images = 0;
   let files = 0;
   const attachments = [];
@@ -1504,9 +1507,7 @@ function validateAttachments(input) {
     }
     images += 1;
     if (images > MAX_IMAGES) fail('INVALID_ATTACHMENT');
-    const bytes = decodeBase64(item.dataBase64, MAX_IMAGE_BYTES);
-    totalBytes += bytes.length;
-    if (totalBytes > MAX_TOTAL_IMAGE_BYTES) fail('LIMIT_EXCEEDED');
+    decodeBase64(item.dataBase64);
     attachments.push({
       type: 'image',
       mediaType: item.mimeType,
@@ -1685,8 +1686,14 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
   async function loadSessionRows({ fresh = false } = {}) {
     if (!fresh && sessionRowsCache
       && Date.now() - sessionRowsCacheAt < SESSION_ROWS_CACHE_MS) return sessionRowsCache;
-    if (!fresh && sessionRowsFlight) return sessionRowsFlight;
-    return requestSessionRows();
+    const pending = !fresh && sessionRowsFlight ? sessionRowsFlight : requestSessionRows();
+    if (fresh || !sessionRowsCache) return pending;
+    // An older list exists: wait for the new one a moment, then answer with the older (the new one is kept when it comes).
+    const older = sessionRowsCache;
+    pending.catch(() => {});
+    let timer;
+    try { return await Promise.race([pending, new Promise((done) => { timer = setTimeout(() => done(older), SESSION_ROWS_WAIT_MS); timer.unref?.(); })]); }
+    finally { clearTimeout(timer); }
   }
 
   async function loadWorkspaces() {
@@ -1758,6 +1765,13 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
   }
 
   async function findSessionRow(sessionId, { fresh = false, enrich = true } = {}) {
+    // One row is wanted (the header of a conversation that is opening, a file's session): a row the bridge already holds answers at once, and the list is
+    // asked for again in the background when it is older than the cache allows.
+    const held = !fresh ? sessionRowsCache?.find((item) => (item.sessionId ?? item.id) === sessionId) : undefined;
+    if (held) {
+      if (!sessionRowsFlight && Date.now() - sessionRowsCacheAt >= SESSION_ROWS_CACHE_MS) requestSessionRows().catch(() => {});
+      return enrich ? enrichSessionRow(held) : held;
+    }
     const rows = await loadSessionRows({ fresh });
     const row = rows.find((item) => (item.sessionId ?? item.id) === sessionId);
     return row && enrich ? enrichSessionRow(row) : row;
@@ -1770,7 +1784,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
   });
   const pageBridge = pages ?? createNativePages({ rpc, files });
   // The board and the Collector: the plugin's own issues and inbox, asked through the commands the desktop interface sends (`board` gives the two).
-  const boardBridge = createNativeBoard({ issues: board?.issues, inbox: board?.inbox, projects: board?.projects, getNeedsYouColor: board?.getNeedsYouColor, home: board?.home, fail });
+  const boardBridge = createNativeBoard({ issues: board?.issues, inbox: board?.inbox, projects: board?.projects, getNeedsYouColor: board?.getNeedsYouColor, home: board?.home, pictures: board?.pictures, fail });
   // 嘟嘟's own settings, drawn by the app: the pages the web view used to show, asked through the same list of actions (phone-pages.mjs).
   const settingsBridge = createNativeSettings({ call: (action, body) => (duduPages?.allowed(action) ? duduPages.call(action, body) : { status: 404, body: {} }) });
   const activityBridge = createNativeSessionActivity({
@@ -2056,7 +2070,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
       assertCurrent();
       const mediaType = file.mediaType?.split(';')[0].trim().toLowerCase();
       if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(mediaType)) fail('INVALID_ATTACHMENT');
-      decodeBase64(file.dataBase64, MAX_IMAGE_BYTES);
+      decodeBase64(file.dataBase64);
       return { mediaType, data: file.dataBase64 };
     }
     const attachmentId = text(params.attachmentId, 512);
@@ -2090,7 +2104,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
         || stored.attachment.mediaType !== image.mediaType) fail('INVALID_ATTACHMENT');
       image = { mediaType: stored.attachment.mediaType, data: stored.data };
     }
-    decodeBase64(image.data, MAX_IMAGE_BYTES);
+    decodeBase64(image.data);
     return image;
   }
 
@@ -2465,7 +2479,13 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
             mode: 'queue',
             content,
           };
-          if (Buffer.byteLength(JSON.stringify(request), 'utf8') > MAX_MESSAGE_BYTES) fail('LIMIT_EXCEEDED');
+          // Opening history does not restore an archived session. DSH accepts
+          // its prompt into the inbox, then rejects the claimed step as blocked
+          // without a user/message. Restore before handing over the input, as
+          // the issue session's explicit send does; a failed restore must fail
+          // the send while the phone still has its draft.
+          await remote.call('workspace/unarchiveSession', { sessionId });
+          forgetWorkspaces();
           await remote.call('session/prompt', request);
           return { requestId: request.requestId };
         }

@@ -169,6 +169,8 @@ struct IssueLabelsPicker: View {
     @ObservedObject var board: BoardModel
     @ObservedObject var store: DSBotStore
     var onSave: (() -> Void)? = nil
+    /// The first page of a sheet: 取消 on the left instead of a back arrow beside a close button (the colour step has its own 取消).
+    var cancels = false
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var naming: String?
@@ -181,10 +183,16 @@ struct IssueLabelsPicker: View {
     var body: some View {
         page
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(L10n.text("保存")) {
-                        if let onSave { onSave() } else { dismiss() }
-                    }.disabled(busy)
+                // The colour step has only its own 取消 (choosing a colour makes the label); 保存 saves the whole selection.
+                if naming == nil {
+                    if cancels {
+                        ToolbarItem(placement: .cancellationAction) { Button(L10n.text("取消")) { dismiss() }.disabled(busy) }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(L10n.text("保存")) {
+                            if let onSave { onSave() } else { dismiss() }
+                        }.disabled(busy)
+                    }
                 }
             }
             .navigationBarBackButtonHidden(busy)
@@ -254,10 +262,14 @@ struct IssueLabelsPicker: View {
 struct IssueDuePicker: View {
     let dueAt: Date?
     let onSelect: (Date?) -> Void
+    /// The first page of a sheet has nothing to go back to: its left side says 取消 instead of a back arrow beside a close button.
+    var cancels = false
+    @Environment(\.dismiss) private var dismiss
     @State private var date: Date
 
-    init(dueAt: Date?, onSelect: @escaping (Date?) -> Void) {
+    init(dueAt: Date?, cancels: Bool = false, onSelect: @escaping (Date?) -> Void) {
         self.dueAt = dueAt
+        self.cancels = cancels
         self.onSelect = onSelect
         _date = State(initialValue: dueAt ?? Date())
     }
@@ -281,6 +293,9 @@ struct IssueDuePicker: View {
             }
         }
         .toolbar {
+            if cancels {
+                ToolbarItem(placement: .cancellationAction) { Button(L10n.text("取消")) { dismiss() } }
+            }
             ToolbarItem(placement: .confirmationAction) {
                 Button(L10n.text("保存")) { onSelect(Self.atNoon(date)) }
             }

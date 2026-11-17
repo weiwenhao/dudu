@@ -84,9 +84,12 @@ struct AgentAvatar: View {
 struct ConversationAvatarStatus: ViewModifier {
     let state: SessionActivityState
     let size: CGFloat
+    var roundedSquare = false
 
     private var markSize: CGFloat { max(6, size * 13 / 49) }
     private var center: CGFloat { size / 2 + (size / 2 - 0.5) / sqrt(2) }
+    private var markX: CGFloat { roundedSquare ? size - 2 : center }
+    private var markY: CGFloat { roundedSquare ? 2 : size - center }
 
     func body(content: Content) -> some View {
         content.overlay(alignment: .topLeading) {
@@ -102,7 +105,7 @@ struct ConversationAvatarStatus: ViewModifier {
                 if state == .processing { AgentWorkingRing() }
             }
             .frame(width: markSize, height: markSize)
-            .offset(x: center - markSize / 2, y: size - center - markSize / 2)
+            .offset(x: markX - markSize / 2, y: markY - markSize / 2)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }

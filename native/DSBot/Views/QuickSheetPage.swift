@@ -32,6 +32,8 @@ struct QuickSheetPage<Actions: View, Filters: View, Content: View, Footer: View>
     var onBack: (() -> Void)? = nil
     let onClose: () -> Void
     var closeLabel = L10n.text("关闭")
+    /// The title sits in the middle of the bar, like the other sheets (the activity sheets); the quick-entry sheets keep their left heading.
+    var centersTitle = false
     var active = true
     var allowsExpansion = false
     var scrollID: Binding<String?> = .constant(nil)
@@ -71,7 +73,7 @@ struct QuickSheetPage<Actions: View, Filters: View, Content: View, Footer: View>
                 } else {
                     ToolbarItem(placement: .topBarLeading) { heading }
                 }
-                if onBack != nil {
+                if onBack != nil || centersTitle {
                     ToolbarItem(placement: .principal) {
                         Text(title).font(.system(size: 16, weight: .semibold)).accessibilityAddTraits(.isHeader)
                     }
@@ -94,14 +96,17 @@ struct QuickSheetPage<Actions: View, Filters: View, Content: View, Footer: View>
             : nil)
     }
 
+    @ViewBuilder
     private var heading: some View {
-        HStack(spacing: 8) {
-            Text(title).font(.system(size: 21, weight: .semibold)).accessibilityAddTraits(.isHeader)
-            if let count {
-                Text("\(count)").font(.system(size: 14)).foregroundStyle(DSBotStyle.muted).monospacedDigit()
+        if !centersTitle {
+            HStack(spacing: 8) {
+                Text(title).font(.system(size: 21, weight: .semibold)).accessibilityAddTraits(.isHeader)
+                if let count {
+                    Text("\(count)").font(.system(size: 14)).foregroundStyle(DSBotStyle.muted).monospacedDigit()
+                }
             }
+            .fixedSize(horizontal: true, vertical: false)
         }
-        .fixedSize(horizontal: true, vertical: false)
     }
 
     private func page(width: CGFloat) -> some View {

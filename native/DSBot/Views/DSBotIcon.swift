@@ -1,5 +1,6 @@
 import LucideSwift
 import SwiftUI
+import UIKit
 
 enum DSBotGlyph: CaseIterable {
     case menu, panel, camera, image, video, keyboard, microphone, voice
@@ -21,6 +22,8 @@ enum DSBotGlyph: CaseIterable {
     case quota
     /// The desktop's session status icons, before the name of a board group (`SessionStateIcon`).
     case stateIdle, stateWorking, stateBlocked, stateUnassigned
+    /// A failed agent or background job in the activity sheets (red Lucide `CircleAlert`).
+    case stateFailed
     /// The square Stop in the approved background-job detail.
     case jobStop
 
@@ -114,6 +117,7 @@ enum DSBotGlyph: CaseIterable {
         case .stateWorking: return .loaderCircle
         case .stateBlocked: return .octagonPause
         case .stateUnassigned: return .user
+        case .stateFailed: return .circleAlert
         case .jobStop: return .square
         }
     }
@@ -142,6 +146,37 @@ enum DSBotGlyph: CaseIterable {
     }
 
     @MainActor private static var menuImages: [DSBotGlyph: Image] = [:]
+
+    /// How far the glyph's ink reaches in a 24pt box, line included: Lucide's corner arrow 18pt (16 of path and the 2pt line), its plus 16pt, the due date's asset 21pt (a 14pt ink in its 16pt box).
+    fileprivate var inkIn24: CGFloat {
+        switch self {
+        case .dueDate: return 21
+        case .plus: return 16
+        default: return 18
+        }
+    }
+
+    private struct MenuInkKey: Hashable {
+        let glyph: DSBotGlyph
+        let ink: CGFloat
+    }
+
+    @MainActor private static var inkMenuImages: [MenuInkKey: Image] = [:]
+
+    /// A menu icon whose ink is `ink` points across, whatever padding its glyph has in its own box. The three icons of the New issue's "…" menu were three sizes (the due date's asset 14pt, the arrow 18pt, a plus
+    /// would be 16pt; owner, 2026-11-17: "这个三个图标大小不一的"). A native menu shows an image at the size it has, so the glyph is drawn at the size that gives this ink, with a 2pt line.
+    @MainActor
+    fileprivate func menuImage(ink: CGFloat) -> Image {
+        let key = MenuInkKey(glyph: self, ink: ink)
+        if let image = Self.inkMenuImages[key] { return image }
+        let box = 24 * ink / inkIn24
+        let renderer = ImageRenderer(content: DSBotIcon(self, size: box, strokeWidth: 2, scalesStroke: false).foregroundStyle(Color.black))
+        renderer.scale = max(UITraitCollection.current.displayScale, 2)
+        guard let drawn = renderer.uiImage else { return menuImage }
+        let image = Image(uiImage: drawn).renderingMode(.template)
+        Self.inkMenuImages[key] = image
+        return image
+    }
 }
 
 struct DSBotIcon: View {
@@ -184,6 +219,12 @@ struct DSBotLabel: View {
     init(_ title: String, icon: DSBotGlyph) {
         self.title = title
         image = icon.menuImage
+    }
+
+    /// A menu item whose icon has the same ink as the others of its menu (`DSBotGlyph.menuImage(ink:)`).
+    init(_ title: String, icon: DSBotGlyph, ink: CGFloat) {
+        self.title = title
+        image = icon.menuImage(ink: ink)
     }
 
     /// A menu item whose icon is not one of the app's glyphs (the pin, which is drawn by hand).

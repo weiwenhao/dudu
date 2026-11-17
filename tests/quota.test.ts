@@ -68,11 +68,24 @@ test('Claude is read with `/usage` and `auth status` (the plan), without what ma
   });
   assert.equal(reading.state, 'ok');
   assert.equal(reading.plan, 'Max');
-  assert.deepEqual(calls.map((call) => call.args).sort(), [['-p', '/usage'], ['auth', 'status', '--json']]);
+  assert.deepEqual(calls.map((call) => call.args).sort(), [['-p', '/usage', '--no-session-persistence'], ['auth', 'status', '--json']], 'a reading must not be kept as a conversation in the owner\'s Claude folder');
   assert.ok(calls.every((call) => !('ANTHROPIC_API_KEY' in call.env) || call.env.ANTHROPIC_API_KEY === undefined), 'a key in the environment would make Claude Code answer as paid by use');
   const out = await readClaudeQuota({ command: 'claude', run: run({ status: { stdout: JSON.stringify({ loggedIn: false }) }, usage: { stdout: '' } }) as never });
   assert.equal(out.state, 'login');
   await assert.rejects(() => readClaudeQuota({ command: 'claude', run: run({ status: { stdout: '{}' }, usage: { stdout: 'nothing useful' } }) as never }), /no usage figures/);
+});
+
+test('a Claude Code that does not know --no-session-persistence is asked again without it, so the reading still works', async () => {
+  const calls: string[][] = [];
+  const run = async (_command: string, args: string[]) => {
+    calls.push(args);
+    if (args[0] === 'auth') return { code: 0, stdout: '{}', stderr: '' };
+    if (args.includes('--no-session-persistence')) return { code: 1, stdout: '', stderr: "error: unknown option '--no-session-persistence'" };
+    return { code: 0, stdout: USAGE, stderr: '' };
+  };
+  const reading = await readClaudeQuota({ command: 'claude', now: () => NOW, run: run as never });
+  assert.equal(reading.state, 'ok');
+  assert.deepEqual(calls.filter((args) => args[0] === '-p'), [['-p', '/usage', '--no-session-persistence'], ['-p', '/usage']]);
 });
 
 // ---- ChatGPT: the usage endpoint, with the token Codex keeps

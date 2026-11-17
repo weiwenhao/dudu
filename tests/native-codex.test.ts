@@ -2,22 +2,23 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { listCodexThreads, readCodexThread, readCodexThreads, threadSummary } from '../host/providers/native/codex-store.mjs';
+import { listCodexThreads, readCodexThread, readCodexThreads, readCodexThreadTail, threadSummary } from '../host/providers/native/codex-store.mjs';
 import { codexHistory, codexTurns } from '../host/providers/native/codex-history.mjs';
 import { codexSearchText } from '../host/providers/native/content-index.mjs';
 
 // `codex app-server` answers over JSON lines on its standard streams. This stands in for it: each request is answered by
 // a handler of the test, or never (a very long thread), and every start of the program is counted.
-function fakeAppServer(handlers: Record<string, (params: any) => unknown>) {
+function fakeAppServer(handlers: Record<string, (params: any) => unknown>, { slice }: { slice?: number } = {}) {
   const starts: { args: string[]; env: Record<string, string | undefined> }[] = [];
   const requests: { method: string; params: any }[] = [];
+  let kills = 0;
   const spawnProcess = (_command: string, args: string[], options: { env: Record<string, string | undefined> }) => {
     starts.push({ args, env: options.env });
     const child: any = new EventEmitter();
     child.stdin = new PassThrough();
     child.stdout = new PassThrough();
     child.stderr = new PassThrough();
-    child.kill = () => { queueMicrotask(() => child.emit('exit', 0)); };
+    child.kill = () => { kills++; queueMicrotask(() => child.emit('exit', 0)); };
     let buffer = '';
     child.stdin.on('data', (chunk: Buffer) => {
       buffer += chunk.toString();
@@ -30,12 +31,14 @@ function fakeAppServer(handlers: Record<string, (params: any) => unknown>) {
         const handler = message.method === 'initialize' ? () => ({}) : handlers[message.method];
         const result = handler?.(message.params);
         if (result === 'hang') continue;
-        child.stdout.write(`${JSON.stringify(result instanceof Error ? { id: message.id, error: { message: result.message } } : { id: message.id, result })}\n`);
+        const line = Buffer.from(`${JSON.stringify(result instanceof Error ? { id: message.id, error: { message: result.message } } : { id: message.id, result })}\n`);
+        if (slice) for (let at = 0; at < line.length; at += slice) child.stdout.write(line.subarray(at, at + slice));
+        else child.stdout.write(line);
       }
     });
     return child;
   };
-  return { spawnProcess, starts, requests };
+  return { spawnProcess, starts, requests, get kills() { return kills; } };
 }
 
 const thread = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -105,6 +108,53 @@ test('a thread that could not be read is reported with its reason, so that nobod
   assert.deepEqual(failures[0], ['broken', 'corrupt rollout']);
   assert.equal(failures[1][0], 'huge');
   assert.match(failures[1][1], /did not answer/, 'one that never answers says so');
+});
+
+// DSH's host died four times of its heap in ten days; a thread of a gigabyte answers `thread/read` with a hundred megabytes of JSON that the host read into a string and parsed.
+test('an answer bigger than the host may hold is dropped and the app-server stopped, instead of being read into the heap', async () => {
+  const server = fakeAppServer({ 'thread/read': () => ({ thread: { id: 'big', turns: [{ items: ['x'.repeat(5000)] }] } }) });
+  await assert.rejects(
+    readCodexThread({ command: 'codex', spawnProcess: server.spawnProcess, maxAnswerBytes: 1000 }, 'big'),
+    (error: any) => error.code === 'ANSWER_TOO_LARGE' && /over/.test(error.message),
+  );
+  assert.ok(server.kills >= 1, 'the program that was still writing is stopped');
+  // a batch goes on with a new app-server after one such answer, as after a thread that never answers
+  const seen: string[] = [];
+  const failures: string[] = [];
+  const batch = fakeAppServer({ 'thread/read': (params) => (params.threadId === 'big' ? { thread: { id: 'big', turns: [{ items: ['x'.repeat(5000)] }] } } : { thread: thread(params.threadId) }) });
+  await readCodexThreads({ command: 'codex', spawnProcess: batch.spawnProcess, maxAnswerBytes: 1000 }, ['a', 'big', 'b'], (id: string) => { seen.push(id); }, { onFailure: (id: string) => failures.push(id) });
+  assert.deepEqual([seen, failures], [['a', 'b'], ['big']]);
+  assert.equal(batch.starts.length, 2);
+});
+
+test('an answer that arrives in small pieces, cut in the middle of a character, is read whole', async () => {
+  const server = fakeAppServer({ 'thread/read': () => ({ thread: { id: 't', name: '你好，世界：长对话', turns: [] } }) }, { slice: 5 });
+  const read = await readCodexThread({ command: 'codex', spawnProcess: server.spawnProcess }, 't');
+  assert.equal(read.name, '你好，世界：长对话');
+});
+
+test('the newest turns of a long thread are read in pages and come back oldest first, and the thread says when older ones were left', async () => {
+  const all = Array.from({ length: 25 }, (_, n) => ({ id: `turn-${n + 1}`, items: [] })); // oldest first
+  const server = fakeAppServer({
+    'thread/read': (params) => ({ thread: { ...thread(params.threadId), turns: params.includeTurns ? all : [] } }),
+    'thread/turns/list': (params) => {
+      const from = params.cursor ? Number(params.cursor) : all.length;
+      const page = all.slice(Math.max(0, from - params.limit), from).reverse();
+      const next = from - params.limit;
+      return { data: page, nextCursor: next > 0 ? String(next) : null };
+    },
+  });
+  const tail = await readCodexThreadTail({ command: 'codex', spawnProcess: server.spawnProcess }, 'long', { turns: 15, page: 10 });
+  assert.deepEqual(tail.turns.map((item: any) => item.id), Array.from({ length: 15 }, (_, n) => `turn-${n + 11}`));
+  assert.equal(tail.partial, true);
+  assert.equal(tail.id, 'long', 'the thread itself (folder, model, name) comes along');
+  assert.deepEqual(server.requests.filter((request) => request.method === 'thread/read').map((request) => request.params.includeTurns), [false], 'the whole thread is never asked for');
+  const lists = server.requests.filter((request) => request.method === 'thread/turns/list');
+  assert.deepEqual(lists.map((request) => request.params.limit), [10, 5]);
+  assert.ok(lists.every((request) => request.params.sortDirection === 'desc' && request.params.itemsView === 'full'));
+  const whole = await readCodexThreadTail({ command: 'codex', spawnProcess: server.spawnProcess }, 'long', { turns: 40, page: 10 });
+  assert.equal(whole.turns.length, 25);
+  assert.equal(whole.partial, false, 'a thread that is shorter than that is read whole');
 });
 
 test('a Codex thread becomes turns: what was typed, then steps that each end at a tool call', () => {

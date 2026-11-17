@@ -70,7 +70,7 @@ test('backend and client update together without restarting DSH, reloading the p
     });
     if (!runtime) {
       const observed = JSON.parse(await readFile(runtimeFile, 'utf8'));
-      const installed = await desktopPackageIdentity(join(dudu.home, 'profiles', 'web', 'node_modules', 'dudu'));
+      const installed = await desktopPackageIdentity(join(dudu.home, 'profiles', 'web', 'node_modules', 'dsh-dudu'));
       const response = await dudu.context.request.post(`${dudu.base}/api/dudu-hot-update-probe`);
       assert.fail(`hot reload: ${JSON.stringify({ expected, observed, installed, probe: { status: response.status(), body: await response.text() } })}\n${dudu.diagnostics()}`);
     }

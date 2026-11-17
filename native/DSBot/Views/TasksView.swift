@@ -23,9 +23,23 @@ struct TaskSummaryRow: View {
     let isOn: Bool
     var isBusy = false
     var horizontalPadding: CGFloat = 16
+    /// The task's last delivery failed: 投递失败 in red ends the line (the conversation's list of tasks; the 任务 page does not say it).
+    var failed = false
 
     /// The desktop's `--dudu-success` in its light theme.
     private static let on = Color(red: 0x17 / 255, green: 0x7a / 255, blue: 0x3c / 255)
+
+    /// The line under the title, ended by the red word of a failed delivery.
+    private var lineText: Text {
+        var text = AttributedString(line)
+        if failed {
+            if !line.isEmpty { text += AttributedString(" · ") }
+            var word = AttributedString(L10n.text("投递失败"))
+            word.foregroundColor = DSBotStyle.chatError
+            text += word
+        }
+        return Text(text)
+    }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -54,8 +68,8 @@ struct TaskSummaryRow: View {
                             .lineLimit(1)
                     }
                 }
-                if !line.isEmpty {
-                    Text(line)
+                if !line.isEmpty || failed {
+                    lineText
                         .font(.system(size: 12))
                         .foregroundStyle(DSBotStyle.muted)
                         .lineLimit(1)
@@ -89,6 +103,7 @@ struct TasksView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.conversationIsCovered) private var isCovered
     @State private var opened: ScheduledTask?
     @State private var editing: ScheduledTask?
     @State private var deleting: ScheduledTask?
@@ -110,8 +125,8 @@ struct TasksView: View {
         .background(DSBotStyle.canvas)
         .accessibilityIdentifier("tasks.page")
         // Read when the page is shown and when the computer connects; the next runs move on by themselves, so it is read again while the page stays.
-        .task(id: TasksLoad(connection: store.connectionRevision, active: scenePhase == .active && store.status == .connected)) {
-            guard scenePhase == .active, store.status == .connected else { return }
+        .task(id: TasksLoad(connection: store.connectionRevision, active: scenePhase == .active && store.status == .connected && !isCovered)) {
+            guard scenePhase == .active, store.status == .connected, !isCovered else { return }
             await model.refresh(using: store)
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))

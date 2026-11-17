@@ -1,6 +1,6 @@
 import { createElement as h } from 'react';
-import { defineWidget } from 'dudu/widget';
-import { Frame, Row, WidgetNumber } from 'dudu/widget-ui';
+import { defineWidget } from 'dsh-dudu/widget';
+import { Frame, Row, WidgetNumber } from 'dsh-dudu/widget-ui';
 
 export const declaration = {
   id: 'dudu-example-widget.count', label: 'Example widget',

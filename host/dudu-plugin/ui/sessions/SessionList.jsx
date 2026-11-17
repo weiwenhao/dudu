@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Info, LoaderCircle, Search, X } from 'lucide-react';
+import { Check, Info, LoaderCircle, Search, X } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/tooltip.jsx';
 import { cn } from '../lib/cn.js';
@@ -12,9 +12,13 @@ import { searchSnippet } from './highlight.js';
 
 const W = T.widgets.sessions;
 
-function Row({ session, selected, terms, now, optionRef, onSelect, onKeyDown }) {
-  return <button type="button" role="option" aria-selected={selected} ref={optionRef} tabIndex={selected ? 0 : -1} onClick={onSelect} onKeyDown={onKeyDown}
-    className={cn('flex w-full items-center gap-3 rounded-[10px] px-2 py-2.5 text-left outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', selected && 'bg-accent')}>
+/**
+ * One session of a list. The task window's picker (tasks/SessionPicker.jsx) draws the same row: `checked` marks the one that is the value now (the trailing check the window's menus have), `disabled` a
+ * session that cannot be chosen there.
+ */
+export function Row({ session, selected, terms, now, optionRef, onSelect, onKeyDown, checked = false, disabled = false }) {
+  return <button type="button" role="option" aria-selected={selected} aria-disabled={disabled || undefined} ref={optionRef} tabIndex={selected ? 0 : -1} onClick={disabled ? undefined : onSelect} onKeyDown={onKeyDown}
+    className={cn('flex w-full items-center gap-3 rounded-[10px] px-2 py-2.5 text-left outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', selected && 'bg-accent', disabled && 'opacity-55')}>
     <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted/70"><AgentLogo agent={agentOf(session)} className="size-4" /></span>
     <span className="min-w-0 flex-1">
       <span className="block truncate text-[14px]/5 font-medium"><Highlighted text={session.title || session.id} terms={terms} /></span>
@@ -22,6 +26,7 @@ function Row({ session, selected, terms, now, optionRef, onSelect, onKeyDown }) 
       {session.evidence?.text && <span className="block truncate text-xs/4 text-muted-foreground"><Highlighted text={searchSnippet(session.evidence.text, terms)} terms={terms} /></span>}
     </span>
     {session.issue && <span className="shrink-0 rounded-md border px-1.5 text-[11px]/4 text-muted-foreground tabular-nums">{session.issue.ref}</span>}
+    {checked && <Check className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
   </button>;
 }
 

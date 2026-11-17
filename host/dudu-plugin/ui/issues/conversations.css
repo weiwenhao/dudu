@@ -1,8 +1,8 @@
 /* The shared phone avatars in the owner's denser Desktop conversation layout. Scoped by the client build. */
 .dudu-conversation-avatar { position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center; user-select: none; }
 .dudu-conversation-avatar > [data-agent-logo="dudu"] { width: 94%; height: 94%; }
-.dudu-conversation-avatar-ref { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; flex-direction: column; border: 1px solid currentColor; border-radius: 50%; background: var(--background); padding: 0 3px; font-weight: 500; font-variant-numeric: tabular-nums; }
-.dudu-conversation-avatar-ref > span { max-width: 100%; white-space: nowrap; }
+.dudu-conversation-avatar-title { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; font-weight: 500; line-height: 1; }
+.dudu-conversation-avatar-title > span { max-width: 79%; overflow: hidden; white-space: nowrap; }
 .dudu-conversation-mark { position: absolute; border-radius: 50%; background: var(--background); pointer-events: none; }
 .dudu-conversation-unread { background: #ec1313; }
 .dudu-conversation-working { position: absolute; inset: 0; width: 100%; height: 100%; }

@@ -11,7 +11,7 @@ export async function buildWidget({ outdir = join(here, 'dist'), duduRoot, devel
     entryPoints: [entryPoint], outfile: join(outdir, 'client.js'), bundle: true,
     format: 'iife', platform: 'browser', target: 'es2022', minify: true,
     external: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client'],
-    alias: duduRoot ? Object.fromEntries(['widget', 'widget-ui', 'widget-testing'].map((name) => [`dudu/${name}`, join(duduRoot, `${name}.mjs`)])) : {},
+    alias: duduRoot ? Object.fromEntries(['widget', 'widget-ui', 'widget-testing'].map((name) => [`dsh-dudu/${name}`, join(duduRoot, `${name}.mjs`)])) : {},
     define: { __WIDGET_DEV__: JSON.stringify(development) },
     // DSH's loader supplies React. Everything else, including defineWidget, is bundled.
     banner: { js: '(function () { let widgetFactory; const moduleLoader = globalThis.window.__ModuleLoader__; const window = { __ModuleLoader__: { load(value) { widgetFactory = value; } } }; function compile(require) {' },

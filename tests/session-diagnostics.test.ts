@@ -11,6 +11,8 @@ test('session diagnostics retain read identity and timing without persisting ups
   const log = createSessionDiagnostics(folder);
   log.record({ event: 'session.index.failure', provider: 'codex', id: 'one', error: new Error('ENOENT: no such file /private/secret; Bearer credential; user message') });
   log.record({ event: 'session.preview.read', provider: 'dsh', id: 'two', source: 'sqlite', outcome: 'success', elapsedMs: 3, count: 20 });
+  log.record({ event: 'session.activity.list', provider: 'dsh', id: 'list', outcome: 'failure', elapsedMs: 12000, error: new DOMException('private credential', 'TimeoutError') });
+  log.record({ event: 'session.activity.read', provider: 'dsh', id: 'three', outcome: 'failure', error: new Error('secret message') });
   await log.flush();
   const file = join(folder, 'diagnostics', 'sessions.jsonl');
   const text = await readFile(file, 'utf8');
@@ -19,5 +21,7 @@ test('session diagnostics retain read identity and timing without persisting ups
   assert.equal(rows[0].reason, 'missing_transcript');
   assert.equal(rows[0].id, 'one');
   assert.deepEqual([rows[1].source, rows[1].elapsedMs, rows[1].count], ['sqlite', 3, 20]);
+  assert.equal(rows[2].reason, 'timeout');
+  assert.equal(rows[3].reason, 'read_failed');
   assert.equal((await stat(file)).mode & 0o777, 0o600);
 });

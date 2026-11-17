@@ -3349,6 +3349,23 @@
         }
       }
     },
+    "定时任务": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "定时任务"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scheduled tasks"
+          }
+        }
+      }
+    },
     "对准电脑上显示的配对码": {
       "extractionState": "manual",
       "localizations": {
@@ -4976,6 +4993,17 @@
         }
       }
     },
+    "打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码"
+          }
+        }
+      }
+    },
     "打开一次电脑上的 DSH 窗口后，这里会显示 DSH 的入口。": {
       "extractionState": "manual",
       "localizations": {
@@ -6251,6 +6279,23 @@
         }
       }
     },
+    "暂无定时任务": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂无定时任务"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No scheduled tasks"
+          }
+        }
+      }
+    },
     "暂无已归档会话": {
       "extractionState": "manual",
       "localizations": {
@@ -7203,6 +7248,17 @@
         }
       }
     },
+    "电脑未连接": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "电脑未连接"
+          }
+        }
+      }
+    },
     "正在连接": {
       "extractionState": "manual",
       "localizations": {
@@ -7624,6 +7680,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Add sub-issue"
+          }
+        }
+      }
+    },
+    "添加图片": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加图片"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add photos"
           }
         }
       }
@@ -9579,6 +9652,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Active goal"
+          }
+        }
+      }
+    },
+    "连接嘟嘟": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接嘟嘟"
           }
         }
       }

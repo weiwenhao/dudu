@@ -31,6 +31,10 @@ struct ConnectorAvatar: View {
         return Int(sum % UInt32(tones.count))
     }
 
+    static func colors(of name: String) -> (background: Color, letter: Color) {
+        tones[tone(of: name)]
+    }
+
     static func initial(of name: String) -> String {
         guard let first = name.trimmingCharacters(in: .whitespacesAndNewlines).first else { return "?" }
         return String(first).uppercased()
@@ -44,7 +48,7 @@ struct ConnectorAvatar: View {
                     .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(DSBotStyle.line, lineWidth: 1))
                     .overlay(Image("Connector-\(icon)").resizable().scaledToFit().frame(width: size * 0.6, height: size * 0.6))
             } else {
-                let tone = Self.tones[Self.tone(of: name)]
+                let tone = Self.colors(of: name)
                 RoundedRectangle(cornerRadius: radius, style: .continuous).fill(tone.background)
                     .overlay(Text(Self.initial(of: name)).font(.system(size: size * 0.46, weight: .semibold)).foregroundStyle(tone.letter))
             }

@@ -1,11 +1,18 @@
-/** Observe inside the host conversation; the native flow keeps ownership of its message slots. */
+import { mirrorNativeSlot } from './native-slots.js';
+
+/** Keep native sending/queuing intact while an empty composer reflects the idle native foreground. */
 export function installHarnessForeground(ctx, { createElement: h, useEffect, useState }, request) {
-  const slot = 'conversation.composer.dock';
-  function Foreground(props) {
+  const slot = 'conversation.composer.bar';
+  const registrant = 'dudu:harness-foreground';
+  function Foreground({ NativeComposer, ...props }) {
     const running = props.useSession((state) => state.running);
     const selection = props.useProjection('modelSelection');
     const provider = (selection?.lastUsed ?? selection?.next)?.provider;
     const observe = running && ['claude', 'codex'].includes(provider);
+    const empty = props.useInput((input) => input === undefined || (
+      input.phase === 'plain' && input.draft.trim() === '' && input.attachmentIds.length === 0 && input.queue.length === 0
+    ));
+    const submitting = props.useSession((state) => state.pendingSubmissions.length > 0);
     const [background, setBackground] = useState(null);
     useEffect(() => {
       setBackground(null);
@@ -28,10 +35,19 @@ export function installHarnessForeground(ctx, { createElement: h, useEffect, use
       return () => controller.abort();
     }, [observe, props.sessionId]);
     const backgroundOnly = observe && background?.sessionId === props.sessionId && background.value === true;
-    // The marker and the running indicator share this occurrence's data-conversation-session ancestor.
-    return h('span', { hidden: true, 'data-dudu-harness-background': backgroundOnly ? '' : undefined });
+    // Only the empty, unclaimed input gets an idle presentation. With a draft,
+    // attachment, queue or pending submission the host sees its real running
+    // state, retaining its delivery mode, keyboard behavior and upload gates.
+    // The Session store and the native child controls always keep that state.
+    const idleComposer = backgroundOnly && empty && !submitting && props.blocked === undefined;
+    const useSession = (select, ...options) => props.useSession(
+      (state) => select(idleComposer ? { ...state, running: false } : state), ...options,
+    );
+    return h('div', { style: { display: 'contents' }, 'data-dudu-harness-background': backgroundOnly ? '' : undefined },
+      h(NativeComposer, { ...props, useSession }));
   }
-  return ctx.slots.inject(slot, () => ctx.slots.register({
-    name: slot, id: 'dudu:harness-foreground', order: -1,
-  }, Foreground));
+  return mirrorNativeSlot(ctx, h, slot, slot,
+    (NativeComposer, props) => h(Foreground, { ...props, NativeComposer }),
+    (entry) => entry.registrant !== registrant,
+    (options) => ({ priority: (options.priority ?? 0) - 1, registrant }));
 }

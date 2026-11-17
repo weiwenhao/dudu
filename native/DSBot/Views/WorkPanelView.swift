@@ -241,12 +241,8 @@ private struct ProjectFilePreview: View {
         .navigationTitle(entry.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                SheetCloseButton(label: L10n.text("关闭文件")) { dismiss() }
-                .accessibilityIdentifier("files.preview.close")
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                if let content {
+            if let content {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         UIPasteboard.general.string = content.text
                         copied = true
@@ -256,6 +252,13 @@ private struct ProjectFilePreview: View {
                     }
                     .accessibilityLabel(L10n.text("复制文件内容"))
                 }
+                if #available(iOS 26.0, *) {
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                SheetCloseButton(label: L10n.text("关闭文件")) { dismiss() }
+                .accessibilityIdentifier("files.preview.close")
             }
         }
         .task {

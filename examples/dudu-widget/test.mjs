@@ -15,7 +15,7 @@ try {
     stdin: { contents: `import { createElement as h } from 'react';
       import { createRoot } from 'react-dom/client';
       import { Widget, declaration } from './widget.mjs';
-      import { exampleWidgetProps, widgetCases, inspectWidget } from 'dudu/widget-testing';
+      import { exampleWidgetProps, widgetCases, inspectWidget } from 'dsh-dudu/widget-testing';
       window.cases = widgetCases(declaration);
       window.show = (scenario) => {
         const root = document.getElementById('root');

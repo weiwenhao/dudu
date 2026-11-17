@@ -58,6 +58,8 @@ export function createDshContentSearch({ controller, query, watch, file, log = c
     ready: index.ready,
     snapshot: index.snapshot,
     saveSnapshot: index.saveSnapshot,
+    metadata: index.metadata,
+    saveMetadata: index.saveMetadata,
     messageStamp: index.messageStamp,
     page: index.page,
     load,

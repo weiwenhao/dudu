@@ -55,6 +55,8 @@ struct IssueCreationOptions: Decodable, Sendable {
     var statuses: [IssueWorkflowStatus]
     var projects: [IssueProject]
     var labels: [IssueLabel]
+    /// The computer can keep pictures for a new issue. An older plugin says nothing, and the app then does not offer them.
+    var attachments: Bool?
 }
 
 /// Only the values exposed by Desktop's New issue dialog. Source and session metadata stay on the computer.
@@ -68,6 +70,8 @@ struct IssueCreationDraft: Sendable {
     var labels: Set<Int> = []
     var dueAt: Date?
     var parent: BoardIssue?
+    /// Pictures for the issue (the app prepares them as for a message: 2,048 pixels, JPEG). The computer keeps them first, and they are the issue's first note.
+    var photos: [PreparedPhotoAttachment] = []
 
     var parameters: [String: JSONValue] {
         var values: [String: JSONValue] = [
@@ -88,6 +92,14 @@ struct IssueCreationDraft: Sendable {
         if !labels.isEmpty { values["labels"] = .array(labels.sorted().map { .number(Double($0)) }) }
         if let dueAt { values["dueAt"] = .number((dueAt.timeIntervalSince1970 * 1000).rounded()) }
         if let parent { values["parent"] = .number(Double(parent.id)) }
+        if !photos.isEmpty {
+            values["attachments"] = .array(photos.map { photo in
+                .object([
+                    "name": .string(photo.attachment.name), "mimeType": .string(photo.attachment.mimeType),
+                    "dataBase64": .string(photo.attachment.dataBase64),
+                ])
+            })
+        }
         return values
     }
 }

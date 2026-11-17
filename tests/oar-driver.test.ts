@@ -115,6 +115,7 @@ test('a harness session starts where the DSH session works, with the mode, model
   await collect(await driver.start({ prompt: 'x', cwd, model: 'opus', effort: 'high', permission: 'read-only' }));
   const options = asked[0];
   assert.equal(options.cwd, cwd);
+  assert.equal(options.retainedBytes, 8 * 1024 * 1024, 'resident OAR sessions retain only a bounded tail of native/tool payloads');
   assert.equal(options.model, 'opus');
   assert.equal(options.effort, 'high');
   assert.equal(options.resume, undefined);
@@ -134,6 +135,22 @@ test('a harness session starts where the DSH session works, with the mode, model
   assert.deepEqual(asked[2].disallowedTools, ['AskUserQuestion'], 'native permissions retain Bash and native rules');
   await collect(await driver.start({ prompt: 'auto', cwd, permission: 'auto' }));
   assert.equal(asked[3].permissionMode, 'auto');
+});
+
+test('the tools the host serves are given to the harness session with every start: its server joins the options and the tools of Claude\'s own they replace join the denied ones', async (t) => {
+  const cwd = await workDirectory(t);
+  const { runtime, asked } = scripted(() => {});
+  const driver = createClaudeProvider({ runtime }).create({ installation: BUNDLED });
+  const hostTools = { mcpServers: [{ name: 'dudu', type: 'http', url: 'http://127.0.0.1:1/mcp', headers: { Authorization: 'Bearer t' } }], disallowedTools: ['CronCreate', 'AskUserQuestion'], launchArgs: ['--allowedTools', 'mcp__dudu__CronCreate'] };
+  await collect(await driver.start({ prompt: 'x', cwd, permission: 'danger-full-access', hostTools }));
+  assert.deepEqual(asked[0].mcpServers, hostTools.mcpServers);
+  assert.deepEqual(asked[0].disallowedTools, ['AskUserQuestion', 'CronCreate'], 'a tool that is denied twice is denied once');
+  assert.deepEqual(asked[0].launchArgs, ['--allowedTools', 'mcp__dudu__CronCreate']);
+  await collect(await driver.start({ prompt: 'again', cwd, resume: 'native-1', permission: 'danger-full-access', hostTools }));
+  assert.deepEqual(asked[1].mcpServers, hostTools.mcpServers, 'OAR does not remember the server: every start gives it again');
+  await collect(await driver.start({ prompt: 'none', cwd, permission: 'danger-full-access' }));
+  assert.equal(asked[2].mcpServers, undefined);
+  assert.deepEqual(asked[2].disallowedTools, ['AskUserQuestion']);
 });
 
 test('stopping interrupts the turn and it ends as interrupted', async (t) => {

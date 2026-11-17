@@ -32,11 +32,16 @@ export { SidebarAgent } from './sessions/SidebarAgent.jsx';
 export { createSidebarActivity } from './sessions/sidebar-state.js';
 export { installChatAutoHistory } from './lib/auto-chat-history.js';
 export { installSessionHistoryCache } from './lib/session-history-cache.js';
+export { createConversationFinder } from './lib/conversation-find.js';
+export { installEmbeddedSessionSurface } from './lib/embedded-session-surface.js';
 export { installSessionReadReceipts } from './lib/session-read-receipts.js';
+export { installSessionActivityUpdates } from './lib/session-activity-updates.js';
 export { installHarnessStats } from './lib/harness-stats.js';
 export { installHarnessForeground } from './lib/harness-foreground.js';
 export { installCollectorNotifications } from './collector/notifications.js';
 export { installIssueHeader, ISSUE_HEADER_SLOT } from './lib/session-header.jsx';
+export { SessionTasksAction } from './tasks/SessionTasks.jsx';
+export { createSessionTasks } from './tasks/session-tasks-store.js';
 export { navigationLabelTranslations } from './lib/navigation-labels.mjs';
 export function openDashboard() { takeIssueRequest(); requestDashboard(); }
 

@@ -863,13 +863,14 @@ struct ChatView: View {
     private var showsEmptyState: Bool {
         if store.isChoosingWorkspace { return true }
         return !store.isRestoring && !hasConversationContent && sessionApprovals.isEmpty && !store.isLoadingSession
-            && !(store.selectedSession == nil && store.isLoading)
+            && store.status == .connected && !(store.selectedSession == nil && store.isLoading)
     }
 
     /// Nothing to show yet because the conversation (or the first one, right after connecting) is on its way.
     private var showsLoadingState: Bool {
         !hasConversationContent && !store.isChoosingWorkspace
-            && (store.isRestoring || store.isLoadingSession || (store.selectedSession == nil && store.isLoading))
+            && (store.status != .connected || store.isRestoring || store.isLoadingSession
+                || (store.selectedSession == nil && store.isLoading))
     }
 
     private func trackKeyboard(_ note: Notification) {
@@ -927,7 +928,8 @@ struct ChatView: View {
     private var contextChips: some View {
         // Project and mode are chosen once, on the new-task page. A conversation that has begun has them
         // fixed, so the row is gone.
-        if store.isChoosingWorkspace || (store.selectedSession != nil && store.isBlankSession && hasContextChips) {
+        if store.status == .connected,
+           store.isChoosingWorkspace || (store.selectedSession != nil && store.isBlankSession && hasContextChips) {
             ViewThatFits(in: .horizontal) {
                 contextChipRow(compactMode: false)
                     .fixedSize(horizontal: true, vertical: false)

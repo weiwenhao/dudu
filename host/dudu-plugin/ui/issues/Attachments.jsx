@@ -4,6 +4,7 @@ import { Button } from '../components/button.jsx';
 import { Dialog, DialogClose, DialogContent, DialogTitle, DialogTrigger } from '../components/dialog.jsx';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/tooltip.jsx';
 import { useToast } from '../components/toast.jsx';
+import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
 
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
@@ -57,7 +58,8 @@ async function pngBlob(src) {
   } finally { image.close(); }
 }
 
-function Picture({ src, name, download, width, height }) {
+/** A picture that opens in a window of its own: as itself (an attachment of a note) or, with `tile`, as the small square of the chat box (a draft that is waiting to be sent). */
+function Picture({ src, name, download, width, height, tile = false }) {
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
   const toast = useToast();
@@ -75,11 +77,11 @@ function Picture({ src, name, download, width, height }) {
   </>;
   return <Dialog open={open} onOpenChange={setOpen}>
     <div className="group/picture relative w-fit max-w-full">
-      {failed ? <Button variant="outline" onClick={() => { setFailed(false); }}>{T.retry}</Button>
-        : <DialogTrigger asChild><button type="button" className="block max-w-full rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      {failed ? <Button variant="outline" className={tile ? 'size-16 rounded-2xl' : undefined} onClick={() => { setFailed(false); }}>{T.retry}</Button>
+        : <DialogTrigger asChild><button type="button" className={cn('block max-w-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50', tile ? 'rounded-2xl' : 'rounded-md')}
           aria-label={T.expand(name)}>
           <img src={src} alt={name} width={width} height={height} onError={() => setFailed(true)}
-            className="block h-auto max-h-96 w-auto max-w-full rounded-md object-contain" />
+            className={tile ? 'block size-16 rounded-2xl border object-cover' : 'block h-auto max-h-96 w-auto max-w-full rounded-md object-contain'} />
         </button></DialogTrigger>}
       {download && !failed && <div className="absolute top-2 right-2 flex items-center gap-0.5 rounded-full border bg-popover p-1 text-muted-foreground opacity-0 shadow-xs transition-opacity group-hover/picture:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
         <Action label={T.expand(name)} onClick={() => setOpen(true)}><Expand /></Action>{tools}
@@ -104,14 +106,19 @@ function FileLabel({ name, size }) {
     </span></>;
 }
 
+/**
+ * What is waiting to be sent, as the chat box shows it (pet.css `.dudu-pet-attachment`): a picture is a 64px square, cropped to fill, with a 16px corner and a hairline; a click on it opens the
+ * original; the dark round × in its corner (20px, 4px in) shows on hover, and always where there is no hover. A file is the card of the chat box.
+ */
 export function AttachmentDrafts({ drafts, disabled, onRemove }) {
-  return <div className="flex flex-col gap-3" data-issue-drafts="">
-    {drafts.map((item) => <div key={item.id} data-issue-draft={item.id} className="group/draft relative w-fit max-w-full">
-      {item.type === 'image' ? <Picture src={item.url} name={item.file.name} />
+  return <div className="flex flex-wrap gap-2" data-issue-drafts="">
+    {drafts.map((item) => <div key={item.id} data-issue-draft={item.id} className="group/draft relative max-w-full">
+      {item.type === 'image' ? <Picture src={item.url} name={item.file.name} tile />
         : <div className="flex h-16 w-[220px] max-w-full items-center gap-3 rounded-2xl border px-3"><FileLabel name={item.file.name} size={item.file.size} /></div>}
-      <Button type="button" variant="secondary" size="icon-xs" disabled={disabled}
-        className="absolute -top-2 -right-2 rounded-full border opacity-0 shadow-xs group-hover/draft:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
-        aria-label={T.settings.connectors.removeOf(item.file.name)} onClick={() => onRemove(item.id)}><X /></Button>
+      <button type="button" disabled={disabled} aria-label={T.settings.connectors.removeOf(item.file.name)} onClick={() => onRemove(item.id)}
+        className="absolute top-1 right-1 inline-flex size-5 items-center justify-center rounded-full bg-[rgb(15_17_21/0.62)] text-white opacity-0 outline-none transition-opacity group-hover/draft:opacity-100 focus-visible:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50 [@media(hover:none)]:opacity-100">
+        <X className="size-3" strokeWidth={2.5} aria-hidden="true" />
+      </button>
     </div>)}
   </div>;
 }

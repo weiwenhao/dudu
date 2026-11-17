@@ -68,6 +68,11 @@ struct IssueActionsSheet: View {
         _activeAction = State(initialValue: action)
     }
 
+    /// The first page has its own 取消 and 保存 once it is loaded (the pickers add them), so the close button steps aside.
+    private var rootSaves: Bool {
+        (rootAction == .due || rootAction == .labels) && !loading && !loadFailed
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             page(rootAction)
@@ -83,17 +88,12 @@ struct IssueActionsSheet: View {
                     }
                 }
                 .toolbar {
-                    if rootAction != nil && path.isEmpty {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button { dismiss() } label: {
-                                DSBotIcon(.back, size: 20)
-                            }
-                            .disabled(saving)
-                            .accessibilityLabel(L10n.text("返回"))
+                    // The first page closes with one ✕. A page that saves (due date, labels) says 取消 and 保存 instead,
+                    // and a page pushed on top has the system back arrow and only its own action.
+                    if path.isEmpty && !rootSaves {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            SheetCloseButton { dismiss() }.disabled(saving)
                         }
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        SheetCloseButton { dismiss() }.disabled(saving)
                     }
                 }
         }
@@ -192,14 +192,15 @@ struct IssueActionsSheet: View {
         case .agent:
             agentChoices
         case .due:
-            IssueDuePicker(dueAt: issue.dueAt.map { Date(timeIntervalSince1970: $0 / 1000) }) { date in
+            IssueDuePicker(dueAt: issue.dueAt.map { Date(timeIntervalSince1970: $0 / 1000) }, cancels: true) { date in
                 save(["dueAt": date.map { .number(($0.timeIntervalSince1970 * 1000).rounded()) } ?? .null])
             }
         case .labels:
             IssueLabelsPicker(
                 labels: Binding(get: { options?.labels ?? [] }, set: { options?.labels = $0 }),
                 selected: $selectedLabels, board: board, store: store,
-                onSave: { save(["labels": .array(selectedLabels.sorted().map { .number(Double($0)) })]) }
+                onSave: { save(["labels": .array(selectedLabels.sorted().map { .number(Double($0)) })]) },
+                cancels: true
             )
         case .subIssue:
             EmptyView()

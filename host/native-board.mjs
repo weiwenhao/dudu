@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer';
+import { randomUUID } from 'node:crypto';
 import { HARNESS_IDS } from './providers/catalog.mjs';
 // The board and the Collector for the phone (docs/assistant.md 4.2). The owner is the one asking, here as on the desktop, and the commands are the desktop
 // interface's own: `issues/list`, `issues/add`, `inbox/*` (host/assistant/issues/api.mjs, host/assistant/inbox/api.mjs). What changes is the answer: plain,
@@ -12,12 +14,14 @@ import { HARNESS_IDS } from './providers/catalog.mjs';
 //   issue.assign  { id, agent, project: { name, path } }       -> { issue }; the same locked assignment as Desktop
 //   issue.open    { id }                                     -> { sessionId | null }               the session of the issue, put back in DSH's sidebar if it was folded away
 //   issue.pick    { withSession? }                           -> { items: [row] }                   the open issues, the one touched last first (what a record is shared to)
-//   issue.options {}                                        -> { statuses, labels, projects }     the desktop's creation choices, including its configured default status
+//   issue.options {}                                        -> { statuses, labels, projects, attachments? }   the desktop's creation choices, including its configured default status; `attachments: true`
+//                                                                                               when DSH can keep pictures (the app offers them for a new issue only then)
 //   issue.parents { q? }                                    -> { items: [row] }                   recent issues or a bounded search, including finished parents
 //   issue.project.create { name?, path, createDirectory? }  -> { project }                        the same explicit project creation as on desktop
 //   issue.label.create { name, color }                       -> { label }                          one label, using the desktop's palette
-//   issue.create  { title, description?, status?, priority?, project?, agent?, labels?, dueAt?, parent?, record? }
-//                                                           -> { outcome, issue? }                a new issue; with `record`, made of that collected record and linked to it
+//   issue.create  { title, description?, status?, priority?, project?, agent?, labels?, dueAt?, parent?, record?, attachments? }
+//                                                           -> { outcome, issue?, attachmentsFailed? }   a new issue; with `record`, made of that collected record and linked to it; `attachments` are
+//                                                                                               pictures `[{ name?, mimeType, dataBase64 }]`, kept before the issue is made and shown by its first note
 //   inbox.list    { tab: 'todo' | 'done' | 'ignored', connector?: [id], cursor? }   -> { items: [card], nextCursor, total, names }
 //   inbox.get     { id }                                     -> { record, draft }
 //   inbox.mark    { action: 'ignore' | 'done' | 'delete' | 'restore', ids }          -> { outcome, changed }
@@ -40,6 +44,9 @@ const PAGE = 50;
 const MAX_IDS = 200;
 const MAX_TITLE = 300;
 const MAX_DESCRIPTION = 20_000;
+// The pictures of a new issue: as many as the desktop's dialog (and `issues/message`) take, and only the kinds DSH shows.
+const MAX_PICTURES = 100;
+const PICTURE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 
 const isRecord = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const text = (value, max) => (typeof value === 'string' ? value.slice(0, max) : '');
@@ -87,7 +94,7 @@ const succeeded = (result) => result?.outcome === 'success';
  * `issues(action, body)` and `inbox(action, body)` run the desktop interface's commands (the owner's: every change is written as the owner); each may answer at once or
  * later. `fail(code)` throws the bridge's own error for a request that is not well formed.
  */
-export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, home, fail }) {
+export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, home, pictures, fail }) {
   const unavailable = () => fail('UPSTREAM_UNAVAILABLE');
   const askIssues = async (action, body) => (issues ? issues(action, body) : unavailable());
   const askInbox = async (action, body) => (inbox ? inbox(action, body) : unavailable());
@@ -104,7 +111,21 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, h
       statuses: (statuses.statuses ?? []).filter((status) => !status.archived).map(({ id, type, name, color, iconProgress, isDefault }) => ({ id, type, name, color, iconProgress, isDefault })),
       labels: (labels.labels ?? []).map(({ id, name, color }) => ({ id, name, color })),
       projects: (folders.projects ?? []).map(({ name, path }) => ({ name, path })),
+      ...(pictures?.available() ? { attachments: true } : {}),
     };
+  }
+
+  /** The pictures of a new issue as the app sends them, read strictly: a kind DSH shows, and base64 that is exactly its bytes. Nothing here limits their size. */
+  function pictureList(value) {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.length > MAX_PICTURES || !value.every(isRecord)) fail('INVALID_ATTACHMENT');
+    return value.map((item) => {
+      const encoded = item.dataBase64;
+      if (typeof encoded !== 'string' || !encoded || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) || !PICTURE_TYPES.has(item.mimeType)) fail('INVALID_ATTACHMENT');
+      const data = Buffer.from(encoded, 'base64');
+      if (data.toString('base64') !== encoded) fail('INVALID_ATTACHMENT');
+      return { name: text(item.name, 160).replace(/[\\/\u0000-\u001f\u007f]/g, '_').trim() || 'photo', mediaType: item.mimeType, data };
+    });
   }
 
   async function parents(params) {
@@ -250,6 +271,7 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, h
     if (!title) fail('BAD_REQUEST');
     if (params.description !== undefined && typeof params.description !== 'string') fail('BAD_REQUEST');
     if (params.record !== undefined && !positive(params.record)) fail('BAD_REQUEST');
+    const attached = pictureList(params.attachments);
     const fields = { title, ...(params.description?.trim() ? { brief: text(params.description, MAX_DESCRIPTION).trim() } : {}) };
     if (params.status !== undefined) {
       if (!shortText(params.status, 100)) fail('BAD_REQUEST');
@@ -286,10 +308,24 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, h
       if (!succeeded(got)) return problem(got);
       Object.assign(fields, { source: 'connector', sourceRef: got.draft.sourceRef });
     }
+    // The pictures are kept first: one that cannot be kept leaves no issue behind, and the app still has its draft.
+    let kept = [];
+    if (attached.length) {
+      if (!pictures?.available()) unavailable();
+      try { kept = await pictures.save(attached); } catch { fail('INVALID_ATTACHMENT'); }
+    }
     const made = await askIssues('add', { fields });
     if (!succeeded(made) || !made.issue) return problem(made);
     if (params.record !== undefined) await askInbox('link', { id: params.record, issue: made.issue.id });
-    return { outcome: 'success', issue: row(made.issue) };
+    // The issue exists now: what came with it is its first note, with nothing written in it, as the desktop's dialog does. A failure here does not undo the issue, and it says so.
+    let attachmentsFailed = false;
+    if (kept.length) {
+      try {
+        const sent = await askIssues('message', { id: made.issue.id, text: '', attachmentIds: pictures.stage(made.issue.id, kept), requestId: randomUUID() });
+        if (!['success', 'no_op'].includes(sent?.outcome)) throw new Error('attachments');
+      } catch { attachmentsFailed = true; }
+    }
+    return { outcome: 'success', issue: row(made.issue), ...(attachmentsFailed ? { attachmentsFailed: true } : {}) };
   }
 
   async function inboxList(params) {

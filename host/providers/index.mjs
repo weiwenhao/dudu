@@ -107,6 +107,8 @@ export async function createProviders({ host, providers, folder, log = console }
     // A goal of DSH (/goal) in a session of this harness: the end of a round says whether the goal is done (goal.mjs).
     bridge.onGoalReport = (sessionId, round, report) => reportGoal({ goals: host.goals?.(), agent: host.agents.get(sessionId), round, report, log });
     bridge.jobs = createHarnessJobs({ host, route: driver.route, log });
+    // The tools the host serves to this harness's sessions (the cron tools that take the place of Claude's own).
+    bridge.toolsOf = (sessionId) => host.sessionTools?.forSession(sessionId, driver.route);
     // AgentOptions keeps the host's default route after restore. Recheck the actual adapter before replaying tools.
     bridge.beforeStep = (sessionId) => {
       const agent = host.agents.get(sessionId);
@@ -169,6 +171,7 @@ export async function createProviders({ host, providers, folder, log = console }
       mirrored.get(agent.id)?.dispose();
       mirrored.delete(agent.id);
       for (const { bridge } of registered.values()) void bridge.close(agent.id).finally(() => bridge.jobs?.forget(agent.id));
+      void host.sessionTools?.forget(agent.id);
     }),
   ];
 
@@ -236,6 +239,7 @@ export async function createProviders({ host, providers, folder, log = console }
         for (const provider of providers) unregister(provider);
         await refreshing;
         await Promise.all(closing);
+        await host.sessionTools?.close();
       })();
     },
   };

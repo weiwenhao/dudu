@@ -11,6 +11,7 @@ import { withAbort } from '../../providers/async.mjs';
 import { readSessionHistory } from '../../dsh-session-history.mjs';
 import { isHarness } from '../../providers/catalog.mjs';
 import { createReplyStream } from './reply-stream.mjs';
+import { createSessionFacts } from './session-facts.mjs';
 
 const textOf = (content) => (typeof content === 'string' ? content : (Array.isArray(content) ? content : []).filter((block) => block?.type === 'text').map((block) => block.text).join('\n'));
 
@@ -57,7 +58,7 @@ export function approvalText(request) {
   return `${said}\n回复“允许”放开这一次，其他回复都不放开。`;
 }
 
-export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, cacheFile, diagnostics } = {}) {
+export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, cacheFile, diagnostics, historyFacts } = {}) {
   const service = (name) => {
     let found;
     try { found = ctx[name]; } catch { found = undefined; } // reading a service the plugin did not ask for throws
@@ -80,6 +81,12 @@ export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, c
       if (['user/message', 'assistant/message', 'session/title'].includes(event.type)) catalogDirty = true;
       if (['user/message', 'assistant/message'].includes(event.type)) receive(session.id);
     }, { global: true }),
+  });
+  const facts = historyFacts ?? createSessionFacts({
+    read: inspectSession,
+    persistence: () => optional('sessionPersistence'),
+    live: (id) => optional('sessions')?.get(id),
+    cache: contentSearch,
   });
   let cachedCatalog;
   let restoredCatalog = false;
@@ -110,10 +117,12 @@ export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, c
 
   return {
     defaults: nativeDefaults,
+    historyFacts: facts,
     searchState: contentSearch.state,
     async close() {
       catalogLifetime.abort();
       await readingCatalog?.catch(() => {});
+      if (!historyFacts) await facts.close();
       await contentSearch.close();
     },
     /** Repair only defaults Dudu originally wrote, before any user input or later owner selection. */
@@ -149,9 +158,7 @@ export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, c
       return result.items ?? result;
     },
     async title(sessionId) {
-      const { events } = await inspectSession(sessionId);
-      const event = events.findLast((item) => item.type === 'session/title');
-      return event ? { title: event.data.title, seq: event.seq, at: event.time } : null;
+      return (await facts.read(sessionId)).title;
     },
     renameTitle: (sessionId, title) => service('sessionController').rename({ sessionId, title }),
     watchTitles: (receive) => ctx.on('session/event', (session, event) => {
@@ -187,10 +194,12 @@ export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, c
         const values = item.projections?.values ?? {};
         const title = typeof values.title === 'string' ? values.title : values.title?.title ?? item.title ?? '';
         const workspace = workspaces.find((candidate) => candidate.sessionIds.includes(id) || candidate.path === item.cwd);
-        const selection = values.modelSelection?.next ?? values.modelSelection?.lastUsed ?? optional('agents')?.get(id)?.options;
+        // The model the session is on, read as a task reads it (plugin `modelOf`: next, pending, last used, DSH's default options): the task window's picker takes it as the task's own.
+        const selection = values.modelSelection?.next ?? values.modelSelection?.pending ?? values.modelSelection?.lastUsed ?? optional('agents')?.get(id)?.options;
         return {
           key: `dsh:${id}`, id, provider: 'dsh', dshSessionId: id, workspaceId: workspace?.id,
           agent: isHarness(selection?.provider) ? selection.provider : 'deepseek',
+          ...(typeof selection?.model === 'string' && selection.model ? { model: selection.model } : {}),
           project: workspace ? { name: workspace.title, path: workspace.path } : null,
           title, cwd: item.cwd, updatedAt: item.updatedAt ?? 0,
           seq: item.seq,
@@ -306,33 +315,12 @@ export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, c
 
     /** How the last turn of a session that is not live ended, from what DSH stored: its log is read without waking the session. */
     async lastTurn(sessionId) {
-      let events;
-      try { ({ events } = await inspectSession(sessionId)); } catch { return null; } // not a session DSH knows
-      let start = -1;
-      let end = -1;
-      events.forEach((event, index) => { if (event.type === 'turn/start') start = index; else if (event.type === 'turn/end') end = index; });
-      if (end < 0 && start < 0) return { last: null, at: null };
-      const ended = end > start ? events[end] : null; // a turn that never ended was cut off: DSH reads it as interrupted
-      const kind = ended?.data?.reason?.kind;
-      const last = !ended ? 'aborted' : kind === 'completed' || kind === 'max-tokens' ? 'answer' : kind === 'error' ? 'error' : 'aborted';
-      const said = events.slice(Math.max(start, 0)).filter((event) => event.type === 'assistant/message').map((event) => textOf(event.data?.message?.content)).filter((text) => text.trim()).at(-1);
-      return { last, at: (ended ?? events[start]).time ?? null, ...(kind === 'error' ? { error: ended.data.reason.error?.message } : {}), ...(said ? { ending: said } : {}) };
+      try { return (await facts.read(sessionId)).lastTurn; } catch { return null; } // not a session DSH knows
     },
 
     /** The last words of each side of a session from what DSH stored (the owner's, the agent's): `{ me?, agent? }`, each `{ text, at }`; null for a session DSH does not know. Read once for a session nobody has spoken in since this started (latest.mjs). */
     async latestMessages(sessionId, signal) {
-      let events;
-      try { ({ events } = await inspectSession(sessionId, signal)); } catch { return null; }
-      const found = {};
-      for (let index = events.length - 1; index >= 0 && !(found.me && found.agent); index--) {
-        const event = events[index];
-        const message = event.data?.message ?? event.data;
-        const side = event.type === 'user/message' && message?.source?.kind === 'user' ? 'me' : event.type === 'assistant/message' ? 'agent' : null;
-        if (!side || found[side]) continue;
-        const said = textOf(message?.content ?? event.data?.content);
-        if (said.trim()) found[side] = { text: said, at: Number.isFinite(event.time) ? event.time : 0 };
-      }
-      return found;
+      try { return (await facts.read(sessionId, signal)).latest; } catch { return null; }
     },
 
     /** Listens to DSH for the sessions `handlers.owns` names (see agent-sessions.mjs). Returns the way to stop. */

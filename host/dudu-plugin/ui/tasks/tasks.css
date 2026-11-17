@@ -43,6 +43,10 @@
 .dudu-task-menu-search [data-slot="command-input-wrapper"] { height: 34px; }
 .dudu-task-menu-search input { height: 34px; }
 .dudu-task-actions [data-slot="command-item"] { min-height: 34px; font-size: 13px; }
+/* The popup of the conversation a task goes into (SessionPicker.jsx): the window's menu, as wide as the rows it opens from (12px of their padding on each side of the button), the search box and the rows of the 会话 window inside. */
+.dudu-task-menu.dudu-session-menu { width: calc(var(--radix-popover-trigger-width) + 24px); min-width: 0; max-width: none; }
+.dudu-session-search { margin: 2px 2px 6px; }
+.dudu-session-list { max-height: min(320px, calc(var(--radix-popover-content-available-height, 9999px) - 56px)); padding: 0 2px 2px; }
 .dudu-task-footer-action[data-slot="button"] { height: 32px; padding: 0 12px; border-radius: 16px; font-size: 13px; line-height: 20px; }
 .dudu-task-primary { border-radius: 16px; background: var(--dsw-alias-button-primary-fill, var(--primary)); color: var(--primary-foreground); }
 .dudu-task-primary:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover, var(--primary)); }

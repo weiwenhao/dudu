@@ -9,8 +9,9 @@ import { AGENT_NAMES } from '../issues/model.js';
 import { cn } from '../lib/cn.js';
 import { useServices } from '../services.jsx';
 import { T } from '../strings.js';
+import { SessionPicker } from './SessionPicker.jsx';
 import { TaskSelect } from './TaskSelect.jsx';
-import { DUDU, chooseProvider, providerDefaults, scheduleLabel, stamp, targetModes, taskAgentName, timezoneLabel, weekday } from './format.js';
+import { DUDU, chooseProvider, followSession, providerDefaults, scheduleLabel, stamp, targetModes, taskAgentName, timezoneLabel, weekday } from './format.js';
 
 const keys = ['title', 'prompt', 'agent', 'model', 'project', 'target', 'schedule'];
 // A task of 嘟嘟 has no workspace: its `project` is null, whether the plugin sends that or leaves the key out.
@@ -40,19 +41,6 @@ function Menu({ trigger, children, label }) {
 
 function TaskForm({ value, onChange, options, disabled }) {
   const S = T.tasks;
-  const { request } = useServices();
-  const [sessions, setSessions] = useState({ items: [], loading: false, failed: false });
-  const [sessionAttempt, setSessionAttempt] = useState(0);
-  useEffect(() => {
-    if (value.target.mode !== 'existing') return;
-    const abort = new AbortController();
-    setSessions({ items: [], loading: true, failed: false });
-    void readRequest(request, 'tasks/options', { includeSessions: true }, abort.signal).then((result) => {
-      if (result.outcome !== 'success') throw new Error();
-      if (!abort.signal.aborted) setSessions({ items: result.sessions, loading: false, failed: false });
-    }).catch(() => { if (!abort.signal.aborted) setSessions({ items: [], loading: false, failed: true }); });
-    return () => abort.abort();
-  }, [request, value.target.mode, sessionAttempt]);
   const set = (key, next) => onChange({ ...value, [key]: next });
   const timing = (patch) => set('schedule', { ...value.schedule, ...patch });
   const schedule = value.schedule;
@@ -61,6 +49,9 @@ function TaskForm({ value, onChange, options, disabled }) {
   const listed = options.providers ?? [...(value.agent === DUDU ? [{ id: DUDU }] : []), ...Object.entries(AGENT_NAMES).map(([id, name]) => ({ id, name }))];
   const providers = listed.map((item) => ({ value: item.id, label: item.id === DUDU ? T.brand : item.name, disabled: item.available === false, icon: <AgentLogo agent={item.id} /> }));
   const byDudu = value.agent === DUDU;
+  // A task that goes into a conversation DSH already has runs on that conversation's own provider and model, in its workspace (owner, 2026-11-17): the three rows follow the conversation chosen below and say nothing until one is.
+  const existing = value.target.mode === 'existing';
+  const bare = existing && !value.target.sessionId;
   const targets = targetModes(value.agent).map((mode) => ({ value: mode, label: S.targets[mode] }));
   const modelIds = [...new Set([...(value.model ? [value.model] : []), ...(provider?.models ?? [])])];
   const models = [{ value: '', label: S.defaultModel }, ...modelIds.map((id) => ({ value: id, label: id }))];
@@ -71,18 +62,15 @@ function TaskForm({ value, onChange, options, disabled }) {
     <Field label={S.name}><input className="dudu-task-text" aria-label={S.name} value={value.title} maxLength={200} onChange={(event) => set('title', event.target.value)} required /></Field>
     <Field label={S.prompt}><textarea aria-label={S.prompt} className="dudu-task-text dudu-task-textarea" rows={3} value={value.prompt} maxLength={100000} onChange={(event) => set('prompt', event.target.value)} required /></Field>
     <div className="dudu-task-rule-rows">
-      <TaskSelect row label={S.provider} value={value.agent} options={providers} onChange={(agent) => onChange(chooseProvider(value, agent, options))} disabled={disabled} />
-      <TaskSelect row label={S.model} value={value.model ?? ''} options={models} onChange={(model) => set('model', model || null)} searchable disabled={disabled} />
+      <TaskSelect row label={S.provider} value={value.agent} options={providers} onChange={(agent) => onChange(chooseProvider(value, agent, options))} disabled={disabled || existing} blank={bare} />
+      <TaskSelect row label={S.model} value={value.model ?? ''} options={models} onChange={(model) => set('model', model || null)} searchable disabled={disabled || existing} blank={bare} />
       {/* 嘟嘟 works in its own folder: no workspace to choose, and no existing conversation to take over. */}
-      {!byDudu && <TaskSelect row label={S.workspace} value={value.project?.path ?? ''} options={projects.map((project) => ({ value: project.path, label: project.name }))} searchable disabled={disabled}
-        onChange={(path) => { const project = projects.find((project) => project.path === path); onChange({ ...value, project, target: value.target.mode === 'existing' ? { mode: 'existing', sessionId: '' } : value.target }); }} />}
+      {!byDudu && <TaskSelect row label={S.workspace} value={value.project?.path ?? ''} options={projects.map((project) => ({ value: project.path, label: project.name }))} searchable disabled={disabled || existing} blank={bare}
+        onChange={(path) => onChange({ ...value, project: projects.find((project) => project.path === path) })} />}
       <TaskSelect row label={S.target} value={value.target.mode} options={targets} disabled={disabled}
         onChange={(mode) => set('target', { mode, ...(mode === 'existing' ? { sessionId: '' } : {}) })} />
-      {value.target.mode === 'existing' && <TaskSelect row label={S.linked} value={value.target.sessionId} searchable disabled={disabled || sessions.loading}
-        options={sessions.items.filter((session) => session.workspaceId === value.project?.id).map((session) => ({ value: session.id, label: session.title }))}
-        onChange={(sessionId) => set('target', { mode: 'existing', sessionId })} />}
+      {existing && <SessionPicker label={S.linked} value={value.target.sessionId} options={options} disabled={disabled} onPick={(session) => onChange(followSession(value, session, options))} />}
     </div>
-    {value.target.mode === 'existing' && sessions.failed && <div role="alert" className="flex items-center gap-2 text-xs text-destructive">{T.collector.loadFailed}<Button variant="ghost" size="xs" onClick={() => setSessionAttempt((n) => n + 1)}>{T.retry}</Button></div>}
     <Field label={S.timing}><div className="dudu-task-rule-rows">
         <TaskSelect row label={S.rules} value={schedule.kind} disabled={disabled} options={Object.entries(S.kinds).map(([value, label]) => ({ value, label }))} onChange={(kind) => set('schedule', {
           kind, timezone: schedule.timezone, ...(kind === 'cron' ? { expression: '0 9 * * *' } : kind === 'interval' ? { minutes: 60 } : { time: schedule.time ?? '09:00',
@@ -321,7 +309,7 @@ export function TasksDialog({ open, initialTaskId, onOpenChange, onConversation 
               <div className="shrink-0 px-6 pt-3">
                 <div className="flex min-h-8 flex-wrap items-center gap-2"><h3 className="min-w-0 flex-1 truncate text-[15px] font-semibold">{selected?.title ?? S.create}</h3>
                   <Button variant="ghost" size="icon-xs" className="order-first sm:hidden" aria-label={S.title} disabled={busy} onClick={() => guard(() => { setSelected(null); setDraft(null); })}><ChevronLeft /></Button>
-                  {selected && <><Status value={selected.status} /><div className="ml-auto flex items-center gap-2">
+                  {selected && <><div className="ml-auto flex items-center gap-2">
                     {selected.status !== 'ended' && <Button variant="outline" size="sm" disabled={busy || dirty} onClick={() => change(selected.status === 'active' ? 'pause' : 'resume')}>{selected.status === 'active' ? S.pause : S.resume}</Button>}
                     <Button variant="outline" size="sm" disabled={busy || dirty} onClick={() => change('run', {}, () => setTab('history'))}>{S.run}</Button>
                     <Menu label={T.detail.more} trigger={<Button variant="ghost" size="icon-sm" aria-label={T.detail.more} disabled={busy || dirty}><Ellipsis /></Button>}>

@@ -217,7 +217,7 @@ export function createWebPageHttp({
     let published = false;
     try {
       const params = await readJSON(request, 4096, bodyTimeoutMs);
-      const deviceId = await pairingStore.authenticate(token, 'iPhone');
+      const deviceId = await pairingStore.authenticate(token, request.headers['x-dudu-client'] === 'android' ? 'Android' : 'iPhone');
       if (!deviceId || revokedDevices.has(deviceId)) throw new PageHttpError(401, 'AUTH_FAILED');
       const deviceCount = [...sessions.values()].filter((item) => item.connection.deviceId === deviceId).length
         + (deviceOpens.get(deviceId) ?? 0);

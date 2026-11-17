@@ -55,7 +55,7 @@ export function IssueRow({ issue, now, show, selected, selecting, onSelect, menu
           />
         </span>
       )}
-      <ConversationAvatar reference={issue.ref ?? ''} state={issue.sessionState} size={32} busy={pinning} />
+      <ConversationAvatar title={issue.title} state={issue.sessionState} size={32} busy={pinning} />
       {show.priority && (
         // Like the status beside it: the icon is the button, and a click opens the priority menu.
         <PriorityMenu priority={issue.priority} onSelect={(next) => onChange(issue, { priority: next })}>

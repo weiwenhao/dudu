@@ -67,8 +67,20 @@ export function createSessionCatalog({ native, dsh, issues }) {
       }
       return best ?? latest;
     },
-    async list({ query = '', provider, limit = 200, ...options } = {}, { signal } = {}) {
+    async list({ query = '', provider, limit = 200, inDsh = false, ...options } = {}, { signal } = {}) {
       signal?.throwIfAborted();
+      // The task window's picker (owner, 2026-11-17: a task can only be sent into a conversation DSH has, from any workspace): DSH's own rows, every one of them, each once. The harnesses' own stores are not read, and
+      // a harness conversation that was loaded into DSH is the DSH row (with its agent, model and workspace), not the harness row `provider` would keep.
+      if (inDsh === true) {
+        const read = Promise.resolve().then(() => dsh.catalog({ query, signal, refresh: options.refresh }));
+        const rows = (await (signal ? withAbort(read, signal) : read)).filter((session) => session.dshSessionId);
+        const sorted = rows.sort((a, b) => b.updatedAt - a.updatedAt);
+        const dshIndex = dsh.searchState?.();
+        return {
+          sessions: sorted.slice(0, Math.min(500, Math.max(1, Number(limit) || 200))).map(withIssue), total: sorted.length, providers: [],
+          indexing: { running: Boolean(dshIndex?.running), done: dshIndex?.done ?? 0, total: dshIndex?.total ?? 0, unsearchable: dshIndex?.unsearchable ?? 0 },
+        };
+      }
       const nativeRead = Promise.resolve().then(() => native.list({ ...options, query, provider, limit: 500 }));
       const dshRead = Promise.resolve().then(() => dsh.catalog({ query, signal, refresh: options.refresh }));
       const results = await Promise.allSettled([

@@ -86,7 +86,7 @@ try {
   ], { cwd: check, timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] });
   execFileSync(process.execPath, ['--input-type=module', '--eval',
     'const plugin = await import(process.argv[1]); if (plugin.name !== "dudu" || typeof plugin.apply !== "function") throw new Error("Invalid desktop plugin entry.");',
-    pathToFileURL(join(check, 'node_modules', 'dudu', 'index.mjs')).href,
+    pathToFileURL(join(check, 'node_modules', 'dsh-dudu', 'index.mjs')).href,
   ], { cwd: check, env: { ...process.env, NODE_PATH: '' }, timeout: 20_000, stdio: ['ignore', 'pipe', 'pipe'] });
   console.log('Packaged desktop plugin imports successfully outside the source repository.');
   await copyFile(join(root, 'desktop', 'README.md'), join(folder, 'README.md'));

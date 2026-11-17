@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chooseProvider, providerDefaults, targetModes } from '../host/dudu-plugin/ui/tasks/format.js';
+import { canRunIn, chooseProvider, followSession, providerDefaults, targetModes } from '../host/dudu-plugin/ui/tasks/format.js';
 
 // The 定时任务 window's provider rule (owner, 2026-11-11): 嘟嘟 is one more provider and works in its own folder, so a task of its own has no workspace and no existing conversation to take over.
 // Choosing 嘟嘟 or leaving it must never keep a place it cannot have, or leave a task of the others without a workspace.
@@ -25,4 +25,19 @@ test('choosing 嘟嘟 drops the workspace and the existing conversation, leaving
   assert.deepEqual([other.agent, other.model, other.project, other.target], ['codex', null, claude.project, claude.target], 'the workspace and the place chosen for Claude stay for ChatGPT');
   assert.equal(chooseProvider(claude, 'claude', options), claude, 'choosing the provider the draft has changes nothing');
   assert.deepEqual(Object.keys(toDudu), Object.keys(claude), 'the draft keeps its keys in their order: the window compares drafts as text');
+});
+
+test('choosing the conversation a task goes into makes its agent, model and workspace the task\'s; only a conversation the plugin can run is one to choose', () => {
+  const session = { key: 'dsh:s9', id: 's9', provider: 'dsh', dshSessionId: 's9', agent: 'codex', model: 'gpt-x', workspaceId: 'w2', project: { name: 'two', path: '/work/two' } };
+  const draft = { ...claude, target: { mode: 'existing', sessionId: '' } };
+  const followed = followSession(draft, session, options);
+  assert.deepEqual([followed.agent, followed.model, followed.project, followed.target], ['codex', 'gpt-x', options.projects[1], { mode: 'existing', sessionId: 's9' }]);
+  assert.deepEqual(Object.keys(followed), Object.keys(draft), 'the draft keeps its keys in their order');
+  assert.equal(followSession(draft, { ...session, model: undefined }, options).model, null, 'a conversation whose model is not known takes the default');
+  const can = { providers: [{ id: 'codex', available: true, models: ['gpt-x'] }, { id: 'claude', available: false, models: ['opus'] }] };
+  assert.equal(canRunIn(session, can), true);
+  assert.equal(canRunIn({ ...session, model: 'gone' }, can), false, 'a model the plugin does not list');
+  assert.equal(canRunIn({ ...session, agent: 'claude', model: 'opus' }, can), false, 'a provider that is not available');
+  assert.equal(canRunIn({ ...session, workspaceId: undefined }, can), false, 'a conversation that is in no workspace');
+  assert.equal(canRunIn(session, {}), true, 'the plugin has not said what it can run yet: it has the last word when the task is saved');
 });

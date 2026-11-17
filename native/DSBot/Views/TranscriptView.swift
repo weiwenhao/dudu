@@ -54,21 +54,33 @@ private struct UserBubbleRow: View {
     let canLoadAttachments: Bool
     let loadAttachment: (TranscriptAttachment, DraftTarget, Bool) async -> PreparedPhotoImage?
 
+    /// Render one indicator on the final visible attachment when there is no text bubble.
+    private var pendingAttachmentIndex: Int? {
+        guard row.isPending, row.text.isEmpty else { return nil }
+        return row.attachments.lastIndex { $0.kind != "image" && $0.kind != "video" }
+            ?? row.attachments.lastIndex { $0.kind == "video" }
+            ?? row.attachments.lastIndex { $0.kind == "image" }
+    }
+
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
             ForEach(Array(row.attachments.enumerated()).filter { $0.element.kind == "image" }, id: \.offset) { index, attachment in
                 ConversationImageThumbnail(
                     attachment: attachment, target: attachmentTarget, canLoadAttachment: canLoadAttachments,
-                    identifier: "chat.image.\(row.id).\(index)", loadImage: loadAttachment
+                    identifier: "chat.image.\(row.id).\(index)", loadImage: loadAttachment,
+                    isPending: pendingAttachmentIndex == index
                 )
                 .messageActions(text: "", isUser: true, seq: row.seq)
             }
-            ForEach(Array(row.attachments.enumerated()).filter { $0.element.kind == "video" }, id: \.offset) { _, attachment in
-                ConversationVideoThumbnail(attachment: attachment, target: attachmentTarget, canLoadAttachment: canLoadAttachments)
+            ForEach(Array(row.attachments.enumerated()).filter { $0.element.kind == "video" }, id: \.offset) { index, attachment in
+                ConversationVideoThumbnail(
+                    attachment: attachment, target: attachmentTarget, canLoadAttachment: canLoadAttachments,
+                    isPending: pendingAttachmentIndex == index
+                )
                     .id(attachmentTarget)
             }
             if !row.text.isEmpty {
-                UserMessageBubble(text: row.text, seq: row.seq)
+                UserMessageBubble(text: row.text, seq: row.seq, isPending: row.isPending)
             }
             if row.attachments.contains(where: { $0.kind != "image" && $0.kind != "video" }) {
                 HStack(spacing: 6) {
@@ -85,10 +97,10 @@ private struct UserBubbleRow: View {
                         .overlay(Capsule().stroke(DSBotStyle.chatDivider, lineWidth: 0.5))
                     }
                 }
+                .modifier(MessagePendingIndicator(isPending: row.isPending && row.text.isEmpty))
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
-        .opacity(row.isPending ? 0.65 : 1)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.message.\(row.id)")
     }
@@ -97,6 +109,7 @@ private struct UserBubbleRow: View {
 struct UserMessageBubble: View {
     let text: String
     var seq: Double?
+    var isPending = false
 
     var body: some View {
         Text(text)
@@ -113,8 +126,26 @@ struct UserMessageBubble: View {
                     bottomTrailingRadius: 4, topTrailingRadius: 24, style: .continuous
                 )
             )
+            .modifier(MessagePendingIndicator(isPending: isPending))
             .messageActions(text: text, isUser: true, seq: seq)
             .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in width * 0.82 }
+    }
+}
+
+/// An overlay on the actual bubble or tile, before its outer trailing-alignment frame.
+/// Changing admission state must not resize or reposition the message.
+struct MessagePendingIndicator: ViewModifier {
+    let isPending: Bool
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .bottomLeading) {
+            if isPending {
+                DSBotLoadingRing(size: 15, color: DSBotStyle.chatSending)
+                    .offset(x: -25, y: -6)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
     }
 }
 

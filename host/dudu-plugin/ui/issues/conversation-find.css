@@ -1,0 +1,61 @@
+/* The find bar hangs from the header's bottom line (owner, 2026-11-17: "这里有一个奇怪的空隙"): the 8px strip the approved sketch left above it showed the
+   transcript scrolling past. The header's border is its top edge, so it is square at the top and its shadow only falls downwards.
+   The host transcript and composer keep their own layout. 44px is the header's height (`h-11`) in the board conversation and in the issue window. */
+.dudu-conversation-find {
+  position: absolute;
+  top: 44px;
+  right: 16px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(390px, calc(100% - 32px));
+  height: 37px;
+  padding: 4px 6px 4px 12px;
+  border: 1px solid var(--border);
+  border-top-width: 0;
+  border-radius: 0 0 8px 8px;
+  background: var(--popover);
+  color: var(--foreground);
+  box-shadow: 0 6px 12px -6px var(--dudu-shadow);
+}
+.dudu-conversation-find:focus-within {
+  border-color: color-mix(in srgb, var(--ring) 45%, var(--border));
+}
+.dudu-conversation-find input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  height: 28px;
+  outline: none;
+  font-size: 14px;
+  line-height: 20px;
+}
+.dudu-conversation-find input::placeholder { color: var(--muted-foreground); }
+.dudu-conversation-find input::-webkit-search-cancel-button { display: none; }
+.dudu-conversation-find-count {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 36px;
+  max-width: 96px;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.dudu-host-conversation {
+  --dudu-find-match-bg: #fff0a6;
+  --dudu-find-match-fg: #252930;
+  --dudu-find-current-bg: #ffd166;
+  --dudu-find-current-fg: #252930;
+}
+body[data-ds-dark-theme] .dudu .dudu-host-conversation {
+  --dudu-find-match-bg: #665221;
+  --dudu-find-match-fg: #fff6d9;
+  --dudu-find-current-bg: #b17b20;
+  --dudu-find-current-fg: #ffffff;
+}

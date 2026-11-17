@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
 import { oneLine } from './text.mjs';
 
 // Codex answers questions about its threads through `codex app-server`, the same program OAR drives to run them.
@@ -9,6 +8,37 @@ import { oneLine } from './text.mjs';
 
 const PAGE = 100;
 const MAX_PAGES = 30;
+// What one answer of the app-server may weigh, as bytes of one line of JSON. The host reads it into a string and parses it, which costs several times as much
+// again in DSH's heap (a thread of a gigabyte answers with a hundred megabytes, and reading it whole took 540 MB of the heap): an answer over this is dropped,
+// and the app-server stopped, instead of being let into the memory of DSH's host. (DSH's host died of its heap four times in ten days.)
+export const MAX_ANSWER_BYTES = 64 * 1024 * 1024;
+// A long thread is read from its end: this many of its newest turns, in pages of this many (`thread/read` with every turn is deprecated by Codex itself for long threads).
+export const TAIL_TURNS = 40;
+const TAIL_PAGE = 10;
+
+/** The lines of a stream of bytes, each as a string once it is whole; a line over `limit` bytes ends the stream's use (`onTooLarge`) before it is held in full. */
+function lineReader(stream, { limit, onLine, onTooLarge }) {
+  let chunks = [];
+  let size = 0;
+  let stopped = false;
+  stream.on('data', (chunk) => {
+    if (stopped) return;
+    let start = 0;
+    while (start < chunk.length) {
+      const end = chunk.indexOf(10, start);
+      const piece = end === -1 ? chunk.subarray(start) : chunk.subarray(start, end);
+      size += piece.length;
+      if (size > limit) { stopped = true; chunks = []; size = 0; onTooLarge(); return; }
+      chunks.push(piece);
+      if (end === -1) return;
+      const line = chunks.length === 1 ? chunks[0].toString('utf8') : Buffer.concat(chunks, size).toString('utf8');
+      chunks = [];
+      size = 0;
+      onLine(line);
+      start = end + 1;
+    }
+  });
+}
 
 /** `base` with an OAR-style overlay applied: a `null` value removes the name. */
 function withOverlay(base, overlay = {}) {
@@ -21,7 +51,7 @@ function withOverlay(base, overlay = {}) {
 }
 
 /** Run `run(request)` against a fresh app-server and stop it afterwards. */
-export async function withAppServer({ command, env, cwd, timeoutMs = 20_000, spawnProcess = spawn }, run) {
+export async function withAppServer({ command, env, cwd, timeoutMs = 20_000, maxAnswerBytes = MAX_ANSWER_BYTES, spawnProcess = spawn }, run) {
   const child = spawnProcess(command, ['app-server'], { stdio: ['pipe', 'pipe', 'pipe'], cwd, env: withOverlay(process.env, env) });
   let stderr = '';
   child.stderr?.on('data', (chunk) => { stderr = (stderr + chunk).slice(-2000); });
@@ -33,14 +63,21 @@ export async function withAppServer({ command, env, cwd, timeoutMs = 20_000, spa
     child.once('exit', (code) => { exitCode = code ?? -1; failAll(new Error(`codex app-server stopped (${exitCode}). ${stderr.trim()}`.trim())); resolve(); });
   });
   child.once('error', (error) => { exitCode = -1; failAll(error); });
-  createInterface({ input: child.stdout }).on('line', (line) => {
-    let message;
-    try { message = JSON.parse(line); } catch { return; }
-    const call = message?.id === undefined ? undefined : pending.get(message.id);
-    if (!call) return;
-    pending.delete(message.id);
-    if (message.error) call.reject(new Error(message.error.message ?? `codex app-server refused ${call.method}.`));
-    else call.resolve(message.result ?? {});
+  lineReader(child.stdout, {
+    limit: maxAnswerBytes,
+    onLine: (line) => {
+      let message;
+      try { message = JSON.parse(line); } catch { return; }
+      const call = message?.id === undefined ? undefined : pending.get(message.id);
+      if (!call) return;
+      pending.delete(message.id);
+      if (message.error) call.reject(new Error(message.error.message ?? `codex app-server refused ${call.method}.`));
+      else call.resolve(message.result ?? {});
+    },
+    onTooLarge: () => {
+      failAll(Object.assign(new Error(`codex app-server's answer is over ${Math.round(maxAnswerBytes / 1048576)} MB.`), { code: 'ANSWER_TOO_LARGE' }));
+      child.kill('SIGTERM');
+    },
   });
   const request = (method, params) => new Promise((resolve, reject) => {
     const id = nextId++;
@@ -94,14 +131,34 @@ export async function listCodexThreads(options) {
   });
 }
 
-/** One thread with its turns. A long thread takes a while to read. */
+/** One thread with all its turns. A long thread takes a while to read and a lot of memory: `readCodexThreadTail` is for those. */
 export async function readCodexThread(options, id) {
   return withAppServer({ timeoutMs: 180_000, ...options }, async (request) => (await request('thread/read', { threadId: id, includeTurns: true })).thread);
 }
 
 /**
+ * The newest `turns` turns of a thread, oldest first, and `partial` when the thread has older ones that were not read. Memory follows what is read, not
+ * how long the thread is: the newest ten turns of a thread of a gigabyte are a few megabytes, the whole of it a hundred.
+ */
+export async function readCodexThreadTail(options, id, { turns = TAIL_TURNS, page = TAIL_PAGE } = {}) {
+  return withAppServer({ timeoutMs: 60_000, ...options }, async (request) => {
+    const { thread } = await request('thread/read', { threadId: id, includeTurns: false });
+    const newest = [];
+    let cursor = null;
+    do {
+      const reply = await request('thread/turns/list', {
+        threadId: id, limit: Math.min(page, turns - newest.length), sortDirection: 'desc', itemsView: 'full', ...(cursor ? { cursor } : {}),
+      });
+      newest.push(...(Array.isArray(reply.data) ? reply.data : []));
+      cursor = reply.nextCursor ?? null;
+    } while (cursor && newest.length < turns);
+    return { ...thread, turns: newest.reverse(), partial: Boolean(cursor) };
+  });
+}
+
+/**
  * Several threads, each handed to `onThread` as it is read. A thread that fails is skipped, and one that does not answer
- * in time (a very long thread) ends that app-server, which may still be busy with it, so the rest are read by a new one.
+ * in time (a very long thread), or answers with more than the host may hold, ends that app-server, which may still be busy with it, so the rest are read by a new one.
  */
 export async function readCodexThreads(options, ids, onThread, { timeoutMs = 25_000, onFailure } = {}) {
   const remaining = [...ids];
@@ -115,7 +172,7 @@ export async function readCodexThreads(options, ids, onThread, { timeoutMs = 25_
           try { thread = (await request('thread/read', { threadId: id, includeTurns: true })).thread; }
           catch (error) {
             onFailure?.(id, error); // the caller says which conversation could not be read, and why
-            if (/did not answer/.test(error.message)) { restart = true; return; }
+            if (/did not answer/.test(error.message) || error.code === 'ANSWER_TOO_LARGE') { restart = true; return; }
             continue;
           }
           await onThread(id, thread);

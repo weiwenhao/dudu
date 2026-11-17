@@ -26,6 +26,27 @@ export function chooseProvider(draft, agent, options = {}) {
   return { ...draft, agent, model: null, ...(crossing ? providerDefaults(agent, options) : {}) };
 }
 
+/**
+ * The draft after a conversation is chosen to run in (owner, 2026-11-17, from the picker's design: 供应商, 模型 and 关联工作区 follow the conversation): its agent, its model and its workspace become the task's and the
+ * place is that conversation, so the three can never disagree with it (the plugin refuses a conversation on another model than the task's). `session` is a row of `sessions/list` asked with `inDsh`. The draft keeps
+ * its keys in their order: the window compares drafts as text.
+ */
+export function followSession(draft, session, options = {}) {
+  const project = options.projects?.find((item) => item.id === session.workspaceId) ?? (session.project?.path ? { id: session.workspaceId, name: session.project.name, path: session.project.path } : draft.project);
+  return { ...draft, agent: session.agent, model: session.model ?? null, project, target: { mode: 'existing', sessionId: session.dshSessionId ?? session.id } };
+}
+
+/**
+ * Whether a task can be sent into this conversation: it is in a workspace DSH has, and its provider and model are ones the plugin can run (otherwise saving would be refused). Until the plugin has said what it can run,
+ * every conversation can be chosen and the plugin has the last word.
+ */
+export function canRunIn(session, options = {}) {
+  if (!session.workspaceId) return false;
+  if (!options.providers) return true;
+  const provider = options.providers.find((item) => item.id === session.agent);
+  return Boolean(provider && provider.available !== false && (!session.model || (provider.models ?? []).includes(session.model)));
+}
+
 /** What a line of a task in 嘟嘟's conversation says under its header: the result of the run, or, for a run that failed, the word for it and the reason (the plugin's own text, which may be English). */
 export function taskText(line) {
   const text = String(line?.text ?? '').trim();

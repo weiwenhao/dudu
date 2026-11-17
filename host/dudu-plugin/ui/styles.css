@@ -8,7 +8,9 @@
 @import "./dashboard/dashboard.css";
 @import "./pet/pet.css";
 @import "./tasks/tasks.css";
+@import "./tasks/session-tasks.css";
 @import "./issues/conversations.css";
+@import "./issues/conversation-find.css";
 @import "../widget.css";
 @source "./";
 

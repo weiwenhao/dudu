@@ -56,6 +56,7 @@ are grouped by implementation area because several features share session module
 | `codex-subagents.patch` | Native v1/v2 child ownership and resume attribution |
 | `codex-session.patch` | Native background terminals alongside official child stopping |
 | `process-ownership.patch` | Exit/signal cleanup and idle hook removal |
+| `crash-recovery.patch` | Private Claude process identities and verified orphan recovery before resume |
 
 ## Upstream provenance
 
@@ -212,6 +213,39 @@ an intentionally handled signal, captured ownership after the root closes,
 and hook removal after both normal disposal and final captured cleanup.
 The original isolated reproduction also runs the installed Claude CLI with a
 scripted model: SIGTERM no longer leaves the native CLI parented by PID 1.
+
+## Recovery after a host crash (2026-11-17)
+
+An abort or forced kill may bypass every in-process exit hook. Claude launches
+now write a private session-keyed ownership record before OAR resolves the
+process's spawn boundary. The record contains the host and direct child PID,
+parent PID, group and start identity; it contains no prompt, path, environment
+or credential. Process-table reads use OAR's asynchronous observation.
+A record failure rejects admission only after ordinary OAR tree disposal has
+finished, so it cannot leave an untracked writer.
+
+`recoverOwnedProcess(key)` verifies a record before the host's existing Claude
+busy check. A still-live recorded owner, a different session, a reused child PID
+or an unverified process grants no permission to terminate. On POSIX the matching
+child must also be orphaned to PID 1 and retain its original detached group.
+Recovery uses the existing OAR tree helpers and waits for observed root exit
+before returning; the host then keeps its normal native-registry busy guard.
+Release removes only the matching record, so a late close cannot erase a later
+owner's identity.
+
+This applies to processes recorded by this version. It does not discover or
+adopt pre-upgrade leftovers, take over another live host/TUI, resume a background
+command after a crash, or resend a user message. Recovery runs when that exact
+Claude session is resumed; there is no startup scan of unrelated sessions.
+The host logs recovery diagnostics internally and keeps its existing busy
+response if verification or disposal fails.
+
+The host also supplies upstream `SessionOptions.retainedBytes` at 8 MiB to all
+OAR sessions. Upstream elides older retained native/tool payloads only after live
+observers receive the complete records, preserving event order, text, usage and
+cursors. DSH remains the durable history. This is a raw-payload retention budget,
+not an 8 MiB total-memory ceiling: text/events remain, and the latest frame may
+exceed the budget. No upstream retention implementation was rewritten.
 
 ## Upgrade to 0.105.0 (2026-11-14)
 

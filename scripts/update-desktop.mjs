@@ -79,12 +79,26 @@ export async function acquireUpdateLock(lockPath, alive = processAlive) {
   }
 }
 
-export async function activateDesktopUpdate({ running, restartRequired, requestReload, waitForRuntime, restart }) {
+/** A ready plugin in a replacement host is recovery after an interruption, not a hot reload. */
+export function assertDesktopContinuity(before, after, runtime) {
+  const missing = before.filter((previous) => !after.some((current) =>
+    current.pid === previous.pid && current.parent === previous.parent
+    && current.command === previous.command && current.startedAt === previous.startedAt));
+  if (!before.length || missing.length || (runtime && !before.some((entry) => entry.pid === runtime.pid))) {
+    throw Object.assign(new Error('DSH exited or its host process changed during the update. Hot reload failed, even if a reopened DSH is now ready. Check the Desktop crash logs; the updater did not request a restart.'), {
+      code: 'DESKTOP_PROCESS_CHANGED', processes: { before, after }, ...(runtime ? { runtime } : {}),
+    });
+  }
+}
+
+export async function activateDesktopUpdate({ running, restartRequired, assertHotRuntime, requestReload, waitForRuntime, restart }) {
   if (running && !restartRequired) {
+    await assertHotRuntime();
     await requestReload();
     // A normal profile reconciliation can take longer than 20 s. Use the same
     // bounded readiness window as a launch; this still never restarts Desktop.
-    const runtime = await waitForRuntime(90_000);
+    const runtime = await waitForRuntime(90_000, assertHotRuntime);
+    await assertHotRuntime(runtime);
     if (runtime) return { mode: 'hot', runtime };
     throw new Error('Plugin hot reload did not become ready. DSH was left open; use --restart only when you want to restart it.');
   }
@@ -92,6 +106,12 @@ export async function activateDesktopUpdate({ running, restartRequired, requestR
   const runtime = await waitForRuntime(90_000);
   if (!runtime) throw new Error('The new desktop plugin did not become ready after restarting DSH.');
   return { mode: 'restart', runtime };
+}
+
+async function writeReceipt(folder, result) {
+  const receipt = await open(join(folder, 'result.json'), 'w', 0o600);
+  try { await receipt.writeFile(JSON.stringify(result, null, 2) + '\n'); }
+  finally { await receipt.close(); }
 }
 
 async function hasDependency(profile, name) {
@@ -154,23 +174,29 @@ async function main() {
     };
     const executable = join(app, 'Contents', 'MacOS', 'DeepSeek Harness');
     const processes = async () => {
-      const { stdout } = await exec('ps', ['-axo', 'pid=,ppid=,comm=']);
+      const { stdout } = await exec('ps', ['-axo', 'pid=,ppid=,lstart=,comm='], { env: { ...process.env, LC_ALL: 'C' } });
       return stdout.split('\n').flatMap((line) => {
-        const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.+)$/);
-        return match ? [{ pid: Number(match[1]), parent: Number(match[2]), command: match[3] }] : [];
+        const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+)$/);
+        return match ? [{ pid: Number(match[1]), parent: Number(match[2]), startedAt: match[3], command: match[4] }] : [];
       });
     };
+    const desktopProcesses = async () => (await processes()).filter((entry) => entry.command === executable);
     const mainPids = async () => {
-      const candidates = (await processes()).filter((entry) => entry.command === executable);
+      const candidates = await desktopProcesses();
       return candidates.filter((entry) => !candidates.some((other) => other.pid === entry.parent));
     };
+    const originalProcesses = await desktopProcesses();
+    const running = originalProcesses.length > 0;
+    const assertHotRuntime = async (runtime) => assertDesktopContinuity(originalProcesses, await desktopProcesses(), runtime);
     console.log('Packaging dudu...');
     await run(process.execPath, ['scripts/package-desktop.mjs'], 'package');
     const expected = await desktopPackageIdentity(join(root, 'host', 'dudu-plugin'));
     const runtimeFolder = join(dshHome, 'dudu');
-    const running = (await mainPids()).length > 0;
-    const legacy = await hasDependency(profile, 'dsbot');
-    const installed = join(profile, 'node_modules', 'dudu');
+    if (running && !restartRequired) await assertHotRuntime();
+    // Earlier names of this plugin that may still be installed: dsbot, then dudu (before the npm package became dsh-dudu).
+    const legacy = [];
+    for (const name of ['dsbot', 'dudu']) if (await hasDependency(profile, name)) legacy.push(name);
+    const installed = join(profile, 'node_modules', 'dsh-dudu');
     const current = await waitForDesktopRuntime({ folder: runtimeFolder, expected, timeoutMs: 0, probe });
     if (!restartRequired && current && running) {
       const identity = await desktopPackageIdentity(installed);
@@ -192,27 +218,27 @@ async function main() {
     }
     const after = Date.now();
     const release = join(root, '.local', 'release');
-    const archive = join(release, `dudu-${expected.version}-${expected.fingerprint}.tgz`);
+    const archive = join(release, `dsh-dudu-${expected.version}-${expected.fingerprint}.tgz`);
     // pnpm caches file: tarballs by path; a changed build must never reuse the previous path.
-    await copyFile(join(release, `dudu-${expected.version}.tgz`), archive);
+    await copyFile(join(release, `dsh-dudu-${expected.version}.tgz`), archive);
     console.log(`Installing dudu ${expected.version} using Desktop's bundled CLI...`);
     await run(carrier, ['plugin', '--profile', 'desktop', 'add', `file:${archive}`], 'install');
     const identity = await desktopPackageIdentity(installed);
     if (identity.fingerprint !== expected.fingerprint) throw new Error('Installed package differs from the packaged source.');
-    if (legacy) {
-      // dudu was called dsbot; two copies would fight over the same port, so the old one leaves in this same update.
-      console.log('Removing the former dsbot plugin...');
-      try { await run(carrier, ['plugin', '--profile', 'desktop', 'remove', 'dsbot'], 'remove-dsbot'); }
+    for (const name of legacy) {
+      // The plugin was called dsbot, then dudu; two copies would fight over the same port, so an old one leaves in this same update.
+      console.log(`Removing the former ${name} plugin...`);
+      try { await run(carrier, ['plugin', '--profile', 'desktop', 'remove', name], `remove-${name}`); }
       catch (error) {
-        await run(carrier, ['plugin', '--profile', 'desktop', 'remove', 'dudu'], 'rollback-dudu').catch(() => {});
+        await run(carrier, ['plugin', '--profile', 'desktop', 'remove', 'dsh-dudu'], 'rollback-dsh-dudu').catch(() => {});
         throw error;
       }
     }
     console.log('Applying the update and checking the running code...');
     const result = await activateDesktopUpdate({
-      running, restartRequired,
+      running, restartRequired, assertHotRuntime,
       requestReload: () => requestDesktopReload(profile, expected.fingerprint),
-      waitForRuntime: (timeoutMs) => waitForDesktopRuntime({ folder: runtimeFolder, expected, after, timeoutMs, probe }),
+      waitForRuntime: (timeoutMs, assertRunning) => waitForDesktopRuntime({ folder: runtimeFolder, expected, after, timeoutMs, probe, assertRunning }),
       restart: async () => {
         if ((await mainPids()).length) {
           console.log('Restart requested; asking DSH to quit normally...');
@@ -231,12 +257,18 @@ async function main() {
         await run('open', ['-a', app], 'open', 15_000);
       },
     });
-    const receipt = await open(join(logFolder, 'result.json'), 'w', 0o600);
-    try { await receipt.writeFile(JSON.stringify(result, null, 2) + '\n'); }
-    finally { await receipt.close(); }
+    await writeReceipt(logFolder, result);
     console.log(`dudu ${expected.version} is running and ready (${result.mode === 'hot' ? 'hot reload; DSH stayed open' : 'DSH restarted'}).`);
   } catch (error) {
-    if (logFolder) console.error(`Update diagnostics: ${logFolder}`);
+    if (logFolder) {
+      try {
+        await writeReceipt(logFolder, {
+          mode: 'failed', error: { code: error.code ?? 'DESKTOP_UPDATE_FAILED', message: error.message },
+          ...(error.processes ? { processes: error.processes } : {}), ...(error.runtime ? { runtime: error.runtime } : {}),
+        });
+      } catch (receiptError) { console.error(`Could not write the update result: ${receiptError.message}`); }
+      console.error(`Update diagnostics: ${logFolder}`);
+    }
     throw error;
   } finally {
     await lock.close();

@@ -21,6 +21,7 @@ await build({
 const { GridStackEngine } = await import(pathToFileURL(join(scratch, 'engine.mjs')).href);
 
 const T0 = 1_800_000_000_000;
+const fullIssuesLayout = () => ({ v: 3, widgets: [{ id: 'issues', type: 'issues', x: 0, y: 0, w: 'fill', h: 'fill' }] });
 type Item = { id: string; type: string; x: number; y: number; w: number | 'fill'; h: number | 'fill' };
 // The test widgets are the ones of the ten-column grid with every cell count a half more (rounded up), so the cases below are the same cases on fifteen columns.
 const gridWidgets = [
@@ -101,7 +102,7 @@ function assertSound(layout: { v: number; widgets: Item[] }, rows = FILL_ROWS) {
 
 test('the built-in widgets are the table of the design doc, and a declaration that breaks the rules is refused with a reason', () => {
   assert.deepEqual(BUILT_IN_WIDGETS.map((widget) => [widget.id, widget.label, `${widget.min.w}x${widget.min.h}`, `${widget.size.w}x${widget.size.h}`]), [
-    ['issues', 'Issues', '6x3', 'fillxfill'], ['office', 'Office', '5x3', '5x3'], ['collector', 'Inbox', '4x3', '6x5'],
+    ['issues', 'Issues', '6x3', '10xfill'], ['office', 'Office', '5x3', '5x4'], ['collector', 'Inbox', '4x3', '5x5'],
   ]);
   for (const widget of BUILT_IN_WIDGETS) {
     assert.deepEqual(validateDeclaration(widget), { ok: true }, widget.id);
@@ -133,14 +134,16 @@ test('the built-in widgets are the table of the design doc, and a declaration th
 test('the owner arranges the dashboard through the page and through 嘟嘟, over the HTTP handler on a real file, and takes changes back', async (t) => {
   const s = session(t, { plugins: true });
 
-  // First open: a lone Issues that fills the width and the height (every row the window shows), and nothing is written yet.
+  // First open and reset use the new composition; opening alone never saves over a custom layout.
   const first = await s.ok('get');
-  assert.deepEqual(first.layout, { v: 3, widgets: [{ id: 'issues', type: 'issues', x: 0, y: 0, w: 'fill', h: 'fill' }] });
   assert.deepEqual(first.layout, defaultLayout());
+  assertSound(first.layout);
   assert.equal(first.widgets.length, 9);
   assert.equal(first.undo, null);
   assert.equal(first.recovered, null);
   assert.equal(existsSync(s.file), false, 'nothing is written before the first change');
+  // The owner can still explicitly arrange one full-width Issues; resizing and fill semantics are independent of the default.
+  await s.ok('set', { layout: fullIssuesLayout() });
 
   // Issues fills until it is given a size: a height alone keeps the width filling, it cannot go sideways, a width alone keeps the height
   // filling, and "fill" gives either back.
@@ -156,6 +159,7 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
   assert.equal(narrower.undo.label, '「Issues」resized to 10 × full height');
   assert.equal((await s.call('resize', { type: 'issues', h: 'fill' })).body.outcome, 'no_op', 'it fills the height already');
   assert.deepEqual((await s.ok('reset')).layout, defaultLayout());
+  await s.ok('set', { layout: fullIssuesLayout() });
 
   // No room beside a filling Issues, so a new widget goes below everything, at its recommended size; the file is then written whole.
   // How far down "below" is depends on the rows the window shows, which the page says (nine when nobody does).
@@ -184,7 +188,7 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
   assert.deepEqual(box((await s.ok('add', { type: 'test.summary', columns: 9 })).layout, 'test.summary'), [8, 0, 6, 3]);
   assert.deepEqual(box((await s.ok('add', { type: 'test.history', columns: 9 })).layout, 'test.history'), [8, 3, 6, 6]);
   const full = await s.ok('add', { type: 'office', columns: 9 });
-  assert.deepEqual(box(full.layout, 'office'), [3, 9, 5, 3], 'no room in the first nine rows: the first slot below, beside Quota (Office comes at 5 × 3, its minimum)');
+  assert.deepEqual(box(full.layout, 'office'), [3, 9, 5, 4], 'no room in the first nine rows: the first slot below, beside Quota');
   assert.deepEqual(box(full.layout, 'test.small'), [0, 9, 3, 2], 'nothing else moved');
   const again = await s.call('add', { type: 'office' });
   assert.equal(again.body.outcome, 'no_op', 'one widget per type');
@@ -193,7 +197,7 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
   // 嘟嘟 moves Quota onto Summary: what it lands on is pushed down, and what that lands on, and so on; the rest stays.
   const pushed = await s.ok('move', { type: 'test.small', x: 8, y: 2 });
   assert.equal(pushed.undo.label, 'Moved「Small」');
-  assert.deepEqual(['issues', 'test.small', 'test.summary', 'test.history', 'office'].map((type) => box(pushed.layout, type)), [[0, 0, 8, 9], [8, 2, 3, 2], [8, 4, 6, 3], [8, 7, 6, 6], [3, 9, 5, 3]]);
+  assert.deepEqual(['issues', 'test.small', 'test.summary', 'test.history', 'office'].map((type) => box(pushed.layout, type)), [[0, 0, 8, 9], [8, 2, 3, 2], [8, 4, 6, 3], [8, 7, 6, 6], [3, 9, 5, 4]]);
   assertSound(pushed.layout);
 
   // Undo takes back the last change, once (the one before it stays); the layout it restores is the one on disk.
@@ -211,14 +215,14 @@ test('the owner arranges the dashboard through the page and through 嘟嘟, over
   assert.deepEqual(resized.corrections, [{ type: 'test.summary', reason: 'size', from: { w: 1, h: 99 }, to: { w: 3, h: 18 } }]);
   assert.equal(resized.undo.label, '「Summary」resized to 3×18');
   assert.deepEqual(box(resized.layout, 'test.summary'), [8, 0, 3, 18]);
-  assert.deepEqual([box(resized.layout, 'office'), box(resized.layout, 'test.history')], [[3, 9, 5, 3], [8, 18, 6, 6]], 'History goes below it; Office, five wide, is beside it (columns 3 to 7, it is on 8 to 10) and stays');
+  assert.deepEqual([box(resized.layout, 'office'), box(resized.layout, 'test.history')], [[3, 9, 5, 4], [8, 18, 6, 6]], 'History goes below it; Office, five wide, is beside it (columns 3 to 7, it is on 8 to 10) and stays');
   assertSound(resized.layout);
   assert.equal((await s.call('resize', { type: 'test.summary', w: 3, h: 18 })).body.outcome, 'no_op');
 
   // Removing leaves the space empty (nothing falls upward).
   const removed = await s.ok('remove', { type: 'test.history' });
   assert.equal(removed.undo.label, 'Removed「History」');
-  assert.deepEqual(box(removed.layout, 'office'), [3, 9, 5, 3], 'nothing falls upward, and Office was not moved');
+  assert.deepEqual(box(removed.layout, 'office'), [3, 9, 5, 4], 'nothing falls upward, and Office was not moved');
   assert.equal((await s.call('remove', { type: 'test.history' })).body.outcome, 'no_op');
 
   // A widget from a plugin the dashboard has never heard of is kept like any other, and its size has to be told.
@@ -508,6 +512,10 @@ test('a layout of the twenty-column grid is read on fifteen: every cell count is
 
 test('a height that fills counts the rows the window shows: the page says them, the plugin keeps "fill", and what gets in the way is pushed down', async (t) => {
   const s = session(t, { plugins: true });
+  const resetFull = async () => {
+    await s.ok('reset');
+    return s.ok('set', { layout: fullIssuesLayout() });
+  };
   const fillAndQuota = (y: number) => ({ v: 3, widgets: [{ id: 'issues', type: 'issues', x: 0, y: 0, w: 'fill', h: 'fill' }, { id: 'test.small', type: 'test.small', x: 0, y, w: 3, h: 2 }] });
 
   // Issues fills fifteen rows in this window: a Quota the page put at row 12 is in the way and goes below it; the fill is still "fill".
@@ -528,29 +536,29 @@ test('a height that fills counts the rows the window shows: the page says them, 
 
   // Rows nobody can use are not said: the default counts.
   for (const rows of [undefined, 0, -1, 1.5, 'ten', 5000]) {
-    await s.ok('reset');
+    await resetFull();
     const said = await s.ok('set', { layout: fillAndQuota(8), type: 'test.small', ...(rows === undefined ? {} : { rows }) });
     assert.deepEqual(said.layout.widgets.map((item: Item) => item.y), [0, FILL_ROWS], `rows ${JSON.stringify(rows)}`);
   }
 
   // Moved down, Issues has no "fill" height any more: it has the rows it had, up to MAX_ROWS; sideways it still fills.
-  await s.ok('reset');
+  await resetFull();
   const lowered = await s.ok('move', { type: 'issues', y: 3, rows: 15 });
   assert.deepEqual(box(lowered.layout, 'issues'), [0, 3, 'fill', 15]);
-  assert.deepEqual(box((await s.ok('reset')).layout, 'issues'), [0, 0, 'fill', 'fill']);
+  assert.deepEqual(box((await resetFull()).layout, 'issues'), [0, 0, 'fill', 'fill']);
   const huge = await s.ok('move', { type: 'issues', y: 3, rows: 40 });
   assert.deepEqual(box(huge.layout, 'issues'), [0, 3, 'fill', MAX_ROWS], 'a window taller than 18 rows still gives a widget 18 at most');
-  await s.ok('reset');
+  await resetFull();
 
   // A widget that is put on Issues' rows from row 0 pushes Issues down; Issues then has a number of rows of its own.
   const landed = await s.ok('add', { type: 'test.small', x: 0, y: 0, rows: 15 });
   assert.deepEqual(landed.layout.widgets.map((item: Item) => [item.type, item.y, item.h]), [['test.small', 0, 2], ['issues', 2, 15]]);
-  await s.ok('reset');
+  await resetFull();
 
   // Only the one that is at row 0 and has every row fills: given a height of "fill" at another row it has the rows a window gives it.
   const lower = await s.ok('add', { type: 'test.history', x: 9, y: 4, h: 'fill', rows: 10 });
   assert.deepEqual(box(lower.layout, 'test.history'), [9, 4, 6, 10]);
-  await s.ok('reset');
+  await resetFull();
 
   // Heights are asked for by name too, and the words of the undo bar say what they are.
   assert.deepEqual(box((await s.ok('resize', { type: 'issues', h: 6 })).layout, 'issues'), [0, 0, 'fill', 6]);
@@ -558,7 +566,7 @@ test('a height that fills counts the rows the window shows: the page says them, 
   await s.ok('resize', { type: 'issues', w: 12, h: 8 });
   const both = await s.ok('resize', { type: 'issues', w: 'fill', h: 'fill' });
   assert.equal(both.undo.label, '「Issues」resized to full width × full height');
-  assert.deepEqual(both.layout, defaultLayout());
+  assert.deepEqual(both.layout, fullIssuesLayout());
   assert.equal((await s.call('resize', { type: 'issues', h: 'tall' })).body.outcome, 'needs_clarification');
 
   // A plugin may recommend a height of fill: the declaration is kept as it is, a widget added from it fills from row 0, and below row 0
@@ -590,8 +598,8 @@ test('a dashboard.json that cannot be used is set aside, not lost, and a failed 
     assert.equal(readFileSync(view.recovered.file, 'utf8'), content, 'what the owner had is kept, byte for byte');
     assert.equal(existsSync(s.file), false);
     // The next change writes a good file; the set-aside one stays.
-    await s.ok('add', { type: 'office' });
-    assert.deepEqual(s.onDisk().widgets.map((item: Item) => item.type), ['issues', 'office']);
+    await s.ok('remove', { type: 'office' });
+    assert.deepEqual(s.onDisk().widgets.map((item: Item) => item.type), ['issues', 'collector']);
     assert.equal(readFileSync(view.recovered.file, 'utf8'), content);
   }
 
@@ -616,7 +624,7 @@ test('a dashboard.json that cannot be used is set aside, not lost, and a failed 
   // A folder that cannot be written: the change is an error, the layout and the undo entry stay as they were, nothing is left behind.
   const blocked = session(t, { file: join(s.dir, 'a-file-not-a-folder', 'dashboard.json') });
   writeFileSync(join(s.dir, 'a-file-not-a-folder'), 'x');
-  const failed = await blocked.call('add', { type: 'office' });
+  const failed = await blocked.call('remove', { type: 'office' });
   assert.equal(failed.status, 200);
   assert.equal(failed.body.outcome, 'error');
   assert.match(failed.body.message, /could not be saved/);
@@ -731,7 +739,7 @@ test('moves, resizes, adds and overlapping files give the positions the bare gri
   const landed = chained.add({ type: 'issues', x: 0, y: 6 });
   assertSound(landed.layout);
   assert.deepEqual(positions(landed.layout), bare.positions(bare.add(chainStart.widgets, {
-    id: 'issues', x: 0, y: 6, w: MAX_COLUMNS, h: FILL_ROWS, minW: declared('issues').min.w, minH: declared('issues').min.h, maxH: MAX_ROWS,
+    id: 'issues', x: 0, y: 6, w: declared('issues').size.w, h: FILL_ROWS, minW: declared('issues').min.w, minH: declared('issues').min.h, maxH: MAX_ROWS,
   })));
   assert.equal(landed.layout.widgets.find((item: Item) => item.type === 'issues')?.h, FILL_ROWS, 'it fills from row 0 only: put lower down it has the rows it would have had');
 

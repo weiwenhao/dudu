@@ -164,6 +164,28 @@ test('shared session activity distinguishes background work, native continuation
   } finally { await activity.close(); receipts.close(); }
 });
 
+test('a reconciled DSH completion outranks an older native running scan, while a later TUI turn can still run', async () => {
+  const receipts = createReadReceipts({ file: ':memory:' });
+  let native: any = { provider: 'claude', dshSessionId: 'a', state: 'running', foregroundActive: true, lastActivityAt: 1000 };
+  let resolved: any = native;
+  const attention = complete(projection.init(), message(4));
+  const activity = createSessionActivity({
+    receipts, projected: () => attention, readProjection: async () => attention,
+    snapshotOf: () => resolved, nativeSnapshotOf: () => native, liveOf: () => ({ status: 'idle' }),
+  });
+  try {
+    assert.equal(activity.statusOf('dsh:a').sessionState, 'processing');
+    resolved = { state: 'finished', lastActivityAt: 1005 };
+    assert.equal(activity.statusOf('dsh:a').sessionState, 'unread', 'the completion is effective before the next native scan');
+    assert.equal(activity.statusOf('claude:a').sessionState, 'unread', 'both identities use the reconciled state');
+    await activity.acknowledge('a', { seq: 4 });
+    assert.equal(activity.statusOf('dsh:a').sessionState, 'idle', 'a read completion cannot retain the old processing badge');
+    native = { ...native, lastActivityAt: 2000 };
+    resolved = native;
+    assert.equal(activity.statusOf('dsh:a').sessionState, 'processing', 'newer native work remains observable');
+  } finally { await activity.close(); receipts.close(); }
+});
+
 test('cold activity reads coalesce, cannot overwrite newer events, transfer only identical read content on replacement, and stop on disposal', async () => {
   const receipts = createReadReceipts({ file: ':memory:' });
   const pending = Promise.withResolvers<any>();

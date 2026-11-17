@@ -98,6 +98,7 @@
 | 代码 | Code | 新增，待审 | Transcript.swift |
 | 令牌 | Token | 复用 settings.connectorsPage.custom.token | native-settings.mjs |
 | 任务 | Tasks | 复用 tasks.title | QuickCards.swift、DSBotRootView.swift、TaskPanel.swift、TaskSheets.swift、TasksView.swift、Navigation or embedded pages |
+| 定时任务 | Scheduled tasks | App 菜单中文由主人 2026-11-17 指定；英文原先复用 Tasks，2026-11-17 主人说“就按你定的来吧”，改成 Scheduled tasks（Tasks 放在 Agent team / Background tasks 旁边容易和后台任务混）。同一个词也是对话「…」菜单的第三项和它的面板标题（SessionTasksSheet.swift） | SidebarView.swift（包括无障碍名称，兼容旧导航目录）、DSBotRootView.swift、SessionActivity.swift |
 | 任务分配 | Issue assignment | 复用 settings.rules.files.ASSIGN.md.title | native-settings.mjs |
 | 任务已停止 | Task stopped | 新增，待审 | ConversationFeatureViews.swift |
 | 任务已因退出 DeepSeek 登录而停止。 | The task stopped because you signed out of DeepSeek. | 新增，待审 | ConversationFeatureViews.swift |
@@ -438,6 +439,7 @@
 | 暂无可选模型 | No models available | 新增，待审 | ComposerAttachmentSheet.swift |
 | 暂无可选模式 | No modes available | 新增，待审 | ChatView.swift |
 | 暂无后台任务 | No background tasks | 新增，待审 | SessionActivitySheet.swift |
+| 暂无定时任务 | No scheduled tasks | 新增（2026-11-17，对话「…」菜单里的定时任务面板），主人说“就按你定的来吧” | SessionTasksSheet.swift |
 | 暂无已归档会话 | No archived sessions | 新增，待审 | SidebarView.swift |
 | 暂无已登记的项目 | No registered projects | 新增，待审 | ChatView.swift |
 | 暂无文件 | No files | 新增，待审 | WorkPanelView.swift |
@@ -756,7 +758,37 @@
 
 视频入口的可访问性文字“发送视频”由主人本轮明确提供，String Catalog 仅增加中文，没有擅加英文译文。未分配事项详情复用“智能体”“事项没能加载”“重试”，不新增其他文案或副文本。
 
+## 2026-11-17 连接引导页
+
+主人确认 `.local/designs/connection-guide-2026-11-17/04-connection-guide.png` 后，
+连接引导页使用以下原文：
+
+| 中文 | 审核状态 | 使用处 |
+|---|---|---|
+| 连接嘟嘟 | 主人已批准 | ConnectionGuideView.swift |
+| 打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码 | 主人已批准 | ConnectionGuideView.swift |
+
+String Catalog 只增加已批准的中文，不新增未经审阅的英文译文。扫描和粘贴按钮沿用原文。
+旧的「连接电脑上的 DSH」仍由独立的配对表单使用，未随连接引导页一并改写。
+
+## 2026-11-17 新建事项加图片
+
+主人看过 `.local/designs/issue-images-2026-11-17/menu-close.png` 和 `phone-final-flow.png` 后说“就这样吧”：新建事项的“…”菜单在“截止日期”“设置父事项…”下面多一项，选好第一张图后，图片块的末尾有一个“+”块。
+
+| 中文 | English | 审核状态 | 使用处 |
+|---|---|---|---|
+| 添加图片 | Add photos | 中文主人已批准（图中原文）；英文新增，待审 | NewIssueSheet.swift：菜单项，也是“+”块的朗读文字 |
+
+英文先写了 Add photos，和现有的“照片 → Photos”“添加 → Add”“移除照片 → Remove photo”一致，等主人逐字审阅。
+一度只加了中文（照“发送视频”的做法），英文界面里会显示中文，主人指出这不对（“英文界面为什么要写中文？”），当天补上。
+其余文字沿用原文：预览照片、移除照片、部分照片未添加。
+
 ## 仍由原内容决定的文字
+
+2026-11-17 连接状态设计确认新增首页提示“电脑未连接”（`BoardConnectionNotice`）。
+String Catalog 只加入主人已确认的这句中文，未增加未经审核的英文译文。
+聊天加载移除可见的“正在连接…”副文本，保留既有的可访问性文字“正在连接”；
+待发送消息使用无文字的进度标记，不增加断连或重试说明。
 
 - 用户创建或修改的名称、标题、正文，以及 Agent 输出，不按界面语言翻译。
 - DSH 动态入口使用它已经注册的中英文词典；第三方插件没有对应译文或无法明确匹配时，保留插件原来的标题，不猜译。

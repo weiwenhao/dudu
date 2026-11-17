@@ -13,6 +13,9 @@ const MODEL_TTL = 5 * 60_000;
 const FALLBACK_TTL = 30_000;
 // A tool result is kept in DSH's log with the conversation: past this many characters it is cut.
 const MAX_OUTPUT = 256 * 1024;
+// DSH durably stores the live stream. OAR only needs a bounded raw-payload tail
+// while native background work keeps its process resident across turns.
+const RETAINED_BYTES = 8 * 1024 * 1024;
 // How long a turn that has ended waits for the follow-up the harness still owes a message it took in the meantime.
 const FOLLOW_UP_MS = 5000;
 // What shows the harness doing something again after its turn has ended.
@@ -240,6 +243,7 @@ export async function compactOarSession({ runtime, installation, sessionOptions,
   try { session = await runtime.session(installation, sessionOptions); }
   catch (error) {
     if (signal?.aborted) throw abortReason(signal);
+    if (error?.code === 'OAR_PROCESS_RECOVERY') throw harnessError('busy', 'HARNESS_BUSY');
     throw harnessError(`Could not start ${name}: ${error instanceof Error ? error.message : String(error)}`, 'HARNESS_UNAVAILABLE');
   }
   let unsubscribe = () => {};
@@ -312,6 +316,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   catch (error) {
     resident?.finishTurn();
     if (signal?.aborted) throw abortReason(signal);
+    if (error?.code === 'OAR_PROCESS_RECOVERY') throw harnessError('busy', 'HARNESS_BUSY');
     throw harnessError(`Could not start ${name}: ${error instanceof Error ? error.message : String(error)}`, 'HARNESS_UNAVAILABLE');
   }
 
@@ -567,6 +572,7 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
         const specific = sessionFor({ permission, signal });
         return {
           cwd: cwd || homedir(),
+          retainedBytes: RETAINED_BYTES,
           ...(model && model !== 'default' ? { model } : {}),
           ...(effort ? { effort } : {}),
           ...(resume ? { resume } : {}),
@@ -605,8 +611,12 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
             } : {}),
           };
         },
-        async start({ prompt, images, signal, onRecord, observedSubagents, onInput, onTasks, previous, ...options }) {
+        async start({ prompt, images, signal, onRecord, observedSubagents, onInput, onTasks, previous, hostTools, ...options }) {
           const sessionOptions = await optionsFor({ ...options, signal, retained: previous?.backgroundActive });
+          // Tools the host serves to this session over MCP, and tools of the harness's own it takes away (providers/cron-tools.mjs). OAR does not remember them: every start gives them again.
+          if (hostTools?.mcpServers?.length) sessionOptions.mcpServers = [...(sessionOptions.mcpServers ?? []), ...hostTools.mcpServers];
+          if (hostTools?.disallowedTools?.length) sessionOptions.disallowedTools = [...new Set([...(sessionOptions.disallowedTools ?? []), ...hostTools.disallowedTools])];
+          if (hostTools?.launchArgs?.length) sessionOptions.launchArgs = [...(sessionOptions.launchArgs ?? []), ...hostTools.launchArgs];
           // Only the harnesses whose OAR session reads background tasks (Claude, Codex) are asked for them.
           if (onTasks && backgroundTasks) sessionOptions.backgroundTasks = true;
           if (id === 'codex' && observedSubagents?.length) sessionOptions.observedSubagents = observedSubagents;

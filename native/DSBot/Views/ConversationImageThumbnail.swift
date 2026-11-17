@@ -7,6 +7,7 @@ struct ConversationImageThumbnail: View {
     let identifier: String
     let loadImage: (TranscriptAttachment, DraftTarget, Bool) async -> PreparedPhotoImage?
     var alignment: Alignment = .trailing
+    var isPending = false
 
     @State private var image: PreparedPhotoImage?
     @State private var isPreviewPresented = false
@@ -48,6 +49,7 @@ struct ConversationImageThumbnail: View {
         }
         .buttonStyle(.plain)
         .disabled(isLoading || (image == nil && !canLoadAttachment))
+        .modifier(MessagePendingIndicator(isPending: isPending))
         .frame(maxWidth: .infinity, alignment: alignment)
         .accessibilityLabel(attachment.name)
         .accessibilityIdentifier(identifier)

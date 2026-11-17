@@ -14,7 +14,7 @@ import { IssueConversation } from './IssueConversation.jsx';
 import { SubIssueChipMenu } from './SubIssueMenu.jsx';
 import { T } from '../strings.js';
 import { conversationTime } from './conversation-time.js';
-import { chooseConversation } from './selection.js';
+import { pickConversation, rememberConversation, rememberedConversation } from './selection.js';
 
 const issueOf = entry => entry.issue ? {
   ...entry.issue, pinned: entry.pinned, sessionState: entry.sessionState, receivedAt: entry.receivedAt,
@@ -88,18 +88,21 @@ function ConversationSidebar({ request, entries, pins, home, selected, scope, op
 export function Conversations({ request, home, scope, header, onOpen, onChange, onAssign, onDelete, onAddSub, onDuplicate, onPin, pinning }) {
   const { conversation: services } = useServices();
   const toast = useToast();
-  const [selection, setSelection] = useState(() => ({ scope, id: chooseConversation(home.value?.conversations ?? []), outsideIssue: null }));
+  const [selection, setSelection] = useState(() => ({ scope, id: pickConversation(home.value?.conversations ?? [], rememberedConversation(scope)), outsideIssue: null }));
   const childRequest = useRef(0);
   const entries = home.value?.conversations ?? [];
   const byId = new Map(entries.map(entry => [entry.id, entry]));
   const pins = (home.value?.pins ?? []).map(id => byId.get(id)).filter(Boolean);
   // Reset only the choice when scope changes. The split and its header stay
   // mounted, including the button anchoring an open filter menu.
-  const initial = chooseConversation(entries);
+  const initial = pickConversation(entries, selection.scope !== scope || selection.id === null ? rememberedConversation(scope) : null);
   if (selection.scope !== scope || (selection.id === null && initial !== null)) {
     setSelection({ scope, id: initial, outsideIssue: null });
   }
   const { id: selected, outsideIssue } = selection;
+  // Expanding a conversation opens DSH's own page and closes this panel: coming back, the same conversation is open (owner, 2026-11-17: "我点了放大之后，我就回不到当前会话页面了").
+  const listed = selected != null && byId.has(selected);
+  useEffect(() => { if (listed) rememberConversation(scope, selected); }, [scope, selected, listed]);
   useEffect(() => () => { childRequest.current++; }, [scope]);
   const open = (entry) => {
     childRequest.current++;
@@ -131,7 +134,7 @@ export function Conversations({ request, home, scope, header, onOpen, onChange, 
       {() => child}
     </IssueMenu>;
   };
-  const badge = (entry, size) => <ConversationAvatar reference={entry.issue?.ref ?? ''} assistant={!entry.issue}
+  const badge = (entry, size) => <ConversationAvatar title={entry.title} assistant={!entry.issue}
     state={entry.sessionState} size={size} busy={pinning.has(entry.id)} />;
   return <ConversationSplit sidebar={compact => <ConversationSidebar request={request} entries={entries} pins={pins} home={home} selected={selected} scope={scope}
     open={open} openChild={openChild} menu={menu} badge={badge} header={header(compact)} />}>

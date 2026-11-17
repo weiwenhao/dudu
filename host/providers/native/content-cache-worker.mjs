@@ -50,6 +50,8 @@ const statements = {
   short: db.prepare('SELECT key,user_text,assistant_text,user_lower,assistant_lower FROM documents WHERE instr(user_lower,?)>0 OR instr(assistant_lower,?)>0'),
   snapshot: db.prepare("SELECT value FROM metadata WHERE key='snapshot'"),
   saveSnapshot: db.prepare("INSERT INTO metadata(key,value) VALUES('snapshot',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"),
+  metadata: db.prepare('SELECT value FROM metadata WHERE key=?'),
+  saveMetadata: db.prepare('INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value'),
   conversation: db.prepare('SELECT stamp,count FROM conversations WHERE key=?'),
   saveConversation: db.prepare('INSERT INTO conversations(key,stamp,count) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET stamp=excluded.stamp,count=excluded.count'),
   deleteConversation: db.prepare('DELETE FROM conversations WHERE key=?'),
@@ -121,6 +123,8 @@ parentPort.on('message', ({ id, action, body }) => {
     });
     else if (action === 'snapshot') value = JSON.parse(statements.snapshot.get()?.value ?? 'null');
     else if (action === 'saveSnapshot') statements.saveSnapshot.run(JSON.stringify(body));
+    else if (action === 'metadata') value = JSON.parse(statements.metadata.get(body.key)?.value ?? 'null');
+    else if (action === 'saveMetadata') statements.saveMetadata.run(body.key, JSON.stringify(body.value));
     else if (action === 'flush') db.exec('PRAGMA wal_checkpoint(PASSIVE)');
     else if (action === 'close') { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); db.close(); }
     else throw new Error('Unknown conversation cache operation.');

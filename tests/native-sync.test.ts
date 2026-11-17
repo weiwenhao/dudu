@@ -28,6 +28,18 @@ test('Codex updates after turns already continued in DSH do not repeat either si
   assert.deepEqual(nativeUpdates({ events: [...events, ...added], history: update, route: 'codex', sessionId: 'dsh-1' }), []);
 });
 
+// A long conversation is read from its end (`partial`): its first prompt must not be matched with an earlier one that says the same.
+test('a history that is only the end of a long conversation is matched against the end of what DSH has', () => {
+  const events = initial([turn('x', 'one'), turn('go on', 'two'), turn('y', 'three'), turn('go on', 'four')], 'codex');
+  const tail = { ...history([turn('go on', 'four'), turn('z', 'five')]), partial: true };
+  const added = nativeUpdates({ events, history: tail, route: 'codex', sessionId: 'dsh-1' });
+  assert.deepEqual(added.filter((event: any) => event.type === 'user/message').map((event: any) => event.data.content[0].text), ['z'], 'only what is new is added');
+  assert.equal(added.find((event: any) => event.type === 'turn/start')?.data.turn, 5);
+  assert.deepEqual(nativeUpdates({ events: [...events, ...added], history: tail, route: 'codex', sessionId: 'dsh-1' }), [], 'and once it is, there is nothing more to add');
+  // the same two turns, read as if they were the whole conversation, are matched from the start: the first prompt finds the earlier "go on" and nothing is appended
+  assert.deepEqual(nativeUpdates({ events, history: { ...tail, partial: undefined }, route: 'codex', sessionId: 'dsh-1' }), []);
+});
+
 test('repeated polling of an unfinished native turn never produces continuation turns', () => {
   const first = turn('first', 'done');
   const events = initial([first], 'codex');
@@ -79,7 +91,9 @@ test('pending tools get no fabricated result and join the open turn once the rea
   const update = nativeUpdates({ events, history: history([first, finished]), route: 'claude', sessionId: 'dsh-1' });
   assert.equal(update.filter((event: any) => event.type === 'turn/start' || event.type === 'user/message').length, 0);
   assert.equal(update.filter((event: any) => event.type === 'tool/result').length, 1);
-  assert.equal(update.find((event: any) => event.type === 'tool/result')?.data.meta.output, 'Actual file contents.');
+  const result = update.find((event: any) => event.type === 'tool/result')?.data;
+  assert.equal(result.message.content[0].text, 'Actual file contents.');
+  assert.equal(result.meta?.output, undefined, 'the content is not stored again in presentation metadata');
   assert.deepEqual(nativeUpdates({ events: [...events, ...update], history: history([first, finished]), route: 'claude', sessionId: 'dsh-1' }), []);
 });
 

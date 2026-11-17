@@ -7,6 +7,7 @@
 //
 // The rows have the shape the app already draws: a todo is the phone board's own row (native-board.mjs `boardRow`), a piece of information is the inbox's own card, a task is what the
 // tasks service lists (its schedule as it stores it: each end writes the rule in its own words), and the quota is what the quota panel shows (`quota.request`: each agent's plan and windows, DeepSeek's wallet and key).
+import { Buffer } from 'node:buffer';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { boardRow } from '../../native-board.mjs';
@@ -66,7 +67,7 @@ export function createCards({ file, issues = () => null, inbox = () => null, tas
 
   /**
    * The phone's 待办 lists unread issue conversations across workflows (owner, 2026-11-16).
-   * Warm exact read boundaries before filtering; work can coexist with unread content. This is
+   * Refresh cached display activity before filtering; work can coexist with unread content. This is
    * read-only and uses the homepage's completed-message order, never partial generation time.
    */
   async function todo(cursor) {

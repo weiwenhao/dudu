@@ -4,7 +4,25 @@ import { ChevronRight } from 'lucide-react';
 import { cn } from '../lib/cn.js';
 import { usePortalContainer } from '../lib/scope.jsx';
 
-export const ContextMenu = Primitive.Root;
+/**
+ * Radix's trigger stores the pointer point in state; its virtual Anchor forwards
+ * that point to Popper in a passive effect. Opening Content in the same commit
+ * lets it measure the previous point (initially 0,0) before that handoff.
+ * Keep the trigger mounted while the point commits, then let Radix mount and
+ * position the menu. Closing stays immediate; submenus keep their DOM anchors.
+ */
+export function ContextMenu({ open: controlledOpen, onOpenChange, children, ...props }) {
+  const [ownOpen, setOwnOpen] = React.useState(false);
+  const [anchorReady, setAnchorReady] = React.useState(false);
+  const open = controlledOpen ?? ownOpen;
+  React.useEffect(() => { setAnchorReady(open); }, [open]);
+  const changeOpen = (value) => {
+    if (!value) setAnchorReady(false);
+    if (controlledOpen === undefined) setOwnOpen(value);
+    onOpenChange?.(value);
+  };
+  return <Primitive.Root {...props} open={open && anchorReady} onOpenChange={changeOpen}>{children}</Primitive.Root>;
+}
 export const ContextMenuTrigger = Primitive.Trigger;
 export const ContextMenuSub = Primitive.Sub;
 

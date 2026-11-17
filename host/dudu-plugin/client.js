@@ -988,14 +988,48 @@ window.__ModuleLoader__.load({
           document.addEventListener('click', home, true);
           return () => document.removeEventListener('click', home, true);
         });
-        ctx.effect(() => ui?.installSessionHistoryCache(ctx.sessions));
+        let historyCache;
+        ctx.effect(() => {
+          historyCache = ui?.installSessionHistoryCache(ctx.sessions, { workspaces: ctx.get?.('workspaces') });
+          return () => { historyCache?.(); historyCache = undefined; };
+        });
         ctx.effect(() => ui?.installSessionReadReceipts(ctx.sessions, request));
+        ctx.effect(() => ui?.installSessionActivityUpdates(ctx.sessions));
+        let embeddedSurface;
+        const surfaceListeners = new Set();
+        const surfaceSnapshot = () => embeddedSurface;
+        const subscribeSurface = (listener) => { surfaceListeners.add(listener); return () => surfaceListeners.delete(listener); };
+        const publishSurface = (surface) => { embeddedSurface = surface; for (const listener of surfaceListeners) listener(); };
+        if (ui?.installEmbeddedSessionSurface) ctx.inject(['sidebarRight'], (child) => {
+          const bridge = ui.installEmbeddedSessionSurface({
+            sidebar: child.sidebarRight,
+            openSession: (id) => child.uiWorkspace.openSession(id),
+            isVisible: () => child.layout.panelInfo.getSnapshot().activePanelId === PANEL_ID,
+          });
+          publishSurface(bridge);
+          child.effect(() => () => { bridge.dispose(); if (embeddedSurface === bridge) publishSurface(undefined); });
+          child.slots.inject('conversation.session.header.actions', () => child.slots.register({
+            name: 'conversation.session.header.actions', id: 'dudu:session-surface-ready', order: 1000,
+          }, function SessionSurfaceReady({ sessionId }) {
+            const onScreen = useSyncExternalStore(child.sidebarRight.mounted.subscribe, child.sidebarRight.mounted.getSnapshot);
+            useEffect(() => { if (onScreen === sessionId) embeddedSurface?.committed(sessionId); }, [onScreen, sessionId]);
+            return null;
+          }));
+        });
         if (ui?.SidebarAgent) {
           const activity = ui.createSidebarActivity(request);
           ctx.effect(() => () => activity.dispose());
           ctx.slots.inject('sidebar.workspaces.session.row.action', () => ctx.slots.register({
             name: 'sidebar.workspaces.session.row.action', id: 'dudu-agent-state', order: 20,
           }, (props) => h(ui.SidebarAgent, { ...props, sessions: ctx.sessions, activity })));
+        }
+        // The scheduled tasks that go into a conversation, in its header after DSH's own team and background-jobs controls (owner, 2026-11-17; nothing until the conversation has one).
+        if (ui?.SessionTasksAction) {
+          const sessionTasks = ui.createSessionTasks(request);
+          ctx.effect(() => () => sessionTasks.dispose());
+          ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+            name: 'conversation.session.header.actions', id: 'dudu:session-tasks', order: 500,
+          }, (props) => h(ui.SessionTasksAction, { ...props, tasks: sessionTasks })));
         }
         ctx.effect(() => {
           if (!ctx.sessions.list?.subscribe || !window.addEventListener) return undefined;
@@ -1081,25 +1115,29 @@ window.__ModuleLoader__.load({
         const preparedSessions = new Map();
         const preparedSession = (requestedId) => {
           const sessionId = preparedSessions.get(requestedId) ?? requestedId;
-          if (ctx.sessions.list.getSnapshot().ids.includes(sessionId)) return sessionId;
+          const snapshot = ctx.sessions.list.getSnapshot();
+          if (snapshot.ids.includes(sessionId) || sessionId in snapshot.byId) return sessionId;
           preparedSessions.delete(requestedId);
           return null;
         };
         // Refresh discovers stored sessions; opening retains/resumes them through DSH's workspace.
         // session.create is for blank conversations and newer hosts mint a different ID for a nonblank target.
-        const prepareSession = async ({ sessionId }, { signal, synchronize = false } = {}) => {
+        const prepareSession = async ({ sessionId }, { signal, synchronize = false, onStage } = {}) => {
           signal?.throwIfAborted();
           const cached = preparedSession(sessionId);
           if (cached && !synchronize) return cached;
           const requestedId = sessionId;
-          if (sessionId.startsWith('dudu-assistant-')) {
-            await withAbort(ctx.sessions.refresh(), signal);
-          } else {
+          if (synchronize && !sessionId.startsWith('dudu-assistant-')) {
+            onStage?.('sync');
             const synchronized = await request('sessions/sync', { sessionIds: [sessionId], recover: true }, { signal });
             const replacement = synchronized.replacements?.find((entry) => entry.previousId === sessionId);
             if (replacement) sessionId = replacement.sessionId;
-            await withAbort(ctx.sessions.refresh(), signal);
           }
+          // On cold startup the host catalog may not have arrived yet. Discover the persisted
+          // session first; the existing visible-session synchronizer updates its native tail.
+          // A missing client list entry is not evidence that its history needs repair.
+          onStage?.('catalog');
+          await withAbort(ctx.sessions.refresh(), signal);
           await untilListed(ctx.sessions, sessionId, 5000, signal);
           preparedSessions.set(requestedId, sessionId);
           preparedSessions.set(sessionId, sessionId);
@@ -1145,26 +1183,43 @@ window.__ModuleLoader__.load({
           }
           return content;
         };
+        const findConversation = ui?.createConversationFinder(async (sessionId, page, signal) => {
+          const result = await ctx.remote.session.page({
+            address: { kind: 'session', sessionId }, maxMessages: 100, ...page,
+          }, signal);
+          if (result.error) throw new Error(result.error.message);
+          return result.value ?? result;
+        });
         const actions = {
           pickProjectDirectory: () => ctx.uiWorkspace.pickDirectory(),
+          findConversation,
+          conversationFindNodes: (reference) => ctx.get('uiConversation').binding(reference.binding)
+            .target('chat').getSnapshot().nodes.values(),
           conversationPermissionLabel: (option) => {
             const key = { 'read-only': 'preset.readOnly', 'workspace-write': 'preset.workspaceWrite', 'danger-full-access': 'preset.fullAccess' }[option.value];
             return key ? ctx.locale.bind('settings.permission')(key) : option.name;
           },
           conversationPermissionTitle: () => ctx.locale.bind('settings.permission')('title'),
-          retainSession: async (target, { signal } = {}) => {
-            let sessionId = await prepareSession(target, { signal });
+          retainCachedSession: (issue) => historyCache?.retain(issue),
+          sessionOpenFailed: (failure) => console.error('[dudu] Session opening failed', failure),
+          retainSession: async (target, { signal, issue, onStage } = {}) => {
+            let sessionId = await prepareSession(target, { signal, onStage });
             const retain = async () => {
               signal?.throwIfAborted();
+              onStage?.('history');
               const reference = ctx.sessions.retain(sessionId, { source: 'duduIssuePreview' });
-              try { await withAbort(reference.ready, signal); return reference; }
+              try {
+                await withAbort(reference.ready, signal);
+                historyCache?.remember(issue, { sessionId });
+                return reference;
+              }
               catch (error) { reference.release(); throw error; }
             };
             try { return await retain(); }
             catch {
               signal?.throwIfAborted();
               // A legacy imported copy can require repair before the host can restore it.
-              sessionId = await prepareSession(target, { signal, synchronize: true });
+              sessionId = await prepareSession(target, { signal, synchronize: true, onStage });
               return retain();
             }
           },
@@ -1336,9 +1391,23 @@ window.__ModuleLoader__.load({
               ...(!petInShell ? permissionChild : {}),
             },
           }, ui ? IssuesPage : Page);
-          const conversation = ctx.slots.register({ name: 'dudu.issue.conversation' }, (props) => props.renderFactorySlot('conversation.content', {
-            variant: 'embedded', phase: 'active', hero: false,
-          }));
+          const conversation = ctx.slots.register({ name: 'dudu.issue.conversation' }, function EmbeddedConversation(props) {
+            const bridge = useSyncExternalStore(subscribeSurface, surfaceSnapshot);
+            const surface = useRef(null);
+            useEffect(() => {
+              const mounted = bridge?.mount(props.sessionId);
+              surface.current = mounted;
+              return () => { mounted?.release(); if (surface.current === mounted) surface.current = null; };
+            }, [bridge, props.sessionId]);
+            return h('div', {
+              className: 'dudu-embedded-session-surface',
+              onPointerDownCapture: () => surface.current?.activate(),
+              onFocusCapture: () => surface.current?.activate(),
+              style: { display: 'contents' },
+            }, props.renderFactorySlot('conversation.content', {
+              variant: 'embedded', phase: 'active', hero: false,
+            }));
+          });
           const widgets = (ui?.REGISTRY ?? []).map((widget) => ctx.slots.register({
             name: 'dudu.widget', id: widget.id, label: widget.label,
           }, widget.Component));

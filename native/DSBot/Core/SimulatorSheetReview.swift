@@ -92,6 +92,14 @@ struct SimulatorSheetReview: ViewModifier {
                     store: store, onOpenChild: { _ in }
                 )
             }
+        case "session-tasks":
+            // The scheduled tasks of the conversation (`-dsbot-review-tasks .local/designs/session-schedules-2026-11-17/verify/tasks.json`: four of them go into the assistant's conversation, three do not).
+            if let session = store.selectedSession, let computer = store.activeComputer {
+                SessionTasksSheet(
+                    request: SessionActivityRequest(panel: .tasks, computerID: computer.id, session: session),
+                    model: tasks, store: store, toast: $toast
+                )
+            }
         case "subissues":
             if let issue { BoardSubIssuesSheet(issue: issue, board: board, store: store, onOpen: { _ in }) }
         case "issue-detail":

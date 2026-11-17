@@ -60,6 +60,22 @@ async function rpc(server, token, method, params = {}) {
   return response.json();
 }
 
+test('Android clients identify their platform without changing existing iPhone connections', async (t) => {
+  const { pairingStore, server } = await setup(t, {
+    dispatch: async (_method, _params, connection) => ({ clientName: connection.clientName }),
+  });
+  const code = await pairingStore.issue({ address: `${server.address}/dsbot` });
+  const token = tokenFrom(code);
+  const response = await fetch(`${server.address}${API}/connect`, {
+    method: 'POST', headers: headers(token, { 'x-dudu-client': 'android' }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(pairingStore.list()[0].name, 'Android');
+  assert.equal((await rpc(server, token, 'catalog.get')).result.clientName, 'Android');
+  await connect(server, token);
+  assert.equal((await rpc(server, token, 'catalog.get')).result.clientName, 'iPhone');
+});
+
 test('native API uses authenticated HTTP only and limits the public probe to a metadata-free proof', async (t) => {
   let dispatchCount = 0;
   const { pairingStore, server } = await setup(t, {

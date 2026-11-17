@@ -1,47 +1,17 @@
 import { useEffect, useRef } from 'react';
+import { mirrorNativeSlot } from './native-slots.js';
 
 export const ISSUE_HEADER_SLOT = 'dudu.issue.header.actions';
-
-// A host action can own child slots (the new subagent panel owns the Team footer).
-// Give each clone private child slots, preserving the host component's renderSlot calls.
-function mirrorSlot(ctx, h, source, target, render = (Component, props) => h(Component, props), accept = () => true) {
-  return ctx.slots.inject(target, () => {
-    const registered = new Map();
-    let serial = 0;
-    const sync = () => {
-      const entries = ctx.slots.entries(source).filter(accept);
-      for (const [entry, dispose] of registered) {
-        if (entries.includes(entry)) continue;
-        dispose();
-        registered.delete(entry);
-      }
-      for (const entry of entries) {
-        if (registered.has(entry)) continue;
-        const { component, options, children: childSlots, ...shares } = entry;
-        const children = Object.entries(childSlots ?? {});
-        const prefix = `${target}.${serial++}`;
-        const names = new Map(children.map(([name]) => [name, `${prefix}.${name}`]));
-        const disposers = [ctx.slots.register({
-          ...options, ...shares, name: target,
-          ...(children.length ? { children: Object.fromEntries(children.map(([name, options]) => [names.get(name), options])) } : {}),
-        }, (props) => render(component, {
-          ...props,
-          ...(children.length ? { renderSlot: (name, ...args) => props.renderSlot(names.get(name) ?? name, ...args) } : {}),
-        }, options.id))];
-        for (const [name] of children) disposers.push(mirrorSlot(ctx, h, name, names.get(name)));
-        registered.set(entry, () => { for (const dispose of disposers.toReversed()) dispose(); });
-      }
-    };
-    const unsubscribe = ctx.slots.subscribe(source, sync);
-    sync();
-    return () => { unsubscribe(); for (const dispose of registered.values()) dispose(); };
-  });
-}
+/** The id of the control of a conversation's scheduled tasks in the host's header slot (`client.js`), which this dialog shows too. */
+export const TASKS_ENTRY = 'dudu:session-tasks';
 
 /** Reuse the host's live team, subagent catalog and jobs controls, including their stores, locale and body portals. */
 export function installIssueHeader(ctx, h) {
   const source = 'conversation.session.header.actions';
-  return mirrorSlot(ctx, h, source, ISSUE_HEADER_SLOT, (NativeAction, props, id) => h(IssueHeaderAction, {
+  return mirrorNativeSlot(ctx, h, source, ISSUE_HEADER_SLOT, (NativeAction, props, id) => id === TASKS_ENTRY
+    // Dudu's own control opens a list of its own, above this dialog's shade (`session-tasks.css`); it only has to be seen as an open header action, so that Escape closes it before the dialog.
+    ? h('div', { className: 'shrink-0', 'data-dudu-session-header-action': id }, h(NativeAction, props))
+    : h(IssueHeaderAction, {
     ...props, kind: id, NativeAction,
     ...(id === 'subagent-catalog' ? {
       openChild: (address) => {
@@ -63,7 +33,7 @@ export function installIssueHeader(ctx, h) {
       });
       props.onNavigate?.();
     },
-  }), (entry) => ['agent-team', 'subagent-catalog', 'job-list'].includes(entry.options.id));
+  }), (entry) => ['agent-team', 'subagent-catalog', 'job-list', TASKS_ENTRY].includes(entry.options.id));
 }
 
 function IssueHeaderAction({ kind, NativeAction, ...props }) {

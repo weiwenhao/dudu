@@ -30,6 +30,7 @@ struct ConversationVideoThumbnail: View {
     let attachment: TranscriptAttachment
     let target: DraftTarget?
     let canLoadAttachment: Bool
+    var isPending = false
     @Environment(\.conversationAccess) private var access
     @State private var video: PreparedVideo?
     @State private var loading = false
@@ -59,6 +60,7 @@ struct ConversationVideoThumbnail: View {
             }
             .buttonStyle(.plain)
             .disabled(loading || (video == nil && !canLoadAttachment))
+            .modifier(MessagePendingIndicator(isPending: isPending))
             .accessibilityLabel(attachment.name)
             if let failure { ConversationFailureView(message: failure) }
         }

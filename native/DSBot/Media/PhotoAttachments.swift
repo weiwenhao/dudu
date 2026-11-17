@@ -48,9 +48,9 @@ struct PhotoAttachmentLoad: Sendable {
 }
 
 enum PhotoAttachments {
-    static let maximumPhotoBytes = 10 * 1_024 * 1_024
-    static let maximumTotalBytes = 20 * 1_024 * 1_024
-    static let maximumPhotoCount = 3
+    /// Nine photos in one message (owner, 2026-11-17). Their size is not limited: a photo is made small by being prepared (2,048 pixels, JPEG at 0.82), and nothing is refused for its bytes.
+    /// (The 3 photos, 10 MB each and 20 MB in all that stood here came with the first commit; they were never asked for.)
+    static let maximumPhotoCount = 9
 
     static func loadFullSizePreview(fromBase64 base64: String) async -> PreparedPhotoImage? {
         let decodeTask = Task.detached(priority: .utility) { () -> PreparedPhotoImage? in
@@ -106,11 +106,7 @@ enum PhotoAttachments {
                 processImage(from: sourceData)
             }.value
 
-            guard let processed, processed.jpegData.count <= maximumPhotoBytes else {
-                rejectedCount += 1
-                continue
-            }
-            guard totalBytes + processed.jpegData.count <= maximumTotalBytes else {
+            guard let processed else {
                 rejectedCount += 1
                 continue
             }
@@ -154,9 +150,7 @@ enum PhotoAttachments {
         let processed = await Task.detached(priority: .utility) {
             processImage(from: data)
         }.value
-        guard let processed,
-              processed.jpegData.count <= maximumPhotoBytes,
-              totalBytes + processed.jpegData.count <= maximumTotalBytes else {
+        guard let processed else {
             return PhotoAttachmentLoad(photos: [], rejectedCount: 1, totalBytes: totalBytes)
         }
 
@@ -190,33 +184,21 @@ enum PhotoAttachments {
     private static func processImage(from data: Data) -> ProcessedPhoto? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
 
-        var maximumPixelSize = 2_048
-        for _ in 0..<5 {
-            let options: [CFString: Any] = [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize,
-            ]
-            guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
-                return nil
-            }
-
-            let thumbnail = UIImage(cgImage: image)
-            for quality in [0.82, 0.70, 0.58, 0.44, 0.30] {
-                guard let candidate = thumbnail.jpegData(compressionQuality: quality) else { continue }
-                if candidate.count <= maximumPhotoBytes {
-                    let preview = makePreviewThumbnail(from: source)
-                    return ProcessedPhoto(
-                        jpegData: candidate,
-                        thumbnailData: preview?.data,
-                        thumbnailImage: preview?.image
-                    )
-                }
-            }
-            maximumPixelSize = max(640, Int(Double(maximumPixelSize) * 0.72))
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 2_048,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+              let jpeg = UIImage(cgImage: image).jpegData(compressionQuality: 0.82) else {
+            return nil
         }
-
-        return nil
+        let preview = makePreviewThumbnail(from: source)
+        return ProcessedPhoto(
+            jpegData: jpeg,
+            thumbnailData: preview?.data,
+            thumbnailImage: preview?.image
+        )
     }
 
     private static func makePreviewThumbnail(from source: CGImageSource) -> ProcessedThumbnail? {

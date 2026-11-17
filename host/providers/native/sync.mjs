@@ -67,7 +67,10 @@ export function nativeUpdates({ events, history, route, sessionId }) {
   history = { ...history, turns: history.turns.map(available) };
   const users = events.filter((event) => event.type === 'user/message' && event.surfaceOp === 'append');
   if (!history.turns.length) return [];
-  let cursor = 0;
+  // A history that is only the end of the conversation (`partial`: a long one is read from its end) is matched against the end of what DSH has. From the start, its first
+  // prompt would match an earlier, identical one ("go on") and the update would be missed.
+  const inputs = history.turns.reduce((count, item) => count + 1 + item.steps.filter((step) => step.input).length, 0);
+  let cursor = history.partial ? Math.max(0, users.length - inputs) : 0;
   let matched = -1;
   let last;
   let first;
@@ -124,7 +127,7 @@ const putOff = (reason = 'busy') => ({ deferred: true, reason });
 /** Use the live Session's publication path when attached; cold sessions use an exclusively owned persistence handle. */
 export function createNativeSync({ persistence, controller = () => undefined, query = () => undefined, agents = () => undefined, refresh, onHistoryAppended, pollMs = 5000 }) {
   const held = new Map();
-  return async ({ sessionId, history, route }) => {
+  return async ({ sessionId, history, route, checkpoint }) => {
     let live = agents()?.get(sessionId);
     const store = persistence();
     // Attach before publishing an open tail: the standard resume path otherwise treats it as a crash.
@@ -208,6 +211,8 @@ export function createNativeSync({ persistence, controller = () => undefined, qu
         await handle.flush();
         onHistoryAppended?.(sessionId, updates);
       }
+      // Optional derived-cache barrier, while this handle still owns the exact journal.
+      await checkpoint?.();
       return { updated: updates.length > 0 };
     } finally { await handle.close(); }
   };

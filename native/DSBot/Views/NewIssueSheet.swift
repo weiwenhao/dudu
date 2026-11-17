@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 enum IssueCreationPicker: Hashable {
@@ -16,10 +17,14 @@ struct NewIssueSheet: View {
     @State private var computerID: String?
     @State private var isCreating = false
     @State private var failed = false
+    @State private var isPhotoPickerPresented = false
+    @State private var pickedPhotos: [PhotosPickerItem] = []
+    @State private var photoLoadGeneration = 0
+    @State private var photosSkipped = false
     @State private var formHeight: CGFloat = 0
     @State private var formTopInset: CGFloat = 0
+    @State private var detent: PresentationDetent = .height(360)
     @FocusState private var titleFocused: Bool
-    @Namespace private var sheetSpace
 
     let record: Int?
     let onCreated: () -> Void
@@ -35,6 +40,8 @@ struct NewIssueSheet: View {
         self.onCreated = onCreated
     }
 
+    /// The form, the bar above it and the home indicator below it (the key window's, which does not change when the keyboard is up).
+    private var formDetent: PresentationDetent { .height(formHeight > 0 ? formHeight + formTopInset + DSBotLayout.windowSafeAreaBottom : 360) }
     private var sameComputer: Bool { computerID != nil && computerID == store.activeComputer?.id }
     private var canCreate: Bool {
         !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -64,9 +71,16 @@ struct NewIssueSheet: View {
                         .padding(16)
                         .background(DSBotStyle.sheet, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .accessibilityIdentifier("newissue.brief")
-                    if options != nil {
-                        properties
-                    } else if optionsFailed {
+                    if !draft.photos.isEmpty { photoTiles }
+                    if photosSkipped {
+                        Text(L10n.text("部分照片未添加"))
+                            .font(.system(size: 13))
+                            .foregroundStyle(DSBotStyle.chatError)
+                            .accessibilityIdentifier("newissue.photos.skipped")
+                    }
+                    // The buttons are buttons, loaded or not (owner, 2026-11-17: "按钮不就是按钮吗"): what the computer supplies (the statuses, labels and projects) fills in when it arrives, and only a failure to load says so, under the row.
+                    properties
+                    if optionsFailed {
                         HStack(spacing: 12) {
                             Text(L10n.text("事项没能加载")).foregroundStyle(DSBotStyle.muted)
                             Button(L10n.text("重试")) {
@@ -75,8 +89,6 @@ struct NewIssueSheet: View {
                             }
                         }
                         .font(.system(size: 14))
-                    } else {
-                        ProgressView().tint(DSBotStyle.muted).frame(height: 44)
                     }
                     if failed {
                         Text(L10n.text("事项没能创建"))
@@ -93,9 +105,18 @@ struct NewIssueSheet: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .scrollBounceBehavior(.basedOnSize)
+            .photosPicker(
+                isPresented: $isPhotoPickerPresented,
+                selection: $pickedPhotos,
+                maxSelectionCount: max(1, PhotoAttachments.maximumPhotoCount - draft.photos.count),
+                matching: .images
+            )
+            .onChange(of: pickedPhotos) { _, items in addPhotos(items) }
             .background(DSBotStyle.canvas)
+            // The bar above the form: its safe area, and nothing else. The form's offset in the sheet used to be added as well; it is measured from the screen, so it grew as the sheet rose, and every
+            // growth of the detent raised the sheet and the offset again until the sheet was full height with a blank page below the values (owner, 2026-11-17: "太高了吧，底下这么多空白").
             .onGeometryChange(for: CGFloat.self) { geometry in
-                max(0, geometry.frame(in: .named(sheetSpace)).minY) + geometry.safeAreaInsets.top
+                geometry.safeAreaInsets.top
             } action: { inset in
                 if path.isEmpty, abs(formTopInset - inset) > 0.5 { formTopInset = inset }
             }
@@ -126,14 +147,22 @@ struct NewIssueSheet: View {
                 destination(picker)
             }
         }
-        .coordinateSpace(name: sheetSpace)
         .background {
             SheetOutsideTapDismiss(isEnabled: !isCreating) { dismiss() }
         }
-        .presentationDetents(path.isEmpty ? [.height(formHeight > 0 ? formHeight + formTopInset : 360)] : [.large])
+        // The sheet is as tall as its form, and the form changes height (a picture row, a line that says the values did not load). A detent whose height changes is a different detent to the sheet, so the
+        // selection follows it, as in the activity sheets.
+        .presentationDetents(path.isEmpty ? [formDetent] : [.large], selection: $detent)
+        .onChange(of: formDetent, initial: true) { _, new in if path.isEmpty { detent = new } }
+        .onChange(of: path.isEmpty) { _, empty in detent = empty ? formDetent : .large }
         .presentationCornerRadius(32)
         .interactiveDismissDisabled(isCreating)
-        .task { titleFocused = true }
+        .task {
+            titleFocused = true
+            #if DEBUG && targetEnvironment(simulator)
+            await reviewPhotos()
+            #endif
+        }
         .task(id: "\(store.connectionRevision)/\(store.status)") { await loadOptions() }
         .onChange(of: store.activeComputer?.id) { _, id in
             if id != computerID { dismiss() }
@@ -142,13 +171,13 @@ struct NewIssueSheet: View {
 
     private var properties: some View {
         IssueValueFlow(spacing: 6) {
-            chip(status?.title ?? L10n.text("状态"), identifier: "status", picker: .status) {
+            chip(status?.title ?? L10n.text("状态"), identifier: "status", picker: .status, needsOptions: true) {
                 IssueStatusIcon(type: status?.type ?? "todo", color: status?.color, iconProgress: status?.iconProgress)
             }
             chip(draft.priority == .none ? L10n.text("优先级") : draft.priority.title, identifier: "priority", picker: .priority) {
                 IssuePriorityIcon(priority: draft.priority)
             }
-            chip(draft.project?.name ?? L10n.text("项目"), identifier: "project", picker: .project) {
+            chip(draft.project?.name ?? L10n.text("项目"), identifier: "project", picker: .project, needsOptions: true) {
                 DSBotIcon(.issueProject, size: 16, scalesStroke: true)
             }
             if let folder = draft.project?.path, !folder.isEmpty {
@@ -157,7 +186,7 @@ struct NewIssueSheet: View {
                     else { DSBotIcon(.stateUnassigned, size: 16, scalesStroke: true) }
                 }
             }
-            chip(selectedLabels.isEmpty ? L10n.text("标签") : selectedLabels.map(\.name).joined(separator: ", "), identifier: "labels", picker: .labels) {
+            chip(selectedLabels.isEmpty ? L10n.text("标签") : selectedLabels.map(\.name).joined(separator: ", "), identifier: "labels", picker: .labels, needsOptions: true) {
                 DSBotIcon(.issueLabel, size: 16, scalesStroke: true)
             }
             if let due = draft.dueAt {
@@ -166,8 +195,14 @@ struct NewIssueSheet: View {
                 }
             }
             Menu {
-                Button { choose(.due) } label: { DSBotLabel(L10n.text("截止日期"), icon: .dueDate) }
-                Button { choose(.parent) } label: { DSBotLabel(L10n.text("设置父事项…"), icon: .open) }
+                Button { choose(.due) } label: { DSBotLabel(L10n.text("截止日期"), icon: .dueDate, ink: 16) }
+                Button { choose(.parent) } label: { DSBotLabel(L10n.text("设置父事项…"), icon: .open, ink: 16) }
+                // Pictures are offered only where the computer can keep them (an older plugin does not say so), and the row greys out at nine.
+                if options?.attachments == true {
+                    Button { choosePhotos() } label: { DSBotLabel(L10n.text("添加图片"), icon: .plus, ink: 16) }
+                        .disabled(draft.photos.count >= PhotoAttachments.maximumPhotoCount)
+                        .accessibilityIdentifier("newissue.more.photos")
+                }
             } label: {
                 ContextChipLabel(title: L10n.text("更多"), iconOnly: true) { DSBotIcon(.options, size: 16, scalesStroke: true) }
                     .frame(minHeight: 44)
@@ -178,13 +213,43 @@ struct NewIssueSheet: View {
         .disabled(store.status != .connected || !sameComputer)
     }
 
-    private func chip<Icon: View>(_ title: String, identifier: String, picker: IssueCreationPicker, @ViewBuilder icon: @escaping () -> Icon) -> some View {
+    /// The pictures waiting to be added, as the chat box shows them (76pt tiles, a round × in the corner, a tap for the full picture), and, until there are nine, a tile of the same size that adds more.
+    private var photoTiles: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(draft.photos) { photo in
+                    PhotoAttachmentPreview(photo: photo) { draft.photos.removeAll { $0.id == photo.id } }
+                }
+                if draft.photos.count < PhotoAttachments.maximumPhotoCount { addPhotoTile }
+            }
+            .padding(.horizontal, 20)
+        }
+        .padding(.horizontal, -20)
+        .accessibilityIdentifier("newissue.photos")
+    }
+
+    private var addPhotoTile: some View {
+        Button { choosePhotos() } label: {
+            DSBotIcon(.plus, size: 24, strokeWidth: 1.5)
+                .foregroundStyle(DSBotStyle.chatInk)
+                .frame(width: AttachmentTile.size, height: AttachmentTile.size)
+                .background(DSBotStyle.sheet, in: AttachmentTile.shape)
+                .overlay { AttachmentTile.shape.stroke(DSBotStyle.chatBorder, lineWidth: 0.5) }
+                .contentShape(AttachmentTile.shape)
+        }
+        .buttonStyle(DSBotQuietPressStyle())
+        .accessibilityLabel(L10n.text("添加图片"))
+        .accessibilityIdentifier("newissue.photos.add")
+    }
+
+    private func chip<Icon: View>(_ title: String, identifier: String, picker: IssueCreationPicker, needsOptions: Bool = false, @ViewBuilder icon: @escaping () -> Icon) -> some View {
         Button { choose(picker) } label: {
             ContextChipLabel(title: title, maxTextWidth: 220, icon: icon)
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(DSBotQuietPressStyle())
+        .disabled(needsOptions && options == nil)
         .accessibilityLabel(title)
         .accessibilityIdentifier("newissue.\(identifier)")
     }
@@ -265,6 +330,54 @@ struct NewIssueSheet: View {
                 draft.agent = nil
                 path = []
             }
+        }
+    }
+
+    #if DEBUG && targetEnvironment(simulator)
+    /// Local review only, never in the phone's Release build: `-dsbot-review-new-issue-photos N` starts the draft with N made-up pictures, because the system picker does not load in the simulator.
+    private func reviewPhotos() async {
+        let args = ProcessInfo.processInfo.arguments
+        guard args.contains("-dsbot-ui-review") else { return }
+        defer {
+            if args.contains("-dsbot-review-new-issue-nokeyboard") { Task { try? await Task.sleep(for: .milliseconds(800)); titleFocused = false } }
+        }
+        guard let index = args.firstIndex(of: "-dsbot-review-new-issue-photos"), args.indices.contains(index + 1),
+              let count = Int(args[index + 1]), draft.photos.isEmpty else { return }
+        draft.photos = (0..<min(count, PhotoAttachments.maximumPhotoCount)).map { number in
+            let size = CGSize(width: 800, height: 600)
+            let image = UIGraphicsImageRenderer(size: size).image { context in
+                let hue = CGFloat((number * 47) % 360) / 360
+                UIColor(hue: hue, saturation: 0.6, brightness: 0.85, alpha: 1).setFill()
+                context.fill(CGRect(origin: .zero, size: size))
+                UIColor(hue: hue, saturation: 0.7, brightness: 0.45, alpha: 1).setFill()
+                context.fill(CGRect(x: 0, y: size.height / 2, width: size.width, height: size.height / 2))
+                ("\(number + 1)" as NSString).draw(at: CGPoint(x: 60, y: 60), withAttributes: [.font: UIFont.systemFont(ofSize: 220, weight: .bold), .foregroundColor: UIColor.white])
+            }
+            let jpeg = image.jpegData(compressionQuality: 0.82) ?? Data()
+            let upload = UploadAttachment(id: UUID().uuidString, name: "review-\(number + 1).jpg", mimeType: "image/jpeg", dataBase64: jpeg.base64EncodedString())
+            return PreparedPhotoAttachment(attachment: upload, compressedBytes: jpeg.count, thumbnailData: nil, thumbnailImage: PreparedPhotoImage(image: image))
+        }
+    }
+    #endif
+
+    private func choosePhotos() {
+        titleFocused = false
+        photosSkipped = false
+        isPhotoPickerPresented = true
+    }
+
+    private func addPhotos(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
+        DSBotLog.record("newissue.photos.select")
+        photoLoadGeneration += 1
+        let generation = photoLoadGeneration
+        let existing = draft.photos
+        Task {
+            let result = await PhotoAttachments.load(items, existingCount: existing.count, existingBytes: existing.reduce(0) { $0 + $1.compressedBytes })
+            guard generation == photoLoadGeneration else { return }
+            draft.photos.append(contentsOf: result.photos)
+            photosSkipped = result.rejectedCount > 0
+            pickedPhotos = []
         }
     }
 

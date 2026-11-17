@@ -1,6 +1,6 @@
 import Foundation
 
-/// What the phone sent, shown from the moment of sending (dimmed, like every input the host has not admitted yet) until the host's snapshot names its
+/// What the phone sent, shown from the moment of sending with an adjacent progress indicator until the host's snapshot names its
 /// request id, the host cancels it, or the send fails. Display state only: never part of the persisted conversation or host Inbox.
 struct AcceptedSubmission: Equatable, Sendable, Identifiable {
     enum Placement: Equatable, Sendable { case transcript, queued }

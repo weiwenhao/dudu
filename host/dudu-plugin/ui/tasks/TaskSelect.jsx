@@ -5,8 +5,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.j
 import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
 
-/** DSH's rule rows and preset menu: value on the right, trailing selection check, and an anchored scrollable popup. */
-export function TaskSelect({ label, value, options, onChange, searchable = false, customValue, disabled = false, className, row = false }) {
+/** DSH's rule rows and preset menu: value on the right, trailing selection check, and an anchored scrollable popup. `blank`: the row has no value of its own yet (it follows a conversation that is not chosen), a dash. */
+export function TaskSelect({ label, value, options, onChange, searchable = false, customValue, disabled = false, className, row = false, blank = false }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const list = useRef(null);
@@ -19,7 +19,7 @@ export function TaskSelect({ label, value, options, onChange, searchable = false
       <button type="button" role="combobox" aria-haspopup="listbox" aria-expanded={open} aria-label={label} disabled={disabled}
         className={cn(row ? 'dudu-task-rule-select' : 'dudu-task-select', 'outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}>
         {row && <span className="dudu-task-rule-label">{label}</span>}
-        <span className="dudu-task-select-face">{current?.icon}<span className="min-w-0 truncate">{current?.label ?? value ?? ''}</span><ChevronDown className="size-3.5 shrink-0" aria-hidden="true" /></span>
+        <span className="dudu-task-select-face">{!blank && current?.icon}<span className="min-w-0 truncate">{blank ? '—' : (current?.label ?? value ?? '')}</span><ChevronDown className="size-3.5 shrink-0" aria-hidden="true" /></span>
       </button>
     </PopoverTrigger>
     <PopoverContent align={row ? 'end' : 'start'} sideOffset={4} collisionPadding={12} className="dudu-task-menu" onOpenAutoFocus={(event) => { if (!searchable) { event.preventDefault(); list.current?.focus(); } }}>

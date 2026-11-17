@@ -16,6 +16,7 @@ import { createNativeDiagnostics } from './dist/native-diagnostics.mjs';
 import { createSessionDiagnostics } from './dist/session-diagnostics.mjs';
 import { migrateLegacyState } from './dist/legacy-state.mjs';
 import { createProviders } from './dist/providers/index.mjs';
+import { createSessionTools } from './dist/providers/cron-tools.mjs';
 import { createLinkStore, createNativeSessions } from './dist/providers/native/index.mjs';
 import { createOverview } from './dist/providers/native/overview.mjs';
 import { createPluginQuota, handleQuota } from './dist/providers/quota/index.mjs';
@@ -31,6 +32,7 @@ import { sourceOf } from './dist/assistant/issues/source.mjs';
 import { createInboxApi, INBOX_ACTIONS } from './dist/assistant/inbox/api.mjs';
 import { AGENTS, createAgentSessions, modelFor } from './dist/assistant/home/agent-sessions.mjs';
 import { approvalText, createDshSessions, questionText } from './dist/assistant/home/dsh-sessions.mjs';
+import { installSessionHistoryCoalescing } from './dist/session-history-coalescing.mjs';
 import { createAssignment } from './dist/assistant/home/assign.mjs';
 import { createDispatch } from './dist/assistant/dispatch/index.mjs';
 import { createCollectorNotifications } from './dist/assistant/collectors/notifications.mjs';
@@ -123,11 +125,22 @@ export const inject = {
 // Desktop's); the providers work wherever DSH can route models, such as `dsh web`.
 async function startProviders(ctx, folder, assignment) {
   const sessionDiagnostics = createSessionDiagnostics(folder);
+  assignment.sessionDiagnostics = sessionDiagnostics;
   const links = await createLinkStore(folder);
+  // The cron tools Claude is given in place of its own (providers/cron-tools.mjs): jobs are tasks of Dudu that send their prompt into the conversation that made them. The tasks start after the providers, so they are asked for per call.
+  const sessionTools = createSessionTools({
+    tasks: () => assignment.tasks,
+    describe: (sessionId) => {
+      let workspace;
+      try { workspace = ctx.workspaceRegistry?.list().find((item) => item.sessionIds.includes(sessionId)); } catch { workspace = undefined; }
+      return workspace ? { project: { id: workspace.id, name: workspace.title, path: workspace.path } } : null;
+    },
+  });
   const providers = await createProviders({
     folder,
     providers: [claudeProvider, codexProvider, piProvider],
     host: {
+      sessionTools,
       llm: ctx.llm,
       agents: ctx.agents,
       goals: () => { try { return ctx.get('goals'); } catch { return undefined; } },   // DSH's goal service, when this DSH has it
@@ -163,6 +176,7 @@ async function startProviders(ctx, folder, assignment) {
   });
   // The issues store opens in startIssues, so it is asked for when a list is read, not now.
   const searchDsh = createDshSessions(ctx, { hidden: links.removed, cacheFile: join(folder, 'session-search-dsh.sqlite'), diagnostics: sessionDiagnostics });
+  assignment.historyFacts = searchDsh.historyFacts;
   const catalog = createSessionCatalog({ native, dsh: searchDsh, issues: { findBySession: (key) => assignment.issues?.findBySession(key) } });
   assignment.sessionCatalog = catalog;
   assignment.searchSessions = async (query) => {
@@ -226,6 +240,7 @@ async function startProviders(ctx, folder, assignment) {
       delete assignment.projects;
       delete assignment.sessionCatalog;
       delete assignment.searchSessions;
+      delete assignment.historyFacts;
       delete assignment.sources;
       delete assignment.release;
       delete assignment.hasActiveWork;
@@ -236,6 +251,7 @@ async function startProviders(ctx, folder, assignment) {
       await Promise.all([providers.close(), native.close(), searchDsh.close()]);
       await links.flush();
       await sessionDiagnostics.flush();
+      delete assignment.sessionDiagnostics;
     },
   };
 }
@@ -289,6 +305,7 @@ async function startIssues(ctx, folder, assignment = {}) {
   });
   assignment.issues = issues;
   assignment.issuesApi = api;
+  assignment.issueAttachments = attachmentApi;
   // What the connectors collected, for the Collector widget: the connectors' names are asked for when a list is read (the project folder can move).
   // Sharing a record to a session is the owner's message to the agent of that issue, through the same door as the one typed on the issue's page.
   const inboxApi = createInboxApi({
@@ -317,6 +334,7 @@ async function startIssues(ctx, folder, assignment = {}) {
   ];
   return async () => {
     delete assignment.issuesApi;
+    delete assignment.issueAttachments;
     delete assignment.inboxApi;
     for (const dispose of disposers) dispose();
     issues.close();
@@ -333,6 +351,7 @@ async function startAssignment(ctx, folder, assignment) {
   const readReceipts = createReadReceipts({ file: join(folder, 'assistant', 'session-reads.db') });
   await ctx.sessionProjections?.register(harnessTimingProjection);
   const dsh = createDshSessions(ctx, {
+    historyFacts: assignment.historyFacts,
     hidden: (id) => assignment.links?.removed(id),
     nativeDefaults: async (agent, { cwd, model }) => {
       if (agent !== 'claude') return null;
@@ -443,7 +462,12 @@ async function startAssignment(ctx, folder, assignment) {
   const sessionActivity = createSessionActivity({
     receipts: readReceipts,
     projected: (id) => { const session = ctx.sessions.get(id); return session ? activityProjection?.stateOf(session) : null; },
-    readProjection: async (sessionId, signal) => (await ctx.sessionController?.projections({ sessionId }, signal))?.values?.duduSessionActivity,
+    readProjection: async (sessionId, signal) => {
+      try { return await ctx.sessionQuery.inspectSession(sessionId, (session) => activityProjection.stateOf(session), signal); }
+      catch (error) { if (error.code === 'SESSION_QUERY_SESSION_NOT_FOUND') return null; throw error; }
+    },
+    listProjections: async (signal) => (await ctx.sessionController.list({}, signal)).items,
+    diagnostics: assignment.sessionDiagnostics,
     snapshotOf: hooks.snapshotOf, nativeSnapshotOf: (key) => snapshots.snapshotOf(key), liveOf: (id) => ctx.agents?.get(id),
   });
   const stopAttention = ctx.on('session/event', (session) => {
@@ -451,10 +475,14 @@ async function startAssignment(ctx, folder, assignment) {
   }, { global: true });
   assignment.sessionHistoryAppended = (id, events) => {
     // Cold native imports append through persistence, without publishing a live session/event.
+    const session = ctx.sessions.get(id);
+    if (session && activityProjection) { sessionActivity.observe(id, activityProjection.stateOf(session)); return; }
     const attention = events.reduce((state, event) => sessionActivityProjection.apply(state, event), sessionActivity.attentionOf(id));
-    if (attention.seq >= 0 || attention.through >= 0) sessionActivity.observe(id, attention);
+    // The previous display hint may predate this append. It can update the list, but only a
+    // complete fold can certify a read acknowledgement or transfer a receipt to another log.
+    if (attention.seq >= 0 || attention.through >= 0) sessionActivity.observe(id, attention, undefined, false);
   };
-  const warmActivity = sessionActivity.warm;
+  const warmActivity = sessionActivity.refresh;
   assignment.sessionStatus = sessionActivity.statusOf;
   const activityOf = (id) => withDeepSleep(sessionActivity.statusOf(`dsh:${id}`), `dsh:${id}`, (key) => assignment.issues?.findBySession(key).issue?.deepSleep === true);
   const acknowledgeRead = sessionActivity.acknowledge;
@@ -471,10 +499,8 @@ async function startAssignment(ctx, folder, assignment) {
     .then(async () => {
       if (closing) return;
       try {
-        const rows = await dsh.list();
-        const ids = rows.map((row) => row.sessionId ?? row.id);
         const assigned = assignment.issues.sessionKeys().filter((key) => key.startsWith('dsh:')).map((key) => key.slice(4));
-        await warmActivity([...ids, ...assigned]);
+        await warmActivity(assigned);
       }
       catch (error) { if (!closing) console.warn(`[dudu] Session read boundaries could not be loaded: ${error.message}`); }
     })
@@ -574,6 +600,7 @@ async function startAssignment(ctx, folder, assignment) {
     for (const hook of ['sessions', 'sessionState', 'sessionHandledAt', 'sessionTurnActive', 'onAssign', 'onReply', 'forward', 'onResume', 'start', 'closeFor', 'restore', 'deleteSessions', 'rebindSession']) delete assignment[hook];
     await hooks.dispose();
     agentSessions.dispose();
+    await dsh.close();
     delete assignment.sessionStatus;
     readReceipts.close();
   };
@@ -635,7 +662,7 @@ const PRUNE_EVERY_MS = 24 * 60 * 60_000;
 
 async function startDispatch(ctx, folder, assignment) {
   if (!assignment.issues) throw new Error('there are no issues');
-  const dsh = createDshSessions(ctx);
+  const dsh = createDshSessions(ctx, { historyFacts: assignment.historyFacts });
   const llm = createDshLlm(ctx);
   const notifications = createCollectorNotifications();
   assignment.collectorNotifications = notifications;
@@ -721,6 +748,7 @@ async function startDispatch(ctx, folder, assignment) {
     await dispatch.dispose();
     await draining;
     await closing;
+    await dsh.close();
     delete assignment.llm;
     delete assignment.runCollector;
     delete assignment.fillRecord;
@@ -745,7 +773,7 @@ async function startDashboard(ctx, folder, assignment) {
 
 async function startTasks(ctx, folder, assignment) {
   if (!assignment.assistant) throw new Error('The assistant services are unavailable.');
-  const dsh = createDshSessions(ctx);
+  const dsh = createDshSessions(ctx, { historyFacts: assignment.historyFacts });
   const host = createTaskHost({ dsh, registry: ctx.workspaceRegistry, controller: ctx.sessionController, agents: ctx.agents,
     access: () => assignment.assistant.settings.value('conversation').permission,
     // The model the session itself recorded (what its owner or a task selected), as the sessions list reads it; a resumed agent's options are only DSH's default.
@@ -771,7 +799,7 @@ async function startTasks(ctx, folder, assignment) {
 async function startConversation(ctx, folder, assignment) {
   if (!assignment.assistant || !assignment.issues || !assignment.dashboard || !ctx.tools) throw new Error('The assistant services are unavailable.');
   // What the quick buttons of the chat send (docs/assistant.md): the lists are read from the same services the pages use, when a card is made (they start after the conversation).
-  const dsh = createDshSessions(ctx);
+  const dsh = createDshSessions(ctx, { historyFacts: assignment.historyFacts });
   // The latest message of each issue's session, fed by what DSH says of every live session (home/latest.mjs), and the lines of the group chat (home/group.mjs): the owner's @ messages to issues
   // and their answers come into the thread as commands of the conversation.
   const latest = createLatest({
@@ -833,6 +861,7 @@ async function startConversation(ctx, folder, assignment) {
     group.dispose();
     latest.dispose();
     await conversation.close();
+    await dsh.close();
     delete assignment.conversation; delete assignment.cards; delete assignment.group; delete assignment.latest;
   };
 }
@@ -948,6 +977,12 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
         getNeedsYouColor: () => assignment.assistant?.settings?.value('needsYouColor'),
         issues: (action, body) => assignment.issuesApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
         inbox: (action, body) => assignment.inboxApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
+        // The pictures of a new issue made on the phone: kept in DSH's store and given to the issue like the ones pasted into the desktop's dialog.
+        pictures: {
+          available: () => assignment.issueAttachments?.available() === true,
+          save: (images) => assignment.issueAttachments?.saveImages(images) ?? Promise.reject(new Error('Issue attachments are unavailable.')),
+          stage: (id, refs) => assignment.issueAttachments.stage(id, refs),
+        },
         projects: {
           list: () => assignment.projects?.list() ?? { outcome: 'error', code: 'unavailable' },
           create: (body) => assignment.projects?.create(body) ?? { outcome: 'error', code: 'unavailable' },
@@ -986,6 +1021,7 @@ export async function apply(ctx, config = {}) {
   const folder = join(dshHome, 'dudu');
   // Paired phones were stored by the plugin's former name; carry them over before anything reads the folder.
   await migrateLegacyState({ dshHome });
+  ctx.effect(() => installSessionHistoryCoalescing(ctx.sessionQuery, ctx.sessions));
 
   const stops = [];
   const assignment = {};

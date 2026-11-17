@@ -16,6 +16,8 @@ struct ConversationSnapshot: Codable, Sendable, Equatable {
     var providers: [SessionProvider]?
     /// Most recently opened conversations on this computer, excluding `detail`.
     var recentDetails: [SessionDetail]?
+    /// The last selection may have no received history yet; do not fabricate an empty detail for it.
+    var selection: SessionSummary? = nil
 }
 
 protocol DSBotConversationStorage: Actor {

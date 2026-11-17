@@ -124,6 +124,18 @@ test('HTTP pages exchange pairing auth for a page-scoped session and serve real 
   }
 });
 
+test('Android page pairing retains the platform name', async (t) => {
+  const f = await fixture(t);
+  const response = await fetch(`${f.server.address}/dsbot/web/open`, {
+    method: 'POST', headers: { authorization: `Bearer ${f.credential.token}`,
+      'content-type': 'application/json', 'x-dudu-client': 'android' },
+    body: JSON.stringify({ page: 'settings' }),
+  });
+  assert.equal(response.status, 200);
+  await response.json();
+  assert.equal(f.pairingStore.list()[0].name, 'Android');
+});
+
 test('HTTP page assets use negotiated gzip while retaining scoped authentication and no-store', async (t) => {
   const fixtureData = await fixture(t);
   const page = (await fixtureData.open()).value;

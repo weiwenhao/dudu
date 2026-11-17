@@ -1,9 +1,16 @@
 import Foundation
 
 enum SessionActivityPanel: String, Identifiable {
-    case team, jobs
+    /// `tasks`: the scheduled tasks that go into the conversation (`SessionTasksSheet`; it reads the task list, not `session.team` or `session.jobs`).
+    case team, jobs, tasks
     var id: String { rawValue }
-    var title: String { self == .team ? L10n.text("智能体团队") : L10n.text("后台任务") }
+    var title: String {
+        switch self {
+        case .team: return L10n.text("智能体团队")
+        case .jobs: return L10n.text("后台任务")
+        case .tasks: return L10n.text("定时任务")
+        }
+    }
 }
 
 struct SessionActivityRequest: Identifiable {

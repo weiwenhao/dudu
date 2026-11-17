@@ -13,7 +13,7 @@ import { createSessionActivity } from '../host/assistant/sessions/session-activi
 import { createNativeBoard } from '../host/native-board.mjs';
 import { DEFAULT_VIEW, listRequest } from '../host/dudu-plugin/ui/issues/view.js';
 import { retainedSessionIdentity } from '../host/dudu-plugin/ui/issues/use-retained-session.js';
-import { chooseConversation } from '../host/dudu-plugin/ui/issues/selection.js';
+import { chooseConversation, pickConversation } from '../host/dudu-plugin/ui/issues/selection.js';
 
 const fail = (code: string) => { throw Object.assign(new Error(code), { code }); };
 const project = { name: 'Dudu', path: '/project/dudu' };
@@ -45,6 +45,11 @@ test('entering chat opens the newest available conversation once, without starti
   assert.equal(chooseConversation([unassigned, { id: 'assistant', sessionId: null }]), null);
   assert.equal(chooseConversation([assistant, older]), assistant.id);
   assert.equal(chooseConversation([latest], 'issue:outside'), 'issue:outside', 'a manually opened child stays open even outside the list');
+  // The expand button opens DSH's own page and closes the panel; coming back shows the conversation that was open, if it can still be opened.
+  assert.equal(pickConversation([unassigned, latest, older, assistant], older.id), older.id);
+  assert.equal(pickConversation([unassigned, latest, older], unassigned.id), latest.id, 'a remembered row that cannot be opened is not chosen');
+  assert.equal(pickConversation([latest, older], 'issue:gone'), latest.id);
+  assert.equal(pickConversation([latest, older]), latest.id);
 });
 
 function world(t: any, file = ':memory:') {
@@ -163,7 +168,7 @@ test('Desktop pinned issue paging keeps pins first in each group and sort direct
   for (const id of pinned) assert.equal((await desktop('pin', { target: `issue:${id}`, pinned: true })).status, 200);
   for (const reverse of [false, true]) {
     for (const group of [null, 'status']) {
-      const request = listRequest('all', { ...DEFAULT_VIEW, group, order: 'updated', reverse });
+      const request = listRequest('all', { ...DEFAULT_VIEW, layout: 'list', group, order: 'updated', reverse });
       assert.equal(request.pinnedFirst, true);
       const baseline = issues.list({ ...request, pinnedFirst: false, limit: 200 });
       const groups = group ? baseline.groups : [{ key: null, items: baseline.items }];
@@ -261,7 +266,7 @@ test('desktop Updated shares phone completion times, ordering, ranges and cursor
     issues.add({ title: `Issue ${index}`, project, agent: 'claude', session: `dsh:session-${index}` });
     if (index !== 5) say(`session-${index}`, 1, index % 3 === 0 ? 4_000 : 3_000, `Answer ${index}`);
   }
-  const request = listRequest('active', { ...DEFAULT_VIEW, group: null });
+  const request = listRequest('active', { ...DEFAULT_VIEW, layout: 'list', group: null });
   assert.equal(request.order, 'received');
   const list = () => issues.list({ ...request, limit: 200 });
   const phone = async () => (await call('board.list', { layout: 'chat' }) as any).conversations.filter((row: any) => row.issue);
@@ -302,15 +307,15 @@ test('desktop Updated shares phone completion times, ordering, ranges and cursor
   const grouped = issues.list({ ...request, group: 'status' });
   assert.deepEqual(grouped.groups.find((group: any) => group.key === 'in_progress').items.map((row: any) => row.id), [1]);
   assert.deepEqual(grouped.groups.find((group: any) => group.key === 'todo').items.map((row: any) => row.id), before.filter((id: number) => id !== 1));
-  const ranged = listRequest('active', { ...DEFAULT_VIEW, order: 'updated', filter: { updated: ['day'] } }, 86_406_000);
+  const ranged = listRequest('active', { ...DEFAULT_VIEW, layout: 'list', order: 'updated', filter: { updated: ['day'] } }, 86_406_000);
   assert.deepEqual(ranged.filter, { receivedFrom: 0 });
   assert.deepEqual(issues.list({ ...ranged, group: null, filter: { receivedFrom: 3_600 } }).items.map((row: any) => row.id), [1, 12, 3, 6, 9]);
-  const upper = listRequest('active', { ...DEFAULT_VIEW, filter: { updatedTo: 3_500 } });
+  const upper = listRequest('active', { ...DEFAULT_VIEW, layout: 'list', filter: { updatedTo: 3_500 } });
   assert.deepEqual(upper.filter, { receivedTo: 3_500 });
   assert.deepEqual(issues.list({ ...request, filter: { receivedTo: 0 } }).items.map((row: any) => row.id), [5]);
   setTime(100_000);
   issues.update(9, { status: 'done' });
-  const all = listRequest('all', { ...DEFAULT_VIEW, group: null, order: 'updated' });
+  const all = listRequest('all', { ...DEFAULT_VIEW, layout: 'list', group: null, order: 'updated' });
   assert.equal(all.completedLast, false, 'an implicit completion-date sort must not replace the message clock');
   const mobileAll = (await call('board.list', { layout: 'chat', tab: 'all' }) as any).conversations.filter((row: any) => row.issue);
   assert.deepEqual(issues.list(all).items.map((row: any) => [row.id, row.receivedAt]), mobileAll.map((row: any) => [row.issue.id, row.receivedAt]));

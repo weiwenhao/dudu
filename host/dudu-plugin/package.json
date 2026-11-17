@@ -1,5 +1,5 @@
 {
-  "name": "dudu",
+  "name": "dsh-dudu",
   "version": "0.1.0-beta",
   "type": "module",
   "main": "./index.mjs",
@@ -19,12 +19,13 @@
       "import": "./widget-testing.mjs"
     },
     "./widget.css": "./widget.css",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
-  "description": "基于 DSH 的多 Agent 高效协作助手",
+  "description": "An efficient multi-agent collaboration assistant built on DSH",
   "icon": "./icon.png",
   "license": "MIT",
-  "files": ["index.mjs", "client.js", "widget.mjs", "widget.d.ts", "widget-ui.mjs", "widget-ui.d.ts", "widget-testing.mjs", "widget-testing.d.ts", "widget.css", "icon.png", "cordis.patch.yml", "dist/"],
+  "files": ["index.mjs", "client.js", "widget.mjs", "widget.d.ts", "widget-ui.mjs", "widget-ui.d.ts", "widget-testing.mjs", "widget-testing.d.ts", "widget.css", "icon.png", "cordis.patch.yml", "locale/", "dist/"],
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {

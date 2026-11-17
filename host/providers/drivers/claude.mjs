@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { harnessError } from '../harness-bridge.mjs';
 import { OarNormalizer, createOarProvider } from '../oar.mjs';
-import { claudeRuntime } from '../oar-runtimes.mjs';
+import { claudeRuntime, recoverOwnedProcess } from '../oar-runtimes.mjs';
 import { readClaudeQuota } from '../quota/claude.mjs';
 import { CLAUDE_TOOLS, fallbackSpec } from './claude-tools.mjs';
 import { createClaudeChildUsageReader } from '../native/claude-child-usage.mjs';
@@ -70,6 +70,11 @@ export function createClaudeProvider({ runtime = claudeRuntime, registry } = {})
     queuesSteer: true,
     before: async ({ resume }) => {
       if (!resume) return;
+      try { await recoverOwnedProcess(`claude:${resume}`); }
+      catch (error) {
+        console.warn('[dudu] Claude process recovery failed', error.code ?? error.message);
+        throw harnessError('busy', 'HARNESS_BUSY');
+      }
       const other = await openElsewhere(resume, registry);
       if (other) throw harnessError(`This Claude Code session is open in another process (pid ${other.pid}). Close it there first.`, 'HARNESS_BUSY');
     },

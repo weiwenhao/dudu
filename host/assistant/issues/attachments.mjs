@@ -58,6 +58,30 @@ export function createIssueAttachmentApi({ issues, attachments }) {
         return new Response(Readable.toWeb(Readable.from(store.readFileStream(ref, request.signal))), { headers });
       } catch { return problem(404, 'attachment_unavailable'); }
     },
+    /** DSH keeps pictures for us (an older DSH may not): what the phone is told, so that it offers the pictures only where they can be kept. */
+    available: () => typeof attachments()?.saveImage === 'function',
+    /**
+     * The pictures that came inside a request of the phone (a new issue), `{ name, mediaType, data }` with the bytes in a Buffer: kept in DSH's store before the issue exists, so that a
+     * picture that cannot be kept leaves no issue behind and the phone still has its draft. What comes back are the references `stage` gives to the issue.
+     */
+    async saveImages(images) {
+      const store = attachments();
+      if (typeof store?.saveImage !== 'function') throw new Error('attachments_unavailable');
+      const refs = [];
+      for (const { name, mediaType, data } of images) {
+        if (!imageTypes.has(mediaType) || data.length > (store.imageLimits?.maxImageBytes ?? Infinity)) throw new Error('invalid_attachment');
+        refs.push(await store.saveImage({ data, mediaType, name }));
+      }
+      return refs;
+    },
+    /** Gives pictures that were kept to the issue they belong to; the ids it answers are what a note then shows. */
+    stage(issueId, refs) {
+      return refs.map((ref) => {
+        const staged = issues.stageAttachment(issueId, 'image', ref);
+        if (staged.outcome !== 'success') throw new Error('invalid_attachment');
+        return staged.item.id;
+      });
+    },
     /** Promote only references owned by this issue into the existing session-scoped prompt protocol. */
     async promptParts(issue, entry, sessionId, fileUploads) {
       const parts = [];

@@ -1,5 +1,31 @@
 import SwiftUI
 
+/// Connection feedback stays on Home; cached conversations remain readable without a notice.
+struct BoardConnectionNotice: View {
+    static let height: CGFloat = 40
+    static let toolbarSpacing: CGFloat = 16
+
+    var body: some View {
+        HStack(spacing: 12) {
+            DSBotIcon(.stateFailed, size: 18, strokeWidth: 1.8)
+                .foregroundStyle(DSBotStyle.chatError)
+                .accessibilityHidden(true)
+            Text(L10n.text("电脑未连接"))
+                .font(.system(size: 15))
+                .foregroundStyle(DSBotStyle.ink)
+            Spacer(minLength: 12)
+            DSBotLoadingRing(size: 14)
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: Self.height)
+        .background(DSBotStyle.connectionNotice)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("board.connection.pending")
+        .allowsHitTesting(false)
+    }
+}
+
 /// The approved chat homepage. Other pages and the todo sheet keep their existing rows.
 struct BoardView: View {
     @ObservedObject var board: BoardModel
@@ -164,7 +190,9 @@ struct BoardView: View {
                         if busy(entry) {
                             ProgressView().controlSize(.small).tint(DSBotStyle.muted)
                                 .frame(width: 40, height: 40)
-                                .background(.white.opacity(0.9), in: Circle())
+                                .background(.white.opacity(0.9), in: RoundedRectangle(
+                                    cornerRadius: entry.isAssistant ? 20 : 10, style: .circular
+                                ))
                         }
                     }
                 Text(title(entry)).font(.system(size: 11.5)).foregroundStyle(DSBotStyle.muted)

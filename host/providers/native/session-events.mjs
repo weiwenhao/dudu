@@ -85,7 +85,7 @@ export function buildSessionEvents({ history, route, model, effort, sessionId, p
         push('tool/result', {
           turn: number, step: stepNumber,
           message: { role: 'tool', source: { kind: 'tool', callId: call.id }, toolCallId: call.id, content: [{ type: 'text', text: result.output }], isError: result.isError === true, id: newId() },
-          meta: { output: result.output, ...(result.data ? { data: result.data } : {}) },
+          ...(result.data ? { meta: { data: result.data } } : {}),
         }, { at: result.at, surfaceOp: 'append', sourceEventSeqs: [callSeqs[index]] });
       });
       push('step/end', { turn: number, step: stepNumber });
