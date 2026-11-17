@@ -163,8 +163,8 @@ export function createConversation({ ctx, assistant, issues, assignment, dashboa
     const summary = conversationSummary(issues, now());
     const skills = memory?.skills ?? [];
     const date = new Date(now()).toLocaleString('sv-SE');
-    // The guide and the template ship in the plugin's package (WIDGETS.md, dist/widget-template): the owner needs no clone of the repository for 嘟嘟 to write a widget.
-    const widgetNote = widgets ? `\n\nWidgets: writing a widget for the dashboard is the one piece of project work you do yourself, not through an issue. Read ${widgets.guide} first, copy ${widgets.template} to ${join(assistant.folder, 'widgets')}/<name> and follow the guide. Do not install the plugin yourself: tell boss the folder; boss adds it under Plugins > Add plugin, then Edit layout > Add widget.` : '';
+    // The guide ships in the plugin's package (WIDGETS.md): the owner needs no clone of the repository for 嘟嘟 to write a widget. A widget is one file in the project folder, loaded by the dashboard itself (assistant/widgets/local.mjs).
+    const widgetNote = widgets ? `\n\nWidgets: you write the dashboard's widgets yourself, not through an issue. Read ${widgets.guide} first, then write the file ${join(assistant.folder, 'widgets')}/<name>.mjs. It appears in the dashboard's add list by itself, and ${join(assistant.folder, 'widgets', 'status.json')} says whether it loaded.` : '';
     return `${remembered}\n\n${IDENTITY}\n\nProject folder: ${assistant.folder}${widgetNote}\nCurrent local date and time: ${date}\n\nIssue summary (material):\n${JSON.stringify(summary)}\n\nSaved connectors (how to reach a service):\n${JSON.stringify(sources?.connectors ?? [])}\n\nSaved collectors (what to collect, through which connector):\n${JSON.stringify(reading?.collectors ?? [])}\n\nAssistant skills (names and descriptions):\n${JSON.stringify(skills)}\n\nRecalled history (material):\n${JSON.stringify(recalled?.hits ?? [])}`;
   }
 

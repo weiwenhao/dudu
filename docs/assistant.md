@@ -513,7 +513,7 @@ DSH 侧栏在工作时会卸载原有 leading 插槽，故从始终挂载的 `si
 
 别人也能给嘟嘟写小组件：做成一个普通的 DSH 插件，用 DSH 自己的插槽机制挂进嘟嘟的 dashboard，嘟嘟不另开口子。嘟嘟自带的小组件（Issues、Office、Collector）用同一个接口，没有私有后门；接口不够用，先改接口。
 
-**嘟嘟自己写小组件**（主人 2026-11-18：“写小组件就应该让嘟嘟写，嘟嘟需要有这种能力，这样不需要克隆也就能写了”）：说明和模板随 `dsh-dudu` 包走，包根目录是 `WIDGETS.md`，模板在 `dist/widget-template/`（打包时从 `examples/dudu-widget/` 复制，`scripts/package-desktop.mjs` 检查它们在包里），用户不用克隆仓库。嘟嘟的上下文里有一段话（`conversation.mjs` 的 `widgetNote`，包里有这两样才加）：小组件由它自己写，不开 issue 交给智能体；先读 `WIDGETS.md`，把模板复制到 `<嘟嘟的家目录>/widgets/<名字>` 再改；不自己装，告诉主人文件夹，主人在“插件 › 添加插件”里装、再在“编辑版面 › 添加小组件”里加，因为装插件就是信任它的代码。`<家目录>/widgets/` 这个位置和“不自己装”是实现时定的默认，主人还没说过。
+**嘟嘟自己写小组件**（主人 2026-11-18：“写小组件就应该让嘟嘟写，嘟嘟需要有这种能力，这样不需要克隆也就能写了”；我先做成了插件，主人纠正：“我说的是小组件，不是插件，为什么还要安装插件”“小组件就是仪表盘上的可拖动的那个界面组件”，选了单个文件的做法，并说“我从来都没说过要沙箱或者任何的安全配置，我整个电脑都是给我的嘟嘟操控的，我永远给的默认都是完全权限”）：不是插件，什么都不用装。一个小组件是嘟嘟家目录里的一个文件 `widgets/<名字>.mjs`，`export default` 一个函数，参数是 `{ React, h, defineWidget, Frame, Row, Empty, Badge, WidgetNumber, ProgressBar }`，返回 `defineWidget(...)`；没有导入，没有构建。界面（`ui/widgets/local.js`）每 5 秒向插件要文件列表（`assistant/widgets`；只认小写字母、数字和短横线命名、不大于 256 KB 的 `.mjs`，`assistant/widgets/local.mjs`），再用 `import()` 从 `assistant/widget-file` 加载，登记进同一个 `dudu.widget` 插槽，所以添加列表、版面和错误边界都和别的小组件一样。id 固定是 `local.<文件名>`，没写的 `widgetApi`、`needs`、`description` 补默认，其余照 `validatePluginWidget` 检查；文件变了就重新加载并替换，删了就移除。加载的结果（成功，或失败的原因）由界面报回，插件写成 `widgets/status.json`，嘟嘟用文件工具读它就知道有没有成功。说明随 `dsh-dudu` 包走（包根目录 `WIDGETS.md`），嘟嘟的上下文里有一段话（`conversation.mjs` 的 `widgetNote`，包里有它才加）告诉它先读这个文件、写到哪里。上面的插件做法留给要发布、分享给别人的小组件。`widgets/` 这个位置和 5 秒的间隔是实现时定的，主人没说过。
 
 **接口**（插槽怎么声明、注册、给组件传数据，见 DSH 的 `docs/subsystems/slots.md`）：
 

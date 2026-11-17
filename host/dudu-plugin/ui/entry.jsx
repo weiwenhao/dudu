@@ -16,6 +16,7 @@ import { warmSessions } from './widgets/data.jsx';
 import { Pet } from './pet/Pet.jsx';
 import { beginPetInteraction, petOwnsOverlay } from './pet/overlays.js';
 import { createWidgetSource, useWidgetCatalog } from './widgets/catalog.jsx';
+import { createLocalWidgets } from './widgets/local.js';
 import { Button } from './components/button.jsx';
 import { T } from './strings.js';
 import { getLocale, subscribeLocale } from './lib/locale.mjs';
@@ -24,7 +25,7 @@ import { receiveStatuses, subscribeWorkflow, workflowRevision } from './issues/w
 import { NeedsYouColorProvider } from './issues/NeedsYouColor.jsx';
 import { resolveIssueSession as resolveSessionTarget } from './issues/session.js';
 
-export { REGISTRY, createWidgetSource };
+export { REGISTRY, createLocalWidgets, createWidgetSource };
 export { connectLocale, getLocale, intlLocale, subscribeLocale } from './lib/locale.mjs';
 export { T } from './strings.js';
 export { AgentLogo } from './issues/AgentLogo.jsx';

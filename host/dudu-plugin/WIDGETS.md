@@ -1,83 +1,50 @@
 # Writing a widget for Dudu
 
-A widget is a small DSH plugin. It registers into the `dudu.widget` slot of the Dudu dashboard. Dudu's own widgets (Issues, Office, Inbox) use the same interface.
+A widget is one of the draggable panels on the Dudu dashboard (Issues, Office, Inbox are widgets). You write one as a single file. There is nothing to install and no build step.
 
-A plugin is code that runs with the owner's permissions, and the slot is not a sandbox: installing a widget plugin means trusting its code. A newly installed widget only appears in the add list. It is never put on the dashboard by itself.
+## Where it goes
 
-## Steps
+`<assistant home>/widgets/<name>.mjs`, with a lowercase name made of letters, digits and dashes, for example `widgets/clock.mjs`. The file is a JavaScript module of at most 256 KB.
 
-1. Copy the template that ships with this package into a folder of your own.
+The dashboard looks at the folder every few seconds. A new file shows up in the add list (Edit layout, Add widget). A changed file replaces the old one, also where it is already on the board. A deleted file removes its widget. A widget's id is `local.<name>`, so the file name is the only name to choose.
 
-   ```sh
-   cp -r <this package>/dist/widget-template <folder>/<name>
-   cd <folder>/<name>
-   ```
+## The file
 
-2. Make these names agree.
-   - `name` in `package.json`.
-   - `id` and `name` in `cordis.patch.yml`.
-   - The widget `id` in `widget.mjs`, which is `<package name>.<widget>`, for example `clock.time`.
-
-   The module-loader id that the build writes is read from `package.json`, so it follows the package name.
-
-3. Edit `widget.mjs`: the declaration and the component.
-
-4. Install and build.
-
-   ```sh
-   npm install
-   npm run build        # esbuild writes dist/client.js
-   npm test             # optional, needs Chrome
-   ```
-
-   If npm cannot fetch `dsh-dudu` (the peer dependency), install without peers and take it from this package instead:
-
-   ```sh
-   npm install --legacy-peer-deps
-   npm install --no-save <this package>
-   ```
-
-5. Install the plugin in DSH. The owner does this, because it adds code that runs with their permissions: Plugins page, Add plugin, then the absolute path of the folder. The terminal form is `dsh plugin --profile <profile> add <absolute path>`. A local folder is linked, not copied: rebuild `dist/client.js` and DSH hot-reloads it.
-
-6. The owner adds the widget from the dashboard: Edit layout, Add widget.
-
-`<this package>` is the folder that contains this file.
-
-## Declaration
+Default-export a function. It receives `{ React, h, defineWidget, Frame, Row, Empty, Badge, WidgetNumber, ProgressBar }` and returns what `defineWidget` returns.
 
 ```js
-import { defineWidget } from 'dsh-dudu/widget';
-
-export const declaration = {
-  id: 'clock.time', label: 'Clock', description: 'The time',
-  min: { w: 3, h: 2 }, size: { w: 4, h: 3 }, needs: [], widgetApi: 1,
-};
-export const Widget = defineWidget(declaration, function Widget(props) { /* return a React element */ });
+export default ({ h, defineWidget, Frame, WidgetNumber }) => defineWidget({
+  label: 'Clock',
+  min: { w: 3, h: 2 },
+  size: { w: 4, h: 3 },
+}, function Clock({ useIssues }) {
+  const { value } = useIssues({ tab: 'active', limit: 1 });
+  return h(Frame, { title: 'Clock' }, h(WidgetNumber, { value: value?.total ?? '-', label: 'Active issues' }));
+});
 ```
 
-- `id` is unique and written `<package name>.<widget>`.
-- `min` is the smallest size whose content still reads. `size` is the recommended size used when it is added, and is not smaller than `min`. Sizes count dashboard cells: fifteen columns, and rows about as tall as a column is wide. `size` may use `'fill'` for every column or every row the window shows.
-- `needs` lists what the widget reads: `issues`, `quota`, `inputs`, `sessions`, `network`.
-- `preview` is an optional image for the add list, as a `data:` URL.
+- There are no imports. Everything comes through the argument. `h` is `React.createElement`, and `React` has the hooks (`React.useState`, `React.useEffect`, ...).
+- `label` is the name in the add list. `description` is optional.
+- `min` is the smallest size whose content still reads. `size` is the size it gets when it is added, and is not smaller than `min`. Sizes count dashboard cells: fifteen columns, and rows about as tall as a column is wide. `size` may use `'fill'` for every column or every row the window shows. Both are required.
+- `needs` lists what the widget reads (`issues`, `quota`, `inputs`, `sessions`, `network`). It defaults to an empty list. `preview` is an optional image for the add list, as a `data:` URL.
 
-The Component receives `WidgetProps` (see `widget.d.ts`):
+## What the component gets
+
+The component receives these props:
 
 - `size: { cols, rows, width, height }` and `editing`.
-- Read-only hooks `useIssues(view)`, `useQuota()`, `useInputs()` and `useSessions(query)`. Each returns `{ status, value }` and follows the real data while the widget is mounted.
+- Read-only hooks `useIssues(view)`, `useQuota()`, `useInputs()` and `useSessions(query)`. Each returns `{ status, value }` and follows the real data while the widget is mounted. `useInputs()` is what the Inbox shows: the records the collectors collected.
 - Actions `openIssue(id)`, `openSession(session)`, `takeOverSession(session)` and the read `readSession(session)`.
-- `renderIssues()` renders the hosted Issues interface.
+- `renderIssues()` renders the Issues interface.
 
-There is no write API. A widget's own preferences belong in its plugin's DSH settings.
-
-`dsh-dudu/widget-ui` exports `Frame`, `Row`, `Empty`, `Badge`, `WidgetNumber` and `ProgressBar`. The host supplies their styles. Otherwise use DSH's `--dsw-*` tokens.
+`Frame`, `Row`, `Empty`, `Badge`, `WidgetNumber` and `ProgressBar` come with the host's styles. Plain elements and DSH's `--dsw-*` tokens work as well. The full types are in `widget.d.ts`, next to this file.
 
 ## Rules
 
 - Any size from `min` up must fit: show whole rows and scroll inside when the content is longer.
-- React comes from DSH's loader and stays external. Everything else, including `defineWidget`, is bundled by `build.mjs`.
 - Content follows its own size (container queries), not the screen width.
 - Respect reduced motion. Label icon buttons with `aria-label`.
 
-## Where to keep it
+## Did it load?
 
-A widget plugin can live in any folder. The assistant keeps the ones it writes in `<assistant home>/widgets/<name>`.
+The dashboard writes how each file loaded to `<assistant home>/widgets/status.json`: `{ "widgets": { "<name>": { "ok": true } } }`, or `{ "ok": false, "error": "..." }` for a file that failed. A file that does not export a function, or whose declaration is incomplete, fails there with the reason. The file is written while the dashboard is open, a few seconds after the widget file changes. A widget that fails while it renders shows an error where it sits on the board.

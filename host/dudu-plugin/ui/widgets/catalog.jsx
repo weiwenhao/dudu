@@ -67,7 +67,8 @@ export function useWidgetCatalog(source, renderSlot) {
       }
       const failed = snapshot.errors.has(id);
       widgets.push(localizedWidget({
-        ...declaration, needs: declaration.needs ?? [], source: builtIn.has(id) ? null : origin, failed,
+        // The widgets 嘟嘟 writes (local.js) are 嘟嘟's own, as the built-in ones are: no "from" line under them.
+        ...declaration, needs: declaration.needs ?? [], source: builtIn.has(id) || id.startsWith('local.') ? null : origin, failed,
         Component: function Widget(props) {
           if (failed) throw new Error(`Widget ${id} failed.`);
           return <WidgetBinding {...props} id={id} renderSlot={renderSlot} />;

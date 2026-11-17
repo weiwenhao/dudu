@@ -1413,7 +1413,7 @@ window.__ModuleLoader__.load({
             name: 'dudu.widget', id: widget.id, label: widget.label,
           }, widget.Component));
           ctx.layout.selectPanel(PANEL_ID);
-          return () => { for (const stop of widgets) stop(); conversation(); dispose(); };
+          return () => { for (const stop of widgets) stop(); localWidgets?.close(); conversation(); dispose(); };
         });
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
           name: 'sidebar.panellist', id: PANEL_ID, order: 20, label: () => ui?.T.brand ?? '嘟嘟',
@@ -1445,6 +1445,14 @@ window.__ModuleLoader__.load({
             const disposeLeading = ctx.slots.register({
               name: leadingSlot, registrant, priority: -1,
               children: { [nativeSlot]: { kind: 'single', scope: 'root' } },
+          // The widgets 嘟嘟 writes: files in its project folder, loaded here and registered into the same slot (ui/widgets/local.js). No plugin is installed.
+          const localWidgets = ui?.createLocalWidgets?.({
+            slots: ctx.slots,
+            list: () => request('assistant/widgets'),
+            report: (entries) => request('assistant/widgets-report', { widgets: entries }),
+            fileUrl: (name, stamp) => new URL(`api/dudu/assistant/widget-file?name=${encodeURIComponent(name)}&v=${encodeURIComponent(stamp)}`, document.baseURI).href,
+          });
+          localWidgets?.start();
             }, Leading);
             let original;
             let disposeNative = () => {};
