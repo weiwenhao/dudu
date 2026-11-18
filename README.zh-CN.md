@@ -58,13 +58,9 @@ Dudu 将多个 TUI 里的所有会话聚合在一个 GUI 界面中，解决多 A
 
 欢迎在 [GitHub Issues](https://github.com/weiwenhao/dudu/issues) 反馈 Bug 和建议，也欢迎提交 Pull Request。改动较大时，建议先开一个 Issue 说说你的想法。
 
-### 准备环境
+### 开发环境
 
-- 已安装并启动过一次的 [DSH](https://deepseek.com/harness)，并在里面配好模型
-- Node.js 24 或更新版本和 Git
-- 要测试 Claude Code、Codex 或 Pi，需要它们已安装并登录
-- 构建 iOS App 需要 Xcode（带 iOS 27 SDK 或更新）和 [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-- 构建安卓 App 需要 Android Studio（自带 JDK 21）和 Android SDK
+需要 Node.js 24 或更新版本、Git 和 [DSH](https://deepseek.com/harness)。构建 iOS App 还需要 Xcode 和 [XcodeGen](https://github.com/yonaskolb/XcodeGen)，构建安卓 App 还需要 Android Studio。
 
 ```sh
 git clone https://github.com/weiwenhao/dudu.git
@@ -76,61 +72,43 @@ npm install
 
 | 目录 | 内容 |
 | :-- | :-- |
-| `host/dudu-plugin/` | DSH 插件本体：入口 `index.mjs`，面板界面（React）在 `ui/`，小组件接口是 `widget*.mjs` |
-| `host/assistant/` | Issue、收件箱、收集器、定时任务、仪表盘布局和嘟嘟 |
-| `host/providers/` | Claude Code、Codex、Pi 的接入（通过 OAR）和额度读取；`native/` 读取它们自己的会话记录 |
-| `host/native-*.mjs` | 手机 App 使用的接口（`/dsbot/api/v1/`） |
-| `packages/oar-adapter/` | OAR 的兼容补丁 |
-| `native/`、`native-android/` | iOS App（SwiftUI）、安卓 App（Kotlin、Jetpack Compose） |
+| `host/dudu-plugin/` | DSH 插件本体，面板界面在 `ui/` |
+| `host/assistant/` | Issue、收件箱、收集器、定时任务、仪表盘和嘟嘟 |
+| `host/providers/` | Claude Code、Codex、Pi 的接入和额度读取 |
+| `host/native-*.mjs` | 手机 App 使用的接口 |
+| `native/` | iOS App |
+| `native-android/` | 安卓 App |
 | `examples/dudu-widget/` | 小组件模板 |
-| `tests/` | 单元测试；`tests/e2e/` 是端到端测试 |
+| `tests/` | 单元测试和端到端测试 |
 | `docs/` | 设计和说明文档 |
-
-根目录的 Expo / React Native 文件（`App.tsx`、`src/` 等）是早期的原型，现在的手机 App 在 `native/` 里。
 
 ### 目录
 
 | 目录 | 内容 |
 | :-- | :-- |
 | `~/.dsh` | DSH 的数据目录，即 `DSH_HOME` |
-| `~/.dsh/dudu/home` | 嘟嘟的家目录，也是嘟嘟会话的工作目录，放嘟嘟自己的 Markdown 文件（`AGENTS.md`、`SOUL.md`、`USER.md`、`MEMORY.md` 等）和它写的小组件（`widgets/`），可以在设置里改位置 |
+| `~/.dsh/dudu/home` | 嘟嘟的家目录，也是嘟嘟会话的工作目录，放它的 Markdown 文件（`AGENTS.md`、`SOUL.md`、`USER.md`、`MEMORY.md` 等）和它写的小组件（`widgets/`），可以在设置里改位置 |
 | `~/.dsh/dudu/assistant/` | 嘟嘟的设置和数据库（`settings.json`、`issues.db` 等） |
-| `.local/` | 仓库里被 git 忽略的工作目录，打包出的插件在 `.local/release/`，更新日志和 profile 备份在 `.local/desktop-updates/` |
+| `.local/` | 仓库里被 git 忽略的工作目录，打包出的插件在 `.local/release/`，更新日志在 `.local/desktop-updates/` |
 
-### 在 DSH Desktop 里运行
-
-```sh
-npm run desktop:update
-```
-
-它会打包插件、装进 DSH Desktop、请求热重载，并检查运行中的版本和服务是否就绪。热重载失败时 Desktop 保持打开并报告原因；确实要重启时加 `-- --restart`（会走 DSH 自己的退出确认）。DSH Desktop 不在 `/Applications` 里时用 `-- --app <路径>`。日志和配置备份在 `.local/desktop-updates/`。
-
-请在普通终端里运行：热重载会断开 DSH 里正在运行的 Claude Code、Codex 会话，所以在 DSH 的会话里运行会被拒绝，确实要运行时加 `-- --force`。
-
-不用脚本时，运行 `npm run package:desktop`，再在 DSH Desktop 的「插件」里安装 `.local/release/dsh-dudu-<版本>.tgz`。面板界面（`host/dudu-plugin/ui/`）由这两个命令一并编译；单独编译用 `npm run client:build`。
-
-### iOS App
+### 运行
 
 ```sh
-npm run native:build       # 构建
-npm run native:install     # 构建并安装到已配对的 iPhone
+npm run desktop:update     # 打包并装进本机的 DSH Desktop，目前只支持 macOS
+npm run native:install     # 构建 iOS App 并装到 iPhone
+npm run android:install    # 构建安卓 App 并装进模拟器
 ```
 
-`native:install` 需要一台已配对、可连接的真机；连了不止一台时用 `-- --device <标识>` 指定。`native/project.yml` 里的 `DEVELOPMENT_TEAM` 和 `PRODUCT_BUNDLE_IDENTIFIER` 是作者自己的，构建前换成你的（提交 PR 时不要带上这两处改动）。`npm run native:test` 在真机上运行 `native/DSBotTests` 里的单元测试。
+构建 iOS App 前，把 `native/project.yml` 里的开发者团队和 Bundle ID 换成你自己的。
 
-### 安卓 App
-
-```sh
-npm run android:build      # 构建 debug APK，并运行单元测试和 lint
-npm run android:install    # 装进正在运行的模拟器
-```
+不用 `desktop:update` 时，运行 `npm run package:desktop`，再在 DSH 的「添加插件」里安装 `.local/release/` 下的 `dsh-dudu-<版本>.tgz`。
 
 ### 测试
 
 ```sh
 npm run typecheck
-npm test                   # 单元测试，很快
-npm run test:e2e           # 端到端，较慢
+npm test             # 单元测试
+npm run test:e2e     # 端到端测试，较慢
 ```
 
 ### 开发小组件
