@@ -60,7 +60,7 @@ Dudu 将多个 TUI 里的所有会话聚合在一个 GUI 界面中，解决多 A
 
 ### 准备环境
 
-- macOS 13 或更新（Apple 芯片），已安装并启动过一次的 [DSH Desktop](https://deepseek.com/harness)（装在 `/Applications` 里），并在里面配好模型
+- 已安装并启动过一次的 [DSH](https://deepseek.com/harness)，并在里面配好模型
 - Node.js 24 或更新版本和 Git
 - 要测试 Claude Code、Codex 或 Pi，需要它们已安装并登录
 - 构建 iOS App 需要 Xcode（带 iOS 27 SDK 或更新）和 [XcodeGen](https://github.com/yonaskolb/XcodeGen)
