@@ -23,7 +23,7 @@ Dudu is a plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-
 - **Agents**: Claude Code, Codex, Pi and DeepSeek. Claude Code and Codex run as the programs installed on your computer, with your login, settings, skills and MCP servers; Pi runs the installed `pi` (1.4.0 or later). Import the Claude Code and Codex sessions you already have, or take one over as an Issue.
 - **Terminal**: copy a Claude Code or Codex session's resume command from its Issue and continue in a terminal. Use a session in one place at a time, DSH or the terminal.
 - **Mobile app**: the same conversations in your pocket, with voice input.
-- **Inbox**: a DSH model reads Lark, Notion, Linear and more through the collectors you set up, on a schedule you choose, so each collection costs tokens. Each record can become an Issue, go to an Agent as a message, or be ignored.
+- **Inbox**: a DSH model reads Lark, Notion, Linear and more through the collectors you set up, on a schedule you choose, so each collection costs tokens. Each record can become an Issue or go to an Agent as a message.
 - **Chat**: ask Dudu to create an Issue, or type `@` to message an Issue's Agent. Open it from the blue icon at the bottom right.
 - **Scheduled tasks**: run a prompt on a schedule.
 - **Quota**: click the Quota icon at the top right to see what is left on Claude, ChatGPT and DeepSeek.
