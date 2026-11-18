@@ -54,6 +54,14 @@ Dudu 将多个 TUI 里的所有会话聚合在一个 GUI 界面中，解决多 A
 - 还有一个可爱的办公室，无聊的时候可以看看你的 Agent 都在干什么。
 
 
+## 数据目录
+
+| 目录 | 内容 |
+| :-- | :-- |
+| `~/.dsh` | DSH 的数据目录，即 `DSH_HOME` |
+| `~/.dsh/dudu/home` | 嘟嘟的家目录，也是嘟嘟会话的工作目录，放它的 Markdown 文件（`AGENTS.md`、`SOUL.md`、`USER.md`、`MEMORY.md` 等）和它写的小组件（`widgets/`），可以在设置里改位置 |
+| `~/.dsh/dudu/assistant/` | 嘟嘟的设置和数据库（`settings.json`、`issues.db` 等） |
+
 ## 开发指南
 
 欢迎在 [GitHub Issues](https://github.com/weiwenhao/dudu/issues) 反馈 Bug 和建议，也欢迎提交 Pull Request。改动较大时，建议先开一个 Issue 说说你的想法。
@@ -67,29 +75,6 @@ git clone https://github.com/weiwenhao/dudu.git
 cd dudu
 npm install
 ```
-
-### 项目结构
-
-| 目录 | 内容 |
-| :-- | :-- |
-| `host/dudu-plugin/` | DSH 插件本体，面板界面在 `ui/` |
-| `host/assistant/` | Issue、收件箱、收集器、定时任务、仪表盘和嘟嘟 |
-| `host/providers/` | Claude Code、Codex、Pi 的接入和额度读取 |
-| `host/native-*.mjs` | 手机 App 使用的接口 |
-| `native/` | iOS App |
-| `native-android/` | 安卓 App |
-| `examples/dudu-widget/` | 小组件模板 |
-| `tests/` | 单元测试和端到端测试 |
-| `docs/` | 设计和说明文档 |
-
-### 目录
-
-| 目录 | 内容 |
-| :-- | :-- |
-| `~/.dsh` | DSH 的数据目录，即 `DSH_HOME` |
-| `~/.dsh/dudu/home` | 嘟嘟的家目录，也是嘟嘟会话的工作目录，放它的 Markdown 文件（`AGENTS.md`、`SOUL.md`、`USER.md`、`MEMORY.md` 等）和它写的小组件（`widgets/`），可以在设置里改位置 |
-| `~/.dsh/dudu/assistant/` | 嘟嘟的设置和数据库（`settings.json`、`issues.db` 等） |
-| `.local/` | 仓库里被 git 忽略的工作目录，打包出的插件在 `.local/release/`，更新日志在 `.local/desktop-updates/` |
 
 ### 运行
 
