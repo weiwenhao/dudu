@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) ![version](https://img.shields.io/badge/version-0.1.0%20beta-orange?style=flat-square) ![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2024-339933?style=flat-square&logo=node.js&logoColor=white) ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-0.2.2--rc.1-4D6BFE?style=flat-square)
 
-[设计理念](#设计理念) • [功能](#功能) • [贡献指南](#贡献指南) • [English](README.md) · **简体中文**
+[设计理念](#设计理念) • [功能](#功能) • [开发指南](#开发指南) • [English](README.md) · **简体中文**
 
 </div>
 
@@ -54,7 +54,7 @@ Dudu 将多个 TUI 里的所有会话聚合在一个 GUI 界面中，解决多 A
 - 还有一个可爱的办公室，无聊的时候可以看看你的 Agent 都在干什么。
 
 
-## 贡献指南
+## 开发指南
 
 欢迎在 [GitHub Issues](https://github.com/weiwenhao/dudu/issues) 反馈 Bug 和建议，也欢迎提交 Pull Request。改动较大时，建议先开一个 Issue 说说你的想法。
 
