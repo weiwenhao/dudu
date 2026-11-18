@@ -14,6 +14,7 @@ import { COLUMNS, FILL_ROWS, MAX_ROWS } from '../../../assistant/dashboard/widge
 import { extent, GAP, metrics, span } from './metrics.js';
 import { WidgetPreview } from '../widgets/WidgetPreview.jsx';
 import { Entry } from './Entry.jsx';
+import { SessionReturnScope } from '../lib/session-return.jsx';
 
 const D = T.dashboard;
 const HANDLES = 'e,w,n,s,se,ne,sw';
@@ -507,7 +508,7 @@ export function Dashboard({ request, registry, onSettings, onSessions, onTasks }
         const surface = <div className="db-surface" inert={editing ? '' : undefined}>
           <Guard source={declared?.source ?? sourceOf(item.type)} reset={declared?.Component} remove={() => remove(item.id)}>
             {declared
-              ? <declared.Component size={size} editing={editing} />
+              ? <SessionReturnScope id={item.id}><declared.Component size={size} editing={editing} /></SessionReturnScope>
               : <div className="flex h-full items-center justify-center p-4 text-center text-muted-foreground">{D.missing(sourceOf(item.type) ?? item.type)}</div>}
           </Guard>
         </div>;

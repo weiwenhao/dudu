@@ -1,6 +1,6 @@
 --- a/dist/runtimes/claude/index.d.ts
 +++ b/dist/runtimes/claude/index.d.ts
-@@ -34,6 +34,7 @@ export declare const claudeRuntime: Omit<{
+@@ -38,6 +38,7 @@
      readonly inspectLimitResets: import("../../browser.js").LimitResetInspector;
      readonly redeemLimitReset: import("../../browser.js").LimitResetRedeemer;
      readonly listModels: import("../../browser.js").ModelLister;
@@ -8,16 +8,9 @@
      readonly checkUpdate: import("../../browser.js").UpdateChecker;
      readonly upgrade: typeof claudeUpgrade;
      readonly login: typeof claudeLogin;
-@@ -44,4 +45,4 @@ export declare const claudeRuntime: Omit<{
- export { claudeAccountUsage } from "./account-usage.js";
- export { claudeListModels, projectClaudeModels } from "./list-models.js";
- export { claudeSession } from "./session.js";
--//# sourceMappingURL=index.d.ts.map
-\ No newline at end of file
-+//# sourceMappingURL=index.d.ts.map
 --- a/dist/runtimes/claude/index.js
 +++ b/dist/runtimes/claude/index.js
-@@ -9,7 +9,7 @@ import { claudeAccountUsage } from "./account-usage.js";
+@@ -9,7 +9,7 @@
  import { claudeInspectLimitResets, claudeRedeemLimitReset } from "./limit-reset/index.js";
  import { claudeInstallation } from "./installation.js";
  import { claudeInstall, claudeInstallPlan } from "./install.js";
@@ -26,7 +19,7 @@
  import { claudeCheckUpdate, claudeUpgrade } from "./update.js";
  import { claudeSession } from "./session.js";
  export const claudeRuntime = defineRuntime({
-@@ -33,6 +33,7 @@ export const claudeRuntime = defineRuntime({
+@@ -34,6 +34,7 @@
      inspectLimitResets: claudeInspectLimitResets,
      redeemLimitReset: claudeRedeemLimitReset,
      listModels: claudeListModels,
@@ -34,13 +27,6 @@
      checkUpdate: claudeCheckUpdate,
      upgrade: claudeUpgrade,
      login: claudeLogin,
-@@ -43,4 +44,4 @@ export const claudeRuntime = defineRuntime({
- export { claudeAccountUsage } from "./account-usage.js";
- export { claudeListModels, projectClaudeModels } from "./list-models.js";
- export { claudeSession } from "./session.js";
--//# sourceMappingURL=index.js.map
-\ No newline at end of file
-+//# sourceMappingURL=index.js.map
 --- a/dist/runtimes/claude/launch-args.d.ts
 +++ b/dist/runtimes/claude/launch-args.d.ts
 @@ -1,5 +1,5 @@

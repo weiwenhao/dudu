@@ -40,6 +40,7 @@ struct BoardIssue: Codable, Identifiable, Equatable, Sendable {
     var description: String?
     var hasSession: Bool?
     var createdAt: Double?
+    var source: String?
     var projectInfo: IssueProject?
     var labels: [IssueLabel]?
     var children: [BoardIssue]?
@@ -89,6 +90,19 @@ enum BoardTab: String, CaseIterable, Identifiable, Sendable {
         case .all: return L10n.text("全部事项")
         }
     }
+
+    func includes(statusType: String) -> Bool {
+        switch self {
+        case .active: return ["todo", "in_progress", "in_review"].contains(statusType)
+        case .backlog: return statusType == "backlog"
+        case .all: return true
+        }
+    }
+
+    func includes(_ row: BoardConversation) -> Bool {
+        if let issue = row.issue { return includes(statusType: issue.statusType) }
+        return self != .backlog
+    }
 }
 
 private struct BoardAnswer: Decodable, Sendable {
@@ -98,6 +112,7 @@ private struct BoardAnswer: Decodable, Sendable {
     var conversations: [BoardConversation]?
     var pins: [String]?
     var unreadCount: Int?
+    var statuses: [IssueWorkflowStatus]?
 }
 
 private struct IssueAnswer: Decodable, Sendable {
@@ -125,6 +140,8 @@ final class BoardModel: ObservableObject {
     enum LoadState: Equatable { case loading, loaded, failed }
 
     @Published private(set) var tab: BoardTab = .active
+    @Published private(set) var filters = BoardFilters()
+    @Published private(set) var filterStatuses: [IssueWorkflowStatus] = []
     @Published private(set) var states: [BoardTab: LoadState] = [:]
     @Published private(set) var deleting: Set<Int> = []
     @Published private(set) var conversationsByTab: [BoardTab: [BoardConversation]] = [:]
@@ -152,20 +169,41 @@ final class BoardModel: ObservableObject {
 
     init(storage: any DSBotBoardStorage = FileBoardStorage.shared) { self.storage = storage }
 
-    var state: LoadState { states[tab] ?? .loading }
+    var state: LoadState { states[tab] ?? states[.all] ?? .loading }
 
-    /// The issues in the homepage's received-message order, without duplicating its pins.
-    var orderedIssues: [BoardIssue] { conversations.compactMap(\.issue) }
-    var conversations: [BoardConversation] {
-        // Also applies to retained disk snapshots from before the server scoped Dudu.
-        (conversationsByTab[tab] ?? []).filter { tab != .backlog || !$0.isAssistant }
+    // Older snapshots can hold individual scopes. New refreshes replace them with one complete list.
+    var scopedConversations: [BoardConversation] {
+        let rows = conversationsByTab[tab] ?? conversationsByTab[.all] ?? []
+        return tab == .all ? rows : rows.filter(tab.includes)
     }
+    var conversations: [BoardConversation] { filters.matching(scopedConversations) }
+
+    var filterLabels: [String: IssueLabel] {
+        let scopes = conversationsByTab[.all].map { [$0] } ?? Array(conversationsByTab.values)
+        return scopes.reduce(into: [:]) { labels, rows in
+            for row in rows {
+                for label in row.issue?.labels ?? [] { labels[String(label.id)] = label }
+            }
+        }
+    }
+
     var pinnedConversations: [BoardConversation] {
-        let byID = Dictionary(uniqueKeysWithValues: conversations.map { ($0.id, $0) })
-        return pinOrder.compactMap { byID[$0] }.filter(\.pinned)
+        guard !pinOrder.isEmpty else { return [] }
+        let keys = Set(pinOrder)
+        var pinned: [String: BoardConversation] = [:]
+        for scope in [BoardTab.all, .active, .backlog] {
+            for row in conversationsByTab[scope] ?? [] where row.pinned && keys.contains(row.id) {
+                if pinned[row.id] == nil { pinned[row.id] = row }
+            }
+        }
+        return pinOrder.compactMap { pinned[$0] }
     }
 
-    func select(_ next: BoardTab) { tab = next }
+    func select(_ next: BoardTab) { if tab != next { tab = next } }
+
+    func toggle(_ option: BoardFilterOption, in field: BoardFilterField) { filters.toggle(option.id, in: field) }
+
+    func resetFilters() { if !filters.isEmpty { filters = BoardFilters() } }
 
     /// Forget what was read: another computer has another board.
     func reset(for computerID: String?) {
@@ -180,6 +218,8 @@ final class BoardModel: ObservableObject {
         refreshPending = false
         visibleReads = [:]
         conversationsByTab = [:]
+        filterStatuses = []
+        resetFilters()
         pinOrder = []
         changing = []
         unreadCount = 0
@@ -204,6 +244,7 @@ final class BoardModel: ObservableObject {
                 guard !Task.isCancelled, reset == resetID else { return }
                 conversationsByTab = prepared
                 states = conversationsByTab.mapValues { _ in .loaded }
+                filterStatuses = snapshot.filterStatuses ?? []
                 pinOrder = snapshot.pins
                 unreadCount = snapshot.unreadCount
                 savedSnapshot = snapshot
@@ -221,7 +262,7 @@ final class BoardModel: ObservableObject {
         let snapshot = BoardSnapshot(
             computerID: computerID,
             conversationsByTab: Dictionary(uniqueKeysWithValues: conversationsByTab.map { ($0.key.rawValue, $0.value) }),
-            pins: pinOrder, unreadCount: unreadCount
+            pins: pinOrder, unreadCount: unreadCount, filterStatuses: filterStatuses
         )
         guard snapshot != savedSnapshot else { return }
         savedSnapshot = snapshot
@@ -237,7 +278,7 @@ final class BoardModel: ObservableObject {
         }
     }
 
-    /// Read the tab again. A refresh keeps what is on screen; only a tab that has nothing yet shows its loading.
+    /// Refresh the whole board once so changing scope or filters needs only the current local rows.
     func refresh(using store: DSBotStore) async {
         reset(for: store.activeComputer?.id)
         let restoring = resetID
@@ -265,11 +306,12 @@ final class BoardModel: ObservableObject {
                 }
             }
         }
-        let wanted = tab
         let revision = mutationRevision
-        if conversationsByTab[wanted] == nil { states[wanted] = .loading }
+        if conversationsByTab[.all] == nil, states[.all] != .loading { states[.all] = .loading }
         do {
-            let value = try await store.request("board.list", ["tab": .string(wanted.rawValue), "layout": .string("chat")])
+            let value = try await store.request("board.list", [
+                "tab": .string(BoardTab.all.rawValue), "layout": .string("chat"), "filterData": .bool(true),
+            ])
             let answer = try await json.decode(BoardAnswer.self, from: value)
             guard !Task.isCancelled, reset == resetID, revision == mutationRevision,
                   connection == store.connectionRevision else { return }
@@ -292,16 +334,18 @@ final class BoardModel: ObservableObject {
                 locallyRead.insert(session)
             }
             let displayedCount = max(0, count - locallyRead.count)
-            if conversationsByTab[wanted] != conversations { conversationsByTab[wanted] = conversations }
+            let boardRows: [BoardTab: [BoardConversation]] = [.all: conversations]
+            if conversationsByTab != boardRows { conversationsByTab = boardRows }
+            if filterStatuses != (answer.statuses ?? []) { filterStatuses = answer.statuses ?? [] }
             if pinOrder != (answer.pins ?? []) { pinOrder = answer.pins ?? [] }
             if unreadCount != displayedCount { unreadCount = displayedCount }
-            if states[wanted] != .loaded { states[wanted] = .loaded }
+            if states != [.all: .loaded] { states = [.all: .loaded] }
             AppNotifications.shared.setUnreadCount(displayedCount)
             persist()
         } catch {
             guard !Task.isCancelled, reset == resetID, connection == store.connectionRevision else { return }
             DSBotLog.networkFailure("board.load.fail", error: error)
-            if conversationsByTab[wanted] == nil { states[wanted] = .failed }
+            if conversationsByTab[.all] == nil { states[.all] = .failed }
         }
     }
 
@@ -522,7 +566,12 @@ final class BoardModel: ObservableObject {
     /// The issue whose session is open, when it is still among the board's rows.
     func openedIssue(for session: SessionSummary?) -> BoardIssue? {
         guard let session else { return nil }
-        return orderedIssues.first { $0.sessionId == session.id }
+        for scope in [tab, .all, .active, .backlog] {
+            if let issue = conversationsByTab[scope]?.first(where: { $0.sessionId == session.id })?.issue {
+                return issue
+            }
+        }
+        return nil
     }
 
     func detail(of issue: BoardIssue, using store: DSBotStore) async -> BoardIssue? {
@@ -539,7 +588,7 @@ final class BoardModel: ObservableObject {
         }
     }
 
-    /// The open issues, the one touched last first: what a collected record is shared to.
+    /// The open issues, the one touched last first: what a collected record is forwarded to (`withSession`: only the ones that have a conversation).
     func openIssues(withSession: Bool, using store: DSBotStore) async -> [BoardIssue]? {
         do {
             let value = try await store.request("issue.pick", withSession ? ["withSession": .bool(true)] : [:])
@@ -577,9 +626,7 @@ final class BoardModel: ObservableObject {
             guard let entries = conversationsByTab[scope] else { continue }
             conversationsByTab[scope] = entries.compactMap { entry in
                 guard entry.issue?.id == changed.id else { return entry }
-                let included = scope == .all || (scope == .backlog ? changed.statusType == "backlog"
-                    : ["todo", "in_progress", "in_review"].contains(changed.statusType))
-                guard included else { return nil }
+                guard scope.includes(statusType: changed.statusType) else { return nil }
                 var fresh = entry
                 fresh.title = changed.title
                 fresh.issue = changed
@@ -648,14 +695,13 @@ final class BoardModel: ObservableObject {
 // MARK: Collector
 
 enum CollectorTab: String, CaseIterable, Identifiable, Sendable {
-    case todo, done, ignored
+    case todo, done
 
     var id: String { rawValue }
     var title: String {
         switch self {
         case .todo: return L10n.text("待处理")
         case .done: return L10n.text("已处理")
-        case .ignored: return L10n.text("已忽略")
         }
     }
 }
@@ -676,6 +722,19 @@ struct CollectorContext: Codable, Equatable, Sendable {
     var text: String?
 }
 
+/// One message of a conversation record (`inbox.get`'s `record.messages`, split by the plugin from the text's one-line-per-message form): its time as the plugin wrote it, `MM-DD HH:mm`, who said it
+/// and what. A phone that is given none shows the record's text as it is.
+struct CollectorMessage: Codable, Equatable, Sendable {
+    var at: String
+    var from: String?
+    var text: String
+
+    /// `MM-DD`, the date of the divider the message sits under.
+    var day: String { String(at.prefix(5)) }
+    /// `HH:mm`.
+    var time: String { String(at.dropFirst(6)) }
+}
+
 /// One collected record: what a collector brought back, without its words (those come with `inbox.get`). Codable because a card of 嘟嘟's chat keeps some (`QuickCard`).
 struct CollectorRecord: Codable, Identifiable, Equatable, Sendable {
     var id: Int
@@ -688,30 +747,30 @@ struct CollectorRecord: Codable, Identifiable, Equatable, Sendable {
     var from: String?
     var at: Double?
     var url: String?
-    var ignored: Bool?
     var done: Bool?
     /// What became of it: an issue made of it, or a note shared to one (`issue`, `note`).
     var verdict: String?
     var issue: CollectorIssue?
     var text: String?
+    /// A conversation's messages one by one, when the plugin could tell them apart (only in `inbox.get`); an older plugin sends none and the text is shown as it is.
+    var messages: [CollectorMessage]?
     var context: [CollectorContext]?
     /// The collector's session is going back to the source to read what is around this record (`inbox.complete`); `inbox.get` says it, and an older plugin says nothing.
     var completing: Bool?
     /// Why the last such completion failed, in the plugin's own words (English system text, which the plugin keeps ten minutes).
     var completeError: String?
 
-    /// The line under the title: its number (`r143`), who it is from, and which collector brought it. The number is first, so a line that is cut short keeps it
-    /// (owner, 2026-11-11, option A of `.local/designs/record-id-2026-11-11/`, on records that read alike: "设计一个 id 吧，不然我都不知道哪个是哪个").
-    var byLine: String { [ref ?? "", from ?? "", connectorName].filter { !$0.isEmpty }.joined(separator: " · ") }
+    /// The line under the title: who it is from and which collector brought it. Its number (`r143`) is the second line of the column at the right, where a line that is cut short cannot take it
+    /// away (owner, 2026-11-11, option A of `.local/designs/record-id-2026-11-11/`, on records that read alike: "设计一个 id 吧，不然我都不知道哪个是哪个"; 2026-11-18, the inbox redesign).
+    var byLine: String { [from ?? "", connectorName].filter { !$0.isEmpty }.joined(separator: " · ") }
 }
 
 /// What the owner can do with a record without making an issue of it.
 enum CollectorMark: String, Sendable {
-    case ignore, done, delete, restore
+    case done, delete, restore
 
     var toast: String {
         switch self {
-        case .ignore: return L10n.text("已忽略")
         case .done: return L10n.text("已处理")
         case .delete: return L10n.text("已删除")
         case .restore: return L10n.text("已恢复")
@@ -949,7 +1008,7 @@ final class CollectorModel: ObservableObject {
         }
     }
 
-    /// A mark on one or several records. No undo (owner, 2026-11-12): a restore is the way back for a row put aside or handled, and a delete is for a row that is wrong.
+    /// A mark on one or several records. No undo (owner, 2026-11-12): a restore is the way back for a handled row, and a delete is for a row that is wrong.
     @discardableResult
     func mark(_ action: CollectorMark, _ records: [CollectorRecord], using store: DSBotStore) async -> Bool {
         let ids = records.map(\.id)
@@ -985,16 +1044,15 @@ final class CollectorModel: ObservableObject {
         }
     }
 
-    /// Records shared to an issue (a note in its activity) or to the session of one (a message to its agent).
+    /// Records forwarded to the conversation of an issue: a message to its agent (owner, 2026-11-18: 转发, to conversations only; the note in an issue's activity is no longer offered on the phone).
     @discardableResult
-    func share(_ records: [CollectorRecord], to issue: BoardIssue, session: Bool, using store: DSBotStore) async -> Bool {
+    func share(_ records: [CollectorRecord], to issue: BoardIssue, using store: DSBotStore) async -> Bool {
         let ids = records.map(\.id)
         guard !ids.isEmpty, changing.isDisjoint(with: ids) else { return false }
         let computer = store.activeComputer?.id
         changing.formUnion(ids)
         defer { if computer == store.activeComputer?.id { changing.subtract(ids) } }
-        var params: [String: JSONValue] = ["ids": .array(ids.map { .number(Double($0)) }), "issue": .number(Double(issue.id))]
-        if session { params["to"] = .string("session") }
+        let params: [String: JSONValue] = ["ids": .array(ids.map { .number(Double($0)) }), "issue": .number(Double(issue.id)), "to": .string("session")]
         do {
             let value = try await store.request("inbox.share", params)
             let answer = try await json.decode(CollectorAnswer.self, from: value)
@@ -1004,7 +1062,7 @@ final class CollectorModel: ObservableObject {
                 return false
             }
             stopSelecting()
-            report?(DSBotToastMessage(text: session ? L10n.text("已分享到 {0} 的会话", "\(issue.reference)") : L10n.text("已分享到 {0}", "\(issue.reference)"), kind: .success))
+            report?(DSBotToastMessage(text: L10n.text("已转发到 {0}", "\(issue.reference)"), kind: .success))
             await refresh(tab, using: store)
             await refreshCount(using: store)
             return true

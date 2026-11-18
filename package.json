@@ -64,7 +64,7 @@
     "zod": "3.25.76"
   },
   "scripts": {
-    "postinstall": "npm run oar:prepare && npm run build:adapter",
+    "postinstall": "npm run oar:prepare && npm run computer-use:prepare && npm run build:adapter",
     "prestart": "npm run build:adapter",
     "start": "expo start",
     "preandroid": "npm run build:adapter",
@@ -84,6 +84,7 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "oar:prepare": "node packages/oar-adapter/build.mjs",
+    "computer-use:prepare": "node packages/dsh-computer-use/build.mjs",
     "build:adapter": "node --experimental-strip-types scripts/build-adapter.mts",
     "share": "npm run build:adapter && node scripts/share.mjs",
     "desktop:link": "node scripts/desktop-link.mjs",

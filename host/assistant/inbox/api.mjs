@@ -1,14 +1,16 @@
 // The collector widget's side of the inbox, for the desktop interface: POST /api/dudu/inbox/<action> with one JSON object, answered with JSON.
-// The page is the owner. Nothing here calls a model: the owner reads what was collected, puts a row aside, shares it to an issue, or makes an
+// The page is the owner. Nothing here calls a model: the owner reads what was collected, marks a row handled, shares it to an issue, or makes an
 // issue of it (the page opens its own New issue dialog for that, and tells this module which issue came of it).
 //
-//   list     { tab: 'todo' | 'done' | 'ignored', filter: { connector: [id], date: ['day' | 'week' | 'month'] }, limit, cursor }
+//   list     { tab: 'todo' | 'done', filter: { connector: [id], date: ['day' | 'week' | 'month'] }, limit, cursor }
 //            -> { items: [card], nextCursor, names: { id: name }, facets: { connector: [{ key, name, count }] } }
-//   get      { id }               -> { record, draft: { title, brief, sourceRef } }   the whole record, and what a new issue made of it starts with (and is marked with)
-//   ignore   { id | ids } / done { id | ids } / delete { id | ids } / restore { id | ids }     one record, or up to 200 at once -> { outcome, changed, record? }
-//            The owner's marks, on a record that has no issue: put aside, dealt with by themselves (listed under Handled, no issue needed), wrong (in no
-//            list; the row is kept, so the same message is not collected again). `restore` takes a mark off: a deleted record is back where it was, an
-//            ignored or handled one is waiting again.
+//   get      { id }               -> { record, draft: { title, brief, sourceRef } }   the whole record, and what a new issue made of it starts with (and is marked with).
+//            A conversation's text is one line per message (`11-17 19:15 name：words`): when every line is one, the record also has `messages`: [{ at: 'MM-DD HH:mm', from, text }],
+//            which the pages set as a talk (the page shows the text as it is when there are none).
+//   done { id | ids } / delete { id | ids } / restore { id | ids }     one record, or up to 200 at once -> { outcome, changed, record? }
+//            The owner's marks, on a record that has no issue: dealt with by themselves (listed under Handled, no issue needed), wrong (in no
+//            list; the row is kept, so the same message is not collected again). `restore` takes a mark off: a deleted record is back where it was, a
+//            handled one is waiting again.
 //   share    { id | ids, issue, to? }  to 'issue' (the default): adds the record to an open issue's activity as a note of the owner's.
 //            to 'session': appends it to the session of that issue as a message to its agent, with where it came from, when and what was around it
 //            (the issue needs an agent and a session: the same checks and the same note in its activity as the owner's own message to the agent);
@@ -18,7 +20,7 @@
 //            background (ten seconds to a few minutes), and what it read goes into that record. -> { outcome: 'success', started: true } at once; `get` then says `completing` while it runs and
 //            `completeError` (the plugin's own words, kept ten minutes) when it failed.
 //
-// A card is the row of the list, without the text: { id, ref, connector, connectorName, connectorIcon, title, from, at, url, state, verdict, ignored, done, byOwner, issue }
+// A card is the row of the list, without the text: { id, ref, connector, connectorName, connectorIcon, title, from, at, url, state, verdict, done, byOwner, issue }
 // (`connector` is the id of the collector that brought the row, and `connectorName` its name: the fields kept their names when the two were told apart;
 // `connectorIcon` is the icon key of the service the collector is about (the catalog's, or one a name says: Lark, Stripe, QQ, WeChat...), or null:
 // the pages draw the first letter of the name then)
@@ -27,17 +29,18 @@
 import { brandOf } from '../connectors/brands.mjs';
 import { loadCatalog } from '../connectors/catalog.mjs';
 import { WORDS as W } from '../dispatch/words.mjs';
+import { parseMessages } from './records.mjs';
 
 const NO_STORE = { 'cache-control': 'no-store' };
 const HOUR = 3_600_000;
 const SPAN = { day: 86_400_000, week: 7 * 86_400_000, month: 30 * 86_400_000 };
-const TABS = ['todo', 'done', 'ignored'];
+const TABS = ['todo', 'done'];
 const FINISHED = new Set(['done', 'canceled']);
 const clip = (value, size) => String(value ?? '').slice(0, size);
 // The catalog's keys that are a plain symbol and not a service's logo (the pages draw the first letter instead).
 const GENERIC = new Set(['browser', 'pencil', 'plug', 'terminal']);
 
-export const INBOX_ACTIONS = Object.freeze(['list', 'get', 'ignore', 'done', 'delete', 'restore', 'share', 'link', 'complete']);
+export const INBOX_ACTIONS = Object.freeze(['list', 'get', 'done', 'delete', 'restore', 'share', 'link', 'complete']);
 const KEEP_ERROR_MS = 10 * 60_000;
 
 const needs = (message, code) => ({ outcome: 'needs_clarification', ...(code ? { code } : {}), message });
@@ -108,7 +111,7 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
     const entry = known.get(row.connector);
     return {
       id: row.id, ref: row.ref, connector: row.connector, connectorName: entry?.name ?? row.connector, connectorIcon: entry?.icon ?? null, title: row.title, from: row.from,
-      at: row.at ?? row.collectedAt, url: row.url, state: row.state, verdict: row.verdict, ignored: row.ignoredAt !== null, done: row.doneAt !== null, byOwner: row.byOwner,
+      at: row.at ?? row.collectedAt, url: row.url, state: row.state, verdict: row.verdict, done: row.doneAt !== null, byOwner: row.byOwner,
       issue: row.issueId === null ? null : issueOf(summaries.get(row.issueId)),
     };
   }
@@ -121,7 +124,7 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
   }
 
   function list({ tab = 'todo', filter = {}, limit, cursor } = {}) {
-    if (!TABS.includes(tab)) return needs('Choose todo, done or ignored.', 'invalid_tab');
+    if (!TABS.includes(tab)) return needs('Choose todo or done.', 'invalid_tab');
     const span = SPAN[filter?.date?.[0]];
     // Counted back from the hour, so that the request, and with it the list, does not change at every look.
     const since = span ? Math.floor(now() / HOUR) * HOUR - span : undefined;
@@ -143,10 +146,11 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
     const name = known.get(record.connector)?.name ?? record.connector;
     const summaries = summariesOf([record]);
     const where = record.url ? `\n\n${W.sourceLine(clip(name, 100), record.url)}` : '';
+    const messages = parseMessages(record.text);
     return {
       outcome: 'success',
       record: {
-        ...card(record, known, summaries), text: record.text, context: record.context, more: record.more, reason: record.reason, cleared: record.cleared, truncated: record.truncated,
+        ...card(record, known, summaries), text: record.text, ...(messages ? { messages } : {}), context: record.context, more: record.more, reason: record.reason, cleared: record.cleared, truncated: record.truncated,
         completing: jobs.get(record.id)?.running === true, completeError: jobs.get(record.id)?.error ?? null,
       },
       // What an issue made of the record starts with (the page puts it in its New issue dialog): the same line of origin 嘟嘟 writes.
@@ -258,7 +262,6 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
 
   const CALLS = {
     list, get, share, link, complete,
-    ignore: mark((record) => inbox.ignore(record.id)),
     done: mark((record) => inbox.done(record.id)),
     delete: mark((record) => inbox.remove(record.id)),
     restore: mark((record) => inbox.restore(record.id)),

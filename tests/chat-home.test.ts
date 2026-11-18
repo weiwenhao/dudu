@@ -156,6 +156,34 @@ test('homepage pins survive restart and unpinning Dudu, without taking pinned co
   assert.equal((await desktop('pin', { target: 'issue:9999', pinned: true })).status, 404);
 });
 
+test('the complete phone board carries filter fields and pins across workflows without reading any session', async (t) => {
+  const { issues, receipts, say, call } = world(t);
+  const status = issues.statusAdd({ name: 'Research', category: 'backlog', color: '#123456' }).status;
+  const label = issues.labelAdd({ name: 'Mobile', color: 'teal' }).label;
+  const planned = issues.add({
+    title: 'Plan', status: status.id, labels: [label.id], source: 'connector',
+    project, agent: 'claude', session: 'dsh:planned', brief: 'Private description',
+  }).issue;
+  const active = issues.add({ title: 'Active', project, session: 'dsh:active', agent: 'codex' }).issue;
+  say('planned', 1, 5_000, 'Plan received');
+  say('active', 1, 4_000, 'Active received');
+  await call('board.pin', { target: `issue:${planned.id}`, pinned: true });
+
+  const answer: any = await call('board.list', { layout: 'chat', tab: 'all', filterData: true });
+  assert.deepEqual(answer.pins, ['assistant', `issue:${planned.id}`]);
+  assert.deepEqual(answer.conversations.filter((entry: any) => entry.issue).map((entry: any) => entry.issue.id), [planned.id, active.id]);
+  const row = answer.conversations.find((entry: any) => entry.issue?.id === planned.id).issue;
+  assert.deepEqual([row.status, row.statusType, row.createdAt, row.source], [status.id, 'backlog', planned.createdAt, 'connector']);
+  assert.deepEqual(row.labels, [{ id: label.id, name: 'Mobile', color: 'teal' }]);
+  assert.equal(row.description, undefined);
+  assert.equal(answer.statuses.find((entry: any) => entry.id === status.id).name, 'Research');
+  assert.equal(answer.unreadCount, 2);
+  assert.equal(receipts.get('dsh:planned'), null);
+  const legacy: any = await call('board.list', { layout: 'chat', tab: 'all' });
+  assert.equal(legacy.statuses, undefined);
+  assert.equal(legacy.conversations.find((entry: any) => entry.issue?.id === planned.id).issue.labels, undefined);
+});
+
 test('Desktop pinned issue paging keeps pins first in each group and sort direction without changing phone chronology', async (t) => {
   const { issues, say, desktop, call } = world(t);
   for (let index = 1; index <= 15; index++) {
@@ -199,16 +227,22 @@ test('Desktop pinned issue paging keeps pins first in each group and sort direct
 });
 
 test('Desktop conversation scopes reuse issue filters and facet counts without reading or starting a session', async (t) => {
-  const { issues, say, desktop, receipts } = world(t);
+  const { issues, say, call, desktop, receipts } = world(t);
   const first = issues.add({ title: 'First', project, agent: 'claude', priority: 'high', session: 'dsh:first' }).issue;
-  issues.add({ title: 'Second', project, agent: 'codex', priority: 'low', session: 'dsh:second' });
-  issues.add({ title: 'Backlog', project, status: 'backlog', agent: 'claude', session: 'dsh:backlog' });
+  const second = issues.add({ title: 'Second', project, agent: 'codex', priority: 'low', session: 'dsh:second' }).issue;
+  const backlog = issues.add({ title: 'Backlog', project, status: 'backlog', agent: 'claude', session: 'dsh:backlog' }).issue;
   say('first', 1, 3_000, 'Completed answer');
+  await call('board.pin', { target: `issue:${second.id}`, pinned: true });
+  await call('board.pin', { target: `issue:${backlog.id}`, pinned: true });
   const filter = { priority: ['high'] };
   const response = await desktop('list', { tab: 'active', filter });
   assert.equal(response.status, 200);
   const answer = await response.json();
   assert.deepEqual(answer.conversations.map((row: any) => row.issue.id), [first.id]);
+  const planned = await (await desktop('list', { tab: 'backlog' })).json();
+  assert.deepEqual(planned.conversations.map((row: any) => row.issue.id), [backlog.id]);
+  assert.deepEqual(answer.pinnedConversations.map((row: any) => row.id), ['assistant', `issue:${second.id}`, `issue:${backlog.id}`]);
+  assert.deepEqual(planned.pinnedConversations, answer.pinnedConversations, 'the shelf keeps the shared pins and their order regardless of scope or filters');
   assert.deepEqual(answer.counts, issues.list({ tab: 'active', filter }).counts);
   assert.equal(answer.counts.priority.low, 1, 'a priority facet leaves out its own filter');
   assert.equal(answer.unreadCount, 1);

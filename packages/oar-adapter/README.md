@@ -1,17 +1,21 @@
 # Dudu OAR adapter
 
 `@dudu/oar-adapter` is the compatibility boundary between Dudu and the official
-`@botiverse/oar` package. It exposes the Claude and Codex runtimes, the executable probe and the
-observation helpers the host uses from its main entry, and the Pi runtime from `@dudu/oar-adapter/pi`
-(a separate entry on purpose: a bundle of it carries Pi's SDK, about 15 MB, which Claude and Codex must not ship in the same file). DSH event mapping, caching, native-store
+`@botiverse/oar` package. Its main entry exposes the Claude and Codex runtimes, the nine other runtimes OAR drives as a process of
+their own (`grokRuntime`, `kimiRuntime`, `opencodeRuntime`, `antigravityRuntime`, `codebuddyRuntime`, `devinRuntime`, `factoryRuntime`,
+`qwenRuntime`, `qoderRuntime`), the executable probe and the observation helpers the host uses (`classifyTool`, `initialTaskState`,
+`reduceTaskState`); the Pi runtime comes from `@dudu/oar-adapter/pi`
+(a separate entry on purpose: a bundle of it carries Pi's SDK, about 15 MB, which the other runtimes must not ship in the same file).
+DeepSeek Harness (`dsh`, which is DSH itself), Pi Durable (host-owned sessions) and Cursor (needs `@cursor/sdk`) are not exported. DSH event mapping, caching, native-store
 reading and process retention remain in `host/providers/`; protocol and native
 process ownership remain in OAR.
 
 ## Source of truth and build
 
-- `package.json` depends on the exact official **0.105.0** release and
+- `package.json` depends on the exact official **0.120.0** release and
   `signal-exit@4.1.0`. The root lockfile pins their npm archives and transitive
-  dependencies.
+  dependencies. npm installs this OAR under `packages/oar-adapter/node_modules/` (its `js-yaml@3.15.2` differs from the
+  repository's own), which is where `build.mjs` resolves it from.
 - `upstream.json` records the original archive, integrity, source-tree checksum,
   and each patch's input/output file checksums. `patches/` contains the complete
   local changes; no full upstream source tree is maintained in this repository.
@@ -39,12 +43,12 @@ Desktop packaging always prepares and checks OAR again. Both development and the
 standalone desktop bundle consume `index.mjs`; the tests use the same entry or
 `@dudu/oar-adapter/testing`. Only that test entry exposes selected private
 projection/process helpers. Application and test files must not deep-import the
-upstream package or generated output. The desktop archive bundles only the two
-runtime dependency graphs, and carries OAR's Apache-2.0 license, its modification
-notice identifying the adapter version, and licenses of dependencies actually bundled.
+upstream package or generated output. The desktop archive bundles the dependency
+graphs of the runtimes the main entry exports in one file (`providers/oar-runtimes.mjs`) and Pi's in another, and carries OAR's Apache-2.0 license, its modification
+notice identifying the adapter version, OAR's notice for the brand marks inside its runtimes, and licenses of dependencies actually bundled.
 
 The previous `0.75.0-dudu.2` full vendor copy has been replaced by the official
-0.92.0 release plus six compatibility patches (2026-11-07), moved to 0.105.0 on 2026-11-14 (see "Upgrade to 0.105.0" below). Native compaction and native
+0.92.0 release plus six compatibility patches (2026-11-07), moved to 0.105.0 on 2026-11-14 and to 0.120.0 on 2026-11-19 (see the two "Upgrade to" sections below). Native compaction and native
 single-task stopping now use upstream implementations. The remaining patches
 are grouped by implementation area because several features share session modules:
 
@@ -60,8 +64,8 @@ are grouped by implementation area because several features share session module
 
 ## Upstream provenance
 
-The baseline is the published `@botiverse/oar@0.105.0` npm package from
-https://registry.npmjs.org/@botiverse/oar/-/oar-0.105.0.tgz.
+The baseline is the published `@botiverse/oar@0.120.0` npm package from
+https://registry.npmjs.org/@botiverse/oar/-/oar-0.120.0.tgz.
 The upstream project is https://github.com/botiverse/oar, package directory
 `packages/oar`, licensed under Apache-2.0. Its original `LICENSE`, README,
 runtime modules, declarations and brand notices are preserved in the generated
@@ -70,7 +74,7 @@ copy. The official installed package remains unchanged, including its manifest.
 The original npm archive's integrity is:
 
 ```
-sha512-hhBT0bx+e44EeEJ4rIZBFAsGgL3rXcGn6ZVWBLuL7A4q4HuVaqUFt5WopNxk9LWhMnGTO930+NbHtL3Y3YJg6A==
+sha512-QcYXeNh6EJWJ48aR8hZLnrrANinodI5h1I6HNSbXaEfOiEzitsTC4XWQr6sRYGUWATtzhDKItferbYeeifGVOA==
 ```
 
 The installed source-tree checksum excludes source maps and `node_modules`;
@@ -258,6 +262,34 @@ Patches stay plain unified diffs without `diff --git` or `index` lines: with tho
 under the generated folder without a message, and the build then fails on the output checksum of the first file.
 
 Upstream's own `compaction.js` and the Pi runtime are the same as in 0.92.0.
+
+## Upgrade to 0.120.0 (2026-11-19)
+
+The archive integrity above is the registry's and the lockfile's. 0.120.0 has 15 runtimes (Devin and Factory Droid are new since 0.105.0). The lockfile changed
+only in OAR's own dependency tree: OAR itself (now nested under this package's `node_modules`), Pi's SDK packages 1.5.0 → 1.5.2 (the Pi bundle carries 1.5.2),
+the new `gray-matter` and `js-yaml@3.15.2`, and `lovely-mermaid` in place of `grok-mermaid` under Pi's coding agent.
+
+Of the 23 upstream files the patches touch, 16 are byte-identical in 0.120.0 and 7 changed; four more are files the patches add. Nothing was retired: upstream
+still has no configuration readback, `permissionMode`, `openSignal`, background-task observation or output, `observedSubagents`, signal cleanup or process
+recovery (searched in the official `dist`). `claude-session`, `codex-subagents`, `process-ownership` and `crash-recovery` apply as they were
+(`crash-recovery` over a `shared/executable/process.js` that gained `windowsHide`). Three patches were redone against the new files, in the order of
+`upstream.json`, and the manifest was recorded again from the resulting trees:
+
+- `session-controls`: its text still applied, but upstream's `shared/stream-json/profile.d.ts` now imports `SessionKernel` itself (for its new
+  `beforeRootResult`), so the patch's own import of it would have been a second one; that line is dropped and the section regenerated. Its other sections are
+  unchanged: `session-options.d.ts` differs upstream in comments only, and `shared/stream-json/session.js` was restructured upstream (a root result is held
+  while native facts are read; `queue()` always holds the input in OAR and sends it when the session is idle), but the two lines the patch adds there
+  (`controls` and its spread into the sealed session) are unaffected, and a runtime's `consume` still sees every line first, so the replies to Claude's private
+  task controls are not held behind a settling turn.
+- `claude-defaults`: upstream removed the three trailing re-exports from `runtimes/claude/index.js` and `index.d.ts` (and added `sessionCapabilities`), which
+  was the context of the patch's last hunk in each file. That hunk only added a newline at the end of the file and is dropped; the `configuration` hunks are the
+  same at new offsets. The other five files of the patch are byte-identical upstream and their sections are unchanged.
+- `codex-session`: upstream's `runtimes/codex/session.js` now throws a typed refusal (`readback.refusal` may be an error object), keeps
+  `queuePausedAfterInterrupt` and moved the queue gate into `codexQueueRefusal`. The patch's same five changes (the import, `backgroundTasks`, the seeded
+  projection, `note`, and `backgroundTasks`/`configure`/`stopTask` on the session) were placed again in that file; `background-tasks.js` is unchanged, and
+  `rpc-control.js` and `task-control.js`, which it relies on, are byte-identical upstream.
+
+The main entry also exports the nine other process runtimes and `classifyTool` from this version on (see the top of this file).
 
 ## Maintaining patches and upgrading
 

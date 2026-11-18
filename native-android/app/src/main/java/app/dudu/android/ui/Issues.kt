@@ -30,8 +30,8 @@ fun SubIssuesScreen(route: Route, state: UiState, model: DuduViewModel) {
     LaunchedEffect(actions.revision) { actions.run {
         children = model.request("issue.get", json("id" to route.target?.toLong())).getJSONObject("issue").rows("children")
     } }
-    LaunchedEffect(children.size) { resize((114 + children.size * 56).coerceIn(170, 600)) }
-    Page(w("子事项"), model::backRoute, actions, centersSheetTitle = true) {
+    LaunchedEffect(children.size) { resize((102 + children.size * 56).coerceIn(158, 600)) }
+    Page(w("子事项"), model::backRoute, actions) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 24.dp)) {
             item { InsetCard { children.forEach { child ->
                 val status = state.options?.statuses?.find { it.id == child.optString("status") }
@@ -85,7 +85,7 @@ fun IssueScreen(route: Route, state: UiState, model: DuduViewModel) {
     LaunchedEffect(id, actions.revision) { actions.run {
         full = Issue.parse(model.request("issue.get", json("id" to id)).getJSONObject("issue"))
     } }
-    Page("", model::backRoute, centersSheetTitle = true) {
+    Page("", model::backRoute) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(issue?.title ?: route.title, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)

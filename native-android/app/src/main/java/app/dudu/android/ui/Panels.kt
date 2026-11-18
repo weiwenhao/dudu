@@ -41,6 +41,7 @@ fun Panels(state: UiState, model: DuduViewModel) {
     var pickerBusy by remember(creationPicker) { mutableStateOf(false) }
     when (val panel = state.panel) {
         null -> Unit
+        Panel.Quota -> QuotaSheet(state, model::dismissPanel)
         is Panel.Actions -> IssueContextMenu(panel, state, model)
         is Panel.EditIssue -> key(panel.issue.id, panel.property) { IssuePropertySheet(panel, state, model) }
         is Panel.Rename -> RenameIssue(panel, state, model)
@@ -92,7 +93,6 @@ fun Panels(state: UiState, model: DuduViewModel) {
                         when (panel) {
                             Panel.Computers -> ComputerList(state, model)
                             Panel.Create -> IssueForm(state, model) { creationPicker = it }
-                            Panel.Quota -> Quota(state)
                             else -> Unit
                         }
                         if (state.problem != null) Text(problemText(state.problem),
@@ -272,7 +272,7 @@ private fun ChoiceMenu(expanded: Boolean, dismiss: () -> Unit, options: List<Pai
         options.forEach { (id, title) ->
             DropdownMenuItem(text = { Text(title) }, onClick = { select(id) },
                 modifier = Modifier.testTag("$tag-option-$id"),
-                leadingIcon = if (agentIcons && id in listOf("claude", "codex", "deepseek", "pi", "dudu")) { { AgentLogo(id, 20) } } else null)
+                leadingIcon = if (agentIcons && (id == "dudu" || id in agentMarks)) { { AgentLogo(id, 20) } } else null)
         }
     }
 }
@@ -291,30 +291,6 @@ private fun RenameIssue(panel: Panel.Rename, state: UiState, model: DuduViewMode
         }, dismissButton = {
             TextButton(onClick = model::dismissPanel, enabled = !state.busy) { Text(stringResource(R.string.cancel)) }
         })
-}
-
-@Composable
-private fun Quota(state: UiState) {
-    val providers = state.quota?.optJSONArray("providers")?.objects().orEmpty()
-    if (providers.isEmpty() && !state.busy) Text(stringResource(R.string.empty_quota))
-    providers.forEach { provider ->
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            AgentLogo(provider.nullableString("agent"))
-            Text(provider.getString("name"), style = MaterialTheme.typography.titleMedium)
-            provider.nullableString("plan")?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        }
-        provider.optJSONArray("windows")?.objects()?.forEach { window ->
-            val used = window.getDouble("used").toFloat().coerceIn(0f, 1f)
-            Row {
-                Text(window.getString("label"), Modifier.weight(1f))
-                Text("${(used * 100).toInt()}%")
-            }
-            LinearProgressIndicator(progress = { used }, modifier = Modifier.fillMaxWidth(),
-                color = if (used >= .9) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
-        }
-        provider.optJSONArray("balance")?.objects()?.forEach { amount -> Text(amount.getString("text")) }
-        Spacer(Modifier.height(4.dp))
-    }
 }
 
 @Composable

@@ -8,7 +8,13 @@
     "语言": "Language",
     "跟随系统": "System default",
     "连接嘟嘟": "Connect to Dudu",
-    "打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码": "Open DSH and install the Dudu plugin, then open the pairing QR code in Dudu settings."
+    "打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码": "Open DSH and install the Dudu plugin, then open the pairing QR code in Dudu settings.",
+    "转发": "Forward",
+    "转发给": "Forward to",
+    "最近会话": "Recent conversations",
+    "已转发到 {0}": "Forwarded to {0}",
+    "已转发到 ": "Forwarded to ",
+    "搜索": "Search"
   },
   "also": "wording-sources.json: englishAwaitingOwnerReview"
 }

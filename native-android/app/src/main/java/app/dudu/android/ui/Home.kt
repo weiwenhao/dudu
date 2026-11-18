@@ -86,25 +86,7 @@ fun DuduApp(state: UiState, model: DuduViewModel) {
                         }
                     },
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
-                    title = {
-                        var expanded by remember { mutableStateOf(false) }
-                        Box {
-                            TextButton(onClick = { expanded = true }, modifier = Modifier.testTag("scope-menu")) {
-                                Text(scopeTitle(state.scope), fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                                Spacer(Modifier.width(6.dp))
-                                Glyph(R.drawable.ic_chevron_down, size = 15)
-                            }
-                            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                                Scope.entries.forEach { scope ->
-                                    DropdownMenuItem(text = { Text(scopeTitle(scope)) },
-                                        onClick = { expanded = false; model.select(scope) },
-                                        trailingIcon = {
-                                            if (state.scope == scope) Glyph(R.drawable.ic_check, size = 18)
-                                        }, modifier = Modifier.testTag("scope-${scope.wire}"))
-                                }
-                            }
-                        }
-                    },
+                    title = {}, // no page title on the board (owner, 2026-11-18: "app 顶部的看板两个字不需要了"); the bar is the menu and the two buttons
                     actions = {
                         IconButton(onClick = { model.show(Panel.Quota) }, enabled = state.connected && !state.busy,
                             modifier = Modifier.testTag("quota")) {
@@ -118,56 +100,70 @@ fun DuduApp(state: UiState, model: DuduViewModel) {
                 )
             },
         ) { insets ->
-            PullToRefreshBox(isRefreshing = state.refreshing && state.home != null, onRefresh = model::refresh,
-                modifier = Modifier.fillMaxSize().padding(insets)) {
-                val home = state.home
-                if (home != null) {
-                    LazyColumn(Modifier.fillMaxSize().testTag("home-list")) {
-                        val pinned = home.pins.mapNotNull { id -> home.rows.find { it.id == id } }
-                        if (pinned.isNotEmpty()) item("pins") {
-                            LazyRow(Modifier.fillMaxWidth().height(80.dp).testTag("pinned-shelf"),
-                                contentPadding = PaddingValues(horizontal = 10.dp),
-                                horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                                items(pinned, key = { it.id }) { row ->
-                                    var anchor by remember(row.id) { mutableStateOf(IntRect.Zero) }
-                                    Column(Modifier.width(56.dp).fillMaxHeight()
-                                        .onGloballyPositioned { anchor = it.boundsInWindow().roundToIntRect() }
-                                        .combinedClickable(onClick = { model.open(row) },
-                                            onLongClick = { model.show(Panel.Actions(row, anchor)) })
-                                        .padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                        TitleAvatar(row, 40)
-                                        Spacer(Modifier.height(5.dp))
-                                        Text(if (row.id == "assistant") stringResource(R.string.dudu) else row.title,
-                                            fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
+            val home = state.home
+            val scoped = remember(home, state.scope) { home?.rows.orEmpty().filter(state.scope::includes) }
+            val filters = state.boardFilters
+            val rows = remember(scoped, filters) { filters.matching(scoped) }
+            var showingFilters by remember(state.computerId) { mutableStateOf(false) }
+            Column(Modifier.fillMaxSize().padding(insets)) {
+            if (state.computerUnavailable) {
+                BoardConnectionNotice()
+            }
+            PullToRefreshBox(isRefreshing = state.refreshing && home != null, onRefresh = model::refresh,
+                modifier = Modifier.fillMaxWidth().weight(1f)) {
+                LazyColumn(Modifier.fillMaxSize().testTag("home-list")) {
+                    val pinned = home?.pinnedRows.orEmpty()
+                    if (pinned.isNotEmpty()) item("pins") {
+                        LazyRow(Modifier.fillMaxWidth().height(80.dp).testTag("pinned-shelf"),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            items(pinned, key = { it.id }) { row ->
+                                var anchor by remember(row.id) { mutableStateOf(IntRect.Zero) }
+                                Column(Modifier.width(56.dp).fillMaxHeight()
+                                    .onGloballyPositioned { anchor = it.boundsInWindow().roundToIntRect() }
+                                    .combinedClickable(onClick = { model.open(row) },
+                                        onLongClick = { model.show(Panel.Actions(row, anchor)) })
+                                    .padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    TitleAvatar(row, 40)
+                                    Spacer(Modifier.height(5.dp))
+                                    Text(if (row.id == "assistant") stringResource(R.string.dudu) else row.title,
+                                        fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
-                        items(home.rows, key = { it.id }) { row ->
-                            HomeSwipeRow(row, state.busy, complete = { model.complete(row) },
-                                read = { model.read(row) }, pin = { model.pin(row) }) { close ->
-                                Surface { ConversationRow(row, onClick = { if (!close()) model.open(row) },
-                                    onLongClick = { model.show(Panel.Actions(row, it)) }, onChildren = {
-                                        model.navigate(Route("subissues", target = row.issue?.id?.toString()))
-                                    }) }
-                            }
-                        }
-                        if (home.rows.isEmpty()) item {
-                            Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-                                Text(stringResource(R.string.empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                    }
+                    item("filters") {
+                        BoardFilterBar(state.scope, active = !filters.isEmpty, open = { showingFilters = true },
+                            select = model::select)
+                    }
+                    items(rows, key = { it.id }) { row ->
+                        HomeSwipeRow(row, state.busy, complete = { model.complete(row) },
+                            read = { model.read(row) }, pin = { model.pin(row) }) { close ->
+                            Surface { ConversationRow(row, onClick = { if (!close()) model.open(row) },
+                                onLongClick = { model.show(Panel.Actions(row, it)) }, onChildren = {
+                                    model.navigate(Route("subissues", target = row.issue?.id?.toString()))
+                                }) }
                         }
                     }
-                } else if (state.refreshing || state.connecting || !state.initialized) {
-                    CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp), strokeWidth = 2.dp)
-                } else {
-                    TextButton(onClick = { if (state.connected) model.refresh() else model.show(Panel.Computers) },
-                        modifier = Modifier.align(Alignment.Center)) {
-                        Text(stringResource(if (state.connected) R.string.retry else R.string.computers))
+                    if (home != null && rows.isEmpty()) item {
+                        Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
+                            Text(if (filters.isEmpty) stringResource(R.string.empty) else w("没有事项"),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
-                if (state.problem != null && state.panel == null) {
+                if (home == null) {
+                    if (state.refreshing || state.connecting) {
+                        CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp), strokeWidth = 2.dp)
+                    } else {
+                        TextButton(onClick = { if (state.connected) model.refresh() else model.show(Panel.Computers) },
+                            modifier = Modifier.align(Alignment.Center)) {
+                            Text(stringResource(if (state.connected) R.string.retry else R.string.computers))
+                        }
+                    }
+                }
+                if (state.problem != null && !isConnectionProblem(state.problem) && state.panel == null) {
                     Surface(Modifier.align(Alignment.BottomCenter).padding(16.dp),
                         shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
                         Row(Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -176,6 +172,11 @@ fun DuduApp(state: UiState, model: DuduViewModel) {
                         }
                     }
                 }
+            }
+            }
+            if (showingFilters) {
+                BoardFilterSheet(home, scoped, filters, close = { showingFilters = false },
+                    reset = model::resetBoardFilters, toggle = model::toggleBoardFilter)
             }
         }
         if (sheetRoute != null) DuduSheet(model::backRoute, containerColor =
@@ -196,6 +197,21 @@ fun DuduApp(state: UiState, model: DuduViewModel) {
         }
     }
     Panels(state, model)
+}
+
+@Composable
+private fun BoardConnectionNotice() {
+    val dark = androidx.compose.foundation.isSystemInDarkTheme()
+    Surface(Modifier.fillMaxWidth().padding(top = 16.dp).height(40.dp).testTag("computer-unavailable"),
+        color = if (dark) MaterialTheme.colorScheme.errorContainer else Color(0xFFFFE7E9)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Glyph(R.drawable.ic_circle_alert, size = 18, tint = MaterialTheme.colorScheme.error)
+            Spacer(Modifier.width(12.dp))
+            Text(w("电脑未连接"), Modifier.weight(1f), fontSize = 15.sp,
+                color = if (dark) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface)
+            RunningMark(14)
+        }
+    }
 }
 
 @Composable
@@ -243,21 +259,21 @@ private fun ConversationRow(row: Conversation, onClick: () -> Unit, onLongClick:
     }
 }
 
-private val tones = listOf(
-    0xFFE8F0FE to 0xFF2F5FD0, 0xFFE6F4EA to 0xFF177A3C, 0xFFFDF1D6 to 0xFF8A5300,
-    0xFFFCE8EC to 0xFFB3294A, 0xFFEEE9FD to 0xFF5B3FC4, 0xFFE0F4F3 to 0xFF0F766E,
-    0xFFECEEF1 to 0xFF4B5563,
-)
+/** A conversation's tile: a rounded square in the tone of its title, with the title's initials (the home list, the forward picker; `title` is the issue's own, without its number). */
+@Composable
+fun TitleTile(title: String, size: Int) {
+    val tone = avatarTones[avatarTone(title)]
+    Box(Modifier.size(size.dp).clip(RoundedCornerShape((size / 4f).dp)).background(Color(tone.first)),
+        contentAlignment = Alignment.Center) {
+        Text(initials(title), fontSize = (size * .37).sp, fontWeight = FontWeight.Medium, color = Color(tone.second))
+    }
+}
 
 @Composable
 fun TitleAvatar(row: Conversation, size: Int) {
-    val tone = tones[avatarTone(row.title)]
     Box(Modifier.size(size.dp)) {
         if (row.id == "assistant") Image(painterResource(R.drawable.dudu), null, Modifier.fillMaxSize())
-        else Box(Modifier.fillMaxSize().clip(RoundedCornerShape((size / 4f).dp)).background(Color(tone.first)),
-            contentAlignment = Alignment.Center) {
-            Text(initials(row.title), fontSize = (size * .37).sp, fontWeight = FontWeight.Medium, color = Color(tone.second))
-        }
+        else TitleTile(row.title, size)
         val badge = (size * .265f).dp
         if (row.unread) Box(Modifier.align(Alignment.TopEnd).offset(x = badge / 2 - 1.dp, y = 2.dp - badge / 2)
             .size(badge).background(Color(0xFFEC1313), CircleShape))
@@ -269,17 +285,13 @@ fun TitleAvatar(row: Conversation, size: Int) {
 
 @Composable
 fun AgentLogo(agent: String?, size: Int = 22) {
-    val resource = when (agent) {
-        "claude" -> R.drawable.agent_claude
-        "codex" -> R.drawable.agent_codex
-        "deepseek" -> R.drawable.agent_deepseek
-        "pi" -> R.drawable.agent_pi
-        "dudu" -> R.drawable.dudu
-        else -> null
-    }
-    if (resource == null) Glyph(R.drawable.ic_user_round, size = size, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-    else Image(painterResource(resource), agentName(agent), Modifier.size(size.dp),
-        colorFilter = if (agent == "codex" && isDark()) ColorFilter.tint(MaterialTheme.colorScheme.onSurface) else null)
+    // The agents' pictures and names are in AgentMarks.kt, written from the Desktop's list. 嘟嘟 is not an agent of an issue: it has its own picture.
+    val mark = agentMarks[agent]
+    val dark = isDark()
+    if (agent == "dudu") Image(painterResource(R.drawable.dudu), agentName(agent), Modifier.size(size.dp))
+    else if (mark == null) Glyph(R.drawable.ic_user_round, size = size, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    else Image(painterResource(if (dark) mark.dark ?: mark.light else mark.light), mark.name, Modifier.size(size.dp),
+        colorFilter = if (mark.ink && dark) ColorFilter.tint(MaterialTheme.colorScheme.onSurface) else null)
 }
 
 @Composable
@@ -310,13 +322,7 @@ fun scopeTitle(scope: Scope): String = stringResource(when (scope) {
     Scope.All -> R.string.all
 })
 
-fun agentName(agent: String?) = when (agent) {
-    "claude" -> "Claude"
-    "codex" -> "ChatGPT"
-    "deepseek" -> "DeepSeek"
-    "pi" -> "Pi"
-    else -> agent ?: ""
-}
+fun agentName(agent: String?) = agentMarks[agent]?.name ?: agent ?: ""
 
 @Composable
 fun problemText(code: String): String = when (code) {

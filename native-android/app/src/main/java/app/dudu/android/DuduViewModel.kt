@@ -61,15 +61,17 @@ data class UiState(
     val busy: Boolean = false, val options: Options? = null, val draft: IssueDraft = IssueDraft(),
     val session: Session? = null, val conversationTitle: String? = null, val opening: Boolean = false,
     val message: String = "", val sending: Boolean = false, val pending: Message? = null,
-    val quota: JSONObject? = null,
+    val quota: JSONObject? = null, val quotaLoading: Boolean = false,
     val computers: List<SavedComputer> = emptyList(), val computerId: String = "",
     val route: Route? = null, val navigation: JSONObject = json(), val catalog: JSONObject = json(),
     val attachments: List<JSONObject> = emptyList(), val outbox: List<Outgoing> = emptyList(),
     val issueId: Long? = null, val pageLoading: Boolean = false, val language: String = "",
-    val voiceEnabled: Boolean = false, val readOnly: Boolean = false,
+    val readOnly: Boolean = false,
     val isAssistant: Boolean = false,
     val preferences: JSONObject = json(),
     val conversationKey: String = "",
+    val boardFilters: BoardFilters = BoardFilters(),
+    val computerUnavailable: Boolean = false,
 )
 
 class DuduViewModel(application: Application) : AndroidViewModel(application) {
@@ -84,11 +86,13 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     private var eventJob: Job? = null
     private var connectionJob: Job? = null
     private var refreshJob: Job? = null
+    private var quotaJob: Job? = null
+    private var quotaRevision = 0
     private var watchJob: Job? = null
     private var watchId: String? = null
     private var visible = false
     private val homes = mutableMapOf<Scope, Home>()
-    private val rawHomes = mutableMapOf<Scope, String>()
+    private var savedHomeJson: String? = null
     private val draftWrites = Mutex()
     private var inputRequestId: String? = null
     private val sendingDrafts = mutableMapOf<String, String>()
@@ -124,7 +128,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                     restoreHomes()
                     api = DuduApi(endpoint, computerId)
                     mutable.update { it.copy(computer = data.getString("name"), initialized = true,
-                        home = homes[it.scope], computerId = computerId) }
+                        home = cachedHome(it.scope), computerId = computerId) }
                     if (visible && pendingLink == null) connect(link)
                 } catch (_: Exception) {
                     mutable.update { it.copy(initialized = true, panel = Panel.Computers) }
@@ -142,6 +146,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         visible = active
         if (!active) {
             eventJob?.cancel()
+            mutable.update { it.copy(computerUnavailable = false) }
             return
         }
         if (state.value.connected) startEvents()
@@ -160,6 +165,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         eventJob?.cancel()
         refreshJob?.cancel()
         watchJob?.cancel()
+        stopQuota()
         val previousApi = api
         previousApi?.retire()
         val next = ++generation
@@ -172,8 +178,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         }
         val candidate = DuduApi(endpoint, endpoint.computerId ?: known, savedComputer?.addressesEdited == true)
         candidate.language = state.value.language
-        mutable.update { it.copy(connecting = true, connected = false, busy = false, sending = false,
-            session = null, conversationTitle = null, opening = false, problem = null) }
+        mutable.update { it.copy(connecting = true, connected = false, busy = false, sending = false, refreshing = false,
+            session = null, conversationTitle = null, opening = false, problem = null, computerUnavailable = false) }
         connectionJob = viewModelScope.launch {
             try {
                 previousApi?.let { runCatching { it.disconnect() } }
@@ -184,7 +190,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                     ?: savedComputer?.name ?: computer.getString("name")
                 require(id.matches(Regex("[A-Za-z0-9_-]{1,100}")))
                 if (computerId != id) {
-                    homes.clear(); rawHomes.clear(); sessions.clear(); cachedSessions.clear(); outboxes.clear()
+                    homes.clear(); savedHomeJson = null; sessions.clear(); cachedSessions.clear(); outboxes.clear()
                 }
                 computerId = id
                 routes.clear()
@@ -202,16 +208,19 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 vault.write("computers", JSONArray(allComputers.map { it.json() }).toString())
                 if (next != generation) return@launch
                 mutable.update { it.copy(initialized = true, computer = name,
-                    connected = true, connecting = false, panel = null, home = homes[it.scope],
+                    connected = true, connecting = false, panel = null, home = cachedHome(it.scope),
+                    boardFilters = if (it.computerId == id) it.boardFilters else BoardFilters(),
                     session = null, conversationTitle = null, message = "", pending = null,
                     computers = allComputers, computerId = id, route = null, attachments = emptyList(),
-                    outbox = emptyList(), navigation = json(), catalog = json()) }
+                    outbox = emptyList(), navigation = json(), catalog = json(), computerUnavailable = false,
+                    quota = if (it.computerId == id) it.quota else null) }
                 refresh()
                 loadCatalog()
                 if (visible) startEvents()
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                if (next == generation) mutable.update { it.copy(connecting = false, problem = code(error)) }
+                if (next == generation) mutable.update { it.copy(connecting = false, problem = code(error),
+                    computerUnavailable = visible && isConnectionProblem(code(error))) }
             }
         }
     }
@@ -219,7 +228,13 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun value(method: String, params: JSONObject = json()): Any {
         val client = api ?: throw ApiFailure("CONNECTION_FAILED")
         val current = generation
-        val result = client.requestValue(method, params)
+        val result = try { client.requestValue(method, params) }
+        catch (error: Exception) {
+            if (error is CancellationException) throw error
+            if (current == generation && visible && isConnectionProblem(code(error)))
+                mutable.update { it.copy(computerUnavailable = true) }
+            throw error
+        }
         if (current != generation) throw CancellationException("Computer switched")
         return result
     }
@@ -242,6 +257,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun navigate(route: Route?) {
+        stopQuota()
         if (route == null) routes.clear()
         else state.value.route?.let { routes.add(it) }
         mutable.update { it.copy(route = route, panel = null, problem = null,
@@ -281,7 +297,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 val previous = api
                 previous?.retire(); generation++; api = null; eventJob?.cancel(); watchJob?.cancel()
                 if (previous != null) viewModelScope.launch(Dispatchers.IO) { runCatching { previous.disconnect() } }
-                homes.clear(); rawHomes.clear(); sessions.clear(); cachedSessions.clear(); outboxes.clear()
+                homes.clear(); savedHomeJson = null; sessions.clear(); cachedSessions.clear(); outboxes.clear()
                 vault.delete("computer")
                 mutable.update { UiState(initialized = true, computers = updated, language = it.language,
                     panel = Panel.Computers) }
@@ -304,21 +320,23 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
             runCatching { request("navigation.get") }.onSuccess { result ->
                 mutable.update { it.copy(navigation = result) }
             }
-            runCatching { value("plugins.list") as? JSONArray }.onSuccess { plugins ->
-                mutable.update { it.copy(voiceEnabled = plugins?.objects()?.any { p ->
-                    p.optBoolean("enabled") && (p.optString("subtitle") + p.optString("id"))
-                        .contains(Regex("(?i)voice|speech"))
-                } == true) }
-            }
         }
     }
 
     fun select(scope: Scope) {
         if (scope == state.value.scope) return
-        mutable.update { it.copy(scope = scope, home = homes[scope], problem = null) }
+        mutable.update { it.copy(scope = scope, home = cachedHome(scope)) }
         preference("scope", scope.wire)
-        refresh()
     }
+
+    fun toggleBoardFilter(field: BoardFilterField, key: String?) {
+        mutable.update { it.copy(boardFilters = it.boardFilters.toggle(field, key)) }
+    }
+
+    fun resetBoardFilters() {
+        mutable.update { it.copy(boardFilters = BoardFilters()) }
+    }
+
     fun preference(key: String, value: Any) {
         val updated = state.value.preferences.copyJson().put(key, value)
         mutable.update { it.copy(preferences = updated) }
@@ -331,38 +349,74 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         refreshJob?.cancel()
         val revision = ++refreshRevision
         val currentGeneration = generation
-        val scope = state.value.scope
         mutable.update { it.copy(refreshing = true) }
         refreshJob = viewModelScope.launch {
             try {
-                val (home, raw) = client.home(scope)
+                val (home, raw) = client.home()
                 if (currentGeneration != generation || revision != refreshRevision) return@launch
-                homes[scope] = home
-                mutable.update { it.copy(home = home, refreshing = false, problem = null) }
-                if (rawHomes[scope] != raw) {
-                    rawHomes[scope] = raw
-                    vault.write(cacheName(scope), raw)
+                homes.clear()
+                homes[Scope.All] = home
+                mutable.update { it.copy(home = home, refreshing = false, problem = null, computerUnavailable = false) }
+                if (savedHomeJson != raw) {
+                    // A canceled write may already have replaced the on-disk snapshot.
+                    savedHomeJson = null
+                    vault.write(cacheName(Scope.All), raw)
+                    if (currentGeneration == generation && revision == refreshRevision) savedHomeJson = raw
                 }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 if (currentGeneration == generation && revision == refreshRevision)
-                    mutable.update { it.copy(refreshing = false, problem = code(error)) }
+                    mutable.update { it.copy(refreshing = false, problem = code(error),
+                        computerUnavailable = it.computerUnavailable || visible && isConnectionProblem(code(error))) }
             }
         }
     }
 
     fun show(panel: Panel) {
+        if (panel != Panel.Quota) stopQuota()
         mutable.update { it.copy(panel = panel, problem = null) }
         if (panel == Panel.Create) loadOptions()
-        if (panel == Panel.Quota) operation { client ->
-            val result = client.request("quota.get", json("ask" to true))
-            mutable.update { it.copy(quota = result) }
-        }
+        if (panel == Panel.Quota) loadQuota()
     }
 
     fun dismissPanel() {
-        if (!state.value.busy && !state.value.connecting) mutable.update { it.copy(panel = null, problem = null,
-            draft = it.draft.copy(preparingPhotos = false)) }
+        if (!state.value.busy && !state.value.connecting) {
+            stopQuota()
+            mutable.update { it.copy(panel = null, problem = null, draft = it.draft.copy(preparingPhotos = false)) }
+        }
+    }
+
+    private fun stopQuota() {
+        quotaRevision++
+        quotaJob?.cancel()
+        mutable.update { if (it.quotaLoading) it.copy(quotaLoading = false) else it }
+    }
+
+    /** Like the iPhone: ask once, then only read the pending result while the sheet remains open. */
+    private fun loadQuota() {
+        val client = api ?: return
+        stopQuota()
+        val revision = quotaRevision
+        val currentGeneration = generation
+        mutable.update { it.copy(quotaLoading = true) }
+        quotaJob = viewModelScope.launch {
+            try {
+                for (attempt in 0..10) {
+                    val result = client.request("quota.get", json("ask" to (attempt == 0)))
+                    if (currentGeneration != generation || revision != quotaRevision || state.value.panel != Panel.Quota) return@launch
+                    mutable.update { it.copy(quota = result) }
+                    if (!result.optBoolean("refreshing")) break
+                    if (attempt < 10) delay(3000)
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (currentGeneration == generation && revision == quotaRevision)
+                    mutable.update { it.copy(problem = code(error),
+                        computerUnavailable = it.computerUnavailable || visible && isConnectionProblem(code(error))) }
+            } finally {
+                if (currentGeneration == generation && revision == quotaRevision) mutable.update { it.copy(quotaLoading = false) }
+            }
+        }
     }
 
     fun editDraft(draft: IssueDraft) {
@@ -537,7 +591,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 if (currentGeneration == generation && watchId == nextWatch)
-                    mutable.update { it.copy(opening = false, problem = code(error)) }
+                    mutable.update { it.copy(opening = false, problem = code(error),
+                        computerUnavailable = it.computerUnavailable || visible && isConnectionProblem(code(error))) }
             }
         }
     }
@@ -605,6 +660,21 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         if ((active.message.isBlank() && active.attachments.isEmpty()) || active.sending || active.readOnly) return
         val next = inputRequestId ?: UUID.randomUUID().toString().also { inputRequestId = it }
         submit(session, Outgoing(next, active.message, active.attachments))
+    }
+
+    /** Voice uses the same durable input journal, keeping the existing text/attachment draft. */
+    fun acceptVoice(result: VoiceResult): Boolean {
+        val active = state.value
+        val session = active.session ?: return true
+        if (result.target != VoiceTarget(active.computerId, session.id) || active.readOnly ||
+            !visible || active.route != null || active.panel != null) return true
+        if (active.sending) return false
+        if (!result.isFinal) {
+            editMessage(appendVoiceDraft(active.message, result.text))
+        } else if (result.text.isNotBlank()) {
+            submit(session, Outgoing(UUID.randomUUID().toString(), result.text, emptyList()), ownsDraft = false)
+        }
+        return true
     }
 
     fun retry(outgoing: Outgoing) { state.value.session?.let { session ->
@@ -733,7 +803,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { current -> current.copy(session = session, outbox = outgoing,
             message = if (receivedDraft != null) "" else current.message,
             attachments = if (receivedDraft != null) emptyList() else current.attachments,
-            problem = if (receivedDraft != null && current.problem == "SEND_FAILED") null else current.problem) }
+            problem = if (receivedDraft != null && current.problem == "SEND_FAILED" || current.problem?.let(::isConnectionProblem) == true)
+                null else current.problem, computerUnavailable = false) }
         viewModelScope.launch {
             writeOutbox(outgoingKey, outgoing)
             val cached = withContext(Dispatchers.Default) {
@@ -801,7 +872,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
             try { block(client) }
             catch (error: Exception) {
                 if (error is CancellationException) throw error
-                if (currentGeneration == generation) mutable.update { it.copy(problem = code(error)) }
+                if (currentGeneration == generation) mutable.update { it.copy(problem = code(error),
+                    computerUnavailable = it.computerUnavailable || visible && isConnectionProblem(code(error))) }
             } finally {
                 if (currentGeneration == generation) mutable.update { it.copy(busy = false) }
             }
@@ -829,7 +901,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                             }
                             changed = true
                         } else if (topic == "session.watch.failed" && params.optString("watchId") == watchId) {
-                            mutable.update { it.copy(problem = "UPSTREAM_UNAVAILABLE") }
+                            throw ApiFailure("UPSTREAM_UNAVAILABLE")
                         } else if (topic.startsWith("board.") || topic.startsWith("issue.") ||
                             topic.startsWith("sessions.")) changed = true
                     }
@@ -837,7 +909,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
                     // Read-only reconnects never replay a mutation or discard the cached home.
-                    mutable.update { it.copy(problem = code(error)) }
+                    mutable.update { it.copy(problem = code(error),
+                        computerUnavailable = visible && isConnectionProblem(code(error))) }
                     delay(2000)
                     try {
                         client.connect()
@@ -848,7 +921,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                         val computers = state.value.computers.map { if (it.id == computerId) it.copy(link = savedLink) else it }
                         vault.write("computers", JSONArray(computers.map { it.json() }).toString())
                         if (currentGeneration != generation) break
-                        mutable.update { it.copy(computers = computers, problem = null) }
+                        mutable.update { it.copy(computers = computers, problem = null, computerUnavailable = false) }
                         eventCursor = 0
                         state.value.session?.let { active ->
                             val params = json("id" to active.id, "watchId" to active.watchId, "transcript" to true)
@@ -871,12 +944,22 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun restoreHomes() {
-        for (scope in Scope.entries) {
+        val current = generation
+        // A full snapshot supersedes the per-scope caches from older app builds.
+        for (scope in listOf(Scope.All, Scope.Active, Scope.Backlog)) {
+            if (Scope.All in homes) return
             if (homes.containsKey(scope)) continue
             val raw = vault.read(cacheName(scope)) ?: continue
-            runCatching { homes[scope] = Home.parse(JSONObject(raw), scope); rawHomes[scope] = raw }
+            val home = withContext(Dispatchers.Default) { runCatching { Home.parse(JSONObject(raw), scope) }.getOrNull() }
+            if (current != generation) return
+            if (home != null) {
+                homes[scope] = home
+                if (scope == Scope.All) savedHomeJson = raw
+            }
         }
     }
+
+    private fun cachedHome(scope: Scope) = homes[Scope.All] ?: homes[scope]
 
     private fun cacheName(scope: Scope) = "home-$computerId-${scope.wire}"
     private fun draftName(id: String) = "draft-" + java.security.MessageDigest.getInstance("SHA-256")

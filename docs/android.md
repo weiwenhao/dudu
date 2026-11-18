@@ -8,6 +8,8 @@ icon atop deletion confirmation. The latest source correction uses current iOS
 controls and operations as its reference. Its rendering has not been reverified;
 the existing screenshots show the rejected version. See
 [Android interface correction](android-ui-parity.md) for the changes and checks.
+On 2026-11-18 the inbox, forward and task pages were redone from the owner's approved
+drawings (see the section of that date below); their rendering has not been looked at yet.
 
 The Android app is a separate Kotlin / Jetpack Compose Material 3 target in
 `native-android/`. This pass implements the current phone service's main
@@ -26,17 +28,17 @@ acceptance remain separate from the isolated emulator checks below.
 | Area | Android implementation |
 | --- | --- |
 | Connections | Manual pairing-link entry and QR scanner; encrypted multi-computer registry; computer/device identity checks; LAN-first signed route probes and public-address fallback; address viewing/editing with verification before save; reconnection without replaying mutations. |
-| Home | Active, Backlog and All scopes; pinned shelf; title avatars and Agent logos; unread/running indicators; child progress; swipe actions; explicit pin/read/status/assignment/delete controls. |
+| Home | Active, Backlog and All scopes with local filters below the pinned shelf; title avatars and Agent logos; unread/running indicators; child progress; swipe actions; explicit pin/read/status/assignment/delete controls. |
 | Issues | Creation and editing, description, project, Agent, labels, priority, due date, children, project/label creation, linked session and copyable resume command; confirmed deletion with a fresh preview token. |
 | Conversation | Dudu and issue/session conversations; streamed rich transcript; history paging; sanitized encrypted caches; reasoning, code, tables, tool details, changes, project and delivered-file browsers, team and background jobs. |
 | Input | Durable multiple-input outbox, stable retry identity, explicit retry/remove, nine prepared photos, dedicated video and document selection, attachment previews, binary file upload, queue editing/removal/steering, stop, model/effort/permission controls, DeepSeek-only mode, commands, questions and approvals. |
 | Dudu | Issue-recipient and skill completion; explicit forwarding; native Todo, Inbox and Task quick sheets; latest reply reading without replacing the current watch; expand/open issue/open session actions. No automatic Dudu issue participation is added. |
 | Sessions | Workspace grouping, content search, session creation/rename/pin/archive/restore and workspace rename/deletion through existing APIs. Project creation uses the issue project API. |
-| Inbox | Filters, paging, detail, selection, handled/ignore/restore/delete and explicit share to an issue or its session; creation of an issue from a record. Collection does not trigger automated triage. |
-| Tasks | Create, read, edit, duplicate, pause/resume, delete, manual run and paged history; daily/workday/weekly/monthly/interval/once/cron schedules; timezone, provider, model, project and new/reused/existing session targets; conversation-scoped list with ended tasks folded. |
+| Inbox | Filters, paging, detail (a conversation record as a talk), selection (选择 / 取消 / 全选), handled/restore/delete and 转发 to a conversation, one at a time; creation of an issue from a record. Collection does not trigger automated triage. See the 2026-11-18 section. |
+| Tasks | Create, read, edit, pause/resume, delete, manual run and paged history; daily/workday/weekly/monthly/interval/once/cron schedules; timezone, provider, model, project and new/reused/existing session targets; conversation-scoped list with ended tasks folded. |
 | Settings | Existing native schema pages and actions, rules editor, connector recognition, account/plugin controls, environment fields and top-right additions; app/system language selection; dynamic host sidebar/settings/session-view navigation. |
 | Embedded pages | Authenticated page-session exchange, scoped documents/resources/RPC/streams, secure cookie handling, navigation restrictions, refresh/back and renderer-failure recovery. Complex host pages use the existing page service rather than reimplementing them. |
-| Files and speech | Image viewing, system document export, streamed video save/open and file details; system speech input is offered only when the corresponding host voice plugin is enabled and Android has a recognizer. |
+| Files and speech | Image viewing, system document export, streamed video save/open and file details; native speech/keyboard switching and hold-to-talk through Android's recognition service, independent of host plugins. Release sends confirmed text; upward cancellation discards it; unfinished text stays a draft. |
 
 Some actions depend on the connected provider's catalog and capabilities.
 The client does not invent model names, an approval channel, or provider
@@ -80,8 +82,10 @@ User-edited routes survive host route discovery. TLS uses Android system trust;
 explicitly paired HTTP addresses are also supported, as on iPhone.
 
 Network, encrypted storage, image decoding, JSON cache serialization and history
-merges run off the UI thread. Home caches are scoped by computer and scope;
-transcript caches, drafts and outboxes by computer and session. The memory
+merges run off the UI thread. Each computer has one complete home snapshot for
+local scope switches, filters, and pins. The previous per-scope caches remain
+readable on upgrade. Transcript caches, drafts and outboxes are scoped by
+computer and session. The memory
 transcript cache holds at most six sessions. Cached conversations omit actionable
 questions, approvals and read positions until a fresh watch arrives.
 
@@ -103,6 +107,7 @@ Quick sheets and read-only cached content cannot cause incidental reads.
 Approved references:
 
 - `.local/designs/android-home-2026-11-17/`
+- `.local/designs/android-board-filters-2026-11-18/06-top-bar-comparison.png` (right-hand design)
 - `.local/designs/material3-popups-2026-11-17/`
 
 Rendered results must be reviewed separately from functional checks. Existing
@@ -132,9 +137,49 @@ release. Their existing Chinese actions are reused unchanged:
 | 发送视频 | Send video |
 | 连接嘟嘟 | Connect to Dudu |
 | 打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码 | Open DSH and install the Dudu plugin, then open the pairing QR code in Dudu settings. |
+| 转发 | Forward |
+| 转发给 | Forward to |
+| 最近会话 | Recent conversations |
+| 已转发到 {0} | Forwarded to {0} |
+| 已转发到 (with the trailing space, the record's line) | Forwarded to |
+| 搜索 | Search |
 
 They are recorded in `native-android/wording-sources.json` and
 `native-android/wording-pending.json`. This document does not approve App copy.
+
+## Inbox, forward and tasks redesign (2026-11-18)
+
+The owner approved the Android drawings (`.local/designs/inbox-forward-android-2026-11-18/`: five boards, the SVG frames and `android.mjs` with every dp/sp number; "就这样吧，开始实现")
+after the iPhone versions were built (build 132). They are SVG drawings, not screenshots of this app. This supersedes the older share, duplicate, icon-bar and header-pencil descriptions
+in the Inbox and Tasks rows above and in the paragraphs below. The Android code follows the iPhone's operations, order, words and states; what changed:
+
+- **Sheets** (`DuduSheet`, `Page`, `SheetHeader`): a 32 x 4 dp grabber in a 24 dp band (Material's is 48 dp), a 52 dp bar, the title in the middle on every sheet (16 sp semibold title, a list's
+  13 sp muted count beside it). The 21 sp left heading and `centersSheetTitle` are gone, and `SheetHeader` (the computers, the quota, the pickers of a new session, a property sheet that has not
+  loaded) is the same centred bar with its action before the ✕ (a choice the coordinator relayed as delegated to the implementer, 2026-11-18). The composer's sheets (添加, 权限, 模型, 推理等级) keep their grey left title: the iPhone's
+  `ComposerAttachmentSheet` is modelled on the system resource sheet and has it too. The estimates of how high a fitted sheet is lost the 12 dp the bar lost.
+- **Labelled bar** (`ActionBar`, `BarItem`): a white pill 58 dp high, 16 dp from the sides, an icon of 22 dp over a word of 11 sp, destructive items in the error colour, an item may open a menu.
+  It replaces the three bars of icons (inbox selection, record, task).
+- **Tabs** (`FilterTabs`, used by the inbox and the tasks only): chips 34 dp high, 8 dp apart, 4 dp under the bar (they were 40 dp, each in a 48 dp touch box).
+- **Inbox**: 选择 before the ✕; choosing shows 取消 / 已选 {0} 条 / 全选 and no ✕ (selection is its own state, so 选择 with nothing chosen shows "已选 0 条" and the bar disabled). A row is a 44 dp
+  picture, a 16 sp title of two lines, "who · source" in 13 sp, the time in 12 sp and the record number in 11 sp at the right, 66 dp at least. The bar: 转发 / 已处理 / 删除.
+  The sheet is as high as its rows as drawn (measured), up to 660 dp. A row's swipe and long-press menu offer 已处理 (恢复 on the 已处理 tab) and 删除. There are two tabs, 待处理 and 已处理: the
+  ignore feature (the 已忽略 tab and the 忽略 mark on a row, in the bar and on a record) was removed on 2026-11-18 at the owner's word, with no code for old data, hosts or app versions
+  (`inbox.list` takes `todo` or `done`; `inbox.mark` takes `done`, `delete` or `restore`).
+- **Record**: ‹ (when pushed) / 收件箱 / ✕, no ↗ and no ⋯. One white card: `record.messages` of the host's `inbox.get` as a talk (a date between days, the sender where it changes, the time at
+  the right), the text as it is when the host sends none, 打开来源 as its last row. Bar: 转发 / 新建事项 / 已处理 / 更多 (补全上下文, 删除); a handled record has 恢复 / 更多; a record an
+  issue holds has 打开事项 / 补全上下文 and no 更多. The old code read `status`, which the record in full does not have (the bar always said 恢复); the tab is now taken from the record's own
+  `done` and `issue` (`recordTab`).
+- **转发** replaces 分享到事项 and 分享到会话 (both gone, with the issue picker): `ForwardPicker` lists the conversations of the open issues that have a session (`issue.pick` with
+  `withSession`), a 48 dp tile in the colour of the title, "REF title", the Agent's logo; a search box finds one by number or words; one conversation at a time. A tap opens the app's own
+  confirmation card (转发给, the conversation, what goes, 取消 / 转发); 转发 sends `inbox.share` with `to: "session"`, shows 已转发到 {ref} and closes; a failure stays in the card.
+  Android has no in-app message component, so the success message is the system toast.
+- **Tasks**: the 任务 sheet has no "+" in its bar; its rows are 64 dp (30 dp logo, 16 sp title, 13 sp status, the line under it across the row) and a 新建任务 pill sits under the list (the sheet is as
+  high as its rows and the pill). The full page keeps its chrome and "+". The task in full: ‹ / 任务 / ✕, no pencil and no status chip, 状态 is the first row of 规则, and the bar is
+  暂停任务 or 恢复任务 (none when ended) / 立即执行 / 编辑 / 删除任务 (red, asks first). 复制任务 is gone from the bar, the row menu and the conversation's list (the host keeps `tasks.duplicate`).
+- Words: new 转发, 转发给, 最近会话, 已转发到 {0}, 已转发到  and 搜索 (English awaiting review, in `wording-pending.json`); removed 分享到事项, 分享到会话, 已分享到 , 复制任务, 事项, 已忽略 and 忽略, which nothing
+  uses now. Everything else is an existing word.
+
+Checks: see [android-ui-parity.md](android-ui-parity.md). The rendering of these pages has not been looked at on an emulator or a phone.
 
 ## Build and checks
 
@@ -177,7 +222,7 @@ inherits screenshots from an earlier test selection.
 
 The eight critical emulator flows cover:
 
-1. Scopes and outside dismissal; signed computer-address save and invalid draft
+1. Local scope switches and independent pins; signed computer-address save and invalid draft
    retention; cached home after refresh failure; no incidental reads.
 2. Project-before-Agent creation, failed creation draft retention, manual
    workflow, locked assignment and deletion preview/cancel/commit.

@@ -1,0 +1,19 @@
+Agent marks
+
+The marks of the agents are drawn only to identify them. Each brand name and mark belongs to its owner.
+
+Claude, OpenAI (ChatGPT), DeepSeek, Grok, Kimi, OpenCode, Antigravity, CodeBuddy, Devin and Qoder:
+LobeHub lobe-icons, packages/static-svg/icons, under the MIT License below. The last seven are the files
+@botiverse/oar 0.120.0 ships in assets/brands (lobe-icons commit a94750e3f5f8fc33757b839d85030e742284e43a).
+Kimi and CodeBuddy are moved to the middle of the box. Kimi's white letter is drawn in the text colour of the page.
+Antigravity is drawn as its outline in one colour, without the blurred colour field of the source.
+https://github.com/lobehub/lobe-icons
+
+Qwen: the sidebar icon of QwenLM/qwen-code, commit ac97ce7a70d9b2ea5d62b357e3d9b0851423afc9,
+packages/vscode-ide-companion/assets/sidebar-icon.svg. Copyright 2025 Qwen Team, Apache License 2.0 (below). Only resized.
+https://github.com/QwenLM/qwen-code
+
+Factory: the glyph of https://factory.com/favicon.svg (retrieved by @botiverse/oar on 2026-11-15), drawn in one colour without the
+dark square of the file. Factory's branding belongs to its owner; neither license below covers it.
+
+Pi: the mark of https://pi.dev/logo-on-light.svg. Pi's branding belongs to its owner; neither license below covers it.

@@ -66,7 +66,7 @@ export function createCards({ file, issues = () => null, inbox = () => null, tas
   };
 
   /**
-   * The phone's 待办 lists unread issue conversations across workflows (owner, 2026-11-16).
+   * The phone's 待办 lists unread issue conversations in the homepage's active scope (owner, 2026-11-18).
    * Refresh cached display activity before filtering; work can coexist with unread content. This is
    * read-only and uses the homepage's completed-message order, never partial generation time.
    */
@@ -77,7 +77,7 @@ export function createCards({ file, issues = () => null, inbox = () => null, tas
       if (!Array.isArray(before) || before.length !== 2 || !Number.isFinite(before[0]) || before[0] < 0
         || !Number.isSafeInteger(before[1]) || before[1] < 1) throw new TypeError('Invalid todo cursor');
     }
-    const all = await listAllIssues((action, body) => ask(issues, action, body));
+    const all = await listAllIssues((action, body) => ask(issues, action, body), { tab: 'active' });
     await warm([...new Set(all.map(issueSessionId).filter(Boolean))]);
     const unread = all.flatMap((item) => {
       const sessionId = issueSessionId(item);

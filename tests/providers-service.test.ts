@@ -100,6 +100,33 @@ test('turning a provider off removes its route and turning it on brings it back;
   assert.equal(host.adapters.has('fake'), true);
 });
 
+// The harnesses added on 2026-11-19 are off until a person switches them on: one that happens to be installed is no agent by itself.
+test('a harness that is off by default is found and listed but is no route until switched on, and the choice outlives a restart', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-providers-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const start = async () => {
+    const host = fakeHost();
+    const provider: any = fakeProvider('rare');
+    provider.defaultEnabled = false;
+    const providers = await createProviders({ host, providers: [provider], folder, log: { warn() {} } });
+    return { host, providers };
+  };
+  const first = await start();
+  assert.equal(first.host.adapters.has('rare'), false, 'found, and still not a route');
+  assert.deepEqual([first.providers.state().providers[0].state, first.providers.state().providers[0].enabled, first.providers.state().providers[0].defaultEnabled], ['ready', false, false]);
+  await first.providers.save({ id: 'rare', enabled: true });
+  assert.equal(first.host.adapters.has('rare'), true);
+  assert.deepEqual(JSON.parse(await readFile(join(folder, 'providers.json'), 'utf8')), { disabled: [], paths: {}, enabled: ['rare'] });
+  await first.providers.close();
+
+  const again = await start();
+  t.after(() => again.providers.close());
+  assert.equal(again.host.adapters.has('rare'), true, 'switched on is remembered');
+  await again.providers.save({ id: 'rare', enabled: false });
+  assert.equal(again.host.adapters.has('rare'), false);
+  assert.deepEqual(JSON.parse(await readFile(join(folder, 'providers.json'), 'utf8')), { disabled: [], paths: {} }, 'back at its default, nothing is written about it');
+});
+
 test('a configured path is what detection looks at, and a different path replaces the route', async (t) => {
   const { host, provider, providers } = await setup(t);
   provider.detection = ready('/custom/fake-cli', '2.0.0');

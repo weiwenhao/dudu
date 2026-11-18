@@ -271,7 +271,6 @@ struct SessionTasksSheet: View {
             Button { act(.resume, task) } label: { DSBotLabel(L10n.text("恢复任务"), icon: .play) }
         }
         Button { act(.run, task) } label: { DSBotLabel(L10n.text("立即执行"), icon: .zap) }
-        Button { act(.duplicate, task) } label: { DSBotLabel(L10n.text("复制任务"), icon: .copy) }
         Button { editing = task } label: { DSBotLabel(L10n.text("编辑"), icon: .editLine) }
         Button(role: .destructive) { deleting = task } label: { DSBotLabel(L10n.text("删除任务"), icon: .trash) }
     }

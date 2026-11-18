@@ -4,34 +4,61 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
 
-enum class Scope(val wire: String) { Active("active"), Backlog("backlog"), All("all") }
+enum class Scope(val wire: String) {
+    Active("active"), Backlog("backlog"), All("all");
+
+    fun includes(row: Conversation): Boolean = when (this) {
+        Active -> row.id == "assistant" || row.issue?.statusType in activeTypes
+        Backlog -> row.issue?.statusType == "backlog"
+        All -> true
+    }
+
+    private companion object {
+        val activeTypes = setOf("todo", "in_progress", "in_review")
+    }
+}
 
 data class Project(val name: String, val path: String?) {
     fun json() = json("name" to name, "path" to path)
 }
 data class Status(val id: String, val name: String?, val type: String, val isDefault: Boolean,
-    val color: String? = null, val iconProgress: Float? = null)
-data class Label(val id: Long, val name: String, val color: String? = null)
+    val color: String? = null, val iconProgress: Float? = null) {
+    companion object {
+        fun parse(o: JSONObject) = Status(o.getString("id"), o.nullableString("name"),
+            o.getString("type"), o.optBoolean("isDefault"), o.nullableString("color"),
+            if (o.isNull("iconProgress")) null else o.getDouble("iconProgress").toFloat())
+    }
+}
+data class Label(val id: Long, val name: String, val color: String? = null) {
+    companion object {
+        fun parse(o: JSONObject) = Label(o.getLong("id"), o.getString("name"), o.nullableString("color"))
+    }
+}
 data class Options(val statuses: List<Status>, val projects: List<Project>, val labels: List<Label>,
     val agents: List<String>, val attachments: Boolean = false)
 data class Issue(
     val id: Long, val ref: String?, val title: String, val agent: String?, val status: String,
     val statusType: String, val priority: String, val project: Project?, val description: String,
     val parent: String?, val subTotal: Int, val subDone: Int,
-    val dueAt: Long? = null, val labelIds: Set<Long> = emptySet(),
+    val dueAt: Long? = null, val labels: List<Label> = emptyList(),
+    val createdAt: Long? = null, val source: String? = null, val sessionState: String? = null,
 ) {
+    val labelIds: Set<Long> get() = labels.mapTo(mutableSetOf(), Label::id)
+
     companion object {
         fun parse(o: JSONObject): Issue {
             val p = o.optJSONObject("projectInfo")
             return Issue(o.getLong("id"), o.nullableString("ref"), o.getString("title"),
-                o.nullableString("agent"), o.getString("status"), o.optString("statusType"),
+                o.nullableString("agent"), o.getString("status"), o.optString("statusType", o.getString("status")),
                 o.optString("priority", "none"), p?.let { Project(it.getString("name"), it.nullableString("path")) }
                     ?: o.nullableString("project")?.let { Project(it, null) },
                 o.optString("description"), o.optJSONObject("parent")?.optString("title"),
                 o.optJSONObject("subIssues")?.optInt("total") ?: 0,
                 o.optJSONObject("subIssues")?.optInt("done") ?: 0,
                 if (o.isNull("dueAt")) null else o.getLong("dueAt"),
-                o.optJSONArray("labels")?.objects()?.map { it.getLong("id") }?.toSet().orEmpty())
+                o.optJSONArray("labels")?.objects()?.map(Label::parse).orEmpty(),
+                if (o.isNull("createdAt")) null else o.getLong("createdAt"),
+                o.nullableString("source"), o.nullableString("sessionState"))
         }
     }
 }
@@ -48,7 +75,13 @@ data class Conversation(
         )
     }
 }
-data class Home(val rows: List<Conversation>, val pins: List<String>, val unreadCount: Int) {
+data class Home(val rows: List<Conversation>, val pins: List<String>, val unreadCount: Int,
+    val statuses: List<Status> = emptyList()) {
+    val pinnedRows: List<Conversation> = if (pins.isEmpty()) emptyList() else {
+        val byId = rows.associateBy(Conversation::id)
+        pins.mapNotNull(byId::get)
+    }
+
     companion object {
         fun parse(o: JSONObject, scope: Scope): Home {
             require(o.getString("outcome") == "success" && o.getString("tab") == scope.wire)
@@ -56,7 +89,8 @@ data class Home(val rows: List<Conversation>, val pins: List<String>, val unread
                 .filter { scope != Scope.Backlog || it.id != "assistant" }
             require(rows.map { it.id }.distinct().size == rows.size)
             val pins = o.getJSONArray("pins")
-            return Home(rows, (0 until pins.length()).map(pins::getString), o.getInt("unreadCount"))
+            return Home(rows, (0 until pins.length()).map(pins::getString), o.getInt("unreadCount"),
+                o.optJSONArray("statuses")?.objects()?.map(Status::parse).orEmpty())
         }
     }
 }
@@ -67,6 +101,8 @@ data class Session(
     val id: String, val watchId: String, val messages: List<Message>, val queue: List<Message>,
     val readPosition: JSONObject?, val state: String, val canceledRequestIds: Set<String> = emptySet(),
     val raw: JSONObject = json(), val cached: Boolean = false,
+    val displayRows: List<TranscriptRow> = transcriptRows(messages, raw.optJSONObject("transcript"),
+        state in listOf("running", "processing") || raw.optJSONObject("session")?.optString("status") == "running"),
 ) {
     val transcript get() = raw.optJSONObject("transcript")
     val processing get() = state in listOf("running", "processing") ||
@@ -134,10 +170,13 @@ fun initials(title: String): String {
     return String(value.codePoints().limit(2).toArray(), 0, minOf(value.codePointCount(0, value.length), 2))
 }
 
+/** How many tones a letter avatar has: the twelve of the Desktop (`--tone-0` to `--tone-11`) and the iPhone, seven until 2026-11-18 (owner: "加到 12 种吧"). */
+const val AVATAR_TONES = 12
+
 fun avatarTone(title: String): Int {
     var hash = 0L
     title.codePoints().forEach { hash = (hash * 31 + it) and 0xffffffffL }
-    return (hash % 7).toInt()
+    return (hash % AVATAR_TONES).toInt()
 }
 
 fun plainPreview(value: String): String = value

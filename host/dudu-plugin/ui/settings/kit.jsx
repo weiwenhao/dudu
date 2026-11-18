@@ -35,7 +35,8 @@ export function Page({ title, back, action, children }) {
 /**
  * A group of rows: a caption (12px, muted, so that the rows are what one reads first) on the line the rows' text starts on and, at its
  * right, what can be done with the group as a whole; under them one card. `label` is the name a screen reader gives the group when the
- * title is not a plain piece of text.
+ * title is not a plain piece of text. A group with no rows is its caption alone (a group whose rows are folded away: the caption is then
+ * the button that unfolds them).
  */
 export function Group({ title, label, action, children, className, ...props }) {
   return (
@@ -46,7 +47,7 @@ export function Group({ title, label, action, children, className, ...props }) {
           {action && <div className="flex shrink-0 items-center gap-1.5">{action}</div>}
         </header>
       )}
-      <div className="rounded-[20px] border bg-card px-5">{children}</div>
+      {children ? <div className="rounded-[20px] border bg-card px-5">{children}</div> : null}
     </section>
   );
 }

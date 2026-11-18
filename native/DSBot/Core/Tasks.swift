@@ -385,7 +385,7 @@ private struct TasksAnswer: Decodable, Sendable {
 }
 
 enum TaskAction: String, Sendable {
-    case pause, resume, run, duplicate, delete
+    case pause, resume, run, delete
 }
 
 enum TaskSaveResult: Equatable {
@@ -506,7 +506,7 @@ final class TasksModel: ObservableObject {
         }
     }
 
-    /// Pause, resume, run now, copy or delete one task. The toast says what was done.
+    /// Pause, resume, run now or delete one task. The toast says what was done.
     @discardableResult
     func act(_ action: TaskAction, _ task: ScheduledTask, using store: DSBotStore) async -> Bool {
         guard !busy.contains(task.id) else { return false }
@@ -524,8 +524,6 @@ final class TasksModel: ObservableObject {
             report?(DSBotToastMessage(text: action == .pause ? L10n.text("已暂停任务") : L10n.text("已恢复任务"), kind: .success))
         case .run:
             report?(DSBotToastMessage(text: L10n.text("正在投递"), kind: .success))
-        case .duplicate:
-            report?(DSBotToastMessage(text: L10n.text("已复制任务"), kind: .success))
         case .delete:
             tasks.removeAll { $0.id == task.id }
             report?(DSBotToastMessage(text: L10n.text("已删除任务"), kind: .success))

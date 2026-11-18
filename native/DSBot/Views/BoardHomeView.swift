@@ -43,6 +43,7 @@ struct BoardView: View {
     @State private var renaming: BoardIssue?
     @State private var renameTitle = ""
     @State private var pinsExpanded = false
+    @State private var showingFilters = false
     @State private var opening: String?
     @State private var subIssues: BoardIssue?
     @State private var subIssueSelection: SubIssueSelection?
@@ -66,6 +67,7 @@ struct BoardView: View {
         }
         .background(.white)
         .accessibilityIdentifier("board.page")
+        .sheet(isPresented: $showingFilters) { BoardFilterSheet(board: board) }
         .sheet(item: $editing) { request in
             if request.action == .subIssue {
                 NewIssueSheet(board: board, store: store, parent: request.issue)
@@ -101,11 +103,11 @@ struct BoardView: View {
                 .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || renameTitle.count > 300)
         }
         .onChange(of: store.activeComputer?.id) { _, _ in clearActions(); pinsExpanded = false }
-        .onChange(of: board.tab) { _, _ in revealed = nil; pinsExpanded = false }
+        .onChange(of: board.tab) { _, _ in revealed = nil }
         .onChange(of: isActive) { _, active in if !active { clearActions() } }
         // Keep the App badge current while another native page covers this retained homepage.
         // Reading this list never acknowledges a session; only its actually rendered chat does.
-        .task(id: BoardLoad(tab: board.tab, connected: store.status == .connected, active: scenePhase == .active)) {
+        .task(id: BoardLoad(connected: store.status == .connected, active: scenePhase == .active)) {
             guard scenePhase == .active, store.status == .connected else { return }
             while !Task.isCancelled {
                 await board.refresh(using: store)
@@ -115,12 +117,21 @@ struct BoardView: View {
     }
 
     private struct BoardLoad: Hashable {
-        var tab: BoardTab
         var connected: Bool
         var active: Bool
     }
 
     @ViewBuilder private var content: some View {
+        let pins = board.pinnedConversations
+        if !pins.isEmpty {
+            BoardPinnedShelf(entries: pins, expanded: $pinsExpanded) { entry in
+                pinnedCell(entry)
+            }
+        }
+        BoardScopeBar(selection: board.tab, hasFilters: !board.filters.isEmpty, onSelect: board.select) {
+            revealed = nil
+            showingFilters = true
+        }
         switch board.state {
         case .loading:
             ProgressView().controlSize(.regular).tint(DSBotStyle.muted)
@@ -142,12 +153,18 @@ struct BoardView: View {
             .frame(maxWidth: .infinity).padding(.top, 80)
         case .loaded:
             let computer = store.activeComputer?.id
-            if !board.pinnedConversations.isEmpty {
-                BoardPinnedShelf(entries: board.pinnedConversations, expanded: $pinsExpanded) { entry in
-                    pinnedCell(entry)
-                }
+            let rows = board.conversations
+            if board.tab == .backlog, rows.isEmpty {
+                Text(board.scopedConversations.isEmpty
+                     ? L10n.text("暂无待规划事项")
+                     : L10n.text("没有找到事项"))
+                    .font(.system(size: 15))
+                    .foregroundStyle(DSBotStyle.chatSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: 72)
+                    .padding(.horizontal, BoardHomeLayout.horizontalInset)
             }
-            ForEach(board.conversations) { entry in
+            ForEach(rows) { entry in
                 BoardConversationSwipeRow(
                     entry: entry, enabled: isActive && available(entry),
                     isRevealed: revealed == entry.id, onReveal: { open in
@@ -274,6 +291,6 @@ struct BoardView: View {
     }
     private func clearActions() {
         removing = nil; revealed = nil; swiping = nil; editing = nil; renaming = nil; opening = nil
-        subIssueSelection = nil; subIssues = nil
+        subIssueSelection = nil; subIssues = nil; showingFilters = false
     }
 }

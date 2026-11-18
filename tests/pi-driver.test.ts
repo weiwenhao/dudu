@@ -8,7 +8,8 @@ import { PI_TOOLS, fallbackSpec, mirrorName, readLines } from '../host/providers
 // Pi is a route and an agent like Claude and Codex: what each list says about it.
 test('Pi is a harness route and an agent of an issue, named Pi', () => {
   assert.equal(providerFamily('pi'), 'pi');
-  assert.deepEqual(Object.keys(AGENTS), ['claude', 'codex', 'pi', 'deepseek']);
+  assert.deepEqual(Object.keys(AGENTS).slice(0, 3), ['claude', 'codex', 'pi']);
+  assert.equal(Object.keys(AGENTS).at(-1), 'deepseek');
   const catalog = { default: { provider: 'deepseek', model: 'flash' }, groups: [{ id: 'deepseek', models: [{ id: 'flash' }] }, { id: 'pi', models: [{ id: 'deepseek/deepseek-flash' }, { id: 'deepseek/deepseek-v4-pro' }] }] };
   assert.deepEqual(modelFor('pi', catalog), { provider: 'pi', model: 'deepseek/deepseek-flash' });
   assert.equal(modelFor('pi', { groups: [{ id: 'deepseek', models: [{ id: 'flash' }] }] }), null, 'a Pi that is switched off has no model, so the issue cannot be given to it');
@@ -118,7 +119,8 @@ test('the agent menus offer a harness only while it is found and switched on', a
   assert.deepEqual(agentIds(state({ enabled: false })), ['claude', 'deepseek'], 'nor one that is switched off');
   assert.deepEqual(agentIds(state({ state: 'unsupported' })), ['claude', 'deepseek']);
   assert.deepEqual(agentIds(state({ enabled: false }), 'pi'), ['claude', 'pi', 'deepseek'], 'the agent an issue has stays in the list');
-  assert.deepEqual(agentIds(null), ['claude', 'codex', 'pi', 'deepseek'], 'until the providers are read, or when they cannot be, all are offered');
+  assert.deepEqual(agentIds(null), ['claude', 'codex', 'pi', 'deepseek'], 'until the providers are read, or when they cannot be, the usual ones are offered and none of the rarer harnesses');
+  assert.deepEqual(agentIds(null, 'grok'), ['claude', 'codex', 'pi', 'grok', 'deepseek'], 'and the agent an issue already has');
 });
 
 test('a Pi session is found again by its harness id and resumes in a terminal with pi --session', async () => {

@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useMemo, useRef, useState } from 'react';
-import { Check, ListFilter, LoaderCircle, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
+import { Check, ListFilter, LoaderCircle, RotateCcw, Trash2 } from 'lucide-react';
 import { Tabs } from 'radix-ui';
 import { Button } from '../components/button.jsx';
 import { Checkbox } from '../components/checkbox.jsx';
@@ -18,7 +18,7 @@ import { T } from '../strings.js';
 import { BulkBar } from './BulkBar.jsx';
 import { ConnectorAvatar } from './ConnectorAvatar.jsx';
 import { COLLECTOR_FIELDS, COLLECTOR_KEYS, COLLECTOR_SCHEMA, SINGLE } from './filters.jsx';
-import { issueRef } from './IssuePicker.jsx';
+import { issueRef } from './ConversationPicker.jsx';
 import { RecordDialog } from './RecordDialog.jsx';
 import { RecordMenu } from './RecordMenu.jsx';
 import { useCompletion } from './use-completion.js';
@@ -37,17 +37,15 @@ const BAR_STEPS = [700, 256];
  * row that is cut short keeps it, and the pointer's buttons, which cover the time, do not hide it (owner, 2026-11-11, option A of `.local/designs/record-id-2026-11-11/`, on rows that
  * read alike: "设计一个 id 吧，不然我都不知道哪个是哪个"). The box and its place appear only in
  * selection mode, entered through the row's context menu (the owner, 2026-11-09). Outside that mode the pointer on the row brings the two things
- * that are one click: fill in its context, handled, and delete (restore, in their place, for a row that was put aside or handled). A row that is handled has nothing to do in bulk.
- * While the record's context is being filled in (`completing`) a small spinner stands before the time, as the connectors' rows have theirs, and the first button turns into one.
- * (The owner, 2026-11-11, on a screenshot with the place marked left of the tick: "是在这里增加了一个补全的按钮么？")
+ * that are one click: handled and delete (restore, in the place of handled, for a row that was handled). A row that is handled has nothing to do in bulk. The button that filled in the context
+ * is gone from the row (the owner, 2026-11-18: "这个按钮也可以去掉了"): the context menu and the record's window have it.
+ * While the record's context is being filled in (`completing`) a small spinner stands before the time, as the connectors' rows have theirs.
  */
-const Spinner = (props) => <LoaderCircle {...props} className={cn(props.className, 'animate-spin')} />;
-const Row = forwardRef(function Row({ record, tab, selected, selecting, marking, completing, onSelect, onOpen, onDone, onRemove, onRestore, onComplete, className, ...props }, ref) {
+const Row = forwardRef(function Row({ record, tab, selected, selecting, marking, completing, onSelect, onOpen, onDone, onRemove, onRestore, className, ...props }, ref) {
   const by = [record.ref, record.from, record.connectorName].filter(Boolean).join(' · ');
-  // Handled with an issue is the issue's: nothing to do with it here. Anything else has the one-click buttons; the last of each is a button's fourth, whether it waits.
-  const fill = [T.collector.complete, completing ? Spinner : RefreshCw, onComplete, completing];
-  const quick = tab === 'todo' ? [fill, [T.collector.markDone, Check, onDone], [T.collector.remove, Trash2, onRemove]]
-    : record.issue ? [] : [fill, [T.collector.restore, RotateCcw, onRestore], [T.collector.remove, Trash2, onRemove]];
+  // Handled with an issue is the issue's: nothing to do with it here. Anything else has the one-click buttons.
+  const quick = tab === 'todo' ? [[T.collector.markDone, Check, onDone], [T.collector.remove, Trash2, onRemove]]
+    : record.issue ? [] : [[T.collector.restore, RotateCcw, onRestore], [T.collector.remove, Trash2, onRemove]];
   return (
     <div ref={ref} {...props} data-record-row={record.id}
       className={cn('group relative flex h-12 w-full shrink-0 items-center gap-2.5 rounded-lg px-3 hover:bg-accent/60 has-[:focus-visible]:bg-accent/60 data-[state=open]:bg-accent/60', selected && 'bg-accent/60', className)}>
@@ -82,8 +80,8 @@ const Row = forwardRef(function Row({ record, tab, selected, selecting, marking,
 });
 
 /**
- * What the connectors collected (docs/assistant.md 4.1, "Collector"): three tabs (to handle, handled, ignored), a filter like Issues', a row
- * for each record. A click opens it in full; a right click selects it, shares it to the session of an issue, makes an issue of it, opens its source, fills in its context, or ignores it.
+ * What the connectors collected (docs/assistant.md 4.1, "Collector"): two tabs (to handle, handled), a filter like Issues', a row
+ * for each record. A click opens it in full; a right click selects it, shares it to the session of an issue, makes an issue of it, opens its source, fills in its context, or marks it handled.
  * Reading and the owner's marks are the plugin's `inbox/*` calls; nothing here asks a model (filling in context is the plugin asking the collector's own session, which the owner asked for: `completion.js`).
  */
 export function CollectorWidget({ request, openIssue }) {
@@ -140,7 +138,7 @@ export function CollectorWidget({ request, openIssue }) {
   }, [request]);
   const ok = (result) => ['success', 'no_op'].includes(result?.outcome);
   const actions = useMemo(() => {
-    // One mark (ignore, restore, handled, delete) on one or several records, and a line at the bottom that says so. No Undo (owner, 2026-11-12): Restore is the way back for a row put aside or
+    // One mark (restore, handled, delete) on one or several records, and a line at the bottom that says so. No Undo (owner, 2026-11-12): Restore is the way back for a row
     // handled, and a delete is for a row that is wrong (the message is still where it came from).
     const saveMark = async (action, records) => {
       const change = beginMark(action, records);
@@ -166,11 +164,8 @@ export function CollectorWidget({ request, openIssue }) {
     return {
       openSource: (record) => window.open(record.url, '_blank', 'noopener,noreferrer'),
       openIssue: (record) => { if (record.issue) openIssue?.(record.issue.id); },
-      ignore: (record) => mark('inbox/ignore', [record], T.collector.toast.ignored),
       // Restore takes the mark off.
       restore: (record) => mark('inbox/restore', [record], T.collector.toast.restored),
-      ignoreMany: (records) => mark('inbox/ignore', records, T.collector.toast.ignored),
-      restoreMany: (records) => mark('inbox/restore', records, T.collector.toast.restored),
       // Handled on their own (no issue needed), or wrong.
       done: (record) => mark('inbox/done', [record], T.collector.toast.done),
       doneMany: (records) => mark('inbox/done', records, T.collector.toast.done),
@@ -242,7 +237,7 @@ export function CollectorWidget({ request, openIssue }) {
               <RecordMenu key={record.id} record={record} tab={tab} request={request} actions={actions} selected={selected.has(record.id)} completing={completion.running.has(record.id)} onSelectRecord={select}>
                 <Row
                   record={record} tab={tab} selected={selected.has(record.id)} selecting={selecting} marking={marking.has(record.id)} completing={completion.running.has(record.id)} onSelect={select} onOpen={() => setOpened(record)}
-                  onDone={actions.done} onRemove={actions.remove} onRestore={actions.restore} onComplete={actions.complete}
+                  onDone={actions.done} onRemove={actions.remove} onRestore={actions.restore}
                 />
               </RecordMenu>
             ))}
@@ -251,10 +246,8 @@ export function CollectorWidget({ request, openIssue }) {
       </Tabs.Root>
       {chosen.length > 0 && tab !== 'done' && (
         <BulkBar
-          request={request} tab={tab} level={narrow} count={chosen.length} onClear={clearSelection} onSelectAll={allSelected ? undefined : selectAll}
+          request={request} level={narrow} count={chosen.length} onClear={clearSelection} onSelectAll={allSelected ? undefined : selectAll}
           onShareSession={(issue) => { actions.shareSessionMany(chosen, issue); clearSelection(); }}
-          onIgnore={() => { actions.ignoreMany(chosen); clearSelection(); }}
-          onRestore={() => { actions.restoreMany(chosen); clearSelection(); }}
           onDone={() => { actions.doneMany(chosen); clearSelection(); }}
           onDelete={() => { actions.removeMany(chosen); clearSelection(); }}
         />

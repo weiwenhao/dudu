@@ -65,6 +65,9 @@ window.__ModuleLoader__.load({
 [data-sidebar-collapsed="true"]:has([data-dudu-shell-leading]) .dudu-home-entry:not([data-dudu-shell-home-entry]){display:none}
 .dudu-session-header-actions{display:flex;align-items:center;gap:8px;flex:none;min-width:0}
 .dudu-session-header-actions:empty{display:none}
+/* Same 28px target and 15px glyph as DSH's adjacent More and right-sidebar controls. */
+.dudu-session-return{flex:none;width:28px;padding:0;color:var(--dsw-alias-label-secondary)}
+.dudu-session-return svg{width:15px;height:15px}
 [data-dudu-session-overlay]{z-index:1100!important}
 /* Match DSH's hidden holding row while its native root waits for background work. Keep its height stable. */
 [data-conversation-session]:has([data-dudu-harness-background]) [data-chat-running]{visibility:hidden;opacity:0}
@@ -443,7 +446,8 @@ window.__ModuleLoader__.load({
     const MODE_SLOT = 'dudu.hero.mode';
     // Routes that are whole harnesses. Every other route belongs to the DeepSeek family (DeepSeek Account,
     // DeepSeek, and any API-key provider the user configured).
-    const HARNESS = new Set(['claude', 'codex', 'pi']);   // host/providers/catalog.mjs says the same
+    // This shell cannot import host/providers/catalog.mjs, so the ids are written here too: tests/harness-lists.test.ts fails when the two differ.
+    const HARNESS = new Set(['claude', 'codex', 'pi', 'grok', 'kimi', 'opencode', 'antigravity', 'codebuddy', 'devin', 'factory', 'qwen', 'qoder']);
     const familyOf = (provider) => (HARNESS.has(provider) ? provider : 'deepseek');
 
     // The look of the mode chip (dsh-client-ui-agent-preset), under this plugin's own class names.
@@ -960,6 +964,36 @@ window.__ModuleLoader__.load({
       name: 'dudu-sessions',
       inject: ['slots', 'layout', 'uiWorkspace', 'sessions', 'remote', 'remote.session', 'remote.skills', 'modelDirectories'],
       apply(ctx) {
+        const sessionExpansion = ui?.createSessionExpansion({ layout: ctx.layout, panelId: PANEL_ID });
+        ctx.effect(() => () => sessionExpansion?.dispose());
+        const selectSession = (sessionId, { returnToDudu = false } = {}) => {
+          ctx.uiWorkspace.openSession(sessionId);
+          ctx.layout.selectPanel(null);
+          if (returnToDudu) sessionExpansion?.begin(sessionId);
+          else sessionExpansion?.clear();
+        };
+        if (sessionExpansion) ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+          name: 'conversation.session.header.utilities', id: 'dudu:session-return', order: 1000,
+        }, function SessionReturn({ sessionId }) {
+          useLanguage();
+          const expanded = useSyncExternalStore(sessionExpansion.subscribe, sessionExpansion.getSnapshot);
+          const control = useRef(null);
+          const active = expanded?.sessionId === sessionId;
+          useEffect(() => { sessionExpansion.visit(sessionId); }, [sessionId]);
+          useEffect(() => active ? followWindowDrag(document, control.current) : undefined, [active]);
+          useEffect(() => active ? ui.installSessionReturnEscape({
+            view: window, restore: () => sessionExpansion.restore(sessionId),
+            blocked: event => ui.sessionReturnBlocked(document, event.target),
+          }) : undefined, [active, sessionId]);
+          if (!active) return null;
+          const label = ui.T.detail.back;
+          return h(Tooltip, { label, shortcutKeys: ['Esc'], side: 'bottom', delayMs: 500 },
+            h(Button, {
+              ref: control, size: 'sm', className: 'dudu-session-return',
+              'aria-label': label, 'aria-keyshortcuts': 'Escape', 'data-dudu-session-return': '',
+              onClick: () => sessionExpansion.restore(sessionId),
+            }, h(ui.SessionReturnIcon)));
+        }));
         ctx.effect(() => ui?.installCollectorNotifications({
           onOpen: () => { ui.openDashboard(); ctx.layout.selectPanel(PANEL_ID); },
         }));
@@ -1004,7 +1038,7 @@ window.__ModuleLoader__.load({
         if (ui?.installEmbeddedSessionSurface) ctx.inject(['sidebarRight'], (child) => {
           const bridge = ui.installEmbeddedSessionSurface({
             sidebar: child.sidebarRight,
-            openSession: (id) => child.uiWorkspace.openSession(id),
+            openSession: selectSession,
             isVisible: () => child.layout.panelInfo.getSnapshot().activePanelId === PANEL_ID,
           });
           publishSurface(bridge);
@@ -1144,10 +1178,9 @@ window.__ModuleLoader__.load({
           preparedSessions.set(sessionId, sessionId);
           return sessionId;
         };
-        const openSession = async (target, { from } = {}) => {
+        const openSession = async (target, { from, returnToDudu = false } = {}) => {
           const sessionId = await prepareSession(target);
-          ctx.uiWorkspace.openSession(sessionId);
-          ctx.layout.selectPanel(null);
+          selectSession(sessionId, { returnToDudu });
           if (from?.width > 0 && from?.height > 0 && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
             await new Promise(requestAnimationFrame);
             // The public main slot is display:contents; its parent is DSH's conversation column.
@@ -1192,6 +1225,7 @@ window.__ModuleLoader__.load({
           return result.value ?? result;
         });
         const actions = {
+          sessionExpansion,
           pickProjectDirectory: () => ctx.uiWorkspace.pickDirectory(),
           findConversation,
           conversationFindNodes: (reference) => ctx.get('uiConversation').binding(reference.binding)
@@ -1412,6 +1446,14 @@ window.__ModuleLoader__.load({
           const widgets = (ui?.REGISTRY ?? []).map((widget) => ctx.slots.register({
             name: 'dudu.widget', id: widget.id, label: widget.label,
           }, widget.Component));
+          // The widgets 嘟嘟 writes: files in its project folder, loaded here and registered into the same slot (ui/widgets/local.js). No plugin is installed.
+          const localWidgets = ui?.createLocalWidgets?.({
+            slots: ctx.slots,
+            list: () => request('assistant/widgets'),
+            report: (entries) => request('assistant/widgets-report', { widgets: entries }),
+            fileUrl: (name, stamp) => new URL(`api/dudu/assistant/widget-file?name=${encodeURIComponent(name)}&v=${encodeURIComponent(stamp)}`, document.baseURI).href,
+          });
+          localWidgets?.start();
           ctx.layout.selectPanel(PANEL_ID);
           return () => { for (const stop of widgets) stop(); localWidgets?.close(); conversation(); dispose(); };
         });
@@ -1445,14 +1487,6 @@ window.__ModuleLoader__.load({
             const disposeLeading = ctx.slots.register({
               name: leadingSlot, registrant, priority: -1,
               children: { [nativeSlot]: { kind: 'single', scope: 'root' } },
-          // The widgets 嘟嘟 writes: files in its project folder, loaded here and registered into the same slot (ui/widgets/local.js). No plugin is installed.
-          const localWidgets = ui?.createLocalWidgets?.({
-            slots: ctx.slots,
-            list: () => request('assistant/widgets'),
-            report: (entries) => request('assistant/widgets-report', { widgets: entries }),
-            fileUrl: (name, stamp) => new URL(`api/dudu/assistant/widget-file?name=${encodeURIComponent(name)}&v=${encodeURIComponent(stamp)}`, document.baseURI).href,
-          });
-          localWidgets?.start();
             }, Leading);
             let original;
             let disposeNative = () => {};

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { T } from '../strings.js';
+import { useSessionReturnState } from '../lib/session-return.jsx';
 
 const INITIAL = 360;
 const MINIMUM = 280;
@@ -17,7 +18,7 @@ export function ConversationSplit({ sidebar, children }) {
   const root = useRef(null);
   const drag = useRef(null);
   const [available, setAvailable] = useState(null);
-  const [preferred, setPreferred] = useState(INITIAL);
+  const [preferred, setPreferred] = useSessionReturnState('conversation.width', INITIAL);
   const [dragging, setDragging] = useState(false);
   useEffect(() => {
     const observer = new ResizeObserver(([entry]) => setAvailable(Math.round(entry.contentRect.width) - GUTTER));

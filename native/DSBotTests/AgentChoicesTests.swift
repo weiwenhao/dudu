@@ -20,6 +20,9 @@ final class AgentChoicesTests: XCTestCase {
         XCTAssertEqual(AgentChoices.of([provider("claude"), provider("codex")]), [.claude, .codex, .deepseek], "DeepSeek is DSH's own and always there")
         XCTAssertEqual(AgentChoices.of([provider("deepseek")], keeping: .pi), [.pi, .deepseek], "the agent an issue has stays in its list")
         XCTAssertEqual(AgentChoices.of([provider("deepseek"), provider("zed")]), [.deepseek, SessionAgent(rawValue: "zed")!], "a harness the app has no special case for is offered")
-        XCTAssertEqual(AgentChoices.of([]), [.claude, .codex, .pi, .deepseek], "until the providers have come, every agent the app knows")
+        XCTAssertEqual(AgentChoices.of([]), [.claude, .codex, .pi, .deepseek], "until the providers have come, the usual agents and none of the rarer harnesses")
+        XCTAssertEqual(AgentChoices.of([], keeping: SessionAgent(rawValue: "grok")), [.claude, .codex, .pi, SessionAgent(rawValue: "grok")!, .deepseek], "the agent an issue has stays in its list")
+        XCTAssertEqual(AgentChoices.known.count, SessionAgent.listed.count, "the Desktop's whole list (AgentNames.swift)")
+        XCTAssertEqual(SessionAgent(rawValue: "opencode")?.name, "OpenCode", "named as the Desktop names it, not by its id")
     }
 }

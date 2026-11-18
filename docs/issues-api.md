@@ -36,7 +36,7 @@ Content-Type: application/json
 | `add` | `fields`，必填 `title` | 新建事项，已有 Agent 分配时接通工作会话 |
 | `update` | `id`、`patch`，可选 `reason` | 修改并写入记录 |
 | `assign` | `id`、`agent`，可选 `project` / `session` | 先有绝对路径项目，再交给 Agent；相同 Agent 的已有会话保留 |
-| `message` | `id`、`text`，可选 `attachmentIds` / `requestId` | 唯一留言框的路由规则；附件可以单独发送 |
+| `message` | `id`、`text`，可选 `attachmentIds` / `requestId` / `initial` | 唯一留言框的路由规则；附件可以单独发送 |
 | `log` | `id`、`kind`、`text`，可选 `data` | 追加活动 |
 | `reply` | `id`、`text` | 兼容的提问回复操作；界面使用 `message` |
 | `complete` / `cancel` | `id`，可选 `outcome` / `reason` | 完成或取消，接通会话收起 |
@@ -61,7 +61,7 @@ schema v5 增加可自定义的事项状态。`status` 是 `statuses` 返回的�
 
 这四个设置写操作只接受可信主人作用域；请求体的 `actor` 无法绕过。嘟嘟只获得 `issues_statuses` 读取工具，可以使用已有定义管理事项，不能自行修改工作流。`list` 同时返回状态定义，菜单、筛选和分组据此显示名称与颜色；导出也包括归档定义。
 
-显示选项默认按独立的 `agentState` 分组，次级分组同样支持它；API 的未传分组保持平铺兼容。工作状态由会话事实得到，与事项的自定义状态相互独立；主人可以用 `update` 的 `patch.agentState`（`idle`、`blocked`，`null` 收回；2026-11-03 起没有 `done`，正常结束和提问、出错一样是 `blocked`，旧值迁成 `blocked`）对一个有智能体、且没有在工作的事项说它的状态，这句话只在会话的状态不变时有效，之后以事实为准（`working` 不能写）。`agentState` 有四个值：`working`、`blocked`、`idle` 和 `unassigned`（2026-11-05：没有分配智能体的事项，筛选、分组都认；它不能写）；会话被停止或被终端中断（会话状态 `stopped`）是 `blocked`，没有靠时间变成 `idle` 的规则（2026-11-07 主人去掉了原来“正常结束 12 小时没人处理就是 `idle`”的一条）：`idle` 只有会话本来空闲、或主人自己说的两种来路。`list` 的 `agentState` 永远是有效值，不含内部的依据字段。`agentFinished`（只读的布尔值）在 `agentState` 是 `blocked`、而原因是这一轮正常结束时为 `true`（头像右下角画绿底白勾，不是红点；主人 2026-11-04），提问、授权、出错和主人自己说的 `blocked` 都没有这个字段；它不是状态，分组、筛选和计数不看它。状态在界面上叫 `Needs you` / `需要你`（键仍是 `blocked`）。`deepSleep`（只读的布尔值，2026-11-04）在这个事项的智能体深度睡眠时为 `true`：智能体标记是空闲（会话自己空闲，或者你说了空闲），**或是正常结束在等你看的绿勾（`agentFinished`，2026-11-07：它睡着仍是 `blocked`、仍是绿勾）**、会话是 DSH 会话（嘟嘟起的或接管的）、这一轮已经结束（不是在跑、也不是在等你回答问题或授权），30 分钟里没人处理（会话自己没动静、你没对它说话也没打开它）；醒着的、红点的（提问、授权、出错、停止，包括你说的 `blocked`）、工作的、终端会话的都没有这个字段。它不是状态，不改 `status` 和 `agentState`，分组、筛选和计数不看它；Office 在睡眠区床上的人、休息区里睡着的绿勾的人嘴旁画 `ZZZ`；头像上月牙只给空闲的，绿勾仍画绿勾。设置里的“深度睡眠”（`assistant/settings` 的 `deepSleep`，默认开）关着时，没有事项有这个字段。时间可以用环境变量 `DUDU_DEEP_SLEEP_MS`（毫秒）缩短，只给测试用。`list.items[].progressSummary` 取已存进度末段的第一句；不读会话、不生成文本、不改历史。
+显示选项默认按独立的 `agentState` 分组，次级分组同样支持它；API 的未传分组保持平铺兼容。工作状态由会话事实得到，与事项的自定义状态相互独立；主人可以用 `update` 的 `patch.agentState`（`idle`、`blocked`，`null` 收回；2026-11-03 起没有 `done`，正常结束和提问、出错一样是 `blocked`，旧值迁成 `blocked`）对一个有智能体、且没有在工作的事项说它的状态，这句话只在会话的状态不变时有效，之后以事实为准（`working` 不能写）。`agentState` 有四个值：`working`、`blocked`、`idle` 和 `unassigned`（2026-11-05：没有分配智能体的事项，筛选、分组都认；它不能写）；会话被停止或被终端中断（会话状态 `stopped`）是 `blocked`，没有靠时间变成 `idle` 的规则（2026-11-07 主人去掉了原来“正常结束 12 小时没人处理就是 `idle`”的一条）：`idle` 只有会话本来空闲、或主人自己说的两种来路。`list` 的 `agentState` 永远是有效值，不含内部的依据字段。`agentFinished`（只读的布尔值）在 `agentState` 是 `blocked`、而原因是这一轮正常结束时为 `true`（头像右下角画绿底白勾，不是红点；主人 2026-11-04），提问、授权、出错和主人自己说的 `blocked` 都没有这个字段；它不是状态，分组、筛选和计数不看它。状态在界面上叫 `Needs you` / `需要你`（键仍是 `blocked`）。`deepSleep`（只读的布尔值，2026-11-04）在这个事项的智能体深度睡眠时为 `true`：智能体标记是空闲（会话自己空闲，或者你说了空闲），**或是正常结束在等你看的绿勾（`agentFinished`，2026-11-07：它睡着仍是 `blocked`、仍是绿勾）**、会话是 DSH 会话（嘟嘟起的或接管的）、这一轮已经结束（不是在跑、也不是在等你回答问题或授权），30 分钟里没人处理（会话自己没动静、你没对它说话也没打开它）；醒着的、红点的（提问、授权、出错、停止，包括你说的 `blocked`）、工作的、终端会话的都没有这个字段。它不是状态，不改 `status` 和 `agentState`，分组、筛选和计数不看它；Office 在睡眠区床上的人、休息区里睡着的绿勾的人嘴旁画 `ZZZ`；头像上月牙只给空闲的，绿勾仍画绿勾。设置里的“深度睡眠”（`assistant/settings` 的 `deepSleep`，默认开）关着时，没有事项有这个字段。时间可以用环境变量 `DUDU_DEEP_SLEEP_MS`（毫秒）缩短，只给测试用。`list.items[].progressSummary` 取已存进度末段的第一句；不读会话、不生成文本、不改历史。`list.items[].preview`（2026-11-18，主人：“和会话一样，desc 部分展示最新的消息”）是会话列表在标题下显示的那一句：会话最近一次完整回复的最后一段，压成一行、最多 300 字符，来自会话活动的同一份事实（`attention.preview`），没有会话或还没有回复时是空串；只出现在 `list` 的每一项里，`get` 没有。看板卡片的描述用它，没有它才用 `progressSummary`。
 
 **标签和子事项**（2026-11-05）：事项有 `labels`（写入时是标签 id 的数组，每个至多一次、最多 50 个，id 必须是已有的标签；读出时是 `[{ id, name, color }]`）和 `parent`（写入时是另一个事项的 id 或 null；读出时是 `{ id, ref, title, status, statusType, subIssues? }` 或 null）；有子事项的事项还有只读的 `subIssues: { total, done }`（done 数 `done` 类型的），`get` 另外给只读的 `children`（子事项的完整列表）。`parent` 不能是事项自己或它的子孙；父事项被 `forget` 后子事项的 `parent` 变成 null。标签动作：`labels`（列出 `[{ id, name, color }]`）、`label-add`（`fields: { name, color }`，名字去空白、不分大小写不能重复、最多 50 字，颜色是 `grey|darkGrey|purple|teal|green|yellow|orange|pink|red`，默认 `darkGrey`）、`label-update`（`id`、`patch: { name?, color? }`，只有主人）、`label-remove`（`id`，从所有事项上摘掉，只有主人）。`list`/`facets` 的筛选有 `label`（标签 id 数组，任一即可）；`facets` 多一个 `label`（每个标签 `{ key: id, label: 名字, color, count }`，没有事项用的标签也列，数量 0）。
 
@@ -118,6 +118,8 @@ Agent 的工作消息只有标题和描述；事项流程、状态、活动和�
 `attachmentIds` 保持文件顺序，最多 100 个、不能重复；只能使用当前事项尚未绑定留言的附件。所有引用校验、留言保存和附件绑定在一个事务里，任何一个引用错误都不留下半条留言。`text` 可以为空，但必须有附件；只写 `@Dudu` / `@Agent` 并附文件也可以。没有 `@` 不投递模型；有 `@` 时，将保存的图片和文件通过 DSH 的图片与会话文件收据协议送到对应会话。
 
 `requestId` 对同一事项和调用身份幂等：原文和附件顺序相同的重试返回原留言及 `no_op`，不会再次投递；内容不同拒绝。留言的 `data.attachments` 包含可信附件元数据，重开页面和服务重启后仍可读取；跨事项标识、已删除事项和未认证请求不能读取。导出包含已绑定附件的元数据，未发送草稿不导出。放弃的上传记录目前随事项保留，底层内容对象的保留策略由 DSH 管理。
+
+新建事项附带的图片和文件（2026-11-19，DUD-15）使用 `initial: true` 标记第一条附件留言：文字为空、必须有已上传附件，并且保存时事项尚未建立会话；相同 `requestId` 的已完成提交在会话建立后仍可幂等重试。桌面和手机使用同一创建顺序：先以未分配状态保存事项，完成上传和附件留言绑定后，再分配所选智能体。首次消息把标题、描述与这些附件一起提交给 DSH；普通文件在目标会话建立后取得该会话的上传收据。未选择智能体时，标记保留在 SQLite，稍后首次分配仍读取这些附件。普通讨论附件不因此投递，父事项的附件也不读取。上传失败不启动智能体；首次发送前若图片读取或文件收据失败，空会话按既有失败路径收起，不降级成纯文字发送。已有会话不重放首次消息，旧会话历史也不改写。
 
 接管已有对话使用同一认证下的 `POST /api/dudu/sessions/takeover`：
 

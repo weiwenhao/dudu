@@ -9,7 +9,7 @@ import { T } from '../strings.js';
 import { BASES, viewKey } from './saved-views.js';
 
 /** B's scope switcher uses the same popover, command rows and saved-view actions as the existing controls. */
-export function IssueScopeMenu({ value, saved, onChange, onRename, onDelete, open, onOpenChange, triggerRef, compact, children }) {
+export function IssueScopeMenu({ value, saved, onChange, onRename, onDelete, open, onOpenChange, triggerRef, compact, iconOnly = compact, highlighted, children }) {
   const list = useRef(null);
   const label = saved.find(entry => viewKey(entry.id) === value)?.name ?? T.tabs[value] ?? T.tabs.active;
   const option = (id, name, props) => <CommandItem value={id} onSelect={() => { onChange(id); onOpenChange(false); }} {...props}>
@@ -19,8 +19,9 @@ export function IssueScopeMenu({ value, saved, onChange, onRename, onDelete, ope
   return <Popover open={open} onOpenChange={onOpenChange}>
     <PopoverTrigger asChild>
       <Button ref={triggerRef} variant="ghost" size="sm" aria-label={label} title={label}
-        className={cn('h-7 min-w-0 shrink gap-2 px-2 text-[13px] font-medium data-[state=open]:bg-accent', compact ? 'size-7 p-0' : 'max-w-40')}>
-        {!compact && <span className="truncate">{label}</span>}
+        className={cn('h-7 min-w-0 shrink gap-2 px-2 text-[13px] font-medium data-[state=open]:bg-accent',
+          iconOnly ? 'size-7 shrink-0 p-0' : 'max-w-40', highlighted && 'bg-accent')}>
+        {!iconOnly && <span className="truncate">{label}</span>}
         <ChevronDown className="size-3 text-muted-foreground" aria-hidden="true" />
       </Button>
     </PopoverTrigger>

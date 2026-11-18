@@ -47,7 +47,7 @@ function TodoRow({ row, open, onToggle, onReply, onOpenSession, onOpenIssue }) {
     <div data-card-issue={row.id}>
       <button type="button" aria-expanded={answerable ? open : undefined} onClick={() => (answerable ? onToggle(row.id) : onOpenIssue(row))}
         className="flex w-full items-start gap-3 px-3.5 pt-2.5 pb-2.5 text-left outline-none hover:bg-accent/60 focus-visible:bg-accent/60">
-        <AgentAvatar agent={row.agent} state={row.sessionState} asleep={row.deepSleep === true} showTitle={false} />
+        <AgentAvatar agent={row.agent} state={row.sessionState} showTitle={false} />
         <span className="min-w-0 flex-1">
           <span className="flex h-6 items-center gap-2">
             <span className="shrink-0 text-[13px] font-semibold tabular-nums">{row.ref ?? `#${row.id}`}</span>

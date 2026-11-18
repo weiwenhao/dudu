@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createWithAttachments } from '../../../assistant/issues/create-with-attachments.mjs';
 import { Box, CornerDownRight, LoaderCircle, MoreHorizontal, Tag, User, X } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '../components/dialog.jsx';
@@ -84,21 +85,25 @@ export function NewIssueDialog({ open, onOpenChange, onCreate, request, preset =
       delete rest.parent; // the window's own parent (which may have been taken off), labels and due date are sent below
       delete rest.labels;
       delete rest.dueAt;
-      const result = await onCreate({
+      const fields = {
         ...rest, status: chosenStatus, ...(chosenPriority === 'none' ? {} : { priority: chosenPriority }), project: chosenProject ?? null, agent: chosenProject?.path ? chosenAgent ?? null : null,
         ...(labels.length ? { labels } : {}), ...(dueAt != null ? { dueAt } : {}), ...(chosenParent ? { parent: chosenParent.id } : {}),
         title: title.trim(), ...(brief.trim() ? { brief: brief.trim() } : {}),
+      };
+      const pending = [...draftRef.current];
+      const result = await createWithAttachments({
+        fields,
+        add: onCreate,
+        prepare: pending.length ? async (issue) => {
+          if (!request) throw new Error('Attachments are unavailable.');
+          const attachmentIds = [];
+          for (const draft of pending) attachmentIds.push(await uploadDraft(issue.id, draft));
+          return request('issues/message', { id: issue.id, text: '', attachmentIds, initial: true, requestId: crypto.randomUUID() });
+        } : undefined,
+        assign: (id, agent) => request('issues/assign', { id, agent }),
       });
       if (result?.outcome !== 'success') throw new Error(result?.message || T.newIssue.failed);
-      // The issue exists now: what was pasted goes to it as the first note, with nothing written in it. A failure here does not undo the issue, and it says so.
-      if (draftRef.current.length && request && result.issue?.id != null) {
-        try {
-          const attachmentIds = [];
-          for (const draft of draftRef.current) attachmentIds.push(await uploadDraft(result.issue.id, draft));
-          const sent = await request('issues/message', { id: result.issue.id, text: '', attachmentIds, requestId: crypto.randomUUID() });
-          if (!['success', 'no_op'].includes(sent?.outcome)) throw new Error('attachments');
-        } catch { toast?.({ message: T.toast.failed }); }
-      }
+      if (result.attachmentsFailed) toast?.({ message: T.toast.failed });
       reset();
       onOpenChange(false);
     } catch {

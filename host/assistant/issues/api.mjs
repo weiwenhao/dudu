@@ -109,17 +109,20 @@ const CALLS = {
     return result;
   },
   log: (issues, { id, kind, text, data, ...rest }, scope) => issues.log(id, { kind, text, data, ...meta(rest, scope) }),
-  message: async (issues, { id, text, attachmentIds = [], requestId }, scope) => {
+  message: async (issues, { id, text, attachmentIds = [], requestId, initial = false }, scope) => {
     const { onMention } = scope;
     const got = issues.get(id, { logLimit: 1 });
     if (!got.issue) return got;
     if (!Array.isArray(attachmentIds) || attachmentIds.length > 100 || attachmentIds.some((key) => typeof key !== 'string')) return { outcome: 'needs_clarification', code: 'invalid_message' };
     const message = issueMessage(text, got.issue.agent, { hasAttachments: attachmentIds.length > 0 });
     if (message.error) return { outcome: 'needs_clarification', code: message.error };
+    if (typeof initial !== 'boolean' || initial && (message.text || !attachmentIds.length)) {
+      return { outcome: 'needs_clarification', code: 'invalid_message' };
+    }
     if (message.target && message.target !== 'dudu' && !got.issue.project?.path) return { outcome: 'needs_clarification', code: 'choose_project' };
     if (message.target && !onMention) return { outcome: 'error', code: 'delivery_failed' };
     const logged = issues.log(id, { kind: 'note', text: message.text, attachmentIds, requestId,
-      data: message.target ? { mention: message.target } : null, ...meta({}, scope) });
+      data: initial ? { initial: true } : message.target ? { mention: message.target } : null, ...meta({}, scope) });
     if (logged.outcome !== 'success' || !message.target) return logged;
     try {
       const result = await onMention(got.issue, message, logged.entry);

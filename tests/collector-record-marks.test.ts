@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { applyRecordMarks, createRecordMarks } from '../host/dudu-plugin/ui/collector/record-marks.js';
 
 const NOW = Date.UTC(2026, 10, 10, 12);
-const row = (id: number, extra: any = {}) => ({ id, connector: 'mail', connectorName: 'Mail', at: NOW - id, done: false, ignored: false, issue: null, ...extra });
+const row = (id: number, extra: any = {}) => ({ id, connector: 'mail', connectorName: 'Mail', at: NOW - id, done: false, issue: null, ...extra });
 const page = (items: any[], nextCursor: string | null = null) => ({ items, nextCursor });
 const shown = (marks: any, value: any, tab = 'todo', filter = {}) => applyRecordMarks(value, marks.getSnapshot(), { tab, filter }, NOW).items;
 
@@ -35,29 +35,30 @@ test('failed marks restore just their own rows, preserving another click and new
   const marks = createRecordMarks();
   const [a, b, c] = [row(1), row(2), row(3)];
   const first = marks.begin('inbox/done', [a])!;
-  const second = marks.begin('inbox/ignore', [b])!;
+  const second = marks.begin('inbox/done', [b])!;
   first.settle(false);
   assert.deepEqual(shown(marks, page([b, c])), [a, c]);
   second.settle(true);
   const deleting = marks.begin('inbox/delete', [a, c])!;
   deleting.settle(true, a); // The public card intentionally has no deleted flag.
-  for (const tab of ['todo', 'done', 'ignored']) assert.deepEqual(shown(marks, page([a, c]), tab).filter((record: any) => record.id !== b.id), []);
+  for (const tab of ['todo', 'done']) assert.deepEqual(shown(marks, page([a, c]), tab).filter((record: any) => record.id !== b.id), []);
   const restoring = marks.begin('inbox/restore', deleting.records)!;
   assert.deepEqual(shown(marks, page([])), [a, c]);
   restoring.settle(false);
   assert.deepEqual(shown(marks, page([])), [], 'a failed restore leaves the deleted state');
 });
 
-test('optimistic moves respect the active tab, filters and loaded page, including deletion from ignored', () => {
+test('optimistic moves respect the active tab, filters and loaded page, including deletion from handled', () => {
   const marks = createRecordMarks();
-  const ignored = row(1, { ignored: true });
-  const deleted = marks.begin('inbox/delete', [ignored])!;
+  const handled = row(1, { done: true });
+  const deleted = marks.begin('inbox/delete', [handled])!;
   deleted.settle(true);
   const restore = marks.begin('inbox/restore', deleted.records)!;
-  assert.deepEqual(shown(marks, page([]), 'ignored'), [ignored]);
+  assert.deepEqual(shown(marks, page([]), 'done'), [handled]);
   assert.deepEqual(shown(marks, page([])), []);
-  assert.deepEqual(shown(marks, page([]), 'ignored', { connector: ['lark'] }), []);
+  assert.deepEqual(shown(marks, page([]), 'done', { connector: ['lark'] }), []);
   restore.settle(true);
+  marks.acceptRead(marks.beforeRead()); // a read after the save reconciles the overlay
   const old = row(4, { at: NOW - 40 * 86_400_000 });
   marks.begin('inbox/done', [old]);
   assert.deepEqual(shown(marks, page([]), 'done', { date: ['month'] }), []);

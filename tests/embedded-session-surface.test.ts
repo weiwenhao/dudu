@@ -6,6 +6,7 @@ function host() {
   let mounted: string | undefined;
   const listeners = new Set<() => void>();
   const opened: string[] = [];
+  const navigation: unknown[] = [];
   const commands: any[] = [];
   const openTab = function (kind: string) { commands.push([mounted, 'tab', kind]); };
   const sidebar = {
@@ -14,8 +15,8 @@ function host() {
     openTab,
   };
   const set = (id?: string) => { mounted = id; for (const listener of listeners) listener(); };
-  const bridge = installEmbeddedSessionSurface({ sidebar, openSession: async (id: string) => { opened.push(id); set(id); } });
-  return { sidebar, opened, commands, set, bridge, openTab };
+  const bridge = installEmbeddedSessionSurface({ sidebar, openSession: async (id: string, options: unknown) => { opened.push(id); navigation.push(options); set(id); } });
+  return { sidebar, opened, navigation, commands, set, bridge, openTab };
 }
 
 test('embedded sidebar actions open their owning native Session and run only after its committed surface; native actions remain direct', async () => {
@@ -25,6 +26,7 @@ test('embedded sidebar actions open their owning native Session and run only aft
   first.activate();
   h.sidebar.openResource('dsh-resource://file/path', { params: { line: 17 } });
   assert.deepEqual(h.opened, ['split-session']);
+  assert.deepEqual(h.navigation, [{ returnToDudu: true }], 'opening a native preview keeps its return address, just like the expand action');
   assert.deepEqual(h.commands, [], 'a selected id alone does not prove the sidebar store has mounted');
   h.bridge.committed('dialog-session');
   await Promise.resolve();
@@ -36,6 +38,13 @@ test('embedded sidebar actions open their owning native Session and run only aft
   h.sidebar.openTab('files');
   assert.equal(h.opened.length, 1);
   assert.deepEqual(h.commands.at(-1), ['split-session', 'tab', 'files']);
+  h.set();
+  h.sidebar.openTab('review');
+  assert.deepEqual(h.navigation, [{ returnToDudu: true }, { returnToDudu: true }], 'page previews use the same return contract as file resources');
+  h.bridge.committed('split-session');
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(h.commands.at(-1), ['split-session', 'tab', 'review']);
   first.release();
   dialog.release();
   h.bridge.dispose();

@@ -8,6 +8,7 @@ struct BoardSnapshot: Codable, Equatable, Sendable {
     var conversationsByTab: [String: [BoardConversation]]
     var pins: [String]
     var unreadCount: Int
+    var filterStatuses: [IssueWorkflowStatus]? = nil
 
     func validate(for computerID: String) throws {
         guard version == 1 else { throw ConversationStorageError.unsupportedVersion }

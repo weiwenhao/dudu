@@ -5,7 +5,13 @@ import expoConfig from 'eslint-config-expo/flat.js';
 export default defineConfig([
   expoConfig,
   {
-    ignores: ['dist/**', '.local/**', 'ios/**', 'android/**', 'src/generated/**', 'packages/oar-adapter/.generated/**'],
+    ignores: ['dist/**', '.local/**', 'ios/**', 'android/**', 'src/generated/**', 'packages/oar-adapter/.generated/**',
+      'packages/dsh-computer-use/vendor/**', 'packages/dsh-computer-use/.generated/**'],
+  },
+  {
+    // Host modules are supplied by DSH, not installed again in the repository.
+    files: ['packages/dsh-computer-use/entry.mjs'],
+    rules: { 'import/no-unresolved': ['error', { ignore: ['^@deepseek-ai/'] }] },
   },
   {
     // The MCP SDK is reached by subpaths of its `exports` map (client/auth.js, ...), which the import resolver does not read; node and esbuild do.

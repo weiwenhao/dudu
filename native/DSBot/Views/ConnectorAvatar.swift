@@ -3,7 +3,7 @@ import SwiftUI
 /// Where a record comes from, as a small picture (owner, 2026-11-07): the service's own mark when the plugin names one for the
 /// record (the catalog's connector, or a service its name says: Lark, Stripe, QQ, WeChat and so on), and otherwise the first letter
 /// of the collector's name on a soft colour that its name picks. The desktop draws the same (`ui/collector/ConnectorAvatar.jsx`):
-/// the same seven tones, picked by the same sum.
+/// the same twelve tones, picked by the same sum (seven until 2026-11-18, when the owner asked for more: "加到 12 种吧"; the five added are sky, orange, lime, magenta and coffee, after the old seven).
 struct ConnectorAvatar: View {
     /// The icon key of the card (`connectorIcon`), or nil.
     let icon: String?
@@ -17,7 +17,9 @@ struct ConnectorAvatar: View {
         (ConnectorAvatar.rgb(0xE8F0FE), ConnectorAvatar.rgb(0x2F5FD0)), (ConnectorAvatar.rgb(0xE6F4EA), ConnectorAvatar.rgb(0x177A3C)),
         (ConnectorAvatar.rgb(0xFDF1D6), ConnectorAvatar.rgb(0x8A5300)), (ConnectorAvatar.rgb(0xFCE8EC), ConnectorAvatar.rgb(0xB3294A)),
         (ConnectorAvatar.rgb(0xEEE9FD), ConnectorAvatar.rgb(0x5B3FC4)), (ConnectorAvatar.rgb(0xE0F4F3), ConnectorAvatar.rgb(0x0F766E)),
-        (ConnectorAvatar.rgb(0xECEEF1), ConnectorAvatar.rgb(0x4B5563)),
+        (ConnectorAvatar.rgb(0xECEEF1), ConnectorAvatar.rgb(0x4B5563)), (ConnectorAvatar.rgb(0xE0F2FB), ConnectorAvatar.rgb(0x0B6A94)),
+        (ConnectorAvatar.rgb(0xFDE9DC), ConnectorAvatar.rgb(0xA4410B)), (ConnectorAvatar.rgb(0xEDF5D6), ConnectorAvatar.rgb(0x4F6B0A)),
+        (ConnectorAvatar.rgb(0xFBE6F5), ConnectorAvatar.rgb(0xA0198A)), (ConnectorAvatar.rgb(0xF3EBE3), ConnectorAvatar.rgb(0x6B4F3A)),
     ]
 
     fileprivate static func rgb(_ value: Int) -> Color {

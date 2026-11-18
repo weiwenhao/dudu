@@ -550,7 +550,7 @@ private actor ReviewTransport: DSBotTransport {
                     SessionProvider(id: "codex", name: "ChatGPT", modelIds: ["codex:gpt"], defaultModelId: "codex:gpt")
                 ]),
                 "permissions": try encode([
-                    Choice(id: "ask", name: L10n.language == "en" ? "Full access" : "操作前询问"),
+                    Choice(id: "ask", name: L10n.language == "en" ? "Full access" : "完全权限"), // the product's default (owner, 2026-11-09), and what the desktop says in Chinese: the README picture shows it
                     Choice(id: "allow", name: "自动允许"),
                     Choice(id: "danger-full-access", name: "danger-full-access")
                 ]),
@@ -1346,15 +1346,6 @@ private actor ReviewTransport: DSBotTransport {
             reviewRuns[id, default: []].insert(run, at: 0)
             items[index].lastRun = TaskLastRun(id: UUID().uuidString, at: now, status: "delivered")
             return ok(["run": run, "task": try encode(items[index]), "pending": .bool(true)])
-        case "tasks.duplicate":
-            var copy = items[index]
-            copy.id = UUID().uuidString
-            copy.status = "paused"
-            copy.revision = 1
-            copy.sessionId = nil
-            copy.lastRun = nil
-            items.insert(copy, at: 0)
-            return ok(["task": try encode(copy)])
         case "tasks.delete":
             let removed = items.remove(at: index)
             return ok(["id": .string(removed.id), "title": .string(removed.title)])

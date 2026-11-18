@@ -766,9 +766,7 @@ struct DSBotRootView: View {
                 }
                 toolbarTrailing(for: page)
             }
-            if page.target == .board {
-                BoardScopeMenu(board: board)
-            } else if title == nil, let title = toolbarTitle(for: page) {
+            if title == nil, let title = toolbarTitle(for: page) {
                 Text(title)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(DSBotStyle.ink)
@@ -783,13 +781,10 @@ struct DSBotRootView: View {
     }
 
     private var boardToolbar: some View {
-        ZStack {
-            HStack(spacing: 8) {
-                sidebarButton
-                Spacer(minLength: 0)
-                boardTrailing
-            }
-            BoardScopeMenu(board: board)
+        HStack(spacing: 8) {
+            sidebarButton
+            Spacer(minLength: 0)
+            boardTrailing
         }
         .padding(.horizontal, DSBotLayout.toolbarHorizontalPadding)
         .frame(height: DSBotLayout.toolbarHeight, alignment: .top)
@@ -909,11 +904,18 @@ struct DSBotRootView: View {
         }
     }
 
-    /// The board's two buttons (owner, 2026-11-11: the quota beside the new issue, 44pt glass circles 8pt apart).
     private var boardTrailing: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
             quotaButton
             newIssueButton
+        }
+        .dsbotGlass(in: Capsule())
+        .overlay {
+            Rectangle()
+                .fill(DSBotStyle.chatDivider)
+                .frame(width: 0.7, height: 18)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
     }
 
@@ -925,9 +927,9 @@ struct DSBotRootView: View {
             DSBotIcon(.quota, size: 22)
                 .foregroundStyle(DSBotStyle.ink)
                 .frame(width: DSBotLayout.toolbarButtonSize, height: DSBotLayout.toolbarButtonSize)
-                .contentShape(Circle())
+                .contentShape(Rectangle())
         }
-        .buttonStyle(DSBotGlassButtonStyle())
+        .buttonStyle(DSBotQuietPressStyle())
         .accessibilityLabel(L10n.text("额度"))
         .accessibilityIdentifier("board.quota")
     }
@@ -940,9 +942,9 @@ struct DSBotRootView: View {
             DSBotIcon(.plus, size: 22)
                 .foregroundStyle(DSBotStyle.ink)
                 .frame(width: DSBotLayout.toolbarButtonSize, height: DSBotLayout.toolbarButtonSize)
-                .contentShape(Circle())
+                .contentShape(Rectangle())
         }
-        .buttonStyle(DSBotGlassButtonStyle())
+        .buttonStyle(DSBotQuietPressStyle())
         .accessibilityLabel(L10n.text("新建事项"))
         .accessibilityIdentifier("board.new")
     }

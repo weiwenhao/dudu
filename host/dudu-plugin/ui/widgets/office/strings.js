@@ -8,8 +8,6 @@ const count = (n, one, many) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
 
 const en = {
   title: 'Office',
-  // The legend in the title row: the clothes of the three agents.
-  agents: { claude: 'Claude', codex: 'ChatGPT', pi: 'Pi', deepseek: 'DeepSeek' },
   /**
    * The one sentence that stands for the whole picture, using the shared session state names.
    * A state nobody is in is left out.

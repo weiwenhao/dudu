@@ -1,10 +1,10 @@
 {
   "upstream": {
     "name": "@botiverse/oar",
-    "version": "0.105.0",
-    "tarball": "https://registry.npmjs.org/@botiverse/oar/-/oar-0.105.0.tgz",
-    "integrity": "sha512-hhBT0bx+e44EeEJ4rIZBFAsGgL3rXcGn6ZVWBLuL7A4q4HuVaqUFt5WopNxk9LWhMnGTO930+NbHtL3Y3YJg6A==",
-    "treeSha256": "81ab4ec8c174a04c307cce7214f23ba3ba3d3327b10f5deb1450f604174047a8"
+    "version": "0.120.0",
+    "tarball": "https://registry.npmjs.org/@botiverse/oar/-/oar-0.120.0.tgz",
+    "integrity": "sha512-QcYXeNh6EJWJ48aR8hZLnrrANinodI5h1I6HNSbXaEfOiEzitsTC4XWQr6sRYGUWATtzhDKItferbYeeifGVOA==",
+    "treeSha256": "c2b1c162f5a7b11a0850da9d03a4c0089972088e86c6683329d5e252ab4fafd4"
   },
   "patches": [
     {
@@ -12,8 +12,8 @@
       "purpose": "Optional controls and declarations on OAR's existing session kernel.",
       "files": {
         "dist/contracts/session-options.d.ts": {
-          "before": "221b83c440fddeb7fa2166bb21f6e3b4899b64891902a1d0594ad11a1ea66dbc",
-          "after": "038d57b2ac11bed816a5c445fc8ad9fb62a1dae991e9ea049aa5bf0ad3fd53a8"
+          "before": "efcadda22fd601f29fd9bfd444aa737cd7a4de20ff074e897b7d78281082d6aa",
+          "after": "a74b1bcf18482e01eadeed2e9895a0c438db971c8c53548282ec69ab0eab1b43"
         },
         "dist/contracts/session.d.ts": {
           "before": "6fcf7f70daa6d7909b460d83ec958e0a9119de13ce32e177c4330806817edad0",
@@ -24,12 +24,12 @@
           "after": "45e0680f2b9ffc1942b0ffeb61550980f8d7aef5713c4894bef738bdc4eb272a"
         },
         "dist/shared/stream-json/profile.d.ts": {
-          "before": "f73365008efcf3ddc57f597ae8b4ab9b932ff54592c27978def9791f9eadcee5",
-          "after": "a86a97eef8d513e6e333c8fdf593a8e8f64cdd8cf89eec174d9399a17faa8bb2"
+          "before": "b69bb3756f2d8daefe5cc67bd3833533090fa136c75dd5312b146058953d1908",
+          "after": "5ad972da510f2c9f63c2cc968ca0190545089d9b691e953e686bfe28c0103dca"
         },
         "dist/shared/stream-json/session.js": {
-          "before": "0d8cb8f90927bdab5bebeaee09f7cb1e2db36ddc7e90f489c34a5ea777e6ad6d",
-          "after": "c8f11ed3e2a198da61270454ed803c261880cbdd119ca1042e949673c676df49"
+          "before": "b0a1a735908672cddb500e631baf2a27fddf825679d3efb4ff68c74895f93373",
+          "after": "ce84d1e7d24fa74d20332000a9aef403270f7521235a939fc3caed45e3014512"
         }
       }
     },
@@ -38,12 +38,12 @@
       "purpose": "Native configuration readback and explicit or inherited permission modes.",
       "files": {
         "dist/runtimes/claude/index.d.ts": {
-          "before": "1cd0c2281a05d667ffcfc3f6353efeacc9d6cbb2ae698e27d68a883748c31561",
-          "after": "8f36e32e663520eca616a0191b23927b5251067c15ed2a9a88299e6134b9a897"
+          "before": "72b5225757cb52a0911350386c7d1cee9578fd380fab040357de9d6c27c9b9be",
+          "after": "067728c105b060e7137684b72fae5d02f2255df1a59e033a09fe7c7dd9daa830"
         },
         "dist/runtimes/claude/index.js": {
-          "before": "782193c6186ef9cb2ae8ec987a0b114a6c988e8db029c19809e29b0d421ba8d5",
-          "after": "ddf701c87086dd3ffac5d5de72b11d82a39a35858884b0c7990914eae677e124"
+          "before": "d7ee439eaa0a75fba76fcec86237bffb71a1fd1d700a1a81327d5fd207868a8d",
+          "after": "29393a17812d65d4e53b728786df30dc9aed1e5537c8965e846b9de8b17d4a63"
         },
         "dist/runtimes/claude/launch-args.d.ts": {
           "before": "f679d938c0af53396d390fa4d16bd3438a4371e67f1bef97be437c63e23039a1",
@@ -120,8 +120,8 @@
           "after": "a73209591abb3629b09d409d22d510d5e9cd122862f3688bb0b1523bf7c1b238"
         },
         "dist/runtimes/codex/session.js": {
-          "before": "9ad27a1d54ef5d09803b2424fe39bd445e0f73915c914f6348e1d154d1c1af73",
-          "after": "603cb4d411cc28133ac8a152f56c2226a687d935503e3f5db256ef5842e199e5"
+          "before": "23a59a73dec54918c540d871652f62cdf69cfe0a6ef9f56f7f4e1e83dbc71c02",
+          "after": "8de4f17ba792738e49787de43753bf47c485caf408062ef9eb725e7a1356dfaa"
         }
       }
     },
@@ -156,8 +156,8 @@
           "after": "50cbb6b474cb83394e32efe5230e9b09099beacef6f627e7e8207da925551ffb"
         },
         "dist/shared/executable/process.js": {
-          "before": "0b7ace01f6890a83d837b5c540f5154c890ffa438d81b91efe6206ec6df4384f",
-          "after": "a14879919392cb9a8720b7ea0ce2a174b81edc8d84fbb5262f12c2bacdc36b27"
+          "before": "4082253d1297d0a5701b99a42a898db4e32acafd1ac403a9a64a135abf95c475",
+          "after": "96df1034910ac3ad7bd072b90aee099ef63317cfe5bbaec2bbf5990a24edba0a"
         }
       }
     }

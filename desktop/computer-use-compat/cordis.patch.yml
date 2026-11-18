@@ -1,0 +1,7 @@
+- id: cua
+  name: '@deepseek-ai/dsh-experimental-cua-macos'
+  disabled: true
+- insert:
+    - id: dudu-cua
+      name: dsh-dudu/computer-use
+      disabled: !!js process.platform !== 'darwin'

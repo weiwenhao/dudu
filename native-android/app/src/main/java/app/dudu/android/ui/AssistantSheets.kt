@@ -23,12 +23,12 @@ import org.json.JSONObject
 
 @Composable
 fun AssistantQuickSheet(kind: String, state: UiState, model: DuduViewModel, dismiss: () -> Unit) {
-    var count by remember(kind) { mutableIntStateOf(2) }
     var todoHeight by remember(kind) { mutableIntStateOf(188) }
+    // The inbox and the tasks tell how high their content is (the bar, the tabs, the rows as drawn, what stands under them); the sheet is that high, up to 660 dp.
+    var listHeight by remember(kind) { mutableIntStateOf(0) }
     var detail by remember(kind) { mutableStateOf<Route?>(null) }
     var revision by remember(kind) { mutableIntStateOf(0) }
-    val height = if (detail != null) 760.dp else if (kind == "todo") todoHeight.dp else (152 + count * 58).coerceIn(188, 660).dp
-    val resize: (Int) -> Unit = { count = it }
+    val height = if (detail != null) 760.dp else if (kind == "todo") todoHeight.dp else listHeight.coerceIn(188, 660).dp
     LaunchedEffect(state.route) { if (state.route != null) dismiss() }
     fun open(route: Route) { if (route.name in listOf("record", "task")) detail = route else model.navigate(route) }
     fun back() { detail = null; revision++ }
@@ -37,9 +37,9 @@ fun AssistantQuickSheet(kind: String, state: UiState, model: DuduViewModel, dism
             Box(Modifier.fillMaxSize().alpha(if (detail == null) 1f else 0f).then(
                 if (detail == null) Modifier else Modifier.clearAndSetSemantics {})) {
             when (kind) {
-                "info" -> CollectorScreen(model, back = dismiss, onCount = resize, open = ::open, refreshKey = revision, active = detail == null)
-                "task" -> TasksScreen(model, back = dismiss, onCount = resize, open = ::open, refreshKey = revision, active = detail == null)
-                else -> AssistantTodos(state, model, back = dismiss, onCount = resize, onHeight = { todoHeight = it })
+                "info" -> CollectorScreen(model, back = dismiss, onHeight = { listHeight = it }, open = ::open, refreshKey = revision, active = detail == null)
+                "task" -> TasksScreen(model, back = dismiss, onHeight = { listHeight = it }, open = ::open, refreshKey = revision, active = detail == null)
+                else -> AssistantTodos(state, model, back = dismiss, onCount = {}, onHeight = { todoHeight = it })
             }
             }
             detail?.let { route -> key(route) {
@@ -73,7 +73,7 @@ fun AssistantTodos(state: UiState, model: DuduViewModel, back: () -> Unit = mode
     }
     LaunchedEffect(actions.revision) { read() }
     LaunchedEffect(rows.size) { onCount?.invoke(rows.size) }
-    val height = 88 + rows.sumOf { issue -> heights[issue.getLong("id")]?.let { with(density) { it.toDp().value.toInt() } }
+    val height = 76 + rows.sumOf { issue -> heights[issue.getLong("id")]?.let { with(density) { it.toDp().value.toInt() } }
         ?: if (issue.optJSONObject("latest") != null) 104 else 56 }
     LaunchedEffect(height) { onHeight?.invoke(height.coerceIn(188, 660)) }
     Page(w("待办"), back, actions, count = total.takeIf { onCount != null }, top = {

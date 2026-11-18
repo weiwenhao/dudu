@@ -55,8 +55,8 @@ fun DeliveredFilesScreen(route: Route, state: UiState, model: DuduViewModel) {
     var query by remember { mutableStateOf("") }
     val shown = files.filter { (it.optString("name") + it.optString("path")).contains(query.trim(), true) }
     val resize = LocalSheetHeight.current
-    LaunchedEffect(shown.size) { resize((150 + shown.size * 56).coerceIn(188, 600)) }
-    Page(wp("全部 %lld 个文件", files.size), model::backRoute, centersSheetTitle = true) {
+    LaunchedEffect(shown.size) { resize((138 + shown.size * 56).coerceIn(176, 600)) }
+    Page(wp("全部 %lld 个文件", files.size), model::backRoute) {
         Box(Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) { SearchField(query, w("搜索文件")) { query = it } }
         LazyColumn {
             cardItems(shown, key = { it.optString("path", it.optString("id")) }) { file ->
@@ -82,7 +82,7 @@ fun FilesScreen(route: Route, state: UiState, model: DuduViewModel) {
         if (id != null) actions.run { result = model.request(if (reading) "files.read" else "files.list", json("id" to id, "path" to path)) }
     }
     Page(if (reading) result?.optString("name") ?: route.title else "", model::backRoute, actions,
-        centersSheetTitle = reading, background = MaterialTheme.colorScheme.surface, top = {
+        background = MaterialTheme.colorScheme.surface, top = {
         if (reading) IconButton(onClick = { scope.launch {
             clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("", result?.optString("text").orEmpty()))); copied = true
         } }, enabled = result != null) { Glyph(if (copied) R.drawable.ic_check else R.drawable.ic_copy, w("复制文件内容"), 20) }
@@ -164,13 +164,13 @@ fun DetailScreen(route: Route, state: UiState, model: DuduViewModel) {
         "${it.value.optString("display")} ${it.value.optString("path")}".contains(query.trim(), true)
     }
     LaunchedEffect(route.name, matching.size) {
-        if (route.name == "changes") resize((144 + matching.size * 56).coerceIn(188, 600))
+        if (route.name == "changes") resize((132 + matching.size * 56).coerceIn(176, 600))
     }
     Page(if (route.name == "changes" && result != null) wp("已编辑 %lld 个文件", result!!.optInt("total", result!!.rows("files").size)) else route.title.ifBlank {
         result?.nullableString(if (route.name == "diff") "display" else "name")
             ?: when (route.name) { "changes", "diff" -> w("已编辑文件"); else -> w("查看详情") }
     },
-        model::backRoute, actions, centersSheetTitle = true, nested = route.name == "diff", background = MaterialTheme.colorScheme.surface) {
+        model::backRoute, actions, nested = route.name == "diff", background = MaterialTheme.colorScheme.surface) {
         if (route.name == "changes") Box(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
             SearchField(query, w("搜索文件")) { query = it }
         }
@@ -240,9 +240,9 @@ fun ActivityScreen(route: Route, state: UiState, model: DuduViewModel) {
         else -it.optLong("finishedAt", it.optLong("startedAt")) })
     val resize = LocalSheetHeight.current
     LaunchedEffect(result, finishedIsOpen, jobId) {
-        val height = if (jobs) 130 + jobRows.size * 58 else 194 + groups.sumOf { 44 + it.second.size * 58 } +
+        val height = if (jobs) 118 + jobRows.size * 58 else 182 + groups.sumOf { 44 + it.second.size * 58 } +
             if (finished.isNotEmpty()) 66 + if (finishedIsOpen) 10 + finished.size * 58 else 0 else 0
-        resize(if (jobId != null) 600 else height.coerceIn(260, 600))
+        resize(if (jobId != null) 600 else height.coerceIn(248, 600))
     }
     fun read() = actions.run {
         result = model.request(if (jobId != null) "session.job.output" else if (jobs) "session.jobs" else "session.team",
@@ -267,7 +267,7 @@ fun ActivityScreen(route: Route, state: UiState, model: DuduViewModel) {
             subagent = member.optJSONObject("session")?.optJSONObject("subagent"))
     }
     Page(if (jobs) w("后台任务") else w("智能体团队"), model::backRoute, actions,
-        centersSheetTitle = true, nested = jobId != null) {
+        nested = jobId != null) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp)) {
             if (jobId != null) {
                 val job = result.optJSONObject("job")

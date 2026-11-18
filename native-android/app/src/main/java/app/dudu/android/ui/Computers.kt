@@ -71,7 +71,7 @@ fun ComputerList(state: UiState, model: DuduViewModel, selected: () -> Unit = mo
 
 @Composable
 fun ComputersScreen(state: UiState, model: DuduViewModel) {
-    Page(w("电脑连接"), model::backRoute, centersSheetTitle = true, nested = true, top = {
+    Page(w("电脑连接"), model::backRoute, nested = true, top = {
         IconButton(onClick = { model.navigate(Route("pair")) }, enabled = !state.connecting) {
             Glyph(R.drawable.ic_plus, w("添加电脑"), 22)
         }
@@ -98,7 +98,7 @@ fun ComputerScreen(route: Route, state: UiState, model: DuduViewModel) {
     val active = state.computerId == saved?.id
     PreventSheetDismiss(actions.busy)
     Page(saved?.name ?: route.title, { if (!actions.busy) { if (editing) editing = false else model.backRoute() } }, actions,
-        centersSheetTitle = true, nested = true, top = {
+        nested = true, top = {
         if (editing) {
             Box {
                 IconButton(onClick = { adding = true }, enabled = !actions.busy && drafts.size < 32) { Glyph(R.drawable.ic_plus, w("添加")) }

@@ -41,29 +41,18 @@ class HomeFlowTest {
 
     @After fun stop() { scenario.close() }
 
-    @Test fun scopeMenusDismissAndCachedHomeSurvivesRefreshFailureWithoutReading() {
+    @Test fun scopesSwitchLocallyAndCachedHomeSurvivesRefreshFailureWithoutReading() {
         screenshot("home")
         assertEquals(0, requests("session.read"))
         assertEquals(0, requests("board.read"))
-        compose.onNodeWithTag("scope-menu").performClick()
-        awaitTag("scope-backlog")
-        screenshot("scope-menu")
-        val now = android.os.SystemClock.uptimeMillis()
-        val bounds = context.resources.displayMetrics
-        for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
-            val event = android.view.MotionEvent.obtain(now, now, action,
-                bounds.widthPixels * .9f, bounds.heightPixels * .8f, 0)
-            instrumentation.uiAutomation.injectInputEvent(event, true)
-            event.recycle()
-        }
-        compose.waitUntil(5000) { compose.onAllNodesWithTag("scope-backlog").fetchSemanticsNodes().isEmpty() }
-        compose.onNodeWithTag("scope-menu").performClick()
+        val boardRequests = requests("board.list")
         compose.onNodeWithTag("scope-backlog").performClick()
         awaitTag("row-issue:8")
         compose.onAllNodesWithTag("row-assistant").assertCountEquals(0)
-        compose.onNodeWithTag("scope-menu").performClick()
+        awaitTag("pinned-shelf")
         compose.onNodeWithTag("scope-active").performClick()
         awaitTag("row-issue:1")
+        assertEquals(boardRequests, requests("board.list"))
         compose.onNodeWithTag("open-drawer").performClick()
         awaitText("Fixture Mac")
         screenshot("sidebar")
@@ -82,8 +71,9 @@ class HomeFlowTest {
         awaitTag("row-issue:1")
         control("/fixture/configure?flag=fail-home", "POST")
         scenario.recreate()
+        scenario.onActivity { ViewModelProvider(it)[DuduViewModel::class.java].refresh() }
+        awaitText("无法连接，请检查电脑和网络")
         awaitTag("row-issue:1")
-        compose.waitUntil(5000) { requests("board.list") >= 3 }
         assertEquals(0, requests("session.read"))
         assertEquals(0, requests("board.read"))
     }
@@ -241,7 +231,7 @@ class HomeFlowTest {
         compose.onNodeWithTag("task-title").performTextReplacement("Android updated fixture")
         compose.onNodeWithTag("save-task").performClick()
         awaitEnabled("edit-task")
-        compose.onNodeWithContentDescription("立即执行").performClick()
+        compose.onNodeWithTag("task-run").performClick()
         compose.waitUntil(5000) { requests("tasks.run") == 1 && requests("tasks.history") >= 3 }
         compose.onNodeWithTag("task-detail-list").performScrollToNode(hasText("已投递"))
         compose.onNodeWithText("已投递").assertExists()

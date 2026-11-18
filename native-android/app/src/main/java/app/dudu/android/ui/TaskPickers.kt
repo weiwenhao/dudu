@@ -30,7 +30,7 @@ internal fun TaskChoicePage(picker: TaskPicker, choices: List<TaskChoice>, selec
         TaskPicker.Timezone -> w("时区")
     }
     val shown = choices.filter { "${it.title} ${it.subtitle.orEmpty()}".contains(query.trim(), true) }
-    Page(title, back, centersSheetTitle = true, nested = true, background = MaterialTheme.colorScheme.background) {
+    Page(title, back, nested = true, background = MaterialTheme.colorScheme.background) {
         if (picker !in listOf(TaskPicker.Provider, TaskPicker.Target))
             Box(Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) { SearchField(query, title) { query = it } }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {

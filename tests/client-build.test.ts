@@ -65,7 +65,13 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
 
   // Apply the shell the way DSH does and look at what the panel registers in the `main` slot.
   let main: (() => { type: unknown; props: { request: unknown; logo?: string; actions?: {
-    openSession?: (target: unknown) => Promise<void>;
+    openSession?: (target: unknown, options?: unknown) => Promise<void>;
+    sessionExpansion?: {
+      getSnapshot: () => { sessionId: string } | null;
+      capturePage: (state: Map<string, unknown>) => void;
+      takePage: () => Map<string, unknown>;
+      restore: (sessionId: string) => boolean;
+    };
     retainSession?: (target: unknown, options?: unknown) => Promise<any>;
     pickProjectDirectory?: () => Promise<string | null>;
   } } }) | undefined;
@@ -77,6 +83,15 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
   let refreshSessions = async () => {};
   let retainSession = (_id: string, _options: unknown): any => { throw new Error('Unexpected retain'); };
   let directoryPicks = 0;
+  let activePanelId: string | null = 'dudu';
+  const panelListeners = new Set<() => void>();
+  const layoutService = {
+    panelInfo: {
+      getSnapshot: () => ({ activePanelId }),
+      subscribe(listener: () => void) { panelListeners.add(listener); return () => panelListeners.delete(listener); },
+    },
+    selectPanel(id: string | null) { activePanelId = id; for (const listener of panelListeners) listener(); },
+  };
   const nativeLeading = {
     registrant: 'dsh-sidebar', locale: 'sidebar',
     inject: { toggleSidebar: () => nativeCalls.push('sidebar'), startSession: () => nativeCalls.push('session') },
@@ -105,7 +120,7 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
       assert.deepEqual([...services], ['sidebarRight']);
       work({
         ...ctx,
-        layout: { panelInfo: { getSnapshot: () => ({ activePanelId: 'dudu' }) } },
+        layout: layoutService,
         uiWorkspace: { openSession() {} },
         sidebarRight: {
           mounted: { getSnapshot: () => undefined, subscribe: () => () => {} },
@@ -135,7 +150,7 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
       if (child.name === 'dudu-sessions') child.apply({
         ...ctx,
         sessions: { list: { getSnapshot: () => sessionList }, refresh: () => refreshSessions(), retain: (id: string, options: unknown) => retainSession(id, options) },
-        layout: { selectPanel() {} },
+        layout: layoutService,
         uiWorkspace: {
           openSession: (id: string) => { assert.ok(restored, 'cached history does not lift the archived-session gate'); opened.push(id); },
           pickDirectory: async () => { directoryPicks++; return '/work/picked'; },
@@ -165,9 +180,18 @@ test('the built client gives the 嘟嘟 panel the interface and needs only what 
     await page.props.actions?.openSession?.({ sessionId: 'cached' });
     assert.equal(requests.length, 1);
     assert.deepEqual(opened, ['cached']);
+    const expansion = page.props.actions!.sessionExpansion!;
+    assert.equal(expansion.getSnapshot(), null, 'ordinary session opening never creates a return control');
+    const sourceState = new Map<string, unknown>([['conversation', 'cached']]);
+    expansion.capturePage(sourceState);
+    await page.props.actions!.openSession!({ sessionId: 'cached' }, { returnToDudu: true });
+    assert.equal(expansion.getSnapshot()?.sessionId, 'cached', 'the actual expansion action opts into the native return control');
+    assert.equal(expansion.restore('cached'), true);
+    assert.equal(activePanelId, 'dudu');
+    assert.equal(expansion.takePage(), sourceState, 'the shell returns through the original panel without a home reset');
     sandbox.fetch = async () => ({ ok: true, json: async () => ({ outcome: 'error', message: 'Restore refused' }) });
     await assert.rejects(page.props.actions!.openSession!({ sessionId: 'cached' }), /Restore refused/);
-    assert.deepEqual(opened, ['cached'], 'a refused restore never opens a composer that cannot send');
+    assert.deepEqual(opened, ['cached', 'cached'], 'a refused restore never opens a composer that cannot send');
     // Home is independent of DSH's initial catalog. A cold entry must await discovery, not
     // synchronously read/repair its complete native transcript before the first history page.
     const initialCatalog = Promise.withResolvers<void>();

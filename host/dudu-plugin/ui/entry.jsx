@@ -24,6 +24,7 @@ import { requestDashboard, usePageHistory } from './lib/use-page-history.js';
 import { receiveStatuses, subscribeWorkflow, workflowRevision } from './issues/workflow.js';
 import { NeedsYouColorProvider } from './issues/NeedsYouColor.jsx';
 import { resolveIssueSession as resolveSessionTarget } from './issues/session.js';
+import { SessionReturnProvider, useSessionReturnState } from './lib/session-return.jsx';
 
 export { REGISTRY, createLocalWidgets, createWidgetSource };
 export { connectLocale, getLocale, intlLocale, subscribeLocale } from './lib/locale.mjs';
@@ -35,6 +36,8 @@ export { installChatAutoHistory } from './lib/auto-chat-history.js';
 export { installSessionHistoryCache } from './lib/session-history-cache.js';
 export { createConversationFinder } from './lib/conversation-find.js';
 export { installEmbeddedSessionSurface } from './lib/embedded-session-surface.js';
+export { createSessionExpansion, installSessionReturnEscape, sessionReturnBlocked } from './lib/session-expansion.js';
+export { SessionReturnIcon } from './lib/session-return.jsx';
 export { installSessionReadReceipts } from './lib/session-read-receipts.js';
 export { installSessionActivityUpdates } from './lib/session-activity-updates.js';
 export { installHarnessStats } from './lib/harness-stats.js';
@@ -56,7 +59,11 @@ const notifySettingsChanged = () => window.dispatchEvent(new Event('dudu:setting
  * when an issue is opened. `request` is the shell's POST helper; `logo` is the 嘟嘟 mark the shell already carries;
  * `actions.openSession({ sessionId, workspaceId })` opens a session in DSH (the shell knows how).
  */
-export function Page({ request, logo, actions = {}, renderConversation, renderSessionHeader, renderPermission, petInShell = false, registry = DIRECT_REGISTRY }) {
+export function Page(props) {
+  return <SessionReturnProvider expansion={props.actions?.sessionExpansion}><PanelPage {...props} /></SessionReturnProvider>;
+}
+
+function PanelPage({ request, logo, actions = {}, renderConversation, renderSessionHeader, renderPermission, petInShell = false, registry = DIRECT_REGISTRY }) {
   useSyncExternalStore(subscribeLocale, getLocale);
   useSyncExternalStore(subscribeWorkflow, workflowRevision);
   useEffect(() => {
@@ -79,7 +86,7 @@ export function Page({ request, logo, actions = {}, renderConversation, renderSe
     take();
     return subscribeTaskRequest(take);
   }, []);
-  const [previewIssue, setPreviewIssue] = useState(null);
+  const [previewIssue, setPreviewIssue] = useSessionReturnState('previewIssue', null);
   const [version, setVersion] = useState(0); // settings changes refresh the dashboard and pet
   useEffect(() => {
     const changed = () => setVersion((n) => n + 1);
@@ -101,8 +108,8 @@ export function Page({ request, logo, actions = {}, renderConversation, renderSe
   }, [request, actions]);
   // An issue names its session as `claude:<id>`, `codex:<id>` or `dsh:<id>`.
   const resolveIssueSession = useCallback((issue, options) => resolveSessionTarget(request, actions, issue, options), [request, actions]);
-  const openIssueSession = useCallback(async (issue) => {
-    await actions.openSession?.(await resolveIssueSession(issue));
+  const openIssueSession = useCallback(async (issue, options) => {
+    await actions.openSession?.(await resolveIssueSession(issue), options);
   }, [actions, resolveIssueSession]);
   // A session that was just put into DSH is listed in DSH's sidebar, without being opened.
   const addSession = useCallback(async (target) => { await actions.addSession?.(target); }, [actions]);
@@ -115,7 +122,8 @@ export function Page({ request, logo, actions = {}, renderConversation, renderSe
       <ToastProvider>
         <NeedsYouColorProvider request={request}><ServicesProvider value={services}>
           {route.name === 'issue' ? (
-            <IssueDetail request={request} id={route.id} ids={route.ids} logo={logo} onBack={backToDashboard} onOpen={openIssue} openSession={openIssueSession} previewSession={setPreviewIssue} />
+            <IssueDetail request={request} id={route.id} ids={route.ids} logo={logo} onBack={backToDashboard} onOpen={openIssue}
+              openSession={issue => openIssueSession(issue, { returnToDudu: true })} previewSession={setPreviewIssue} />
           ) : (
             <Dashboard key={version} request={request} registry={registry} onSettings={() => setSettings(true)} onSessions={() => setSessions(true)} onTasks={() => setTasks(true)} />
           )}

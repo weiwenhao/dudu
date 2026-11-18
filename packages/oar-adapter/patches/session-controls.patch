@@ -84,16 +84,15 @@
 +//# sourceMappingURL=seal-session.js.map
 --- a/dist/shared/stream-json/profile.d.ts
 +++ b/dist/shared/stream-json/profile.d.ts
-@@ -3,6 +3,8 @@ import type { RuntimeEventBody, TurnOutcome, SessionCapabilities, Session, Frame
+@@ -4,6 +4,7 @@
  import type { LoadedImage } from "../input-images.js";
  import type { JsonRecord } from "../json.js";
  import type { StreamJsonProjectionState } from "./state.js";
-+import type { SessionKernel } from "../session-kernel.js";
 +import type { AdapterSession } from "../../contracts/session.js";
  export interface StreamJsonUpdate<S> {
      readonly state: S;
      readonly events: readonly RuntimeEventBody[];
-@@ -35,6 +37,8 @@ export interface StreamJsonProjectionProfile<S extends StreamJsonProjectionState
+@@ -36,6 +37,8 @@
  }
  /** Process-specific startup and capabilities; line framing and process ownership use LineProcess. */
  export interface StreamJsonSessionProfile<S extends StreamJsonProjectionState> {
@@ -102,7 +101,7 @@
      readonly projection: StreamJsonProjectionProfile<S>;
      readonly initial: S;
      readonly capabilities: SessionCapabilities;
-@@ -65,4 +69,4 @@ export interface StreamJsonSessionProfile<S extends StreamJsonProjectionState> {
+@@ -68,4 +71,4 @@
      /** A native allow response, already in the runtime's own wire shape; null leaves the request unanswered. */
      readonly permissionResponse?: (requestId: string, request: JsonRecord) => JsonRecord | null;
  }

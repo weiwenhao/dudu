@@ -55,7 +55,7 @@ test('more context for a record: its conversation takes the messages the session
     { id: 'm1', kind: 'message', thread: 'omt_1', from: 'SigmaAI-QA', at: '2026-11-11T03:47:00+08:00', text: '两个条件不满足，14:00 就会卡住' },
     { id: 'm9', kind: 'message', thread: 'omt_1', from: 'Frank Wang', at: '2026-11-11T04:07:00+08:00', text: '@我' },
   ]).records;
-  assert.equal(inbox.ignore(bare.id), true);
+  assert.equal(inbox.done(bare.id), true);
   assert.deepEqual(inbox.addContext(bare.id, read), { outcome: 'success', added: 2 });
   const grown = inbox.get(bare.id).record;
   assert.deepEqual(grown.text.split('\n').map((line: string) => line.replace(/^\d\d-\d\d \d\d:\d\d /, '')), ['SigmaAI-QA：两个条件不满足，14:00 就会卡住', 'Frank Wang：@我', 'Frank Wang：看到请回我']);
@@ -96,14 +96,14 @@ test('an update changes the row that holds the item and makes none: the owner\'s
   const [alert] = w.ingest('alerts', [raw('a1', { title: 'CPU 高 · db1', text: '告警正文', from: '监控' })]).added;
   const [other] = w.ingest('alerts', [raw('a2', { title: 'CPU 高 · db2' })]).added;
   const issue = w.issues.add({ title: '处理 db2' }).issue;
-  assert.equal(w.inbox.ignore(alert.id), true);
+  assert.equal(w.inbox.done(alert.id), true);
   assert.equal(w.inbox.link(other.id, { issueId: issue.id, verdict: 'issue' }), true);
 
   const first = w.ingest('alerts', [{ id: 'a1', update: true, title: '已恢复 · CPU 高 · db1' }, { id: 'a2', update: true, title: '已恢复 · CPU 高 · db2' }]);
   assert.deepEqual([first.added.length, first.updated.length, first.seen, first.missed], [0, 2, 0, 0]);
   const now = w.inbox.get(alert.id).record;
   assert.deepEqual([now.title, now.ref, now.version, now.text, now.from], ['已恢复 · CPU 高 · db1', alert.ref, alert.version, '告警正文', '监控'], 'what is not given stays, and so does the number');
-  assert.notEqual(now.ignoredAt, null, 'the owner\'s mark stays');
+  assert.notEqual(now.doneAt, null, 'the owner\'s mark stays');
   const linked = w.inbox.get(other.id).record;
   assert.deepEqual([linked.title, linked.issueId, linked.byOwner], ['已恢复 · CPU 高 · db2', issue.id, true], 'so does the issue it became');
   assert.equal(w.inbox.list({}).items.length, 2, 'no row was made');
@@ -136,8 +136,8 @@ test('an update finds a conversation by its thread and has the last word of an a
   assert.equal(w.ingest('alerts', [{ id: 'm1', update: true, thread: 'omt_1', title: '又改了' }]).missed, 1, 'a row the owner deleted is not changed');
   assert.equal(w.inbox.restore(talk.id), true);
 
-  // After 30 days the text of a row the owner put aside is cleared; an update may still change its title, and the text stays cleared.
-  assert.equal(w.inbox.ignore(talk.id), true);
+  // After 30 days the text of a row the owner marked handled is cleared; an update may still change its title, and the text stays cleared.
+  assert.equal(w.inbox.done(talk.id), true);
   w.clock.now += KEEP_TEXT_MS + DAY;
   assert.deepEqual(w.inbox.prune(), { cleared: 1, deleted: 0 });
   const late = w.ingest('alerts', [{ id: 'm1', update: true, thread: 'omt_1', title: '已恢复 · CPU 高 · 补记', text: '新的正文' }]);

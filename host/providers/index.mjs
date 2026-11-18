@@ -15,7 +15,10 @@ import { reportGoal } from './goal.mjs';
 // mirror tools that show the harness's tool calls live in that session's agent only, for as long as the
 // session's selected route is that harness.
 
-const NO_SETTINGS = { disabled: [], paths: {} };
+// `disabled` and `enabled` hold only a choice that differs from what a harness is by default: Claude, Codex and Pi are on until switched
+// off; the harnesses of drivers/universal.mjs are off until switched on (`defaultEnabled: false`), so that a tool a person happens to have
+// installed does not turn up in every list of agents by itself.
+const NO_SETTINGS = { disabled: [], enabled: [], paths: {} };
 
 async function readSettings(file) {
   let raw;
@@ -24,13 +27,15 @@ async function readSettings(file) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('The providers settings file is not an object.');
   return {
     disabled: Array.isArray(raw.disabled) ? raw.disabled.filter((id) => typeof id === 'string') : [],
+    enabled: Array.isArray(raw.enabled) ? raw.enabled.filter((id) => typeof id === 'string') : [],
     paths: raw.paths && typeof raw.paths === 'object' ? Object.fromEntries(Object.entries(raw.paths).filter(([, value]) => typeof value === 'string' && value)) : {},
   };
 }
 
 async function writeSettings(file, settings) {
   const temporary = `${file}.${process.pid}.tmp`;
-  await writeFile(temporary, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
+  const { enabled, ...rest } = settings;
+  await writeFile(temporary, JSON.stringify(enabled?.length ? { ...rest, enabled } : rest, null, 2) + '\n', { mode: 0o600 });
   await chmod(temporary, 0o600);
   await rename(temporary, file);
 }
@@ -131,14 +136,19 @@ export async function createProviders({ host, providers, folder, log = console }
     registered.set(driver.route, { bridge, teams, driver, path: detection.path, version: detection.version, environment: provider.environment, dispose });
   }
 
+  /** Whether a harness is switched on: the person's choice either way, and without one what the harness is by default. */
+  const enabledOf = (provider) => (settings.disabled.includes(provider.id) ? false : settings.enabled.includes(provider.id) ? true : provider.defaultEnabled !== false);
+
   async function refreshNow() {
     if (closed) return;
     for (const provider of providers) {
       const detection = await provider.probe({ override: settings.paths[provider.id] });
-      const enabled = !settings.disabled.includes(provider.id);
+      const enabled = enabledOf(provider);
       status.set(provider.id, {
         id: provider.id, name: provider.name, route: provider.route, enabled, configuredPath: settings.paths[provider.id] ?? '',
         state: detection.state, version: detection.version, path: detection.path, reason: detection.reason,
+        // Said only of a harness that is off until switched on: the settings page folds such a one away while it is not found.
+        ...(provider.defaultEnabled === false ? { defaultEnabled: false } : {}),
       });
       if (closed) return;
       const entry = registered.get(provider.route);
@@ -195,10 +205,12 @@ export async function createProviders({ host, providers, folder, log = console }
     async save({ id, enabled, path }) {
       const provider = providers.find((candidate) => candidate.id === id);
       if (!provider) throw new Error('Unknown provider.');
-      const next = { disabled: [...settings.disabled], paths: { ...settings.paths } };
+      const next = { disabled: [...settings.disabled], enabled: [...settings.enabled], paths: { ...settings.paths } };
       if (typeof enabled === 'boolean') {
         next.disabled = next.disabled.filter((item) => item !== id);
-        if (!enabled) next.disabled.push(id);
+        next.enabled = next.enabled.filter((item) => item !== id);
+        // Only a choice that differs from the harness's default is written down.
+        if (enabled !== (provider.defaultEnabled !== false)) (enabled ? next.enabled : next.disabled).push(id);
       }
       if (typeof path === 'string') {
         if (path.trim()) next.paths[id] = path.trim();

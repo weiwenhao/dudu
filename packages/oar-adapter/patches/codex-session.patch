@@ -76,15 +76,16 @@
  import { manualCompaction } from "../../shared/manual-compaction.js";
  import { codexCompaction, codexCompactionBusy } from "./compaction.js";
  import { appendCleanupFailure } from "../../shared/executable/process-cleanup.js";
-@@ -75,13 +76,14 @@ export const codexSession = withSessionCredentials(async (installation, options,
-             throw new Error(readback.refusal);
+@@ -75,6 +76,7 @@
+             throw typeof readback.refusal === "string" ? new Error(readback.refusal) : readback.refusal;
          }
          const kernel = credentials.kernel(threadId);
 +        const backgroundTasks = codexBackgroundTasks(client, kernel, threadId);
          const state = {
              active: null,
              spontaneous: false,
-             codexTurnId: null,
+@@ -82,7 +84,7 @@
+             queuePausedAfterInterrupt: false,
              // A resume awaits codex's re-report of the thread's total so far: the
              // baseline this Session's token totals count from (projection.ts, #169).
 -            projection: initialCodexProjection(threadId, openMethod),
@@ -92,15 +93,15 @@
          };
          const tasks = codexTaskControl(kernel, client, () => state.projection.subagents);
          const nativeBusy = () => state.active !== null || state.spontaneous;
-@@ -99,6 +101,7 @@ export const codexSession = withSessionCredentials(async (installation, options,
+@@ -100,6 +102,7 @@
          // transport-only turn id and the control decisions (busy, spontaneous).
          const onNotification = (method, params) => {
              tasks.observe(method, params);
 +            if (params.threadId === threadId) backgroundTasks.note(method, params);
              const isRoot = typeof params.threadId !== "string" || params.threadId === threadId;
              if (isRoot && method === "turn/started") {
-                 const startedTurn = asRecord(params.turn)?.id;
-@@ -262,13 +265,32 @@ export const codexSession = withSessionCredentials(async (installation, options,
+                 state.queuePausedAfterInterrupt = false;
+@@ -264,13 +267,32 @@
              id: kernel.sessionId,
              ...(options.goals === true ? { goal: codexGoalControl(kernel, client, threadId) } : {}),
              capabilities,

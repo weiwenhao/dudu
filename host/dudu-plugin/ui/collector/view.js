@@ -1,9 +1,9 @@
 import { useCallback, useState } from 'react';
 
-export const TABS = ['todo', 'done', 'ignored'];
+export const TABS = ['todo', 'done'];
 const DATES = ['day', 'week', 'month'];
 const STORAGE_KEY = 'dudu.collector.view.v1';
-const EMPTY = () => ({ tab: 'todo', filters: { todo: {}, done: {}, ignored: {} } });
+const EMPTY = () => ({ tab: 'todo', filters: { todo: {}, done: {} } });
 
 /** What a stored filter may hold: connector ids, and one date range. Anything else is left out. */
 function clean(filter) {

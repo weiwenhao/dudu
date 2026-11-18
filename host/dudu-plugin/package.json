@@ -5,6 +5,7 @@
   "main": "./index.mjs",
   "exports": {
     ".": "./index.mjs",
+    "./computer-use": "./dist/computer-use/provider.mjs",
     "./client": "./dist/client.js",
     "./widget": {
       "types": "./widget.d.ts",

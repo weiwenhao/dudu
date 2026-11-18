@@ -15,6 +15,7 @@ import { SubIssueChipMenu } from './SubIssueMenu.jsx';
 import { T } from '../strings.js';
 import { conversationTime } from './conversation-time.js';
 import { pickConversation, rememberConversation, rememberedConversation } from './selection.js';
+import { useSessionReturnState } from '../lib/session-return.jsx';
 
 const issueOf = entry => entry.issue ? {
   ...entry.issue, pinned: entry.pinned, sessionState: entry.sessionState, receivedAt: entry.receivedAt,
@@ -27,31 +28,34 @@ function ConversationTitle({ issue }) {
   </span>;
 }
 
-function ConversationSidebar({ request, entries, pins, home, selected, scope, open, openChild, menu, badge, header }) {
+function ConversationSidebar({ request, entries, pins, home, selected, listKey, open, openChild, menu, badge, header, controls }) {
   const scroller = useRef(null);
-  const shelf = useRef(null);
-  const [shelfHeight, setShelfHeight] = useState(0);
+  const aboveRows = useRef(null);
+  const [aboveRowsHeight, setAboveRowsHeight] = useState(0);
   useEffect(() => {
-    // Observe the real shelf: pin rows change when the divider moves, and the
-    // shelf disappears in the compact rail. Neither changes the host session.
-    const element = shelf.current;
-    const observer = new ResizeObserver(() => setShelfHeight(element.offsetHeight));
+    // Pins may wrap and the number of filter controls can change.
+    const element = aboveRows.current;
+    const observer = new ResizeObserver(() => setAboveRowsHeight(element.offsetHeight));
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  useEffect(() => { scroller.current.scrollTop = 0; }, [scope]);
+  useEffect(() => { scroller.current.scrollTop = 0; }, [listKey]);
+  const scrollMargin = 8 + aboveRowsHeight; // includes the scroller's top padding
   const virtual = useVirtualizer({
     count: entries.length, getScrollElement: () => scroller.current, estimateSize: () => 64, overscan: 8,
-    scrollMargin: 8 + shelfHeight, getItemKey: index => entries[index].id,
+    scrollMargin, getItemKey: index => entries[index].id,
   });
   return <div className="dudu-conversation-sidebar">
     {header}
     <div ref={scroller} className="dudu-conversation-scroll">
-    <div ref={shelf} className="dudu-conversation-pins">
-      {pins.map(entry => menu(entry, <button type="button" className="dudu-conversation-pin focus-visible:ring-[3px] focus-visible:ring-ring/50" title={entry.issue ? entry.title : T.brand}
-        onClick={event => { if (event.currentTarget.contains(event.target)) open(entry); }}>
-        {badge(entry, 32)}<span className="dudu-conversation-pin-label">{entry.issue ? entry.title : T.brand}</span>
-      </button>))}
+    <div ref={aboveRows}>
+      <div className="dudu-conversation-pins">
+        {pins.map(entry => menu(entry, <button type="button" className="dudu-conversation-pin focus-visible:ring-[3px] focus-visible:ring-ring/50" title={entry.issue ? entry.title : T.brand}
+          onClick={event => { if (event.currentTarget.contains(event.target)) open(entry); }}>
+          {badge(entry, 32)}<span className="dudu-conversation-pin-label">{entry.issue ? entry.title : T.brand}</span>
+        </button>))}
+      </div>
+      {controls}
     </div>
     {home.status === 'error' && !home.value ? <div role="alert" className="flex flex-col items-center gap-3 p-5 text-muted-foreground">
       <span>{T.loadFailed}</span><Button variant="outline" size="sm" onClick={() => home.refresh()}>{T.retry}</Button>
@@ -61,7 +65,7 @@ function ConversationSidebar({ request, entries, pins, home, selected, scope, op
       {virtual.getVirtualItems().map(row => {
         const entry = entries[row.index], issue = issueOf(entry), progress = issue.subIssues;
         const title = issue.parent ? `${issue.parent.title}#${issue.title}` : issue.title;
-        return <div key={entry.id} role="listitem" className="absolute top-0 left-0 w-full" style={{ height: row.size, transform: `translateY(${row.start - (8 + shelfHeight)}px)` }}>
+        return <div key={entry.id} role="listitem" className="absolute top-0 left-0 w-full" style={{ height: row.size, transform: `translateY(${row.start - scrollMargin}px)` }}>
           {menu(entry, <div tabIndex={0} className="dudu-conversation-row" aria-label={title} aria-current={selected === entry.id ? 'true' : undefined} title={title}
             onClick={event => { if (event.currentTarget.contains(event.target) && !event.target.closest('button')) open(entry); }}
             onKeyDown={event => { if (event.key === 'Enter' && event.target === event.currentTarget) { event.preventDefault(); open(entry); } }}>
@@ -85,48 +89,63 @@ function ConversationSidebar({ request, entries, pins, home, selected, scope, op
   </div>;
 }
 
-export function Conversations({ request, home, scope, header, onOpen, onChange, onAssign, onDelete, onAddSub, onDuplicate, onPin, pinning }) {
+export function Conversations({ request, home, scope, listKey, header, controls, deletedIssue, onOpen, onChange, onAssign, onDelete, onAddSub, onDuplicate, onPin, pinning }) {
   const { conversation: services } = useServices();
   const toast = useToast();
-  const [selection, setSelection] = useState(() => ({ scope, id: pickConversation(home.value?.conversations ?? [], rememberedConversation(scope)), outsideIssue: null }));
+  const [selection, setSelection] = useSessionReturnState('conversation.selection', () => ({ scope, id: null, entry: null, outsideIssue: null }));
   const childRequest = useRef(0);
-  const entries = home.value?.conversations ?? [];
-  const byId = new Map(entries.map(entry => [entry.id, entry]));
-  const pins = (home.value?.pins ?? []).map(id => byId.get(id)).filter(Boolean);
-  // Reset only the choice when scope changes. The split and its header stay
-  // mounted, including the button anchoring an open filter menu.
-  const initial = pickConversation(entries, selection.scope !== scope || selection.id === null ? rememberedConversation(scope) : null);
-  if (selection.scope !== scope || (selection.id === null && initial !== null)) {
-    setSelection({ scope, id: initial, outsideIssue: null });
+  const deleted = deletedIssue == null ? null : `issue:${deletedIssue}`;
+  const loadedPins = home.value?.pinnedConversations;
+  const [shelf, setShelf] = useState(() => ({ listKey, response: loadedPins, pins: loadedPins }));
+  if (shelf.listKey !== listKey) {
+    // A cached response for the new query can be older than the pins already on screen.
+    setShelf({ ...shelf, listKey, response: loadedPins });
+  } else if (loadedPins && loadedPins !== shelf.response) {
+    setShelf({ listKey, response: loadedPins, pins: loadedPins });
   }
-  const { id: selected, outsideIssue } = selection;
-  // Expanding a conversation opens DSH's own page and closes this panel: coming back, the same conversation is open (owner, 2026-11-17: "我点了放大之后，我就回不到当前会话页面了").
+  const entries = (home.value?.conversations ?? []).filter(entry => entry.id !== deleted);
+  const pins = (shelf.pins ?? []).filter(entry => entry.id !== deleted);
+  const pinnedIds = new Set(pins.map(entry => entry.id));
+  const byId = new Map([...pins, ...entries].map(entry => [entry.id, entry]));
+  const resetSelection = selection.scope !== scope || (deleted !== null && selection.id === deleted);
+  let selected = resetSelection ? null : selection.id;
+  if (selected === null) {
+    const remembered = byId.get(rememberedConversation(scope));
+    selected = (remembered ? pickConversation([remembered], remembered.id) : null) ?? pickConversation(entries);
+  }
+  const previousSelection = !resetSelection && selection.id === selected ? selection : null;
+  const selectedEntry = byId.get(selected) ?? previousSelection?.entry ?? null;
+  const outsideIssue = selectedEntry ? null : previousSelection?.outsideIssue ?? null;
+  // Filtering changes the list query, but the right pane still owns the same conversation.
+  if (resetSelection || selected !== selection.id || selectedEntry !== selection.entry) {
+    setSelection({ scope, id: selected, entry: selectedEntry, outsideIssue });
+  }
   const listed = selected != null && byId.has(selected);
   useEffect(() => { if (listed) rememberConversation(scope, selected); }, [scope, selected, listed]);
   useEffect(() => () => { childRequest.current++; }, [scope]);
   const open = (entry) => {
     childRequest.current++;
     if (entry.issue && !entry.issue.session) return;
-    setSelection({ scope, id: entry.id, outsideIssue: null });
+    setSelection({ scope, id: entry.id, entry, outsideIssue: null });
   };
-  const selectedEntry = byId.get(selected);
   const selectedIssue = selectedEntry ? issueOf(selectedEntry) : outsideIssue;
   const openChild = async (id) => {
-    const local = entries.find(entry => entry.issue?.id === id);
+    const local = byId.get(`issue:${id}`);
     if (local) { open(local); return; }
     const token = ++childRequest.current;
     try {
       const answer = await request('issues/get', { id, logLimit: 1 });
       if (token !== childRequest.current) return;
       if (answer.outcome !== 'success') throw new Error();
-      if (answer.issue?.session) setSelection(current => current.scope === scope ? { scope, id: `issue:${id}`, outsideIssue: answer.issue } : current);
+      if (answer.issue?.session) setSelection(current => current.scope === scope ? { scope, id: `issue:${id}`, entry: null, outsideIssue: answer.issue } : current);
     } catch { if (token === childRequest.current) toast({ message: T.toast.failed }); }
   };
   const menu = (entry, child) => {
-    const issue = issueOf(entry);
+    const pinned = pinnedIds.has(entry.id);
+    const issue = { ...issueOf(entry), pinned };
     if (!entry.issue) return <ContextMenu key={entry.id}><ContextMenuTrigger asChild>{child}</ContextMenuTrigger>
       <ContextMenuContent><ContextMenuItem disabled={pinning.has(entry.id)} onSelect={() => onPin(issue)}>
-        {entry.pinned ? <ArrowDownFromLine strokeWidth={1.8} /> : <ArrowUpToLine strokeWidth={1.8} />}{entry.pinned ? T.issuePin.off : T.issuePin.on}
+        {pinned ? <ArrowDownFromLine strokeWidth={1.8} /> : <ArrowUpToLine strokeWidth={1.8} />}{pinned ? T.issuePin.off : T.issuePin.on}
       </ContextMenuItem></ContextMenuContent>
     </ContextMenu>;
     return <IssueMenu key={entry.id} issue={issue} request={request} onChange={onChange} onAssign={onAssign} onDelete={onDelete}
@@ -136,8 +155,8 @@ export function Conversations({ request, home, scope, header, onOpen, onChange, 
   };
   const badge = (entry, size) => <ConversationAvatar title={entry.title} assistant={!entry.issue}
     state={entry.sessionState} size={size} busy={pinning.has(entry.id)} />;
-  return <ConversationSplit sidebar={compact => <ConversationSidebar request={request} entries={entries} pins={pins} home={home} selected={selected} scope={scope}
-    open={open} openChild={openChild} menu={menu} badge={badge} header={header(compact)} />}>
+  return <ConversationSplit sidebar={compact => <ConversationSidebar request={request} entries={entries} pins={pins} home={home} selected={selected} listKey={listKey}
+    open={open} openChild={openChild} menu={menu} badge={badge} header={header(compact)} controls={!compact && controls} />}>
     {selectedIssue && services && <IssueConversation key={selectedIssue.id} issue={selectedIssue} request={request} services={services} />}
   </ConversationSplit>;
 }

@@ -1,44 +1,64 @@
 import SwiftUI
 
-struct BoardScopeMenu: View {
-    @ObservedObject var board: BoardModel
+struct BoardScopeBar: View {
+    let selection: BoardTab
+    let hasFilters: Bool
+    let onSelect: (BoardTab) -> Void
+    let onFilter: () -> Void
+    @Namespace private var pill
 
     var body: some View {
-        Menu {
-            Picker(selection: Binding(get: { board.tab }, set: { board.select($0) })) {
+        HStack(spacing: 2) {
+            Button(action: onFilter) {
+                DSBotIcon(.listFilter, size: 18)
+                    .foregroundStyle(hasFilters ? DSBotStyle.blue : DSBotStyle.ink)
+                    .frame(width: 32, height: 32)
+                    .background(hasFilters ? DSBotStyle.chatBubble : DSBotStyle.track, in: Circle())
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(DSBotQuietPressStyle())
+            .accessibilityLabel(L10n.text("筛选"))
+            .accessibilityAddTraits(hasFilters ? .isSelected : [])
+            .accessibilityIdentifier("board.filters")
+            HStack(spacing: 0) {
                 ForEach(BoardTab.allCases) { tab in
-                    Text(tab.title)
-                        .tag(tab)
-                        .accessibilityIdentifier("board.tab.\(tab.id)")
+                    Button { onSelect(tab) } label: {
+                        Text(tab.title)
+                            // The chosen tab's words stay the grey of the others; only the white pill marks it (owner, 2026-11-18: "就用灰色吧").
+                            .font(.system(size: 14, weight: selection == tab ? .medium : .regular))
+                            .foregroundStyle(DSBotStyle.chatSecondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                            .padding(.horizontal, 13)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .background {
+                                if selection == tab {
+                                    // Lark's: a white pill with a thin grey edge that slides to the tab that is chosen (owner, 2026-11-18: "胶囊会移动到下一个选项").
+                                    Capsule().fill(.white).overlay(Capsule().strokeBorder(Color.black.opacity(0.14), lineWidth: 1)).frame(height: 28)
+                                        .matchedGeometryEffect(id: "board.scope.pill", in: pill)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(DSBotQuietPressStyle())
+                    .accessibilityAddTraits(selection == tab ? .isSelected : [])
+                    .accessibilityIdentifier("board.tab.\(tab.id)")
                 }
-            } label: {
-                EmptyView()
             }
-            .pickerStyle(.inline)
-        } label: {
-            HStack(spacing: 6) {
-                Text(board.tab.title)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(DSBotStyle.ink)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DSBotStyle.muted)
-                    .accessibilityHidden(true)
-            }
-            .padding(.horizontal, 8)
-            .frame(minWidth: DSBotLayout.toolbarButtonSize, minHeight: DSBotLayout.toolbarHeight)
-            .contentShape(Rectangle())
+            .padding(.horizontal, 2)
+            .background { Capsule().fill(DSBotStyle.selected).frame(height: 32) }
+            .animation(.snappy(duration: 0.3), value: selection)
+            .accessibilityIdentifier("board.scope")
+            Spacer(minLength: 0)
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .accessibilityLabel(board.tab.title)
-        .accessibilityIdentifier("board.scope")
+        .padding(.leading, BoardHomeLayout.horizontalInset - 6)
+        .padding(.trailing, BoardHomeLayout.horizontalInset)
+        .padding(.bottom, 2)
     }
 }
 
-/// The Collector's three tabs: a glass capsule, the chosen one in the sidebar's selected grey.
+/// The tabs of the Collector (two) and of the tasks (four): a glass capsule, the chosen one in the sidebar's selected grey.
 struct GlassTabs<Tab: Identifiable & Hashable>: View {
     let tabs: [Tab]
     let title: (Tab) -> String

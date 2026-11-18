@@ -1,4 +1,4 @@
-// An issue given to an agent gets a session in its project folder, with the task title and description as its first message.
+// An issue given to an agent gets a session in its project folder, with the task title, description and creation attachments as its first message.
 // Session facts drive actual questions; read receipts drive presentation status. The owner controls workflow.
 // What the owner answers on the issue's page reaches the session. It never imports DSH: the sessions are
 // ./agent-sessions.mjs's, the issues are host/assistant/issues/'s.
@@ -41,7 +41,7 @@ export const WORDS = Object.freeze({
 const EARLY_KEPT = 100;
 const finished = (issue) => ['done', 'canceled'].includes(issue.statusType ?? issue.status);
 
-export function createAssignment({ issues, agentSessions, snapshotOf = () => null, repairDefaults, accessOf = () => ({}), waitMs = 8000, log = console } = {}) {
+export function createAssignment({ issues, agentSessions, snapshotOf = () => null, repairDefaults, attachmentsOf, accessOf = () => ({}), waitMs = 8000, log = console } = {}) {
   if (!issues || !agentSessions) throw new TypeError('createAssignment needs the issues and the sessions.');
   const bySession = new Map();   // session key -> issue id
   const suspended = new Set();  // issue ids whose linked sessions are being removed
@@ -139,7 +139,10 @@ export function createAssignment({ issues, agentSessions, snapshotOf = () => nul
     try { cwd = issue.project?.path; } catch (error) { return refuse(issue, error.message); }
     if (!cwd) return refuse(issue, '这个 issue 没有项目目录');
     const text = firstMessage({ issue });
-    const started = await agentSessions.start({ issue, agent, firstMessage: text, cwd, access, model: said.model });
+    const initial = issues.initialAttachments(id);
+    if (initial.outcome !== 'success' || initial.items.length && !attachmentsOf) return refuse(issue, 'Issue attachment is unavailable.');
+    const started = await agentSessions.start({ issue, agent, firstMessage: text, cwd, access, model: said.model,
+      ...(initial.items.length ? { attachments: (sessionId) => attachmentsOf(issue, { data: { attachments: initial.items } }, sessionId) } : {}) });
     if (started.outcome !== 'success') return refuse(issue, started.message, started);
 
     // Another agent, a session of its own or Done may have come while it started: then this one is not wanted.

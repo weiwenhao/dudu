@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, Check, ChevronDown, ChevronLeft, Clock3, Copy, Ellipsis, LoaderCircle, MessageCircle, PencilLine, Plus, Search, Trash2, X } from 'lucide-react';
+import { ArrowUpRight, Check, ChevronDown, ChevronLeft, Clock3, Copy, Ellipsis, LoaderCircle, MessageCircle, PencilLine, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { Command, CommandItem, CommandList, CommandSeparator } from '../components/command.jsx';
 import { Dialog, DialogContent, DialogTitle } from '../components/dialog.jsx';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
 import { AgentLogo } from '../issues/AgentLogo.jsx';
-import { AGENT_NAMES } from '../issues/model.js';
+import { AGENT_NAMES, USUAL_AGENTS } from '../issues/model.js';
 import { cn } from '../lib/cn.js';
 import { useServices } from '../services.jsx';
 import { T } from '../strings.js';
@@ -45,8 +45,8 @@ function TaskForm({ value, onChange, options, disabled }) {
   const timing = (patch) => set('schedule', { ...value.schedule, ...patch });
   const schedule = value.schedule;
   const provider = options.providers?.find((item) => item.id === value.agent);
-  // Until the plugin has sent its providers (or when it cannot), the agents of the issues are listed, and 嘟嘟 when the task is its own, so that its face is never a bare id.
-  const listed = options.providers ?? [...(value.agent === DUDU ? [{ id: DUDU }] : []), ...Object.entries(AGENT_NAMES).map(([id, name]) => ({ id, name }))];
+  // Until the plugin has sent its providers (or when it cannot), the usual agents of the issues are listed (and the task's own, whichever it is), and 嘟嘟 when the task is its own, so that its face is never a bare id.
+  const listed = options.providers ?? [...(value.agent === DUDU ? [{ id: DUDU }] : []), ...Object.entries(AGENT_NAMES).filter(([id]) => USUAL_AGENTS.includes(id) || id === value.agent).map(([id, name]) => ({ id, name }))];
   const providers = listed.map((item) => ({ value: item.id, label: item.id === DUDU ? T.brand : item.name, disabled: item.available === false, icon: <AgentLogo agent={item.id} /> }));
   const byDudu = value.agent === DUDU;
   // A task that goes into a conversation DSH already has runs on that conversation's own provider and model, in its workspace (owner, 2026-11-17): the three rows follow the conversation chosen below and say nothing until one is.
@@ -263,7 +263,13 @@ export function TasksDialog({ open, initialTaskId, onOpenChange, onConversation 
         onCloseAutoFocus={(event) => { event.preventDefault(); trigger.current?.focus?.(); }}>
         <header className="flex h-14 shrink-0 items-center gap-3 border-b pr-3.5 pl-5">
           <DialogTitle className="text-[16px] font-semibold">{S.title}</DialogTitle>
-          <div className="dudu-task-new ml-auto">
+          {/* Where the window says that it is reading the options (providers, models, workspaces) and that it could not: a spinner here, a retry button when it failed, and nothing otherwise (owner, 2026-11-18, on the
+              strip that stood above the form: "这里放一个 loading 吧"). The place is kept, so the button beside it never moves. */}
+          <span className="ml-auto flex size-8 shrink-0 items-center justify-center">
+            {loading ? <LoaderCircle role="status" aria-label={T.shell.loading} className="size-4 animate-spin text-muted-foreground" />
+              : optionsProblem && <Button variant="ghost" size="icon-sm" className="text-destructive hover:text-destructive" aria-label={`${S.optionsFailed} · ${T.retry}`} title={`${S.optionsFailed} · ${T.retry}`} onClick={retryLoad}><RefreshCw /></Button>}
+          </span>
+          <div className="dudu-task-new">
             <Button size="sm" className="dudu-task-primary rounded-r-none" disabled={busy} onClick={() => guard(() => choose(null))}><Plus />{S.create}</Button>
             <Menu label={S.create} trigger={<Button size="icon-sm" className="dudu-task-primary w-7 rounded-l-none border-l border-white/20" aria-label={T.detail.more} disabled={busy}><ChevronDown className="size-3.5" /></Button>}>
             {(hide) => <><CommandItem onSelect={() => { hide(); guard(() => choose(null)); }}><PencilLine />{S.manual}</CommandItem>
@@ -298,8 +304,6 @@ export function TasksDialog({ open, initialTaskId, onOpenChange, onConversation 
             </div>
           </aside>
           <section className="flex min-w-0 flex-1 flex-col">
-            {loading && draft && <div role="status" className="flex shrink-0 items-center gap-2 border-b px-6 py-2 text-xs text-muted-foreground"><LoaderCircle className="size-3.5 animate-spin" />{T.shell.loading}</div>}
-            {optionsProblem && <div role="alert" className="flex shrink-0 items-center gap-2 border-b px-6 py-2 text-xs text-destructive"><span>{T.collector.loadFailed}</span><Button variant="ghost" size="xs" disabled={loading} onClick={retryLoad}>{T.retry}</Button></div>}
             {problem && !optionsProblem && <div role="alert" className="flex shrink-0 items-center gap-2 border-b px-6 py-2 text-xs text-destructive"><span>{T.toast.failed} · {problem}</span>
               {problem === 'conflict' && selected && <Button variant="ghost" size="xs" disabled={busy} onClick={() => guard(() => void change('get'))}>{T.descriptionHistory.current}</Button>}
               {problem === 'unavailable' && <Button variant="ghost" size="xs" disabled={loading} onClick={retryLoad}>{T.retry}</Button>}

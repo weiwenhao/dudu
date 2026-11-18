@@ -4,7 +4,8 @@
 //
 //   const sessions = createAgentSessions({ dsh, now = Date.now, log = console });
 //
-//   start({ issue?, agent, firstMessage, cwd, access = 'read-only', model?, title? })
+//   start({ issue?, agent, firstMessage, cwd, access = 'read-only', model?, title?, attachments? })
+//        attachments: prompt parts, or an async (sessionId) builder for session-scoped file receipts
 //        -> { outcome: 'success', key: 'dsh:<id>', sessionId, agent, provider, model, access, cwd }
 //   send(key, text, { steer? })      the owner's words to the session: the answer to the question it waits on, else a message that
 //                                    starts its next turn (the session is put back first if it was folded away: `resumed: true`).
@@ -45,11 +46,11 @@
 //     request for a wider mode (kind 'approval'); the adapter waits for `answer` (the owner's words) and calls close() once it is settled by
 //     anyone, in DSH's own window as well
 
-import { HARNESS_IDS } from '../../providers/catalog.mjs';
+import { HARNESS_IDS, harnessName } from '../../providers/catalog.mjs';
 
 export const ACCESS_MODES = Object.freeze(['read-only', 'workspace-write', 'danger-full-access']);
 // The agents the issues name, and what each is to DSH: the harnesses are routes of their own, DeepSeek is DSH's own model.
-export const AGENTS = Object.freeze({ claude: 'Claude', codex: 'ChatGPT', pi: 'Pi', deepseek: 'DeepSeek' });
+export const AGENTS = Object.freeze({ ...Object.fromEntries(HARNESS_IDS.map((id) => [id, harnessName(id)])), deepseek: 'DeepSeek' });
 const HARNESS_ROUTES = Object.fromEntries(HARNESS_IDS.map((id) => [id, id]));
 
 const KEY = /^dsh:(.+)$/s;
@@ -212,7 +213,7 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
   });
 
   // --- the operations ---------------------------------------------------------------------------------------------------
-  async function start({ issue, agent, firstMessage, cwd, access, model, title } = {}) {
+  async function start({ issue, agent, firstMessage, cwd, access, model, title, attachments = [] } = {}) {
     if (!AGENTS[agent]) return clarify(`"${agent}" is not an agent. The agents are: ${Object.keys(AGENTS).join(', ')}.`);
     if (typeof firstMessage !== 'string' || !firstMessage.trim()) return clarify('firstMessage must not be empty.', 'Write what the agent is to do.');
     if (firstMessage.length > TEXT_MAX) return clarify(`firstMessage must be at most ${TEXT_MAX} characters.`);
@@ -247,7 +248,8 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
     try {
       await dsh.selectModel(sessionId, chosen);
       await dsh.setAccess(sessionId, access); // before the first message: the harnesses read the mode when a turn starts
-      await dsh.prompt(sessionId, firstMessage.trim());
+      const content = typeof attachments === 'function' ? await attachments(sessionId) : attachments;
+      await dsh.prompt(sessionId, firstMessage.trim(), ...(content.length ? [{ attachments: content }] : []));
     } catch (error) {
       entries.delete(sessionId);
       await Promise.resolve(dsh.archive(sessionId, { stop: true })).catch(() => {}); // a session that never took its first message is not left in the sidebar

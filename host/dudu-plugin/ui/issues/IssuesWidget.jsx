@@ -17,6 +17,7 @@ import { FilterMenu } from './FilterMenu.jsx';
 import { IssueList } from './IssueList.jsx';
 import { Conversations } from './Conversations.jsx';
 import { IssueScopeMenu } from './IssueScopeMenu.jsx';
+import { ScopeTabs } from './ScopeTabs.jsx';
 import { AGENT_NAMES, leafIds, presetOf } from './model.js';
 import { NewIssueDialog } from './NewIssueDialog.jsx';
 import { keepVisible, selectRow } from './selection.js';
@@ -29,17 +30,18 @@ import { DeleteConfirm, DeleteIssuesDialog } from './DeleteIssuesDialog.jsx';
 import { useSavedViews, viewKey } from './saved-views.js';
 import { ViewNameDialog } from './ViewDialogs.jsx';
 import { usePolled } from '../widgets/use-polled.js';
+import { useSessionReturnState } from '../lib/session-return.jsx';
 
 const TABS = ['active', 'backlog', 'all'];
 const SEARCH_DELAY_MS = 250;
 const allItems = (groups) => groups.flatMap((group) => group.groups ? allItems(group.groups) : group.items ?? []);
 
 export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession }) {
-  const [tab, setTab] = useState('active');
+  const [tab, setTab] = useSessionReturnState('issues.tab', 'active');
   const [creating, setCreating] = useState(null); // null, or { preset, parent?, initial? } while the New issue window is open
   const [dialogKey, setDialogKey] = useState(0); // a window that opens anew starts from its own preset and text
   const startCreating = useCallback((next) => { setDialogKey((key) => key + 1); setCreating(next); }, []);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useSessionReturnState('issues.search', '');
   const [searched, setSearched] = useState('');
   useEffect(() => { const timer = setTimeout(() => setSearched(search), SEARCH_DELAY_MS); return () => clearTimeout(timer); }, [search]);
   const { viewOf, update } = useViews();
@@ -139,6 +141,7 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   // Ticked rows: what they are, and what a bulk change does to them all, in one group (the store logs them together).
   const [selected, setSelected] = useState(() => new Set());
   const [deleting, setDeleting] = useState(null);
+  const [deletedIssue, setDeletedIssue] = useState(null);
   const selectedIssues = (list.groups ? allItems(list.groups) : list.items).filter((issue) => selected.has(issue.id));
   const assignmentLocked = selectedIssues.length !== selected.size || selectedIssues.some((issue) => issue.agent);
   const sharedProject = selectedIssues[0]?.project;
@@ -200,11 +203,12 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
       if (event.key.toLowerCase() !== 'f' || !button) return;
       event.preventDefault();
       setScopeMenuOpen(false);
-      openFilter(button, 'end');
+      if (chat) button.closest('[data-conversation-list-controls]')?.scrollIntoView({ block: 'nearest' });
+      openFilter(button, chat ? 'start' : 'end');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openFilter]);
+  }, [chat, openFilter]);
   const filtered = appliedFilters(view.filter, FILTER_KEYS).length > 0;
   const facets = useFacets(request, menu.open, query.tab, query.filter);
   const addTo = useCallback((entry) => startCreating({ preset: presetOf(entry.field, entry.groupKey) }), [startCreating]);
@@ -217,12 +221,14 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   const addViewButton = <Button variant="ghost" size="icon-sm"
     className={cn('size-7 text-muted-foreground', chat ? 'rounded-md' : 'rounded-full')}
     aria-label={T.views.add} title={T.views.add} onClick={() => { setScopeMenuOpen(false); setNaming('new'); }}><Layers /></Button>;
+  const filterTrigger = <Button ref={filterButton} variant={chat ? 'ghost' : 'outline'} size="icon-sm"
+    className={cn('size-7 rounded-full', chat && 'bg-muted text-muted-foreground', menu.open && 'bg-accent',
+      chat && filtered && 'bg-[var(--dudu-soft)] text-[var(--dudu-strong)] hover:bg-[var(--dudu-soft)] hover:text-[var(--dudu-strong)] dark:hover:bg-[var(--dudu-soft)]')}
+    aria-label={T.filterButton} title={T.filterButton} aria-haspopup="dialog" aria-expanded={menu.open}
+    onClick={(event) => openFilter(event.currentTarget, chat ? 'start' : 'end')}>
+    <ListFilter />
+  </Button>;
   const actions = <>
-    <Button ref={filterButton} variant={chat ? 'ghost' : 'outline'} size="icon-sm"
-      className={cn('size-7', chat ? 'rounded-md text-muted-foreground' : 'rounded-full', menu.open && 'bg-accent')}
-      aria-label={T.filterButton} aria-haspopup="dialog" aria-expanded={menu.open} onClick={(event) => openFilter(event.currentTarget, 'end')}>
-      <ListFilter />
-    </Button>
     <DisplayMenu
       tab={base} view={view} onChange={(change) => update(tab, change)}
       onReset={() => update(tab, (current) => ({ ...DEFAULT_VIEW, filter: current.filter }))}
@@ -240,38 +246,48 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
         chat ? 'w-full rounded-md' : 'w-[150px] rounded-full @[560px]:w-[220px]')}
     />
   </div>;
-  const filterBar = filtered && <FilterBar
+  const clearFilters = () => update(tab, { filter: {} });
+  const filterBar = !chat && filtered && <FilterBar
     filter={view.filter} onAdd={(element) => openFilter(element, 'start')}
     onRemove={(field) => update(tab, (current) => ({ filter: removeFilter(current.filter, field) }))}
-    onClear={() => update(tab, { filter: {} })}
+    onClear={clearFilters}
   />;
   const filterMenu = <FilterMenu
     open={menu.open} anchor={menu.anchor} filter={view.filter} counts={chat ? home.value?.counts : list.counts} facets={facets}
     onOpenChange={(open) => setMenu((current) => ({ ...current, open }))}
     onToggle={(field, value) => update(tab, (current) => ({ filter: toggleFilter(current.filter, field, value) }))}
+    canReset={filtered} onReset={() => {
+      clearFilters();
+      if (chat) return;
+      // Clearing removes the chip bar and its "+ Filter" anchor.
+      setMenu({ open: false, anchor: { element: filterButton.current, align: 'end' } });
+    }}
   />;
-  const sidebarTools = <div className="shrink-0">
-    {searchControl && <div className="px-3 pb-2">{searchControl}</div>}
-    {filterBar && <div className="dudu-conversation-filters">{filterBar}</div>}
-  </div>;
-  const conversationHeader = (compact) => <>
-    <header className="dudu-conversation-toolbar">
+  const conversationSearch = searchControl && <div className="px-3 pb-2">{searchControl}</div>;
+  const conversationHeader = (compact) => <header className="dudu-conversation-toolbar">
+    {compact ? (
       <IssueScopeMenu value={tab} saved={saved} onChange={selectView} onRename={setNaming} onDelete={setRemovingView}
-        open={scopeMenuOpen} onOpenChange={setScopeMenuOpen} triggerRef={scopeButton} compact={compact}>
-        {compact && <div data-conversation-compact-tools>
-          <div className="flex items-center justify-end gap-1.5 px-1.5 pt-1.5 pb-2">{addViewButton}{actions}</div>
-          {sidebarTools}
-        </div>}
+        open={scopeMenuOpen} onOpenChange={setScopeMenuOpen} triggerRef={scopeButton} compact highlighted={filtered}>
+        <div data-conversation-compact-tools>
+          <div className="flex items-center justify-end gap-1.5 px-1.5 pt-1.5 pb-2">{addViewButton}{filterTrigger}{actions}</div>
+          {conversationSearch}
+        </div>
       </IssueScopeMenu>
-      {!compact && <div className="ml-auto flex shrink-0 items-center gap-1.5">{addViewButton}{actions}</div>}
-    </header>
-    {!compact && sidebarTools}
-    {filterMenu}
+    ) : <div className="ml-auto flex shrink-0 items-center gap-1.5">{addViewButton}{actions}</div>}
+  </header>;
+  const conversationControls = <>
+    <div className="flex min-w-0 items-center gap-1.5 px-4 py-1" data-conversation-list-controls>
+      {filterTrigger}
+      <ScopeTabs tabs={TABS} value={tab} label={T.widgets.titles.issues} />
+      {saved.length > 0 && <IssueScopeMenu value={tab} saved={saved} onChange={selectView} onRename={setNaming} onDelete={setRemovingView}
+        open={scopeMenuOpen} onOpenChange={setScopeMenuOpen} triggerRef={scopeButton} iconOnly={!savedView} />}
+    </div>
+    {conversationSearch}
   </>;
 
   return (
     <section ref={root} aria-label={T.widgets.titles.issues} className="@container relative flex h-full min-h-0 flex-col">
-      <Tabs.Root value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
+      <Tabs.Root value={tab} onValueChange={chat ? selectView : setTab} className="flex min-h-0 flex-1 flex-col">
         {!chat && <div className="flex h-11 shrink-0 items-center gap-1.5 px-3">
           {/* The tabs give way to what is beside them (saved views can be many, and the smallest widget is narrow): they scroll sideways in their own row, with no bar. */}
           <Tabs.List className="-mx-1 flex min-w-0 items-center gap-1.5 overflow-x-auto px-1 [scrollbar-width:none]" aria-label={T.widgets.titles.issues}>
@@ -299,12 +315,14 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
           {addViewButton}
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
             {searchControl}
+            {filterTrigger}
             {actions}
           </div>
         </div>}
-        {!chat && filterBar}
+        {filterBar}
         {chat ? <Conversations
-          request={request} home={home} scope={JSON.stringify(homeQuery)} header={conversationHeader} onOpen={onOpen}
+          request={request} home={home} scope={savedView ? tab : JSON.stringify({ tab: base })} listKey={JSON.stringify(homeQuery)}
+          header={conversationHeader} controls={conversationControls} deletedIssue={deletedIssue} onOpen={onOpen}
           onChange={changeProperty} onAssign={assignCard} onDelete={(issue) => setDeleting([issue.id])}
           onAddSub={addSub} onDuplicate={duplicate} onPin={pin} pinning={pinning}
         /> : list.status === 'error' ? (
@@ -355,13 +373,17 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
         }} />}
       <DeleteConfirm open={Boolean(removingView)} onClose={() => setRemovingView(null)} title={T.views.deleteTitle(removingView?.name ?? '')} description={T.views.deleteScope}
         onDelete={() => { if (tab === viewKey(removingView.id)) selectView(removingView.base); removeView(removingView.id); setRemovingView(null); }} />
-      <DeleteIssuesDialog request={request} ids={deleting} onClose={() => setDeleting(null)} onDeleted={() => { setSelected(new Set()); refresh(); }} />
+      <DeleteIssuesDialog request={request} ids={deleting} onClose={() => setDeleting(null)} onDeleted={() => {
+        if (chat) setDeletedIssue(deleting?.[0]);
+        setSelected(new Set());
+        refresh();
+      }} />
       <NewIssueDialog
         request={request}
         key={dialogKey} open={creating !== null} onOpenChange={(open) => { if (!open) setCreating(null); }} preset={creating?.preset} parent={creating?.parent} initial={creating?.initial}
         onCreate={async (fields) => { const result = await request('issues/add', { fields }); if (result?.outcome === 'success') refresh(); return result; }}
       />
-      {!chat && filterMenu}
+      {filterMenu}
     </section>
   );
 }

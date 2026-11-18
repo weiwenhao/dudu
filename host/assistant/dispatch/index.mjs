@@ -23,7 +23,7 @@
 //   intake({ only? })   async. Runs each collector (only = an id or a list of ids) and keeps what it brought in the inbox (issues.inbox), and
 //       NOTHING ELSE (owner, 2026-11-05: "去掉嘟嘟的 issue 创建规则，现在他都创建不对，我不需要他创建了", then "只要收集好信息就好了，不需要嘟嘟处理任何东西"): no
 //       issue is made, nothing is judged, nothing is put aside, no model is asked. The owner reads the records in the Collector widget and shares them to
-//       an issue or a session, makes an issue of them, or ignores them. Per collector: collect; check and store the records (one row per source id and
+//       an issue or a session, or makes an issue of them. Per collector: collect; check and store the records (one row per source id and
 //       version, so a record that is stored already is not stored again).
 //       One run at a time: a second call while one runs is a no_op.
 //       -> { outcome, message, at, created: [], noted: [], collectors: [{ id, name, ok, error?, operations: [{ operation, label, status, ... }] }],

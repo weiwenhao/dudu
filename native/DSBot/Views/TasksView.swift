@@ -25,6 +25,8 @@ struct TaskSummaryRow: View {
     var horizontalPadding: CGFloat = 16
     /// The task's last delivery failed: 投递失败 in red ends the line (the conversation's list of tasks; the 任务 page does not say it).
     var failed = false
+    /// The sheet of tasks (owner, 2026-11-18, the inbox redesign): a 30pt logo, the title in 16pt, the status in 13pt, 64pt high. The other lists keep the compact row.
+    var roomy = false
 
     /// The desktop's `--dudu-success` in its light theme.
     private static let on = Color(red: 0x17 / 255, green: 0x7a / 255, blue: 0x3c / 255)
@@ -42,20 +44,20 @@ struct TaskSummaryRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: roomy ? 12 : 14) {
             Group {
                 if let agent {
-                    TaskAgentLogo(agent: agent, size: 22)
+                    TaskAgentLogo(agent: agent, size: roomy ? 30 : 22)
                 } else {
-                    DSBotIcon(.schedule, size: 20).foregroundStyle(DSBotStyle.muted)
+                    DSBotIcon(.schedule, size: roomy ? 24 : 20).foregroundStyle(DSBotStyle.muted)
                 }
             }
-            .frame(width: 22, height: 22)
+            .frame(width: roomy ? 30 : 22, height: roomy ? 30 : 22)
             .opacity(isOn ? 1 : 0.55)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(title)
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.system(size: roomy ? 16 : 15, weight: .medium))
                         .foregroundStyle(isOn ? DSBotStyle.ink : DSBotStyle.muted)
                         .lineLimit(1)
                     Spacer(minLength: 0)
@@ -63,7 +65,7 @@ struct TaskSummaryRow: View {
                         ProgressView().controlSize(.small).tint(DSBotStyle.muted)
                     } else if let statusText {
                         Text(statusText)
-                            .font(.system(size: 12))
+                            .font(.system(size: roomy ? 13 : 12))
                             .foregroundStyle(isOn ? Self.on : DSBotStyle.muted)
                             .lineLimit(1)
                     }
@@ -78,7 +80,7 @@ struct TaskSummaryRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, horizontalPadding)
-        .frame(height: 58)
+        .frame(height: roomy ? 64 : 58)
         .accessibilityElement(children: .combine)
     }
 }
@@ -165,7 +167,7 @@ struct TasksView: View {
             if let index = value("-dsbot-review-task-edit").flatMap(Int.init), rows.indices.contains(index) { editing = rows[index] }
             if arguments.contains("-dsbot-review-task-new") { model.isMaking = true }
             if let index = value("-dsbot-review-task-swipe").flatMap(Int.init), rows.indices.contains(index) { revealed = rows[index].id }
-            // `-dsbot-review-task-act pause:0` (also resume, run, duplicate, delete): what a swipe's block does to the Nth row.
+            // `-dsbot-review-task-act pause:0` (also resume, run, delete): what a swipe's block does to the Nth row.
             if let spec = value("-dsbot-review-task-act") {
                 let parts = spec.split(separator: ":")
                 if parts.count == 2, let action = TaskAction(rawValue: String(parts[0])), let index = Int(parts[1]), rows.indices.contains(index) {
@@ -184,13 +186,9 @@ struct TasksView: View {
         ZStack {
             QuickSheetPage(
                 title: L10n.text("任务"), count: model.state == .loaded ? model.items.count : nil,
-                onClose: { dismiss() }, active: sheet.task == nil,
+                onClose: { dismiss() }, centersTitle: true, active: sheet.task == nil,
                 scrollID: Binding(get: { sheet.scrollID }, set: { sheet.scrollID = $0 })
             ) {
-                Button { model.isMaking = true } label: {
-                    DSBotIcon(.plus, size: 20)
-                }
-                .accessibilityLabel(L10n.text("新建任务"))
             } filters: {
                 GlassTabs(tabs: TaskTab.allCases, title: \.title, selection: model.tab, identifier: "tasks.tab", onSelect: model.select)
                     .padding(.bottom, 14)
@@ -199,12 +197,12 @@ struct TasksView: View {
                     VStack(spacing: 0) {
                         ForEach(model.items) { task in
                             SwipeActionRow(actions: swipeActions(for: task), isRevealed: revealed == task.id, onReveal: { revealed = $0 ? task.id : nil }) {
-                                Button { tap(task) } label: { row(task) }
+                                Button { tap(task) } label: { row(task, roomy: true) }
                                     .buttonStyle(DSBotRowButtonStyle())
                                     .contextMenu { rowMenu(for: task) } preview: { TaskRowCard(task: task) }
                             }
                             .id(task.id)
-                            if task.id != model.items.last?.id { Divider().padding(.leading, 52).padding(.trailing, 16) }
+                            if task.id != model.items.last?.id { Divider().padding(.leading, 56).padding(.trailing, 14) }
                         }
                     }
                     .scrollTargetLayout()
@@ -213,7 +211,9 @@ struct TasksView: View {
                 } else {
                     content.frame(minHeight: 82)
                 }
-            } footer: {}
+            } footer: {
+                newTaskButton
+            }
             .opacity(sheet.task == nil ? 1 : 0)
             .allowsHitTesting(sheet.task == nil)
             .accessibilityHidden(sheet.task != nil)
@@ -295,11 +295,29 @@ struct TasksView: View {
         .refreshable { await model.refresh(using: store) }
     }
 
-    private func row(_ task: ScheduledTask) -> some View {
+    private func row(_ task: ScheduledTask, roomy: Bool = false) -> some View {
         TaskSummaryRow(
             agent: task.taskAgent, title: task.title, line: task.line, statusText: task.statusText,
-            isOn: task.isActive, isBusy: model.busy.contains(task.id), horizontalPadding: 10
+            isOn: task.isActive, isBusy: model.busy.contains(task.id), horizontalPadding: roomy ? 14 : 10, roomy: roomy
         )
+    }
+
+    /// The way to make a task, with its word, under the list (owner, 2026-11-18, the inbox redesign: it was a "+" beside the ✕): a glass capsule across the sheet.
+    private var newTaskButton: some View {
+        Button { model.isMaking = true } label: {
+            HStack(spacing: 8) {
+                DSBotIcon(.plus, size: 20)
+                Text(L10n.text("新建任务")).font(.system(size: 16, weight: .medium))
+            }
+            .foregroundStyle(DSBotStyle.ink)
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(DSBotGlassCapsuleButtonStyle())
+        .padding(.horizontal, 20)
+        .padding(.bottom, GlassActionBar.bottomGap)
+        .accessibilityIdentifier("tasks.new")
     }
 
     /// A tap puts away the swipe actions that are showing; otherwise it opens the task.
@@ -317,7 +335,7 @@ struct TasksView: View {
     }
 
     /// What a swipe to the left offers: pause (a quiet grey) and run now (blue, not black: owner, 2026-11-10) and delete (red) for a task that is on; resume and delete for one that is paused; delete for one
-    /// that is over. Run now, copy and edit are also in the menu of a press and hold, and in the task in full.
+    /// that is over. Run now and edit are also in the menu of a press and hold, and in the task in full.
     private func swipeActions(for task: ScheduledTask) -> [SwipeAction] {
         guard !model.busy.contains(task.id) else { return [] }
         let pause = SwipeAction(id: "pause", title: L10n.text("暂停任务"), symbol: "pause", color: SwipeAction.grey) { act(.pause, task) }
@@ -340,7 +358,6 @@ struct TasksView: View {
             Button { act(.resume, task) } label: { DSBotLabel(L10n.text("恢复任务"), icon: .play) }
         }
         Button { act(.run, task) } label: { DSBotLabel(L10n.text("立即执行"), icon: .zap) }
-        Button { act(.duplicate, task) } label: { DSBotLabel(L10n.text("复制任务"), icon: .copy) }
         Button { editing = task } label: { DSBotLabel(L10n.text("编辑"), icon: .editLine) }
         Button(role: .destructive) { deleting = task } label: { DSBotLabel(L10n.text("删除任务"), icon: .trash) }
     }

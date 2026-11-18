@@ -1,4 +1,5 @@
 import { abortable } from '../lib/abortable.js';
+import { HARNESS_AGENTS } from './model.js';
 
 /** Readable history can still be archived. Always restore through the issue's hook before opening its composer. */
 export async function resolveIssueSession(request, _actions, issue, { signal } = {}) {
@@ -23,7 +24,7 @@ export function watchIssueSession(request, { id, agent }, receive) {
       if (controller.signal.aborted || result?.outcome !== 'success') return;
       receive(result);
       // Harness identity may arrive after DSH has already created its session.
-      if (!controller.signal.aborted && ['claude', 'codex', 'pi'].includes(agent) && !result.command) timer = setTimeout(read, 5000);
+      if (!controller.signal.aborted && HARNESS_AGENTS.includes(agent) && !result.command) timer = setTimeout(read, 5000);
     } catch { /* The copy command stays unavailable; do not retry a failed read. */ }
   };
   void read();

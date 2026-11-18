@@ -5,12 +5,12 @@ struct AgentLogo: View {
     let agent: SessionAgent
     var size: CGFloat = 18
 
-    private var color: Color {
+    /// What a mark of one colour is drawn in: Claude's orange, DeepSeek's blue, and ink for every other (the ChatGPT knot, Grok, OpenCode and the like).
+    private var tint: Color {
         switch agent.rawValue {
         case "claude": return Color(red: 217.0 / 255, green: 119.0 / 255, blue: 87.0 / 255)
-        case "codex": return DSBotStyle.ink
         case "deepseek": return Color(red: 77.0 / 255, green: 107.0 / 255, blue: 254.0 / 255)
-        default: return DSBotStyle.muted
+        default: return DSBotStyle.ink
         }
     }
 
@@ -19,18 +19,27 @@ struct AgentLogo: View {
             if agent == .pi {
                 PiMark()
             } else if UIImage(named: "Agent-\(agent.rawValue)") != nil {
-                Image("Agent-\(agent.rawValue)")
-                    .renderingMode(.template)
-                    .resizable()
-                    .scaledToFit()
-                    .foregroundStyle(color)
+                // The assets are written by scripts/sync-agent-assets.mjs: a mark with colours of its own (`pictured`: Kimi, Antigravity, Devin) is a picture that is
+                // shown as it is; every other is a template of one colour that takes `tint`.
+                if SessionAgent.pictured.contains(agent.rawValue) {
+                    Image("Agent-\(agent.rawValue)")
+                        .renderingMode(.original)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    Image("Agent-\(agent.rawValue)")
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .foregroundStyle(tint)
+                }
             } else {
                 // An agent the app has no mark for: its first letter, as the Desktop draws an agent it does not know.
                 Text(String(agent.name.prefix(1)))
                     .font(.system(size: size * 0.55, weight: .semibold))
-                    .foregroundStyle(color)
+                    .foregroundStyle(DSBotStyle.muted)
                     .frame(width: size, height: size)
-                    .background(Circle().fill(color.opacity(0.15)))
+                    .background(Circle().fill(DSBotStyle.muted.opacity(0.15)))
             }
         }
         .frame(width: size, height: size)

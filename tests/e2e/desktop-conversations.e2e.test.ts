@@ -196,13 +196,14 @@ test('Desktop layouts share pins and completed reply order while retained conver
   await shot('10-list-pinned');
   checked('Normal list menu pin/unpin shares the home store and keeps pinned issues first within their workflow group');
   await layout('Sessions');
-  await widget.locator('.dudu-conversation-toolbar').getByRole('button', { name: 'Active', exact: true }).click();
-  await page.getByRole('option', { name: 'Backlog', exact: true }).click();
+  const scopes = widget.getByRole('tablist', { name: 'Issues', exact: true });
+  const pinnedConversation = page.locator('.dudu-conversation-pins').getByRole('button', { name: new RegExp(work[7].title) });
+  await scopes.getByRole('tab', { name: 'Backlog', exact: true }).click();
   await row('待规划检查').waitFor();
   assert.equal(await row('Dudu').count(), 0);
-  await widget.locator('.dudu-conversation-toolbar').getByRole('button', { name: 'Backlog', exact: true }).click();
-  await page.getByRole('option', { name: 'Active', exact: true }).click();
-  await page.locator('.dudu-conversation-pins').getByRole('button', { name: new RegExp(work[7].title) }).waitFor();
+  await pinnedConversation.waitFor();
+  await scopes.getByRole('tab', { name: 'Active', exact: true }).click();
+  await row(work[0].title).waitFor();
   // Persistence is a cold reopen check. Live reconnect during host shutdown is investigated separately from this feature.
   await page.goto('about:blank');
   stage = 'host restart';
@@ -218,7 +219,7 @@ test('Desktop layouts share pins and completed reply order while retained conver
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target: 'assistant', pinned: false }),
   });
   assert.equal(anonymous.status, 401, 'pin writes require DSH authentication');
-  checked('Layout and shared pins survive a host restart; planning hides Dudu; new pin API rejects anonymous writes');
+  checked('Layout and shared pins survive a host restart, planning scopes ordinary rows without changing pins, and pin writes require authentication');
   await shot('07-chat-restored');
   await widget.getByRole('button', { name: 'Display options', exact: true }).click();
   await shot('08-display-menu');

@@ -154,8 +154,6 @@
 | 内网地址 | LAN address | 复用 shell.lan | ComputerConnectionView.swift |
 | 写入 | Write | 新增，待审 | Transcript.swift |
 | 分 | m  | 复用 pet.duration.minute | TaskSheets.swift |
-| 分享到事项 | Share to issue | 新增，待审 | CollectorView.swift |
-| 分享到会话 | Share to session | 复用 collector.shareSession | CollectorView.swift |
 | 分组方式 | Group by | 新增，待审 | SidebarView.swift |
 | 切换到键盘 | Switch to keyboard | 新增，待审 | ChatView.swift |
 | 刚刚 | just now | 复用 activity.justNow | SidebarView.swift |
@@ -191,7 +189,7 @@
 | 取消归档 | Unarchive | 新增，待审 | SidebarView.swift |
 | 取消归档后才能打开。 | Unarchive this session to open it. | 新增，待审 | SidebarView.swift |
 | 取消置顶 | Unpin | 新增，待审 | SidebarView.swift |
-| 取消选择 | Clear selection | 复用 bulk.clear | CollectorView.swift、DSBotRootView.swift |
+| 取消选择 | Clear selection | 复用 bulk.clear | DSBotRootView.swift |
 | 受阻的目标 | Blocked goal | 新增，待审 | Transcript.swift |
 | 变量名 | Variable name | 复用 settings.connectorsPage.custom.envName | NativeSettingsView.swift |
 | 只移除工作区的登记。目录和其中的会话都会保留，会话会显示在「未分组」下。 | Only the workspace registration will be removed. Its folder and sessions will remain. Sessions will appear under “Ungrouped”. | 新增，待审 | SidebarView.swift |
@@ -234,7 +232,6 @@
 | 处理失败 | Processing failed | 新增，待审 | Transcript.swift |
 | 处理过程 | Activity | 新增，待审 | ChatView.swift |
 | 复制 | Copy | 复用 copy.menu | MessageActions.swift |
-| 复制任务 | Duplicate task | 复用 tasks.duplicate | TaskSheets.swift、TasksView.swift |
 | 复制文件内容 | Copy file contents | 新增，待审 | WorkPanelView.swift |
 | 复制路径 | Copy path | 新增，待审 | TurnFilesView.swift |
 | 失败 | Failed | 新增，待审 | SessionActivity.swift |
@@ -263,9 +260,6 @@
 | 已停止 | Stopped | 新增，待审 | SessionActivity.swift、Transcript.swift |
 | 已停用 | Disabled | 新增，待审 | LibraryView.swift |
 | 已写入文件 | Wrote files | 新增，待审 | Transcript.swift |
-| 已分享到  | Shared to  | 新增，待审 | CollectorView.swift |
-| 已分享到 {0} | Shared to {0} | 新增，待审 | Board.swift |
-| 已分享到 {0} 的会话 | Shared to {0}'s session | 新增，待审 | Board.swift |
 | 已创建任务 | Task created | 复用 pet.actions.tasks_create | TaskSheets.swift |
 | 已删除 | Deleted | 复用 collector.toast.deleted | Board.swift |
 | 已删除 {0} | Deleted {0} | 新增，待审 | native-settings.mjs |
@@ -278,7 +272,6 @@
 | 已取消进入计划模式 | Plan mode entry canceled | 新增，待审 | SessionCommands.swift |
 | 已启用 | Enabled | 新增，待审 | LibraryView.swift |
 | 已处理 | Handled | 复用 collector.tabs.done | Board.swift、CollectorView.swift |
-| 已复制任务 | Task duplicated | 复用 pet.actions.tasks_duplicate | Tasks.swift |
 | 已完成 | Done | 复用 status.done | IssueCreation.swift、SessionActivity.swift、Transcript.swift、NewIssueSheet.swift、TaskPanel.swift、native-bridge.mjs、native-settings.mjs |
 | 已完成分析 | Analyzed the request | 新增，待审 | Transcript.swift |
 | 已完成，用时 {0} | Completed in {0} | 新增，待审 | Transcript.swift |
@@ -287,7 +280,6 @@
 | 已开始 | Started | 复用 settings.statuses.categories.started | native-settings.mjs |
 | 已归档的会话 | Archived session | 新增，待审 | SidebarView.swift |
 | 已归档，取消归档后才能打开 | Archived. Unarchive to open. | 新增，待审 | SidebarView.swift |
-| 已忽略 | Ignored | 复用 collector.tabs.ignored | Board.swift |
 | 已恢复 | Restored | 复用 collector.toast.restored | Board.swift |
 | 已恢复任务 | Task resumed | 复用 pet.actions.tasks_resume | Tasks.swift |
 | 已投递 | Delivered | 复用 tasks.delivery.delivered | Tasks.swift |
@@ -344,7 +336,6 @@
 | 待确认 | Needs confirmation | 复用 tasks.delivery.uncertain | Tasks.swift |
 | 待规划 | Backlog | 复用 tabs.backlog | Board.swift、IssueCreation.swift、NewIssueSheet.swift、native-settings.mjs |
 | 忘记 | Forget | 复用 settings.memory.forget | native-settings.mjs |
-| 忽略 | Ignore | 复用 collector.ignore | CollectorView.swift |
 | 思考 | Thinking | 新增，待审 | TranscriptView.swift |
 | 思考过程 | Reasoning | 新增，待审 | ChatView.swift |
 | 恢复 | Restore | 复用 collector.restore | CollectorView.swift |
@@ -782,6 +773,25 @@ String Catalog 只增加已批准的中文，不新增未经审阅的英文译�
 英文先写了 Add photos，和现有的“照片 → Photos”“添加 → Add”“移除照片 → Remove photo”一致，等主人逐字审阅。
 一度只加了中文（照“发送视频”的做法），英文界面里会显示中文，主人指出这不对（“英文界面为什么要写中文？”），当天补上。
 其余文字沿用原文：预览照片、移除照片、部分照片未添加。
+
+## 2026-11-18 收件箱、转发和任务页
+
+主人看过 `.local/designs/inbox-forward-2026-11-18/` 的设计后说“ios 的审核通过”；页面上的字用设计里的原文，这里是这次新增的。英文是我写的，等主人逐字审阅。
+
+| 中文 | English | 审核状态 | 使用处 |
+|---|---|---|---|
+| 转发 | Forward | 中文随设计通过（取代“分享到会话”和“分享到事项”）；英文新增，待审 | CollectorView.swift：长按菜单、选择栏、记录栏；ForwardPickerSheet.swift：标题、确认卡的按钮 |
+| 转发给 | Forward to | 中文随设计通过；英文新增，待审 | ForwardPickerSheet.swift：确认卡上的小标签 |
+| 最近会话 | Recent conversations | 中文随设计通过；英文新增，待审 | ForwardPickerSheet.swift：列表上的小标签 |
+| 已转发到 {0} | Forwarded to {0} | 中文随设计通过（取代“已分享到 {0} 的会话”）；英文新增，待审 | Board.swift：转发成功的提示 |
+| 已转发到  | Forwarded to  | 中文随设计通过（取代“已分享到 ”；末尾有一个空格，后面接事项编号）；英文新增，待审 | CollectorView.swift：记录页里挂了事项的那一行 |
+| 搜索 | Search | 中文是设计图里搜索框的原文；英文新增，待审。设计说明把它当成了已有的词，其实 String Catalog 里原来只有“搜索事项…”“搜索文件”这些 | ForwardPickerSheet.swift：搜索框的提示文字 |
+
+沿用、没有改的词：取消、选择、全选、已选 {0} 条、打开来源、更多、补全上下文、恢复、已处理、删除、新建事项、新建任务、暂停任务、恢复任务、立即执行、编辑、删除任务、状态、打开事项、清除搜索、更改没能保存。选择器的列表为空、搜不到或没加载出来时沿用“没有事项”“没有找到事项”“事项没能加载”，没有新增说明文字。
+
+删掉的词（没有地方再用）：分享到事项、分享到会话、已分享到 {0}、已分享到 {0} 的会话、已分享到 （由上面的“转发”系列取代），复制任务、已复制任务（手机上不再有复制任务）。“搜索事项…”还在新建事项的选择器里用，所以保留。
+
+2026-11-18 主人说“忽略功能可以删掉了，用不上这个功能了”，手机上去掉了忽略这个功能，同时删掉的词（String Catalog 里的两条也已删除）：忽略（滑动、长按菜单、选择栏、记录页“更多”）、已忽略（“已忽略”页签的名字和标记后的提示）。没有新增任何文字。
 
 ## 仍由原内容决定的文字
 

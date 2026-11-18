@@ -29,7 +29,7 @@ const en = {
     targets: { reuse: 'Create a conversation and reuse it', new: 'New conversation each run', existing: 'Existing conversation' },
     kinds: { daily: 'Every day', workdays: 'Monday to Friday', weekly: 'Every week', monthly: 'Every month', interval: 'Interval', once: 'Once', cron: 'Cron' },
     pause: 'Pause task', resume: 'Resume task', run: 'Run now', duplicate: 'Duplicate task', delete: 'Delete task',
-    linked: 'Linked conversation', unsaved: 'You have unsaved changes', discard: 'Discard', save: 'Save changes', more: 'Load more',
+    linked: 'Linked conversation', unsaved: 'You have unsaved changes', discard: 'Discard', save: 'Save changes', more: 'Load more', optionsFailed: 'Could not load', // NEW (2026-11-18): the retry button in the window's header when the providers, models and workspaces could not be read
     delivery: { delivered: 'Delivered', delivering: 'Delivering', failed: 'Delivery failed', uncertain: 'Needs confirmation' },
     runFailed: 'Run failed', // NEW
   },
@@ -149,14 +149,14 @@ const en = {
   // NEW: the Collector widget. The owner approved its design and these words on 2026-11-05 ("没问题，就按你的推荐实现吧"); the rest is Issues' own (Filter, Clear, Dates, New issue, Open source, Open issue, Search issues…, Undo).
   collector: {
     select: 'Select', // Existing bulk-selection wording; moved to the context menu at the owner's request, 2026-11-09.
-    tabs: { todo: 'To handle', done: 'Handled', ignored: 'Ignored' },
+    tabs: { todo: 'To handle', done: 'Handled' },
     empty: 'Nothing here', loadFailed: 'Could not load the information',
-    shareSession: 'Share to session', ignore: 'Ignore', restore: 'Restore', // NEW: Share to session (the owner's words, 2026-11-05)
+    shareSession: 'Forward', restore: 'Restore', // Forward: the owner's word (2026-11-18, "我们不应该叫分享了，我们也改成叫转发吧"; it was Share to session); the English is mine
     markDone: 'Handled', remove: 'Delete', // NEW (2026-11-07): the owner's buttons 已处理 and 删除 ("collected information is often wrong"); the English names are mine
     complete: 'Fill in context', // NEW (2026-11-11): 补全上下文, the owner's own phrase ("让收集信息对应的会话去继续补全这一条信息的上下文"); the English name is mine
-    toast: { ignored: 'Ignored', restored: 'Restored', done: 'Handled', deleted: 'Deleted', sharedSession: (ref) => `Shared to the session of ${ref}` }, // NEW: sharedSession, done, deleted
-    // The line of the dialog about which issue the record went to: "Dudu made [DUD-12]" (an issue it made before it stopped making them), and what the owner did ("Shared to [DUD-12]", then the issue's status icon and number)
-    verdict: { made: 'made', shared: 'Shared to', created: 'Created' },
+    toast: { restored: 'Restored', done: 'Handled', deleted: 'Deleted', sharedSession: (ref) => `Forwarded to ${ref}` }, // NEW: sharedSession (the phone's "已转发到 {0}"), done, deleted
+    // The line of the dialog about which issue the record went to: "Dudu made [DUD-12]" (an issue it made before it stopped making them), and what the owner did ("Forwarded to [DUD-12]", then the issue's status icon and number)
+    verdict: { made: 'made', shared: 'Forwarded to', created: 'Created' },
   },
   // NEW: the + of a group bar or board column, and the menu of a board column.
   addTo: (name) => `New issue in ${name}`, // the design's label for the + of a group or column
@@ -224,7 +224,7 @@ const en = {
     descriptions: {
       issues: 'Every issue, as a list or a board',
       office: 'Assigned active issues as people at desks',
-      collector: 'What the collectors collected, to share to an issue, make an issue of, or ignore', // NEW
+      collector: 'What the collectors collected, to forward to a conversation or make an issue of', // NEW
     },
     needs: { issues: 'issues', quota: 'quota', inputs: 'inputs', sessions: 'sessions', network: 'network' },
     quota: {
@@ -353,7 +353,6 @@ const en = {
     skills: { empty: 'No skills yet', delete: 'Delete', back: 'Back to skills', deleteOf: (name) => `Delete: ${name}` },
   },
   sessionState: { idle: 'Idle', processing: 'Working', unread: 'Unread', unassigned: 'Unassigned' }, // NEW: Unread awaits English review; Working reuses the previous label
-  deepSleep: 'Deep sleep', // NEW (2026-11-05): the owner's word 深度睡眠, the name of the crescent that takes the place of the idle ring (hover title, screen readers); the English awaits review
   // NEW: the Pet frame's English controls and its unavailable states.
   pet: {
     open: 'Open conversation', close: 'Close', conversation: 'Dudu', message: 'Message', send: 'Send',
@@ -412,7 +411,7 @@ const zh = {
     targets: { reuse: '新建对话并复用', new: '每次新建对话', existing: '已有会话' },
     kinds: { daily: '每天', workdays: '周一至周五', weekly: '每周', monthly: '每月', interval: '间隔', once: '仅一次', cron: 'Cron' },
     pause: '暂停任务', resume: '恢复任务', run: '立即执行', duplicate: '复制任务', delete: '删除任务',
-    linked: '关联会话', unsaved: '有未保存的修改', discard: '放弃', save: '保存修改', more: '加载更多',
+    linked: '关联会话', unsaved: '有未保存的修改', discard: '放弃', save: '保存修改', more: '加载更多', optionsFailed: '没能读取', // NEW（2026-11-18）：供应商、模型、工作区没读到时，窗口标题栏里重试按钮的名字，待主人审核
     delivery: { delivered: '已投递', delivering: '正在投递', failed: '投递失败', uncertain: '待确认' },
     runFailed: '运行失败', // NEW (2026-11-11): 待主人审核
   },
@@ -491,14 +490,14 @@ const zh = {
   // 信息收集器：设计和这些字主人 2026-11-05 看过（“没问题，就按你的推荐实现吧”）；别的字是事项自己的（筛选、清除、日期、新建事项、打开来源、打开事项、搜索事项…、撤销）。
   collector: {
     select: '选择', // 已批准的原字；主人 2026-11-09 改为右键菜单入口。
-    tabs: { todo: '待处理', done: '已处理', ignored: '已忽略' },
+    tabs: { todo: '待处理', done: '已处理' },
     empty: '没有信息', loadFailed: '信息没能加载',
-    shareSession: '分享到会话', ignore: '忽略', restore: '恢复', // 分享到会话：主人的原话（2026-11-05）
+    shareSession: '转发', restore: '恢复', // 转发：主人的原话（2026-11-18：“我们不应该叫分享了，我们也改成叫转发吧”；原来是分享到会话）
     markDone: '已处理', remove: '删除', // 主人的原话（2026-11-07）：“收集器增加删除和已处理按钮”
     complete: '补全上下文', // NEW（2026-11-11）：主人的原话“让收集信息对应的会话去继续补全这一条信息的上下文”
-    toast: { ignored: '已忽略', restored: '已恢复', done: '已处理', deleted: '已删除', sharedSession: (ref) => `已分享到 ${ref} 的会话` }, // sharedSession：新写的；done 用主人的“已处理”，deleted：新写的
-    // 详情里说这条信息去了哪个事项的一行：“嘟嘟 建了 [DUD-12]”（嘟嘟不再建事项之前建的），和主人自己做的（“已分享到 [DUD-12]”，后面跟事项的状态图标和编号）
-    verdict: { made: '建了', shared: '已分享到', created: '已新建' },
+    toast: { restored: '已恢复', done: '已处理', deleted: '已删除', sharedSession: (ref) => `已转发到 ${ref}` }, // sharedSession：手机的“已转发到 {0}”；done 用主人的“已处理”，deleted：新写的
+    // 详情里说这条信息去了哪个事项的一行：“嘟嘟 建了 [DUD-12]”（嘟嘟不再建事项之前建的），和主人自己做的（“已转发到 [DUD-12]”，后面跟事项的状态图标和编号）
+    verdict: { made: '建了', shared: '已转发到', created: '已新建' },
   },
   addTo: (name) => `在${name}中新建事项`, lane: { options: '列选项', collapse: '折叠列', expand: '展开列' },
   dashboard: {
@@ -558,7 +557,7 @@ const zh = {
   },
   widgets: {
     titles: { issues: '看板', quota: '额度', sessions: '会话', office: '办公室', collector: '收件箱' },
-    descriptions: { issues: '所有事项，可按列表或看板查看', office: '已分配智能体的进行中事项，各有一位员工', collector: '收集器收集回来的信息，可分享到事项、新建事项或忽略' }, // collector: 新写的
+    descriptions: { issues: '所有事项，可按列表或看板查看', office: '已分配智能体的进行中事项，各有一位员工', collector: '收集器收集回来的信息，可转发到会话或新建事项' }, // collector: 新写的
     needs: { issues: '事项', quota: '额度', inputs: '输入', sessions: '会话', network: '网络' },
     quota: { leftLine: (window, percent) => `${window} 剩余 ${percent}%`, empty: '暂无用量', unknown: '—', fiveHour: '5 小时', weekly: '每周', days: (n) => `${n} 天`, used: (label, percent) => `${label} 已用 ${percent}%`,
       resets: (when) => `${when} 重置`, resetsAt: (when) => `${when} 重置`, limitReached: (when) => `已达上限，${when} 重置`, label: (name, percent) => `${name} 已用 ${percent}%`, balance: '余额', updated: (when) => `更新于 ${when}`, until: (date) => `有效期至${date}` },
@@ -655,7 +654,6 @@ const zh = {
     skills: { empty: '还没有技能', delete: '删除', back: '返回技能', deleteOf: (name) => `删除：${name}` },
   },
   sessionState: { idle: '空闲', processing: '工作', unread: '未读', unassigned: '未分配' },
-  deepSleep: '深度睡眠', // 主人 2026-11-05 的原话：代替空闲圈的月牙的名字（悬停提示、读屏）
   pet: {
     open: '展开对话', close: '关闭', conversation: '嘟嘟', message: '发消息', send: '发送', earlier: '更早的对话', voice: '语音输入', release: '松开发送 · Esc 取消',
     hide: '隐藏 Dudu',

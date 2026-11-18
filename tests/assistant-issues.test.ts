@@ -65,6 +65,21 @@ test('add creates an issue with the documented defaults', (t) => {
   });
 });
 
+test('a listed issue carries the latest message of its session, and nothing before there is a session or a message', (t) => {
+  const s = store();
+  t.after(s.cleanup);
+  s.add({ title: 'has a session', agent: 'claude', session: 'claude:talked' });
+  s.add({ title: 'session never spoke', agent: 'claude', session: 'claude:quiet' });
+  s.add({ title: 'no session' });
+  const said = new Map([['claude:talked', 'The fix is in; waiting for your OK to merge.']]);
+  const listed = s.open({ sessionPreview: (key: string) => said.get(key) ?? '' }).list({ tab: 'all' }).items;
+  const previews = Object.fromEntries(listed.map((issue: any) => [issue.title, issue.preview]));
+  assert.deepEqual(previews, { 'has a session': 'The fix is in; waiting for your OK to merge.', 'session never spoke': '', 'no session': '' });
+  // a hook that throws is a session with nothing to show, never a failed list
+  const broken = s.open({ sessionPreview: () => { throw new Error('facts are not loaded'); } }).list({ tab: 'all' }).items;
+  assert.deepEqual(broken.map((issue: any) => issue.preview), ['', '', '']);
+});
+
 test('add rejects wrong input with needs_clarification and creates nothing', (t) => {
   const s = store();
   t.after(s.cleanup);

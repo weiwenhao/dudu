@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Check } from 'lucide-react';
+import { Button } from '../components/button.jsx';
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from '../components/command.jsx';
 import { Popover, PopoverAnchor, PopoverContent } from '../components/popover.jsx';
 import { cn } from '../lib/cn.js';
@@ -59,7 +60,7 @@ function FilterOptions({ row, sections, fields, filter, onToggle, inputRef, onBa
  * options are showing. `anchor` is the button that opened it ({ element, align }). `schema` is what the filter holds ({ fields, rows, groups, first });
  * the Collector widget brings its own.
  */
-export function FilterMenu({ open, anchor, onOpenChange, filter, counts, facets, onToggle, schema = ISSUES }) {
+export function FilterMenu({ open, anchor, onOpenChange, filter, counts, facets, onToggle, onReset, canReset, schema = ISSUES }) {
   const [hot, setHot] = useState(schema.first);
   const rows = useRef({});
   const row = schema.rows[hot];
@@ -104,6 +105,14 @@ export function FilterMenu({ open, anchor, onOpenChange, filter, counts, facets,
             ))}
           </CommandList>
         </Command>
+        {onReset && (
+          <>
+            <div className="-mx-1.5 my-1.5 border-t" role="separator" />
+            <div className="flex h-9 items-center justify-end px-2">
+              <Button variant="ghost" size="sm" onClick={onReset} disabled={!canReset}>{T.display.reset}</Button>
+            </div>
+          </>
+        )}
         {open && row && (
           <Popover open onOpenChange={(next) => { if (!next) onOpenChange(false); }}>
             <PopoverAnchor virtualRef={optionsAnchor} />

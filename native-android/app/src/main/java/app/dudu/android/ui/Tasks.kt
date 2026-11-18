@@ -20,6 +20,8 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,6 +44,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 @Composable
 fun taskStatus(value: String): String = when (value) {
@@ -68,17 +71,25 @@ fun scheduleLine(schedule: JSONObject): String = when (schedule.optString("kind"
         }.orEmpty() else "", schedule.optString("time")).filter(String::isNotBlank).joinToString(" ")
 }
 
+/**
+ * The scheduled tasks: a sheet of the Dudu chat (`onHeight` reports how high the sheet has to be), the list of a conversation (`sessionId`), or a page of its own. The sheet's bar is the frame (the
+ * centred 任务 with its count and the ✕: no "+"), the way to make a task is 新建任务 across the sheet under the list, and its rows are the roomy ones (owner, 2026-11-18, the inbox redesign; the drawings are
+ * `.local/designs/inbox-forward-android-2026-11-18/`). The page of its own keeps its chrome.
+ */
 @Composable
 fun TasksScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
-    onCount: ((Int) -> Unit)? = null, sessionId: String? = null,
+    onHeight: ((Int) -> Unit)? = null, sessionId: String? = null,
     open: (Route) -> Unit = { model.navigate(it) }, refreshKey: Int = 0, active: Boolean = true) {
     val actions = rememberActions()
+    val quick = onHeight != null
     var tasks by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var filter by rememberSaveable { mutableStateOf("") }
     var finishedOpen by remember { mutableStateOf<Boolean?>(null) }
     var deleting by remember { mutableStateOf<JSONObject?>(null) }
     var revealed by remember { mutableStateOf<String?>(null) }
     var detail by remember { mutableStateOf<Route?>(null) }
+    val density = LocalDensity.current
+    var tabsHeight by remember { mutableIntStateOf(44) }
     fun openTask(route: Route) { if (sessionId != null) detail = route else open(route) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(actions.revision, sessionId, refreshKey, lifecycle, active, detail) {
@@ -99,10 +110,14 @@ fun TasksScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
         else current + if (finishedIsOpen) finished else emptyList()
     val resize = LocalSheetHeight.current
     LaunchedEffect(visible.size, finished.size, current.size, detail) {
-        if (sessionId != null) resize(if (detail != null) 600 else (96 + current.size * 58 + if (finished.isEmpty()) 0 else
+        if (sessionId != null) resize(if (detail != null) 600 else (84 + current.size * 58 + if (finished.isEmpty()) 0 else
             (if (current.isEmpty()) 52 else 66) + if (finishedIsOpen) 10 + finished.size * 58 else 0).coerceIn(260, 600))
     }
-    LaunchedEffect(visible.size) { onCount?.invoke(visible.size) }
+    if (onHeight != null) {
+        // The sheet is as high as its content: the bar, the tabs, the rows (64 dp, a hairline between them), and 新建任务 under them.
+        val rows = if (visible.isEmpty()) 160 else visible.size * 64 + (visible.size - 1) / 2
+        LaunchedEffect(rows, tabsHeight) { onHeight(54 + tabsHeight + rows + 16 + 52 + 12) }
+    }
     fun act(name: String, task: JSONObject) = actions.run {
         model.request("tasks.$name", json("id" to task.getString("id"), "revision" to task.getInt("revision")))
         revealed = null; actions.refresh()
@@ -119,16 +134,17 @@ fun TasksScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
                 } else if (status == "paused") add(RowSwipeAction(w("恢复任务"), R.drawable.ic_play, DuduStyle.blue) { act("resume", task) })
                 add(RowSwipeAction(w("删除任务"), R.drawable.ic_trash2, androidx.compose.ui.graphics.Color(0xFFE14848)) { deleting = task })
             }
-            LibraryRowGroup(task === rows.first(), task === rows.last(), grouped = sessionId != null || onCount != null) {
+            LibraryRowGroup(task === rows.first(), task === rows.last(), grouped = sessionId != null || quick,
+                inset = if (quick) 16 else 20, dividerStart = if (quick) 56 else 16, dividerEnd = if (quick) 14 else 0) {
                 SwipeMenuRow(swipe, enabled = !actions.busy, revealed = revealed == id,
                     onReveal = { revealed = if (it) id else null }) { closeSwipe ->
                     Box {
-                        Surface(color = if (sessionId != null || onCount != null) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.background) {
+                        Surface(color = if (sessionId != null || quick) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.background) {
                             Box(Modifier.fillMaxWidth().testTag("task-$id").combinedClickable(onClick = {
                                 if (revealed != null) { revealed = null; closeSwipe() }
                                 else openTask(Route("task", task.getString("title"), id))
                             }, onLongClick = { menu = true })) {
-                                TaskSummary(task, sessionId != null, horizontalPadding = if (sessionId != null || onCount != null) 16 else 10)
+                                TaskSummary(task, sessionId != null, horizontalPadding = if (quick) 14 else if (sessionId != null) 16 else 10, roomy = quick)
                             }
                         }
                         DropdownMenu(menu, { menu = false }) {
@@ -138,8 +154,6 @@ fun TasksScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
                                 enabled = !actions.busy, onClick = { menu = false; act(if (status == "active") "pause" else "resume", task) })
                             DropdownMenuItem(text = { Text(w("立即执行")) }, leadingIcon = { Glyph(R.drawable.ic_zap, size = 18) },
                                 enabled = !actions.busy, onClick = { menu = false; act("run", task) })
-                            DropdownMenuItem(text = { Text(w("复制任务")) }, leadingIcon = { Glyph(R.drawable.ic_copy, size = 18) },
-                                enabled = !actions.busy, onClick = { menu = false; act("duplicate", task) })
                             DropdownMenuItem(text = { Text(w("编辑")) }, leadingIcon = { Glyph(R.drawable.ic_pencil_line, size = 18) },
                                 enabled = !actions.busy, onClick = { menu = false; openTask(Route("task", task.getString("title"), id, json("edit" to true))) })
                             DropdownMenuItem(text = { Text(w("删除任务"), color = MaterialTheme.colorScheme.error) },
@@ -154,15 +168,17 @@ fun TasksScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
     Box(Modifier.fillMaxSize()) {
     Box(Modifier.fillMaxSize().alpha(if (detail == null) 1f else 0f).then(
         if (detail == null) Modifier else Modifier.clearAndSetSemantics {})) {
-    Page(if (onCount != null) w("任务") else w("定时任务"), back, actions,
-        centersSheetTitle = sessionId != null, count = visible.size.takeIf { onCount != null }, top = {
-            if (sessionId == null) IconButton(onClick = { openTask(Route("task", target = "new")) }, modifier = Modifier.testTag("new-task")) {
+    Page(if (quick) w("任务") else w("定时任务"), back, actions,
+        count = visible.size.takeIf { quick }, top = {
+            if (sessionId == null && !quick) IconButton(onClick = { openTask(Route("task", target = "new")) }, modifier = Modifier.testTag("new-task")) {
                 Glyph(R.drawable.ic_plus, w("新建任务"))
             }
         }) {
-        if (sessionId == null) FilterTabs(filter, listOf("" to w("全部"), "active" to taskStatus("active"),
-            "paused" to taskStatus("paused"), "ended" to taskStatus("ended"))) { filter = it }
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        if (sessionId == null) Box(Modifier.onSizeChanged { tabsHeight = (it.height / density.density).roundToInt() }) {
+            FilterTabs(filter, listOf("" to w("全部"), "active" to taskStatus("active"),
+                "paused" to taskStatus("paused"), "ended" to taskStatus("ended"))) { filter = it }
+        }
+        LazyColumn(if (quick) Modifier.weight(1f) else Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = if (quick) 0.dp else 24.dp)) {
             if (visible.isEmpty() && !actions.busy && actions.error == null) item {
                 Box(Modifier.fillMaxWidth().heightIn(min = 160.dp), contentAlignment = Alignment.Center) {
                     Text(if (sessionId == null) w("没有任务") else w("暂无定时任务"), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -182,6 +198,14 @@ fun TasksScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
                 item { Spacer(Modifier.height(10.dp)) }
                 taskRows(finished)
             }
+        }
+        if (quick) Button(onClick = { openTask(Route("task", target = "new")) },
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp).height(52.dp).testTag("new-task"),
+            shape = RoundedCornerShape(26.dp), colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = .08f), contentColor = MaterialTheme.colorScheme.onSurface)) {
+            Glyph(R.drawable.ic_plus, size = 20)
+            Spacer(Modifier.width(8.dp))
+            Text(w("新建任务"), fontSize = 16.sp, fontWeight = FontWeight.Medium)
         }
     }
     }
@@ -363,13 +387,13 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
         }
         return
     }
+    // The header of the task in full is only the frame (owner, 2026-11-18, the inbox redesign): ‹ when it is pushed over the list, the centred 任务, ✕; no pencil and no status chip. What can be done
+    // is the labelled bar at the bottom, and the status is the first row of the rule.
     Page(if (editing) { if (isNew) w("新建任务") else w("编辑") } else w("任务"), cancel, actions,
-        centersSheetTitle = editing || close != null, cancels = editing, nested = close != null && !editing,
+        cancels = editing, nested = close != null && !editing,
         background = if (editing) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surfaceContainer,
         close = close?.takeUnless { editing }?.let { action -> { if (!actions.busy) action() } }, top = {
         if (editing) TextButton(onClick = { save() }, enabled = valid && !actions.busy && (isNew || dirty), modifier = Modifier.testTag("save-task")) { Text(stringResource(R.string.save)) }
-        else IconButton(onClick = { task?.let(::seed); editing = true }, enabled = task != null && !actions.busy,
-            modifier = Modifier.testTag("edit-task")) { Glyph(R.drawable.ic_pencil, w("编辑")) }
     }) {
         if (editing) Form {
             DraftInput(title, w("自动化任务名称"), seeded && !actions.busy, tag = "task-title", modifier = Modifier.focusRequester(titleFocus)) { title = it }
@@ -420,21 +444,16 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
         LazyColumn(Modifier.weight(1f).testTag("task-detail-list"), contentPadding = PaddingValues(bottom = 20.dp)) {
             task?.let { task ->
                 item {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 26.dp, vertical = 20.dp), verticalAlignment = Alignment.CenterVertically,
+                    Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        AgentLogo(task.optString("agent"), 26)
+                        AgentLogo(task.optString("agent"), 30)
                         Text(task.getString("title"), Modifier.weight(1f), fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                        Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.surfaceContainer) {
-                            Text(taskStatus(task.optString("status")), Modifier.padding(horizontal = 10.dp, vertical = 5.dp), fontSize = 12.sp,
-                                color = if (task.optString("status") == "active") androidx.compose.ui.graphics.Color(0xFF177A3C)
-                                    else MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
                     }
                 }
-                item { Section(w("规则")) }
+                item { Section(w("规则"), top = 12) }
                 item {
                     val schedule = task.getJSONObject("schedule")
-                    val values = listOf(w("运行时间") to scheduleLine(schedule), w("时区") to schedule.optString("timezone"),
+                    val values = listOf(w("状态") to taskStatus(task.optString("status")), w("运行时间") to scheduleLine(schedule), w("时区") to schedule.optString("timezone"),
                         w("下次运行") to if (task.optString("status") != "active" || task.isNull("nextRunAt")) "—" else
                             DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT, locale).apply {
                                 timeZone = TimeZone.getTimeZone(schedule.optString("timezone")) }.format(Date(task.getLong("nextRunAt"))),
@@ -445,10 +464,11 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
                     InsetCard(Modifier.padding(horizontal = 18.dp)) {
                         values.forEachIndexed { index, (name, value) ->
                             if (index > 0) TaskRuleDivider()
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 15.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(name, fontSize = 15.sp); Spacer(Modifier.width(12.dp))
-                                Text(value, Modifier.weight(1f), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                            Row(Modifier.fillMaxWidth().heightIn(min = 50.dp).padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(name, fontSize = 15.sp, lineHeight = 22.sp); Spacer(Modifier.width(12.dp))
+                                Text(value, Modifier.weight(1f), fontSize = 15.sp, lineHeight = 22.sp, textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                                    color = if (index == 0 && task.optString("status") == "active") androidx.compose.ui.graphics.Color(0xFF177A3C)
+                                        else MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -470,18 +490,16 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
                 } }, enabled = !actions.busy, modifier = Modifier.fillMaxWidth()) { Text(w("加载更多")) } }
             }
         }
-        Surface(Modifier.padding(horizontal = 24.dp, vertical = 12.dp).fillMaxWidth(), shape = RoundedCornerShape(50),
-            color = MaterialTheme.colorScheme.surface, border = androidx.compose.foundation.BorderStroke(.5.dp, MaterialTheme.colorScheme.outlineVariant)) {
-            Row(Modifier.fillMaxWidth().height(48.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                val status = task?.optString("status")
-                if (status == "active" || status == "paused") IconButton(onClick = { action(if (status == "active") "pause" else "resume") }, enabled = !actions.busy) {
-                    Glyph(if (status == "active") R.drawable.ic_pause else R.drawable.ic_play, if (status == "active") w("暂停任务") else w("恢复任务"), 22)
-                }
-                IconButton(onClick = { action("run") }, enabled = task != null && !actions.busy) { Glyph(R.drawable.ic_zap, w("立即执行"), 22) }
-                IconButton(onClick = { action("duplicate") }, enabled = task != null && !actions.busy) { Glyph(R.drawable.ic_copy, w("复制任务"), 22) }
-                IconButton(onClick = { deleting = true }, enabled = task != null && !actions.busy) { Glyph(R.drawable.ic_trash2, w("删除任务"), 22, MaterialTheme.colorScheme.error) }
-            }
-        }
+        // What can be done with the task, with the words under the icons: pause or resume it (not one that is over), run it now, edit it, delete it (red, asks first).
+        val ready = task != null && !actions.busy
+        val phase = task?.optString("status")
+        ActionBar(buildList {
+            if (phase == "active" || phase == "paused") add(BarItem(if (phase == "active") w("暂停任务") else w("恢复任务"),
+                if (phase == "active") R.drawable.ic_pause else R.drawable.ic_play, "task-toggle", enabled = ready) { action(if (phase == "active") "pause" else "resume") })
+            add(BarItem(w("立即执行"), R.drawable.ic_zap, "task-run", enabled = ready) { action("run") })
+            add(BarItem(w("编辑"), R.drawable.ic_pencil_line, "edit-task", enabled = ready) { task?.let(::seed); editing = true })
+            add(BarItem(w("删除任务"), R.drawable.ic_trash2, "task-delete", danger = true, enabled = ready) { deleting = true })
+        })
         }
     }
     if (confirmingDiscard) AlertDialog(onDismissRequest = { if (!actions.busy) confirmingDiscard = false },

@@ -4,7 +4,7 @@
 //   const inbox = createInbox(db, { now })
 //
 //   ingest(connector, records, { runId })  records from normalizeRecords. One row per (connector, source id, version); a row that is there
-//                                          already is only counted. A conversation (`record.conversation`) whose row is still waiting (not ignored,
+//                                          already is only counted. A conversation (`record.conversation`) whose row is still waiting (not handled,
 //                                          not shared) takes the messages it did not have, instead of a second row. A record that says `update` is an item given again to
 //                                          change what the inbox kept of it: the fields it gives replace the row's (the newest row of that item's id that is not deleted, else the
 //                                          newest of the conversation it is in, `thread:<thread>`), whatever its state; the owner's marks, its issue and its number stay, no row
@@ -19,21 +19,20 @@
 //   search(q, { connector, limit })        full text, Chinese included -> [row without text]
 //   get(id, { around, summary })           -> { record, thread: [rows of the same thread, without text] } | null; summary skips body and thread
 //   forIssue(issueId)                      the rows that became or fed this issue
-//   dropUntouched(connector)               the rows of a collector that was removed which the owner never dealt with (the widget's "待处理": no issue, not ignored, not
+//   dropUntouched(connector)               the rows of a collector that was removed which the owner never dealt with (the widget's "待处理": no issue, not
 //                                          handled, not deleted) are deleted for good; what the owner marked or made an issue of stays -> the number deleted
 //   prune()                                30 days after judgement the text of a row that has no issue is cleared; a year after, the row goes
-//   browse({ tab, connector, since, limit, cursor })   the collector widget's list: tab todo | done | ignored, newest first -> { items, nextCursor, facets }
-//   ignore(id) / restore(id)               the owner's own mark: a row that is ignored is no one's to judge, and is listed under "ignored"
-//   done(id) / remove(id)                  the owner's other two marks, for a row that has no issue: dealt with by themselves (listed under "done"), or wrong
-//                                          (gone from every list; the row stays, so that the same message is not collected again). restore(id) takes any of
-//                                          the three marks off: a deleted row is back where it was, an ignored or handled one is waiting again
+//   browse({ tab, connector, since, limit, cursor })   the collector widget's list: tab todo | done, newest first -> { items, nextCursor, facets }
+//   done(id) / remove(id)                  the owner's own marks, for a row that has no issue: dealt with by themselves (listed under "done"), or wrong
+//                                          (gone from every list; the row stays, so that the same message is not collected again). restore(id) takes either
+//                                          mark off: a deleted row is back where it was, a handled one is waiting again
 //   link(id, { issueId, verdict })         the owner made an issue of the row (verdict 'issue') or shared it to one (verdict 'note')
 //   lastMe(connector)                      who the owner is on that source, as the latest collection that said so named them: { name, id } | null
 //   startRun / finishRun / lastRun / lastFinished / lastGood / lastStarted   collect_runs: one row per collection of a connector
 //
 // A row is 'new' until judged, then 'done' (verdict, issue, reason), or 'let_go' (the model could not judge it three times) or 'dropped'
 // (more than 1,000 waited for one connector: the oldest are given up). Text is not taken as an instruction anywhere in here.
-// The owner's marks sit beside that and change none of it: `ignored_at` (the owner ignored it), `done_at` (they dealt with it themselves, no issue made),
+// The owner's marks sit beside that and change none of it: `done_at` (they dealt with it themselves, no issue made),
 // `deleted_at` (it was wrong) and `by_owner` (the owner, not 嘟嘟, decided the issue).
 import { matchQuery, segment } from '../segment.mjs';
 import { addMessages, mergeMessages, newestSaid, titleFromText } from './records.mjs';
@@ -97,7 +96,6 @@ export function migrateInbox(db) {
 /** The owner's marks on a record. Safe to run twice (ALTER TABLE is not). */
 export function migrateInboxOwner(db) {
   const columns = new Set(db.prepare('PRAGMA table_info(inbox_records)').all().map((column) => column.name));
-  if (!columns.has('ignored_at')) db.exec('ALTER TABLE inbox_records ADD COLUMN ignored_at INTEGER');
   if (!columns.has('by_owner')) db.exec('ALTER TABLE inbox_records ADD COLUMN by_owner INTEGER NOT NULL DEFAULT 0');
 }
 
@@ -117,18 +115,17 @@ export function migrateInboxSignals(db) {
   if (!columns('collect_runs').has('me')) db.exec('ALTER TABLE collect_runs ADD COLUMN me TEXT');
 }
 
-// What the widget's tabs hold. A row with an issue is handled, whoever decided it, and so is one the owner marked handled; one without is waiting, or ignored
-// by the owner. A row the owner deleted is in none of them.
-const OPEN = 'ignored_at IS NULL AND done_at IS NULL AND deleted_at IS NULL'; // the owner has not put a mark on it
+// What the widget's tabs hold. A row with an issue is handled, whoever decided it, and so is one the owner marked handled; one without is waiting.
+// A row the owner deleted is in none of them.
+const OPEN = 'done_at IS NULL AND deleted_at IS NULL'; // the owner has not put a mark on it
 const TABS = Object.freeze({
   todo: `issue_id IS NULL AND ${OPEN}`,
   done: 'deleted_at IS NULL AND (issue_id IS NOT NULL OR done_at IS NOT NULL)',
-  ignored: 'issue_id IS NULL AND ignored_at IS NOT NULL AND done_at IS NULL AND deleted_at IS NULL',
 });
 const SHOWN_AT = 'COALESCE(at, collected_at)'; // the time the row shows: its own, else when it was collected
 
-const COLUMNS = 'id, connector, source_id, version, kind, title, author, url, thread, at, text, context, more, truncated, collected_at, state, verdict, issue_id, reason, judged_at, tries, cleared, ignored_at, done_at, deleted_at, by_owner, to_me, handled';
-const LIGHT = 'id, connector, source_id, version, kind, title, author, url, thread, at, truncated, collected_at, state, verdict, issue_id, reason, judged_at, cleared, ignored_at, done_at, deleted_at, by_owner, to_me, handled';
+const COLUMNS = 'id, connector, source_id, version, kind, title, author, url, thread, at, text, context, more, truncated, collected_at, state, verdict, issue_id, reason, judged_at, tries, cleared, done_at, deleted_at, by_owner, to_me, handled';
+const LIGHT = 'id, connector, source_id, version, kind, title, author, url, thread, at, truncated, collected_at, state, verdict, issue_id, reason, judged_at, cleared, done_at, deleted_at, by_owner, to_me, handled';
 
 const json = (text) => {
   try {
@@ -143,7 +140,7 @@ const view = (row) => row ? ({
   id: row.id, ref: `r${row.id}`, connector: row.connector, sourceId: row.source_id, version: row.version, kind: row.kind, title: row.title,
   from: row.author, url: row.url, thread: row.thread, at: row.at, collectedAt: row.collected_at, state: row.state, verdict: row.verdict,
   issueId: row.issue_id, reason: row.reason, judgedAt: row.judged_at, truncated: Boolean(row.truncated), cleared: Boolean(row.cleared),
-  ignoredAt: row.ignored_at ?? null, doneAt: row.done_at ?? null, deletedAt: row.deleted_at ?? null, byOwner: Boolean(row.by_owner),
+  doneAt: row.done_at ?? null, deletedAt: row.deleted_at ?? null, byOwner: Boolean(row.by_owner),
   toMe: row.to_me == null ? null : Boolean(row.to_me), handled: row.handled == null ? null : Boolean(row.handled),
   ...('text' in row ? { text: row.text, context: json(row.context), more: row.more } : {}),
 }) : null;
@@ -226,7 +223,7 @@ export function createInbox(db, { now = Date.now } = {}) {
           seen++;
           continue;
         }
-        // The talk of a conversation goes on in the row that waits for the owner; once the owner has dealt with it (ignored it, shared it), new talk is a new row.
+        // The talk of a conversation goes on in the row that waits for the owner; once the owner has dealt with it (handled it, shared it), new talk is a new row.
         const open = record.conversation
           ? sql(`SELECT id, text, author, to_me, truncated FROM inbox_records WHERE connector = ? AND source_id = ? AND state = 'new' AND issue_id IS NULL AND ${OPEN} ORDER BY id DESC LIMIT 1`).get(connector, record.sourceId)
           : null;
@@ -399,8 +396,8 @@ export function createInbox(db, { now = Date.now } = {}) {
   function prune() {
     const at = now();
     return transaction(() => {
-      const settled = "(state <> 'new' OR ignored_at IS NOT NULL OR done_at IS NOT NULL OR deleted_at IS NOT NULL) AND issue_id IS NULL"; // judged, or dealt with by the owner
-      const settledAt = 'COALESCE(judged_at, ignored_at, done_at, deleted_at)';
+      const settled = "(state <> 'new' OR done_at IS NOT NULL OR deleted_at IS NOT NULL) AND issue_id IS NULL"; // judged, or dealt with by the owner
+      const settledAt = 'COALESCE(judged_at, done_at, deleted_at)';
       const old = sql(`SELECT id FROM inbox_records WHERE cleared = 0 AND ${settled} AND ${settledAt} < ?`).all(at - KEEP_TEXT_MS);
       for (const { id } of old) sql('DELETE FROM inbox_fts WHERE rowid = ?').run(id);
       for (const { id } of old) sql("UPDATE inbox_records SET text = '', context = NULL, more = '', cleared = 1 WHERE id = ?").run(id);
@@ -437,22 +434,20 @@ export function createInbox(db, { now = Date.now } = {}) {
     return { items: rows.slice(0, size).map(view), nextCursor: rows.length > size ? `${rows[size - 1].shown_at}:${rows[size - 1].id}` : null, facets: { connector: facets } };
   }
 
-  /** The owner puts a row aside; only one that has no issue. True when it changed. */
-  const ignore = (id) => sql('UPDATE inbox_records SET ignored_at = ? WHERE id = ? AND issue_id IS NULL AND ignored_at IS NULL AND done_at IS NULL AND deleted_at IS NULL').run(now(), id).changes === 1;
-  /** The owner dealt with it themselves and needs no issue for it: it is handled (an ignored row is, from now on, handled and no longer ignored). */
-  const done = (id) => sql('UPDATE inbox_records SET done_at = ?, ignored_at = NULL WHERE id = ? AND issue_id IS NULL AND done_at IS NULL AND deleted_at IS NULL').run(now(), id).changes === 1;
+  /** The owner dealt with it themselves and needs no issue for it: it is handled. Only a row that has no issue; true when it changed. */
+  const done = (id) => sql('UPDATE inbox_records SET done_at = ? WHERE id = ? AND issue_id IS NULL AND done_at IS NULL AND deleted_at IS NULL').run(now(), id).changes === 1;
   /** The row was wrong. It leaves every list but stays in the table, so that the same message is not collected into a new row. */
   const remove = (id) => sql('UPDATE inbox_records SET deleted_at = ? WHERE id = ? AND issue_id IS NULL AND deleted_at IS NULL').run(now(), id).changes === 1;
   /**
-   * Takes the owner's mark off. A deleted row is back where it was (its other marks were kept); an ignored or handled row, with no issue, is waiting again.
+   * Takes the owner's mark off. A deleted row is back where it was (its other mark was kept); a handled row, with no issue, is waiting again.
    */
   const restore = (id) => transaction(() => {
     if (sql('UPDATE inbox_records SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL').run(id).changes === 1) return true;
-    return sql('UPDATE inbox_records SET ignored_at = NULL, done_at = NULL WHERE id = ? AND issue_id IS NULL AND (ignored_at IS NOT NULL OR done_at IS NOT NULL)').run(id).changes === 1;
+    return sql('UPDATE inbox_records SET done_at = NULL WHERE id = ? AND issue_id IS NULL AND done_at IS NOT NULL').run(id).changes === 1;
   });
 
   /** The owner made an issue of the row (verdict 'issue') or shared it to one (verdict 'note'): it is handled, and it is theirs. */
-  const link = (id, { issueId, verdict }) => sql("UPDATE inbox_records SET state = 'done', verdict = ?, issue_id = ?, reason = '', judged_at = COALESCE(judged_at, ?), by_owner = 1, ignored_at = NULL WHERE id = ?")
+  const link = (id, { issueId, verdict }) => sql("UPDATE inbox_records SET state = 'done', verdict = ?, issue_id = ?, reason = '', judged_at = COALESCE(judged_at, ?), by_owner = 1 WHERE id = ?")
     .run(verdict, issueId, now(), id).changes === 1;
 
   const startRun = (connector, at = now()) => Number(sql('INSERT INTO collect_runs (connector, started_at) VALUES (?, ?)').run(connector, at).lastInsertRowid);
@@ -475,5 +470,5 @@ export function createInbox(db, { now = Date.now } = {}) {
   const lastMe = (connector) => meOf(sql("SELECT me FROM collect_runs WHERE connector = ? AND me IS NOT NULL ORDER BY id DESC LIMIT 1").get(connector)?.me);
   const lastStarted = (connector) => sql('SELECT MAX(started_at) AS at FROM collect_runs WHERE connector = ?').get(connector)?.at ?? null;
 
-  return { ingest, addContext, repairTitles, pending, waiting, judge, fail, issueFor, list, search, get, forIssue, prune, dropUntouched, browse, ignore, done, remove, restore, link, startRun, finishRun, lastRun, lastFinished, lastGood, lastStarted, lastMe };
+  return { ingest, addContext, repairTitles, pending, waiting, judge, fail, issueFor, list, search, get, forIssue, prune, dropUntouched, browse, done, remove, restore, link, startRun, finishRun, lastRun, lastFinished, lastGood, lastStarted, lastMe };
 }

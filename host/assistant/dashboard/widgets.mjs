@@ -34,7 +34,7 @@ const declare = (id, label, description, min, size, needs) => Object.freeze({
 export const BUILT_IN_WIDGETS = Object.freeze([
   declare('issues', 'Issues', 'Every issue, as a list or a board', [6, 3], [10, FILL], ['issues']), // NEW description
   declare('office', 'Office', 'Each active issue as someone at a desk', [5, 3], [5, 4], ['issues']), // NEW description
-  declare('collector', 'Inbox', 'What the connectors collected, to share, make issues of or ignore', [4, 3], [5, 5], ['inputs']), // NEW description
+  declare('collector', 'Inbox', 'What the connectors collected, to forward to a conversation or make issues of', [4, 3], [5, 5], ['inputs']), // NEW description
 ]);
 
 const refuse = (reason) => ({ ok: false, reason });

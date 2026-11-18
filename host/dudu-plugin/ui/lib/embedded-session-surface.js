@@ -29,7 +29,7 @@ export function installEmbeddedSessionSurface({ sidebar, openSession, isVisible 
     // Install the waiter before navigation: openSession may synchronously commit.
     const timeout = setTimeout(() => { if (pending === waiting) abort(); }, 10_000);
     try {
-      await openSession(id);
+      await openSession(id, { returnToDudu: true });
       await ready.promise;
       if (!closed && mounted() === id) return method.apply(sidebar, args);
     } finally {

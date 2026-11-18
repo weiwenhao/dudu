@@ -1,10 +1,10 @@
 import { forwardRef, useState } from 'react';
-import { Check, CheckCheck, EyeOff, MessageSquarePlus, RotateCcw, Trash2, X } from 'lucide-react';
+import { Check, CheckCheck, Forward, Trash2, X } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/tooltip.jsx';
 import { T } from '../strings.js';
-import { hasSession, IssuePicker } from './IssuePicker.jsx';
+import { ConversationPicker } from './ConversationPicker.jsx';
 
 // The same keys as the dialog's list: cmdk owns navigation and text in its box; Escape, Left and Tab still leave it.
 const pickerKeys = (event) => {
@@ -25,14 +25,14 @@ const Action = forwardRef(function Action({ level, label, icon: Icon, ...props }
   );
 });
 
-/** An action of the bar that opens the list of issues the ticked rows are shared to. */
-function Share({ level, label, icon, request, eligible, onSelect }) {
+/** An action of the bar that opens the list of conversations the ticked rows are forwarded to. */
+function Share({ level, label, icon, request, onSelect }) {
   const [open, setOpen] = useState(false);
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild><Action level={level} label={label} icon={icon} /></PopoverTrigger>
       <PopoverContent side="top" align="center" className="w-80" aria-label={label} onKeyDown={pickerKeys}>
-        <IssuePicker request={request} eligible={eligible} onSelect={(issue) => { setOpen(false); onSelect(issue); }} />
+        <ConversationPicker request={request} onSelect={(issue) => { setOpen(false); onSelect(issue); }} />
       </PopoverContent>
     </Popover>
   );
@@ -40,11 +40,11 @@ function Share({ level, label, icon, request, eligible, onSelect }) {
 
 /**
  * The bar that comes up at the bottom once rows are ticked, the way it does in Issues: how many, "select all" (every row that is loaded), and what can be done with all of them at once. To handle:
- * share them to the session of an issue, mark them handled, ignore them or delete them. Ignored: restore them, share them, mark them handled or delete them. It sits over the widget, not over the window, and
+ * forward them to a conversation, mark them handled or delete them. It sits over the widget, not over the window, and
  * stays on one line: `level` says how narrow the widget is (0 wide enough for the words, 1 the actions are icons, 2 the count is left to screen readers too). In the narrowest
- * widget the seven icons are still wider than it: the bar then keeps inside the widget and scrolls sideways, with no bar of its own.
+ * widget the icons are still wider than it: the bar then keeps inside the widget and scrolls sideways, with no bar of its own.
  */
-export function BulkBar({ request, tab, level = 0, count, onClear, onSelectAll, onShareSession, onIgnore, onRestore, onDone, onDelete }) {
+export function BulkBar({ request, level = 0, count, onClear, onSelectAll, onShareSession, onDone, onDelete }) {
   return (
     <TooltipProvider>
       <div role="toolbar" aria-label={T.bulk.toolbar} className="absolute bottom-5 left-1/2 z-20 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-0.5 overflow-x-auto rounded-xl border bg-popover p-1.5 text-popover-foreground shadow-lg [scrollbar-width:none]">
@@ -53,11 +53,9 @@ export function BulkBar({ request, tab, level = 0, count, onClear, onSelectAll, 
         {/* Select all: every row that is loaded; not offered once they all are ticked. */}
         {onSelectAll && <Action level={level} label={T.bulk.selectAll} icon={CheckCheck} onClick={onSelectAll} />}
         <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
-        <Share level={level} label={T.collector.shareSession} icon={MessageSquarePlus} request={request} eligible={hasSession} onSelect={onShareSession} />
+        <Share level={level} label={T.collector.shareSession} icon={Forward} request={request} onSelect={onShareSession} />
         <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
         <Action level={level} label={T.collector.markDone} icon={Check} onClick={onDone} />
-        {tab === 'todo' && <Action level={level} label={T.collector.ignore} icon={EyeOff} onClick={onIgnore} />}
-        {tab === 'ignored' && <Action level={level} label={T.collector.restore} icon={RotateCcw} onClick={onRestore} />}
         <Action level={level} label={T.collector.remove} icon={Trash2} onClick={onDelete} />
       </div>
     </TooltipProvider>

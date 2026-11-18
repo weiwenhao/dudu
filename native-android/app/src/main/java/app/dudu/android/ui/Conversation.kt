@@ -3,10 +3,9 @@
 
 package app.dudu.android.ui
 
-import android.app.Activity
+import android.Manifest
 import android.content.ClipData
-import android.content.Intent
-import android.speech.RecognizerIntent
+import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.combinedClickable
@@ -24,12 +23,17 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
@@ -40,6 +44,11 @@ import androidx.compose.ui.unit.sp
 import app.dudu.android.*
 import app.dudu.android.R
 import app.dudu.android.data.*
+import app.dudu.android.media.AndroidSpeechCapture
+import app.dudu.android.media.VoiceProblem
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
@@ -68,15 +77,48 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
     val context = LocalContext.current
     val locale = appLocale()
     val picker = rememberAttachmentPicker(state, model, actions)
-    var voiceTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
-    val voice = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (voiceTarget == (state.computerId to state.session?.id) && result.resultCode == Activity.RESULT_OK) result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-            ?.firstOrNull()?.let { model.editMessage((state.message + " " + it).trim()) }
-        voiceTarget = null
+    val voiceTarget = session?.let { VoiceTarget(state.computerId, it.id) }
+    val capture = remember(voiceTarget) { AndroidSpeechCapture(context.applicationContext) }
+    var isVoiceMode by remember(voiceTarget) { mutableStateOf(false) }
+    var permissionTarget by remember { mutableStateOf<VoiceTarget?>(null) }
+    val microphone = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted && permissionTarget == voiceTarget) capture.microphoneDenied()
+        permissionTarget = null
     }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val inputFocus = remember { FocusRequester() }
+    DisposableEffect(capture, lifecycle) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) capture.cancel() }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer); capture.cancel() }
+    }
+    LaunchedEffect(capture, state.route, state.panel, state.readOnly, attachmentMenu, quickSheet, controls, permissions) {
+        if (state.route != null || state.panel != null || state.readOnly ||
+            attachmentMenu || quickSheet != null || controls || permissions) capture.cancel()
+    }
+    LaunchedEffect(capture.result, state.sending, state.route, state.panel, attachmentMenu, quickSheet, controls, permissions) {
+        capture.result?.let { result ->
+            if (state.route != null || state.panel != null || attachmentMenu || quickSheet != null || controls || permissions) {
+                capture.cancel()
+                return@LaunchedEffect
+            }
+            if (model.acceptVoice(result)) {
+                capture.consumeResult()
+                if (!result.isFinal) isVoiceMode = false
+            }
+        }
+    }
+    val goalInput = state.message.startsWith("/goal ")
+    val canSend = (if (goalInput) state.message.removePrefix("/goal ").isNotBlank() else state.message.isNotBlank()) ||
+        state.attachments.isNotEmpty()
+    val processing = session?.processing == true || state.sending || actions.busy
+    val showsModeToggle = processing || isVoiceMode || !canSend
     val messages = session?.messages.orEmpty()
     val waiting = state.outbox.filterNot { it.failed || session?.observed(it.requestId) == true }.map { it.message() }
-    val all = (messages + waiting).distinctBy { it.requestId ?: it.id }
+    val history = session?.displayRows.orEmpty()
+    val all = history + waiting.map(TranscriptRow::Entry)
     val hasOlder = session?.transcript?.optBoolean("hasMore") == true
     var following by remember(session?.id) { mutableStateOf(true) }
     val olderOffset = if (hasOlder) 1 else 0
@@ -89,14 +131,14 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
             list.isScrollInProgress to atBottom
         }.distinctUntilChanged().collect { (moving, atBottom) -> if (moving || atBottom) following = atBottom }
     }
-    LaunchedEffect(session?.id, all.lastOrNull()?.id, all.lastOrNull()?.text) {
+    LaunchedEffect(session?.id, all.lastOrNull()?.id, messages.lastOrNull()?.text) {
         if (following && all.isNotEmpty()) list.scrollToItem(all.lastIndex + olderOffset)
     }
-    LaunchedEffect(session?.watchId, session?.readPosition?.toString(), state.panel, state.route, quickSheet, controls, permissions, attachmentMenu) {
-        if (session == null || messages.isEmpty() || state.panel != null || state.route != null || session.cached ||
-            quickSheet != null || controls || permissions || attachmentMenu) return@LaunchedEffect
+    LaunchedEffect(session?.watchId, session?.readPosition?.toString(), state.panel, state.route, quickSheet, controls, permissions, attachmentMenu, capture.active) {
+        if (session == null || history.isEmpty() || state.panel != null || state.route != null || session.cached ||
+            quickSheet != null || controls || permissions || attachmentMenu || capture.active) return@LaunchedEffect
         snapshotFlow {
-            val last = list.layoutInfo.visibleItemsInfo.find { it.index == messages.lastIndex + olderOffset }
+            val last = list.layoutInfo.visibleItemsInfo.find { it.index == history.lastIndex + olderOffset }
             last != null && last.offset + last.size <= list.layoutInfo.viewportEndOffset
         }.filter { it }.distinctUntilChanged().collect { model.acknowledge(session) }
     }
@@ -131,6 +173,7 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
                 model.state.value.message == submitted) model.editMessage("")
         }
     }
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
         modifier = Modifier.imePadding(),
         containerColor = MaterialTheme.colorScheme.background,
@@ -211,9 +254,14 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
                     LaunchedEffect(value) { delay(10000); if (notice == value) notice = null }
                     TextButton(onClick = { notice = null }) { Text(value, maxLines = 3) }
                 }
-                if (state.problem != null || actions.error != null) Text(problemText(state.problem ?: actions.error!!),
+                val problem = state.problem?.takeUnless(::isConnectionProblem) ?: actions.error?.takeUnless(::isConnectionProblem)
+                if (problem != null) Text(problemText(problem),
                     color = MaterialTheme.colorScheme.error, fontSize = 14.sp,
                     modifier = Modifier.padding(bottom = 8.dp).testTag("send-error"))
+                capture.problem?.let {
+                    Text(if (it == VoiceProblem.Microphone) w("请允许麦克风权限。") else w("语音识别暂不可用。"),
+                        color = MaterialTheme.colorScheme.error, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
+                }
                 if (actions.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (state.outbox.any { it.failed }) LazyColumn(Modifier.heightIn(max = 120.dp)) {
                     items(state.outbox.filter { it.failed }, key = { it.requestId }) { failed ->
@@ -233,7 +281,7 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
                             }
                         }
                     }
-                    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp),
+                    Surface(Modifier.fillMaxWidth().alpha(if (capture.active) 0f else 1f), shape = RoundedCornerShape(28.dp),
                         color = MaterialTheme.colorScheme.surface, shadowElevation = 3.dp,
                         border = BorderStroke(.75.dp, MaterialTheme.colorScheme.outlineVariant)) {
                         Column {
@@ -243,14 +291,25 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
                                     enabled = session != null && !state.sending && !actions.busy) {
                                     Glyph(R.drawable.ic_plus, w("添加"), 24)
                                 }
-                                val goalInput = state.message.startsWith("/goal ")
-                                if (goalInput) TextButton(onClick = { model.editMessage(state.message.removePrefix("/goal ")) },
+                                if (goalInput && !isVoiceMode) TextButton(onClick = { model.editMessage(state.message.removePrefix("/goal ")) },
                                     contentPadding = PaddingValues(horizontal = 2.dp)) {
                                     Text("/${w("目标")}", color = DuduStyle.blue, fontSize = 16.sp)
                                 }
-                                BasicTextField(value = if (goalInput) state.message.removePrefix("/goal ") else state.message,
+                                if (isVoiceMode) HoldToTalkBar(capture, enabled = session != null && !state.sending && !actions.busy,
+                                    modifier = Modifier.weight(1f)) {
+                                    val target = voiceTarget
+                                    if (target == null || state.sending || actions.busy) false
+                                    else if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                                        permissionTarget = target
+                                        microphone.launch(Manifest.permission.RECORD_AUDIO)
+                                        false
+                                    } else {
+                                        capture.begin(target, locale.toLanguageTag())
+                                        capture.active
+                                    }
+                                } else BasicTextField(value = if (goalInput) state.message.removePrefix("/goal ") else state.message,
                                     onValueChange = { model.editMessage(if (goalInput) "/goal $it" else it) },
-                                    modifier = Modifier.weight(1f).heightIn(min = 44.dp).testTag("message-input")
+                                    modifier = Modifier.weight(1f).heightIn(min = 44.dp).testTag("message-input").focusRequester(inputFocus)
                                         .padding(vertical = 11.dp, horizontal = 2.dp),
                                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                                     cursorBrush = SolidColor(DuduStyle.blue), maxLines = 6,
@@ -262,17 +321,24 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
                                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         inner()
                                     })
-                                if (state.voiceEnabled && context.packageManager.resolveActivity(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH), 0) != null)
+                                if (showsModeToggle)
                                     IconButton(onClick = {
-                                        voiceTarget = state.computerId to session!!.id
-                                        voice.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                                            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                                            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, locale.toLanguageTag()))
-                                    }, enabled = session != null && !state.sending, modifier = Modifier.size(44.dp)) {
-                                        Glyph(R.drawable.ic_mic, w("语音输入"), 22)
+                                        capture.cancel()
+                                        isVoiceMode = !isVoiceMode
+                                        if (isVoiceMode) { focus.clearFocus(); keyboard?.hide() }
+                                        else coroutine.launch {
+                                            withFrameNanos { }
+                                            val current = model.state.value
+                                            if (!isVoiceMode && !current.readOnly &&
+                                                current.computerId == voiceTarget?.computer && current.session?.id == voiceTarget?.session) {
+                                                inputFocus.requestFocus()
+                                                keyboard?.show()
+                                            }
+                                        }
+                                    }, enabled = session != null, modifier = Modifier.size(44.dp)
+                                        .testTag(if (isVoiceMode) "composer-keyboard" else "composer-voice")) {
+                                        ComposerModeGlyph(isVoiceMode, if (isVoiceMode) w("切换到键盘") else w("语音输入"))
                                     }
-                                val canSend = (if (goalInput) state.message.removePrefix("/goal ").isNotBlank() else state.message.isNotBlank()) ||
-                                    state.attachments.isNotEmpty()
                                 if (canSend || session?.processing == true || state.sending) IconButton(onClick = {
                                     val match = Regex("^/(compact|plan|goal)(?:\\s+([\\s\\S]+))?$").matchEntire(state.message.trim())
                                     if (canSend && match != null && state.attachments.isEmpty())
@@ -296,16 +362,23 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
         },
     ) { insets ->
         Box(Modifier.fillMaxSize().padding(insets)) {
-            if (state.opening && session == null) CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp), strokeWidth = 2.dp)
+            if (session == null) Box(Modifier.align(Alignment.Center)) { RunningMark(22) }
             else LazyColumn(Modifier.fillMaxSize().testTag("message-list"), state = list,
                 contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 if (hasOlder) item("older") { TextButton(onClick = model::older, enabled = !state.pageLoading,
                     modifier = Modifier.fillMaxWidth()) { Text(w("加载更早")) } }
-                items(all, key = { it.id }) { message ->
-                    MessageView(message, state, model, actions)
+                items(all, key = { it.id }) { row ->
+                    when (row) {
+                        is TranscriptRow.Entry -> MessageView(row.message, state, model, actions)
+                        is TranscriptRow.Turn -> TranscriptTurn(row, session,
+                            openTool = { openTool(it, session, model) },
+                            openChanges = { model.navigate(Route("changes", params = json("seq" to it))) },
+                            files = { DeliveredFilesCard(it, session.id, model) },
+                            message = { MessageView(it, state, model, actions, showsProcess = false) })
+                    }
                 }
-                if (session != null && !session.cached && !state.readOnly) {
+                if (!session.cached && !state.readOnly) {
                     items(session.raw.rows("questions"), key = { "question:${it.getString("id")}" }) { batch ->
                         Questions(batch, session.id, model)
                     }
@@ -318,6 +391,9 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
                 onClick = { following = true; coroutine.launch { list.animateScrollToItem(all.lastIndex + olderOffset) } },
                 modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) { Glyph(R.drawable.ic_arrow_down, w("回到底部"), 20) }
         }
+    }
+    VoiceCaptureOverlay(capture, Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+        .height(minOf(LocalConfiguration.current.screenHeightDp * .4f, 320f).dp))
     }
     if (controls && session != null) ModelControls(session, state, model, dismiss = { controls = false })
     if (permissions && session != null) PermissionControls(session, state, model, dismiss = { permissions = false })
@@ -336,22 +412,23 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
 }
 
 @Composable
-private fun MessageView(message: Message, state: UiState, model: DuduViewModel, actions: Actions) {
+private fun MessageView(message: Message, state: UiState, model: DuduViewModel, actions: Actions, showsProcess: Boolean = true) {
     val own = message.role == "user"
     val session = state.session ?: return
     val clipboard = LocalClipboard.current
     val coroutine = rememberCoroutineScope()
     val raw = message.raw
     var messageMenu by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().alpha(if (message.pending) .65f else 1f),
+    Row(Modifier.fillMaxWidth(),
         horizontalArrangement = if (own) Arrangement.End else Arrangement.Start) {
+        Box {
         Column(Modifier.widthIn(max = if (own) 320.dp else 800.dp)
             .combinedClickable(enabled = !message.pending && !message.streaming && message.text.isNotBlank(),
                 onClick = {}, onLongClick = { messageMenu = true }).then(if (own)
             Modifier.background(if (androidx.compose.foundation.isSystemInDarkTheme()) MaterialTheme.colorScheme.secondaryContainer else DuduStyle.bubble,
-                RoundedCornerShape(20.dp))
-                .padding(horizontal = 14.dp, vertical = 10.dp) else Modifier), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (message.reasoning.isNotBlank()) {
+                RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomEnd = 4.dp, bottomStart = 24.dp))
+                .padding(horizontal = 16.dp, vertical = 12.dp) else Modifier), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (showsProcess && message.reasoning.isNotBlank()) {
                 var expanded by remember(message.id) { mutableStateOf(false) }
                 TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(0.dp)) {
                     Text(w("思考过程"), style = MaterialTheme.typography.labelMedium)
@@ -369,20 +446,8 @@ private fun MessageView(message: Message, state: UiState, model: DuduViewModel, 
                 if (raw.has("seq")) Attachment(session.id, json("kind" to "image", "name" to image.groupValues[1],
                     "source" to image.groupValues[2]), raw.getLong("seq"), model)
             }
-            raw.rows("calls").forEach { call ->
-                val reference = session.transcript?.optJSONObject("tools")?.optJSONObject(call.optString("id"))
-                val seq = reference?.optLong("seq", -1) ?: call.optLong("seq", -1)
-                val resultSeq = reference?.optLong("resultSeq", -1) ?: call.optLong("resultSeq", -1)
-                OutlinedButton(onClick = { model.navigate(Route("tool", call.optString("name"), params = json("seq" to seq, "callId" to call.getString("id")).apply {
-                    if (resultSeq >= 0) put("resultSeq", resultSeq)
-                })) }, enabled = seq >= 0) {
-                    Glyph(R.drawable.ic_terminal, size = 16); Spacer(Modifier.width(8.dp))
-                    Text(call.optString("name"), maxLines = 1)
-                    if ((reference?.optString("status") ?: call.optString("status")) == "running")
-                        CircularProgressIndicator(Modifier.padding(start = 8.dp).size(12.dp), strokeWidth = 1.5.dp)
-                }
-                call.nullableString("detail")?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 2,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (showsProcess) raw.rows("calls").forEach { call ->
+                ToolCallRow(call, session) { openTool(it, session, model) }
             }
             if (message.role == "compaction") {
                 Text(w("已压缩"), style = MaterialTheme.typography.labelMedium)
@@ -398,7 +463,7 @@ private fun MessageView(message: Message, state: UiState, model: DuduViewModel, 
                     color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
                 raw.nullableString("summary")?.let { Markdown(it, compact = true) }
             }
-            if (message.streaming) Row(verticalAlignment = Alignment.CenterVertically) {
+            if (showsProcess && message.streaming) Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
                 if (message.text.isBlank()) Text(w("正在分析请求"), Modifier.padding(start = 8.dp), style = MaterialTheme.typography.bodySmall)
             }
@@ -421,15 +486,19 @@ private fun MessageView(message: Message, state: UiState, model: DuduViewModel, 
                         model.request("assistant.hide", json("sessionId" to session.id, "seqs" to JSONArray(listOf(raw.getLong("seq")))))
                     } })
             }
-            val turnNumber = raw.optInt("turn", -1)
-            val isLast = turnNumber >= 0 && session.messages.lastOrNull { it.raw.optInt("turn", -2) == turnNumber }?.id == message.id
-            val turn = if (isLast) session.transcript?.rows("turns")?.find { it.optInt("turn", -1) == turnNumber } else null
-            turn?.rows("notices")?.forEach { notice -> Text(notice.optString("message"), style = MaterialTheme.typography.bodySmall,
-                color = if (notice.optString("kind") == "error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant) }
-            turn?.let { DeliveredFilesCard(it.rows("files"), session.id, model) }
-            if (turn?.has("changesSeq") == true) TextButton(onClick = { model.navigate(Route("changes", params = json("seq" to turn.getLong("changesSeq")))) }) {
-                Glyph(R.drawable.ic_file_diff, size = 16); Spacer(Modifier.width(6.dp)); Text(w("已编辑文件"))
-            }
+        }
+        if (message.pending) Box(Modifier.align(Alignment.BottomStart).offset(x = (-25).dp, y = (-6).dp)) {
+            RunningMark(15, Color(0xFFA6CFE7))
+        }
         }
     }
+}
+
+private fun openTool(call: JSONObject, session: Session, model: DuduViewModel) {
+    val reference = session.transcript?.optJSONObject("tools")?.optJSONObject(call.optString("id"))
+    val seq = reference?.optLong("seq", -1) ?: call.optLong("seq", -1)
+    val resultSeq = reference?.optLong("resultSeq", -1) ?: call.optLong("resultSeq", -1)
+    model.navigate(Route("tool", call.optString("name"), params = json("seq" to seq, "callId" to call.getString("id")).apply {
+        if (resultSeq >= 0) put("resultSeq", resultSeq)
+    }))
 }

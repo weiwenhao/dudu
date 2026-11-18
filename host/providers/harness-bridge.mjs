@@ -10,8 +10,12 @@ import { admittedLink, createInputDelivery, undeliveredInputs, withInputDeliveri
 // result. DSH therefore records and renders the turn natively, and the harness's own session store stays the
 // authority a terminal can resume.
 
-// The harness manages its own context, so DSH must never decide the history is too long and compact it.
-export const CONTEXT_WINDOW = 10_000_000;
+// DSH's replay is display history, not the context sent to the native harness.
+// This host requires a positive integer capacity and has no adapter opt-out for
+// automatic compaction. Use the largest safe integer as a host-only sentinel:
+// even a 10M placeholder eventually made long conversations fail model switches.
+// Real limits and automatic compaction remain owned by the native harness.
+export const CONTEXT_WINDOW = Number.MAX_SAFE_INTEGER;
 
 const textOf = (content) => (Array.isArray(content) ? content : [])
   .filter((block) => block?.type === 'text').map((block) => block.text).join('');
@@ -293,9 +297,13 @@ export class HarnessBridge {
     try {
       await delivery.prepare();
       const input = await this.inputOf([prompt], { signal });
-      await run.pushUserMessage(input.prompt, input.images, { onInput: delivery.record });
+      const taken = await run.pushUserMessage(input.prompt, input.images, { onInput: delivery.record });
+      // The harness cannot take a message while it works (no steering): nothing was sent, so it is not marked forwarded and the next
+      // turn, which starts when this one ends, carries it.
+      if (taken === false) { await delivery.failed(signal); return false; }
       await delivery.accepted(run.nativeSessionId);
       run.forwarded.add(prompt.id);
+      return true;
     } catch (error) {
       await delivery.failed(signal);
       throw error;
@@ -486,7 +494,7 @@ export function createHarnessAdapter(bridge) {
     imageRequestPricing() { return undefined; },
     listModels() { return driver.listModels(); },
     resolveModel(provider, model) {
-      return driver.resolveModel(model).then((info) => ({ context: { contextWindow: CONTEXT_WINDOW }, ...info, provider }));
+      return driver.resolveModel(model).then((info) => ({ ...info, provider, context: { contextWindow: CONTEXT_WINDOW } }));
     },
     async prepareCall(provider, model, signal) {
       return { model: await this.resolveModel(provider, model, signal), stream: (options) => this.stream(options) };

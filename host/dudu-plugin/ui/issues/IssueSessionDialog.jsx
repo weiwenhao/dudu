@@ -53,8 +53,8 @@ export function IssueSessionDialog({ issue, resolveSession, actions, renderConve
     setExpanding(true);
     try {
       const rect = surface.current?.getBoundingClientRect();
-      await actions.openSession({ sessionId: reference.sessionId }, { from: rect?.toJSON() });
-      onClose();
+      await actions.openSession({ sessionId: reference.sessionId }, { from: rect?.toJSON(), returnToDudu: true });
+      // Native navigation unmounts this panel. Keep its dialog selection for the explicit return.
     } catch { setFailed(true); setExpanding(false); }
   };
   // DSH portals its model menus to body. Radix's modal trap would hide them and block their pointer/focus events.

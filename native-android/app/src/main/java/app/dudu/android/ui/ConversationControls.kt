@@ -39,8 +39,7 @@ fun ComposerMenu(session: Session, state: UiState, model: DuduViewModel, dismiss
             "models", "efforts" -> ModelControls(session, state, model, dismiss, embedded = true,
                 combined = false, effortsOnly = page == "efforts", back = { page = "root" }, onBusyChange = { configuring = it })
             else -> {
-        ComposerSheetHeader(w("添加"))
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 8.dp)) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 8.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(Triple(R.drawable.ic_image, w("照片"), "image/*"),
                     Triple(R.drawable.ic_film, w("发送视频"), "video/*"),

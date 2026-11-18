@@ -14,8 +14,9 @@ enum DSBotGlyph: CaseIterable {
     case archive, archiveRestore, info
     /// The settings' 隐私政策 and 版本信息 rows (owner, 2026-11-12); 关于 is `info`.
     case privacy, version
-    case inbox, selectRows, shareToIssue, shareToSession, hide, restore, openLink, selectAll, listTodo, zap, reply
+    case inbox, selectRows, forward, restore, openLink, selectAll, listTodo, zap, reply
     case issueProject, issueLabel, dueDate, issueStatus, issuePriority
+    case listFilter, issueSource, filterStatus, filterDates
     /// Fill in the context of a collected record (the desktop's `RefreshCw`, in its record menu and the row's buttons; the owner, 2026-11-11: "刷新图标吧").
     case completeContext
     /// The quota (the desktop's `Gauge`: the header icon and the chat's 额度 button), the board's second button (owner, 2026-11-11).
@@ -100,9 +101,7 @@ enum DSBotGlyph: CaseIterable {
         case .listTodo: return .listTodo
         case .zap: return .zap
         case .selectRows: return .listChecks
-        case .shareToIssue: return .listPlus
-        case .shareToSession: return .messageSquarePlus
-        case .hide: return .eyeOff
+        case .forward: return .forward
         case .restore: return .rotateCcw
         case .openLink: return .externalLink
         case .selectAll: return .checkCheck
@@ -111,6 +110,10 @@ enum DSBotGlyph: CaseIterable {
         case .dueDate: return .calendar
         case .issueStatus: return .circleDot
         case .issuePriority: return .signal
+        case .listFilter: return .listFilter
+        case .issueSource: return .plug
+        case .filterStatus: return .circleDashed
+        case .filterDates: return .calendarDays
         case .completeContext: return .refreshCw
         case .quota: return .gauge
         case .stateIdle: return .circle

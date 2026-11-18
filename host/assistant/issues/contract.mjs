@@ -67,7 +67,8 @@ export const ISSUE_REQUESTS = {
   assign: object({ id: ISSUE_ID, agent: ISSUE_FIELDS.properties.agent, session: ISSUE_FIELDS.properties.session, project: ISSUE_PROJECT, ...meta }, ['id', 'agent']),
   log: object({ id: ISSUE_ID, kind: choice(['source', 'priority', 'due', 'assign', 'status', 'progress', 'decision', 'blocked', 'session', 'result', 'note']), text, data: {}, ...meta }, ['id', 'kind', 'text']),
   message: object({ id: ISSUE_ID, text: { ...text, maxLength: 20000 },
-    attachmentIds: list({ ...text, minLength: 1, maxLength: 100 }), requestId: { ...text, minLength: 1, maxLength: 100 } }, ['id', 'text']),
+    attachmentIds: list({ ...text, minLength: 1, maxLength: 100 }), requestId: { ...text, minLength: 1, maxLength: 100 },
+    initial: { type: 'boolean', description: 'Creation attachments, saved before assigning the first session; requires empty text and attachments.' } }, ['id', 'text']),
   forward: object({ id: ISSUE_ID, session: text, text: { ...text, minLength: 1, maxLength: 20000 }, attachments: list(promptAttachment), retryEntry: { type: 'integer', minimum: 1 }, chat: { type: 'boolean' } }, ['id', 'text']),
   recipients: object({ q: { ...text, maxLength: 300 }, limit: { type: 'integer', minimum: 1, maximum: 200 } }),
   reply: object({ id: ISSUE_ID, text, ...meta }, ['id', 'text']),
@@ -103,6 +104,7 @@ export function issueApiDocument() {
         createdAt: time, updatedAt: time, receivedAt: { ...time, readOnly: true, description: 'Last completed incoming reply, from the shared session activity projection; 0 before any completed reply.' }, resolvedAt: nullable(time),
         statusType: choice(['backlog', 'todo', 'in_progress', 'in_review', 'done', 'canceled']),
         progressSummary: { ...text, maxLength: 20000, readOnly: true },
+        preview: { type: 'string', maxLength: 300, readOnly: true, description: "The latest message of the issue's session as the conversation list shows it (the last paragraph of the agent's latest completed reply, flattened); empty before any reply. Only on the items of list." },
         sessionState: { ...choice(ISSUE_SESSION_STATES), readOnly: true },
         pinned: { type: 'boolean', readOnly: true },
         labels: { type: 'array', readOnly: true, items: object({ id: { type: 'integer' }, name: text, color: choice(LABEL_COLORS) }) }, // `labels` as written are ids; as read, these

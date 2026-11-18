@@ -92,7 +92,7 @@ test('collected records are kept in the inbox and nothing else is done with them
   assert.equal(w.issues.counts().total, 0, 'no issue is made');
   const rows = w.issues.inbox.list({ connector: 'mail', limit: 10 }).items;
   assert.equal(rows.length, 3);
-  assert.ok(rows.every((row: any) => row.state === 'new' && row.verdict == null && row.ignoredAt == null && row.issueId == null), 'every record waits for the owner: nothing is judged and nothing is put aside');
+  assert.ok(rows.every((row: any) => row.state === 'new' && row.verdict == null && row.doneAt == null && row.issueId == null), 'every record waits for the owner: nothing is judged and nothing is put aside');
 
   // the same records again are not stored again, in this process or after a restart; an edited one is a new version
   assert.equal(firstOp(await w.dispatch.intake()).status, 'unchanged');

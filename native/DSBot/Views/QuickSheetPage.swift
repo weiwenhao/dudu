@@ -10,6 +10,13 @@ struct QuickDetailNavigation {
     let close: () -> Void
 }
 
+/// A word button at the left of a centred page's bar, in the place the ✕ would take on the right: the list that is being chosen from has 取消 here and no ✕ (owner, 2026-11-18, the inbox redesign).
+struct QuickSheetLeading {
+    let title: String
+    var isEnabled = true
+    let action: () -> Void
+}
+
 /// Observe navigation even when the surrounding sidebar page keeps this state as an optional input.
 struct QuickSheetNavigation<Content: View>: View {
     @ObservedObject var state: AssistantQuickSheetState
@@ -32,11 +39,16 @@ struct QuickSheetPage<Actions: View, Filters: View, Content: View, Footer: View>
     var onBack: (() -> Void)? = nil
     let onClose: () -> Void
     var closeLabel = L10n.text("关闭")
-    /// The title sits in the middle of the bar, like the other sheets (the activity sheets); the quick-entry sheets keep their left heading.
+    /// The title sits in the middle of the bar on every sheet (owner, 2026-11-18: "我们其他弹窗我看 title 都是在中间的", about the 收件箱 and 任务 sheets, whose left heading was only the activity sheet's old header, copied into the
+    /// quick-entry designs of 2026-11-12). The count of a list goes beside it. A page with a back button is always centred; `false` is the old left heading (21pt), no sheet asks for it now.
     var centersTitle = false
+    /// A word button on the left of a centred page (`QuickSheetLeading`); it has no ✕ then, `showsClose: false`.
+    var leading: QuickSheetLeading? = nil
+    var showsClose = true
     var active = true
     var allowsExpansion = false
     var scrollID: Binding<String?> = .constant(nil)
+    var horizontalInset: CGFloat = 20
     @ViewBuilder var actions: () -> Actions
     @ViewBuilder var filters: () -> Filters
     @ViewBuilder var content: () -> Content
@@ -67,6 +79,11 @@ struct QuickSheetPage<Actions: View, Filters: View, Content: View, Footer: View>
                         }
                         .accessibilityLabel(L10n.text("返回"))
                     }
+                } else if let leading {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(leading.title, action: leading.action)
+                            .disabled(!leading.isEnabled)
+                    }
                 } else if #available(iOS 26.0, *) {
                     ToolbarItem(placement: .topBarLeading) { heading }
                         .sharedBackgroundVisibility(.hidden)
@@ -75,17 +92,29 @@ struct QuickSheetPage<Actions: View, Filters: View, Content: View, Footer: View>
                 }
                 if onBack != nil || centersTitle {
                     ToolbarItem(placement: .principal) {
-                        Text(title).font(.system(size: 16, weight: .semibold)).accessibilityAddTraits(.isHeader)
+                        // The count of a list stays beside its title, now in the middle with it.
+                        HStack(spacing: 6) {
+                            Text(title).font(.system(size: 16, weight: .semibold))
+                            if let count {
+                                Text("\(count)").font(.system(size: 13)).foregroundStyle(DSBotStyle.muted).monospacedDigit()
+                            }
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isHeader)
                     }
                 }
                 if Actions.self != EmptyView.self {
                     ToolbarItemGroup(placement: .topBarTrailing) { actions() }
-                    if #available(iOS 26.0, *) {
-                        ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                    if showsClose {
+                        if #available(iOS 26.0, *) {
+                            ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                        }
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    SheetCloseButton(label: closeLabel, action: onClose)
+                if showsClose {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        SheetCloseButton(label: closeLabel, action: onClose)
+                    }
                 }
             }
             .foregroundStyle(DSBotStyle.ink)
@@ -116,9 +145,9 @@ struct QuickSheetPage<Actions: View, Filters: View, Content: View, Footer: View>
             ScrollView {
                 content()
                     // Measure height at the sheet's width; long Markdown must not enlarge the sheet.
-                    .frame(width: max(0, width - 40), alignment: .leading)
+                    .frame(width: max(0, width - 2 * horizontalInset), alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, horizontalInset)
                     .padding(.bottom, 24)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
             }

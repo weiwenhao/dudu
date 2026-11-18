@@ -24,7 +24,7 @@ export function AgentLogo({ agent, className }) {
   if (agent === 'dudu') return <img src={duduMark} alt="" aria-hidden="true" draggable={false} className={cn('block size-4 shrink-0', className)} data-agent-logo="dudu" />;
   const mark = agentLogo(agent);
   if (!mark) return null;
-  const color = ['codex', 'chatgpt'].includes(agent) ? 'var(--dudu-chatgpt-color, #030303)' : mark.color;
+  const color = mark.ink ? 'var(--dudu-chatgpt-color, #030303)' : mark.color;
   return <svg viewBox="0 0 24 24" style={{ color }} className={cn('size-4 shrink-0', className)} aria-hidden="true" data-agent-logo={agent}>
     <AgentMark agent={agent} />
   </svg>;

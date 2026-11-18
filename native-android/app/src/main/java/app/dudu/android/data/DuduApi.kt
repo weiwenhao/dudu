@@ -186,9 +186,9 @@ class DuduApi(endpoint: Endpoint, private val expectedComputer: String? = endpoi
     suspend fun array(method: String, params: JSONObject = JSONObject()): JSONArray =
         requestValue(method, params) as? JSONArray ?: throw ApiFailure("PROTOCOL_ERROR")
 
-    suspend fun home(scope: Scope): Pair<Home, String> {
-        val result = request("board.list", json("tab" to scope.wire, "layout" to "chat"))
-        return Home.parse(result, scope) to result.toString()
+    suspend fun home(): Pair<Home, String> {
+        val result = request("board.list", json("tab" to Scope.All.wire, "layout" to "chat", "filterData" to true))
+        return withContext(Dispatchers.Default) { Home.parse(result, Scope.All) to result.toString() }
     }
 
     suspend fun options(): Options {
@@ -196,12 +196,9 @@ class DuduApi(endpoint: Endpoint, private val expectedComputer: String? = endpoi
         val available = request("catalog.get")
         val providers = available.optJSONArray("providers")?.objects() ?: emptyList()
         return Options(
-            result.getJSONArray("statuses").objects().map {
-                Status(it.getString("id"), it.nullableString("name"), it.getString("type"), it.optBoolean("isDefault"),
-                    it.nullableString("color"), if (it.isNull("iconProgress")) null else it.getDouble("iconProgress").toFloat())
-            },
+            result.getJSONArray("statuses").objects().map(Status::parse),
             result.getJSONArray("projects").objects().map { Project(it.getString("name"), it.nullableString("path")) },
-            result.getJSONArray("labels").objects().map { Label(it.getLong("id"), it.getString("name"), it.nullableString("color")) },
+            result.getJSONArray("labels").objects().map(Label::parse),
             providers.map { it.getString("id") }.distinct(),
             attachments = result.optBoolean("attachments"),
         )

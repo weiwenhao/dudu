@@ -7,13 +7,16 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -28,6 +31,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.roundToInt
 
 @Composable
 fun SessionsScreen(state: UiState, model: DuduViewModel) {
@@ -145,22 +149,33 @@ fun SessionsScreen(state: UiState, model: DuduViewModel) {
         } }) }
 }
 
+/**
+ * The inbox (收件箱), in a sheet of the Dudu chat (`onHeight` reports how high the sheet has to be) or as a page of its own. In a sheet its bar has 选择 before the ✕; choosing shows 取消 / 已选 {0} 条 / 全选
+ * and no ✕, and a labelled bar of what can be done to the chosen rows (owner, 2026-11-18, the inbox redesign; the drawings are `.local/designs/inbox-forward-android-2026-11-18/`). 转发 replaces the two
+ * shares: it goes to a conversation, one at a time (`ForwardPicker`).
+ */
 @Composable
 fun CollectorScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
-    onCount: ((Int) -> Unit)? = null, open: (Route) -> Unit = { model.navigate(it) }, refreshKey: Int = 0, active: Boolean = true) {
+    onHeight: ((Int) -> Unit)? = null, open: (Route) -> Unit = { model.navigate(it) }, refreshKey: Int = 0, active: Boolean = true) {
     val actions = rememberActions()
+    val sheet = onHeight != null
     var tab by rememberSaveable { mutableStateOf("todo") }
     var filter by rememberSaveable { mutableStateOf("") }
     var items by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var names by remember { mutableStateOf(json()) }
     var next by remember { mutableStateOf<String?>(null) }
+    var selecting by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<Set<Long>>(emptySet()) }
-    var share by remember { mutableStateOf<String?>(null) }
-    var sharingIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var forwarding by remember { mutableStateOf<List<JSONObject>?>(null) }
     var deleting by remember { mutableStateOf(false) }
     var revealed by remember { mutableStateOf<Long?>(null) }
     var rowMenu by remember { mutableStateOf<JSONObject?>(null) }
     var total by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+    val rowHeights = remember { mutableStateMapOf<Long, Int>() }
+    var tabsHeight by remember { mutableIntStateOf(44) }
+    /** A handled record that went to an issue is the issue's: nothing to choose it for. */
+    fun canChoose(record: JSONObject) = tab != "done" || record.optJSONObject("issue") == null
     fun load(more: Boolean = false) = actions.run {
         val params = json("tab" to tab).apply {
             if (more) next?.let { put("cursor", it) }
@@ -170,38 +185,50 @@ fun CollectorScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
         items = (if (more) items + result.rows("items") else result.rows("items")).distinctBy { it.getLong("id") }
         names = result.optJSONObject("names") ?: json(); next = result.nullableString("nextCursor")
         total = result.optInt("total", items.size)
+        selected = selected.filter { id -> items.any { it.getLong("id") == id } }.toSet()
     }
-    LaunchedEffect(tab, filter) { selected = emptySet(); revealed = null }
+    LaunchedEffect(tab, filter) { selecting = false; selected = emptySet(); revealed = null }
     LaunchedEffect(tab, filter, actions.revision, refreshKey, active) { if (active) load() }
-    LaunchedEffect(items.size) { onCount?.invoke(items.size) }
+    if (onHeight != null) {
+        // The sheet is as high as its content (the bar, the tabs, the rows as drawn, the labelled bar while choosing), up to what the sheet allows.
+        val height = 54 + tabsHeight + items.sumOf { rowHeights[it.getLong("id")] ?: 76 } + (if (items.isEmpty()) 120 else 0) + 24 + (if (selecting) 78 else 0)
+        LaunchedEffect(height) { onHeight(height) }
+    }
+    fun stopChoosing() { selecting = false; selected = emptySet() }
     fun mark(action: String) = actions.run {
         model.request("inbox.mark", json("action" to action, "ids" to JSONArray(selected.toList())))
-        deleting = false; selected = emptySet(); actions.refresh()
+        deleting = false; stopChoosing(); actions.refresh()
     }
     fun markOne(action: String, record: JSONObject) = actions.run {
         model.request("inbox.mark", json("action" to action, "ids" to JSONArray(listOf(record.getLong("id")))))
         revealed = null; actions.refresh()
     }
-    fun chooseShare(target: String, ids: Set<Long>) { sharingIds = ids; share = target }
-    Page(if (selected.isEmpty()) w("收件箱") else w("已选 {0} 条").replace("{0}", selected.size.toString()),
-        { if (selected.isNotEmpty()) selected = emptySet() else back() }, actions,
-        count = total.takeIf { onCount != null && selected.isEmpty() }, top = {
-        if (selected.isNotEmpty()) TextButton(onClick = { selected = items.filter { tab != "done" || it.optJSONObject("issue") == null }.map { it.getLong("id") }.toSet() },
-            enabled = !actions.busy) { Text(w("全选")) }
-        if (names.length() > 1 || filter.isNotBlank()) Box {
-            var choosing by remember { mutableStateOf(false) }
-            IconButton(onClick = { choosing = true }, enabled = !actions.busy) {
-                Glyph(R.drawable.ic_sliders_horizontal, w("收集器"), 22)
-            }
-            DropdownMenu(choosing, { choosing = false }) {
-                (listOf("" to w("全部")) + names.keys().asSequence().map { it to names.optString(it) }.toList()).forEach { (id, title) ->
-                    DropdownMenuItem(text = { Text(title) }, onClick = { filter = id; choosing = false },
-                        trailingIcon = { if (filter == id) Glyph(R.drawable.ic_check, size = 18) })
+    val choosableCount = items.count(::canChoose)
+    Page(if (selecting) w("已选 {0} 条").replace("{0}", selected.size.toString()) else w("收件箱"),
+        { if (selecting) stopChoosing() else back() }, actions, cancels = selecting && sheet,
+        count = total.takeIf { sheet && !selecting }, top = {
+        if (selecting) TextButton(onClick = { selected = items.filter(::canChoose).map { it.getLong("id") }.toSet() },
+            enabled = !actions.busy && selected.size < choosableCount) { Text(w("全选")) }
+        else {
+            if (names.length() > 1 || filter.isNotBlank()) Box {
+                var choosing by remember { mutableStateOf(false) }
+                IconButton(onClick = { choosing = true }, enabled = !actions.busy) {
+                    Glyph(R.drawable.ic_sliders_horizontal, w("收集器"), 22)
+                }
+                DropdownMenu(choosing, { choosing = false }) {
+                    (listOf("" to w("全部")) + names.keys().asSequence().map { it to names.optString(it) }.toList()).forEach { (id, title) ->
+                        DropdownMenuItem(text = { Text(title) }, onClick = { filter = id; choosing = false },
+                            trailingIcon = { if (filter == id) Glyph(R.drawable.ic_check, size = 18) })
+                    }
                 }
             }
+            if (sheet && choosableCount > 0) TextButton(onClick = { selecting = true }, enabled = !actions.busy,
+                modifier = Modifier.testTag("collector-select")) { Text(w("选择")) }
         }
     }) {
-        FilterTabs(tab, listOf("todo" to w("待处理"), "done" to w("已处理"), "ignored" to w("已忽略"))) { tab = it }
+        Box(Modifier.onSizeChanged { tabsHeight = (it.height / density.density).roundToInt() }) {
+            FilterTabs(tab, listOf("todo" to w("待处理"), "done" to w("已处理"))) { tab = it }
+        }
         LazyColumn(Modifier.weight(1f).testTag("collector-list"), contentPadding = PaddingValues(bottom = 24.dp)) {
             if (items.isEmpty() && !actions.busy && actions.error == null) item {
                 Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
@@ -209,40 +236,38 @@ fun CollectorScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
                 }
             }
             itemsIndexed(items, key = { _, record -> record.getLong("id") }) { index, record ->
-                LibraryRowGroup(index == 0, index == items.lastIndex, grouped = onCount != null) {
                 val id = record.getLong("id")
-                val choosable = tab != "done" || record.optJSONObject("issue") == null
-                val swipe = if (selected.isNotEmpty() || !choosable) emptyList() else buildList {
-                    if (tab != "todo") add(RowSwipeAction(w("恢复"), R.drawable.ic_rotate_ccw, DuduStyle.blue) { markOne("restore", record) })
-                    if (tab in listOf("todo", "ignored")) add(RowSwipeAction(w("已处理"), R.drawable.ic_check, Color(0xFF18191B)) { markOne("done", record) })
-                    if (tab == "todo") add(RowSwipeAction(w("忽略"), R.drawable.ic_eye_off, Color(0xFF96989D)) { markOne("ignore", record) })
+                val choosable = canChoose(record)
+                val swipe = if (selecting || !choosable) emptyList() else buildList {
+                    if (tab == "todo") add(RowSwipeAction(w("已处理"), R.drawable.ic_check, Color(0xFF18191B)) { markOne("done", record) })
+                    else add(RowSwipeAction(w("恢复"), R.drawable.ic_rotate_ccw, DuduStyle.blue) { markOne("restore", record) })
                     add(RowSwipeAction(w("删除"), R.drawable.ic_trash2, Color(0xFFE14848)) { markOne("delete", record) })
                 }
+                Box(Modifier.onSizeChanged { rowHeights[id] = (it.height / density.density).roundToInt() }) {
+                LibraryRowGroup(index == 0, index == items.lastIndex, grouped = sheet, inset = 16,
+                    dividerStart = if (selecting) 104 else 70, dividerEnd = 14) {
                 SwipeMenuRow(swipe, enabled = !actions.busy, revealed = revealed == id,
                     onReveal = { revealed = if (it) id else null }) { closeSwipe ->
                 Box {
-                Surface(color = if (id in selected) MaterialTheme.colorScheme.secondaryContainer else if (onCount != null)
-                    MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.background) {
+                Surface(color = if (sheet) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.background) {
                 Box(Modifier.fillMaxWidth().testTag("record-$id").combinedClickable(
                     onClick = {
                         if (revealed != null) { revealed = null; closeSwipe() }
-                        else if (selected.isNotEmpty()) { if (choosable) selected = if (id in selected) selected - id else selected + id }
+                        else if (selecting) { if (choosable) selected = if (id in selected) selected - id else selected + id }
                         else open(Route("record", record.optString("title"), id.toString()))
-                    }, onLongClick = { if (selected.isEmpty()) rowMenu = record })) {
-                    CollectorSummary(record, tab, selected.isNotEmpty(), id in selected, horizontalPadding = if (onCount != null) 14 else 10)
+                    }, onLongClick = { if (!selecting) rowMenu = record })) {
+                    CollectorSummary(record, tab, selecting, id in selected, horizontalPadding = if (sheet) 14 else 10)
                 }
                 }
                 DropdownMenu(rowMenu?.optLong("id") == id, { rowMenu = null }) {
-                    if (choosable) DropdownMenuItem(text = { Text(w("选择")) }, onClick = { selected = setOf(id); rowMenu = null })
+                    if (choosable) DropdownMenuItem(text = { Text(w("选择")) }, onClick = { selecting = true; selected = setOf(id); rowMenu = null })
                     record.optJSONObject("issue")?.let { issue ->
                         DropdownMenuItem(text = { Text(w("打开事项")) }, onClick = { rowMenu = null
                             model.navigate(Route("issue", issue.optString("title"), issue.getLong("id").toString())) })
                     } ?: run {
                         if (tab != "done") {
-                            DropdownMenuItem(text = { Text(w("分享到事项")) }, enabled = !actions.busy,
-                                leadingIcon = { Glyph(R.drawable.ic_list_plus, size = 18) }, onClick = { rowMenu = null; chooseShare("issue", setOf(id)) })
-                            DropdownMenuItem(text = { Text(w("分享到会话")) }, enabled = !actions.busy,
-                                leadingIcon = { Glyph(R.drawable.ic_message_square_plus, size = 18) }, onClick = { rowMenu = null; chooseShare("session", setOf(id)) })
+                            DropdownMenuItem(text = { Text(w("转发")) }, enabled = !actions.busy,
+                                leadingIcon = { Glyph(R.drawable.ic_forward, size = 18) }, onClick = { rowMenu = null; forwarding = listOf(record) })
                             DropdownMenuItem(text = { Text(w("新建事项")) }, onClick = { rowMenu = null; actions.run {
                                 val result = model.request("inbox.get", json("id" to id))
                                 val draft = result.optJSONObject("draft")
@@ -255,9 +280,8 @@ fun CollectorScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
                     DropdownMenuItem(text = { Text(w("补全上下文")) }, enabled = !actions.busy && !record.optBoolean("completing"),
                         onClick = { rowMenu = null; actions.run { model.request("inbox.complete", json("id" to id)); actions.refresh() } })
                     if (record.optJSONObject("issue") == null) {
-                        if (tab != "todo") DropdownMenuItem(text = { Text(w("恢复")) }, onClick = { rowMenu = null; markOne("restore", record) })
-                        if (tab in listOf("todo", "ignored")) DropdownMenuItem(text = { Text(w("已处理")) }, onClick = { rowMenu = null; markOne("done", record) })
-                        if (tab == "todo") DropdownMenuItem(text = { Text(w("忽略")) }, onClick = { rowMenu = null; markOne("ignore", record) })
+                        if (tab == "todo") DropdownMenuItem(text = { Text(w("已处理")) }, onClick = { rowMenu = null; markOne("done", record) })
+                        else DropdownMenuItem(text = { Text(w("恢复")) }, onClick = { rowMenu = null; markOne("restore", record) })
                         DropdownMenuItem(text = { Text(w("删除"), color = MaterialTheme.colorScheme.error) },
                             leadingIcon = { Glyph(R.drawable.ic_trash2, size = 18, tint = MaterialTheme.colorScheme.error) },
                             onClick = { rowMenu = null; markOne("delete", record) })
@@ -266,44 +290,39 @@ fun CollectorScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
                 }
                 }
                 }
+                }
             }
             if (next != null) item { TextButton(onClick = { load(true) }, enabled = !actions.busy,
                 modifier = Modifier.fillMaxWidth()) { Text(w("加载更多")) } }
         }
-        if (selected.isNotEmpty()) Surface(Modifier.padding(horizontal = 24.dp, vertical = 12.dp).fillMaxWidth(),
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(50), color = MaterialTheme.colorScheme.surface,
-            border = androidx.compose.foundation.BorderStroke(.5.dp, MaterialTheme.colorScheme.outlineVariant)) {
-            Row(Modifier.fillMaxWidth().height(48.dp), horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { chooseShare("issue", selected) }, enabled = !actions.busy) { Glyph(R.drawable.ic_list_plus, w("分享到事项"), 22) }
-                IconButton(onClick = { chooseShare("session", selected) }, enabled = !actions.busy) { Glyph(R.drawable.ic_message_square_plus, w("分享到会话"), 22) }
-                IconButton(onClick = { mark("done") }, enabled = !actions.busy) { Glyph(R.drawable.ic_check, w("已处理"), 22) }
-                IconButton(onClick = { mark(if (tab == "ignored") "restore" else "ignore") }, enabled = !actions.busy) {
-                    Glyph(if (tab == "ignored") R.drawable.ic_rotate_ccw else R.drawable.ic_eye_off,
-                        if (tab == "ignored") w("恢复") else w("忽略"), 22)
-                }
-                IconButton(onClick = { deleting = true }, enabled = !actions.busy) { Glyph(R.drawable.ic_trash2, w("删除"), 22,
-                    MaterialTheme.colorScheme.error) }
-            }
+        if (selecting) {
+            // What can be done to all the chosen rows at once, with the words under the icons: forward them, mark them handled, delete them (red).
+            val ready = selected.isNotEmpty() && !actions.busy
+            ActionBar(listOf(
+                BarItem(w("转发"), R.drawable.ic_forward, "bulk-forward", enabled = ready) { forwarding = items.filter { it.getLong("id") in selected } },
+                BarItem(w("已处理"), R.drawable.ic_check, "bulk-done", enabled = ready) { mark("done") },
+                BarItem(w("删除"), R.drawable.ic_trash2, "bulk-delete", danger = true, enabled = ready) { deleting = true },
+            ))
         }
     }
     if (deleting) Confirm(w("将要删除"), "${selected.size}", actions, { deleting = false }, { mark("delete") })
-    share?.let { target -> IssuePicker(model, target == "session", dismiss = { share = null }, busy = actions.busy, error = actions.error) { issue ->
-        actions.run {
-            model.request("inbox.share", json("ids" to JSONArray(sharingIds.toList()), "issue" to issue.getLong("id"), "to" to target))
-            selected = emptySet(); share = null; actions.refresh()
-        }
-    } }
+    forwarding?.let { records ->
+        ForwardPicker(model, records, dismiss = { forwarding = null }, forwarded = { stopChoosing(); actions.refresh() })
+    }
 }
 
+/**
+ * One record in full, pushed over the list (‹ and ✕) or on its own (✕): the header is only the frame (owner, 2026-11-18, the inbox redesign: no ↗ and no ⋯), the words are one white card
+ * (`RecordCard`), and what can be done is the labelled bar at the bottom: 转发 and 新建事项, the mark that is done with the record (已处理, or 恢复 on a handled one), and 更多, a menu of
+ * filling in the context and deleting it (in red). A record an issue holds has 打开事项 and 补全上下文 and no 更多.
+ */
 @Composable
 fun RecordScreen(route: Route, model: DuduViewModel, back: () -> Unit = model::backRoute, close: (() -> Unit)? = null) {
     val actions = rememberActions()
-    val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var record by remember { mutableStateOf<JSONObject?>(null) }
     var draft by remember { mutableStateOf<JSONObject?>(null) }
-    var sharing by remember { mutableStateOf<String?>(null) }
+    var forwarding by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     val id = route.target!!.toLong()
     PreventSheetDismiss(actions.busy)
@@ -331,125 +350,67 @@ fun RecordScreen(route: Route, model: DuduViewModel, back: () -> Unit = model::b
             description = draft?.optString("brief") ?: item.optString("text"), record = id))
         model.show(Panel.Create)
     }
-    Page(w("收件箱"), { if (!actions.busy) back() }, actions, centersSheetTitle = close != null,
-        nested = close != null, close = close?.let { action -> { if (!actions.busy) action() } }, top = {
-        var menu by remember { mutableStateOf(false) }
-        record?.nullableString("url")?.let { url ->
-            val uri = runCatching { android.net.Uri.parse(url) }.getOrNull()
-            if (uri?.scheme?.lowercase() in listOf("http", "https")) IconButton(onClick = {
-                runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri)) }
-            }) { Glyph(R.drawable.ic_external_link, w("打开来源"), 20) }
+    Page(w("收件箱"), { if (!actions.busy) back() }, actions, nested = close != null,
+        close = close?.let { action -> { if (!actions.busy) action() } }) {
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
+            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp)) {
+            record?.let { RecordContent(it) }
         }
-        Box {
-            IconButton(onClick = { menu = true }) { Glyph(R.drawable.ic_ellipsis, stringResource(R.string.more)) }
-            DropdownMenu(menu, { menu = false }) {
-                DropdownMenuItem(text = { Text(w("补全上下文")) }, leadingIcon = { Glyph(R.drawable.ic_refresh_cw, size = 18) },
-                    enabled = record != null && !actions.busy && record?.optBoolean("completing") != true,
-                    onClick = { menu = false; complete() })
-                if (record != null && record?.optJSONObject("issue") == null) {
-                    val status = record!!.optString("status")
-                    if (status == "todo") DropdownMenuItem(text = { Text(w("忽略")) }, leadingIcon = { Glyph(R.drawable.ic_eye_off, size = 18) },
-                        enabled = !actions.busy, onClick = { menu = false; mark("ignore") })
-                    if (status == "ignored") DropdownMenuItem(text = { Text(w("已处理")) }, leadingIcon = { Glyph(R.drawable.ic_check, size = 18) },
-                        enabled = !actions.busy, onClick = { menu = false; mark("done") })
-                    DropdownMenuItem(text = { Text(w("删除"), color = MaterialTheme.colorScheme.error) },
-                        leadingIcon = { Glyph(R.drawable.ic_trash2, size = 18, tint = MaterialTheme.colorScheme.error) },
-                        enabled = !actions.busy, onClick = { menu = false; deleting = true })
-                }
-            }
-        }
-    }) {
-        Box(Modifier.weight(1f).fillMaxWidth()) { Form {
-            record?.let { item ->
-                Column(Modifier.padding(horizontal = 4.dp, vertical = 2.dp)) {
-                Text(item.optString("title"), fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
-                Text(listOf(item.optString("ref"), item.optString("from"), item.optString("connectorName"),
-                    item.optLong("at").takeIf { it > 0 }?.let { relativeTime(it) }.orEmpty())
-                    .filter(String::isNotBlank).joinToString(" · "), Modifier.padding(top = 10.dp), fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                item.optJSONObject("issue")?.let { issue -> Text(
-                    (if (item.optString("verdict") == "issue") w("已新建 ") else w("已分享到 ")) + (issue.nullableString("ref") ?: "#${issue.optLong("id")}"),
-                    Modifier.padding(top = 6.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                androidx.compose.foundation.text.selection.SelectionContainer {
-                    Text(item.optString("text"), Modifier.padding(top = 20.dp), fontSize = 16.sp, lineHeight = 24.sp)
-                }
-                if (item.rows("context").isNotEmpty()) Text(w("上下文"), Modifier.padding(top = 24.dp), fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                item.rows("context").forEach { entry ->
-                    Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (entry.optString("from").isNotBlank()) Text(entry.getString("from"), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        entry.optLong("at").takeIf { it > 0 }?.let { Text(relativeTime(it), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    }
-                    Text(entry.optString("text"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (item.optBoolean("completing")) LinearProgressIndicator(Modifier.fillMaxWidth())
-                item.nullableString("completeError")?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                }
-            }
-        } }
         record?.let { item ->
-            Surface(Modifier.padding(horizontal = 24.dp, vertical = 12.dp).fillMaxWidth(),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
-                color = MaterialTheme.colorScheme.surface,
-                border = androidx.compose.foundation.BorderStroke(.5.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                Row(Modifier.fillMaxWidth().height(48.dp), horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically) {
-                    val done = item.optString("status") == "done"
-                    val linked = item.optJSONObject("issue")
-                    if (!done && linked == null) {
-                        IconButton(onClick = { sharing = "issue" }, enabled = !actions.busy) {
-                            Glyph(R.drawable.ic_list_plus, w("分享到事项"), 22)
-                        }
-                        IconButton(onClick = { sharing = "session" }, enabled = !actions.busy) {
-                            Glyph(R.drawable.ic_message_square_plus, w("分享到会话"), 22)
-                        }
-                        IconButton(onClick = { create() }, enabled = !actions.busy, modifier = Modifier.testTag("record-create")) {
-                            Glyph(R.drawable.ic_plus, stringResource(R.string.new_issue), 22)
-                        }
-                    } else if (linked != null) {
-                        IconButton(onClick = { model.navigate(Route("issue", linked.optString("title"), linked.getLong("id").toString())) },
-                            enabled = !actions.busy) { Glyph(R.drawable.ic_arrow_up_right, w("打开事项"), 22) }
-                    }
-                    IconButton(onClick = { complete() }, enabled = !actions.busy && !item.optBoolean("completing")) {
-                        if (item.optBoolean("completing")) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 1.5.dp)
-                        else Glyph(R.drawable.ic_refresh_cw, w("补全上下文"), 22)
-                    }
-                    if (!done || linked == null) {
-                        val restore = item.optString("status") != "todo"
-                        IconButton(onClick = { mark(if (restore) "restore" else "done") }, enabled = !actions.busy) {
-                            Glyph(if (restore) R.drawable.ic_rotate_ccw else R.drawable.ic_check,
-                                if (restore) w("恢复") else w("已处理"), 22)
-                        }
-                    }
-                }
-            }
+            val tab = recordTab(item)
+            val linked = item.optJSONObject("issue")
+            val ready = !actions.busy
+            val completing = item.optBoolean("completing")
+            val fillIn = BarItem(w("补全上下文"), R.drawable.ic_refresh_cw, "record-complete", enabled = ready && !completing, busy = completing) { complete() }
+            val more = BarItem(w("更多"), R.drawable.ic_ellipsis, "record-more", enabled = ready, busy = completing, menu = { closeMenu ->
+                DropdownMenuItem(text = { Text(w("补全上下文")) }, leadingIcon = { Glyph(R.drawable.ic_refresh_cw, size = 20) },
+                    enabled = ready && !completing, onClick = { closeMenu(); complete() })
+                if (linked == null) DropdownMenuItem(text = { Text(w("删除"), color = MaterialTheme.colorScheme.error) },
+                    leadingIcon = { Glyph(R.drawable.ic_trash2, size = 20, tint = MaterialTheme.colorScheme.error) },
+                    enabled = ready, onClick = { closeMenu(); deleting = true })
+            })
+            ActionBar(if (tab == "done") {
+                if (linked != null) listOf(
+                    BarItem(w("打开事项"), R.drawable.ic_arrow_up_right, "record-open-issue", enabled = ready) {
+                        model.navigate(Route("issue", linked.optString("title"), linked.getLong("id").toString()))
+                    }, fillIn)
+                else listOf(BarItem(w("恢复"), R.drawable.ic_rotate_ccw, "record-restore", enabled = ready) { mark("restore") }, more)
+            } else listOf(
+                BarItem(w("转发"), R.drawable.ic_forward, "record-forward", enabled = ready) { forwarding = true },
+                BarItem(w("新建事项"), R.drawable.ic_plus, "record-create", enabled = ready) { create() },
+                BarItem(w("已处理"), R.drawable.ic_check, "record-done", enabled = ready) { mark("done") },
+                more))
         }
     }
-    sharing?.let { target -> IssuePicker(model, target == "session", { sharing = null }, busy = actions.busy, error = actions.error) { issue ->
-        actions.run {
-            model.request("inbox.share", json("ids" to JSONArray(listOf(id)), "issue" to issue.getLong("id"), "to" to target))
-            sharing = null; back()
-        }
-    } }
+    if (forwarding) record?.let { item ->
+        ForwardPicker(model, listOf(item), dismiss = { forwarding = false }, forwarded = { back() })
+    }
     if (deleting) Confirm(w("将要删除"), record?.optString("title"), actions, { deleting = false }, { mark("delete") })
 }
 
+/** The record's title, who it is from and when, what became of it, the card of its words, and the context that was read around it. */
 @Composable
-fun IssuePicker(model: DuduViewModel, withSession: Boolean, dismiss: () -> Unit,
-    busy: Boolean = false, error: String? = null, selected: (JSONObject) -> Unit) {
-    val actions = rememberActions()
-    var items by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
-    var query by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) { actions.run { items = model.request("issue.pick", json("withSession" to withSession)).rows("items") } }
-    DuduSheet(dismiss, canDismiss = !busy) {
-        SheetHeader(w("事项"), dismiss, enabled = !busy)
-        Box(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) { SearchField(query, w("搜索事项")) { query = it } }
-        if (actions.busy || busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-        (error ?: actions.error)?.let { Text(problemText(it), Modifier.padding(20.dp), color = MaterialTheme.colorScheme.error) }
-        LazyColumn(Modifier.heightIn(max = 500.dp).navigationBarsPadding()) {
-            items(items.filter { it.optString("title").contains(query, true) || it.optString("ref").contains(query, true) }) { issue ->
-                Line(issue.optString("title"), issue.nullableString("ref"), enabled = !busy && !actions.busy, action = { selected(issue) })
-            }
-        }
+private fun RecordContent(item: JSONObject) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val issue = item.optJSONObject("issue")
+    Column(Modifier.padding(horizontal = 4.dp)) {
+        Text(item.optString("title"), fontSize = 19.sp, lineHeight = 25.sp, fontWeight = FontWeight.SemiBold)
+        Text(listOfNotNull(item.nullableString("ref"), item.nullableString("from"), item.nullableString("connectorName"),
+            item.optLong("at").takeIf { it > 0 }?.let { relativeTime(it) }).joinToString(" · "),
+            Modifier.padding(top = 8.dp), fontSize = 13.sp, lineHeight = 18.sp, color = muted)
+        issue?.let { Text((if (item.optString("verdict") == "issue") w("已新建 ") else w("已转发到 ")) + (it.nullableString("ref") ?: "#${it.optLong("id")}"),
+            Modifier.padding(top = 6.dp), fontSize = 13.sp, lineHeight = 18.sp, color = muted) }
     }
+    RecordCard(item, Modifier.padding(top = 10.dp))
+    val context = item.rows("context")
+    if (context.isNotEmpty()) Text(w("上下文"), Modifier.padding(start = 4.dp, top = 24.dp), fontSize = 12.sp, color = muted)
+    context.forEach { entry ->
+        Row(Modifier.padding(start = 4.dp, top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            entry.nullableString("from")?.let { Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+            entry.optLong("at").takeIf { it > 0 }?.let { Text(relativeTime(it), fontSize = 12.sp, color = muted) }
+        }
+        Text(entry.optString("text"), Modifier.padding(start = 4.dp), fontSize = 13.sp, color = muted)
+    }
+    if (item.optBoolean("completing")) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 16.dp))
+    item.nullableString("completeError")?.let { Text(it, Modifier.padding(start = 4.dp, top = 12.dp), color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
 }

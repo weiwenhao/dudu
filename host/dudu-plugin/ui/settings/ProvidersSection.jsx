@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pencil, RefreshCw } from 'lucide-react';
+import { ChevronDown, Pencil, RefreshCw } from 'lucide-react';
 import { Switch } from '../components/switch.jsx';
 import { AgentLogo } from '../issues/AgentLogo.jsx';
 import { cn } from '../lib/cn.js';
@@ -13,7 +13,7 @@ const DOT = { ready: 'bg-success', missing: 'bg-muted-foreground/50', unsupporte
  * One harness, one line: which it is, whether it can be used here and its version, where it was found, and the switch that lets 嘟嘟
  * use it. Where to look for it when it does not turn up by itself is a thing one rarely needs: it opens from the pencil, under the line.
  */
-function ProviderRow({ provider, busy, editing, onEdit, onEnabled, onPath }) {
+export function ProviderRow({ provider, busy, editing, onEdit, onEnabled, onPath }) {
   const [path, setPath] = useState(provider.configuredPath ?? '');
   const reason = (provider.state === 'unsupported' || provider.state === 'broken') && provider.reason;
   const name = `${S.executable}: ${provider.name}`;
@@ -55,7 +55,7 @@ function ProviderRow({ provider, busy, editing, onEdit, onEnabled, onPath }) {
   );
 }
 
-/** The harnesses 嘟嘟 can hand an issue to (Claude Code, Codex), as found on this computer. */
+/** The harnesses 嘟嘟 can hand an issue to, as found on this computer. */
 export function ProvidersSection({ request }) {
   const [providers, setProviders] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -63,6 +63,7 @@ export function ProvidersSection({ request }) {
   const [error, setError] = useState('');
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [showMissing, setShowMissing] = useState(false);
   useEffect(() => {
     let alive = true;
     request('providers/state').then((value) => { if (alive) setProviders(value.providers); }, (failure) => { if (alive) { setFailed(true); setError(diagnostic(failure.message)); } });
@@ -84,21 +85,45 @@ export function ProvidersSection({ request }) {
       </Page>
     );
   }
+  // A harness that is off until switched on (the plugin says so: `defaultEnabled: false`) and is not on this computer is one of many a
+  // person does not have. Such rows are folded under one line after the card (owner's pick, 2026-11-19: C of
+  // .local/designs/providers-fold-2026-11-19): the word for their state, how many, and their marks, so that what else there is shows
+  // without opening it. Claude, ChatGPT and Pi keep their row whatever their state, and so does a folded one once it is found.
+  const folded = (provider) => provider.defaultEnabled === false && provider.state === 'missing';
+  const missing = providers.filter(folded);
+  const rows = (list) => (
+    <ul>
+      {list.map((provider) => (
+        <ProviderRow
+          key={`${provider.id}:${provider.configuredPath ?? ''}`} provider={provider} busy={busy} editing={editing === provider.id}
+          onEdit={(open) => setEditing(open ? provider.id : null)}
+          onEnabled={(enabled) => run('save', { id: provider.id, enabled })}
+          onPath={async (path) => { if (await run('save', { id: provider.id, path })) setEditing(null); }}
+        />
+      ))}
+    </ul>
+  );
   return (
     <Page title={S.providers} action={<ActionButton disabled={busy} onClick={() => run('refresh', {})}><RefreshCw aria-hidden="true" />{busy ? S.busy : S.detect}</ActionButton>}>
       <Problem>{error}</Problem>
-      <Group label={S.providers}>
-        <ul>
-          {providers.map((provider) => (
-            <ProviderRow
-              key={`${provider.id}:${provider.configuredPath ?? ''}`} provider={provider} busy={busy} editing={editing === provider.id}
-              onEdit={(open) => setEditing(open ? provider.id : null)}
-              onEnabled={(enabled) => run('save', { id: provider.id, enabled })}
-              onPath={async (path) => { if (await run('save', { id: provider.id, path })) setEditing(null); }}
-            />
-          ))}
-        </ul>
-      </Group>
+      <Group label={S.providers}>{rows(providers.filter((provider) => !folded(provider)))}</Group>
+      {missing.length > 0 && (
+        <Group
+          label={S.providerStates.missing}
+          title={(
+            <button
+              type="button" aria-expanded={showMissing} onClick={() => setShowMissing((open) => !open)}
+              className="-mx-1 flex h-6 items-center gap-1 rounded-md px-1 outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            >
+              {S.providerStates.missing}<span className="tabular-nums">{missing.length}</span>
+              <span className="mx-1 flex items-center gap-1.5">{missing.map((provider) => <AgentLogo key={provider.id} agent={provider.id} className="size-3.5 opacity-60" />)}</span>
+              <ChevronDown className={cn('size-3.5 transition-transform', showMissing && 'rotate-180')} aria-hidden="true" />
+            </button>
+          )}
+        >
+          {showMissing && rows(missing)}
+        </Group>
+      )}
     </Page>
   );
 }

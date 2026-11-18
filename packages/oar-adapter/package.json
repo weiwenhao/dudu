@@ -38,7 +38,7 @@
     "build": "node build.mjs"
   },
   "dependencies": {
-    "@botiverse/oar": "0.105.0",
+    "@botiverse/oar": "0.120.0",
     "signal-exit": "4.1.0"
   },
   "engines": {

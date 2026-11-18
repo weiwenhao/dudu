@@ -153,37 +153,19 @@ export function DueDate({ info, className }) {
   );
 }
 
-// Idle needs no badge. Sleep never covers unread.
+// Idle needs no badge. Deep sleep has no mark of its own anywhere (owner, 2026-11-18: "小月亮图标应该都取消了"): the avatar shows the session's state and nothing else.
 const BADGE = {
   processing: 'animate-spin border-[1.5px] border-muted-foreground/30 border-t-muted-foreground bg-background motion-reduce:animate-none',
   unread: 'bg-[#ec1313]',
 };
 
-// Deep sleep (the owner picked this picture on 2026-11-05, and the colour, a moon yellow #e8b923, the same day): a crescent takes the place of the idle ring, centred where the ring is centred (the marks sit
-// 2px in from the corner; a crescent is lighter than a disc, so it is drawn 1px larger than the box on every side). The moon is a circle (radius 6.8 of a 16
-// grid) with a bite (radius 5.2) taken out toward the upper right, placed so that its full circle is concentric with the box. The thin edge round it is the
-// ring's colour (`--tw-ring-color`: the background in the sidebar, where it is transparent like the ring of every mark there, and the tag's card in the Office); Tailwind's
-// `--tw-*` properties do not inherit, so it is read on the span, where the ring class sets it, and the stroke is inherited from there.
-const CRESCENT = 'M14.999 8.256A6.8 6.8 0 1 1 7.761 1.018A5.2 5.2 0 0 0 14.999 8.256Z';
-
-export function AgentActivity({ state, asleep = false, className }) {
-  const mark = state;
-  if (asleep && mark === 'idle') {
-    return (
-      <span aria-hidden="true" data-agent-activity="sleep" style={{ stroke: 'var(--tw-ring-color)' }}
-        className={cn('absolute -right-0.5 -bottom-0.5 size-2 text-[#e8b923] ring-background', className, 'rounded-none border-0 bg-transparent ring-0')}>
-        <svg viewBox="0 0 16 16" fill="currentColor" className="absolute -inset-px size-[calc(100%+2px)] overflow-visible">
-          <path d={CRESCENT} style={{ strokeWidth: 4, strokeLinejoin: 'round', paintOrder: 'stroke' }} />
-        </svg>
-      </span>
-    );
-  }
-  return BADGE[mark] ? <span aria-hidden="true" data-agent-activity={mark}
-    className={cn('absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-1 ring-background', BADGE[mark], className)}>
+export function AgentActivity({ state, className }) {
+  return BADGE[state] ? <span aria-hidden="true" data-agent-activity={state}
+    className={cn('absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-1 ring-background', BADGE[state], className)}>
   </span> : null;
 }
 
-export function AgentAvatar({ agent, state = 'idle', asleep = false, compact = false, className, logoClassName, showTitle = true, showActivity = true }) {
+export function AgentAvatar({ agent, state = 'idle', compact = false, className, logoClassName, showTitle = true, showActivity = true }) {
   const frame = cn('relative flex shrink-0 select-none', compact ? 'size-4' : 'size-6', className);
   if (!agent) {
     return (
@@ -196,12 +178,11 @@ export function AgentAvatar({ agent, state = 'idle', asleep = false, compact = f
   }
   const name = AGENT_NAMES[agent] ?? agent;
   const letter = AGENT_LETTERS[agent] ?? name.slice(0, 1).toUpperCase();
-  const sleeping = asleep && state === 'idle';
-  const label = `${name} · ${sleeping ? T.deepSleep : T.sessionState[state] ?? T.sessionState.idle}`;
+  const label = `${name} · ${T.sessionState[state] ?? T.sessionState.idle}`;
   return (
     <span className={frame} data-session-state={state ?? 'idle'} title={showTitle ? label : undefined} role={showTitle ? undefined : 'img'} aria-label={showTitle ? undefined : label}>
       <span className={cn('flex size-full items-center justify-center text-xs text-muted-foreground', !agentLogo(agent) && 'rounded-full bg-muted')}>{agentLogo(agent) ? <AgentLogo agent={agent} className={cn(compact ? 'size-4' : 'size-5', logoClassName)} /> : letter}</span>
-      {showActivity && <AgentActivity state={state} asleep={sleeping} className={!compact && 'size-2.5 ring-2'} />}
+      {showActivity && <AgentActivity state={state} className={!compact && 'size-2.5 ring-2'} />}
     </span>
   );
 }

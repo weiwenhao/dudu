@@ -1,7 +1,7 @@
 // The issues store (issues.db): the one unit of work in 嘟嘟, see docs/assistant.md 3.2.
 //
 //   const issues = createIssues({ file, now = Date.now, lifecycleState = () => null, sessionState = () => 'idle',
-//     sessionReceivedAt = () => 0, sessionHandledAt, sessionTurnActive, deepSleepMs = 30 min, deepSleepOn = () => true, actor = 'owner' });
+//     sessionReceivedAt = () => 0, sessionPreview = () => '', sessionHandledAt, sessionTurnActive, deepSleepMs = 30 min, deepSleepOn = () => true, actor = 'owner' });
 //
 // createIssues throws SchemaTooNew (code 'SCHEMA_TOO_NEW') when the file was written by a newer app; the file is left
 // untouched. Everything else returns { outcome: 'success' | 'no_op' | 'needs_clarification' | 'error', issue?, message?,
@@ -9,7 +9,7 @@
 //
 //   list(view)              view = { tab: 'active'|'backlog'|'all', filter, group, subGroup, order, reverse, completedLast,
 //                                    limit (1..200, default 50), cursor, groupFilter }
-//                           -> { items (with progressSummary), total, nextCursor, counts: { status, priority }, groups? }
+//                           -> { items (with preview, the latest message of the issue's session as the conversation list shows it, and progressSummary), total, nextCursor, counts: { status, priority }, groups? }
 //                           filter = { status, priority, project, agent, sessionState, lifecycleState (the session's own state, for the
 //                                      reminders), source (lists; null is "none"),
 //                                      dueFrom, dueTo, createdFrom, createdTo, updatedFrom, updatedTo, completedFrom, q }
@@ -368,7 +368,7 @@ function logEntries(before, after, next, reason, finished = isFinished) {
   return entries;
 }
 
-export function createIssues({ file, now = Date.now, lifecycleState = () => null, sessionState = () => 'idle', sessionReceivedAt = () => 0, issuePinned = () => false, sessionHandledAt = () => null, sessionTurnActive = () => null, deepSleepMs = DEEP_SLEEP_MS, deepSleepOn = () => true, actor: defaultActor = OWNER }) {
+export function createIssues({ file, now = Date.now, lifecycleState = () => null, sessionState = () => 'idle', sessionReceivedAt = () => 0, sessionPreview = () => '', issuePinned = () => false, sessionHandledAt = () => null, sessionTurnActive = () => null, deepSleepMs = DEEP_SLEEP_MS, deepSleepOn = () => true, actor: defaultActor = OWNER }) {
   if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(file);
   try {
@@ -460,6 +460,16 @@ export function createIssues({ file, now = Date.now, lifecycleState = () => null
   db.function('dudu_session_activity', sessionStateOf);
   db.function('dudu_session_state', (session) => stateOf(session));
   const receivedAtOf = (session) => session ? sessionReceivedAt(session) : 0;
+  // The latest message of the issue's session, as the conversation list shows it (the last paragraph of the agent's latest completed reply, flattened, at most 300 characters): the board card's description.
+  const previewOf = (session) => {
+    if (!session) return '';
+    try {
+      const text = sessionPreview(session);
+      return typeof text === 'string' ? text : '';
+    } catch {
+      return '';
+    }
+  };
   db.function('dudu_session_received_at', receivedAtOf);
   db.function('dudu_issue_pinned', (id) => issuePinned(id) ? 1 : 0);
 
@@ -716,15 +726,17 @@ export function createIssues({ file, now = Date.now, lifecycleState = () => null
     const entry = { kind, text: check('text', text(20000, keys.length === 0), body), data: data ?? null };
     const ctx = context(meta);
     return write(() => {
-      loadRow(id);
+      const issue = loadRow(id);
       if (requestId) {
         const previous = stmt("SELECT * FROM issue_log WHERE issue_id=? AND actor=? AND json_extract(data, '$.requestId')=?").get(id, ctx.actor, requestId);
         if (previous) {
           const saved = parseJson(previous.data);
-          if (previous.text !== entry.text || JSON.stringify(saved?.attachments?.map((item) => item.id) ?? []) !== JSON.stringify(keys)) throw new Invalid('requestId has different content');
+          if (previous.text !== entry.text || Boolean(saved?.initial) !== Boolean(entry.data?.initial)
+            || JSON.stringify(saved?.attachments?.map((item) => item.id) ?? []) !== JSON.stringify(keys)) throw new Invalid('requestId has different content');
           return { ...success({ issue: toIssue(loadRow(id)), entry: { id: previous.id, at: previous.at, actor: previous.actor, kind: previous.kind, text: previous.text, data: saved } }), outcome: 'no_op' };
         }
       }
+      if (entry.data?.initial && (issue.session || kind !== 'note' || entry.text || !keys.length)) throw new Invalid('invalid attachments');
       const attachments = keys.map((key) => {
         const row = stmt('SELECT * FROM issue_attachments WHERE issue_id=? AND id=? AND log_id IS NULL').get(id, key);
         if (!row) throw new Invalid('attachment is unavailable for this issue');
@@ -845,7 +857,7 @@ export function createIssues({ file, now = Date.now, lifecycleState = () => null
     }
     const last = rows[limit - 1];
     return {
-      items: rows.slice(0, limit).map(({ row }) => ({ ...toIssue(row), progressSummary: progressSentence(lastParagraph(row.latest_progress)) })),
+      items: rows.slice(0, limit).map(({ row }) => ({ ...toIssue(row), preview: previewOf(row.session), progressSummary: progressSentence(lastParagraph(row.latest_progress)) })),
       nextCursor: rows.length > limit ? encodeCursor(last.s, last.order.keys.map((_, i) => last.row[`k${i}`])) : null,
     };
   }
@@ -1091,6 +1103,17 @@ export function createIssues({ file, now = Date.now, lifecycleState = () => null
       const row = stmt("SELECT * FROM issue_log WHERE issue_id = ? AND id = ? AND kind = 'note'").get(parseId(id), entryId);
       return row ? { id: row.id, at: row.at, actor: row.actor, kind: row.kind, text: row.text, data: parseJson(row.data) } : null;
     },
+    initialAttachments: guarded((rawId) => {
+      const id = parseId(rawId);
+      loadRow(id);
+      const items = stmt(`SELECT a.id, a.type, a.ref
+        FROM issue_log AS l JOIN json_each(l.data, '$.attachments') AS j
+        JOIN issue_attachments AS a ON a.issue_id=l.issue_id AND a.log_id=l.id AND a.id=json_extract(j.value, '$.id')
+        WHERE l.issue_id=? AND l.kind='note' AND json_extract(l.data, '$.initial')=1
+        ORDER BY l.id, CAST(j.key AS INTEGER)`).all(id)
+        .map((row) => ({ id: row.id, type: row.type, attachment: parseJson(row.ref) }));
+      return success({ items });
+    }),
     stageAttachment: guarded((rawId, type, attachment) => {
       const id = parseId(rawId);
       loadRow(id);

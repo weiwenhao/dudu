@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 import { HARNESS_IDS } from './providers/catalog.mjs';
+import { createWithAttachments } from './assistant/issues/create-with-attachments.mjs';
 // The board and the Collector for the phone (docs/assistant.md 4.2). The owner is the one asking, here as on the desktop, and the commands are the desktop
 // interface's own: `issues/list`, `issues/add`, `inbox/*` (host/assistant/issues/api.mjs, host/assistant/inbox/api.mjs). What changes is the answer: plain,
 // small rows (no description, no activity), so that the app draws its lists itself.
@@ -8,6 +9,7 @@ import { HARNESS_IDS } from './providers/catalog.mjs';
 //   board.list    { tab: 'active' | 'backlog' | 'all', groupKey?, cursor? }   the issues of a tab, grouped by what their agent is doing; with `groupKey` and
 //                 `cursor`, the next page of that one group
 //                 -> { tab, total, groups: [{ key: 'processing' | 'unread' | 'idle' | 'unassigned', count, nextCursor, items: [row] }] }
+//   board.list    { layout: 'chat', tab: 'all', filterData: true } -> the complete chat list, shared pins, and the fields for local filtering
 //   issue.get     { id }                                     -> { issue }                          one issue, with its description
 //   issue.delete  { id, token? }                             -> { preview, token, issue } or { forgotten, id }; the desktop's preview and deletion
 //   issue.update  { id, patch: { status?, priority?, dueAt?, labels?, project? } } -> { issue }
@@ -22,9 +24,10 @@ import { HARNESS_IDS } from './providers/catalog.mjs';
 //   issue.create  { title, description?, status?, priority?, project?, agent?, labels?, dueAt?, parent?, record?, attachments? }
 //                                                           -> { outcome, issue?, attachmentsFailed? }   a new issue; with `record`, made of that collected record and linked to it; `attachments` are
 //                                                                                               pictures `[{ name?, mimeType, dataBase64 }]`, kept before the issue is made and shown by its first note
-//   inbox.list    { tab: 'todo' | 'done' | 'ignored', connector?: [id], cursor? }   -> { items: [card], nextCursor, total, names }
-//   inbox.get     { id }                                     -> { record, draft }
-//   inbox.mark    { action: 'ignore' | 'done' | 'delete' | 'restore', ids }          -> { outcome, changed }
+//   inbox.list    { tab: 'todo' | 'done', connector?: [id], cursor? }   -> { items: [card], nextCursor, total, names }
+//   inbox.get     { id }                                     -> { record, draft }                  `record.messages` is there when the record is a conversation (one line per message in its text):
+//                                                                                               `[{ at: 'MM-DD HH:mm', from, text }]`, for the phone to set as a talk; the text is always there too
+//   inbox.mark    { action: 'done' | 'delete' | 'restore', ids }          -> { outcome, changed }
 //   inbox.share   { ids, issue, to?: 'issue' | 'session' }   -> { outcome, changed }
 //   inbox.complete { id }                                    -> { outcome, started }              more context for one record: its collector's session reads the conversation around it, in the
 //                                                                                               background; `inbox.get` then says `completing` and, when it failed, `completeError`
@@ -37,8 +40,8 @@ export const NATIVE_BOARD_METHODS = Object.freeze([
 ]);
 
 const TABS = new Set(['active', 'backlog', 'all']);
-const INBOX_TABS = new Set(['todo', 'done', 'ignored']);
-const MARKS = new Set(['ignore', 'done', 'delete', 'restore']);
+const INBOX_TABS = new Set(['todo', 'done']);
+const MARKS = new Set(['done', 'delete', 'restore']);
 const GROUPS = new Set(['processing', 'unread', 'idle', 'unassigned']);
 const PAGE = 50;
 const MAX_IDS = 200;
@@ -56,9 +59,19 @@ const sessionIdOf = (key) => (typeof key === 'string' && key.startsWith('dsh:') 
 
 function detail(issue) {
   return {
-    ...row(issue), description: text(issue.brief, MAX_DESCRIPTION), hasSession: Boolean(issue.session), createdAt: issue.createdAt,
+    ...filterRow(issue), description: text(issue.brief, MAX_DESCRIPTION), hasSession: Boolean(issue.session),
     projectInfo: issue.project ? { name: text(issue.project.name, 200), path: issue.project.path ?? null } : null,
     labels: (issue.labels ?? []).map(({ id, name, color }) => ({ id, name, color })),
+  };
+}
+
+function filterRow(issue) {
+  return {
+    ...row(issue),
+    ...(issue.project?.name ? { project: issue.project.name } : {}),
+    createdAt: issue.createdAt,
+    source: issue.source,
+    ...(issue.labels?.length ? { labels: issue.labels.map(({ id, name, color }) => ({ id, name, color })) } : {}),
   };
 }
 
@@ -155,7 +168,11 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, h
   async function list(params) {
     const tab = params.tab ?? 'active';
     if (!TABS.has(tab)) fail('BAD_REQUEST');
-    if (params.layout === 'chat') return home ? home.list(tab, row) : unavailable();
+    if (params.layout === 'chat') {
+      if (!home) return unavailable();
+      if (params.filterData === true) return home.list(tab, filterRow, undefined, { includeStatuses: true });
+      return home.list(tab, row);
+    }
     const request = { tab, group: 'sessionState', limit: PAGE };
     if (params.groupKey !== undefined || params.cursor !== undefined) {
       if (!GROUPS.has(params.groupKey) || typeof params.cursor !== 'string' || !params.cursor || params.cursor.length > 200) fail('BAD_REQUEST');
@@ -314,18 +331,17 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, h
       if (!pictures?.available()) unavailable();
       try { kept = await pictures.save(attached); } catch { fail('INVALID_ATTACHMENT'); }
     }
-    const made = await askIssues('add', { fields });
+    const made = await createWithAttachments({
+      fields,
+      add: (fields) => askIssues('add', { fields }),
+      prepare: kept.length ? (issue) => askIssues('message', {
+        id: issue.id, text: '', attachmentIds: pictures.stage(issue.id, kept), initial: true, requestId: randomUUID(),
+      }) : undefined,
+      assign: (id, agent) => askIssues('assign', { id, agent }),
+    });
     if (!succeeded(made) || !made.issue) return problem(made);
     if (params.record !== undefined) await askInbox('link', { id: params.record, issue: made.issue.id });
-    // The issue exists now: what came with it is its first note, with nothing written in it, as the desktop's dialog does. A failure here does not undo the issue, and it says so.
-    let attachmentsFailed = false;
-    if (kept.length) {
-      try {
-        const sent = await askIssues('message', { id: made.issue.id, text: '', attachmentIds: pictures.stage(made.issue.id, kept), requestId: randomUUID() });
-        if (!['success', 'no_op'].includes(sent?.outcome)) throw new Error('attachments');
-      } catch { attachmentsFailed = true; }
-    }
-    return { outcome: 'success', issue: row(made.issue), ...(attachmentsFailed ? { attachmentsFailed: true } : {}) };
+    return { outcome: 'success', issue: row(made.issue), ...(made.attachmentsFailed ? { attachmentsFailed: true } : {}) };
   }
 
   async function inboxList(params) {
@@ -345,7 +361,9 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, h
   async function inboxGet(params) {
     if (!positive(params.id)) fail('BAD_REQUEST');
     const result = await askInbox('get', { id: params.id });
-    return succeeded(result) ? { outcome: 'success', record: result.record, draft: result.draft } : problem(result);
+    if (!succeeded(result)) return problem(result);
+    // A conversation's record carries its `messages` when every line of its text is one (the plugin's `get`): the phone sets it as a talk, and shows the text as it is when not.
+    return { outcome: 'success', record: result.record, draft: result.draft };
   }
 
   function ids(params) {

@@ -1,5 +1,5 @@
-// What the Collector widget reads and does (host/assistant/inbox/api.mjs and the owner's marks in inbox/store.mjs): the three tabs, the filter,
-// ignoring and restoring (one record or several), sharing records to an issue or to the session of one, and the record that became an issue.
+// What the Collector widget reads and does (host/assistant/inbox/api.mjs and the owner's marks in inbox/store.mjs): the two tabs, the filter,
+// marking handled and restoring (one record or several), sharing records to an issue or to the session of one, and the record that became an issue.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createInboxApi } from '../host/assistant/inbox/api.mjs';
@@ -51,29 +51,29 @@ test('more context for a record starts at once and runs in the background: the r
   assert.equal((bare.api.execute('complete', { id: other.id }) as any).code, 'unavailable');
 });
 
-test('the tabs: waiting rows (judged or not) are To do, a row with an issue is Done, an ignored one is Ignored', (t) => {
+test('the tabs: waiting rows (judged or not) are To do, a row with an issue or one the owner marked handled is Done, and there is no other tab', (t) => {
   const { issues, inbox, api, ingest } = world(t);
   const [a, b, , d] = ingest('mail', [raw('a', { at: '2026-11-05T09:00:00+08:00' }), raw('b', { at: '2026-11-05T08:00:00+08:00' }), raw('c'), raw('d')]);
   const issue = issues.add({ title: '核对合同', source: 'connector', sourceRef: 'mail:a' }, { actor: 'dudu' }).issue;
   inbox.judge(a.id, { verdict: 'issue', issueId: issue.id, reason: '有人在等' });
   inbox.judge(b.id, { verdict: 'ignore', reason: '像是抄送' });
-  assert.equal(api.execute('ignore', { id: d.id }).outcome, 'success');
+  assert.equal(api.execute('done', { id: d.id }).outcome, 'success');
 
-  assert.deepEqual(ids(api.execute('list', { tab: 'todo' })), ['来信 c', '来信 b'], 'what was not made an issue and not ignored, judged by 嘟嘟 or not; c has no time of its own, so it shows when it was collected: now');
+  assert.deepEqual(ids(api.execute('list', { tab: 'todo' })), ['来信 c', '来信 b'], 'what was not made an issue and not handled, judged by 嘟嘟 or not; c has no time of its own, so it shows when it was collected: now');
   const done = api.execute('list', { tab: 'done' });
-  assert.deepEqual(ids(done), ['来信 a']);
-  assert.deepEqual(done.items[0].issue, { id: issue.id, ref: issue.ref, title: '核对合同', status: 'todo', statusType: 'todo' });
-  assert.equal(done.items[0].connectorName, 'QQ 邮箱');
-  assert.deepEqual(ids(api.execute('list', { tab: 'ignored' })), ['来信 d']);
-  assert.equal(api.execute('list', { tab: 'ignored' }).items[0].ignored, true);
+  assert.deepEqual(ids(done), ['来信 d', '来信 a'], 'newest first: d has no time of its own either');
+  const made = done.items.find((item: any) => item.issue);
+  assert.deepEqual(made.issue, { id: issue.id, ref: issue.ref, title: '核对合同', status: 'todo', statusType: 'todo' });
+  assert.equal(made.connectorName, 'QQ 邮箱');
+  assert.equal(api.execute('list', { tab: 'ignored' }).code, 'invalid_tab', 'the Ignored tab is gone');
 });
 
-test('ignoring puts a row aside for 嘟嘟 too, restoring gives it back, and a row that has an issue cannot be ignored', (t) => {
+test('marking a row handled takes it away from 嘟嘟 too, restoring gives it back, and a row that has an issue cannot be marked', (t) => {
   const { issues, inbox, api, ingest } = world(t);
   const [a, b] = ingest('mail', [raw('a'), raw('b')]);
-  assert.equal(api.execute('ignore', { id: a.id }).outcome, 'success');
-  assert.equal(api.execute('ignore', { id: a.id }).outcome, 'no_op', 'twice changes nothing');
-  assert.deepEqual(inbox.pending('mail').map((row: any) => row.id), [b.id], 'a row the owner ignored is not judged');
+  assert.equal(api.execute('done', { id: a.id }).outcome, 'success');
+  assert.equal(api.execute('done', { id: a.id }).outcome, 'no_op', 'twice changes nothing');
+  assert.deepEqual(inbox.pending('mail').map((row: any) => row.id), [b.id], 'a row the owner marked handled is not judged');
   assert.equal(inbox.waiting('mail'), 1);
   assert.equal(inbox.judge(a.id, { verdict: 'issue', issueId: null, reason: '' }), false, 'and a judgement that was on its way to it is not written');
   assert.equal(api.execute('restore', { id: a.id }).outcome, 'success');
@@ -81,8 +81,8 @@ test('ignoring puts a row aside for 嘟嘟 too, restoring gives it back, and a r
   assert.equal(api.execute('restore', { id: a.id }).outcome, 'no_op');
   const issue = issues.add({ title: '已经是事项' }, { actor: 'owner' }).issue;
   inbox.judge(b.id, { verdict: 'issue', issueId: issue.id, reason: '' });
-  assert.equal(api.execute('ignore', { id: b.id }).outcome, 'no_op');
-  assert.equal(api.execute('ignore', { id: 9999 }).outcome, 'needs_clarification');
+  assert.equal(api.execute('done', { id: b.id }).outcome, 'no_op');
+  assert.equal(api.execute('done', { id: 9999 }).outcome, 'needs_clarification');
 });
 
 test('sharing adds the record to an open issue\'s activity as the owner\'s note and moves it to Done; a finished issue is refused', (t) => {
@@ -118,20 +118,20 @@ test('an unknown action and a body that is not an object are refused', async (t)
 
 // ---------------------------------------------------------------- several at once, and to a session
 
-test('ignore, restore and share take several records at once: all or none by number, one change for each, and "nothing changed" when none did', (t) => {
+test('done, restore and share take several records at once: all or none by number, one change for each, and "nothing changed" when none did', (t) => {
   const { issues, api, ingest } = world(t);
   const rows = ingest('mail', [raw('a'), raw('b'), raw('c')]);
   const every = rows.map((row: any) => row.id);
-  const ignored = api.execute('ignore', { ids: every.slice(0, 2) });
-  assert.deepEqual([ignored.outcome, ignored.changed], ['success', 2]);
-  assert.deepEqual(ids(api.execute('list', { tab: 'ignored' })).sort(), ['来信 a', '来信 b']);
+  const handled = api.execute('done', { ids: every.slice(0, 2) });
+  assert.deepEqual([handled.outcome, handled.changed], ['success', 2]);
+  assert.deepEqual(ids(api.execute('list', { tab: 'done' })).sort(), ['来信 a', '来信 b']);
   assert.deepEqual(ids(api.execute('list', { tab: 'todo' })), ['来信 c']);
-  const again = api.execute('ignore', { ids: every.slice(0, 2) });
+  const again = api.execute('done', { ids: every.slice(0, 2) });
   assert.equal(again.outcome, 'no_op');
-  const mixed = api.execute('ignore', { ids: every });
-  assert.deepEqual([mixed.outcome, mixed.changed], ['success', 1], 'only the one that was not ignored changed');
-  assert.equal(api.execute('ignore', { ids: [every[0], 9999] }).code, 'unknown_record', 'a number that is not there refuses the whole call');
-  assert.equal(api.execute('ignore', { ids: [] }).code, 'unknown_record');
+  const mixed = api.execute('done', { ids: every });
+  assert.deepEqual([mixed.outcome, mixed.changed], ['success', 1], 'only the one that was not handled changed');
+  assert.equal(api.execute('done', { ids: [every[0], 9999] }).code, 'unknown_record', 'a number that is not there refuses the whole call');
+  assert.equal(api.execute('done', { ids: [] }).code, 'unknown_record');
   const restored = api.execute('restore', { ids: every });
   assert.deepEqual([restored.outcome, restored.changed], ['success', 3]);
   assert.equal(ids(api.execute('list', { tab: 'todo' })).length, 3);
@@ -148,10 +148,9 @@ test('ignore, restore and share take several records at once: all or none by num
 test('delete: the record is in no tab, Restore brings it back to the tab it was in, and the same message is not collected again', (t) => {
   const { api, issues, inbox, ingest } = world(t);
   const [a, b, c] = ingest('mail', [raw('a'), raw('b'), raw('c')]);
-  api.execute('ignore', { id: b.id });
   api.execute('done', { id: c.id });
   for (const record of [a, b, c]) assert.equal(api.execute('delete', { id: record.id }).outcome, 'success');
-  for (const tab of ['todo', 'ignored', 'done']) assert.deepEqual(ids(api.execute('list', { tab })), [], `${tab} shows none of the deleted`);
+  for (const tab of ['todo', 'done']) assert.deepEqual(ids(api.execute('list', { tab })), [], `${tab} shows none of the deleted`);
   assert.equal(inbox.search('原文').length, 0, 'search does not offer them');
   assert.equal(inbox.list({}).items.length, 0, 'nor does the plain list');
   assert.equal(api.execute('get', { id: a.id }).outcome, 'success', 'by its number it is still there');
@@ -164,8 +163,7 @@ test('delete: the record is in no tab, Restore brings it back to the tab it was 
   assert.equal(api.execute('restore', { id: a.id }).outcome, 'success');
   api.execute('restore', { id: b.id });
   api.execute('restore', { id: c.id });
-  assert.deepEqual(ids(api.execute('list', { tab: 'todo' })), ['来信 a']);
-  assert.deepEqual(ids(api.execute('list', { tab: 'ignored' })), ['来信 b'], 'b was ignored before it was deleted');
+  assert.deepEqual(ids(api.execute('list', { tab: 'todo' })).sort(), ['来信 a', '来信 b']);
   assert.deepEqual(ids(api.execute('list', { tab: 'done' })), ['来信 c'], 'c was handled before it was deleted');
 });
 
@@ -206,7 +204,7 @@ test('owner marks read only summaries, without loading message bodies or scannin
     return get(id, options);
   };
   const ids = rows.map((record: any) => record.id);
-  for (const action of ['done', 'delete', 'restore', 'restore', 'ignore', 'restore']) {
+  for (const action of ['done', 'delete', 'restore', 'restore', 'done', 'restore']) {
     reads.length = 0;
     const result = api.execute(action, { ids });
     assert.equal(result.outcome, 'success');
@@ -218,10 +216,9 @@ test('owner marks read only summaries, without loading message bodies or scannin
 
 test('a removed collector takes with it what the owner never dealt with; what they marked or made an issue of, and other collectors\' rows, stay', (t) => {
   const { issues, inbox, api, ingest } = world(t);
-  const [open1, open2, handled, ignored, linked, deleted] = ingest('mail', [raw('open1'), raw('open2'), raw('handled'), raw('ignored'), raw('linked'), raw('deleted')]);
+  const [open1, open2, handled, linked, deleted] = ingest('mail', [raw('open1'), raw('open2'), raw('handled'), raw('linked'), raw('deleted')]);
   const [other] = ingest('lark', [raw('other')]);
   assert.equal(api.execute('done', { id: handled.id }).outcome, 'success');
-  assert.equal(api.execute('ignore', { id: ignored.id }).outcome, 'success');
   assert.equal(api.execute('delete', { id: deleted.id }).outcome, 'success');
   const issue = issues.add({ title: '核对', source: 'connector', sourceRef: 'mail:linked' }, { actor: 'dudu' }).issue;
   inbox.judge(linked.id, { verdict: 'issue', issueId: issue.id, reason: 'x' });
@@ -231,7 +228,7 @@ test('a removed collector takes with it what the owner never dealt with; what th
   assert.equal(inbox.get(open1.id), null);
   assert.equal(inbox.get(open2.id), null);
   assert.deepEqual(inbox.search('open1', { connector: 'mail' }), [], 'and they are not found by search either');
-  for (const kept of [handled, ignored, linked, other]) assert.ok(inbox.get(kept.id), `row ${kept.id} stays`);
+  for (const kept of [handled, linked, other]) assert.ok(inbox.get(kept.id), `row ${kept.id} stays`);
   assert.deepEqual(ids(api.execute('list', { tab: 'done' })).sort(), ['来信 handled', '来信 linked']);
   assert.equal(inbox.dropUntouched('mail'), 0, 'a second time changes nothing');
   assert.equal(inbox.dropUntouched('nothing'), 0);

@@ -31,6 +31,7 @@ private data class SidebarGroup(val id: String, val workspace: JSONObject?, val 
 @Composable
 fun DuduSidebar(state: UiState, model: DuduViewModel, opened: Boolean, close: () -> Unit) {
     var inventory by remember(state.computerId) { mutableStateOf(SidebarInventory(emptyList(), emptyList())) }
+    var moreExpanded by remember(state.computerId) { mutableStateOf(false) }
     val folded = remember { mutableStateMapOf<String, Boolean>() }
     LaunchedEffect(opened, state.computerId, state.connected) {
         if (!opened || !state.connected) return@LaunchedEffect
@@ -49,7 +50,7 @@ fun DuduSidebar(state: UiState, model: DuduViewModel, opened: Boolean, close: ()
         .groupBy { it.optString("workspaceId") }.map { (id, entries) ->
             SidebarGroup(id, inventory.workspaces.find { it.optString("id") == id }, entries, folded[id] == true)
         }
-    val dynamic = state.navigation.rows("sidebar")
+    val navigation = remember(state.navigation) { sidebarNavigation(state.navigation) }
     val width = (LocalConfiguration.current.screenWidthDp * .79f).coerceAtMost(360f).dp
     ModalDrawerSheet(Modifier.width(width), drawerContainerColor = MaterialTheme.colorScheme.background,
         drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)) {
@@ -69,20 +70,27 @@ fun DuduSidebar(state: UiState, model: DuduViewModel, opened: Boolean, close: ()
             }
         }
         LazyColumn(Modifier.weight(1f).padding(top = 12.dp)) {
-            if (dynamic.isNotEmpty()) items(dynamic) { item ->
-                SidebarLink(item.optString("title"), { close(); model.navigateItem(item) }) {
-                    if (item.has("icon")) NavigationGlyph(item.optJSONObject("icon"))
-                    else Glyph(when (item.optJSONObject("open")?.optString("native")) {
-                        "board" -> R.drawable.ic_panels_top_left
-                        "collector" -> R.drawable.ic_inbox
-                        "tasks" -> R.drawable.ic_clock
-                        else -> R.drawable.ic_panels_top_left
-                    }, size = 21)
-                }
+            if (navigation.primary.isNotEmpty()) items(navigation.primary, key = { "nav:${it.optString("id")}" }) { item ->
+                SidebarDestination(item) { close(); model.navigateItem(item) }
             } else {
-                item { SidebarLink(w("看板"), { close(); model.navigate(null) }) { Glyph(R.drawable.ic_panels_top_left, size = 21) } }
+                item { SidebarLink(w("看板"), { close(); model.navigate(null) }) { Glyph(R.drawable.ic_circle_dot, size = 21) } }
                 item { SidebarLink(w("收件箱"), { route(Route("collector")) }, "nav-collector") { Glyph(R.drawable.ic_inbox, size = 21) } }
                 item { SidebarLink(w("定时任务"), { route(Route("tasks")) }, "nav-tasks") { Glyph(R.drawable.ic_clock, size = 21) } }
+            }
+            if (navigation.additional.isNotEmpty()) {
+                item("more") {
+                    Row(Modifier.fillMaxWidth().testTag("sidebar-more").clickable { moreExpanded = !moreExpanded }
+                        .heightIn(min = 44.dp).padding(horizontal = 26.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Glyph(R.drawable.ic_ellipsis, size = 21)
+                        Text(w("查看更多"), Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        Glyph(if (moreExpanded) R.drawable.ic_chevron_up else R.drawable.ic_chevron_down,
+                            size = 14, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (moreExpanded) items(navigation.additional, key = { "nav:${it.optString("id")}" }) { item ->
+                    SidebarDestination(item) { close(); model.navigateItem(item) }
+                }
             }
             item {
                 Row(Modifier.fillMaxWidth().padding(start = 26.dp, end = 16.dp, top = 18.dp),
@@ -133,6 +141,19 @@ fun DuduSidebar(state: UiState, model: DuduViewModel, opened: Boolean, close: ()
                 Glyph(R.drawable.ic_settings, w("设置"), 22)
             }
         }
+    }
+}
+
+@Composable
+private fun SidebarDestination(item: JSONObject, action: () -> Unit) {
+    SidebarLink(item.optString("title"), action) {
+        if (item.has("icon")) NavigationGlyph(item.optJSONObject("icon"))
+        else Glyph(when (item.optJSONObject("open")?.optString("native")) {
+            "board" -> R.drawable.ic_circle_dot
+            "collector" -> R.drawable.ic_inbox
+            "schedule" -> R.drawable.ic_clock
+            else -> R.drawable.ic_panels_top_left
+        }, size = 21)
     }
 }
 

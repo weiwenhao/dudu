@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The Collector, a page of its own (owner, 2026-11-07): what the collectors brought back, in the desktop's three tabs. Its header (back, the
+/// The Collector, a page of its own (owner, 2026-11-07): what the collectors brought back, in two tabs (待处理, 已处理). Its header (back, the
 /// title, or the count and "全选" while choosing) is the root's toolbar; this is the rest of the page.
-/// A tap opens a record in full; a swipe to the left (the app's own, `SwipeActionRow`) marks it handled, ignores it or deletes it; pressing and holding opens the menu of what
+/// A tap opens a record in full; a swipe to the left (the app's own, `SwipeActionRow`) marks it handled (or restores it) or deletes it; pressing and holding opens the menu of what
 /// can be done with that record, as it does on a conversation (owner, 2026-11-07: a long press that looked like choosing several, and did not choose several,
 /// was "非常奇怪"). The menu's 选择 enters multiple selection with that row chosen (owner, 2026-11-13); taps then choose further rows.
 struct CollectorView: View {
@@ -29,12 +29,9 @@ struct CollectorView: View {
     /// The record whose swipe actions are showing (one at a time).
     @State private var revealed: Int?
 
-    private enum PickTarget { case issue, session }
-
-    /// The records to share, and where to: to an issue, or to the session of one.
+    /// The records to forward to the conversation of an issue.
     private struct PickRequest: Identifiable {
         let id = UUID()
-        let target: PickTarget
         let records: [CollectorRecord]
     }
 
@@ -69,9 +66,8 @@ struct CollectorView: View {
             CollectorRecordSheet(record: record, tab: model.tab, model: model, board: board, store: store, onOpenIssue: onOpenIssue)
         }
         .sheet(item: $picking) { request in
-            IssuePickerSheet(withSession: request.target == .session, board: board, store: store) { issue in
-                picking = nil
-                Task { await model.share(request.records, to: issue, session: request.target == .session, using: store) }
+            ForwardPickerSheet(records: request.records, board: board, store: store) { issue in
+                await model.share(request.records, to: issue, using: store)
             }
         }
         .sheet(item: $making) { draft in
@@ -100,19 +96,24 @@ struct CollectorView: View {
 
     private func quickContent(_ sheet: AssistantQuickSheetState) -> some View {
         ZStack {
+            // Choosing has its own bar (owner, 2026-11-18): 取消 on the left leaves it, 全选 on the right, the title says how many, and the ✕ is not there; otherwise 选择 stands before the ✕.
             QuickSheetPage(
                 title: model.isSelecting ? L10n.text("已选 {0} 条", "\(model.selection.count)") : L10n.text("收件箱"),
                 count: model.isSelecting || model.state != .loaded ? nil : model.totals[model.tab],
-                onClose: { if model.isSelecting { model.stopSelecting() } else { dismiss() } },
-                closeLabel: model.isSelecting ? L10n.text("取消选择") : L10n.text("关闭"),
+                onClose: { dismiss() },
+                centersTitle: true,
+                leading: model.isSelecting ? QuickSheetLeading(title: L10n.text("取消")) { model.stopSelecting() } : nil,
+                showsClose: !model.isSelecting,
                 active: sheet.record == nil,
                 scrollID: Binding(get: { sheet.scrollID }, set: { sheet.scrollID = $0 })
             ) {
                 if model.isSelecting {
                     Button(L10n.text("全选")) { model.selectAll() }
-                        .font(.system(size: 14, weight: .medium))
-                        .frame(minHeight: 44)
-                        .buttonStyle(DSBotQuietPressStyle())
+                        .disabled(model.allSelected)
+                        .accessibilityIdentifier("collector.selectAll")
+                } else if canSelect {
+                    Button(L10n.text("选择")) { model.startSelecting() }
+                        .accessibilityIdentifier("collector.select")
                 }
             } filters: {
                 GlassTabs(tabs: CollectorTab.allCases, title: \.title, selection: model.tab, identifier: "collector.tab", onSelect: model.select)
@@ -133,9 +134,10 @@ struct CollectorView: View {
                                 .contextMenu { rowMenu(for: record) } preview: {
                                     CollectorRowCard(record: record, tab: model.tab, completing: model.completing.contains(record.id))
                                 }
+                                .accessibilityIdentifier("collector.record.\(record.id)")
                             }
                             .id(String(record.id))
-                            if record.id != model.items.last?.id { QuickTodoSeparator() }
+                            if record.id != model.items.last?.id { QuickTodoSeparator(leading: model.isSelecting ? 104 : 70) }
                         }
                     }
                     .scrollTargetLayout()
@@ -168,6 +170,9 @@ struct CollectorView: View {
             }
         }
     }
+
+    /// 选择 in the bar needs a row that can be chosen (a handled record that went to an issue is the issue's).
+    private var canSelect: Bool { model.state == .loaded && model.items.contains { model.tab != .done || $0.issue == nil } }
 
     @ViewBuilder
     private var content: some View {
@@ -261,19 +266,17 @@ struct CollectorView: View {
         Task { await model.mark(action, [record], using: store) }
     }
 
-    /// What a swipe to the left offers (owner, 2026-11-07: "删除，忽略，已处理三个情况放在左滑里面"), the same words as pressing and holding, no issue needed: on the
-    /// to-do list Handled, Ignore and Delete; on Ignored, Restore, Handled and Delete; on Handled, Restore and Delete. A record that went to an issue is the issue's.
+    /// What a swipe to the left offers (owner, 2026-11-07: the marks go in the swipe), the same words as pressing and holding, no issue needed: on the
+    /// to-do list Handled and Delete; on Handled, Restore and Delete. A record that went to an issue is the issue's.
     /// Not while rows are being chosen.
     private func swipeActions(for record: CollectorRecord) -> [SwipeAction] {
         guard !model.isSelecting, !model.changing.contains(record.id), model.tab == .todo || record.issue == nil else { return [] }
         let done = SwipeAction(id: "done", title: L10n.text("已处理"), symbol: "checkmark", color: DSBotStyle.ink) { mark(.done, record) }
-        let ignore = SwipeAction(id: "ignore", title: L10n.text("忽略"), symbol: "eye.slash", color: SwipeAction.grey) { mark(.ignore, record) }
         let restore = SwipeAction(id: "restore", title: L10n.text("恢复"), symbol: "arrow.counterclockwise", color: DSBotStyle.blue) { mark(.restore, record) }
         let delete = SwipeAction(id: "delete", title: L10n.text("删除"), symbol: "trash", color: SwipeAction.red) { mark(.delete, record) }
         switch model.tab {
-        case .todo: return [done, ignore, delete]
-        case .ignored: return [restore, done, delete]
-        default: return [restore, delete]
+        case .todo: return [done, delete]
+        case .done: return [restore, delete]
         }
     }
 
@@ -291,19 +294,14 @@ struct CollectorView: View {
                 completeButton(for: record)
             } else {
                 if model.tab != .done {
-                    Button { picking = PickRequest(target: .issue, records: [record]) } label: { DSBotLabel(L10n.text("分享到事项"), icon: .shareToIssue) }
-                    Button { picking = PickRequest(target: .session, records: [record]) } label: { DSBotLabel(L10n.text("分享到会话"), icon: .shareToSession) }
+                    Button { picking = PickRequest(records: [record]) } label: { DSBotLabel(L10n.text("转发"), icon: .forward) }
                     Button { makeIssue(from: record) } label: { DSBotLabel(L10n.text("新建事项"), icon: .plus) }
                 }
                 completeButton(for: record)
                 if model.tab == .todo {
                     Button { mark(.done, record) } label: { DSBotLabel(L10n.text("已处理"), icon: .check) }
-                    Button { mark(.ignore, record) } label: { DSBotLabel(L10n.text("忽略"), icon: .hide) }
                 } else {
                     Button { mark(.restore, record) } label: { DSBotLabel(L10n.text("恢复"), icon: .restore) }
-                    if model.tab == .ignored {
-                        Button { mark(.done, record) } label: { DSBotLabel(L10n.text("已处理"), icon: .check) }
-                    }
                 }
                 Button(role: .destructive) { mark(.delete, record) } label: { DSBotLabel(L10n.text("删除"), icon: .trash) }
             }
@@ -325,17 +323,13 @@ struct CollectorView: View {
         }
     }
 
-    /// What can be done to all the chosen rows at once: share them, mark them handled, put them aside or bring them back, delete them.
+    /// What can be done to all the chosen rows at once: forward them, mark them handled, delete them (the words under the icons, delete in red).
     private var bulkBar: some View {
-        var items: [GlassActionBar.Item] = [
-            .init(id: "share", title: L10n.text("分享到事项"), glyph: .shareToIssue) { picking = PickRequest(target: .issue, records: model.chosen) },
-            .init(id: "session", title: L10n.text("分享到会话"), glyph: .shareToSession) { picking = PickRequest(target: .session, records: model.chosen) },
+        let items: [GlassActionBar.Item] = [
+            .init(id: "forward", title: L10n.text("转发"), glyph: .forward) { picking = PickRequest(records: model.chosen) },
             .init(id: "done", title: L10n.text("已处理"), glyph: .check) { Task { await model.mark(.done, model.chosen, using: store) } },
+            .init(id: "delete", title: L10n.text("删除"), glyph: .trash, destructive: true) { Task { await model.mark(.delete, model.chosen, using: store) } },
         ]
-        items.append(model.tab == .ignored
-            ? .init(id: "restore", title: L10n.text("恢复"), glyph: .restore) { Task { await model.mark(.restore, model.chosen, using: store) } }
-            : .init(id: "ignore", title: L10n.text("忽略"), glyph: .hide) { Task { await model.mark(.ignore, model.chosen, using: store) } })
-        items.append(.init(id: "delete", title: L10n.text("删除"), glyph: .trash) { Task { await model.mark(.delete, model.chosen, using: store) } })
         return GlassActionBar(items: model.chosen.isEmpty ? items.map { $0.disabled() } : items)
     }
 }
@@ -348,7 +342,8 @@ struct NewIssueDraft: Identifiable {
     var record: Int?
 }
 
-/// One record: where it comes from as a small picture, its title, who it is from and which collector, and when (or the issue it went to).
+/// One record: where it comes from as a small picture, its title (two lines at most), who it is from and which collector, and at the right when (or the issue it went to) and its number
+/// (owner, 2026-11-18, the inbox redesign: `.local/designs/inbox-forward-2026-11-18/`, 44pt picture, 16pt title, 13pt line under it, 12pt time and 11pt number, 66pt at least).
 /// The information card of 嘟嘟's chat draws its rows with it too (`QuickCardView`).
 struct CollectorRow: View {
     let record: CollectorRecord
@@ -360,6 +355,9 @@ struct CollectorRow: View {
 
     /// A handled record that went to an issue is the issue's: nothing to choose it for.
     private var choosable: Bool { tab != .done || record.issue == nil }
+
+    /// The room the column at the right takes from the text: the widest time ("11月16日", 12pt) with a little air.
+    private static let trailingColumn: CGFloat = 56
 
     var body: some View {
         HStack(spacing: 12) {
@@ -379,49 +377,62 @@ struct CollectorRow: View {
                 .frame(width: 22, height: 22)
                 .transition(.move(edge: .leading).combined(with: .opacity))
             }
-            ConnectorAvatar(icon: record.connectorIcon, name: record.connectorName)
-            VStack(alignment: .leading, spacing: 2) {
+            ConnectorAvatar(icon: record.connectorIcon, name: record.connectorName, size: 44)
+            VStack(alignment: .leading, spacing: 3) {
                 Text(record.title)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.system(size: 16, weight: .medium))
+                    .lineSpacing(2)
                     .foregroundStyle(DSBotStyle.ink)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
                 Text(record.byLine)
-                    .font(.system(size: 12))
+                    .font(.system(size: 13))
                     .foregroundStyle(DSBotStyle.muted)
                     .lineLimit(1)
             }
+            .padding(.trailing, Self.trailingColumn)
             .frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: 6) {
-                if completing {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.7)
-                        .tint(DSBotStyle.muted)
-                        .frame(width: 14, height: 14)
-                        .accessibilityHidden(true)
+            // The column at the right is held to the text's two ends: the time on the first line, the number on the last.
+            .overlay(alignment: .topTrailing) {
+                HStack(spacing: 6) {
+                    if completing {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.7)
+                            .tint(DSBotStyle.muted)
+                            .frame(width: 14, height: 14)
+                            .accessibilityHidden(true)
+                    }
+                    if let first = firstLine {
+                        Text(first)
+                            .font(.system(size: 12))
+                            .foregroundStyle(DSBotStyle.muted)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                    }
                 }
-                trailing
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if let ref = record.ref, !ref.isEmpty {
+                    Text(ref)
+                        .font(.system(size: 11))
+                        .foregroundStyle(DSBotStyle.muted)
+                        .lineLimit(1)
+                }
             }
         }
-        .frame(minHeight: 58)
+        .padding(.vertical, 10)
         .padding(.horizontal, 10)
-        .background(selected ? DSBotStyle.selected : Color.clear, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .frame(minHeight: 62)
+        .background(selected ? DSBotStyle.selected : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.vertical, 2)
         .contentShape(Rectangle())
     }
 
-    @ViewBuilder
-    private var trailing: some View {
-        if tab == .done, let issue = record.issue {
-            Text(issue.reference)
-                .font(.system(size: 10))
-                .foregroundStyle(DSBotStyle.muted)
-        } else if let at = record.at {
-            Text(relativeTime(at))
-                .font(.system(size: 10))
-                .foregroundStyle(DSBotStyle.muted)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-        }
+    /// The first line of the column at the right: the issue a handled record went to, or when it came.
+    private var firstLine: String? {
+        if tab == .done, let issue = record.issue { return issue.reference }
+        return record.at.map(relativeTime)
     }
 }
 
@@ -439,11 +450,22 @@ private struct CollectorRowCard: View {
     }
 }
 
-/// A glass bar of actions, each an icon over its word: the bar of chosen rows, and the bottom of a record in full.
+/// A glass bar of a page's actions, each an icon over its word (owner, 2026-11-18, the inbox redesign: the bar of icons alone had no words): the bar of chosen rows, the bottom of a record in full and of a task.
+/// An item is a button, or a menu of actions (更多). The word and the icon of one that deletes are red.
 struct GlassActionBar: View {
-    static let barHeight: CGFloat = 46
+    static let barHeight: CGFloat = 58
     static let bottomGap: CGFloat = 2
     static var reservedHeight: CGFloat { barHeight + bottomGap }
+
+    /// One action of an item's menu.
+    struct MenuEntry: Identifiable {
+        let id: String
+        let title: String
+        let glyph: DSBotGlyph
+        var isDestructive = false
+        var isDisabled = false
+        let action: () -> Void
+    }
 
     struct Item: Identifiable {
         let id: String
@@ -452,13 +474,25 @@ struct GlassActionBar: View {
         var isDisabled = false
         /// What it asks for is under way: a spinner stands in the place of its icon (so that it shows at once and is not pressed again) and it cannot be pressed.
         var isBusy = false
+        var isDestructive = false
+        /// An item with entries opens them as a menu when it is pressed; it has no action of its own.
+        var menu: [MenuEntry] = []
         let action: () -> Void
 
-        init(id: String, title: String, glyph: DSBotGlyph, action: @escaping () -> Void) {
+        init(id: String, title: String, glyph: DSBotGlyph, destructive: Bool = false, action: @escaping () -> Void) {
             self.id = id
             self.title = title
             self.glyph = glyph
+            self.isDestructive = destructive
             self.action = action
+        }
+
+        init(id: String, title: String, glyph: DSBotGlyph, menu: [MenuEntry]) {
+            self.id = id
+            self.title = title
+            self.glyph = glyph
+            self.menu = menu
+            self.action = {}
         }
 
         func disabled() -> Item {
@@ -494,35 +528,61 @@ struct GlassActionBar: View {
             }
     }
 
-    /// A small glass pill of icons, no words (each keeps its word for VoiceOver).
+    /// A small glass pill of actions, each an icon over a 11pt word.
     private var bar: some View {
         HStack(spacing: 0) {
             ForEach(items) { item in
-                Button(action: item.action) {
-                    Group {
-                        if item.isBusy {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(DSBotStyle.ink)
-                                .frame(width: 21, height: 21)
-                        } else {
-                            DSBotIcon(item.glyph, size: 21)
-                                .foregroundStyle(DSBotStyle.ink.opacity(item.isDisabled ? 0.35 : 1))
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: Self.barHeight)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(DSBotQuietPressStyle())
-                .disabled(item.isDisabled || item.isBusy)
-                .accessibilityLabel(item.title)
-                .accessibilityIdentifier("collector.action.\(item.id)")
+                cell(item)
+                    .accessibilityLabel(item.title)
+                    .accessibilityIdentifier("collector.action.\(item.id)")
             }
         }
         .padding(.horizontal, 6)
         .dsbotGlass(in: Capsule())
-        .padding(.horizontal, DSBotLayout.sidebarPadding + 10)
+        .padding(.horizontal, 20)
+    }
+
+    @ViewBuilder
+    private func cell(_ item: Item) -> some View {
+        if item.menu.isEmpty {
+            Button(action: item.action) { label(item) }
+                .buttonStyle(DSBotQuietPressStyle())
+                .disabled(item.isDisabled || item.isBusy)
+        } else {
+            Menu {
+                ForEach(item.menu) { entry in
+                    Button(role: entry.isDestructive ? .destructive : nil, action: entry.action) { DSBotLabel(entry.title, icon: entry.glyph) }
+                        .disabled(entry.isDisabled)
+                }
+            } label: { label(item) }
+            .menuIndicator(.hidden)
+            // The words in the order they are written, also when the menu opens upward over the bar (the system turns it round by default): the first one on top, delete last, nearest the bar.
+            .menuOrder(.fixed)
+            .buttonStyle(DSBotQuietPressStyle())
+            .disabled(item.isDisabled)
+        }
+    }
+
+    private func label(_ item: Item) -> some View {
+        let color = (item.isDestructive ? DSBotStyle.chatError : DSBotStyle.ink).opacity(item.isDisabled ? 0.35 : 1)
+        return VStack(spacing: 5) {
+            if item.isBusy {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(DSBotStyle.ink)
+                    .frame(width: 22, height: 22)
+            } else {
+                DSBotIcon(item.glyph, size: 22)
+            }
+            Text(item.title)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .foregroundStyle(color)
+        .frame(maxWidth: .infinity)
+        .frame(height: Self.barHeight)
+        .contentShape(Rectangle())
     }
 }
 
@@ -555,15 +615,16 @@ private struct CollectorRecordSheet: View {
     @State private var failed = false
     @State private var next: Next?
     @State private var activeAction: String?
+    /// The record went to a conversation: the page it was opened from takes it away once the picker is gone.
+    @State private var forwarded = false
 
     private enum Next: Identifiable {
-        case shareIssue, shareSession
+        case forward
         case newIssue(NewIssueDraft)
 
         var id: String {
             switch self {
-            case .shareIssue: return "shareIssue"
-            case .shareSession: return "shareSession"
+            case .forward: return "forward"
             case .newIssue: return "newIssue"
             }
         }
@@ -587,67 +648,111 @@ private struct CollectorRecordSheet: View {
         [shown.ref ?? "", shown.from ?? "", shown.connectorName, shown.at.map(relativeTime) ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
+    /// The link to the source, when the record has one a browser can open.
+    private var sourceURL: URL? {
+        shown.url.flatMap(URL.init(string:)).flatMap { ["http", "https"].contains($0.scheme?.lowercased()) ? $0 : nil }
+    }
+
     private var recordContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-                    Text(shown.title)
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(DSBotStyle.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(meta)
-                        .font(.system(size: 13))
-                        .foregroundStyle(DSBotStyle.muted)
-                        .padding(.top, 10)
-                    if let issue = shown.issue {
-                        Text("\(shown.verdict == "issue" ? L10n.text("已新建 ") : L10n.text("已分享到 "))\(issue.reference)")
-                            .font(.system(size: 13))
-                            .foregroundStyle(DSBotStyle.chatSecondary)
-                            .padding(.top, 6)
-                    }
-                    if failed {
-                        Text(L10n.text("信息没能加载"))
-                            .font(.system(size: 15))
-                            .foregroundStyle(DSBotStyle.muted)
-                            .padding(.top, 20)
-                    }
-                    if let problem = completionProblem {
-                        Text(problem)
-                            .font(.system(size: 13))
-                            .foregroundStyle(DSBotStyle.chatError)
-                            .padding(.top, 20)
-                            .accessibilityIdentifier("collector.record.completeError")
-                    }
-                    if let text = detail?.record.text, !text.isEmpty {
-                        Text(text)
-                            .font(.system(size: 16))
-                            .foregroundStyle(DSBotStyle.ink)
-                            .lineSpacing(4)
-                            .textSelection(.enabled)
-                            .padding(.top, 20)
-                    }
-                    if let context = detail?.record.context, !context.isEmpty {
-                        Text(L10n.text("上下文"))
-                            .font(.system(size: 12))
-                            .foregroundStyle(DSBotStyle.muted)
-                            .padding(.top, 24)
-                        ForEach(Array(context.enumerated()), id: \.offset) { _, entry in
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 8) {
-                                    Text(entry.from ?? "").font(.system(size: 13, weight: .semibold)).foregroundStyle(DSBotStyle.ink)
-                                    if let at = entry.at { Text(relativeTime(at)).font(.system(size: 12)).foregroundStyle(DSBotStyle.muted) }
-                                }
-                                Text(entry.text ?? "").font(.system(size: 13)).foregroundStyle(DSBotStyle.chatSecondary)
-                            }
-                            .padding(.top, 12)
+            Text(shown.title)
+                .font(.system(size: 19, weight: .semibold))
+                .lineSpacing(2)
+                .foregroundStyle(DSBotStyle.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(meta)
+                .font(.system(size: 13))
+                .foregroundStyle(DSBotStyle.muted)
+                .padding(.top, 10)
+            if let issue = shown.issue {
+                Text("\(shown.verdict == "issue" ? L10n.text("已新建 ") : L10n.text("已转发到 "))\(issue.reference)")
+                    .font(.system(size: 13))
+                    .foregroundStyle(DSBotStyle.chatSecondary)
+                    .padding(.top, 6)
+            }
+            if failed {
+                Text(L10n.text("信息没能加载"))
+                    .font(.system(size: 15))
+                    .foregroundStyle(DSBotStyle.muted)
+                    .padding(.top, 20)
+            }
+            if let problem = completionProblem {
+                Text(problem)
+                    .font(.system(size: 13))
+                    .foregroundStyle(DSBotStyle.chatError)
+                    .padding(.top, 20)
+                    .accessibilityIdentifier("collector.record.completeError")
+            }
+            recordCard
+            if let context = detail?.record.context, !context.isEmpty {
+                Text(L10n.text("上下文"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(DSBotStyle.muted)
+                    .padding(.top, 24)
+                ForEach(Array(context.enumerated()), id: \.offset) { _, entry in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 8) {
+                            Text(entry.from ?? "").font(.system(size: 13, weight: .semibold)).foregroundStyle(DSBotStyle.ink)
+                            if let at = entry.at { Text(relativeTime(at)).font(.system(size: 12)).foregroundStyle(DSBotStyle.muted) }
                         }
+                        Text(entry.text ?? "").font(.system(size: 13)).foregroundStyle(DSBotStyle.chatSecondary)
                     }
+                    .padding(.top, 12)
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// What the record says, in one white card (owner, 2026-11-18, the inbox redesign): a conversation as a talk when the plugin sent its messages one by one, otherwise the text as it is; the source is the
+    /// card's last row, 打开来源, when the record has a link.
+    @ViewBuilder
+    private var recordCard: some View {
+        let messages = detail?.record.messages ?? []
+        let text = detail?.record.text ?? ""
+        let hasWords = !messages.isEmpty || !text.isEmpty
+        if hasWords || sourceURL != nil {
+            VStack(alignment: .leading, spacing: 0) {
+                if !messages.isEmpty {
+                    RecordTalk(messages: messages)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 14)
+                        .padding(.bottom, 8)
+                } else if !text.isEmpty {
+                    Text(text)
+                        .font(.system(size: 16))
+                        .foregroundStyle(DSBotStyle.ink)
+                        .lineSpacing(4)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                }
+                if let url = sourceURL {
+                    if hasWords { Rectangle().fill(DSBotStyle.line).frame(height: 1).padding(.horizontal, 16) }
+                    Button { openURL(url) } label: {
+                        HStack(spacing: 8) {
+                            Text(L10n.text("打开来源")).font(.system(size: 16)).foregroundStyle(DSBotStyle.ink)
+                            Spacer(minLength: 8)
+                            DSBotIcon(.openLink, size: 18).foregroundStyle(DSBotStyle.muted)
+                        }
+                        .padding(.horizontal, 16)
+                        .frame(height: 53)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(DSBotRowButtonStyle())
+                    .accessibilityIdentifier("collector.record.source")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .padding(.top, 14)
+        }
+    }
+
+    /// The header is the page's frame and no more (owner, 2026-11-18): ‹ when it is pushed, the title, ✕. What can be done is in the bar at the bottom.
     private var standalone: some View {
-        QuickSheetPage(title: L10n.text("收件箱"), onClose: { dismiss() }) {
-            quickActions
-        } filters: {} content: {
+        QuickSheetPage(title: L10n.text("收件箱"), onClose: { dismiss() }, centersTitle: true, actions: {}, filters: {}) {
             recordContent.padding(.horizontal, 4).padding(.top, 14)
         } footer: {
             GlassActionBar(items: barItems)
@@ -664,10 +769,8 @@ private struct CollectorRecordSheet: View {
             if let quickNavigation {
                 QuickSheetPage(
                     title: L10n.text("收件箱"), onBack: quickNavigation.back, onClose: quickNavigation.close,
-                    allowsExpansion: true
+                    allowsExpansion: true, actions: {}, filters: {}
                 ) {
-                    quickActions
-                } filters: {} content: {
                     recordContent.padding(.horizontal, 4).padding(.top, 14)
                 } footer: {
                     GlassActionBar(items: barItems).padding(.bottom, GlassActionBar.bottomGap)
@@ -692,15 +795,19 @@ private struct CollectorRecordSheet: View {
             Task { if let loaded = await model.detail(of: record, using: store) { detail = loaded } }
         }
         .onDisappear { model.clearProblem(record.id) }
-        .sheet(item: $next) { destination in
+        .sheet(item: $next, onDismiss: {
+            // Forwarded: the record has left this tab, so the page it was opened from goes (back to the list, or away when it was opened on its own).
+            if forwarded {
+                forwarded = false
+                finish()
+            }
+        }) { destination in
             switch destination {
-            case .shareIssue, .shareSession:
-                IssuePickerSheet(withSession: destination.id == "shareSession", board: board, store: store) { issue in
-                    next = nil
-                    let withSession = destination.id == "shareSession"
-                    Task {
-                        if await model.share([record], to: issue, session: withSession, using: store) { finish() }
-                    }
+            case .forward:
+                ForwardPickerSheet(records: [record], board: board, store: store) { issue in
+                    let went = await model.share([record], to: issue, using: store)
+                    if went { forwarded = true }
+                    return went
                 }
             case let .newIssue(draft):
                 NewIssueSheet(board: board, store: store, title: draft.title, brief: draft.brief, record: draft.record) {
@@ -718,51 +825,16 @@ private struct CollectorRecordSheet: View {
         if let quickNavigation { quickNavigation.back() } else { dismiss() }
     }
 
-    private var quickActions: some View {
-        HStack(spacing: 2) {
-            if let url = shown.url.flatMap(URL.init(string:)), ["http", "https"].contains(url.scheme?.lowercased()) {
-                Button { openURL(url) } label: {
-                    quickActionIcon(.openLink)
-                }
-                .buttonStyle(DSBotQuietPressStyle())
-                .accessibilityLabel(L10n.text("打开来源"))
-            }
-            Menu {
-                Button { completeContext() } label: { DSBotLabel(L10n.text("补全上下文"), icon: .completeContext) }
-                    .disabled(isCompleting)
-                ForEach(moreActions, id: \.title) { item in
-                    Button(role: item.glyph == .trash ? .destructive : nil) {
-                        Task {
-                            if await model.mark(item.mark, [record], using: store) { finish() }
-                        }
-                    } label: { DSBotLabel(item.title, icon: item.glyph) }
-                }
-            } label: { quickActionIcon(.options) }
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .accessibilityLabel(L10n.text("更多"))
-        }
-    }
-
-    private func quickActionIcon(_ glyph: DSBotGlyph) -> some View {
-        DSBotIcon(glyph, size: 20)
-            .foregroundStyle(DSBotStyle.chatSecondary)
-    }
-
     private struct MoreAction {
         let title: String
         let glyph: DSBotGlyph
         let mark: CollectorMark
     }
 
-    /// What is left after the bar's: put aside or handled, and delete (not for a record an issue holds), with filling in the context first.
+    /// What is left after the bar's: delete (not for a record an issue holds); 更多 opens it after filling in the context.
     private var moreActions: [MoreAction] {
         guard record.issue == nil else { return [] }
-        switch tab {
-        case .todo: return [MoreAction(title: L10n.text("忽略"), glyph: .hide, mark: .ignore), MoreAction(title: L10n.text("删除"), glyph: .trash, mark: .delete)]
-        case .ignored: return [MoreAction(title: L10n.text("已处理"), glyph: .check, mark: .done), MoreAction(title: L10n.text("删除"), glyph: .trash, mark: .delete)]
-        case .done: return [MoreAction(title: L10n.text("删除"), glyph: .trash, mark: .delete)]
-        }
+        return [MoreAction(title: L10n.text("删除"), glyph: .trash, mark: .delete)]
     }
 
     /// Fill in the context of the record: a spinner stands in the button's place while it runs, and the sheet stays open (the new lines come into it).
@@ -771,8 +843,8 @@ private struct CollectorRecordSheet: View {
         model.complete(record, using: store)
     }
 
-    /// What can be done with the record, left to right: what passes it on, then filling in its context (every record, in every tab; between the two, as the desktop's menu has it), then
-    /// the mark that is done with it, which stays last.
+    /// What can be done with the record, left to right (owner, 2026-11-18, the inbox redesign): what passes it on (转发, 新建事项), the mark that is done with it (已处理, or 恢复 on the
+    /// handled), and 更多, a menu of filling in the context and delete (in red). A record an issue holds has 打开事项 and 补全上下文 and no 更多.
     private var barItems: [GlassActionBar.Item] {
         func mark(_ id: String, _ title: String, _ glyph: DSBotGlyph, _ action: CollectorMark) -> GlassActionBar.Item {
             .init(id: id, title: title, glyph: glyph) {
@@ -784,9 +856,24 @@ private struct CollectorRecordSheet: View {
             }
         }
         let complete = GlassActionBar.Item(id: "complete", title: L10n.text("补全上下文"), glyph: .completeContext) { completeContext() }.busy(isCompleting)
+        // 更多: the spinner of a completion in the place of its icon (the menu stays open to the other actions); its own marks are one at a time like the bar's.
+        var entries = [GlassActionBar.MenuEntry(id: "complete", title: L10n.text("补全上下文"), glyph: .completeContext, isDisabled: isCompleting) { completeContext() }]
+        for item in moreActions {
+            entries.append(GlassActionBar.MenuEntry(
+                id: "mark.\(item.mark.rawValue)", title: item.title, glyph: item.glyph, isDestructive: item.glyph == .trash,
+                isDisabled: model.changing.contains(record.id) || activeAction != nil
+            ) {
+                activeAction = "more"
+                Task {
+                    defer { activeAction = nil }
+                    if await model.mark(item.mark, [record], using: store) { finish() }
+                }
+            })
+        }
+        let more = GlassActionBar.Item(id: "more", title: L10n.text("更多"), glyph: .options, menu: entries).busy(isCompleting || activeAction == "more")
         func ready(_ items: [GlassActionBar.Item]) -> [GlassActionBar.Item] {
             model.changing.contains(record.id) || activeAction != nil
-                ? items.map { $0.id == activeAction ? $0.busy(true) : $0.disabled() } : items
+                ? items.map { $0.id == activeAction ? $0.busy(true).disabled() : $0.disabled() } : items
         }
         if tab == .done {
             if let issue = record.issue {
@@ -795,91 +882,76 @@ private struct CollectorRecordSheet: View {
                     onOpenIssue(issue.id)
                 }, complete])
             }
-            return ready([complete, mark("restore", L10n.text("恢复"), .restore, .restore)])
+            return ready([mark("restore", L10n.text("恢复"), .restore, .restore), more])
         }
         let draft = NewIssueDraft(title: detail?.draft.title ?? record.title, brief: detail?.draft.brief ?? "", record: record.id)
         return ready([
-            .init(id: "share", title: L10n.text("分享到事项"), glyph: .shareToIssue) { next = .shareIssue },
-            .init(id: "session", title: L10n.text("分享到会话"), glyph: .shareToSession) { next = .shareSession },
+            .init(id: "forward", title: L10n.text("转发"), glyph: .forward) { next = .forward },
             .init(id: "new", title: L10n.text("新建事项"), glyph: .plus) { next = .newIssue(draft) },
-            complete,
-            tab == .ignored ? mark("restore", L10n.text("恢复"), .restore, .restore) : mark("done", L10n.text("已处理"), .check, .done),
+            mark("done", L10n.text("已处理"), .check, .done),
+            more,
         ])
     }
 }
 
-/// The open issues, the one touched last first, to share a record to: a box finds one by its number or its words.
-struct IssuePickerSheet: View {
-    let withSession: Bool
-    @ObservedObject var board: BoardModel
-    @ObservedObject var store: DSBotStore
-    let onPick: (BoardIssue) -> Void
+/// A conversation record's messages as a talk, inside the record's white card (owner, 2026-11-18, the inbox redesign): the day between the days (`MM-DD`, centred on two hairlines), the sender's name
+/// (14pt semibold) when the sender changes, each message in 16pt with its time (12pt, muted) at the right.
+private struct RecordTalk: View {
+    let messages: [CollectorMessage]
 
-    @Environment(\.dismiss) private var dismiss
-    @State private var issues: [BoardIssue]?
-    @State private var failed = false
-    @State private var query = ""
+    private struct Line: Identifiable {
+        let id: Int
+        let message: CollectorMessage
+        /// The day starts here: its date goes first.
+        let startsDay: Bool
+        /// The sender is named before the message: it is the first of the day, or another one than before.
+        let showsName: Bool
+    }
 
-    private var shown: [BoardIssue] {
-        let words = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let issues else { return [] }
-        return words.isEmpty ? issues : issues.filter { $0.title.localizedCaseInsensitiveContains(words) || $0.reference.localizedCaseInsensitiveContains(words) }
+    private var lines: [Line] {
+        var out: [Line] = []
+        for (index, message) in messages.enumerated() {
+            let previous = index > 0 ? messages[index - 1] : nil
+            let startsDay = previous?.day != message.day
+            out.append(Line(id: index, message: message, startsDay: startsDay, showsName: message.from != nil && (startsDay || previous?.from != message.from)))
+        }
+        return out
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let issues {
-                    if shown.isEmpty {
-                        Text(issues.isEmpty ? L10n.text("没有事项") : L10n.text("没有找到事项"))
-                            .font(.system(size: 15))
-                            .foregroundStyle(DSBotStyle.muted)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        List(shown) { issue in
-                            Button { onPick(issue) } label: {
-                                HStack(spacing: 10) {
-                                    Text(issue.reference)
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(DSBotStyle.muted)
-                                        .lineLimit(1)
-                                        .frame(minWidth: 56, alignment: .leading)
-                                        .fixedSize(horizontal: true, vertical: false)
-                                    Text(issue.title)
-                                        .font(.system(size: 15))
-                                        .foregroundStyle(DSBotStyle.ink)
-                                        .lineLimit(1)
-                                }
-                                .frame(minHeight: 40)
-                            }
-                            .listRowBackground(Color.clear)
-                            .accessibilityIdentifier("picker.issue.\(issue.id)")
-                        }
-                        .listStyle(.plain)
-                    }
-                } else if failed {
-                    Text(L10n.text("事项没能加载"))
-                        .font(.system(size: 15))
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(lines) { line in
+                if line.startsDay { dateDivider(line.message.day) }
+                if line.showsName, let name = line.message.from {
+                    Text(name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(DSBotStyle.ink)
+                        .frame(height: 24, alignment: .leading)
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(line.message.text)
+                        .font(.system(size: 16))
+                        .lineSpacing(3)
+                        .foregroundStyle(DSBotStyle.ink)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(line.message.time)
+                        .font(.system(size: 12))
                         .foregroundStyle(DSBotStyle.muted)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ProgressView().tint(DSBotStyle.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .monospacedDigit()
                 }
-            }
-            .background(DSBotStyle.canvas)
-            .navigationTitle(withSession ? L10n.text("分享到会话") : L10n.text("分享到事项"))
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: L10n.text("搜索事项…"))
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(L10n.text("取消")) { dismiss() }
-                        .accessibilityIdentifier("picker.cancel")
-                }
+                .padding(.bottom, 8)
             }
         }
-        .presentationDetents([.large])
-        .task {
-            if let found = await board.openIssues(withSession: withSession, using: store) { issues = found } else { failed = true }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func dateDivider(_ day: String) -> some View {
+        HStack(spacing: 10) {
+            Rectangle().fill(DSBotStyle.line).frame(height: 1)
+            Text(day).font(.system(size: 12)).foregroundStyle(DSBotStyle.muted)
+            Rectangle().fill(DSBotStyle.line).frame(height: 1)
         }
+        .frame(height: 30)
     }
 }

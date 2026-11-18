@@ -1,7 +1,8 @@
 # 供应商：在 DSH 里使用电脑上的 Claude 和 ChatGPT
 
-dudu 插件把电脑上已安装的 harness（第一版是 Claude Code 和 Codex，2026-11-14 加了 Pi）接进 DSH。新会话的聊天框上方会多一个供应商
-下拉框，选 Claude、ChatGPT 或 Pi 后，这个会话由对应的 harness 运行，DSH 只负责显示。
+dudu 插件把电脑上已安装的 harness（第一版是 Claude Code 和 Codex，2026-11-14 加了 Pi，2026-11-19 加了 Grok、Kimi、OpenCode、
+Antigravity、CodeBuddy、Devin、Factory、Qwen、Qoder）接进 DSH。新会话的聊天框上方会多一个供应商下拉框，选其中一个后，
+这个会话由对应的 harness 运行，DSH 只负责显示。下拉框只列电脑上找到并启用的。
 
 关键点：会话是 harness 自己的真实会话。在终端里用 `claude --resume` 或 `codex resume` 就能接着聊。
 
@@ -46,6 +47,127 @@ DSH 的 loop ──一步一条助手消息──▶ harness 适配器（LLM ada
   供应商的选择写进会话日志（`model/selection` 事件）。这部分是一个单独的 Cordis 插件，依赖的服务缺失时只是不出现，
   不会影响手机控制和设置页。嘟嘟设置里的"供应商"页（DSH 自己的设置里没有）显示是否找到、版本、路径，可以启用/停用、指定可执行文件路径、重新检测。
   选择器左侧使用当前供应商自己的 Logo，复用侧栏与事项的 `AgentLogo`（16 px，跟随浅色/深色主题），切换供应商时同步更新。
+
+## 长会话切换模型被 DSH 自动压缩拦住（2026-11-18）
+
+DUD-5 从 `auto/gpt-6.1-sol` 切到 `codex/gpt-6.2-sol` 后，日志先记录了 `model/selection`（seq 57101），
+随后 `turn/end`（seq 57111）以 `MODEL_SWITCH_COMPACTION_FAILED` 结束，保留原来的模型。请求还没进入
+Codex 的模型执行。压缩的失败是网桥对 DSH `purpose: 'compaction'` 的拒绝，与 OAR 的原生 `session.compact()`
+是否可用无关；后者仍由 `/compact` 调用。
+
+根因：网桥为了把上下文管理交给原生 harness，给 DSH 的展示历史填了 `10_000_000` 的占位容量。当前 DSH
+0.2.2-rc.3 在模型切换时，用新请求头重新估算完整 surface，达到 80% 就先做 DSH 摘要。这个会话的 surface
+已约 868 万 token，另有工具声明；Codex 原生上下文最近的请求使用量约 9.6 万 token。DSH 的展示历史
+没有随着原生压缩缩短，所以越过占位门槛，错误进入 DSH 的摘要流程。普通步骤也会重复失败，只是宿主会记录警告后继续，
+切换模型则会直接报错。
+
+当前宿主的适配器协议要求容量是正整数，没有“由外部 harness 管理上下文”的免自动压缩选项，省略容量同样会让模型
+切换报错。网桥改用 `Number.MAX_SAFE_INTEGER` 表达仅供宿主使用的无实际限制占位值，并防止驱动的原生容量覆盖它。
+这不是模型真实窗口，也不会扩大原生窗口：原生 CLI 继续检查真实限制并自动压缩，网桥只提交新输入并 resume 原生 ID。
+没有让 DSH 摘要返回伪成功，没有改会话日志或删除历史。
+
+验证：新增单测用上述历史规模检查宿主压力边界，覆盖驱动不带容量和带原生容量两种情况，并确认新模型 ID、新输入和原生
+会话 ID 正确交给驱动；该用例在旧实现失败、修复后通过。相关续接、中断、失败和原生手动压缩的定向单测共 6 条通过。
+未调用真实模型，未跑 DSH/browser E2E；尚未更新正式 Desktop。
+
+## 官方 OAR 0.120.0 与九个新供应商（2026-11-19）
+
+主人（2026-11-19）：“OAR 供应商全面接入……目前 oar 已经支持了大量的供应商”，随后 “接着做完把，oar 升级，然后接入”。
+
+### OAR 0.105.0 → 0.120.0
+
+0.120.0 内置 15 个 runtime，比 0.105.0 多 Devin 和 Factory Droid。七份补丁都保留（上游仍没有这些功能）：四份原样适用，
+`claude-defaults`、`codex-session`、`session-controls` 三份因上游挪动了上下文而重做，做法和校验值见
+`packages/oar-adapter/README.md` 的 “Upgrade to 0.120.0”。锁文件只变了 OAR 自己的依赖树：Pi 的 SDK 从 1.5.0 到 1.5.2，
+新增 `gray-matter`，OAR 因 `js-yaml` 版本不同被 npm 放到 `packages/oar-adapter/node_modules/` 下。
+打包后 `providers/oar-runtimes.mjs` 从 0.6 MB 变成 1.95 MB（多出九个 runtime、ACP 的 SDK、zod、js-yaml），Pi 的包没有变大多少。
+
+上游在这 15 个版本里对已接的三家的改动，和宿主有关的：
+
+- Claude 的 `queue()` 现在总由 OAR 自己保管输入，空闲时作为一个新的 `prompt` 发出。宿主里 “Claude 把运行中收到的消息排在后面
+  单独答一轮” 的那条路径（`queuesSteer`）依赖这里，目前只有脚本化的单测覆盖，需要用真实的 Claude 发一条运行中的消息确认一次。
+- Codex 被中断后再 `queue` 会以 `no_active_turn` 被拒，宿主把它记为 “未送达”，下一轮会重新带上。
+- 模型不一致时 Codex 和 Pi 抛 `ModelConfirmationError`，文字不变。事件种类没有新增（`contracts/session.d.ts` 一字未变）。
+
+### 九个新供应商共用一个驱动
+
+Grok、Kimi、OpenCode、Antigravity、CodeBuddy、Devin（这六个走 ACP）、Qwen、Qoder（stream-json）、Factory（droid 自己的协议）
+在 OAR 这一层给出的记录是同一种，所以宿主只写了一个驱动：`drivers/universal.mjs` 和 `drivers/universal-tools.mjs`，
+每家只是一行定义（OAR 的 runtime、可执行文件的环境变量名、没登录时的提示）。以后 OAR 再加 runtime，加一行即可。
+
+没接的三个：DeepSeek Harness（就是 DSH 自己）、Pi Durable（宿主托管的持久会话，实验性，Pi 已经接了）、Cursor
+（没有可执行文件，要把 `@cursor/sdk` 和它的原生包打进插件，登录也是 SDK 自己的一套，和 Cursor 编辑器、CLI 的登录无关）。
+
+- **工具怎么画**：各家工具名都不一样（`run_terminal_command`、`Bash`、`run_shell_command`……），而且随版本变。驱动不认工具名，
+  认 “这是什么动作”：先用 OAR 自带的 `classifyTool`（它记录了每家每个工具属于哪类、命令和路径在哪个字段），不认识的再看 ACP
+  调用自带的 `kind`，最后才按名字猜。每家固定九个镜像工具 `<id>_<动作>`（执行命令、读文件、改文件、搜索、搜网页、取网页、
+  子智能体、MCP、其他），用 DSH 已有的卡片：终端、diff、通用卡片。原来的工具名和输入留在调用里（`tool`、`input`）。
+- **访问模式**：这九家都由 OAR 以各自的 “全部放行” 方式启动（没有人能回答审批），OAR 也没有可验证的沙盒或禁用工具通道
+  （ACP 的五家直接拒绝禁用列表；Qwen、Qoder、CodeBuddy 能传，但名字写错会被静默忽略，没有真机无法确认）。所以
+  **只读模式下不启动**，直接报 `<名字> cannot be kept read-only. Choose another access mode to use it.`，
+  不会出现选了只读却仍然能写的情况。其他模式不加限制，和 Pi 的 “工作区内修改” 一样。
+- **反向请求**：这些 runtime 的终端、审批请求由 OAR 自己回答。宿主原来把任何 “harness 向宿主提的请求” 当成没人能回答而结束回合
+  （对 Claude、Codex 是对的），现在驱动可以声明 “OAR 已回答”（`autoAnswered`），否则 Grok 每跑一条命令回合就会被结束。
+- **运行中发的消息**：不插进正在跑的回合，等这一轮结束后作为下一轮发出（`steering: false`）。原因是 Grok、OpenCode 的插话
+  如果没赶上当前回合，会变成 harness 自己另起的一轮，DSH 不会等它，回答就丢了。顺带修了桥里的一个缺口：不能插话的 runtime
+  原来会把这条消息记成 “已送达” 然后丢掉，现在如实返回 “没送”，由下一轮带上（`harness-bridge.mjs` 的 `forward`）。
+- **开场不带参数的调用**：ACP 的工具调用常常先开场、参数后到（Kimi 开场什么都没有，OpenCode 的 shell 开场只有目录）。
+  驱动等参数到了再画卡片；一直没有参数的调用在结束时补画，不再被丢掉。
+- **没有**：后台任务和子智能体的单独显示、额度读取、侧栏里浏览和载入它们已有的会话、单写者检查（终端里同时写同一个会话要自己当心）。
+  手动 `/compact` 走 OAR 的 `compact()`，OAR 没给这个能力的 runtime（Kimi、CodeBuddy、Antigravity、Devin、Qwen、OpenCode v1）
+  会如实说不支持。`/goal` 走桥里和 Claude、ChatGPT、Pi 相同的约定，没有对这九家单独验证。
+- **harness 自己重试时没有提示**：Grok 遇到 503 会自己重试最多 15 次，这期间 OAR 不报任何事件，DSH 里只看到一直在运行。
+
+### 各处的名单
+
+- 宿主的名单是 `catalog.mjs` 的 `HARNESS_IDS`（事项的智能体 `AGENTS` 由它生成）。桌面界面的名单是 `ui/issues/model.js` 的 `AGENT_NAMES`，
+  手机和 Android 的名字、标志由脚本从它生成（`sync-agent-assets.mjs`、`sync-android-assets.mjs`）。`client.js` 的外壳不能 import，
+  仍是一份字面量。`tests/harness-lists.test.ts` 检查这几处的 id、顺序和名字一致。
+- **没装的不占地方**：聊天框的供应商下拉框、事项的智能体菜单本来就只列找到并启用的。定时任务窗口原来把没装的也列出来置灰，
+  现在新接的九家只在可用时才列（Claude、ChatGPT、Pi 没装时照旧置灰，现有用户看到的不变）。供应商名单还没读到时，
+  各端只列常用的四个（`USUAL_AGENTS`），不会先闪出十三个。
+- **新接的九家默认关闭**（主人 2026-11-19：“折起来，并且默认关闭把”）：装了也要在设置里打开才会用。这样电脑上碰巧装着的
+  （比如没登录的 Grok）不会自己出现在智能体列表里。只有 “找到了” 并且 “开关开着” 的才会出现在新建事项、下拉框和定时任务里；
+  没装的即使把开关打开也不会出现。`providers.json` 只记和默认不同的选择：默认开的记在 `disabled`，默认关的记在 `enabled`
+  （驱动的 `defaultEnabled: false`，`providers/index.mjs` 的 `enabledOf`）。Claude、ChatGPT、Pi 仍然默认开启，旧的设置文件不用迁移。
+- **设置里的 “供应商” 页把没找到的折起来**（主人选的方案 C，设计稿 `.local/designs/providers-fold-2026-11-19/`）：新接的九家里没找到的，
+  收成卡片下面的一行 “未找到 N” 加它们的标志，点开后另成一张卡片。Claude、ChatGPT、Pi 不管找没找到都各占一行（和以前一样）；
+  折起来的某一家被找到后自动回到上面。手机上没有供应商设置页，没有可折的东西。
+- 标志取自 OAR 自带的品牌图（LobeHub lobe-icons，MIT；Qwen、Factory 各有出处），许可在 `licenses/agent-marks.txt`、`licenses/qwen-code.txt`
+  和打包后的 `THIRD_PARTY_NOTICES.txt`。Factory 只画字形，Antigravity 画成单色轮廓，和原图不同。
+
+### 验证（2026-11-19）
+
+- **单元**：`tests/universal-driver.test.ts` 13 项全过（九家的名单和各处一致；动作归类；各家输入归一；卡片；参数后到和无参数的调用；
+  OAR 已回答的请求不结束回合而 Claude 的仍然结束；只读被拒且没有进程启动；运行中的消息不插话）。桥的修复有一条单测，
+  去掉修复即失败。相邻的 `pi-driver`、`oar-driver`、`harness-bridge` 45 项全过；OAR 升级的回归 11 个文件 88 项全过。
+- **这台电脑上的真实 CLI**（只有 Grok 装着）：九家的探测如实返回（Grok 可用，其余未找到）；经驱动向 Grok 列出两个模型和思考等级；
+  在临时目录里跑了两轮真实对话：会话建立、消息送达、失败归类和收尾都正确，但两轮都没到模型回答，
+  因为这台电脑的 Grok 本身用不了（`grok-4.6` 的中转返回 503 无可用渠道，`grok-4.5` 返回 401 未登录）。
+  第二轮显示的是 `Grok is not logged in. Run \`grok login\` in a terminal.`。两个探测会话已用 `grok sessions delete` 删除。
+  Grok 在被启动时自己从 1.0.4 更新到了 1.0.89。
+- **打包和各端构建**：`npm run package:desktop` 通过，包在仓库外能加载（7.4 MB 变 7.8 MB）；`npm run native:build` 通过，
+  手机装了 build 139；`npm run android:build`（编译、单测、lint）通过。lint、typecheck 干净
+  （`ui/tasks/TasksDialog.jsx` 里两条 react-hooks 报错是原有代码的，不在这次改动的行上）。
+- **隔离的 dsh web**（主人 2026-11-19：“跑吧，做个快速的更新验证”；Desktop 自带 CLI 0.2.2-rc.3，独立 HOME，真实的 Claude 2.1.326、
+  Codex 0.169.0、Pi，只脚本化模型，日志在 `.local/verify/oar-0120/`）：
+  - 升级回归 `claude-stop`、`harness-failures`、`harness-resume`、`pi-provider` 共 33 项，32 过，4 分 22 秒。
+    失败的一项是 `pi-provider` 里 “供应商开关后各处的智能体列表跟着变”：它一上来在看板里找 “New issue” 按钮，而看板现在默认是会话布局，
+    按钮收在折叠菜单里（11 月 18 日看板改版后的样子），测试还是旧找法。页面本身正常：四个区域都在，页面报错 0 条。
+    这一项没有在改动前的树上跑过对照。
+  - Claude 运行中收到消息（上面说的 `queuesSteer` 那条路径）：消息到了 Claude 一次、得到回答、同一个 Claude 会话、
+    DSH 里一轮正常结束。这是不进仓库的小检查（`claude-midturn-lite.e2e.test.ts`）。
+  - 真实 DSH 里十二个供应商都列出，Claude、ChatGPT、Pi、Grok 是模型目录里的路由，没找到的八个不是；设置里的 “供应商” 页十二行、
+    十二个标志都画出来了（截图 `settings-providers.png`）。
+  - Grok 在测试自己的 HOME 里没有登录：DSH 里这一轮 0.8 秒内以 `Could not start Grok: Authentication required` 结束。
+  - 这一轮里 Pi 用的是仓库 `node_modules/.bin/pi`（1.5.2，随 OAR 升级带进来的），不是电脑上装的 1.4.0。
+  - 默认关闭和折叠做完后又看了一次真实页面（`providers-fold.e2e.test.ts`，英文界面，截图 `fold-en-closed.png`、`fold-en-open.png`）：
+    上面是 Claude、ChatGPT、Pi、Grok 四行，Grok 的开关是关的；折叠行是 “Not found 8” 加八个标志（12px、中等字重、灰色，高 24px，
+    文字比行里的名字靠左 1px，和别的分组小标题一样）；点开是十二行；把 Grok 打开它才成为路由，再关掉就没了；页面报错 0 条。
+    中文界面只看过代码渲染的设计稿；新建事项里的智能体列表没有在真实页面里点开看，只查了它读的 `providers/state`。
+- **没验证**：任何一家真实跑出文字和工具调用的成功路径（工具卡片只按 OAR 记录的字段和脚本化的帧测过；Grok 可以在隔离的
+  `GROK_HOME` 里指向脚本化模型来补这一条，还没做）；另外八家没装，一条真实命令都没跑过；电脑上装的 Pi 1.4.0 配新的 OAR；
+  Windows；装进 Desktop；模拟器和手机上的界面；没跑全量单测和其余的 e2e。
 
 ## 官方 OAR 0.105.0 与 Pi 供应商（2026-11-14）
 
@@ -391,6 +513,25 @@ Claude 已成功结束，OAR 已释放本轮原生进程，但 DSH 仍在消费�
 记录为 `.local/device-logs/blank-relaunch-nov04/handoff-logic-final.log` 和
 `handoff-final-e2e.log`；修复已打包，尚未更新正式 Desktop。
 
+## 恢复后的第一个回合被提前结束（2026-11-18）
+
+现象（主人：“为什么忽然就已完成了，然后也没有后续内容了”）：Claude 登录过期（`AUTH`，“this login reached its time limit
+and cannot be renewed”）使上一轮失败，主人重新登录后发“继续”，界面只显示“已完成，用时 4 秒”，没有任何内容；
+实际上 Claude 一直在干活，只是 DSH 已经不在回合里，那一分多钟的工具调用和文字既没显示也没写进 DSH 的会话日志
+（只在 Claude 自己的 transcript 里），直到主人的下一条消息开了新回合才恢复。
+
+原因（DSH 会话日志与 Claude transcript 对时间戳得到）：上一个进程被收掉时，一个后台命令还没结束。恢复时 Claude
+先处理它留下的通知（“Background shell command didn't finish before the previous session ended”，只写进 transcript、
+不调模型），这是 Claude 自己的一个回合，几毫秒内就以空的助手消息和 `result` 结束；`oar.mjs` 把这个结束当成了
+“继续”那一轮的结束（日志里 `assistant/message []` 之后紧跟 `turn/end completed`，与 Claude transcript 里通知出队相差 1 ms），
+而提示词在这之后才被接上并回答。
+
+修法：恢复的 Claude 会话（`queuesSteer` 且有 `resume`）也把提示词放进 `waiting`，和被复用的进程一样；成功的结束先被
+扣住，等 Claude 回放确认接上了这条提示词（`user_message` 带 `inputId`）就立刻继续这一轮，不再等 5 秒窗口里的下一个活动。
+没有被接上时仍按原来的 5 秒窗口释放；失败的结束不扣。一个单元用例（`tests/oar-driver.test.ts`）在旧逻辑上失败
+（只剩一个 `turn-end`），新逻辑通过；相关 46 条通过。没有用真实 Claude 复现（没有保留原始帧，只有上述两份日志），
+也没有更新正式 Desktop。
+
 ## 原生子智能体与 DSH 团队（2026-11-04）
 
 `teams.mjs` 把 harness 自己启动的子智能体投影到 DSH 既有的 Agent Team 和子会话目录。原生 CLI 继续决定委派、
@@ -654,6 +795,9 @@ OAR 没有审批回复通道；Codex 的审批策略仍为 never。2026-11-03–
 | 自动 | 原生 auto | 工作区可写沙箱 |
 | 完全访问 | 原生 bypassPermissions | 完全访问 |
 
+Pi 没有沙盒：只读是去掉 bash、edit、write，其他模式不限制。2026-11-19 接的九家（Grok、Kimi、OpenCode、Antigravity、CodeBuddy、
+Devin、Factory、Qwen、Qoder）连可验证的禁用工具通道都没有：只读模式下不启动并说明原因，其他模式不限制（见上面 2026-11-19 一节）。
+
 ### Claude 默认模型、思考等级和 lark-cli（2026-11-03–04）
 
 本机 Claude 2.1.317 的配置回读为 `model: sonnet`、`effort: xhigh`、`permissions.defaultMode: auto`。
@@ -736,6 +880,16 @@ Orca 的删除、拖进终端、跨主机这些没有做。
 - 加载失败时显示在那一行下面的英文：`That harness is not available. Check Settings > 供应商.`、`This DSH cannot store a loaded
   session.`、`That session is no longer on this computer.`、`The session does not say which folder it ran in.`、
   `The session has no conversation to load.`、`The session's folder is not available: …`。
+- 2026-11-19 九个新供应商（待审）：
+  - 名字（下拉框、设置、智能体列表里都用）：`Grok`、`Kimi`、`OpenCode`、`Antigravity`、`CodeBuddy`、`Devin`、`Factory`、`Qwen`、`Qoder`。
+    OAR 自己的叫法是 Grok Build、Kimi Code、CodeBuddy Code、Factory Droid、Qwen Code，这里取了短的。
+  - 只读模式下的错误：`<名字> cannot be kept read-only. Choose another access mode to use it.`
+  - 设置页折叠行：`未找到 N` / `Not found N`，用的是已有的状态词加数量，没有新词（主人 2026-11-19 看过设计稿后选的方案 C）。
+  - 没登录时接在 `<名字> is not logged in.` 后面的提示：``Run `grok login` in a terminal.``、``Run `kimi login` in a terminal.``、
+    ``Run `opencode auth login` in a terminal.``、``Run `agy` in a terminal and sign in.``、``Run `codebuddy` in a terminal and sign in.``、
+    ``Run `devin auth login` in a terminal.``、``Run `droid` in a terminal and sign in.``、``Run `qwen` in a terminal and sign in.``、
+    ``Run `qodercli login` in a terminal.``
+  - 工具卡片的标题沿用 Claude、Pi 驱动已有的词（`Read`、`Edit`、`Write`、`Search`、`Search the web:`、`Fetch`、`Subagent:`），没有新词。
 
 ## 验证
 

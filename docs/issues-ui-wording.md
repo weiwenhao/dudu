@@ -4,6 +4,27 @@
 
 所有界面上的固定字在 `host/dudu-plugin/ui/strings.js`（带 `NEW` 注释的是设计稿里没有的）。
 
+## 2026-11-19 Computer Use 可选兼容补丁（待审，尚未安装）
+
+没有新增页面、按钮或权限弹窗。电脑控制、应用授权与系统权限页沿用已安装的 DSH 原生界面。
+兼容补丁的包元信息和新增的失败诊断可能出现在 DSH 的插件与错误信息里，以下原样用词须在安装前由主人审阅：
+
+| 位置 | 原样用词 |
+| --- | --- |
+| 兼容补丁包名 | `dsh-dudu-computer-use` |
+| 兼容补丁描述 | `Computer Use compatibility for Dudu on DSH 0.2.2` |
+| 包装器名称 | `dudu-computer-use-compat` |
+| 找不到原生 provider | `The Computer Use compatibility bundle requires DSH’s built-in macOS provider.` |
+| 不支持的工具注册 | `Unsupported Computer Use provider registration.` |
+| 不支持的指导注册 | `Unsupported Computer Use provider prompt.` |
+| 原生工具注册缺失 | `The installed Computer Use provider has no supported raw registration.` |
+| 原生初始化指导缺失 | `The installed Computer Use provider has no supported facade initialization.` |
+| 运行时不兼容 | `The Computer Use compatibility adapter requires DSH’s TypeScript PTC runtime.` |
+| 能力卸载时取消程序的原因 | `Computer Use program scope disposed` |
+
+工具名 `cua_run_code` 沿用上游独立入口；工具参数的 `description` 仍由模型按实际动作生成。
+没有新增面向主人的说明文案、重试入口或成功提示。实现与验证边界见 `packages/dsh-computer-use/README.md`。
+
 ## 2026-11-17 当前会话查找
 
 主人审核 `.local/designs/conversation-find-2026-11-17/` 后答“就这样，你做吧”，按该稿实现。
@@ -115,7 +136,7 @@
 - 给模型的指令（`dispatch/prompts.mjs`）不是界面，但你写的 `TRIAGE.md`、`ASSIGN.md` 就是读给它们的。
 - Office：名牌、图例、读屏句子在 `host/dudu-plugin/ui/widgets/office/strings.js`。
 - 设置“通用”页“事项”一栏里的开关 `深度睡眠` / `Deep sleep`（`strings.js` 的 `settings.general.deepSleep`，主人 2026-11-05 要的：“嘟嘟设置页面增加一条可以深度睡眠的配置，默认开启可以选择关闭”）：中文是主人的原话；英文是我照译的，请主人看一下英文。行上没有说明文字（主人定的规矩：不默认加副标题），读屏名和行名一样，没存成时用宠物开关已在用的那句 `Could not save the change` / `更改没能保存`（`T.toast.failed`），不是新词。
-- 深度睡眠的月牙（主人 2026-11-05 选定的标记）的名字 `深度睡眠` / `Deep sleep`（`strings.js` 的顶层 `deepSleep`）：头像的悬停提示和读屏名（`Claude · 深度睡眠` / `Claude · Deep sleep`，是已有的 `{智能体} · {状态}` 里状态那一格换成这个词）、Office 名牌的读屏名和悬停卡里的状态字、iPhone 头像的读屏名（`深度睡眠`）。中文是主人的原话；英文是我照译的，请主人看一下英文（和设置里那一行是同一个词）。
+- 深度睡眠的月牙（主人 2026-11-05 选定）的名字 `深度睡眠` / `Deep sleep`（`strings.js` 的顶层 `deepSleep`）已删除：主人 2026-11-18 说“小月亮图标应该都取消了”，Desktop 的头像（侧栏、卡片、详情、宠物卡片）不再画月牙，悬停提示和读屏名只剩 `{智能体} · {会话状态}`；手机（2026-11-15）和办公室（2026-11-16）更早已去掉。设置里的开关 `深度睡眠` 是另一个词，保留。
 - **标签、子事项、新建事项窗口（2026-11-05，参照 Linear；主人没有逐字审，下面都是暂定，请主人看）**。Linear 截图里有的字原样用：`Labels`、`Change or add labels…`、`Create new label: "x"`、`Pick a color for label`、九种颜色名（`Grey`、`Dark Grey`、`Purple`、`Teal`、`Green`、`Yellow`、`Orange`、`Pink`、`Red`）、`Add label`、`Sub-issue of`、`Add sub-issues`、`Set due date`（这里用已有的 `Due date`）；我加的：`Add sub-issue`（右键菜单）、`Sub-issues`（小标题）、`Sub-issue title`（输入框）、`Parent issue`、`Set parent issue…`、`Remove parent`、`Search issues…`、`No issues found`、`Loading labels…`、`No labels yet`、`Could not load labels`、`Could not create the label`、`Could not create the sub-issue`、`More`（新建窗口 “…” 的名字）；显示属性里多了 `Labels`，筛选里多了 `Labels`。中文：标签、修改或添加标签…、新建标签：“x”、选择标签颜色、灰色/深灰/紫色/青色/绿色/黄色/橙色/粉色/红色、添加标签、子事项，属于、添加子事项、连续创建、子事项标题、父事项、设置父事项…、移除父事项、搜索事项…、没有找到事项、正在读取标签…、还没有标签、标签没能读取、标签没能创建、子事项没能创建、更多。完成数/总数写成 `0/1`（不用字）。新建窗口的芯片没有新字：状态、优先级、智能体（没选时写 `Agent`，读屏名仍是 `No agent`）、项目（读屏名仍是 `Choose a project`）。
 - Office 的深度睡眠标签 `ZZZ`：2026-11-07 主人说“zzz 就不需要了”，已经去掉（`strings.js` 的 `zzz` 也删了）；没有为它留下新词。
 
@@ -884,3 +905,31 @@ Lucide `ListTodo`。复用原有导航图标的尺寸、颜色、线宽和圆角
 | 仪表盘小组件表里这个小组件的英文名（`dashboard/widgets.mjs`，嘟嘟的工具看到的名字） | Collector | — | **Inbox** |
 
 不变的：记录里的“没有信息”“信息没能加载”说的是记录，不是页面名；设置里的“收集器”仍是收集规则；“收集到的信息：…”（分享给会话时的开头）是给智能体看的话。**图标**（主人看了候选 `.local/designs/inbox-icon-2026-11-16/`，说“选你推荐的”）：收件箱用托盘（Lucide `inbox`，手机输入框上的快捷项和卡片本来就是它，侧栏现在也是）；设置里的“收集器”页改用订阅图标（Lucide `rss`，原来手机侧栏用的那个），桌面和手机一样，两个图标不再重复。图标不是字，没有新词。README 的文字和两张桌面图（`docs/images/hero.*.png`、`dashboard.*.png`）里还写着“信息”和 Collector，等桌面更新以后一起重做。文档里更早的“信息”是当时的说法，不改。
+
+## 收件箱里的“忽略”删了（2026-11-18，主人的话，只删字，没有新字）
+
+主人：“忽略功能可以删掉了，用不上这个功能了”“全部一起删，老数据可以忽略，不需要做什么兼容逻辑”。电脑、手机、安卓和主机一起删。用不着了的字：**忽略** / Ignore（右键菜单、选择栏、记录窗口、手机的左滑、长按菜单、更多），**已忽略** / Ignored（页签、提示）。页签只剩 **待处理 · 已处理**。改了字的一句：添加小组件列表里收件箱的说明，从“…可分享到事项、新建事项或忽略” / “…to share to an issue, make an issue of, or ignore”，删掉“或忽略” / “, or ignore”，成了“收集器收集回来的信息，可分享到事项或新建事项” / “What the collectors collected, to share to an issue or make an issue of”（宿主一侧的同一句：`dashboard/widgets.mjs`，成了 “What the connectors collected, to share or make issues of”）。
+
+同一天主人还说了电脑版记录窗口底部的两处（没有新字）：“删除”前面加图标、变红（和右键菜单里的删除同一个图标和颜色），“补全上下文”前面也加图标（和右键菜单里同一个）；收件箱行上的一键按钮里去掉“补全上下文”（“这个按钮也可以去掉了”）。
+
+## 收件箱里的“分享”改叫“转发”（2026-11-18，主人的话；选了 A：点一个会话就转，不再确认）
+
+主人：“我们不应该叫分享了，我们也改成叫转发吧”，要电脑版和手机对齐，转发列表“显示头像之类的都接入”。电脑版的字：
+
+| 位置 | 原来 | 现在 | English | 谁的字 |
+| --- | --- | --- | --- | --- |
+| 右键菜单、选择栏、记录窗口里的动作 | 分享到会话 | **转发** | Share to session → **Forward** | 主人（英文是我写的） |
+| 转发后底部的一行 | 已分享到 DUD-6 的会话 | **已转发到 DUD-6** | Shared to the session of DUD-6 → **Forwarded to DUD-6** | 手机的“已转发到 {0}” |
+| 记录窗口里“去了哪个事项”一行 | 已分享到 | **已转发到** | Shared to → **Forwarded to** | 同上 |
+| 转发列表里的搜索框 | 搜索事项… | **搜索会话** | Search issues… → **Search sessions** | “会话”窗口已有的字 |
+| 添加小组件列表里收件箱的说明 | 收集器收集回来的信息，可分享到事项或新建事项 | **收集器收集回来的信息，可转发到会话或新建事项** | …to share to an issue or make an issue of → **…to forward to a conversation or make an issue of** | 我（新，等主人审）；宿主一侧的同一句（`dashboard/widgets.mjs`）：What the connectors collected, to forward to a conversation or make issues of |
+
+手机的确认卡（“转发给”）电脑版没有（主人选了 A）。图标换成转发箭头（Lucide `forward`）。
+
+## 任务窗口标题栏里的“读取”状态（2026-11-18，主人：“这里放一个 loading 吧”）
+
+任务窗口读供应商、模型、工作区的选项时，在标题栏“新建任务”的左边放一个小转圈（朗读名用现成的 `正在读取…` / `Loading…`）；读不出来时同一个位置变成红色重试按钮。表单上方原来的两条（“正在读取…”和红字“信息没能加载 重试”）拿掉了。新字一个，英文是我写的，待主人审核：
+
+| 位置 | 中文 | English | 来源 |
+| --- | --- | --- | --- |
+| 重试按钮的名字和悬停提示（后面接现成的“重试” / Retry） | **没能读取 · 重试** | **Could not load · Retry** | 新字 `tasks.optionsFailed`（“没能读取” / Could not load）。不想加新字：用手机上已审的“任务没能加载”（`tasks.loadFailed` 桌面还没有这个 key）。原来借的“信息没能加载”是收件箱的字，用错了地方；历史页签和空列表里还借着收件箱的字（“信息没能加载”“没有信息”），这次没动，设计稿里有换法。 |

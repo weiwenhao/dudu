@@ -23,7 +23,7 @@ export function IssueConversation({ issue, request, services }) {
   const expand = async () => {
     if (!reference || expanding) return;
     setExpanding(true);
-    try { await services.actions.openSession({ sessionId: reference.sessionId }); }
+    try { await services.actions.openSession({ sessionId: reference.sessionId }, { returnToDudu: true }); }
     catch { setExpandFailed(true); }
     finally { setExpanding(false); }
   };

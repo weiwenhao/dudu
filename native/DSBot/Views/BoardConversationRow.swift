@@ -152,6 +152,29 @@ private struct BoardConversationPressStyle: ButtonStyle {
     }
 }
 
+/// A conversation's tile (the approved B-1 avatar): a rounded square in the tone of its title with the title's initials, wherever the conversation is listed (the home list, the forward picker).
+struct ConversationTile: View {
+    let title: String
+    let size: CGFloat
+
+    var body: some View {
+        let initials = ConversationIdentity.initials(of: title)
+        let tone = ConnectorAvatar.colors(of: title)
+        RoundedRectangle(cornerRadius: (size * 0.25).rounded(), style: .circular)
+            .fill(tone.background)
+            .overlay {
+                Text(initials)
+                    .font(.system(size: size * (initials.unicodeScalars.count > 2 ? 0.32 : 0.37), weight: .medium))
+                    .foregroundStyle(tone.letter)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .frame(maxWidth: size * 0.79)
+                    .offset(y: size * 0.015)
+            }
+            .frame(width: size, height: size)
+    }
+}
+
 struct BoardConversationAvatar: View {
     let entry: BoardConversation
     let size: CGFloat
@@ -161,20 +184,7 @@ struct BoardConversationAvatar: View {
             if entry.isAssistant {
                 DuduLogo(size: size * 0.94).frame(width: size, height: size)
             } else {
-                let initials = ConversationIdentity.initials(of: entry.title)
-                let tone = ConnectorAvatar.colors(of: entry.title)
-                RoundedRectangle(cornerRadius: (size * 0.25).rounded(), style: .circular)
-                    .fill(tone.background)
-                    .overlay {
-                        Text(initials)
-                            .font(.system(size: size * (initials.unicodeScalars.count > 2 ? 0.32 : 0.37), weight: .medium))
-                            .foregroundStyle(tone.letter)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.5)
-                            .frame(maxWidth: size * 0.79)
-                            .offset(y: size * 0.015)
-                    }
-                    .frame(width: size, height: size)
+                ConversationTile(title: entry.title, size: size)
             }
         }
         .modifier(ConversationAvatarStatus(state: entry.sessionState, size: size, roundedSquare: !entry.isAssistant))

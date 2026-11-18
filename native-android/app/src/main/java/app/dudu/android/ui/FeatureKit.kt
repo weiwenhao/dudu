@@ -29,8 +29,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -85,6 +87,17 @@ internal fun PreventSheetDismiss(blocked: Boolean) {
     }
 }
 
+/**
+ * The grabber of every sheet: 32 x 4 dp, the muted ink at 40%, in a 24 dp band (owner, 2026-11-18, the inbox redesign: Material's own band is 48 dp and left a dead strip above
+ * the title). The library's handle is kept, so that its accessibility actions stay; it is laid out 48 dp high in a box that is only 24 dp high, and so is centred on it.
+ */
+@Composable
+private fun SheetHandle() {
+    Box(Modifier.height(24.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.requiredHeight(48.dp)) { BottomSheetDefaults.DragHandle() }
+    }
+}
+
 @Composable
 fun DuduSheet(dismiss: () -> Unit, containerColor: Color = MaterialTheme.colorScheme.surfaceContainer,
     canDismiss: Boolean = true,
@@ -95,6 +108,7 @@ fun DuduSheet(dismiss: () -> Unit, containerColor: Color = MaterialTheme.colorSc
         tonalElevation = 0.dp, shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true,
             confirmValueChange = { it != SheetValue.Hidden || canDismiss && !guard.blocked }),
+        dragHandle = { SheetHandle() },
     ) {
         val maxHeight = with(androidx.compose.ui.platform.LocalDensity.current) {
             (androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height * .88f).toDp()
@@ -106,23 +120,34 @@ fun DuduSheet(dismiss: () -> Unit, containerColor: Color = MaterialTheme.colorSc
     }
 }
 
+/**
+ * The bar of a sheet that is not a `Page` (the computers, the quota, the pickers of a new session): the bar of a page, 52 dp high with the title in the middle (owner, 2026-11-18: "我们其他弹窗我看
+ * title 都是在中间的"), what `action` draws before the ✕ on the right.
+ */
 @Composable
 fun SheetHeader(title: String, dismiss: () -> Unit, enabled: Boolean = true,
     action: @Composable (() -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(start = 20.dp, end = 8.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Text(title, Modifier.weight(1f), fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
-        action?.invoke()
-        IconButton(onClick = dismiss, enabled = enabled, modifier = Modifier.testTag("close-sheet")) {
-            Glyph(R.drawable.ic_x, stringResource(R.string.close), 20)
-        }
-    }
+    CenterAlignedTopAppBar(
+        title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
+        expandedHeight = 52.dp,
+        windowInsets = WindowInsets(0),
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+        actions = {
+            action?.invoke()
+            IconButton(onClick = dismiss, enabled = enabled, modifier = Modifier.testTag("close-sheet")) {
+                Glyph(R.drawable.ic_x, stringResource(R.string.close), 20)
+            }
+        },
+    )
 }
 
+/**
+ * A page of the app. In a sheet its bar is 52 dp high and the title is in the middle on every page (owner, 2026-11-18: "我们其他弹窗我看 title 都是在中间的"; the 21 sp left heading the
+ * quick-entry lists had is gone), the count of a list beside it; ‹ is `nested`, 取消 on the left is `cancels` (and then there is no ✕), `top` is what stands before the ✕.
+ */
 @Composable
 fun Page(title: String, back: () -> Unit, actions: Actions? = null,
-    centersSheetTitle: Boolean = false, nested: Boolean = false, cancels: Boolean = false,
+    nested: Boolean = false, cancels: Boolean = false,
     background: Color = if (LocalSheet.current) LocalSheetColor.current else MaterialTheme.colorScheme.background, count: Int? = null,
     close: (() -> Unit)? = null,
     top: @Composable RowScope.() -> Unit = {}, content: @Composable ColumnScope.() -> Unit) {
@@ -130,9 +155,15 @@ fun Page(title: String, back: () -> Unit, actions: Actions? = null,
     BackHandler { back() }
     Scaffold(containerColor = background,
         topBar = {
-            if (sheet && centersSheetTitle) CenterAlignedTopAppBar(
-                title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
+            if (sheet) CenterAlignedTopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(title, Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        count?.let { Text(it.toString(), fontSize = 13.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                },
+                expandedHeight = 52.dp,
                 windowInsets = WindowInsets(0),
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = background),
                 navigationIcon = { if (cancels) TextButton(onClick = back) { Text(stringResource(R.string.cancel)) }
@@ -142,22 +173,6 @@ fun Page(title: String, back: () -> Unit, actions: Actions? = null,
                 actions = {
                     top()
                     if ((!nested && !cancels) || close != null) IconButton(onClick = close ?: back, modifier = Modifier.testTag("page-back")) {
-                        Glyph(R.drawable.ic_x, stringResource(R.string.close), 20)
-                    }
-                },
-            ) else if (sheet) TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            fontSize = if (count != null) 21.sp else 17.sp, fontWeight = FontWeight.SemiBold)
-                        count?.let { Text(it.toString(), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    }
-                },
-                windowInsets = WindowInsets(0),
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = background),
-                actions = {
-                    top()
-                    IconButton(onClick = back, modifier = Modifier.testTag("page-back")) {
                         Glyph(R.drawable.ic_x, stringResource(R.string.close), 20)
                     }
                 },
@@ -191,8 +206,8 @@ fun Page(title: String, back: () -> Unit, actions: Actions? = null,
 }
 
 @Composable
-fun Section(title: String) {
-    Text(title, Modifier.padding(top = 20.dp, start = 20.dp, end = 20.dp, bottom = 6.dp),
+fun Section(title: String, top: Int = 20) {
+    Text(title, Modifier.padding(top = top.dp, start = 20.dp, end = 20.dp, bottom = 6.dp),
         color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.Medium)
 }
 
@@ -202,15 +217,17 @@ fun InsetCard(modifier: Modifier = Modifier, radius: Int = 22, content: @Composa
         shape = RoundedCornerShape(radius.dp)) { Column(content = content) }
 }
 
+/** One row of a white card made of several lazy items; the hairline after it starts `dividerStart` dp from the card's left edge (after the picture, where the words start) and stops `dividerEnd` dp before its right edge. */
 @Composable
-fun GroupRow(first: Boolean, last: Boolean, divider: Boolean = true, inset: Int = 18, content: @Composable () -> Unit) {
+fun GroupRow(first: Boolean, last: Boolean, divider: Boolean = true, inset: Int = 18,
+    dividerStart: Int = 16, dividerEnd: Int = 0, radius: Int = 22, content: @Composable () -> Unit) {
     val shape = RoundedCornerShape(
-        topStart = if (first) 22.dp else 0.dp, topEnd = if (first) 22.dp else 0.dp,
-        bottomStart = if (last) 22.dp else 0.dp, bottomEnd = if (last) 22.dp else 0.dp)
+        topStart = if (first) radius.dp else 0.dp, topEnd = if (first) radius.dp else 0.dp,
+        bottomStart = if (last) radius.dp else 0.dp, bottomEnd = if (last) radius.dp else 0.dp)
     Column(Modifier.padding(horizontal = inset.dp).fillMaxWidth().clip(shape)
         .background(MaterialTheme.colorScheme.surface)) {
         content()
-        if (!last && divider) HorizontalDivider(Modifier.padding(start = 16.dp), thickness = .5.dp,
+        if (!last && divider) HorizontalDivider(Modifier.padding(start = dividerStart.dp, end = dividerEnd.dp), thickness = .5.dp,
             color = MaterialTheme.colorScheme.outlineVariant)
     }
 }
@@ -223,8 +240,9 @@ fun <T> LazyListScope.cardItems(rows: List<T>, key: ((T) -> Any)? = null, inset:
 }
 
 @Composable
-internal fun LibraryRowGroup(first: Boolean, last: Boolean, grouped: Boolean, content: @Composable () -> Unit) {
-    if (grouped) GroupRow(first, last, inset = 20, content = content)
+internal fun LibraryRowGroup(first: Boolean, last: Boolean, grouped: Boolean, inset: Int = 20,
+    dividerStart: Int = 16, dividerEnd: Int = 0, content: @Composable () -> Unit) {
+    if (grouped) GroupRow(first, last, inset = inset, dividerStart = dividerStart, dividerEnd = dividerEnd, content = content)
     else Box(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 2.dp).clip(RoundedCornerShape(11.dp))) { content() }
 }
 
@@ -293,22 +311,27 @@ fun Field(label: String, value: String, enabled: Boolean = true, multi: Boolean 
     }
 }
 
+/** `prominent` is the forward picker's field (owner, 2026-11-18): a 48 dp pill filled in the sheet's darker grey, a 22 dp icon, the words in 16 sp. */
 @Composable
 fun SearchField(value: String, placeholder: String, tag: String = "", autoFocus: Boolean = false,
-    capsule: Boolean = false, changed: (String) -> Unit) {
+    capsule: Boolean = false, prominent: Boolean = false,
+    containerColor: Color = if (prominent) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainer,
+    iconSize: Int = if (prominent) 22 else 18,
+    fontSize: Int = if (prominent) 16 else 14, changed: (String) -> Unit) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(autoFocus) { if (autoFocus) focus.requestFocus() }
-    Row(Modifier.fillMaxWidth().heightIn(min = 44.dp)
-        .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(if (capsule) 50.dp else 13.dp))
-        .padding(start = 13.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Glyph(R.drawable.ic_search, size = 18, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(9.dp))
+    val words = (if (prominent) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium)
+        .copy(fontSize = fontSize.sp)
+    Row(Modifier.fillMaxWidth().heightIn(min = if (prominent) 48.dp else 44.dp)
+        .background(containerColor, RoundedCornerShape(if (capsule || prominent) 50.dp else 13.dp))
+        .padding(start = if (prominent) 15.dp else 13.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Glyph(R.drawable.ic_search, size = iconSize, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(if (prominent) 11.dp else 9.dp))
         BasicTextField(value, changed, Modifier.weight(1f).testTag(tag).focusRequester(focus), singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+            textStyle = words.copy(color = MaterialTheme.colorScheme.onSurface),
             cursorBrush = SolidColor(DuduStyle.blue),
             decorationBox = { inner ->
-                if (value.isEmpty()) Text(placeholder, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium)
+                if (value.isEmpty()) Text(placeholder, color = MaterialTheme.colorScheme.onSurfaceVariant, style = words)
                 inner()
             })
         if (value.isNotEmpty()) IconButton(onClick = { changed(""); focus.requestFocus() }, modifier = Modifier.size(40.dp)) {
@@ -318,15 +341,22 @@ fun SearchField(value: String, placeholder: String, tag: String = "", autoFocus:
     }
 }
 
+/**
+ * The tabs of the inbox and of the tasks: pill chips, 34 dp high with 8 dp between them, the chosen one filled with the ink colour (owner's drawings, 2026-11-18; they were 40 dp: the 13 sp words
+ * inherited a 24 sp line, and Material made each chip a 48 dp touch box). The row starts 4 dp under the bar (the page's own 2 dp strip is the rest) and has 8 dp under it.
+ */
 @Composable
 fun FilterTabs(selected: String, options: List<Pair<String, String>>, changed: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        options.forEach { (id, title) ->
-            Surface(onClick = { changed(id) }, shape = RoundedCornerShape(50),
-                color = if (selected == id) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainer) {
-                Text(title, Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp,
-                    color = if (selected == id) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant)
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 18.dp, end = 18.dp, top = 2.dp, bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            options.forEach { (id, title) ->
+                Surface(onClick = { changed(id) }, shape = RoundedCornerShape(50),
+                    color = if (selected == id) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainer) {
+                    Text(title, Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, lineHeight = 18.sp,
+                        fontWeight = if (selected == id) FontWeight.Medium else FontWeight.Normal,
+                        color = if (selected == id) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }
@@ -339,9 +369,11 @@ fun Confirm(title: String, body: String? = null, actions: Actions, dismiss: () -
         error = actions.error?.let { problemText(it) })
 }
 
+/** The app's own confirmation. `content` is what a card says between its title and the error (the forward card shows the conversation and what goes), `confirmLabel` the word of the right button (otherwise 删除 or 保存). */
 @Composable
 fun DuduConfirmation(title: String, body: String?, enabled: Boolean, dismiss: () -> Unit,
-    confirm: () -> Unit, destructive: Boolean = true, error: String? = null, tag: String = "") {
+    confirm: () -> Unit, destructive: Boolean = true, error: String? = null, tag: String = "",
+    confirmLabel: String? = null, content: (@Composable ColumnScope.() -> Unit)? = null) {
     Dialog(onDismissRequest = { if (enabled) dismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = enabled,
             dismissOnClickOutside = enabled)) {
@@ -352,6 +384,7 @@ fun DuduConfirmation(title: String, body: String?, enabled: Boolean, dismiss: ()
                     lineHeight = 23.sp, fontWeight = FontWeight.SemiBold)
                 if (!body.isNullOrBlank()) Text(body, Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
                     fontSize = 14.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                content?.invoke(this)
                 error?.let { Text(it, Modifier.padding(horizontal = 8.dp, vertical = 8.dp), fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.error) }
                 Spacer(Modifier.height(14.dp))
@@ -365,10 +398,55 @@ fun DuduConfirmation(title: String, body: String?, enabled: Boolean, dismiss: ()
                         shape = RoundedCornerShape(50), colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = .08f),
                             contentColor = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)) {
-                        Text(stringResource(if (destructive) R.string.delete else R.string.save))
+                        Text(confirmLabel ?: stringResource(if (destructive) R.string.delete else R.string.save))
                     }
                 }
             }
+        }
+    }
+}
+
+/** One item of the labelled bar: an icon over its word; `menu` makes it open a menu (更多) instead of acting; `busy` shows a spinner in the icon's place. */
+internal class BarItem(
+    val title: String, @param:androidx.annotation.DrawableRes val icon: Int, val tag: String = "", val danger: Boolean = false,
+    val enabled: Boolean = true, val busy: Boolean = false,
+    val menu: (@Composable ColumnScope.(close: () -> Unit) -> Unit)? = null, val action: () -> Unit = {},
+)
+
+/**
+ * The bar of a page's actions, each with its word (owner, 2026-11-18, the inbox redesign; the icons alone had none): a white pill 58 dp high and 16 dp from the sides, an icon of 22 dp over a word of
+ * 11 sp, the items sharing the width; what deletes is in the error colour. The menu of an item opens above the bar.
+ */
+@Composable
+internal fun ActionBar(items: List<BarItem>, modifier: Modifier = Modifier) {
+    Surface(modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp),
+        shape = RoundedCornerShape(29.dp), color = MaterialTheme.colorScheme.surface, shadowElevation = 3.dp) {
+        Row(Modifier.fillMaxWidth().height(58.dp).padding(horizontal = 6.dp)) {
+            items.forEach { item -> BarCell(item, Modifier.weight(1f)) }
+        }
+    }
+}
+
+@Composable
+private fun BarCell(item: BarItem, modifier: Modifier) {
+    var open by remember { mutableStateOf(false) }
+    val color = (if (item.danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+        .copy(alpha = if (item.enabled) 1f else .38f)
+    Box(modifier.fillMaxHeight()) {
+        Column(Modifier.fillMaxSize().testTag(item.tag)
+            .clickable(enabled = item.enabled && (item.menu != null || !item.busy), role = Role.Button) { if (item.menu != null) open = true else item.action() }
+            .padding(top = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
+                if (item.busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 1.5.dp, color = color)
+                else Glyph(item.icon, null, 22, color)
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(item.title, fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.Medium, color = color,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        item.menu?.let { menu ->
+            // As drawn: at least 232 dp wide, its right edge in line with the bar's (the last item's cell ends 6 dp inside it), 8 dp above the bar.
+            DropdownMenu(open, { open = false }, Modifier.widthIn(min = 232.dp), offset = DpOffset((-6).dp, (-8).dp)) { menu { open = false } }
         }
     }
 }

@@ -6,6 +6,9 @@ import { withAbort } from '../../providers/async.mjs';
 import { isHarness } from '../../providers/catalog.mjs';
 
 const reject = (code) => { throw Object.assign(new Error(code), { code, beforeSend: true }); };
+// The task window has always listed these, greyed when they cannot be used. Every other harness is listed only while it can be used:
+// a row for each tool a person does not have would be nine greyed rows.
+const LISTED_WHEN_UNAVAILABLE = new Set(['claude', 'codex', 'pi', 'deepseek']);
 /**
  * `modelOf(agent)` is the model a session is on. DSH resumes a session that is not loaded with its DEFAULT options (`agent.options`), not the model the session itself
  * recorded, so for a conversation that was set to another model those options say the wrong thing (the first timed run, which made the session and chose its model, was
@@ -52,7 +55,7 @@ export function createTaskHost({ dsh, registry, controller, agents, access = () 
         const selected = modelFor(id, catalog);
         const groups = catalog.groups.filter((group) => id === 'deepseek' ? !isHarness(group.id) : group.id === id);
         return { id, name, available: Boolean(selected), models: [...new Set(groups.flatMap((group) => group.models.map((model) => model.id)))] };
-      });
+      }).filter((provider) => provider.available || LISTED_WHEN_UNAVAILABLE.has(provider.id));
       // 嘟嘟 itself comes first: it can use the models of the conversation routes (never Claude Code or Codex), as its own conversation does.
       const own = catalog.groups.filter((group) => !isHarness(group.id));
       providers.unshift({ id: 'dudu', name: '嘟嘟', available: Boolean(dudu()) && Boolean(pickModel(catalog)), models: [...new Set(own.flatMap((group) => group.models.map((model) => model.id)))] });

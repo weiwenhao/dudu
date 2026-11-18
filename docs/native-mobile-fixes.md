@@ -1,5 +1,12 @@
 # iPhone 会话修正（2026-11-03）
 
+## 附件弹窗移除“添加”和标题占位（2026-11-18）
+
+主人在安卓截图里要求两端都删掉“添加”，并明确不需要留下空白。
+`ComposerAttachmentSheet` 的首页不再绘制标题块；照片、视频、文件入口直接上移，
+只保留拖动条下方 8pt 的内容边距。首页高度计算同时减掉标题高度，模型、权限和推理等级页面的标题不变。
+安卓同样处理。没有新增 App 文案。此次只做构建检查，未运行模拟器或界面 E2E。
+
 ## 新建事项页高度和按钮一排（2026-11-17，接上一条）
 
 主人装上 build 127 后截了一张图：页面几乎满屏，下面一大片空白；状态、优先级……那一排按钮被一个转圈替掉。
@@ -2603,3 +2610,77 @@ request ID 收敛。真实电脑切换和服务端明确拒绝保留原来的草
 历史卡片、媒体、通知和诊断是平台替身，不是实际网络或界面验收。未运行浏览器、
 真实 DSH、模拟器或手机界面场景；未安装 App 或热更新 Desktop。提示条的实际渲染
 和操作手感仍需之后按主人授权的方式检查，不能用编译和单元用例代替。
+
+## 2026-11-18：所有弹窗的标题居中
+
+主人问“为什么这两个弹窗它的 title 在左侧，是有什么特别的设计吗？”（在此之前说“我们其他弹窗我看 title 都是在中间的”）：没有特别的设计。待办、收件箱、任务这三个快捷弹窗 2026-11-12 的设计照搬了当时“智能体团队”弹窗的 header（21pt 左对齐标题、数量、✕）；2026-11-17 只把活动类弹窗改成了居中，这三个因为“已批准”留了下来，是遗漏。
+
+现在 `QuickSheetPage(centersTitle: true)` 用在待办、收件箱、任务三个列表页，以及收件箱记录、任务详情单独打开时；列表的数量放在居中的标题旁边（“收件箱 7”，13pt 灰色）。没有新增文案。左标题的写法留在 `QuickSheetPage` 里，目前没有页面再用。
+
+检查：模拟器 Debug 包（`.local/native-sim-readme-new`）按夹具数据看过三个列表和两个单独打开的页面（照片在 `.local/designs/inbox-forward-2026-11-18/current/after-*.png`），标题居中、数量在旁边，右侧按钮没有挤压标题；收件箱选择模式的“已选 N 条”标题没有单独看。手机装了 build 131（`npm run native:install`，设备上读到 0.1.0 / 131），没有在手机上操作过。
+
+## 2026-11-18：收件箱、转发和任务页改版（iPhone）
+
+主人看过设计（`.local/designs/inbox-forward-2026-11-18/`，是 SVG 画的，不是 App 截图）后说“ios 的审核通过”。这里是照设计做的 iPhone 部分；Desktop 没有改，也没有更新。
+
+改了什么：
+
+- **收件箱列表**：标题栏在 ✕ 前面有一颗“选择”胶囊；选择时左边“取消”、中间“已选 N 条”、右边“全选”，没有 ✕（`QuickSheetPage` 多了 `leading` 和 `showsClose`）。一行是 44pt 的图、16pt 的标题（最多两行）、13pt 的“谁 · 来源”，右边是时间，下面是记录编号（`CollectorRow`；普通页和嘟嘟聊天里旧的信息卡片画的是同一行，跟着变了）。
+- **底部栏**：`GlassActionBar` 改成带字的栏（图标在上、11pt 的字在下，58pt，删除是红的；一项可以带菜单）。选择栏：转发 / 已处理 / 删除（做的时候还有“忽略”，同一天去掉了，见本文最后一节）。
+- **记录页**：标题栏只有 ‹（从列表进来时）、居中的“收件箱”、✕，去掉了 ↗ 和 ⋯。内容是一张白卡：插件给了 `record.messages` 就排成对话（日期隔开，发言人变了才写名字，右边是时间），没有就是原文；卡的最后一行是“打开来源”；上下文还在卡的下面。底部栏：转发 / 新建事项 / 已处理 / 更多（补全上下文、删除；做的时候还有“忽略”和“已忽略”页里的恢复，同一天去掉了）；已处理页是恢复 / 更多；挂了事项的记录是“打开事项”“补全上下文”，没有“更多”。
+- **转发**：新的 `ForwardPickerSheet`（居中的标题“转发”、✕、搜索框、“最近会话”一张白卡，每行是 48pt 的标题色块 + “REF 标题” + Agent 图标）；点一个会话弹一张确认卡（转发给 / 会话 / 要转发的内容 / 取消、转发）；不能多选。成功后弹窗关掉，从列表进来的记录页回到列表，提示“已转发到 REF”；失败时卡留着，卡里写“更改没能保存”。`CollectorModel.share` 只发 `to: "session"`。“分享到事项”去掉了，“分享到会话”改叫“转发”（长按菜单、选择栏、记录栏）；旧的 `IssuePickerSheet` 删了。
+- **任务**：快捷弹窗去掉“+”，列表下面是一颗“新建任务”玻璃胶囊（在弹窗高度里），行是 30pt 的 Agent 图标 / 16pt 标题 / 13pt 状态（`TaskSummaryRow(roomy:)`，其他列表还是原来的行）；整页的任务页不变。任务详情：标题栏只有 ‹ / “任务” / ✕，没有铅笔和状态小标签，“状态”是“规则”卡的第一行；底部栏是暂停任务或恢复任务（结束的没有）/ 立即执行 / 编辑 / 删除任务（红，仍先问一次）。手机上不再有“复制任务”（底部栏、两处长按菜单、`TaskAction.duplicate`、“已复制任务”的提示、夹具里的 `tasks.duplicate`）。
+- **电脑端插件**：`inbox.get` 的 `record.messages`（`host/assistant/inbox/records.mjs` 的 `parseMessages`，`host/native-board.mjs` 调用），文本里每一条消息都以 `MM-DD HH:mm` 开头才有，否则不带这个字段，旧手机不看它。一条单元测试在 `tests/native-board.test.ts`。电脑端这次没有更新，手机连到还没有这个字段的电脑时，会话类的记录在卡里按原文显示。
+
+字：新增 转发 / 转发给 / 最近会话 / 已转发到 {0} / 已转发到  / 搜索（英文待主人审，见 `docs/native-localization-wording.md`）；删掉 分享到事项、分享到会话、已分享到 {0}、已分享到 {0} 的会话、已分享到 、复制任务、已复制任务。设计说明里把“搜索”当成已有的词，其实 String Catalog 里原来没有，所以它是新增的一条。选择器列表为空、搜不到、加载失败时沿用“没有事项”“没有找到事项”“事项没能加载”。
+
+和设计图不一样的地方：
+
+- 快捷弹窗还是最高到屏幕的 75%（2026-11-13 的规则），设计图里画得更高，所以列表里一屏看到的行少一些，里面可以滚。
+- “编辑”的图标用的是 App 里已有的 pencil-line（任务长按菜单和原来的铅笔也是它），设计图画的是 square-pen。
+- 底部栏贴在系统底部安全区的上沿（`SheetFooter`），比设计图里高出十来个点。
+- 确认卡后面的 32% 暗层只盖住转发这张弹窗，不盖住弹窗外面（设计图里是整屏）。
+- “更多”的系统菜单是系统画的：图标在字的左边（设计图画在右边），打开后第一项在上、删除在最下面（`.menuOrder(.fixed)`）。
+- 玻璃的搜索框、胶囊按钮是系统的玻璃，在浅色底上比设计图里的白色胶囊淡。
+
+检查：
+
+- 模拟器 Debug 包（`.local/native-sim-readme-new`）用夹具数据（`.local/designs/inbox-forward-2026-11-18/fixtures/`：带 `messages` 的 `inbox.get`、`issue.pick`、`inbox.share` 的成功和失败）和 `.local/ui-touch` 里的临时 UI 测试（`Tests/InboxBuildTests.swift`）截图，放在 `.local/designs/inbox-forward-2026-11-18/built/`，逐张和 `frames/` 里的设计图对过：列表、选择（0 条、3 条、全选）、取消、记录（对话和原文两种、单独打开）、“更多”菜单、转发选择器（搜索、没有结果）、确认卡（一条、多条、失败）、转发成功后的提示（回到列表）、任务列表、任务详情、整页的收件箱和任务页、长按菜单、嘟嘟聊天里旧的信息和任务卡片，以及英文界面的七张。看出的差别按上面的清单留着或已改（“更多”的菜单顺序、选择器里搜索框和小标签的间距、记录标题的行距）。
+- `tests/native-board.test.ts` 里新的一条和 Collector 那一条通过；`npm run typecheck`、`npm run lint` 通过。没有跑整套单元测试和端到端测试。
+- 没看过：真机上的手感（触摸、滚动、键盘），真实的电脑端（`messages` 是夹具里的），iOS 18 的样子（系统工具栏上的按钮在 iOS 26 以前是纯文字、不是胶囊），VoiceOver，单独打开的记录页里转发成功后关页的路径（代码和从列表进去的那条是同一段，没有单独跑），长按菜单里的“转发”（看过菜单，没有点）。
+- 手机：build 132 已用 `npm run native:install` 原位装到“chuchu的iPhone”（设备上读到 0.1.0 / 132，日志 `.local/native-install-132.log`），没有在手机上操作过。
+
+## 2026-11-18：去掉忽略（iPhone）
+
+主人说：“忽略功能可以删掉了，用不上这个功能了 … 全部一起删，老数据可以忽略，不需要做什么兼容逻辑。app 现在都还没在本地测试。”手机上整个功能去掉了，没有为旧数据、旧的电脑端插件或旧版 App 写任何兼容或迁移。只删字，没有新增任何文字。
+
+改了什么：
+
+- **页签和标记**：`CollectorTab` 只剩 todo / done，收件箱的页签是“待处理”“已处理”两个；`CollectorRecord.ignored`、`CollectorMark.ignore`（和提示“已忽略”）删掉；只有忽略用的图标 `DSBotGlyph.hide`（eye-off）一起删掉。`inbox.list` 只问 `todo` 和 `done`，`inbox.mark` 只发 `done`、`delete`、`restore`。
+- **左滑**：待处理是 已处理 / 删除；已处理（没挂事项的）是 恢复 / 删除。
+- **长按菜单**：待处理里没有“忽略”；已处理里不变（恢复、删除）；“已忽略”页和它菜单里的 恢复 / 已处理 一起没了。
+- **选择栏**：转发 / 已处理 / 删除。
+- **记录页**：待处理是 转发 / 新建事项 / 已处理 / 更多（补全上下文、删除）；已处理没挂事项的是 恢复 / 更多；挂了事项的还是 打开事项 + 补全上下文。
+- **String Catalog**：“忽略”“已忽略”两条删掉（源码里没有别处再用）。`docs/native-localization-wording.md` 跟着改了。
+- 手机上没有存页签名（`CollectorModel.tab` 每次从“待处理”开始，换电脑也回到它），所以没有“存着的 ignored 页签”要回退；嘟嘟聊天里旧的信息卡片存着的行，即使带 `ignored` 键也照样解码（多出的键不读）。
+
+没改的：电脑端那一半（`inbox.list` 只剩 todo / done、`inbox.mark` 只剩 done / delete / restore、列表卡片不再带 `ignored`）由别的改动做，这里没有碰；手机连到还没改的电脑端时，旧插件里“已忽略”页的记录手机上不再显示，也不处理。已处理页的选择栏现在是 转发 / 已处理 / 删除（原来是 转发 / 已处理 / 忽略 / 删除）：这页的“已处理”本来就是多余的，也没有批量的“恢复”，这次只删了“忽略”，没有补。
+
+检查：
+
+- `npm run native:build` 通过（Release、iphoneos；只有 `EmbeddedPageSession.swift` 里原来就有的一条“will never be executed”警告）。`Localizable.xcstrings` 是合法 JSON，编出来的 `zh-Hans` 和 `en` 表里都没有这两条。`native/` 下的源码、测试、String Catalog 里再没有这个功能的引用（`native/DSBotTests` 里没有用例碰它，没有跑单元测试）。
+- 手机：build 133（`project.yml` 的 `CURRENT_PROJECT_VERSION` 132 → 133）已用 `npm run native:install` 原位装到“chuchu的iPhone”（设备上读到 0.1.0 / 133，bundle id 和签名团队没变，日志 `.local/native-install-133.log`）；第一次安装撞上另一个同时在跑的 `native:build`（同一个 DerivedData，“database is locked”），没有装上，等它跑完后重装成功。这一版带着当时共享目录里所有人没提交的改动。
+- 没看过：页签变成两个后的样子、左滑两个按钮、三项的选择栏、记录页“更多”里只剩补全上下文和删除，都没有在模拟器或手机上看过，也没有点过；没有跑 UI 或端到端测试。
+
+## 2026-11-19：九个新供应商的名字和标志（build 139）
+
+电脑端这天接了 Grok、Kimi、OpenCode、Antigravity、CodeBuddy、Devin、Factory、Qwen、Qoder（见 `docs/providers.md`）。手机上的改动只有名字和标志，没有新的界面文字。
+
+- **名单只有一份**：`scripts/sync-agent-assets.mjs`（`native:build` 会跑）从桌面的 `AGENT_NAMES`（`host/dudu-plugin/ui/issues/model.js`）生成 `native/DSBot/Core/AgentNames.swift` 和九个 `Agent-<id>.imageset`。`SessionAgent.name`、`AgentChoices.known` 都读它，以后电脑端加供应商，手机不用再改代码。
+- **列表不闪**：电脑还没把供应商发过来时，“智能体”原来列出 App 认识的全部（那时是四个）。现在认识十三个，所以这时只列常用的四个（Claude、ChatGPT、Pi、DeepSeek，`AgentChoices.usual`）加上事项已有的那个；其余九个要等电脑说它可用才出现。
+- **标志**：取自 OAR 0.120.0 自带的品牌图（来源和许可在 `native/DSBot/Resources/AgentLogoNotices.txt`）。单色的跟随文字颜色；Kimi、Devin、Antigravity 保留自己的颜色。Factory 只画字形（去掉了原图的深色方块底），Antigravity 画成单色蓝的轮廓（原图的渐变遮罩在 asset catalog 里画不出来），这两个和原图不同，等你看。
+
+检查：
+
+- `npm run native:build` 通过；build 139（`CURRENT_PROJECT_VERSION` 138 → 139）已用 `npm run native:install` 原位装到“chuchu的iPhone”，设备上读到 0.1.0 / 139，日志 `.local/native-install-139.log`。
+- 没看过：新标志在手机上的样子（只看过同一份 SVG 数据用代码渲染的图 `.local/designs/oar-providers-2026-11-19/sheet.png`）；`AgentChoicesTests.swift` 改了但没跑（要模拟器）。电脑端的插件还没更新，更新前手机上看不到新的供应商。

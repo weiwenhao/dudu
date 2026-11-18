@@ -287,15 +287,21 @@ test('a new issue from the phone may bring pictures: kept before the issue exist
   const kept: string[] = [];
   const store = { imageLimits: { maxImageBytes: 100 }, saveImage: async ({ data, mediaType, name }: any) => { kept.push(name); return { attachmentId: `a${kept.length}`, bytes: data.length, mediaType, name }; } };
   const projects = { list: () => ({ outcome: 'success', projects: [] }) };
-  const { issues, call } = world(t, { attachments: store, projects });
+  const assigned: number[] = [];
+  const { issues, call } = world(t, { attachments: store, projects, onAssign: (issue: any) => {
+    assigned.push(issue.id);
+    assert.equal(issues.initialAttachments(issue.id).items.length, 2, 'pictures are committed before the first session starts');
+  } });
   const picture = (name: string, size = 10) => ({ name, mimeType: 'image/jpeg', dataBase64: Buffer.alloc(size, 7).toString('base64') });
   const count = () => (issues.list({ tab: 'all', limit: 100 }) as any).items.length;
   assert.equal(((await call('issue.options')) as any).attachments, true);
 
-  const made: any = await call('issue.create', { title: '带图', attachments: [picture('a.jpg'), picture('b.jpg', 50)] });
+  const made: any = await call('issue.create', { title: '带图', project: { name: 'docs', path: '/work/docs' }, agent: 'claude', attachments: [picture('a.jpg'), picture('b.jpg', 50)] });
   assert.equal(made.outcome, 'success');
   assert.equal(made.attachmentsFailed, undefined);
   assert.deepEqual(kept, ['a.jpg', 'b.jpg']);
+  assert.deepEqual(assigned, [made.issue.id]);
+  assert.equal(issues.get(made.issue.id).issue.agent, 'claude');
   const note = (issues.get(made.issue.id, { logLimit: 10 }) as any).log.find((entry: any) => entry.kind === 'note');
   assert.equal(note.text, '');
   assert.equal(note.data.attachments.length, 2);
@@ -421,6 +427,25 @@ test('the Collector: the cards of a tab with the connector\'s icon, a total, a c
   assert.equal((await call('inbox.get', { id: 9999 }) as any).outcome, 'needs_clarification');
 });
 
+test('a conversation record in full also says its messages one by one (for the phone to set as a talk), and a record that is not a conversation does not', async (t) => {
+  const { call, ingest } = world(t);
+  // Times without an offset are the machine's own, as the lines of the text are written on it.
+  const [talk] = ingest('lark', [
+    { id: 'm1', kind: 'message', thread: 'omt_1', title: '同步下 staging', from: '陈明', at: '2026-11-17T19:15:00', text: '这个是 api 加密的参数' },
+    { id: 'm2', kind: 'message', thread: 'omt_1', title: '同步下 staging', from: '魏文豪', at: '2026-11-17T19:16:00', text: '你要看配置？\n在 nacos 里' },
+    { id: 'm3', kind: 'message', thread: 'omt_1', title: '同步下 staging', from: '陈明', at: '2026-11-18T09:04:00', text: '同步下 staging 吧' },
+  ]);
+  const [mail] = ingest('mail', [raw('m9')]);
+  const full: any = await call('inbox.get', { id: talk.id });
+  assert.deepEqual(full.record.messages, [
+    { at: '11-17 19:15', from: '陈明', text: '这个是 api 加密的参数' },
+    { at: '11-17 19:16', from: '魏文豪', text: '你要看配置？\n在 nacos 里' },
+    { at: '11-18 09:04', from: '陈明', text: '同步下 staging 吧' },
+  ]);
+  assert.equal(full.record.text.split('\n').length, 4, 'the text is still there as it was: an older phone shows it');
+  assert.equal('messages' in (await call('inbox.get', { id: mail.id }) as any).record, false);
+});
+
 test('the owner\'s marks work on several records at once, and Restore takes them off', async (t) => {
   const { call, ingest } = world(t);
   const [a, b, c] = ingest('mail', [raw('a'), raw('b'), raw('c')]);
@@ -431,8 +456,8 @@ test('the owner\'s marks work on several records at once, and Restore takes them
   assert.equal((await call('inbox.list', { tab: 'todo' }) as any).total, 0);
   assert.deepEqual(await call('inbox.mark', { action: 'restore', ids: [a.id, b.id, c.id] }), { outcome: 'success', changed: 3 });
   assert.equal((await call('inbox.list', { tab: 'todo' }) as any).total, 3);
-  assert.deepEqual(await call('inbox.mark', { action: 'ignore', ids: [a.id] }), { outcome: 'success', changed: 1 });
-  assert.equal((await call('inbox.mark', { action: 'ignore', ids: [a.id] }) as any).outcome, 'no_op');
+  await assert.rejects(call('inbox.mark', { action: 'ignore', ids: [a.id] }), { code: 'BAD_REQUEST' }); // there is no ignore any more
+  await assert.rejects(call('inbox.list', { tab: 'ignored' }), { code: 'BAD_REQUEST' });
   assert.equal((await call('inbox.mark', { action: 'done', ids: [9999] }) as any).outcome, 'needs_clarification');
   await assert.rejects(call('inbox.mark', { action: 'burn', ids: [1] }), { code: 'BAD_REQUEST' });
   await assert.rejects(call('inbox.mark', { action: 'done', ids: [] }), { code: 'BAD_REQUEST' });

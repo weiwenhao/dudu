@@ -26,8 +26,11 @@ struct QuickTodoList: View {
 }
 
 struct QuickTodoSeparator: View {
+    /// Where the line starts: 14pt, the row's edge, or the start of the text after a picture (the inbox's rows, 2026-11-18).
+    var leading: CGFloat = 14
+
     var body: some View {
-        Rectangle().fill(Color.black.opacity(0.06)).frame(height: 0.5).padding(.horizontal, 14)
+        Rectangle().fill(Color.black.opacity(0.06)).frame(height: 0.5).padding(.leading, leading).padding(.trailing, 14)
     }
 }
 
@@ -228,7 +231,7 @@ struct AssistantTodoSheet: View {
 
     private var list: some View {
         QuickSheetPage(
-            title: L10n.text("待办"), count: model.loading ? nil : model.total, onClose: onClose,
+            title: L10n.text("待办"), count: model.loading ? nil : model.total, onClose: onClose, centersTitle: true,
             scrollID: $state.scrollID,
             actions: {}, filters: {}
         ) {

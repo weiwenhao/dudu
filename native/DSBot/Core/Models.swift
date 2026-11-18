@@ -104,14 +104,9 @@ struct SessionAgent: RawRepresentable, Codable, Hashable, Sendable {
     static let pi = SessionAgent(rawValue: "pi")!
     static let deepseek = SessionAgent(rawValue: "deepseek")!
 
+    /// The name the Desktop gives the agent (`listed`, AgentNames.swift, written from the Desktop's own list); an agent it does not list shows its id, capitalised.
     var name: String {
-        switch rawValue {
-        case "claude": return "Claude"
-        case "codex": return "ChatGPT"
-        case "pi": return "Pi"
-        case "deepseek": return "DeepSeek"
-        default: return rawValue.prefix(1).uppercased() + rawValue.dropFirst()
-        }
+        Self.listed.first { $0.id == rawValue }?.name ?? rawValue.prefix(1).uppercased() + rawValue.dropFirst()
     }
 }
 

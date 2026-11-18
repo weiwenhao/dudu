@@ -56,6 +56,34 @@ async function collect(stream: AsyncIterable<Chunk>) {
 
 const finishOf = (chunks: Chunk[]) => chunks.at(-1)!;
 
+test('model switching keeps the full DSH transcript outside native harness context pressure', async () => {
+  const { driver, adapter } = setup();
+  const modelId = 'codex/gpt-6.2-sol';
+  // DUD-5 on 2026-11-18: DSH priced the unabridged display transcript above its
+  // old 8M threshold although the native harness had already compacted its context.
+  const displayTokens = 8_683_301 + 67_842;
+  for (const nativeContext of [undefined, { contextWindow: 200_000 }]) {
+    driver.resolveModel = async (id: string) => ({ id, name: id, ...(nativeContext ? { context: nativeContext } : {}) });
+    const info = await adapter.resolveModel('fake', modelId);
+    assert.equal(info.id, modelId);
+    assert.ok(Number.isSafeInteger(info.context.contextWindow) && info.context.contextWindow > 0);
+    assert.ok(displayTokens < info.context.contextWindow * 0.8,
+      'DSH must not summarize display history that the harness never receives as context');
+  }
+
+  const prepared = await adapter.prepareCall('fake', modelId);
+  const pending = collect(prepared.stream({
+    sessionId: 's1', model: prepared.model.id,
+    messages: [user('u1', 'old task'), assistant([], { nativeSessionId: 'native-old' }), user('u2', 'continue')],
+  }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(driver.started[0].model, modelId);
+  assert.equal(driver.started[0].resume, 'native-old');
+  assert.equal(driver.started[0].prompt, 'continue');
+  driver.handles[0].push({ type: 'turn-end', ok: true });
+  assert.equal(finishOf(await pending).replayState.nativeSessionId, 'native-old');
+});
+
 test('a request is the opener of a turn, one more step of it, or steering that arrived on the way', () => {
   const fresh = analyzeRequest([user('u1', 'first'), assistant([], { nativeSessionId: 'n1' }), context('c'), user('u2', 'second')], 'fake');
   assert.equal(fresh.continuing, false);
@@ -244,6 +272,33 @@ test('input typed while the harness works is handed over once, as steering', asy
   }
   assert.deepEqual(handle.userMessages, ['actually use tabs']);
   assert.equal(bridge.runOf('s1')!.forwarded.has('u2'), true);
+});
+
+// A harness that cannot take a message while it works (no steering) must not be told it was handed one: it would be lost.
+test('input typed while a harness that cannot steer works is not marked as handed over, and the next turn carries it', async () => {
+  const { driver, bridge, adapter } = setup();
+  const first = collect(adapter.stream({ sessionId: 's1', messages: [user('u1', 'go')] }));
+  await new Promise((resolve) => setImmediate(resolve));
+  const handle = driver.handles[0];
+  handle.pushUserMessage = function pushUserMessage(text: string) { this.userMessages.push(text); return false; };
+  handle.push({ type: 'tool-call', id: 't1', name: 'Bash', input: {} });
+  handle.push({ type: 'step-end' });
+  await first;
+  handle.push({ type: 'tool-result', id: 't1', output: 'ok', isError: false });
+  const messages = [user('u1', 'go'), assistant(['t1']), tool('t1', 'ok'), user('u2', 'actually use tabs')];
+  const again = collect(adapter.stream({ sessionId: 's1', messages }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(bridge.runOf('s1')!.forwarded.has('u2'), false, 'nothing was sent, so it is not forwarded');
+  handle.push({ type: 'text-delta', text: 'Done.' });
+  handle.push({ type: 'step-end', reason: 'stop' });
+  handle.push({ type: 'turn-end', ok: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(driver.started.length, 2, 'a turn of its own starts for the message');
+  assert.equal(driver.started[1].prompt, 'actually use tabs');
+  driver.handles[1].push({ type: 'step-end', reason: 'stop' });
+  driver.handles[1].push({ type: 'turn-end', ok: true });
+  await again;
+  await bridge.dispose();
 });
 
 test('input admitted after the native answer resumes the same session once instead of steering a disposed writer', async () => {

@@ -1,13 +1,12 @@
 import { ICONS } from '../connectors/icons.js';
 import { Tile } from '../connectors/Tile.jsx';
+import { AVATAR_TONES } from '../issues/conversation-identity.js';
 
-const TONES = 7;
-
-/** Which of the seven tones (styles.css, `--tone-N-*`) a name gets: the same name, the same tone, here and on the phone (its `ConnectorAvatar` makes the same sum). */
+/** Which of the twelve tones (styles.css, `--tone-N-*`) a name gets: the same name, the same tone, here and on the phone (its `ConnectorAvatar` makes the same sum). */
 export function toneOf(name) {
   let sum = 0;
   for (const char of String(name ?? '')) sum = (sum * 31 + char.codePointAt(0)) >>> 0;
-  return sum % TONES;
+  return sum % AVATAR_TONES;
 }
 
 /** The first letter of a name in capitals; a character of Chinese is itself. */

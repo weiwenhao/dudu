@@ -1,6 +1,6 @@
 import Foundation
 
-struct IssueWorkflowStatus: Decodable, Identifiable, Equatable, Sendable {
+struct IssueWorkflowStatus: Codable, Identifiable, Equatable, Sendable {
     var id: String
     var type: String
     var name: String?

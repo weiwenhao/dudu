@@ -4,6 +4,7 @@ import { cn } from '../../lib/cn.js';
 import { AgentLogo } from '../../issues/AgentLogo.jsx';
 import { agentLogo } from '../../issues/agent-logos.js';
 import { AgentActivity } from '../../issues/icons.jsx';
+import { AGENT_NAMES } from '../../issues/model.js';
 import { T } from '../../strings.js';
 import { agentColor, boardCounts, DESKS, employeesOf, fitScene, headPoint, hex, SCENE, seatAnchor, seating, spreadTags, stateOf, summarize, toCanvas } from './layout.js';
 import { O } from './strings.js';
@@ -13,7 +14,7 @@ import { useReducedMotion } from './use-environment.js';
 const BACKGROUND = '#f7f7f7';
 
 const refOf = (issue) => issue.ref || issue.title;
-const agentName = (agent) => (agent ? O.agents[agent] ?? agent : T.noAgent);
+const agentName = (agent) => (agent ? AGENT_NAMES[agent] ?? agent : T.noAgent);
 
 /**
  * Where the name tags go before the scene is there, and without it: the same fit, the same heads, at their desks. Returns a Map from issue

@@ -318,6 +318,25 @@ test('a message Claude took while it worked is answered before the turn ends, in
   assert.deepEqual(events.filter((event) => event.type === 'text-delta').map((event) => event.text), ['First answer.', 'Second answer.']);
 });
 
+test('a resumed Claude session first answers the notice of what the cut process left running: that end is not the end of the prompt\'s turn', async () => {
+  // 2026-11-18: after a forced update and a new login, "继续" showed "已完成，用时 4 秒" with nothing in it, while Claude went on working out of sight.
+  const { session: base, emit } = queueingSession();
+  const prompted: string[] = [];
+  const session = { ...base, prompt: async (_text: string, options: { inputId: string }) => { prompted.push(options.inputId); return { kind: 'accepted' }; } };
+  const handle = await startRun(session, { queuesSteer: true, sessionOptions: { resume: 'native-1' } });
+  const seen = collect(handle);
+  // "Background shell command didn't finish before the previous session ended": a turn of its own, with no model call, over before the prompt is taken up
+  emit(turnEnded({ kind: 'completed' }));
+  await new Promise((resolve) => setImmediate(resolve));
+  emit(acknowledged(prompted[0]));
+  emit(said('The real answer.'));
+  emit(messageStop());
+  emit(turnEnded({ kind: 'completed' }));
+  const events = await seen;
+  assert.deepEqual(types(events), ['text-delta', 'step-end', 'turn-end']);
+  assert.equal(events[0].text, 'The real answer.');
+});
+
 test('a follow-up that never starts does not keep the turn open for ever, and a harness that steers inside its turn is not waited on', async () => {
   const silent = queueingSession();
   const handle = await startRun(silent.session, { queuesSteer: true, followUpMs: 30 });

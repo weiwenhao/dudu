@@ -40,7 +40,7 @@ Dudu 不是 Grok Bot 类型的产品，在 Bot 类型产品中人类只需要和
 
 ## 功能
 
-- 支持 DSH、Claude、Codex、Pi 四种 Agent，并深度集成到了 GUI 中。
+- 支持 DSH、Claude、Codex、Pi、Grok、Kimi、OpenCode、Antigravity、CodeBuddy、Devin、Factory、Qwen、Qoder Agent，并深度集成到了 GUI 中。
 - 可以方便地导入已有的 DSH、Claude、Codex 会话。
 - 通过个人助理嘟嘟，用对话的方式管理所有功能。
 - 不活跃的智能体会自动进入深度休眠，避免占用内存。

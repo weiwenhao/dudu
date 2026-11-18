@@ -1,17 +1,16 @@
 // Keep the owner's marks over list reads until a read started after the save has returned.
 // A poll already on its way must not put a just-handled row back under the pointer.
 const SPAN = { day: 86_400_000, week: 7 * 86_400_000, month: 30 * 86_400_000 };
-const tabOf = (record) => record.deleted ? null : record.issue || record.done ? 'done' : record.ignored ? 'ignored' : 'todo';
+const tabOf = (record) => record.deleted ? null : record.issue || record.done ? 'done' : 'todo';
 const newest = (a, b) => b.at - a.at || b.id - a.id;
 
 function marked(record, action) {
   if (record.issue) return record;
   switch (action) {
-    case 'inbox/done': return { ...record, done: true, ignored: false };
-    case 'inbox/ignore': return { ...record, ignored: true };
+    case 'inbox/done': return { ...record, done: true };
     case 'inbox/delete': return { ...record, deleted: true };
     case 'inbox/restore': {
-      if (!record.deleted) return { ...record, done: false, ignored: false };
+      if (!record.deleted) return { ...record, done: false };
       const restored = { ...record };
       delete restored.deleted;
       return restored;

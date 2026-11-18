@@ -108,6 +108,12 @@ export class OarNormalizer {
   /** A native task can return control before its process exits; only runtimes with that evidence provide a result. */
   backgroundResult() { return undefined; }
 
+  /**
+   * True for a request of the harness to its host that OAR itself answers (the ACP runtimes' terminal and permission requests, a
+   * Qwen permission check): it needs no one, so it does not end the turn. Claude and Codex have no such answer.
+   */
+  autoAnswered() { return false; }
+
   /** The turn the normalizer reported as ended continues: the harness took up a message that had been waiting. */
   reopen() { this.#finished = false; }
 
@@ -115,7 +121,7 @@ export class OarNormalizer {
     const events = [];
     if (this.#finished) return events;
     if (record.kind === 'frame') this.#frame(record, events);
-    else if (record.kind === 'request' && record.direction === 'toApp') this.#unanswerable(record, events);
+    else if (record.kind === 'request' && record.direction === 'toApp' && !this.autoAnswered(record)) this.#unanswerable(record, events);
     else if (record.kind === 'response' && record.body?.kind === 'exited') this.#exited(record.body, events);
     return events;
   }
@@ -186,7 +192,9 @@ export class OarNormalizer {
 
   #end(event, record, events, result) {
     const call = this.#calls.get(event.callId);
-    if (!call?.announced) return;
+    if (!call) return;
+    // A call that finished without any input after its start (an ACP tool with no arguments) is still a call.
+    if (!call.announced) this.#announce(event.callId, this.inputOf({ callId: event.callId }), events, false);
     // A result means the message that made the call is over, even where the harness gave no sign of it.
     if (this.#inStep > 0) this.#closeStep(events);
     result ??= this.resultOf(event, call, record);
@@ -237,7 +245,7 @@ async function* drain(queue) {
 }
 
 /** OAR verifies native compaction completion; keep the writer until its process has actually closed. */
-export async function compactOarSession({ runtime, installation, sessionOptions, name, signal }) {
+export async function compactOarSession({ runtime, installation, sessionOptions, name, signal, autoAnswered = () => false }) {
   if (signal?.aborted) throw abortReason(signal);
   let session;
   try { session = await runtime.session(installation, sessionOptions); }
@@ -258,7 +266,7 @@ export async function compactOarSession({ runtime, installation, sessionOptions,
     if (typeof session.compact !== 'function') throw manualCompactionError(name);
     unsubscribe = session.rawEvents((record) => {
       if (!requested || record.sessionId !== session.id || (record.agentPath?.length ?? 0) > 0) return;
-      if (record.kind === 'request' && record.direction === 'toApp') {
+      if (record.kind === 'request' && record.direction === 'toApp' && !autoAnswered(record)) {
         interrupted.reject(harnessError(`${name} asked for something DSH cannot answer here (${text(record.body?.type) || 'a request'}).`, 'HARNESS_UNSUPPORTED'));
       }
       if (record.kind === 'frame') {
@@ -291,7 +299,7 @@ export async function compactOarSession({ runtime, installation, sessionOptions,
 }
 
 /** One DSH turn on an OAR session, retaining native processes that still own background work. */
-export async function startOarRun({ runtime, installation, sessionOptions, prompt, images, normalizer, name, signal, queuesSteer = false, followUpMs = FOLLOW_UP_MS, onRecord, observedSubagents = [], onInput, onTasks, previous }) {
+export async function startOarRun({ runtime, installation, sessionOptions, prompt, images, normalizer, name, signal, queuesSteer = false, steering = true, followUpMs = FOLLOW_UP_MS, onRecord, observedSubagents = [], onInput, onTasks, previous }) {
   if (signal?.aborted) throw signal.reason ?? harnessError('The request was aborted.', 'ABORTED');
   let session;
   let resident = previous?.resident;
@@ -402,8 +410,10 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
       finish({ type: 'turn-end', ok: false, error: harnessError(`${name} did not take the message: ${dropped.message || dropped.reason}`, 'HARNESS_REJECTED') });
       return;
     }
-    for (const event of seen) if (event.kind === 'user_message' && event.inputId) waiting.delete(event.inputId);
-    if (held && (seen.some((event) => ACTIVITY.has(event.kind) || (event.kind === 'turn_ended' && event.outcome?.kind !== 'completed'))
+    // The harness taking up a message that waited is the turn the held end was waiting for: whatever ended before that was another turn's.
+    let taken = false;
+    for (const event of seen) if (event.kind === 'user_message' && event.inputId && waiting.delete(event.inputId)) taken = true;
+    if (held && (taken || seen.some((event) => ACTIVITY.has(event.kind) || (event.kind === 'turn_ended' && event.outcome?.kind !== 'completed'))
       || (record.kind === 'response' && record.body?.kind === 'exited'))) {
       clearTimeout(holdTimer);
       holdTimer = undefined;
@@ -478,7 +488,10 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   }
   let outcome;
   try {
-    if (reused) waiting.add(inputId);
+    // The prompt can wait behind a turn of the harness's own: a process kept for background work may have opened one, and a process resumed after
+    // the last one was cut meets what that one left running (Claude answers the notice of a command that "didn't finish" at once, as a turn with
+    // no model call, and only then takes the prompt up). Such a turn's end is not this turn's end: it is held until the harness shows it took the prompt up.
+    if (reused || (queuesSteer && sessionOptions?.resume)) waiting.add(inputId);
     outcome = await submit(async () => {
       const options = { inputId, ...(images?.length ? { images } : {}) };
       if (!reused) return session.prompt(prompt, options);
@@ -506,7 +519,8 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     // A DSH turn held for native background work can have an idle root. OAR owns the prompt/steer race there.
     async pushUserMessage(content, images, { onInput } = {}) {
       const continuing = Boolean(held) || hasWork();
-      if (!continuing && typeof session.steer !== 'function') return;
+      // Nothing is sent: `false` tells the bridge the message is still its own to send, as the next turn once this one ends.
+      if (!continuing && (!steering || typeof session.steer !== 'function')) return false;
       const inputId = randomUUID();
       forwarded.add(inputId);
       if (queuesSteer || continuing) waiting.add(inputId);
@@ -530,12 +544,14 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
  * A harness provider on an OAR runtime. `session` returns what is specific to the harness in the options of one OAR
  * session (environment, tool limits, launch arguments) from the DSH access mode.
  */
-export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, quota, childUsage, backgroundTasks = true }) {
+export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, steering = true, quota, childUsage, backgroundTasks = true, defaultEnabled = true }) {
   const known = new Set(tools.map((tool) => tool.name));
   const environment = (extra) => ({ ...scrubbedEnvironment(scrub.patterns, scrub), ...extra });
 
   return {
     id, name, route: id,
+    /** Whether the harness is used once it is found, without anyone switching it on in Settings > Providers (providers/index.mjs). */
+    defaultEnabled,
     /** The environment the harness runs in (an OAR overlay: `null` removes a name). */
     environment: () => environment(),
 
@@ -622,12 +638,13 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
           if (id === 'codex' && observedSubagents?.length) sessionOptions.observedSubagents = observedSubagents;
           return startOarRun({
             runtime: active, installation, sessionOptions, prompt, images, normalizer: normalizer({ name, login }),
-            name, signal, queuesSteer, onRecord, observedSubagents, onInput, onTasks, previous,
+            name, signal, queuesSteer, steering, onRecord, observedSubagents, onInput, onTasks, previous,
           });
         },
         async compact(options) {
           const sessionOptions = await optionsFor(options);
-          return compactOarSession({ runtime: active, installation, sessionOptions, name, signal: options.signal });
+          const reading = normalizer({ name, login });
+          return compactOarSession({ runtime: active, installation, sessionOptions, name, signal: options.signal, autoAnswered: (record) => reading.autoAnswered(record) });
         },
       };
     },

@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Check, ChevronDown, ChevronRight, ChevronUp, LoaderCircle } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
+import { HARNESS_AGENTS } from '../issues/model.js';
 import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
 import { ownPetInteraction } from './overlays.js';
@@ -63,7 +64,7 @@ function Models({ directory, model, actions, onError }) {
   const [picking, setPicking] = useState(false);
   const state = useSyncExternalStore(directory?.store.subscribe ?? noop, directory?.store.getSnapshot ?? (() => empty));
   const current = state.current ?? model;
-  const groups = state.groups.filter((group) => !['claude', 'codex', 'pi'].includes(group.id));
+  const groups = state.groups.filter((group) => !HARNESS_AGENTS.includes(group.id));
   const selected = groups.find((group) => group.id === current?.provider)?.models.find((item) => item.id === current?.model);
   const efforts = selected?.reasoning?.efforts ?? [];
   const effort = efforts.find((item) => item.id === (current?.reasoningEffort ?? selected?.reasoning?.defaultEffort));

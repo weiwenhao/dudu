@@ -24,6 +24,7 @@ import { createPluginQuota, handleQuota } from './dist/providers/quota/index.mjs
 import { claudeProvider } from './dist/providers/drivers/claude.mjs';
 import { codexProvider } from './dist/providers/drivers/codex.mjs';
 import { piProvider } from './dist/providers/drivers/pi.mjs';
+import { universalProviders } from './dist/providers/drivers/universal.mjs';
 import { isHarness } from './dist/providers/catalog.mjs';
 import { permissionOf } from './dist/providers/permission.mjs';
 import { createIssues } from './dist/assistant/issues/index.mjs';
@@ -142,7 +143,7 @@ async function startProviders(ctx, folder, assignment) {
   });
   const providers = await createProviders({
     folder,
-    providers: [claudeProvider, codexProvider, piProvider],
+    providers: [claudeProvider, codexProvider, piProvider, ...universalProviders],
     host: {
       sessionTools,
       llm: ctx.llm,
@@ -266,6 +267,7 @@ async function startIssues(ctx, folder, assignment = {}) {
   const issues = createIssues({ file: join(folder, 'assistant', 'issues.db'), lifecycleState: (key) => assignment.sessionState?.(key) ?? assignment.snapshots?.stateOf(key) ?? null,
     sessionState: (key) => assignment.sessionStatus?.(key)?.sessionState ?? 'idle', sessionHandledAt: (key) => assignment.sessionHandledAt?.(key) ?? null, deepSleepMs: deepSleepAfter,
     sessionReceivedAt: (key) => assignment.sessionStatus?.(key)?.attention?.messageAt ?? 0,
+    sessionPreview: (key) => assignment.sessionStatus?.(key)?.attention?.preview ?? '', // the same line the conversation list shows under a title (the board card's description)
     issuePinned: (id) => assignment.chatHome?.isPinned(`issue:${id}`) === true,
     sessionTurnActive: (key) => key.startsWith('dsh:') && assignment.hasActiveWork?.(key.slice(4)) ? true : assignment.sessionTurnActive?.(key) ?? null,
     deepSleepOn: () => assignment.assistant?.settings?.value('deepSleep') !== false }); // the settings open later (startAssistant): until then, and for a file without the key, it is on
@@ -372,6 +374,7 @@ async function startAssignment(ctx, folder, assignment) {
   const agentSessions = createAgentSessions({ dsh });
   const hooks = createAssignment({
     issues: assignment.issues,
+    attachmentsOf: (issue, entry, sessionId) => assignment.issueAttachments.promptParts(issue, entry, sessionId, ctx.fileUploads),
     repairDefaults: async (issue) => {
       if (issue.agent !== 'claude' || !issue.session?.startsWith('dsh:')) return;
       const options = sessionOptions(assignment.assistant?.memory?.rules?.()?.rules?.['ASSIGN.md'], issue, { home: homedir(), defaultAccess: null });

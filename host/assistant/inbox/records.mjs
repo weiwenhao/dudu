@@ -194,6 +194,24 @@ export function newestSaid(text) {
   return last.replace(/^\d{2}-\d{2} \d{2}:\d{2} (?:[^：\n]{1,200}：)?/u, '');
 }
 
+const MESSAGE = /^(\d{2}-\d{2} \d{2}:\d{2}) (?:([^：\n]{1,200})：)?([\s\S]*)$/u;
+
+/**
+ * The messages of a conversation's text one by one, for a page that sets them as a talk: `[{ at: '11-17 19:15', from: 'Wenhao' | null, text }]` (the time and the name are cut from the
+ * front of each line by the same rule as `newestSaid`). Null when the text is not a talk (no text, or a message that does not begin with its time): the page then shows the text as it is.
+ */
+export function parseMessages(text) {
+  const lines = messagesOf(text);
+  if (!lines.length) return null;
+  const messages = [];
+  for (const line of lines) {
+    const found = MESSAGE.exec(line);
+    if (!found) return null;
+    messages.push({ at: found[1], from: found[2] || null, text: found[3] });
+  }
+  return messages;
+}
+
 /** Messages as one text of at most `max` characters: when there are too many the oldest go first. */
 function fit(messages, max) {
   const kept = [...messages];

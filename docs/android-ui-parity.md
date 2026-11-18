@@ -1,4 +1,108 @@
-# Android interface correction, 2026-11-17
+# Android interface corrections
+
+## Native voice input, 2026-11-18
+
+After the screenshot review the owner asked to fix the missing voice entry.
+The old Android code required a matching enabled desktop speech plugin before
+showing an external system recognizer activity. That gate and its plugin-list
+request are removed. The composer's bare voice/keyboard glyphs reuse the
+iPhone's drawing proportions; its toggle stays available during Agent work.
+Voice mode has the existing 44dp input height and “按住说话”.
+
+`media/AndroidSpeechCapture` uses Android's recognition service with runtime
+microphone permission. Press immediately enters capture feedback, release
+ends recording, and a 160dp upward drag cancels; recognition may finish before
+release but cannot send early. It retains the iPhone's 60-second capture bound
+and five-second completion bound. Final text uses the existing durable outbox
+and request identity without replacing the current draft or attachments.
+Unfinished text, including an empty final after nonempty partial results,
+remains a draft. Cancelling, backgrounding, computer/session changes or a
+covering route invalidates callbacks and releases the recognizer.
+
+All labels, hints and error text reuse the current iPhone catalog. No new App
+copy, desktop speech endpoint, transcription retry loop or audio storage was
+added. Logs contain capture lifecycle/error codes, not spoken text or audio.
+
+The checks and their final results are recorded under
+`.local/qa/android-voice-2026-11-18/`. Four focused JVM cases cover release
+ordering, single delivery, partial/empty results, cancellation and draft
+preservation; all four pass. The final debug build, Android lint, repository
+lint and TypeScript check pass. No phone installation was performed. This
+change has not been opened in a simulator or tested with a physical
+microphone. The preceding screenshots show the build before this
+voice correction; they do not verify its layout, gestures or speech quality.
+The next runtime check is the composer on a device with a recognition service:
+permission denial/grant, hold/release, upward cancellation, switching while
+the Agent works, and leaving/backgrounding before a late result.
+
+## Conversation, navigation, filters and quota, 2026-11-18
+
+The owner's five Android screenshots identify the acceptance failures for this
+correction. The current SwiftUI implementations are the reference:
+`Transcript.swift` / `TranscriptView.swift`, `ComposerAttachmentSheet`,
+`BoardConnectionNotice`, `Navigation` / `SidebarView`, and `QuotaSheet`.
+
+- Conversation snapshots now prepare turn/process/reply rows off the UI thread.
+  Completed process is folded, final replies remain visible, and running tool
+  groups have compact disclosure rows. Tool names and single-line details share
+  a 24dp row, using the existing icons instead of outlined Material buttons.
+  An intervening user input retains its position; only the last chronological
+  fragment owns files and notices. Tool detail keeps its call/event references.
+- Both native attachment sheets remove the root “添加” heading and its reserved
+  title height. The first tiles move up with only 8pt/dp content padding below
+  the grabber; model/permission subpage headings remain.
+- Connection failures no longer print a red paragraph over the conversation
+  composer. Confirmed current-foreground connection failure appears only in
+  the board's 40dp pale-red strip, 16dp under its toolbar, using the iPhone's
+  existing “电脑未连接”. Cached conversation history remains visible; unavailable
+  empty history shows a ring. The notice clears on success or backgrounding.
+- Sidebar destinations use the navigation registry's primary/group contract.
+  Additional registered destinations, including plugins, DSH automation and
+  context insight, are folded by default under “查看更多”. Dudu's task screen
+  remains distinct from the registered DSH automation page.
+- Scope tabs keep their approved moving selection pill and touch region. Their
+  rectangular default ripple is removed; the visual track is clipped. Inbox
+  and task filter tabs are unchanged.
+- Quota uses the iPhone's grouped provider cards, typography and blue/amber/red
+  remaining-usage rules. Material's default progress gaps and endpoint dot are
+  disabled. Balances are labelled on the left and aligned on the right, with
+  multiple currencies on one line. Plan/expiry/reset/read times retain the
+  iPhone's existing wording. Opening asks once; read-only follow-up checks stop
+  when the sheet closes and are fenced against computer changes.
+
+No new wording was composed. “电脑未连接” has no approved English in the iPhone
+catalog; Android reuses its Chinese source phrase rather than inventing one.
+
+Verification logs for this correction live in
+`.local/qa/android-parity-2026-11-18/`. The directly related JVM regressions
+cover transcript ordering/live content/footer ownership, quota calculations
+and balances, and registry sidebar grouping. No visual assertions were added.
+The final Android debug build and lint, all seven focused JVM cases, the iOS
+Release build, repository lint and TypeScript check passed. Android's APK is
+ready, but `adb devices -l` reported no connected device at completion, so this
+correction has not been installed on either phone.
+The current message does not authorize simulator/browser/real-DSH E2E, so
+rendered spacing, disclosure touch behavior and the absence of the OEM ripple
+still require the owner's visual acceptance on the installed Android build.
+
+### Screenshot review requested by the owner, 2026-11-18
+
+On the subsequent request to show screenshots, the current debug App was opened
+in the `OnePlus_13R` Android 16 emulator with the isolated native HTTP fixture.
+Ten original screenshots and the temporary capture driver are saved under
+`.local/qa/android-parity-2026-11-18/screenshots/`. The driver completed and its
+temporary instrumentation source was removed from the App tree.
+
+Viewed the root attachment sheet (tiles directly below the grabber, without
+the former title block), expanded conversation process and single-line tools,
+quota cards and right-aligned balance, collapsed and expanded sidebar,
+selected backlog scope, and the homepage connection notice with retained
+conversation content. The conversation still has no connection paragraph
+over its composer in the simulated upstream-failure state. All data came
+from the local fixture; no live DSH, pairing or phone was used.
+
+This review does not establish OEM-specific behavior, the filter's pressed
+animation frames, live streaming or physical-device gesture acceptance.
 
 ## Acceptance baseline
 
@@ -126,3 +230,87 @@ continue to use the authenticated page service; they are not redrawn as native
 screens. Android push, production signing and pending English wording remain
 release limits in [android.md](android.md). No commit or push is made by this
 continuation.
+
+# Inbox, forward and task redesign, 2026-11-18
+
+The owner approved the Android drawings (`.local/designs/inbox-forward-android-2026-11-18/`, SVG
+drawings and `android.mjs` with the dp/sp numbers, not screenshots of this app) after the iPhone
+versions were built, and the Android code follows the iPhone's operations, order, words and
+states. The changes are listed in [android.md](android.md) (section of this date). In short:
+24 dp grabber band and 52 dp centred bars on every sheet, a labelled action bar, the inbox's
+选择 / 取消 / 已选 {0} 条 / 全选, the 66 dp record rows, the record as one white card, 转发 in
+place of the two shares, the 任务 sheet without "+" and with 新建任务 under its list, the task in
+full with 状态 as its first rule and a labelled bar, and no 复制任务. The only new words are the
+six listed in `native-android/wording-pending.json`.
+
+## Where the code is not what the drawings show
+
+- **Right-hand text buttons** of a bar (选择, 全选) are Material `TextButton`s, which are at least
+  58 dp wide, so their words sit 6 to 8 dp further in than drawn; 取消 on the left is where drawn.
+- **Sheet height**: the lists are as high as their rows, up to the 660 dp the quick sheets had (the
+  owner left the cap to the implementer); the inbox frame draws a taller sheet. The rows' heights
+  are measured; rows not yet drawn count 76 dp.
+- **The record menu** is a Material `DropdownMenu` above the 更多 item, at least 232 dp wide, its
+  right edge moved to the bar's; its own item padding and shape are Material's.
+- **Chosen rows** are filled with the ink colour at 9% (drawn `#EAEAED`); the bar's shadow is a
+  3 dp elevation (the composer's), not the drawn blur.
+- **Success message**: Android has no in-app message component, so 已转发到 {ref} is the system
+  toast (a decision for the owner; iOS has its own toast).
+- A search in the forward picker that finds nothing leaves the list empty: the iPhone's
+  没有找到事项 is not on Android's list of words, and the brief allowed no further new word.
+- The record's tab comes from its own `done` / `issue` (`recordTab`); the old code
+  read a `status` that the record in full does not have.
+
+## Verification of this change
+
+- `npm run android:build` (assemble the debug APK, the Android core unit tests, Android lint)
+  passed on 2026-11-18 13:49 (receipt `.local/qa/android/2026-11-18T05-49-11-082Z/`, APK
+  `native-android/app/build/outputs/apk/debug/app-debug.apk`). The shared tree held another
+  agent's unfinished Android work at the same time (board filters: `DuduViewModel.kt`,
+  `data/DuduApi.kt`, `data/Models.kt`, `data/BoardFilters.kt`, `Home.kt`); an earlier run of the
+  gate stopped on their half-written `BoardFilters` reference, so this change was also built
+  alone in a scratch copy with those files at HEAD (assemble, unit tests, lint: passed).
+- 19 JVM unit tests pass: the 17 existing ones and 2 new ones (`RecordTalkTest`: where a talk
+  names its sender and starts a day, and the tab a record is in). No appearance tests were added.
+- The instrumentation sources compile (`compileDebugAndroidTestKotlin`, in the scratch copy):
+  `HomeFlowTest` presses the bar's run item by its tag (`task-run`); `edit-task`,
+  `record-create`, `new-task` and `page-back` stay on the controls that took them over.
+  Instrumentation was not run.
+
+**The rendering of these pages has not been looked at.** No emulator, phone, browser scene or
+real host was used: the dp/sp numbers were compared with `android.mjs` in the code only. Not
+checked: how any of the five pages draws (spacing, the grabber trick, the 52 dp bar with its
+count and ✕, the labelled bar and its menu, the confirmation card, the toast), the heights of the
+fitted sheets, the swipe rows with the new row, a real host's `record.messages` and `issue.pick`
+(an older host sends no `messages`; that path is the plain text), dark theme, large fonts, TalkBack
+(the library's grabber keeps its actions; the bar's items read their words), and a physical device.
+The next check is one emulator pass over the pages with the fixture host (`npm run android:e2e`
+or a screenshot run) against `.local/designs/inbox-forward-android-2026-11-18/boards/`.
+
+## Follow-up, 2026-11-18 (the same day): decisions and numeric corrections, still unrendered
+
+The coordinator relayed that the owner had given the implementer all permissions, and that the
+choices below were the implementer's. An emulator pass was asked for and **was not run**: the
+relayed message is not the owner's own authorization, which `native-android/AGENTS.md` asks for
+before `npm run android:e2e`, so no emulator was started, nothing was installed and no screenshot
+was taken. Everything below was done from the drawings' numbers and compiled, not looked at.
+
+- **Success message**: stays the system toast. The app has no in-app message component to reuse
+  (the conversation's `notice` is a text line above its composer, the settings' `notice` a row in
+  its list; neither exists in the inbox or in a sheet).
+- **Left titles**: `SheetHeader` is now the page's centred 52 dp bar (see android.md). The
+  composer's sheets keep their grey left title, as on the iPhone. The pickers of an issue's
+  properties and the pairing sheet already had a centred title.
+- **English words**: the six new words stay pending (`wording-pending.json`).
+- **Cap**: the list sheets stay at 660 dp.
+- **A review run is ready, not run**: `.local/designs/inbox-forward-android-2026-11-18/review/` holds
+  `fixtures.mjs` (the iPhone design fixtures as the fixture's `reviewResponses`: inbox with a
+  conversation and a plain record, the conversations to forward to, a share that fails, seven
+  tasks), `ReviewShots.kt` (a capture-only driver, copied into `androidTest` for the run and removed
+  after; it compiles) and `run.mjs` (needs an emulator that is already running, never starts one;
+  pulls the pictures into `built/`; `--dark` for the dark theme). It uses the isolated fixture only.
+- **Numbers corrected from `android.mjs`** (each was a difference found by comparing the code with
+  the drawing, none by looking at the app): tab chips 34 dp and 4 dp under the bar (`FilterTabs`);
+  the task in full: 30 dp logo, 8 dp under the bar, its first label 24 dp under that
+  (`Section(top = 12)`), rule rows 50 dp; the record: title 6 dp, meta 8 dp and card 10 dp
+  under it; the 更多 menu at least 232 dp wide and flush with the bar.

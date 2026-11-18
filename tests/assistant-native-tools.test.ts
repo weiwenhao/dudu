@@ -45,4 +45,10 @@ test('the assistant keeps legacy global-tool support and one explicit native fil
   for (const name of ['terminal_unrecognized', 'run_code', 'schedule', 'subagent', 'plugin_install']) assert.equal(isConversationTool(name), false, name);
   assert.deepEqual(conversationToolNames({ view: () => ({ restrictableNames: new Set() }), schemas: () => [{ name: 'bash' }] }, {}), [],
     'an empty inherited scope must not fall back to another scope');
+  assert.equal(isConversationTool('cua_run_code'), false, 'scheduled tasks keep their existing capability scope');
+  assert.equal(isConversationTool('cua_run_code', { computerUse: true }), true);
+  assert.equal(isConversationTool('cua', { computerUse: true }), false, 'the raw CUA binding stays private');
+  assert.deepEqual(conversationToolNames({
+    view: () => ({ restrictableNames: ['cua_run_code', 'cua', 'bash', 'run_code', 'plugin_install'] }),
+  }, {}, { computerUse: true }), ['bash', 'cua_run_code'], 'only the standalone Computer Use entry joins native tools');
 });

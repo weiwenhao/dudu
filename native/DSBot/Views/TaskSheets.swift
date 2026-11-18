@@ -21,22 +21,35 @@ private struct TaskSection<Content: View>: View {
     }
 }
 
+/// One row of the rule: its name, its value, and the value's colour (muted, or green for a task that is on).
+private struct TaskValue {
+    let name: String
+    let value: String
+    var color: Color = DSBotStyle.muted
+
+    init(_ name: String, _ value: String, color: Color = DSBotStyle.muted) {
+        self.name = name
+        self.value = value
+        self.color = color
+    }
+}
+
 /// Rows of a name on the left and its value on the right, in one card.
 private struct TaskValueRows: View {
-    let rows: [(String, String)]
+    let rows: [TaskValue]
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
                 if index > 0 { Divider().padding(.leading, 16) }
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text(row.0)
+                    Text(row.name)
                         .font(.system(size: 15))
                         .foregroundStyle(DSBotStyle.ink)
                     Spacer(minLength: 12)
-                    Text(row.1)
+                    Text(row.value)
                         .font(.system(size: 15))
-                        .foregroundStyle(DSBotStyle.muted)
+                        .foregroundStyle(row.color)
                         .multilineTextAlignment(.trailing)
                 }
                 .padding(.horizontal, 16)
@@ -76,13 +89,8 @@ struct TaskSheet: View {
             if let quickNavigation {
                 QuickSheetPage(
                     title: L10n.text("任务"), onBack: quickNavigation.back, onClose: quickNavigation.close,
-                    allowsExpansion: true
+                    allowsExpansion: true, actions: {}, filters: {}
                 ) {
-                    Button { editing = true } label: {
-                        DSBotIcon(.editLine, size: 20)
-                    }
-                    .accessibilityLabel(L10n.text("编辑"))
-                } filters: {} content: {
                     sections.padding(.top, 14)
                 } footer: {
                     GlassActionBar(items: barItems).padding(.bottom, GlassActionBar.bottomGap)
@@ -145,11 +153,7 @@ struct TaskSheet: View {
     }
 
     private var standalone: some View {
-        QuickSheetPage(title: L10n.text("任务"), onClose: { dismiss() }) {
-            Button { editing = true } label: { DSBotIcon(.editLine, size: 20) }
-                .accessibilityLabel(L10n.text("编辑"))
-                .accessibilityIdentifier("task.edit")
-        } filters: {} content: {
+        QuickSheetPage(title: L10n.text("任务"), onClose: { dismiss() }, centersTitle: true, actions: {}, filters: {}) {
             sections.padding(.top, 14)
         } footer: {
             GlassActionBar(items: barItems)
@@ -175,28 +179,23 @@ struct TaskSheet: View {
                 .foregroundStyle(DSBotStyle.ink)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
-            Text(task.statusText)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(task.isActive ? Self.on : DSBotStyle.muted)
-                .padding(.horizontal, 10)
-                .frame(height: 24)
-                .background(task.isActive ? Self.on.opacity(0.10) : DSBotStyle.selected, in: Capsule())
         }
         .padding(.horizontal, 8)
     }
 
-    /// The rule, as the desktop's rules tab lists it. A task of 嘟嘟 has no workspace, so it has no row for one.
-    private var ruleRows: [(String, String)] {
+    /// The rule, as the desktop's rules tab lists it, the status first (it was a chip at the end of the title: owner, 2026-11-18, the inbox redesign). A task of 嘟嘟 has no workspace, so it has no row for one.
+    private var ruleRows: [TaskValue] {
         let next = task.isActive ? task.nextRunAt.map { TaskSchedule.stamp($0, timezone: task.schedule.timezone) } ?? "—" : "—"
         var rows = [
-            (L10n.text("运行时间"), task.schedule.label),
-            (L10n.text("时区"), task.schedule.timezone.map(TaskSchedule.timezoneLabel) ?? "—"),
-            (L10n.text("下次运行"), next),
-            (L10n.text("执行位置"), TaskTarget.name(task.target.mode)),
+            TaskValue(L10n.text("状态"), task.statusText, color: task.isActive ? Self.on : DSBotStyle.muted),
+            TaskValue(L10n.text("运行时间"), task.schedule.label),
+            TaskValue(L10n.text("时区"), task.schedule.timezone.map(TaskSchedule.timezoneLabel) ?? "—"),
+            TaskValue(L10n.text("下次运行"), next),
+            TaskValue(L10n.text("执行位置"), TaskTarget.name(task.target.mode)),
         ]
-        if let project = task.project { rows.append((L10n.text("关联工作区"), project.name)) }
-        rows.append((L10n.text("供应商"), task.taskAgent?.name ?? task.agent))
-        rows.append((L10n.text("模型"), task.model ?? L10n.text("默认模型")))
+        if let project = task.project { rows.append(TaskValue(L10n.text("关联工作区"), project.name)) }
+        rows.append(TaskValue(L10n.text("供应商"), task.taskAgent?.name ?? task.agent))
+        rows.append(TaskValue(L10n.text("模型"), task.model ?? L10n.text("默认模型")))
         return rows
     }
 
@@ -293,7 +292,8 @@ struct TaskSheet: View {
         nextCursor = page.nextCursor
     }
 
-    /// What can be done with the task: pause or resume it (not one that is over), run it now, copy it, delete it.
+    /// What can be done with the task, with the words under the icons (owner, 2026-11-18, the inbox redesign; the pencil of the header is 编辑 here): pause or resume it (not one that is over), run it now,
+    /// edit it, delete it (red, asks first).
     private var barItems: [GlassActionBar.Item] {
         var items: [GlassActionBar.Item] = []
         switch task.status {
@@ -302,8 +302,8 @@ struct TaskSheet: View {
         default: break
         }
         items.append(.init(id: "run", title: L10n.text("立即执行"), glyph: .zap) { act(.run) })
-        items.append(.init(id: "duplicate", title: L10n.text("复制任务"), glyph: .copy) { act(.duplicate) })
-        items.append(.init(id: "delete", title: L10n.text("删除任务"), glyph: .trash) { confirmingDelete = true })
+        items.append(.init(id: "edit", title: L10n.text("编辑"), glyph: .editLine) { editing = true })
+        items.append(.init(id: "delete", title: L10n.text("删除任务"), glyph: .trash, destructive: true) { confirmingDelete = true })
         return model.busy.contains(task.id) || activeAction != nil
             ? items.map { $0.id == activeAction?.rawValue ? $0.busy(true) : $0.disabled() } : items
     }
@@ -313,7 +313,7 @@ struct TaskSheet: View {
         activeAction = action
         Task {
             defer { activeAction = nil }
-            if await model.act(action, task, using: store), action == .duplicate || action == .delete { finish() }
+            if await model.act(action, task, using: store), action == .delete { finish() }
         }
     }
 }

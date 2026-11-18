@@ -1,8 +1,14 @@
 // The harnesses that are routes of their own (providers/drivers/). Their ids are the routes of DSH and the names of an issue's agent.
-export const HARNESS_IDS = Object.freeze(['claude', 'codex', 'pi']);
+// The names are what a person sees (ChatGPT is Codex's). Claude, Codex and Pi have drivers of their own; the nine after them share
+// drivers/universal.mjs.
+const HARNESS_NAMES = Object.freeze({
+  claude: 'Claude', codex: 'ChatGPT', pi: 'Pi',
+  grok: 'Grok', kimi: 'Kimi', opencode: 'OpenCode', antigravity: 'Antigravity', codebuddy: 'CodeBuddy', devin: 'Devin', factory: 'Factory', qwen: 'Qwen', qoder: 'Qoder',
+});
+export const HARNESS_IDS = Object.freeze(Object.keys(HARNESS_NAMES));
 const HARNESS = new Set(HARNESS_IDS);
 export const isHarness = (id) => HARNESS.has(id);
-const HARNESS_NAMES = { claude: 'Claude', codex: 'ChatGPT', pi: 'Pi' };
+export const harnessName = (id) => HARNESS_NAMES[id];
 export const providerFamily = (provider) => HARNESS.has(provider) ? provider : 'deepseek';
 const groupRank = (group) => group.id === 'deepseek-account' ? 0 : group.id === 'deepseek-official' ? 1 : 2;
 

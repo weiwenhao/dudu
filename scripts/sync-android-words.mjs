@@ -7,6 +7,8 @@ const words = {};
 for (const [zh, value] of Object.entries(native)) {
   const en = value.localizations?.en?.stringUnit?.value ?? value.localizations?.en?.variations?.plural?.other?.stringUnit?.value;
   if (en) words[zh] = en;
+  // A source-language phrase already used by the iPhone stays that way until its English is reviewed.
+  else if (value.localizations?.['zh-Hans']?.stringUnit?.value === zh) words[zh] = zh;
 }
 function walk(zh, en) {
   for (const [key, value] of Object.entries(zh)) {
@@ -19,7 +21,10 @@ walk(DICTIONARIES.zh, DICTIONARIES.en);
 const pending = { '添加图片': 'Add pictures', '发送视频': 'Send video',
   '回到底部': 'Scroll to bottom', '刷新': 'Refresh', '语言': 'Language', '跟随系统': 'System default',
   '连接嘟嘟': 'Connect to Dudu',
-  '打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码': 'Open DSH and install the Dudu plugin, then open the pairing QR code in Dudu settings.' };
+  '打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码': 'Open DSH and install the Dudu plugin, then open the pairing QR code in Dudu settings.',
+  // The inbox, forward and task redesign (owner, 2026-11-18): the iOS catalog has the same words, its English is awaiting review there too.
+  '转发': 'Forward', '转发给': 'Forward to', '最近会话': 'Recent conversations',
+  '已转发到 {0}': 'Forwarded to {0}', '已转发到 ': 'Forwarded to ', '搜索': 'Search' };
 Object.assign(words, pending);
 const src = new URL('native-android/app/src/main/java/app/dudu/android/', root);
 async function sources(directory) {

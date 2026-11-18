@@ -11,7 +11,7 @@ export function createChatHomeApi(home, issues) {
         const tab = body.tab ?? 'active';
         if (!['active', 'backlog', 'all'].includes(tab)
           || body.filter !== undefined && (!body.filter || typeof body.filter !== 'object' || Array.isArray(body.filter))) fail('BAD_REQUEST');
-        answer = await home.list(tab, (issue) => issue, body.filter);
+        answer = await home.list(tab, (issue) => issue, body.filter, { includePinnedConversations: true });
         // Reuse the issue store's facet counts (each leaves its own filter out), after warming session facts.
         const summary = await issues('list', { tab, filter: body.filter, limit: 1 });
         if (summary.outcome !== 'success') fail('BAD_REQUEST');

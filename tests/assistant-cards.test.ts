@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { CARD_COMMAND, cardCommand, cardText, createCards } from '../host/assistant/home/cards.mjs';
+import { createIssues } from '../host/assistant/issues/index.mjs';
+import { createIssuesApi } from '../host/assistant/issues/api.mjs';
 
 // The cards of the quick buttons of 嘟嘟's chat: what each lists, that a list that cannot be read is an error and never an empty card, and that a card is kept under its command's id across a restart.
 
@@ -40,7 +42,7 @@ test('a todo card lists unread issue conversations as board rows, counts only un
   const s = services();
   const cards = createCards({ ...s, now: () => 7 });
   const card = await cards.build('todo');
-  assert.equal((s.asked[0][2] as { tab: string }).tab, 'all', 'manual workflow never filters unread conversations');
+  assert.equal((s.asked[0][2] as { tab: string }).tab, 'active', 'the todo list shares the homepage active scope');
   assert.deepEqual([card.kind, card.at, card.total, card.rows.length], ['todo', 7, 2, 2]);
   assert.deepEqual(card.rows[0], { id: 9, ref: 'DUD-9', title: '事项 9', agent: 'codex', sessionState: 'unread', status: 'todo', statusType: 'todo', priority: 'none', project: 'dudu', updatedAt: 1009, sessionId: 'abc' });
   assert.equal(JSON.stringify(card).includes('never sent'), false);
@@ -55,32 +57,41 @@ test('a todo row carries the latest message of its session, and the sessions wit
   assert.equal('latest' in card.rows[1], false);
 });
 
-test('the sheet warms unread boundaries before filtering all pages and keeps working unread conversations without reading them', async () => {
+test('the sheet pages only active issues and warms their unread boundaries, including working unread conversations', async (t) => {
+  const issues = createIssues({ file: ':memory:' });
+  t.after(() => issues.close());
+  const api = createIssuesApi({ issues });
+  for (const [index, status] of ['todo', 'in_progress', 'in_review', 'backlog', 'done', 'canceled'].entries()) {
+    issues.add({ title: `Issue ${index + 1}`, status, project: { name: 'Dudu', path: '/project/dudu' }, agent: 'codex', session: `dsh:session-${index + 1}` });
+  }
+  issues.add({ title: 'Unassigned' });
   let warmed = false;
   const read: unknown[] = [];
+  const acknowledged = new Set(['session-1']);
   const cards = createCards({
     ...services(),
-    issues: () => ({ execute: async (_action, body) => {
+    issues: () => ({ execute: async (action, body) => {
       // A state-filtered query would return zero before the projections have been read.
       read.push(body);
-      if (body.filter) return { outcome: 'success', items: [], total: 0 };
-      return body.cursor ? {
-        outcome: 'success', items: [issue(3, { status: 'backlog', sessionState: 'idle' }), issue(4, { session: null })],
-      } : {
-        outcome: 'success', items: [issue(1), issue(2, { status: 'done', sessionState: 'idle' })], nextCursor: 'page-2',
-      };
+      assert.equal(body.filter, undefined);
+      return api.execute(action, { ...body, limit: 2 });
     } }),
-    warm: async (ids) => { assert.deepEqual(ids, ['session-1', 'session-2', 'session-3']); warmed = true; },
+    warm: async (ids) => { assert.deepEqual(ids, ['session-3', 'session-2', 'session-1']); warmed = true; },
     activity: (id) => {
       assert.equal(warmed, true);
       const number = Number(id.split('-').at(-1));
-      return { unread: number !== 1, sessionState: number === 3 ? 'processing' : 'unread', attention: { messageAt: number } };
+      return { unread: !acknowledged.has(id), sessionState: number === 3 ? 'processing' : 'unread', attention: { messageAt: number } };
     },
   });
   const list = await cards.todos();
   assert.deepEqual(list.rows.map((row) => [row.id, row.sessionState]), [[3, 'processing'], [2, 'unread']]);
   assert.equal(list.total, 2);
-  assert.equal(read.length, 2, 'every issue page is read before selecting unread rows');
+  assert.equal(read.length, 2, 'every active issue page is read before selecting unread rows');
+  assert.ok(read.every((body: any) => body.tab === 'active'), 'completed, canceled and backlog sessions never enter the candidate scope');
+  acknowledged.add('session-2');
+  acknowledged.add('session-3');
+  const empty = await cards.todos();
+  assert.deepEqual([empty.total, empty.rows, empty.nextCursor], [0, [], undefined], 'reading all active conversations empties the sheet even when excluded workflows still have unseen content');
   assert.deepEqual(cards.many(['page-2']), {}, 'opening a sheet writes no transcript card');
 });
 

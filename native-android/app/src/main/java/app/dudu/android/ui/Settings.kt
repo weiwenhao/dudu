@@ -154,7 +154,7 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
         }
     }
     Page(page?.optString("title") ?: route.title, model::backRoute, actions,
-        centersSheetTitle = true, nested = true, background = settingsBackground(), top = {
+        nested = true, background = settingsBackground(), top = {
         if (additions.isNotEmpty() || environment != null) Box {
             IconButton(onClick = {
                 if (additions.isEmpty()) addEnvironment()
@@ -287,7 +287,7 @@ fun PreferencesScreen(state: UiState, model: DuduViewModel) {
     val entries = state.navigation.rows("settings").filter {
         it.optString("group") == "dudu" || it.optJSONObject("open")?.optString("native") in listOf("dudu-settings", "dsh-settings")
     }
-    Page(w("设置"), model::backRoute, centersSheetTitle = true, background = settingsBackground()) {
+    Page(w("设置"), model::backRoute, background = settingsBackground()) {
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(20.dp),
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp)) {
             item { InsetCard {
@@ -347,7 +347,7 @@ fun PreferencesScreen(state: UiState, model: DuduViewModel) {
 
 @Composable
 fun AboutScreen(model: DuduViewModel) {
-    Page(w("关于"), model::backRoute, centersSheetTitle = true, nested = true) {
+    Page(w("关于"), model::backRoute, nested = true) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 72.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
             androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(R.drawable.dudu), null, Modifier.size(76.dp))

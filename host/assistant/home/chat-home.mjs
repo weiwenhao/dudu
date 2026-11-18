@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { issueSessionId as sessionOf, listAllIssues } from './issue-list.mjs';
+import { issueSessionId as sessionOf, listAllIssues, listIssueSnapshot } from './issue-list.mjs';
 
 const inTab = (issue, tab) => tab === 'all' || (tab === 'backlog'
   ? issue.statusType === 'backlog' : ['todo', 'in_progress', 'in_review'].includes(issue.statusType));
@@ -43,14 +43,14 @@ export function createChatHome({ file, issues, assistant, activity, warm, markUn
 
   return {
     isPinned: (target) => Boolean(readPin.get(target)),
-    async list(tab, row, filter) {
-      const all = await listAllIssues(issues);
+    async list(tab, row, filter, { includeStatuses = false, includePinnedConversations = false } = {}) {
+      const { items: all, statuses } = await listIssueSnapshot(issues);
       const assistantId = assistant()?.sessionId ?? null; // Never create/start Dudu while listing.
       await warm([...new Set([...all.map(sessionOf), assistantId].filter(Boolean))]);
       if (closed) throw new Error('Chat home is closed');
       const pinned = pins();
       const included = filter && Object.keys(filter).length
-        ? new Set((await listAllIssues(issues, filter)).map((issue) => issue.id)) : null;
+        ? new Set((await listAllIssues(issues, { filter })).map((issue) => issue.id)) : null;
       const entries = all.map((issue) => conversation(`issue:${issue.id}`, sessionOf(issue), issue.title, row(issue), pinned));
       const dudu = conversation('assistant', assistantId, '嘟嘟', null, pinned);
       // Count conversations, once per session, across every scope, including offscreen rows.
@@ -58,8 +58,15 @@ export function createChatHome({ file, issues, assistant, activity, warm, markUn
       const filtersAssistant = Object.keys(filter ?? {}).some((key) => key !== 'completedFrom');
       const conversations = [...(tab === 'backlog' || filtersAssistant ? [] : [dudu]), ...entries.filter((entry) => inTab(entry.issue, tab) && (!included || included.has(entry.issue.id)))]
         .sort((a, b) => b.receivedAt - a.receivedAt || a.id.localeCompare(b.id, 'en'));
+      const visible = new Set(conversations.map((entry) => entry.id));
+      const shelf = includePinnedConversations
+        ? new Map([dudu, ...entries].filter((entry) => entry.pinned).map((entry) => [entry.id, entry]))
+        : null;
       return { outcome: 'success', tab, conversations, unreadCount: unread,
-        pins: [...pinned.keys()].filter((key) => conversations.some((entry) => entry.id === key)) };
+        pins: [...pinned.keys()].filter((key) => visible.has(key)),
+        ...(shelf ? { pinnedConversations: [...pinned.keys()].map((key) => shelf.get(key)).filter(Boolean) } : {}),
+        ...(includeStatuses && Array.isArray(statuses) ? { statuses: statuses.filter((status) => !status.archived)
+          .map(({ id, type, name, color, iconProgress, isDefault }) => ({ id, type, name, color, iconProgress, isDefault })) } : {}) };
     },
     async pin(params, fail) {
       if (typeof params.pinned !== 'boolean') return fail('BAD_REQUEST');

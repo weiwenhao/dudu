@@ -36,6 +36,9 @@ struct SimulatorSheetReview: ViewModifier {
                       let computer = store.activeComputer?.id,
                       let session = store.selectedSession else { return }
                 prepared = true
+                // The root's toast sits behind a sheet: the review shows the pages' own answers in the sheet's toast.
+                collector.report = { toast = $0 }
+                tasks.report = { toast = $0 }
                 if name.hasPrefix("todo") || name.hasPrefix("info") || name.hasPrefix("task") {
                     let kind: QuickCardKind = name.hasPrefix("todo") ? .todo : name.hasPrefix("info") ? .info : .task
                     let state = AssistantQuickSheetState(kind: kind, target: DraftTarget(computerID: computer, sessionID: session.id))

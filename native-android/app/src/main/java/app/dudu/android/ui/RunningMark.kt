@@ -5,6 +5,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.rotate
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.res.painterResource
@@ -14,7 +15,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.dudu.android.R
 
 @Composable
-internal fun RunningMark(size: Int = 20) {
+internal fun RunningMark(size: Int = 20, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val angle = if (lifecycle.isAtLeast(Lifecycle.State.STARTED)) {
         val transition = rememberInfiniteTransition(label = "agent-working")
@@ -23,5 +24,5 @@ internal fun RunningMark(size: Int = 20) {
         rotation
     } else 0f
     Icon(painterResource(R.drawable.ic_loader_circle), null, Modifier.size(size.dp).rotate(angle),
-        tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        tint = color)
 }
