@@ -5,6 +5,7 @@ import { Check, Minus, Plus, RotateCcw } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { useToast, useToastAbove } from '../components/toast.jsx';
 import { cn } from '../lib/cn.js';
+import { untilStarted } from '../lib/startup-grace.js';
 import { isTyping } from '../lib/typing.js';
 import { T } from '../strings.js';
 import { AddWidgetDialog } from './AddWidgetDialog.jsx';
@@ -197,12 +198,17 @@ export function Dashboard({ request, registry, onSettings, onSessions, onTasks }
     }
   }, [applyMetrics, build]); // eslint-disable-line react-hooks/exhaustive-deps -- fromWire only reads what it is given
 
-  const load = useCallback(async () => {
+  // `patient`: the board has never been shown, so the plugin may still be starting; keep asking (lib/startup-grace.js) before calling it failed.
+  const load = useCallback(async ({ patient = false } = {}) => {
     revision.current++;
     setStatus('loading');
     try {
-      const result = await live.current.api.get(live.current.M?.rows);
-      if (result.outcome !== 'success') throw new Error(result.message);
+      const read = async () => {
+        const answer = await live.current.api.get(live.current.M?.rows);
+        if (answer.outcome !== 'success') throw new Error(answer.message);
+        return answer;
+      };
+      const result = patient ? await untilStarted(read) : await read();
       setStatus('ready');
       show(result.items);
       shown.current = result.undo?.at ?? null;
@@ -361,7 +367,7 @@ export function Dashboard({ request, registry, onSettings, onSessions, onTasks }
 
   // First layout, once the grid exists and the window has been measured.
   const started = useRef(false);
-  useEffect(() => { if (M && grid.current && !started.current) { started.current = true; applyMetrics(M.cols, M.row); load(); } }, [M, applyMetrics, load]);
+  useEffect(() => { if (M && grid.current && !started.current) { started.current = true; applyMetrics(M.cols, M.row); load({ patient: true }); } }, [M, applyMetrics, load]);
   // The window changed: the cell and the columns follow it, the widgets keep their cells.
   useEffect(() => {
     if (!M || !items || !grid.current) return;
@@ -492,7 +498,7 @@ export function Dashboard({ request, registry, onSettings, onSessions, onTasks }
         {status === 'error' && (
           <div className="flex flex-col items-center gap-3 py-24 text-muted-foreground">
             <span>{D.loadFailed}</span>
-            <Button variant="outline" size="sm" onClick={load}>{D.retry}</Button>
+            <Button variant="outline" size="sm" onClick={() => load({ patient: true })}>{D.retry}</Button>
           </div>
         )}
         <div className={cn('db-wrap', editing && 'db-editing', gesturing && 'db-dragging')} style={cssVars} hidden={status === 'error'}>

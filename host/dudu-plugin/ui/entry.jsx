@@ -20,6 +20,7 @@ import { createLocalWidgets } from './widgets/local.js';
 import { Button } from './components/button.jsx';
 import { T } from './strings.js';
 import { getLocale, subscribeLocale } from './lib/locale.mjs';
+import { untilStarted } from './lib/startup-grace.js';
 import { requestDashboard, usePageHistory } from './lib/use-page-history.js';
 import { receiveStatuses, subscribeWorkflow, workflowRevision } from './issues/workflow.js';
 import { NeedsYouColorProvider } from './issues/NeedsYouColor.jsx';
@@ -149,11 +150,14 @@ export function SlotPage({ widgetSource, renderSlot, request, ...props }) {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     const widgets = catalog.widgets.filter((widget) => !isBuiltInWidget(widget.id)).map(({ Component: _component, failed: _failed, ...declaration }) => declaration);
-    request('dashboard/catalog', { widgets }).then((result) => {
-      if (active) setSynced(result.outcome === 'success' ? 'ready' : 'error');
-    }).catch(() => { if (active) setSynced('error'); });
-    return () => { active = false; };
+    // The page can open while the plugin is still starting: ask again for a while (lib/startup-grace.js) before the failure and its Retry are shown.
+    untilStarted(async () => {
+      const result = await request('dashboard/catalog', { widgets });
+      if (result.outcome !== 'success') throw new Error(result.message);
+    }, { signal: controller.signal }).then(() => { if (active) setSynced('ready'); }).catch(() => { if (active) setSynced('error'); });
+    return () => { active = false; controller.abort(); };
   }, [catalog, request, attempt]);
   if (synced === 'error') return <Scope><div className="flex h-full flex-col items-center justify-center gap-3" role="alert">
     <span>{T.dashboard.loadFailed}</span>
