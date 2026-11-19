@@ -5,7 +5,7 @@ name: e2e
 # It can also be started by hand from the Actions tab.
 on:
   push:
-    branches: [main, ci/e2e-and-release] # TEMP: the second branch is removed before the merge
+    branches: [main]
   workflow_dispatch:
     inputs:
       files:
