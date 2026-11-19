@@ -41,9 +41,15 @@ function world(t: any, options: any = {}) {
     collect: async (source: any, opts: any) => {
       collected.push({ source, ...opts });
       const value = records.get(source.id) ?? [];
-      if (typeof value === 'function') return value(source, opts);
+      if (typeof value === 'function') {
+        const read = await value(source, opts);
+        if (read?.outcome !== 'success') return read;
+        const receipt = await opts.submit(read.records);
+        return receipt.ok ? read : { outcome: 'error', message: receipt.message ?? receipt.code };
+      }
       if (value instanceof Error) throw value;
-      return { outcome: 'success', records: value };
+      const receipt = await opts.submit(value);
+      return receipt.ok ? { outcome: 'success', records: value } : { outcome: 'error', message: receipt.message ?? receipt.code };
     },
     llm: async (messages: any, opts: any) => {
       calls.push({ messages, ...opts });
@@ -55,7 +61,7 @@ function world(t: any, options: any = {}) {
   const dispatch = make();
   const opened = [dispatch];
   t.after(async () => { for (const d of opened) await d.dispose(); await sources.close(); await connectors.close(); issues.close(); rmSync(dir, { recursive: true, force: true }); });
-  return { dispatch, sources, issues, answers, calls, collected, records, file, clock,
+  return { dispatch, sources, connectors, issues, answers, calls, collected, records, file, clock,
     rules: (next: any) => { rules = next; },
     reopen(extra: any = {}) { const d = make(extra); opened.push(d); return d; },
     add: (fields: any = {}) => issues.add({ title: '合同', kind: '合同回复', project: { name: 'docs', path: '/work/docs' }, ...fields }).issue,
@@ -156,7 +162,12 @@ test('more context for one record: the session of its collector reads the conver
     rec('m1', { kind: 'message', thread: 'omt_1', from: 'SigmaAI-QA', at: '2026-10-31T10:30:00+08:00', text: '两个条件不满足' }),
     rec('m9', { kind: 'message', thread: 'omt_1', from: 'Frank Wang', at: '2026-10-31T11:00:00+08:00', text: '@我' }),
   ] };
-  const fill = async (source: any, record: any, options: any) => { filled.push({ source, record, options }); return read; };
+  const fill = async (source: any, record: any, options: any) => {
+    filled.push({ source, record, options });
+    const receipt = await options.submit(read.records);
+    assert.equal(receipt.ok, true);
+    return read;
+  };
   const asked = w.reopen({ collect: Object.assign(async () => ({ outcome: 'success', records: [] }), { fill }) });
   const done = await asked.complete({ id: row.id });
   assert.deepEqual([done.outcome, done.added], ['success', 1]);
@@ -193,6 +204,58 @@ test('incoming material is bounded and redacted before it is kept', async (t) =>
   assert.equal(w.issues.counts().total, 0);
 });
 
+test('a collection submission validates before committing and returns real row ids; repeating it does not write or notify twice', async (t) => {
+  const events: any[] = [];
+  let acknowledgements = 0;
+  const w = world(t, {
+    onCollected: (_collector: any, rows: any[]) => { events.push(rows); },
+    acknowledge: async (_collector: any, _raw: any[], rows: any[]) => {
+      acknowledgements++;
+      assert.ok(rows.every((row: any) => w.issues.inbox.get(row.id).record));
+      return { ok: false, failed: [{ code: 'missing_scope' }] };
+    },
+  });
+  const raw = [rec('one'), rec('two')];
+  w.records.set('mail', async (_source: any, { submit }: any) => {
+    const invalid = await submit([rec('one'), { id: 'broken' }]);
+    assert.equal(invalid.ok, false);
+    assert.equal(invalid.errors[0].path, 'records.1');
+    assert.equal(w.issues.inbox.list({}).items.length, 0, 'a rejected batch writes nothing');
+    const ingest = w.issues.inbox.ingest;
+    w.issues.inbox.ingest = () => { throw new Error('database locked'); };
+    await assert.rejects(submit(raw), /database locked/, 'a storage exception cannot produce a success receipt');
+    w.issues.inbox.ingest = ingest;
+    const saved = await submit(raw);
+    assert.deepEqual([saved.ok, saved.added, saved.updated, saved.seen], [true, 2, 0, 0]);
+    assert.equal(saved.acknowledgement.ok, false, 'reaction failure is distinct from successful storage');
+    for (const id of saved.recordIds) assert.ok(w.issues.inbox.get(id).record, 'receipt follows COMMIT');
+    assert.deepEqual(await submit([rec('unexpected')]), saved);
+    return { outcome: 'success', records: raw };
+  });
+  const result = await w.dispatch.intake();
+  assert.equal(firstOp(result).added, 2);
+  assert.equal(w.issues.inbox.list({}).items.length, 2);
+  assert.equal(events.length, 1);
+  assert.equal(acknowledgements, 1);
+});
+
+test('a model failure after submission keeps committed records but does not advance the successful collection cursor', async (t) => {
+  const w = world(t);
+  w.records.set('mail', [rec('before')]);
+  await w.dispatch.intake();
+  const before = w.issues.inbox.lastGood('mail');
+  w.clock.now++;
+  w.records.set('mail', async (_source: any, { submit }: any) => {
+    assert.equal((await submit([rec('saved-before-crash')])).ok, true);
+    throw new Error('The model failed after the tool returned.');
+  });
+  const result = await w.dispatch.intake();
+  assert.equal(firstOp(result).status, 'failed');
+  assert.equal(w.issues.inbox.list({}).items.length, 2);
+  assert.equal(w.issues.inbox.lastRun('mail').added, 1);
+  assert.deepEqual(w.issues.inbox.lastGood('mail'), before);
+});
+
 test('a deleted or edited prompt cannot publish the collection that was already in flight', async (t) => {
   const w = world(t);
   w.records.set('mail', async () => {
@@ -202,6 +265,20 @@ test('a deleted or edited prompt cannot publish the collection that was already 
   const result = await w.dispatch.intake();
   assert.equal(result.created?.length ?? 0, 0);
   assert.equal(w.issues.inbox.list({ connector: 'mail', limit: 5 }).items.length, 0, 'what was read is not kept');
+
+  for (const afterCommit of [false, true]) {
+    const changed = world(t);
+    const dispatch = changed.reopen({ collect: async (_view: any, { submit }: any) => {
+      if (afterCommit) assert.equal((await submit([rec('saved')])).ok, true);
+      assert.equal(changed.connectors.owner.update('mail', { prompt: 'Use a different source.' }).outcome, 'success');
+      if (!afterCommit) assert.equal((await submit([rec('stale')])).code, 'collector_changed');
+      return { outcome: 'success', records: [rec('ignored-prose')] };
+    } });
+    const result = await dispatch.intake();
+    assert.equal(firstOp(result).status, 'failed');
+    assert.equal(changed.issues.inbox.list({}).items.length, afterCommit ? 1 : 0, 'a changed connector cannot admit stale data or undo a commit');
+    assert.equal(changed.issues.inbox.lastGood('mail'), null, 'a changed source cannot advance the successful cursor');
+  }
 });
 
 test('collection has bounded work even when every source fails', async (t) => {
