@@ -22,10 +22,11 @@ permissions:
   contents: read
 
 env:
-  # The programs the suite drives, pinned to the versions it was last run with (the owner's machine, 2026-11-19).
+  # The programs the suite drives, pinned to the versions installed on the owner's machine on 2026-11-19. DSH is the one the
+  # Desktop app ships, which is what Dudu is for: the 0.2.0 on npm lacks what the plugin needs (phone control, session projections).
   # Move them together with the tests.
   NODE_VERSION: 24.14.0
-  DSH_VERSION: 0.2.0-rc.2
+  DSH_VERSION: 0.2.2-rc.3
   CLAUDE_CODE_VERSION: 2.1.326
   CODEX_VERSION: 0.169.0
   PI_VERSION: 1.4.0
@@ -69,13 +70,12 @@ jobs:
           google-chrome --version
 
       # DUDU_E2E_DIAG prints what DSH and the plugin wrote after each failed test; the pictures of the pages that were open then are kept.
-      # TEMP: the subset below is for finding why the suite fails on the runner; removed before the merge.
       - name: Run the end-to-end tests
         env:
           FILES: ${{ inputs.files }}
           DUDU_E2E_DIAG: '1'
           DUDU_E2E_SHOTS: ${{ runner.temp }}/e2e-failures
-        run: npm run test:e2e -- tests/e2e/agent-sessions.e2e.test.ts tests/e2e/mobile-pages.e2e.test.ts tests/e2e/native-sync.e2e.test.ts tests/e2e/conversation.e2e.test.ts "--test-name-pattern=ASSIGN.md chooses|mobile embedded|claude sidebar logo|dudu forwards the current reply"
+        run: npm run test:e2e -- $FILES
 
       - name: Keep the pictures of the failed tests
         if: failure()
