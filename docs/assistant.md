@@ -181,11 +181,15 @@ SQLite 文件不放进项目文件夹：用户可能把它指到同步盘，SQLi
         inbox_records（去重，存原文）──> 你：转发 / 新建事项
 ```
 
-**记录**：一条是一件事，或一段对话。字段由采集会话填，嘟嘟用代码检查类型、长度和密钥；不合格的单条跳过并报告，不连累别的。
+**记录**：一条是一件事，或一段对话。字段由采集会话填，嘟嘟用代码检查类型、长度和密钥。
+
+**提交和回执**（主人 2026-11-19）：采集会话通过会话内的 `collector_submit` 提交 `{ok:true,records:[…]}`，没有新记录也提交空数组；无法读取来源时提交 `{ok:false,error:"…"}`。工具参数的 JSON Schema 和执行时的类型校验由同一份 Zod 定义生成；参数 Schema 投影到 DSH 支持的形状和 `oneOf` 子集，长度、数量、日期和链接限制仍在工具执行时完整校验。`normalizeRecords` 继续负责内容检查、清理控制字符、遮密钥和对话合并。格式不对、字段不合格或超出上限时，整批不写，工具把字段路径和原因交回模型，让它在这一轮修正；不补括号、不修复自由文本、不另起自动重试任务。收集器、运行编号、补全上下文的目标记录由程序绑定，模型不能指定数据库、路径或别的收集器。只有 SQLite 事务提交成功后，工具才返回 `ok:true`、记录编号、新增、更新、重复和截断数量。一个回合只接受一次成功提交，重复调用返回原回执，不再入库或通知；最后一段普通回复不再被解析成数据。模型在回执之后失败，已提交的数据仍保留，本次运行记录已有数量，但不推进上次成功采集的时间。约定版本改为 6，旧会话下次采集时更换；无需重建记录库。实现：`inbox/submission.mjs`、`home/source-collector.mjs`、`dispatch/index.mjs`。
+
+**飞书入库标记**（主人同日提供 GET 表情截图）：现有 `lark-cli` Prompt 连接器的消息成功入库后，由程序使用同一个本地用户登录，为实际存入新增或更新记录中的原消息添加飞书内置 `Get` 表情。仅处理原消息的 `om_…` 编号，不标上下文、补全上下文或只改标题的请求，也不通过本地账号操作 MCP 连接器。命令和表情固定，参数通过 argv 传入，不执行模型提供的命令，不读取凭据、不自动登录。每条调用有超时、并行有上限，不自动重试，不回扫历史。表情失败不回滚记录或使采集失败；回执中的 `acknowledgement` 单独报告成功、失败的消息编号和错误类别，日志不记录原文、凭据或 CLI 的原始错误。没有新增 UI 文案。实现：`collectors/acknowledgements.mjs`。
 
 **一段对话是一条记录**（主人 2026-11-06，看到一个私聊建了十几条：“这个都是一个消息私聊，为什么创建这么多条我不是理解”。原因是给采集会话的约定写的是“每一条消息一条记录”，它照做，每条的标题还都是聊天的名字）。采集会话照旧一条消息给一条，合并在代码里做，不靠模型听话：`kind` 是 `message` 或 `comment`、又填了 `thread` 的，同一次采集里同一个 `thread` 的合成一条：编号是 `thread:<线程 id>`，正文是这些消息按时间从早到晚、一条一行（`11-06 14:43 李维钊：…`，多行的消息接在它那一行下面），版本是最新一条的，标题取最新的非空标题，发言人合在一起，太长时先丢最早的并标记截断。邮件不合（每封有自己的主题），没有 `thread` 的、issue、页面也不合。之后的采集里这段对话又有新消息：如果那一行还在“待处理”里（你没处理、没分享），新消息并进同一行（已经有的消息不重复），时间随最新一条往前，算这次采集“新增”；你已经处理或分享了，再来的消息是新的一行。`inbox_records` 的唯一键没变；已有的旧行不动。（2026-11-11，主人看到一条只有“@我”的信息：“我不知道这个@是让我干什么”。原因有两个：给采集会话的约定写的是上下文“只要够看懂就行”，它就一句也没给；合成时又把每条消息的 `context` 丢掉了。现在约定写明：@ 主人、回复别人、只有几个字的消息单独看不懂，`context` 必须有，要回源去读（`more` 里写的命令就是读法），只有邮件、事项这类自己说得清的才可以不给；合成时把各条的 `context` 当作这段对话的前几行并入正文，按时间排、重复的不加两遍；约定的版本号加一，旧的采集会话下次换新的。）
 
-**补全上下文**（主人 2026-11-11：“收集信息的地方能不能增加一个快捷按钮？让我点击一下，就让收集信息对应的会话去继续补全这一条信息的上下文”）：记录上的一个动作，叫“补全上下文”：桌面在行上鼠标停着时出现的快捷按钮里（✓ 的左边，主人 2026-11-11 在截图上圈出的位置）、记录弹窗和右键菜单里各一个，手机在记录页底栏、行的长按菜单和“更多”菜单里。点一下，`inbox/complete`（手机 `inbox.complete`）马上答“开始了”，活在后台：这条记录的收集器自己的会话（排在正在跑的采集后面，同一个会话）被问一个问题（`source-collector.mjs` 的 `fillQuestion`：这条记录留下的标题、发言人、时间、线程、链接、原文，和 `more` 里写的读法），去读它所在的线程或聊天，用和采集一样的 JSON 答：前十几条消息、这一条、后面的。`dispatch.complete` 把答案交给 `inbox.addContext`：对话型的行，各条按时间并进正文（`mergeMessages`，已有的不重复，不管这行现在在哪个页签，不另起新行）；邮件、事项这类就存成它的 `context`。它不是一次采集：不记运行，不动“上次采集的时间”（下一次采集还是从原来的地方读）。记录的 `get` 在跑的时候说 `completing: true`，失败了说 `completeError`（插件自己的话，留十分钟，只在内存里，重启就忘）；界面每 3 秒问一次，最多 4 分钟。`host/assistant/inbox/api.mjs`、`store.mjs`、`dispatch/index.mjs`。
+**补全上下文**（主人 2026-11-11：“收集信息的地方能不能增加一个快捷按钮？让我点击一下，就让收集信息对应的会话去继续补全这一条信息的上下文”）：记录上的一个动作，叫“补全上下文”：桌面在行上鼠标停着时出现的快捷按钮里（✓ 的左边，主人 2026-11-11 在截图上圈出的位置）、记录弹窗和右键菜单里各一个，手机在记录页底栏、行的长按菜单和“更多”菜单里。点一下，`inbox/complete`（手机 `inbox.complete`）马上答“开始了”，活在后台：这条记录的收集器自己的会话（排在正在跑的采集后面，同一个会话）被问一个问题（`source-collector.mjs` 的 `fillQuestion`：这条记录留下的标题、发言人、时间、线程、链接、原文，和 `more` 里写的读法），去读它所在的线程或聊天，通过同一个 `collector_submit` 工具提交前十几条消息、这一条和后面的消息。`dispatch.complete` 绑定目标记录，先核对来源编号或线程，再交给 `inbox.addContext` 并返回写入回执：对话型的行，各条按时间并进正文（`mergeMessages`，已有的不重复，不管这行现在在哪个页签，不另起新行）；邮件、事项这类就存成它的 `context`。它不是一次采集：不记运行，不动“上次采集的时间”（下一次采集还是从原来的地方读）。记录的 `get` 在跑的时候说 `completing: true`，失败了说 `completeError`（插件自己的话，留十分钟，只在内存里，重启就忘）；界面每 3 秒问一次，最多 4 分钟。`host/assistant/inbox/api.mjs`、`store.mjs`、`dispatch/index.mjs`。
 
 **收集器通知**（主人审核设计，2026-11-14）：设置的收集器条目右侧放一个铃铛，直接点击开关，深色普通铃铛带浅灰底是开启，灰色斜线铃铛是关闭；默认关闭。没有等级、弹窗或表单里的通知行。第一次开启时才向系统请求通知权限，拒绝后不保存开启。`COLLECTORS.md` 的元数据只在开启时写 `notify: true`，没有这个字段的旧条目关闭；改名、改频率和改提示词保留开关。一次采集成功入库后，只有新增或实际更新的记录才发送一个通知，读取历史、重复采集和补全上下文不发。标题是收集器名称，正文是本次记录的标题和原文（最多三条，清理并限制长度），不加等级和额外图标。桌面使用 DSH 的应用图标和系统来源名；插件前端生命周期内通过 DSH 认证的 `/api/dudu/inbox/notifications` 接收实时 HTTP 流，关闭设置或看板仍能接收，点击通知回到嘟嘟主页；流断开不循环重试，窗口重新聚焦、网络恢复或再次开启通知时重新订阅，不补发历史。主人随后要求手机也接入：原生收集器设置条目复用同一个铃铛偏好，使用 UserNotifications 和 APNs，系统来源为 Dudu；点击通知打开来源电脑的“信息”。设备 Token 通过固定的原生鉴权方法注册，取消配对停推，密钥仅在电脑，桌面流不加入手机页面白名单。通知失败不影响入库，没有持久化通知队列。APNs 凭据、签名开通、隐私政策待审文案和实际验证边界见 `docs/collector-notifications.md`。实现：`collectors/notifications.mjs`、`dispatch/index.mjs`、`ui/collector/notifications.js`、`settings/CollectorsSection.jsx`、`host/native-notifications.mjs`、`host/apns.mjs`、`native/ios/Dudu/Core/AppNotifications.swift`。
 
@@ -202,7 +206,7 @@ SQLite 文件不放进项目文件夹：用户可能把它指到同步盘，SQLi
 | `more` | 还要更多上下文时怎么取（工具和参数，或链接），一行 |
 | `update` | `true`：这是一件已经收过的事，再给一次是为了改它（见下）；没有就是新记录 |
 
-采集会话不再被要求填 `to_me`（是不是对你说的）、`handled`（你是不是已经处理了）和整份结果里的 `me`（以谁的身份读的）：这些是给“整理”判断用的，整理没有了。交回来也认、也存，但没有谁读它们。一次最多 100 条。超出的和不合格的在这次采集的结果里报告，不悄悄丢。
+采集会话不再被要求填 `to_me`（是不是对你说的）、`handled`（你是不是已经处理了）和整份结果里的 `me`（以谁的身份读的）：这些是给“整理”判断用的，整理没有了。记录里的旧布尔字段交回来仍认、仍存，但没有谁读它们；提交工具不接受整份结果的 `me`。一次最多 100 条，超出上限或有不合格记录时，工具返回错误，本批不入库，等模型修正。
 
 **改一条已经收进来的记录**（主人 2026-11-14：Platform Alerts 告警收集器里，某条告警下面出现回复就算已恢复，要在收件箱里那条告警的标题前面加“已恢复”，而不是另写一条）：以前收件箱只能加，同一件事版本变了是另一行，版本没变只算见过。现在采集会话可以把一件已经收过的事再给一次，带上 `update: true`、同一个 `id`（原来填了 `thread` 的也带上同一个）和只写变了的字段（`title`、`text`、`from`、`at`、`url`、`context`、`more`），收件箱就改那一件事的行，不新增。怎么找行：先按 `id`，没有再按它所在的对话（`thread:<线程 id>`，所以带上 `thread`）；同一件事有几行时改最新的、没被删除的那一行。给了的字段替换原来的，没给的不动；你的标记（已处理）、挂着的事项、记录编号和版本都不变；改了也和原来一样的只算见过；收件箱里没有的 `id` 不新增，记进这次采集的 `unmatched`（和 `updated` 一起写在运行结果里）。改了的行算这次采集的“新增”，和对话里来了新消息一样，标题、正文、发言人改了会重新进全文索引。同一次答案里既带了对话的新消息、又改了那件事，先并消息再改，改的说了算。正文已经被清掉（过了 30 天）的行，只改不是正文的字段。收集器的提示词里写什么时候改、标题怎么写，是主人自己的话（例如“告警下面出现回复就算已恢复，更新收件箱里那条告警，标题前面加「已恢复」”），代码只管“能改”；给采集会话的约定里只多了一条，版本号 4 加到 5，旧的采集会话下次换新的。只改同一个收集器的行；更新带来的字段和新记录一样先过 `normalizeRecords` 的检查（去控制字符、遮密钥、限长度、链接要 http(s)）；一个更新至少要改一样东西，不然算不合格。`records.mjs`、`store.mjs` 的 `ingest`、`dispatch/index.mjs`；验证：`tests/assistant-collector.test.ts`（三条：答案怎么检查、改行时什么不动、对话和已删除、已清掉的行）、`tests/assistant-dispatch.test.ts`（一条：从答案到那一行和运行结果）。
 
@@ -1106,6 +1110,7 @@ Issues 前端怎么搭（2026-10-31 查的，星数和更新日期来自 GitHub�
 - 宠物对话框内可添加、粘贴或拖入图片，发送前预览和移除，支持仅发图片；发送失败保留草稿及附件。图片通过 DSH 的附件协议发送和读取，重开后仍显示。Enter 发送，Shift+Enter 换行。工具栏右侧的小框选择此会话的模型和推理等级（见上面的“对话窗口”），复用 DSH 的 ModelDirectory、会话投影和选择接口，只显示当前模型实际支持的等级，没有显式默认等级时提供默认选项；+ 菜单有 File 和 Compact，附件是图片小方块和文件卡片（2026-11-01 晚按定稿实现，仿 DSH 的输入框；文件走 DSH 的文件上传，主人当天改“上传图片”为“上传文件”）。客户端为模型目录持有显式 Session reference 并在组件退出后释放；菜单通过 portal 显示，点菜单不会把对话收起。禁止嘟嘟使用 Claude/Codex 的 harness 路由，工作由 issue 分配。通用设置仍可进入这一个会话的 DSH 页面。会话从侧栏的 id 列表里隐藏，`byId` 元数据保留给 DSH 渲染模型和历史。
 - 连接器保存采集 Prompt，不要求主人配置启动命令、工具白名单或启停开关。定时采集在独立 DSH 会话里用已经安装的 MCP、技能和读取工具；不执行旧登记册里的启动 JSON。普通嘟嘟对话继承 MCP、`skill`、网页读取及原生 shell、文件、后台任务工具，由当前权限控制。未启用 Computer Use 时，嘟嘟的工具保持独立的原生调用模式，其他会话设成 PTC 也不影响它。
 - **DSH 内置 Computer Use（2026-11-19）**：按主人要求，嘟嘟主会话始终挂载官方 `standard` preset，并使用 native executor。只有宿主启用 Computer Use 且实际向该会话提供 `cua_run_code` 时才放行该独立工具，保留 `computer-use:dsh-cua` 指导；不保留改变日常工具调用方式的 `tools:ptc-only` 和通用 `tools:sdk`。私有 `cua` 仅允许从正在执行的同一个 `cua_run_code` 调用令牌、同一 agent、同一根调用进入，调用结束立即撤销；`cua` 和通用 `run_code` 不向模型开放。沿用原会话 id 和历史，连接器继续普通 native 调用，采集和定时任务范围不变。2026-11-19 核对：本机 `0.2.2-rc.3` 及当时核对的已发布 `0.2.2-rc.5`（2026-11-18）均无独立入口，上游开发分支已有。主人随后要求提前集成，因此新增内置适配：`host/dudu-plugin/cordis.patch.yml` 随嘟嘟主包通过正式 bundle patch 用包装器挂载已安装的官方 macOS provider，复用原始配置、授权存储、截图附件和原生 helper；现有 PTC 会话的原始工具范围不变，只给嘟嘟标准会话补独立入口。适配原先单独打包，现已合入主包，安装或更新 `dsh-dudu` 即包含该入口，不再要求额外安装或启用兼容包。`packages/dsh-computer-use/` 固定并校验官方已发布的 PTC 源码，适配为只有 `cua` 的能力绑定，程序状态与主 agent 的其他程序分开；不实现 GUI 驱动、脚本求值器、协议或权限弹窗。包装器还适配旧版只识别 `run_code` 的方向键释放观察器。宿主提供新的 `CuaPrograms` 后直接交回宿主实现。不直接编辑 DSH 安装或配置文件，不自动改变持久化 PTC、sandbox 或 macOS 授权。构建、来源和安装边界见 `packages/dsh-computer-use/README.md`；本次尚未把此组合安装到 Desktop，未运行真实 DSH、Computer Use 或界面端到端检查，新增诊断文案仍待审。
+- **Computer Use 调用故障（2026-11-20）**：现场会话在 11 月 19 日 23:13:58 和 23:14:42 已按说明调用 `cua_run_code` / `cua.getCapabilities()`，两次均在进入程序前报 `Cannot read properties of undefined (reading 'has')`。原因是内置适配读取了不存在的 `toolSet.allowed`，而本机 DSH 的 `ResolvedToolSet` 是 `view(scope)`；旧单元替身也错误地模拟成 `allowed`，未能拦住。适配现通过宿主公开的 `tools.executable('cua_run_code', agent, toolSet)` 重新检查父能力，测试替身改用真实接口形状，保留条件准入、作用域、结束及撤销检查。模型指导同时改为独立入口自动初始化的方式，树读取示例不再引用程序中未绑定的文件工具，原始 PTC 会话的指导不变。相关单元及本机真实工具库的静态契约检查通过；没有启动真实 DSH、模型或原生 helper，也没有操作 GUI。此次修复尚未热更新至 Desktop。
 - 项目文件夹迁移后，后续模型请求和上下文使用新目录；历史 session header 保留创建时的目录，不重写历史日志。
 - 本地忘记删掉 issue、活动、事件原文、FTS 和 issue 内的会话关联；保留数值 id 的忘记记录，编号不复用。源消息与 DSH/原生会话历史仍在自己的存储里。
 - 记忆忘记会删除索引中的原文和引用、清理文件，并保存不含正文的消息 key 墓碑；重启不会再次收录那些旧消息。DSH 源日志及模型正常历史仍保留，见 3.5 的完整遗忘限制。
@@ -1328,14 +1333,14 @@ host/assistant/
   sessions/  index.mjs states.mjs readers.mjs（已做，2026-10-31）
              createSessions({ readers, runners, links, now, file, ignore, intervals }) → { snapshots, onChange, read, open, close, resume, send, stateOf, poll, dispose }；`stateOf(key)` 直接给 `createIssues({ sessionState })`；`readers` 是 `{ claude, codex, dsh }`，前两个来自 `readers.mjs`，`dsh` 由插件适配层给
   dispatch/  index.mjs
-             createDispatch({ issues, collectors, collect, rules, llm, agents, file }) → { intake, assign, state, dispose }；`collectors` 给出每个收集器和它的连接器（`via`）；`collect(collector, { signal, since })` 交回 `{ outcome, records }`，记录在 `issues.inbox` 里存、去重、等你处理；不整理、不建 issue，也不问模型（`llm` 只给分配用）。
+             createDispatch({ issues, collectors, collect, onCollected, acknowledge, rules, llm, agents, file }) → { intake, complete, assign, state, dispose }；`collectors` 给出每个收集器和它的连接器（`via`）；`collect(collector, { signal, since, submit })` 经 `submit` 校验、入库并返回回执，再结束采集；记录由 `issues.inbox` 存、去重、等你处理；不整理、不建 issue，也不问模型（`llm` 只给分配用）。
   dashboard/ index.mjs layout.mjs widgets.mjs
              createDashboard({ file, engine }) → { get, set, catalog, add, move, resize, remove, reset, undo }；widgets.mjs 放最小和推荐尺寸及声明校验；layout.mjs 修正版面（夹进范围，重叠的往下推：用打包好的 gridstack 引擎，和界面里同一套规则）
   connectors/ index.mjs entries-file.mjs sources.mjs
              连接器登记册（`kind`：`prompt` 或 `mcp`）；`entries-file.mjs` 是两个登记册共用的读写（按标题分条目、写之前对照读过的文本），`sources.mjs` 读元数据行。旧版命令、MCP 启动配置及解析模块保留兼容读取，不再从登记册启动程序。
   collectors/ index.mjs migrate.mjs
              收集器登记册（连接器 id、收集什么、频率）；`resolve()` 给出收集器和它的连接器；`splitLegacySources` 把旧登记册拆成两个文件，打开项目文件夹时跑一次。
-  inbox/     records.mjs store.mjs api.mjs
+  inbox/     records.mjs submission.mjs store.mjs api.mjs
              `normalizeRecords(raw)` 检查采集会话交回的记录；`createInbox(db)` 存、去重、读、搜、清理，表在 `issues/schema.mjs` 的迁移里。
   schedule/  index.mjs cron.mjs
              `parseFrequency(text)`、`createScheduler({ list, lastStarted, run, now })`；cron 用 croner（打包进插件，见 `scripts/package-desktop.mjs`）。

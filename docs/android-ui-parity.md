@@ -413,3 +413,18 @@ Android lint 均通过（0 错误、41 警告，与此前报告数量相同）�
 未增加持久化导航偏好或请求。选中样式对照 iOS `SidebarView.libraryButton`：
 两侧 16dp 外边距、12dp 圆角、浅色 `#EAEAED` 灰底，深色沿用已有 surface token；
 内容左边距仍为 26dp，最小行高仍为 44dp，文字和图标尺寸未变。
+
+检查期间主分支合入目录迁移 `49d3a54`，Android 改为 `native/android/`。
+旧目录上的 APK 和 3 项导航检查已通过，但 lint 生成报告时因旧路径被移走失败。
+随后改用新目录检查；迁移遗漏的 `SidebarList.kt`、`SidebarListTest.kt` 和
+`changed_files.png` 已从 Git 对象恢复，三份文件均与迁移前 SHA-256 完全相同，
+资源脚本保留新 iOS 路径和此前的变更卡片文件名。
+
+最终 `:app:assembleDebug :app:lintDebug`、仓库 lint、typecheck 和资源脚本语法
+检查通过；Android lint 为 0 错误、41 警告。10 项定向单元测试通过
+（导航 3 项、恢复的侧边栏列表 2 项、此前的 transcript 5 项），没有运行全量
+测试或端到端场景。最终检查期间 17 份改动的源码/资源校验值均未变化，
+回执在 `.local/qa/android-filter-sidebar-2026-11-19/verification.json`。
+没有安装手机或打开 App/模拟器，选中底色、筛选图标和触摸效果的实际渲染未复核；
+主人授权后的界面检查应覆盖看板/收件箱/任务切换、弹窗下保留原页选中、
+打开独立会话时不选中看板，以及收件箱筛选菜单。
