@@ -66,11 +66,12 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: npm publish ".local/release/dsh-dudu-${VERSION}.tgz" --dry-run --access public --tag latest
 
-      - name: Keep the packages
+      # Only the npm package is kept: it is what the release and npm publish. The zip and whatever else the script leaves in that folder stay out.
+      - name: Keep the package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: plugin
-          path: .local/release/*
+          path: .local/release/dsh-dudu-${{ steps.version.outputs.version }}.tgz
           if-no-files-found: error
           retention-days: 14
 
@@ -156,7 +157,6 @@ jobs:
             exit 0
           fi
           cd assets
-          sha256sum ./* | sed 's|\./||' > SHA256SUMS.txt
           args=(--repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes)
           # A version with a hyphen (0.2.0-rc.1, say) is a pre-release.
           case "$VERSION" in *-*) args+=(--prerelease) ;; esac
