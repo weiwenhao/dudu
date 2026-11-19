@@ -121,7 +121,9 @@ export class HarnessRun {
     } catch (error) {
       this.#end({ type: 'turn-end', ok: false, error });
     } finally {
-      await this.team?.end(this.turnEnd);
+      // OAR's team observes the native process across stopped/replaced parent turns.
+      // A view without that lifetime (the one-shot mirror) still ends with its own stream.
+      if (!this.handle.team) await this.team?.end(this.turnEnd);
     }
   }
 
@@ -260,6 +262,7 @@ export class HarnessBridge {
     const previous = this.#runs.get(sessionId);
     const retained = previous?.finished && previous.handle.backgroundActive ? previous.handle : undefined;
     await previous?.close({ preserveBackground: Boolean(retained) });
+    const observedSubagents = await previous?.team?.checkpoint() ?? link?.nativeSubagents;
     const agent = this.agentOf(sessionId);
     const delivery = this.deliveryOf(sessionId, prompts);
     let team;
@@ -267,22 +270,23 @@ export class HarnessBridge {
     try {
       await delivery.prepare();
       const input = await this.inputOf(prompts, { signal });
-      team = this.teams?.observe(agent, link?.nativeSubagents);
       // Tools the host serves must never keep a conversation from starting.
       const hostTools = await Promise.resolve(this.toolsOf?.(sessionId)).catch(() => null);
       handle = await this.driver.start({
         sessionId, agent, ...input, resume: link?.nativeSessionId, cwd: agent?.session?.header?.cwd,
-        model, effort, permission: this.permissionOf(agent), signal, onRecord: team?.record,
-        observedSubagents: team?.seed(), onInput: delivery.record, previous: retained,
+        model, effort, permission: this.permissionOf(agent), signal,
+        observeSubagents: this.teams ? () => (team = this.teams.observe(agent, observedSubagents)) : undefined,
+        observedSubagents, onInput: delivery.record, previous: retained,
         onTasks: this.jobs?.observe(agent), hostTools,
       });
+      team = handle.team ?? team;
       signal.throwIfAborted();
       await delivery.accepted(handle.nativeSessionId);
       signal.throwIfAborted();
     } catch (error) {
       await handle?.close?.({ preserveBackground: Boolean(retained) && !this.#lifetime.signal.aborted });
       await delivery.failed(signal);
-      await team?.end({ ok: false, error });
+      if (!handle?.team) await team?.end({ ok: false, error });
       throw error;
     }
     const activity = createHarnessActivity({ session: agent?.session, route: this.route, nativeSessionId: handle.nativeSessionId, signal });

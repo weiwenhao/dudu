@@ -64,6 +64,10 @@ fun mergeTranscript(old: JSONObject?, fresh: JSONObject): JSONObject {
     (old.rows("turns") + fresh.rows("turns")).forEach { turn ->
         val key = turn.optInt("turn")
         val merged = turns[key]?.copyJson() ?: json()
+        // Counts belong to this exact comparison. Keep them if it expires, never
+        // attach an older turn snapshot's counts to a newer changesSeq.
+        if (!turn.isNull("changesSeq") && turn.optLong("changesSeq") != merged.optLong("changesSeq", -1))
+            merged.remove("changesSummary")
         turn.keys().forEach { field ->
             if (field in listOf("files", "notices")) {
                 merged.put(field, JSONArray((merged.rows(field) + turn.rows(field))

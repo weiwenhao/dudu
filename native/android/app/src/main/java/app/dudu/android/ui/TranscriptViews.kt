@@ -1,17 +1,25 @@
 package app.dudu.android.ui
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -24,6 +32,7 @@ import java.util.Locale
 internal fun TranscriptTurn(
     row: TranscriptRow.Turn,
     session: Session,
+    connected: Boolean,
     openTool: (JSONObject) -> Unit,
     openChanges: (Long) -> Unit,
     files: @Composable (List<JSONObject>) -> Unit,
@@ -78,20 +87,53 @@ internal fun TranscriptTurn(
                 Text(notice.optString("message"), fontSize = 13.sp, lineHeight = 19.sp,
                     color = if (notice.optString("kind") == "error") MaterialTheme.colorScheme.error else tertiary)
             }
-            files(row.timing?.rows("files").orEmpty())
             row.timing?.takeUnless { it.isNull("changesSeq") }?.let { timing ->
-                TextButton(onClick = { openChanges(timing.getLong("changesSeq")) }, contentPadding = PaddingValues(0.dp)) {
-                    Glyph(R.drawable.ic_file_diff, size = 16)
-                    Spacer(Modifier.width(6.dp))
-                    Text(w("已编辑文件"), fontSize = 14.sp)
-                }
+                TurnChangesCard(timing.getLong("changesSeq"), timing.optJSONObject("changesSummary"),
+                    enabled = connected && !session.cached, open = openChanges)
             }
+            files(row.timing?.rows("files").orEmpty())
         }
         if (row.running) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             RunningMark(14)
             Text(w("正在分析请求"), fontSize = 14.sp, color = tertiary)
         }
     }
+}
+
+/** The existing iPhone file card. Its summary comes with the transcript; only a tap reads the comparison. */
+@Composable
+private fun TurnChangesCard(seq: Long, summary: JSONObject?, enabled: Boolean, open: (Long) -> Unit) {
+    val dark = androidx.compose.foundation.isSystemInDarkTheme()
+    Surface(onClick = { open(seq) }, enabled = enabled,
+        modifier = Modifier.fillMaxWidth().testTag("changes-toggle"),
+        shape = RoundedCornerShape(16.dp),
+        color = if (dark) MaterialTheme.colorScheme.surfaceContainer else Color(0xFFF9FAFB),
+        border = BorderStroke(.5.dp, if (dark) MaterialTheme.colorScheme.outlineVariant else Color.Black.copy(alpha = .04f))) {
+        Row(Modifier.heightIn(min = 56.dp).padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Image(painterResource(R.drawable.changed_files), null, Modifier.size(24.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(summary?.let { wp("已编辑 %lld 个文件", it.getInt("total")) } ?: w("已编辑文件"),
+                    fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, maxLines = 1,
+                    color = MaterialTheme.colorScheme.onSurface, overflow = TextOverflow.Ellipsis)
+                // Reserve this line even when the host no longer retains the comparison.
+                Row(Modifier.alpha(if (summary == null) 0f else 1f)
+                    .then(if (summary == null) Modifier.clearAndSetSemantics {} else Modifier),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FileChangeCounts(summary?.optInt("added") ?: 0, summary?.optInt("deleted") ?: 0)
+                }
+            }
+            Glyph(R.drawable.ic_chevron_right, size = 14, tint = chatTertiary())
+        }
+    }
+}
+
+@Composable
+internal fun FileChangeCounts(added: Int, deleted: Int) {
+    Text("+$added", fontSize = 12.sp, lineHeight = 16.sp, fontFamily = FontFamily.Monospace,
+        color = Color(0xFF1A8E47))
+    Text("−$deleted", fontSize = 12.sp, lineHeight = 16.sp, fontFamily = FontFamily.Monospace,
+        color = MaterialTheme.colorScheme.error)
 }
 
 @Composable

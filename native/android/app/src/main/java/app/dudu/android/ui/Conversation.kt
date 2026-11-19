@@ -414,9 +414,9 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
                 items(all, key = { it.id }, contentType = { if (it is TranscriptRow.Turn) "turn" else "entry" }) { row ->
                     when (row) {
                         is TranscriptRow.Entry -> MessageView(row.message, state, model, actions)
-                        is TranscriptRow.Turn -> TranscriptTurn(row, session,
+                        is TranscriptRow.Turn -> TranscriptTurn(row, session, connected = state.connected,
                             openTool = { openTool(it, session, model) },
-                            openChanges = { model.navigate(Route("changes", params = json("seq" to it))) },
+                            openChanges = { model.navigate(Route("changes", params = json("id" to session.id, "seq" to it))) },
                             files = { DeliveredFilesCard(it, session.id, model) },
                             message = { MessageView(it, state, model, actions, showsProcess = false) })
                     }

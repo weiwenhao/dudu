@@ -213,7 +213,7 @@ fun CollectorScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
             if (names.length() > 1 || filter.isNotBlank()) Box {
                 var choosing by remember { mutableStateOf(false) }
                 IconButton(onClick = { choosing = true }, enabled = !actions.busy) {
-                    Glyph(R.drawable.ic_sliders_horizontal, w("收集器"), 22)
+                    Glyph(R.drawable.ic_list_filter, w("筛选"), 22)
                 }
                 DropdownMenu(choosing, { choosing = false }) {
                     (listOf("" to w("全部")) + names.keys().asSequence().map { it to names.optString(it) }.toList()).forEach { (id, title) ->

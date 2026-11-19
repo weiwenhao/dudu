@@ -47,6 +47,7 @@ function nativeSession() {
     abort: async () => accepted,
     dispose: async () => {
       disposed++;
+      emit([], { kind: 'request', direction: 'toRuntime', body: { kind: 'dispose' } });
       emit([], { kind: 'response', body: { kind: 'exited', code: 0 } });
     },
   };
@@ -66,7 +67,101 @@ function observe(handle: any) {
 }
 const end = { kind: 'turn_ended', outcome: { kind: 'completed' } };
 const shell = { kind: 'task_started', taskId: 'poll', taskType: 'shell', nativeType: 'local_bash', background: true };
+const child = { kind: 'task_started', taskId: 'research', taskType: 'agent', background: true };
 const say = (text: string) => ({ kind: 'text_delta', text, messageId: 'answer' });
+
+test('stopping the parent retains explicit background agents and their observer across the next input', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const native = nativeSession();
+  const records: any[] = [];
+  const endings: any[] = [];
+  const team = { record: (record: any) => records.push(record), end: async () => { endings.push(true); } };
+  const handle = await start(native.session, { observeSubagents: () => team });
+  const run = new HarnessRun({ sessionId: 'dsh-background', handle, prompts: [], team });
+  t.after(() => run.close());
+  native.emit([child, { ...child, taskId: 'second-child' }, say('Research started.'), end]);
+  await flush();
+  await run.interrupt();
+  await run.pump;
+  assert.equal(run.turnEnd.error.code, 'ABORTED');
+  assert.equal(run.foregroundActive, false);
+  assert.equal(handle.backgroundActive, true);
+  assert.equal(native.disposed, 0, 'stopping the root must not dispose its running background agent');
+  assert.equal(endings.length, 0, 'the native team observer outlives the stopped root');
+  native.emit([say('Still working.')], { agentPath: ['delegate'] });
+  assert.ok(records.some(record => record.agentPath?.[0] === 'delegate'), 'child output remains observed while the parent is stopped');
+  native.emit([], { kind: 'response', sessionId: 'another-child', body: { kind: 'exited', code: 0 } });
+  assert.equal(handle.backgroundActive, true, 'a child or foreign exit is not the native root process exiting');
+
+  const next = await start(native.session, {
+    previous: handle, prompt: 'Continue the parent.',
+    observeSubagents: () => assert.fail('the same process must keep the same team observer'),
+  });
+  t.after(() => next.close());
+  const seen = observe(next);
+  assert.strictEqual(next.resident, handle.resident);
+  assert.strictEqual(next.team, team);
+  assert.equal(native.inputs[0].via, 'deliver');
+  native.emit([say('The child finished.')], { agentPath: ['delegate'] });
+  native.emit([{ kind: 'task_ended', taskId: child.taskId, status: 'completed' }]);
+  await flush();
+  assert.equal(next.backgroundActive, true, 'one completed child cannot release another child that still works');
+  native.emit([{ kind: 'task_ended', taskId: 'second-child', status: 'completed' }, say('Result received.'), end]);
+  await seen.done;
+  await next.close();
+  assert.equal(seen.events.at(-1).ok, true);
+  assert.equal(seen.events.filter(event => event.type === 'text-delta').map(event => event.text).join(''), 'Result received.');
+  assert.equal(records.filter(record => record.body?.events?.some((event: any) => event.text === 'The child finished.')).length, 1);
+  assert.equal(endings.length, 1);
+  assert.equal(native.disposed, 1);
+});
+
+test('background agent observation ends at native task or process termination, not parent cancellation', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  for (const outcome of ['completed', 'stopped', 'failed', 'exit', 'dispose']) {
+    const native = nativeSession();
+    const snapshots: any[] = [];
+    let ended = 0;
+    const handle = await start(native.session, { observeSubagents: () => ({
+      record: (record: any, _id: string, tasks: Map<string, any>) => { snapshots.push({ record, tasks }); },
+      end: async () => { ended++; },
+    }) });
+    t.after(() => handle.close());
+    const seen = observe(handle);
+    native.emit([child, end]);
+    await handle.interrupt();
+    await seen.done;
+    assert.equal(native.disposed, 0);
+    assert.equal(ended, 0);
+    if (outcome === 'exit') native.emit([], { kind: 'response', body: { kind: 'exited', code: 9 } });
+    else if (outcome === 'dispose') await handle.close();
+    else {
+      native.emit([{ kind: 'task_ended', taskId: child.taskId, status: outcome }]);
+      await flush();
+      assert.equal(native.disposed, 0, 'the last task notification leaves time for the native follow-up');
+      t.mock.timers.tick(5000);
+    }
+    await flush();
+    await handle.close();
+    assert.equal(ended, 1);
+    assert.equal(native.disposed, 1);
+    const last = snapshots.at(-1).tasks.get(child.taskId);
+    assert.equal(last.status, outcome === 'exit' ? 'failed' : outcome === 'dispose' ? 'stopped' : outcome);
+  }
+});
+
+test('foreground, unclassified and ambient agents do not become retained background work', async t => {
+  for (const task of [{ ...child, background: false }, { ...child, background: undefined }, { ...child, ambient: true }]) {
+    const native = nativeSession();
+    const resident = new OarResident(native.session, {});
+    t.after(() => resident.close());
+    native.emit([task, end]);
+    assert.equal(resident.backgroundActive, false);
+    resident.finishTurn();
+    await flush();
+    assert.equal(native.disposed, 1);
+  }
+});
 
 test('background shell and Monitor hold the DSH turn through native completion and the follow-up answer', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });

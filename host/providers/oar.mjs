@@ -299,7 +299,7 @@ export async function compactOarSession({ runtime, installation, sessionOptions,
 }
 
 /** One DSH turn on an OAR session, retaining native processes that still own background work. */
-export async function startOarRun({ runtime, installation, sessionOptions, prompt, images, normalizer, name, signal, queuesSteer = false, steering = true, followUpMs = FOLLOW_UP_MS, onRecord, observedSubagents = [], onInput, onTasks, previous }) {
+export async function startOarRun({ runtime, installation, sessionOptions, prompt, images, normalizer, name, signal, queuesSteer = false, steering = true, followUpMs = FOLLOW_UP_MS, onRecord, observeSubagents, observedSubagents = [], onInput, onTasks, previous }) {
   if (signal?.aborted) throw signal.reason ?? harnessError('The request was aborted.', 'ABORTED');
   let session;
   let resident = previous?.resident;
@@ -308,7 +308,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   try {
     if (resident) {
       session = resident.session;
-      resident.idle = false;
+      resident.resumeTurn();
       // No process replacement while it owns background commands. Apply the next turn's native settings in place.
       const settings = ({ resume: _resume, openSignal: _signal, observedSubagents: _children, ...value }) => value;
       if (JSON.stringify(settings(resident.options)) !== JSON.stringify(settings(sessionOptions))) {
@@ -335,7 +335,9 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     foreground = active;
     events.push({ type: 'foreground-state', active });
   };
-  resident ??= new OarResident(session, { normalizer, observedSubagents, onTasks, options: sessionOptions });
+  resident ??= new OarResident(session, {
+    normalizer, observedSubagents, onRecord, onTasks, options: sessionOptions, team: observeSubagents?.(), followUpMs,
+  });
   const hasWork = () => resident.hasChildren || resident.backgroundActive;
   let finished = false;
   // OAR answers a second `dispose()` at once, without waiting for the process: one disposal is kept, so that whoever
@@ -343,7 +345,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   let disposal;
   const dispose = () => (disposal ??= resident.close());
   if (signal?.aborted) {
-    if (reused && resident.backgroundActive) resident.finishTurn();
+    if (reused && resident.retained) resident.finishTurn();
     else await dispose();
     throw abortReason(signal);
   }
@@ -366,7 +368,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     signal?.removeEventListener('abort', onAbort);
     unsubscribe();
     events.close();
-    if (preserveBackground && resident.backgroundActive) resident.finishTurn();
+    if (preserveBackground && resident.retained) resident.finishTurn();
     else await dispose();
   }
   function interrupt() {
@@ -397,7 +399,6 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   const release = () => { clearTimeout(holdTimer); const event = held; held = undefined; if (event) finish(event); };
   const read = (record) => {
     if (finished) return;
-    onRecord?.(record, session.id);
     // Native children and background commands can finish after the root's first answer. Keep both the process and
     // this DSH turn open so the native completion notification can start its follow-up on the same stream.
     if (held && waiting.size === 0 && !hasWork() && !holdTimer) holdTimer = setTimeout(release, followUpMs);
@@ -512,7 +513,8 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
 
   return {
     resident,
-    get backgroundActive() { return resident.backgroundActive; },
+    team: resident.team,
+    get backgroundActive() { return resident.retained; },
     nativeSessionId: session.id,
     events: drain(events),
     yieldForInput,
@@ -627,18 +629,19 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
             } : {}),
           };
         },
-        async start({ prompt, images, signal, onRecord, observedSubagents, onInput, onTasks, previous, hostTools, ...options }) {
+        async start({ prompt, images, signal, onRecord, observeSubagents, observedSubagents, onInput, onTasks, previous, hostTools, ...options }) {
           const sessionOptions = await optionsFor({ ...options, signal, retained: previous?.backgroundActive });
           // Tools the host serves to this session over MCP, and tools of the harness's own it takes away (providers/cron-tools.mjs). OAR does not remember them: every start gives them again.
           if (hostTools?.mcpServers?.length) sessionOptions.mcpServers = [...(sessionOptions.mcpServers ?? []), ...hostTools.mcpServers];
           if (hostTools?.disallowedTools?.length) sessionOptions.disallowedTools = [...new Set([...(sessionOptions.disallowedTools ?? []), ...hostTools.disallowedTools])];
           if (hostTools?.launchArgs?.length) sessionOptions.launchArgs = [...(sessionOptions.launchArgs ?? []), ...hostTools.launchArgs];
           // Only the harnesses whose OAR session reads background tasks (Claude, Codex) are asked for them.
-          if (onTasks && backgroundTasks) sessionOptions.backgroundTasks = true;
+          // Claude also needs its per-task stop declaration when only subagents are observed, without a job registry.
+          if ((onTasks || observeSubagents) && backgroundTasks) sessionOptions.backgroundTasks = true;
           if (id === 'codex' && observedSubagents?.length) sessionOptions.observedSubagents = observedSubagents;
           return startOarRun({
             runtime: active, installation, sessionOptions, prompt, images, normalizer: normalizer({ name, login }),
-            name, signal, queuesSteer, steering, onRecord, observedSubagents, onInput, onTasks, previous,
+            name, signal, queuesSteer, steering, onRecord, observeSubagents, observedSubagents, onInput, onTasks, previous,
           });
         },
         async compact(options) {

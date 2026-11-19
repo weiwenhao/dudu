@@ -485,24 +485,11 @@ fun FeatureScreen(route: Route, state: UiState, model: DuduViewModel, openDrawer
 
 fun DuduViewModel.navigateItem(item: JSONObject) {
     val open = item.optJSONObject("open") ?: return
-    val web = open.optJSONObject("web")
     val title = item.optString("title")
-    fun fallback() {
-        if (web?.optString("page") == "dudu") navigate(Route("settings", title, web.nullableString("target") ?: "general"))
-        else if (web != null) navigate(Route("web", title, web.nullableString("target"),
-            json("page" to web.getString("page"), "sessionId" to state.value.session?.id)))
-    }
     when (open.optString("native")) {
         "assistant" -> state.value.home?.rows?.find { it.id == "assistant" }?.let(::open)
             ?: openSession(null, title, assistant = true)
         "board" -> navigate(null)
-        "chat" -> navigate(Route("sessions", title))
-        "collector" -> navigate(Route("collector", title))
-        "dudu-settings" -> navigate(Route("settings", title, open.optString("target", "general")))
-        "dsh-settings" -> navigate(Route("navigation", title, "settings"))
-        "schedule" -> if (item.optString("id") == "dudu.tasks" || open.optString("target") == "dudu-tasks")
-            navigate(Route("tasks", title)) else fallback()
-        "files" -> navigate(Route("files", title))
-        else -> fallback()
+        else -> navigationRoute(item, state.value.session?.id)?.let(::navigate)
     }
 }

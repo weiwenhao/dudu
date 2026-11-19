@@ -88,9 +88,9 @@ await writeFile(path.join(root, 'native/android/app/src/main/java/app/dudu/andro
   + '\n)\n');
 const dudu = path.join(root, 'native/ios/Dudu/Assets.xcassets/DuduLogo.imageset/DuduLogo.png');
 await copyFile(dudu, path.join(resources, 'drawable-nodpi/dudu.png'));
-for (const name of ['Goal', 'Queue']) {
+for (const name of ['Goal', 'Queue', 'ChangedFiles']) {
   execFileSync('rsvg-convert', ['-w', '96', '-h', '96', '-o',
-    path.join(resources, 'drawable-nodpi', `ic_${name.toLowerCase()}.png`),
+    path.join(resources, 'drawable-nodpi', name === 'ChangedFiles' ? 'changed_files.png' : `ic_${name.toLowerCase()}.png`),
     path.join(root, `native/ios/Dudu/Assets.xcassets/${name}.imageset/${name}.svg`)]);
 }
 // The glyphs of the board list's swipe are the iPhone's own (owner, 2026-11-19: the two phones show the same).

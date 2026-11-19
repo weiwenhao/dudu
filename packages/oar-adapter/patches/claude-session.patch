@@ -190,3 +190,36 @@
 -//# sourceMappingURL=tasks.js.map
 \ No newline at end of file
 +//# sourceMappingURL=tasks.js.map
+--- a/dist/runtimes/claude/compaction.js
++++ b/dist/runtimes/claude/compaction.js
+@@ -2,6 +2,10 @@
+ import { asRecord } from "../../shared/json.js";
+ import { claudeControlResponseId } from "./effort.js";
+ export const CLAUDE_COMPACTION_BUSY = "Wait until the session is idle: a queued /compact can be reinterpreted as a project or user command before execution";
++function builtinCompact(commands) {
++    return Array.isArray(commands) && commands.some((value) => { const command = asRecord(value); return command?.name === "compact" && command.builtin === true; })
++        && !commands.some((value) => { const command = asRecord(value); return command?.name === "compact" && command.builtin !== true; });
++}
+ /** Command provenance is read in this process. Initialize also carries private account fields. */
+ export function claudeCompaction(child) {
+     let revision = 0;
+@@ -9,7 +13,8 @@
+     let pending = null;
+     return {
+         consume(message) {
+-            if (message.type === "system" && message.subtype === "commands_changed") {
++            if (message.type === "system" && message.subtype === "commands_changed" && !builtinCompact(message.commands)) {
++                // Claude pushes the full catalog for any skill reload. Only loss of builtin compact provenance invalidates this operation.
+                 revision += 1;
+             }
+             const id = claudeControlResponseId(message);
+@@ -17,8 +22,7 @@
+                 const response = asRecord(message.response);
+                 const commands = asRecord(response?.response)?.commands;
+                 pending.resolve(response?.subtype !== "success" ? { error: "unavailable" } : {
+-                    builtin: Array.isArray(commands) && commands.some((value) => { const command = asRecord(value); return command?.name === "compact" && command.builtin === true; })
+-                        && !commands.some((value) => { const command = asRecord(value); return command?.name === "compact" && command.builtin !== true; }),
++                    builtin: builtinCompact(commands),
+                     revision,
+                 });
+             }
