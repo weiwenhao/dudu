@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { receiveStatuses } from './workflow.js';
+import { STARTUP_GRACE_MS } from '../lib/startup-grace.js';
 
 export const PAGE_SIZE = 50;
 const MAX_LIMIT = 200;
@@ -29,6 +30,7 @@ export function useIssueList(request, view, enabled = true) {
   const latest = useRef(state);
   latest.current = state;
   const sequence = useRef(0);
+  const began = useRef(Date.now()); // when this view started asking: while the plugin may still be starting, a view with nothing to show is not called failed yet
 
   const fetchPage = useCallback(async (mode) => {
     const token = ++sequence.current;
@@ -50,13 +52,15 @@ export function useIssueList(request, view, enabled = true) {
       }));
     } catch (error) {
       if (token !== sequence.current) return;
-      // A failed refresh keeps what is on screen; only a view with nothing to show reports the failure.
-      setState((previous) => (previous.key === key && (previous.items.length || previous.groups) ? previous : { ...previous, key, status: 'error', error }));
+      // A failed refresh keeps what is on screen; only a view with nothing to show reports the failure, once the plugin has had time to start (the next poll asks again).
+      const starting = Date.now() - began.current < STARTUP_GRACE_MS;
+      setState((previous) => (previous.key === key && (previous.items.length || previous.groups) ? previous : { ...previous, key, status: starting ? 'loading' : 'error', error }));
     }
   }, [key, request]); // eslint-disable-line react-hooks/exhaustive-deps -- `view` is represented by `key`
 
   useEffect(() => {
     if (!enabled) return undefined;
+    began.current = Date.now();
     // The rows of the view just left stay until the new ones arrive (no blank flash while a filter is ticked); their cursors do not.
     setState((previous) => (previous.key === key ? previous : {
       ...previous, key, status: previous.items.length || previous.groups ? 'ready' : 'loading', cursor: null, error: null,
@@ -107,7 +111,7 @@ export function useIssueList(request, view, enabled = true) {
     } catch { /* the next scroll tries again */ } finally { loadingMore.current.delete(id); }
   }, [key, request, view]);
 
-  const retry = useCallback(() => fetchPage('first'), [fetchPage]);
+  const retry = useCallback(() => { began.current = Date.now(); return fetchPage('first'); }, [fetchPage]);
   const refresh = useCallback(() => fetchPage('refresh'), [fetchPage]);
   // Show a change at once; the refresh that follows the request puts the store's answer in its place.
   const patch = useCallback((id, changes) => setState((previous) => {

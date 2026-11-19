@@ -1,9 +1,13 @@
 // A read source shared by widgets asking the same question. No polling remains when its last subscriber leaves.
 import { abortable } from '../lib/abortable.js';
+import { STARTUP_GRACE_MS } from '../lib/startup-grace.js';
+
+// The lists of issues open with the page, so they are the reads a restarting plugin shows as failed (lib/startup-grace.js).
+const PATIENT_ACTIONS = new Set(['home/list', 'issues/list']);
 
 export function createReadStore(request, action, body, {
   every = 10_000, timeoutMs = 15_000, visibility = globalThis.document,
-  initialRetries = 0, retryMs = 1000, keepValueOnError = false, trackRefresh = false,
+  initialRetries = 0, retryMs = 1000, startupGraceMs = 0, keepValueOnError = false, trackRefresh = false,
 } = {}) {
   let snapshot = { status: 'loading', value: null, ...(trackRefresh ? { refreshing: false, updatedAt: null } : {}) };
   let pending = null;
@@ -11,12 +15,15 @@ export function createReadStore(request, action, body, {
   let timer = null;
   let controller = null;
   let failures = 0;
+  // Until when a read that has never worked keeps asking every `retryMs` instead of reporting the failure (a new window onto it, or a manual retry, starts the time again).
+  let patientUntil = startupGraceMs ? Date.now() + startupGraceMs : 0;
+  const patient = () => snapshot.value === null && Date.now() < patientUntil;
   const listeners = new Set();
   const cadences = new Map();
   const visible = () => !visibility || visibility.visibilityState === 'visible';
   const schedule = () => {
     clearTimeout(timer);
-    const delay = failures > 0 && failures <= initialRetries ? retryMs : Math.min(...cadences.values());
+    const delay = failures > 0 && (failures <= initialRetries || patient()) ? retryMs : Math.min(...cadences.values());
     if (listeners.size) timer = setTimeout(() => { if (visible()) void load(); else schedule(); }, delay);
   };
   function load(override, manual = false) {
@@ -24,7 +31,10 @@ export function createReadStore(request, action, body, {
     controller = new AbortController();
     const current = controller;
     const signal = AbortSignal.any([current.signal, AbortSignal.timeout(timeoutMs)]);
-    if (manual) failures = 0;
+    if (manual) {
+      failures = 0;
+      if (startupGraceMs && snapshot.value === null) patientUntil = Date.now() + startupGraceMs;
+    }
     if (manual || trackRefresh) snapshot = { ...snapshot, ...(manual ? { status: 'loading' } : {}), ...(trackRefresh ? { refreshing: true } : {}) };
     pending = Promise.resolve().then(() => abortable(request(action, override ? { ...body, ...override } : body, { signal }), signal)).then((value) => {
       if (current.signal.aborted) return;
@@ -35,7 +45,7 @@ export function createReadStore(request, action, body, {
       if (current.signal.aborted) return;
       failures++;
       if (snapshot.value !== null && keepValueOnError) snapshot = { ...snapshot, status: 'ready' };
-      else if (snapshot.value === null || manual) snapshot = { ...snapshot, status: failures <= initialRetries ? 'loading' : 'error' };
+      else if (snapshot.value === null || manual) snapshot = { ...snapshot, status: failures <= initialRetries || patient() ? 'loading' : 'error' };
     }).finally(() => {
       if (controller === current) controller = null;
       pending = null;
@@ -65,7 +75,8 @@ export function createReadStore(request, action, body, {
       listeners.add(listener);
       cadences.set(listener, cadence);
       if (listeners.size === 1) {
-        if (initialRetries && snapshot.status === 'error' && snapshot.value === null) {
+        if (startupGraceMs && snapshot.value === null) patientUntil = Date.now() + startupGraceMs;
+        if ((initialRetries || startupGraceMs) && snapshot.status === 'error' && snapshot.value === null) {
           failures = 0;
           snapshot = { ...snapshot, status: 'loading' };
           listener();
@@ -98,6 +109,7 @@ export function widgetReadStore(request, action, body, every) {
     }
     cache.set(key, createReadStore(request, action, body, {
       every, ...(action === 'sessions/list' ? { initialRetries: 2, keepValueOnError: true, trackRefresh: true } : {}),
+      ...(PATIENT_ACTIONS.has(action) ? { startupGraceMs: STARTUP_GRACE_MS } : {}),
     }));
   }
   return cache.get(key);
