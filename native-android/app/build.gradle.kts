@@ -12,9 +12,27 @@ android {
         applicationId = "app.dudu.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        // The release workflow (.github/workflows/release.yml) numbers each build itself, so that a newer APK installs over an older one.
+        versionCode = System.getenv("DUDU_VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = "0.1.0"
         testInstrumentationRunner = "app.dudu.android.DuduTestRunner"
+    }
+    signingConfigs {
+        // Only the release workflow signs a release build. The key is a secret of the repository, never in it.
+        val keystore = System.getenv("DUDU_KEYSTORE_FILE")
+        if (!keystore.isNullOrBlank()) {
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = System.getenv("DUDU_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("DUDU_KEY_ALIAS")
+                keyPassword = System.getenv("DUDU_KEY_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        release {
+            signingConfigs.findByName("release")?.let { signingConfig = it }
+        }
     }
     buildFeatures { compose = true }
     bundle { language { enableSplit = false } }

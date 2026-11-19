@@ -1,0 +1,66 @@
+name: e2e
+
+# The end-to-end suite (tests/e2e), run once a change is merged into main: not on pull requests (owner, 2026-11-19).
+# Real DSH, real Claude Code, Codex and Pi, real Chrome; the model is the one scripted part (tests/e2e/mock-model.mjs).
+# It can also be started by hand from the Actions tab.
+on:
+  push:
+    branches: [main, ci/e2e-and-release] # TEMP: the second branch is removed before the merge
+  workflow_dispatch:
+
+# A newer merge makes the run of the older one pointless: main already contains it.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The programs the suite drives, pinned to the versions it was last run with (the owner's machine, 2026-11-19).
+  # Move them together with the tests, and keep this list in step with .github/workflows/release.yml.
+  DSH_VERSION: 0.2.0-rc.2
+  CLAUDE_CODE_VERSION: 2.1.326
+  CODEX_VERSION: 0.169.0
+  PI_VERSION: 1.4.0
+  PNPM_VERSION: 10.30.3
+
+jobs:
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install the repository
+        run: npm ci
+
+      - name: Install the programs the suite drives
+        run: >
+          npm install --global
+          "pnpm@${PNPM_VERSION}"
+          "@deepseek-ai/dsh@${DSH_VERSION}"
+          "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+          "@openai/codex@${CODEX_VERSION}"
+          "@earendil-works/pi-coding-agent@${PI_VERSION}"
+
+      - name: Versions in use
+        run: |
+          echo "node $(node --version), npm $(npm --version), pnpm $(pnpm --version)"
+          echo "dsh $(dsh --version)"
+          echo "claude $(claude --version)"
+          echo "codex $(codex --version)"
+          echo "pi $(pi --version)"
+          google-chrome --version
+
+      - name: Run the end-to-end tests
+        run: npm run test:e2e
