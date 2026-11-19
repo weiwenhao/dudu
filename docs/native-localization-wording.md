@@ -793,6 +793,18 @@ String Catalog 只增加已批准的中文，不新增未经审阅的英文译�
 
 2026-11-18 主人说“忽略功能可以删掉了，用不上这个功能了”，手机上去掉了忽略这个功能，同时删掉的词（String Catalog 里的两条也已删除）：忽略（滑动、长按菜单、选择栏、记录页“更多”）、已忽略（“已忽略”页签的名字和标记后的提示）。没有新增任何文字。
 
+## 2026-11-19 上架前补齐的英文
+
+上架 App Store 前在英文界面里走了一遍：连接引导页的标题和说明、首页的“电脑未连接”、“发送视频”、“子事项”这五条只有中文，英文界面里会显示中文（主人 2026-11-17 说过“英文界面为什么要写中文？”）。中文原文没有动，英文是我写的，等主人逐字审阅。
+
+| 中文 | English | 使用处 |
+|---|---|---|
+| 连接嘟嘟 | Connect to Dudu | ConnectionGuideView.swift：标题 |
+| 打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码 | Open DSH and install the Dudu plugin, then open the pairing QR code in Dudu's settings | ConnectionGuideView.swift：说明 |
+| 电脑未连接 | Computer not connected | BoardHomeView.swift：首页提示 |
+| 发送视频 | Send video | ComposerAttachmentSheet.swift、ChatView.swift |
+| 子事项 | Sub-issues | BoardSubIssues.swift |
+
 ## 仍由原内容决定的文字
 
 2026-11-17 连接状态设计确认新增首页提示“电脑未连接”（`BoardConnectionNotice`）。

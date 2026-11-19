@@ -54,6 +54,7 @@ import { createLatest } from './dist/assistant/home/latest.mjs';
 import { createChatHome } from './dist/assistant/home/chat-home.mjs';
 import { createChatHomeApi } from './dist/assistant/home/chat-home-api.mjs';
 import { createConversation } from './dist/assistant/home/conversation.mjs';
+import { createAssistantSessionOperations } from './dist/assistant/home/session-operations.mjs';
 import { createLocalWidgets } from './dist/assistant/widgets/local.mjs';
 import { reminders } from './dist/assistant/home/reminders.mjs';
 import { createIssueTidy } from './dist/assistant/issues/tidy.mjs';
@@ -193,12 +194,14 @@ async function startProviders(ctx, folder, assignment) {
   };
   const projects = createProjects({ registry: () => ctx.workspaceRegistry });
   assignment.projects = projects;
+  assignment.providers = providers;
   assignment.nativeSessions = native;
   assignment.sources = providers.sources;
   assignment.release = (sessionId) => providers.release(sessionId); // deep sleep lets go of what the harnesses hold for a session whose turn has ended
   assignment.hasActiveWork = providers.hasActiveWork;
   assignment.links = links;
   const overview = createOverview({ sources: providers.sources, links, titleOf: native.titleOf });
+  assignment.overview = overview;
   // The subscription quota: read only when a person asks (the panel's icon, the chat's card), from the providers that are found and enabled and from DSH's DeepSeek accounts, kept in quota.db.
   // Each of DSH's services is read when needed: reading one this DSH lacks throws.
   const quota = createPluginQuota({
@@ -243,6 +246,8 @@ async function startProviders(ctx, folder, assignment) {
     async stop() {
       delete assignment.nativeSessions;
       delete assignment.projects;
+      delete assignment.providers;
+      delete assignment.overview;
       delete assignment.sessionCatalog;
       delete assignment.searchSessions;
       delete assignment.historyFacts;
@@ -315,7 +320,7 @@ async function startIssues(ctx, folder, assignment = {}) {
   // What the connectors collected, for the Collector widget: the connectors' names are asked for when a list is read (the project folder can move).
   // Sharing a record to a session is the owner's message to the agent of that issue, through the same door as the one typed on the issue's page.
   const inboxApi = createInboxApi({
-    issues, collectors: () => assignment.assistant?.collectors ?? null, forward: (id, text) => api.execute('forward', { id, text }),
+    issues, collectors: () => assignment.assistant?.collectors ?? null, forward: (id, text, origin) => api.execute('forward', { id, text, ...origin }),
     // The Collector's button: the collector's session reads the conversation around a record (dispatch starts after the issues, so it is asked for when used).
     fill: (id) => assignment.fillRecord?.(id) ?? { outcome: 'error', message: 'Collection is unavailable.' },
   });
@@ -696,6 +701,7 @@ async function startDispatch(ctx, folder, assignment) {
     },
     file: join(folder, 'assistant', 'intake.json'),
   });
+  assignment.dispatch = dispatch;
 
   const handOut = createHandOut({ dispatch, assignment });
   assignment.handOut = handOut;
@@ -760,6 +766,7 @@ async function startDispatch(ctx, folder, assignment) {
     delete assignment.runCollector;
     delete assignment.fillRecord;
     delete assignment.collectSource;
+    delete assignment.dispatch;
     delete assignment.issueTidy;
     delete assignment.handOut;
   };
@@ -836,6 +843,42 @@ async function startConversation(ctx, folder, assignment) {
   assignment.cards = cards;
   assignment.group = group;
   assignment.latest = latest;
+  const localWidgets = createLocalWidgets({ folder: () => assignment.assistant?.folder });
+  const conversationOperations = {
+    widgets: () => localWidgets.list(),
+    'widget-file': ({ name }) => {
+      const text = localWidgets.read(name);
+      return text === null ? { outcome: 'error', code: 'not_found' } : { outcome: 'success', name, text };
+    },
+    'widgets-report': ({ widgets } = {}) => localWidgets.report(widgets),
+    conversation: async () => ({ outcome: 'success', ...await conversation.ensure() }),
+    'conversation-settings': (body) => conversation.preferences(body),
+    'conversation-model': (body) => conversation.selectModel(body),
+    compact: () => conversation.requestCompact(),
+    card: ({ kind, since } = {}) => conversation.card(kind, since),
+    cards: ({ ids } = {}) => conversation.cardsOf(ids),
+    hide: ({ seqs } = {}) => group.hide(seqs),
+    hidden: () => ({ outcome: 'success', seqs: [...group.hidden()] }),
+    reminders: () => ({ outcome: 'success', reminders: reminders(assignment.issues, Date.now()) }),
+  };
+  assignment.conversationOperations = conversationOperations;
+  // The scoped assistant can use the same finite session controls as the native interface.
+  // This peer is local to the plugin, never a phone RPC pass-through.
+  let sessionPeer;
+  let sessionOperations;
+  assignment.sessionOperations = {
+    models: () => ctx.sessionController.modelCatalog(),
+    execute: (action, args) => {
+      if (!sessionOperations) {
+        sessionPeer = ctx.connection.createPeer({ principal: { kind: 'owner' } });
+        sessionOperations = createAssistantSessionOperations({
+          rpc: createTypertRpcAdapter({ gateway: ctx.typertGateway, peer: sessionPeer }),
+          dsh, controller: ctx.sessionController,
+        });
+      }
+      return sessionOperations.execute(action, args);
+    },
+  };
   // Restore our scoped owner before a remembered DSH conversation tab can promote the persisted session.
   // Keep the route available when no model is configured, so choosing one later can retry initialization.
   await conversation.ensure().catch((error) => console.warn(`[dudu] The assistant conversation could not be opened: ${error.message}`));
@@ -849,10 +892,9 @@ async function startConversation(ctx, folder, assignment) {
     },
   });
   // The widgets 嘟嘟 writes (assistant/widgets/local.mjs): the interface lists the folder, loads each file as a module and reports how that went.
-  const localWidgets = createLocalWidgets({ folder: () => assignment.assistant?.folder });
   const disposers = [
-    route('widgets', () => localWidgets.list()),
-    route('widgets-report', ({ widgets } = {}) => localWidgets.report(widgets)),
+    route('widgets', conversationOperations.widgets),
+    route('widgets-report', conversationOperations['widgets-report']),
     registerRoute(ctx, {
       path: '/api/dudu/assistant/widget-file', methods: ['GET'], requestBody: 'buffered',
       fetch: async (request) => {
@@ -862,19 +904,19 @@ async function startConversation(ctx, folder, assignment) {
           : new Response(text, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
       },
     }),
-    route('conversation', async () => ({ outcome: 'success', ...await conversation.ensure() })),
-    route('conversation-settings', (body) => conversation.preferences(body)),
-    route('conversation-model', (body) => conversation.selectModel(body)),
+    route('conversation', conversationOperations.conversation),
+    route('conversation-settings', conversationOperations['conversation-settings']),
+    route('conversation-model', conversationOperations['conversation-model']),
     // The conversation's Compact.
     route('compact', () => conversation.compact()),
     // The quick buttons of the chat: a card is made as a command of the conversation (no model); the page asks for the contents of the ones it has read by their command ids.
-    route('card', ({ kind, since } = {}) => conversation.card(kind, since)),
-    route('cards', ({ ids } = {}) => conversation.cardsOf(ids)),
+    route('card', conversationOperations.card),
+    route('cards', conversationOperations.cards),
     // Hiding a line of the thread (the owner's 删除: only what the interface shows; the session's log and what 嘟嘟 was told stay) and which lines are hidden.
-    route('hide', ({ seqs } = {}) => group.hide(seqs)),
-    route('hidden', () => ({ outcome: 'success', seqs: [...group.hidden()] })),
+    route('hide', conversationOperations.hide),
+    route('hidden', conversationOperations.hidden),
     // What dudu says by itself beside the pet; read from the issues, with no model.
-    route('reminders', () => ({ outcome: 'success', reminders: reminders(assignment.issues, Date.now()) })),
+    route('reminders', conversationOperations.reminders),
   ];
   return async () => {
     for (const dispose of disposers) dispose();
@@ -882,8 +924,10 @@ async function startConversation(ctx, folder, assignment) {
     group.dispose();
     latest.dispose();
     await conversation.close();
+    await sessionPeer?.dispose();
     await dsh.close();
     delete assignment.conversation; delete assignment.cards; delete assignment.group; delete assignment.latest;
+    delete assignment.conversationOperations; delete assignment.sessionOperations;
   };
 }
 
@@ -1013,6 +1057,12 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
       port: config.port ?? 3170,
       host: config.host ?? '0.0.0.0',
     });
+    assignment.phoneOperations = async (action, body) => {
+      if (action === 'state') return control.state();
+      if (action === 'save') return control.save(body);
+      if (action === 'revoke') { await control.devices.revoke(body.id); return control.state(); }
+      return { outcome: 'error', code: 'unknown_action' };
+    };
     for (const action of ['state', 'save', 'generate', 'revoke', 'nav']) {
       disposers.push(registerRoute(ctx, {
         path: `/api/dudu/${action}`, methods: ['POST'], requestBody: 'buffered',
@@ -1030,6 +1080,7 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
   catch { console.warn('[dudu] Could not save the local runtime receipt.'); }
   console.info(`[dudu] Ready on port ${control.state().port}. Open the 嘟嘟 page, then Settings > 手机控制 to pair.`);
   return async () => {
+    delete assignment.phoneOperations;
     questionBridge.close();
     for (const dispose of disposers) dispose();
     try { await control.close(); }

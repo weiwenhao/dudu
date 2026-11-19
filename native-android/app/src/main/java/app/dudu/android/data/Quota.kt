@@ -17,9 +17,12 @@ data class QuotaProvider(
     val amount: String?, val windows: List<QuotaWindow>,
 )
 
+private val zeroBalance = Regex("^-?[$¥]?0\\.00$")
+
 fun quotaProviders(quota: JSONObject?): List<QuotaProvider> = quota?.rows("providers").orEmpty().mapNotNull { source ->
     val balance = source.optString("kind") == "balance"
     val amount = if (balance) source.rows("balance").mapNotNull { it.nullableString("text") }
+        .filterNot { it.isEmpty() || zeroBalance.matches(it) }
         .takeIf { it.isNotEmpty() }?.joinToString(" + ") else null
     val windows = if (balance) emptyList() else source.rows("windows").mapNotNull window@{ window ->
         val used = window.optDouble("used").takeIf(Double::isFinite) ?: return@window null

@@ -20,6 +20,7 @@ class MainActivity : ComponentActivity() {
     private val model: DuduViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        Diagnostics.start(applicationContext)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (savedInstanceState == null) intent?.dataString?.let { model.openPairingLink(it) }

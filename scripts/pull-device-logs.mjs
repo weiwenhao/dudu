@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -20,12 +20,18 @@ const option = (name) => {
 async function main() {
   if (args.includes('--help')) {
     console.log('npm run logs:pull -- [--device <name-or-UUID>] [--output <directory>] [--minutes <number>]');
+    console.log('npm run logs:pull -- --android [--device <adb serial>] [--output <directory>] [--minutes <number>]');
     return;
   }
   const minutes = Number(option('--minutes') ?? 30);
   if (!Number.isFinite(minutes) || minutes <= 0) throw new Error('--minutes must be positive.');
   const timestamp = new Date().toISOString().replaceAll(':', '-');
   const destination = path.resolve(option('--output') ?? path.join(root, '.local', 'device-logs', timestamp));
+  if (args.includes('--android')) {
+    await pullAndroid(destination);
+    await summarize(destination, minutes);
+    return;
+  }
   const temporary = await mkdtemp(path.join(tmpdir(), 'dsbot-logs-'));
   try {
     let device = option('--device');
@@ -48,6 +54,40 @@ async function main() {
       '--domain-type', 'appDataContainer', '--domain-identifier', 'com.harnessmobile.app',
       '--source', 'Documents/diagnostics', '--destination', path.join(destination, 'diagnostics'),
       '--timeout', '60', '--json-output', receipt], { timeout: 65_000 });
+    await summarize(destination, minutes);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The Android app's diagnostics (`Diagnostics.kt`): the files of `no_backup/diagnostics` in the app's own storage, read over adb as the app
+ * (`run-as`, so a debug build), and what the app wrote to logcat under its tag. Nothing else of the app's storage is read.
+ */
+async function pullAndroid(destination) {
+  const adb = path.join(process.env.ANDROID_HOME || path.join(homedir(), 'Library/Android/sdk'), 'platform-tools/adb');
+  let serial = option('--device') ?? process.env.ANDROID_SERIAL;
+  if (!serial) {
+    const { stdout } = await exec(adb, ['devices'], { timeout: 20_000 });
+    const ready = stdout.split('\n').map((line) => line.trim().split(/\s+/)).filter((item) => item[1] === 'device').map((item) => item[0]);
+    if (ready.length !== 1) throw new Error('Pass --device with the adb serial; exactly one connected Android device is required for automatic selection.');
+    serial = ready[0];
+  }
+  const asApp = (...command) => exec(adb, ['-s', serial, 'exec-out', 'run-as', 'app.dudu.android', ...command],
+    { timeout: 60_000, maxBuffer: 64 * 1024 * 1024, encoding: 'buffer' });
+  const folder = path.join(destination, 'diagnostics');
+  await mkdir(folder, { recursive: true });
+  const names = (await asApp('ls', 'no_backup/diagnostics')).stdout.toString('utf8').split('\n').map((name) => name.trim())
+    .filter((name) => /^(events(\.\d)?\.jsonl|crash-\d+\.txt)$/.test(name));
+  if (!names.length) throw new Error('The app has written no diagnostics yet (or this is not a debug build).');
+  for (const name of names) await writeFile(path.join(folder, name), (await asApp('cat', `no_backup/diagnostics/${name}`)).stdout);
+  const logcat = await exec(adb, ['-s', serial, 'logcat', '-d', '-v', 'threadtime', '-s', 'Dudu:V', 'AndroidRuntime:E'],
+    { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 }).catch(() => null);
+  if (logcat) await writeFile(path.join(destination, 'logcat.txt'), logcat.stdout);
+}
+
+async function summarize(destination, minutes) {
+  {
     const entries = [];
     let incompleteLines = 0;
     const readLogs = async (directory) => {
@@ -92,8 +132,6 @@ async function main() {
     console.log(`${entries.length} records; ${recent.length} in the last ${minutes} minutes; ${issues.length} warnings/errors.`);
     console.log(describeActions(analyzeActions(recent, { since: cutoff })));
     console.log('Read timeline.jsonl for the full timeline and summary.json for event counts, recent issues and the slow taps.');
-  } finally {
-    await rm(temporary, { recursive: true, force: true });
   }
 }
 

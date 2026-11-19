@@ -238,15 +238,19 @@ fun CollectorScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
             itemsIndexed(items, key = { _, record -> record.getLong("id") }) { index, record ->
                 val id = record.getLong("id")
                 val choosable = canChoose(record)
-                val swipe = if (selecting || !choosable) emptyList() else buildList {
-                    if (tab == "todo") add(RowSwipeAction(w("已处理"), R.drawable.ic_check, Color(0xFF18191B)) { markOne("done", record) })
-                    else add(RowSwipeAction(w("恢复"), R.drawable.ic_rotate_ccw, DuduStyle.blue) { markOne("restore", record) })
-                    add(RowSwipeAction(w("删除"), R.drawable.ic_trash2, Color(0xFFE14848)) { markOne("delete", record) })
+                // The board list's swipe (owner, 2026-11-19: "右滑已处理，左滑点击转发，参考看板列表"; 删除 was in the swipe and stays): on the to-do list the right is 已处理, the left 转发
+                // and 删除; on 已处理 the left is 恢复 and 删除 and the right nothing. Not while rows are being chosen, and not on a record an issue holds.
+                val swipes = !selecting && choosable
+                val handle = if (swipes && tab == "todo") RevealAction(w("已处理"), R.drawable.home_swipe_complete, SwipeColors.complete) { markOne("done", record) } else null
+                val swipe = if (!swipes) emptyList() else buildList {
+                    if (tab != "todo") add(RevealAction(w("恢复"), R.drawable.ic_rotate_ccw, SwipeColors.blue) { markOne("restore", record) })
+                    else if (record.optJSONObject("issue") == null) add(RevealAction(w("转发"), R.drawable.ic_forward, SwipeColors.blue) { forwarding = listOf(record) })
+                    add(RevealAction(w("删除"), R.drawable.ic_trash2, SwipeColors.delete) { markOne("delete", record) })
                 }
                 Box(Modifier.onSizeChanged { rowHeights[id] = (it.height / density.density).roundToInt() }) {
                 LibraryRowGroup(index == 0, index == items.lastIndex, grouped = sheet, inset = 16,
                     dividerStart = if (selecting) 104 else 70, dividerEnd = 14) {
-                SwipeMenuRow(swipe, enabled = !actions.busy, revealed = revealed == id,
+                SwipeRevealRow(handle, swipe, enabled = !actions.busy, revealed = revealed == id,
                     onReveal = { revealed = if (it) id else null }) { closeSwipe ->
                 Box {
                 Surface(color = if (sheet) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.background) {

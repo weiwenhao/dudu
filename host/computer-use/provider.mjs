@@ -5,7 +5,7 @@ import { installComputerUseRegistration } from './registration.mjs';
 export const name = 'dudu-computer-use-compat';
 export const inject = ['computerUse', 'tools', 'systemPrompt', 'subprocess', 'agents', 'loader'];
 
-/** Optional compatibility bundle; does not install, enable or edit the host provider itself. */
+/** The main Dudu bundle mounts this adapter around the installed native provider. */
 export async function apply(ctx) {
   const entry = ctx.get('configEditor')?.entries().find((item) => item.options.id === 'cua');
   if (entry?.options.name !== '@deepseek-ai/dsh-experimental-cua-macos') {

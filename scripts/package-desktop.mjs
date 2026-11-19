@@ -71,7 +71,7 @@ for (const [title, file] of [['Cline - the sign-in of hosted MCP servers', 'clin
   noticeBlocks.push(`${title}\n\n${await readFile(join(root, 'licenses', file), 'utf8')}`);
 }
 noticeBlocks.push(`Hermes Agent - the paste-anything MCP parser of the connectors page\n\n${await readFile(join(root, 'licenses', 'hermes-agent.txt'), 'utf8')}`);
-noticeBlocks.push(`DeepSeek Harness - the pinned PTC engine used by the optional Computer Use adapter\n\n${await readFile(join(root, 'packages', 'dsh-computer-use', 'LICENSE'), 'utf8')}`);
+noticeBlocks.push(`DeepSeek Harness - the pinned PTC engine used by the built-in Computer Use adapter\n\n${await readFile(join(root, 'packages', 'dsh-computer-use', 'LICENSE'), 'utf8')}`);
 if (noticeBlocks.length) {
   await writeFile(join(runtime, 'THIRD_PARTY_NOTICES.txt'), `This plugin bundles the following packages.\n\n${[...new Set(noticeBlocks)].join('\n----------------------------------------\n\n')}`);
 }
@@ -105,13 +105,8 @@ try {
   await rm(archive, { force: true });
   execFileSync('zip', ['-q', '-r', archive, 'dudu-desktop'], { cwd: staging });
   await copyFile(join(folder, packed[0].filename), join(output, packed[0].filename));
-  // Explicitly installed opt-in companion: ordinary Dudu updates do not enable
-  // Computer Use or replace an existing provider without the owner's request.
-  const compatibility = JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', output], {
-    cwd: join(root, 'desktop', 'computer-use-compat'), encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'],
-  }));
-  if (compatibility.length !== 1) throw new Error('Expected one Computer Use compatibility bundle.');
-  console.log(join(output, compatibility[0].filename));
+  // Computer Use is part of this bundle; there is no second package to install.
+  await rm(join(output, `dsh-dudu-computer-use-${version}.tgz`), { force: true });
   console.log(archive);
 } finally {
   await rm(staging, { recursive: true, force: true });

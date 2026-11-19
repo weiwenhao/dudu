@@ -95,6 +95,7 @@ struct NativeSettingsToolbarActions: View {
                 } label: { additionLabel }
             }
         }
+        .buttonBorderShape(.circle)
         .disabled(model.busy || model.isPreviewing || store.status != .connected ||
                   (page.additionLinks.isEmpty && model.environmentRows.count >= 40))
         .accessibilityLabel(page.additionLinks.count > 1 ? L10n.text("添加") :
@@ -103,9 +104,11 @@ struct NativeSettingsToolbarActions: View {
     }
 
     private var additionLabel: some View {
-        DSBotIcon(.plus, size: 22)
+        // A native toolbar supplies its own touch area and padding around the icon.
+        let size = usesGlass ? DSBotLayout.toolbarButtonSize : 22
+        return DSBotIcon(.plus, size: 22)
             .foregroundStyle(DSBotStyle.ink)
-            .frame(width: DSBotLayout.toolbarButtonSize, height: DSBotLayout.toolbarButtonSize)
+            .frame(width: size, height: size)
             .contentShape(Circle())
     }
 }
@@ -372,24 +375,17 @@ private struct SettingsPageView: View {
     }
 
     private func notificationButton(_ notification: SettingsNotification, rowID: String) -> some View {
-        let on = switches[rowID] ?? notification.on
+        let on = model.notificationValues[rowID] ?? notification.on
         return Button {
-            switches[rowID] = !on
-            perform(notification.act, value: !on ? "true" : "false")
+            model.setNotification(notification, rowID: rowID, on: !on, using: store, report: report)
         } label: {
-            Group {
-                if model.busy && switches[rowID] != nil {
-                    ProgressView().tint(DSBotStyle.muted)
-                } else {
-                    LucideIcon(on ? .bell : .bellOff, size: 18, strokeWidth: 2, absoluteStrokeWidth: false)
-                        .frame(width: 18, height: 18)
-                        .foregroundStyle(on ? DSBotStyle.ink : DSBotStyle.muted)
-                }
-            }
-            .frame(width: 32, height: 32)
-            .background(on ? DSBotStyle.selected : Color.clear, in: RoundedRectangle(cornerRadius: 8))
-            .frame(width: 44, height: 44)
-            .contentShape(Rectangle())
+            LucideIcon(on ? .bell : .bellOff, size: 18, strokeWidth: 2, absoluteStrokeWidth: false)
+                .frame(width: 18, height: 18)
+                .foregroundStyle(on ? DSBotStyle.ink : DSBotStyle.muted)
+                .frame(width: 32, height: 32)
+                .background(on ? DSBotStyle.selected : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(model.busy || store.status != .connected)

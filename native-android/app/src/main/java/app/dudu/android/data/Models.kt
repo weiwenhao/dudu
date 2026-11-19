@@ -101,14 +101,22 @@ data class Session(
     val id: String, val watchId: String, val messages: List<Message>, val queue: List<Message>,
     val readPosition: JSONObject?, val state: String, val canceledRequestIds: Set<String> = emptySet(),
     val raw: JSONObject = json(), val cached: Boolean = false,
+    /**
+     * Inputs the computer has taken for the agent's next step and has not written into the history yet (a queued message after 插话发送).
+     * They are shown at the end of the history as messages on their way, as the iPhone and DSH show them, and never in the queue:
+     * a message that stayed in the queue's list after its 插话发送 looked as if the button had done nothing (owner, 2026-11-19).
+     */
+    val pendingInputs: List<Message> = emptyList(),
     val displayRows: List<TranscriptRow> = transcriptRows(messages, raw.optJSONObject("transcript"),
         state in listOf("running", "processing") || raw.optJSONObject("session")?.optString("status") == "running"),
 ) {
     val transcript get() = raw.optJSONObject("transcript")
     val processing get() = state in listOf("running", "processing") ||
         raw.optJSONObject("session")?.optString("status") == "running"
-    fun observed(requestId: String) = requestId in canceledRequestIds ||
-        (messages + queue).any { it.id == requestId || it.requestId == requestId }
+    private val known: Set<String> by lazy {
+        (messages + queue + pendingInputs).flatMapTo(mutableSetOf()) { listOfNotNull(it.id, it.requestId) }
+    }
+    fun observed(requestId: String) = requestId in canceledRequestIds || requestId in known
 
     fun visibleMessages(pending: Message?): List<Message> {
         return visibleMessages(listOfNotNull(pending))
@@ -144,12 +152,13 @@ data class Session(
             }
             return Session(o.getJSONObject("session").getString("id"), watchId,
                 entries?.plus(listOfNotNull(live)) ?: messages(o.optJSONArray("messages")),
-                messages(o.optJSONArray("queuedMessages")) + messages(transcript?.optJSONArray("pendingInputs")),
+                messages(o.optJSONArray("queuedMessages")),
                 o.optJSONObject("readPosition"), o.getJSONObject("session").optString("state",
                     o.getJSONObject("session").optString("status")),
                 o.optJSONArray("canceledRequestIds")?.let { array ->
                     (0 until array.length()).map(array::getString).toSet()
-                } ?: emptySet(), raw, cached)
+                } ?: emptySet(), raw, cached,
+                pendingInputs = messages(transcript?.optJSONArray("pendingInputs")).map { it.copy(pending = true) })
         }
     }
 }

@@ -41,7 +41,10 @@ struct QuotaProvider: Decodable, Equatable, Identifiable, Sendable {
 
     var amount: String? {
         guard kind == "balance", let balance, !balance.isEmpty else { return nil }
-        return balance.map(\.text).joined(separator: " + ")
+        let amounts = balance.map(\.text).filter {
+            !$0.isEmpty && $0.range(of: #"^-?[$¥]?0\.00$"#, options: .regularExpression) == nil
+        }
+        return amounts.isEmpty ? nil : amounts.joined(separator: " + ")
     }
     var rows: [QuotaRow] { kind == "balance" ? [] : windows.map { QuotaRow($0) } }
     var hasContent: Bool { amount != nil || !rows.isEmpty }

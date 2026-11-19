@@ -110,7 +110,7 @@ export function createTaskSessions({ ctx, assistant, tools, context, say, file =
       let lift = null;
       let allowed = null;
       const limit = () => {
-        const names = conversationToolNames(ctx.tools, agent);
+        const names = conversationToolNames(ctx.tools, agent, { scheduled: true });
         const key = names.join('\n');
         if (key === allowed) return;
         const before = allowed;
@@ -129,7 +129,7 @@ export function createTaskSessions({ ctx, assistant, tools, context, say, file =
       const definitions = tools(task).filter((tool) => !tool.name.startsWith('tasks_'));
       for (const tool of definitions) agentCtx.tools.register(tool);
       const owned = new Set(definitions.map((tool) => tool.name));
-      const nativeSchemas = (who = agent, toolSet) => (ctx.tools?.schemas?.(who, toolSet) ?? []).filter((tool) => isConversationTool(tool.name));
+      const nativeSchemas = (who = agent, toolSet) => (ctx.tools?.schemas?.(who, toolSet) ?? []).filter((tool) => isConversationTool(tool.name, { scheduled: true }));
       agentCtx.tools.guard((exec) => owned.has(exec.name) || nativeSchemas(exec.agent, exec.toolSet).some((tool) => tool.name === exec.name)
         ? undefined : 'That tool is not available to a scheduled task of dudu.');
       agentCtx.systemPrompt.suppressRuntimeContext();

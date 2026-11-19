@@ -21,7 +21,7 @@ test('assistant restrictions include preset tools and can recover them after an 
   };
   assert.equal(registry.schemas(agent).some((tool) => tool.name === 'bash'), false, 'the old restriction hid the preset shell');
   const names = conversationToolNames(registry, agent);
-  assert.deepEqual(names, ['apply_patch', 'bash', 'job_output', 'mcp__mail__search', 'read', 'skill', 'terminal_open', 'terminal_send']);
+  assert.deepEqual(names, ['apply_patch', 'bash', 'job_output', 'mcp__mail__search', 'read', 'schedule', 'skill', 'subagent', 'terminal_open', 'terminal_send', 'unrelated_global']);
   allowed = new Set(names);
   assert.equal(registry.schemas(agent).some((tool) => tool.name === 'bash'), true);
   assert.deepEqual(conversationToolNames(registry, agent), names, 'an installed mask must not erase tools on the next registry update');
@@ -31,18 +31,20 @@ test('assistant restrictions include preset tools and can recover them after an 
   const changed = conversationToolNames(registry, agent);
   assert.ok(changed.includes('pwsh') && changed.includes('mcp__other__list'));
   assert.ok(!changed.includes('bash') && !changed.includes('mcp__mail__search'), 'removed tools do not remain admitted');
-  assert.ok(!changed.includes('issues_get') && !changed.includes('schedule') && !changed.includes('subagent'), 'do not expand the approved scope or pass own registrations to restrict');
+  assert.ok(!changed.includes('issues_get'), 'never pass own registrations to restrict');
+  assert.ok(changed.includes('schedule') && changed.includes('subagent'), 'inherit standard-session capabilities instead of maintaining a second list');
 });
 
 test('the assistant keeps legacy global-tool support and one explicit native filter for connectors and guards', () => {
   assert.deepEqual(conversationToolNames({
     schemas: () => ['bash', 'read', 'skill', 'mcp__mail__search', 'unrelated_global'].map((name) => ({ name })),
-  }, {}), ['bash', 'mcp__mail__search', 'read', 'skill']);
+  }, {}), ['bash', 'mcp__mail__search', 'read', 'skill', 'unrelated_global']);
   for (const name of ['bash', 'pwsh', 'read', 'read_image', 'write', 'edit', 'apply_patch', 'glob', 'grep', 'skill', 'web_search', 'web_fetch', 'job_output', 'job_list', 'job_kill',
     'terminal_open', 'terminal_send', 'terminal_read', 'terminal_signal', 'terminal_close', 'terminal_list', 'mcp__mail__search']) {
     assert.equal(isConversationTool(name), true, name);
   }
-  for (const name of ['terminal_unrecognized', 'run_code', 'schedule', 'subagent', 'plugin_install']) assert.equal(isConversationTool(name), false, name);
+  for (const name of ['new_host_capability', 'schedule', 'subagent', 'plugin_install']) assert.equal(isConversationTool(name), true, name);
+  for (const name of ['run_code', 'cua']) assert.equal(isConversationTool(name), false, name);
   assert.deepEqual(conversationToolNames({ view: () => ({ restrictableNames: new Set() }), schemas: () => [{ name: 'bash' }] }, {}), [],
     'an empty inherited scope must not fall back to another scope');
   assert.equal(isConversationTool('cua_run_code'), false, 'scheduled tasks keep their existing capability scope');
@@ -50,5 +52,6 @@ test('the assistant keeps legacy global-tool support and one explicit native fil
   assert.equal(isConversationTool('cua', { computerUse: true }), false, 'the raw CUA binding stays private');
   assert.deepEqual(conversationToolNames({
     view: () => ({ restrictableNames: ['cua_run_code', 'cua', 'bash', 'run_code', 'plugin_install'] }),
-  }, {}, { computerUse: true }), ['bash', 'cua_run_code'], 'only the standalone Computer Use entry joins native tools');
+  }, {}, { computerUse: true }), ['bash', 'cua_run_code', 'plugin_install'], 'private PTC bindings stay private while ordinary capabilities remain inherited');
+  for (const name of ['schedule', 'schedule_create', 'cron_create', 'tasks_create']) assert.equal(isConversationTool(name, { scheduled: true }), false, 'a task run cannot create more tasks');
 });
