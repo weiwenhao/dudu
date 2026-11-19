@@ -150,6 +150,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.plugin.outputs.version }}
         run: |
+          # A run that is repeated (a job that failed, and was started again) finds the release it made before.
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "The release $GITHUB_REF_NAME exists already. Nothing to make."
+            exit 0
+          fi
           cd assets
           sha256sum ./* | sed 's|\./||' > SHA256SUMS.txt
           args=(--repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes)
@@ -193,4 +198,5 @@ jobs:
             echo "dsh-dudu@${VERSION} is on npm already. Nothing to publish."
             exit 0
           fi
-          npm publish "assets/dsh-dudu-${VERSION}.tgz" --provenance --access public --tag latest
+          # `./`: without it npm reads assets/<file>.tgz as the GitHub shorthand owner/repo.
+          npm publish "./assets/dsh-dudu-${VERSION}.tgz" --provenance --access public --tag latest
