@@ -745,7 +745,10 @@ async function startDispatch(ctx, folder, assignment) {
   });
   const disposeNotifications = registerRoute(ctx, {
     path: '/api/dudu/inbox/notifications', methods: ['POST'], requestBody: 'buffered',
-    fetch: (request) => notifications.follow(request.signal),
+    fetch: async (request) => {
+      const stopped = await request.json().catch(() => null); // `{ epoch, after }`: where the page's last stream stopped
+      return notifications.follow(request.signal, stopped && typeof stopped === 'object' && !Array.isArray(stopped) ? stopped : {});
+    },
   });
   const disposeTidy = registerRoute(ctx, {
     path: '/api/dudu/issues/tidy', methods: ['POST'], requestBody: 'buffered',

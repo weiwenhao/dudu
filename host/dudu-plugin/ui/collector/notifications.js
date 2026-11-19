@@ -1,5 +1,12 @@
 const ENABLED = 'dudu:collector-notifications-enabled';
 
+const pause = (ms, signal) => new Promise((resolve) => {
+  if (signal?.aborted) { resolve(); return; }
+  const done = () => { clearTimeout(timer); signal?.removeEventListener('abort', done); resolve(); };
+  const timer = setTimeout(done, ms);
+  signal?.addEventListener('abort', done, { once: true });
+});
+
 /** Ask for system permission only in response to the owner's explicit enable action. */
 export async function allowCollectorNotifications({ target = window, NotificationClass = globalThis.Notification } = {}) {
   if (!NotificationClass) return false;
@@ -42,24 +49,44 @@ export function installCollectorNotifications({
     connection = controller;
     void (async () => {
       let reader;
+      // Where the last stream stopped. The plugin ends a stream every few seconds (DSH installs an update of itself only when no request is in flight),
+      // and the next one goes on from here, so what is collected in between is not lost; nothing from before the first stream is ever asked for.
+      let cursor = null;
+      const receive = (message) => {
+        if (typeof message?.epoch === 'string' && Number.isSafeInteger(message.head)) {
+          if (cursor?.epoch !== message.epoch) cursor = { epoch: message.epoch, after: message.head };
+          return;
+        }
+        if (cursor && Number.isSafeInteger(message?.id) && message.id > cursor.after) cursor = { ...cursor, after: message.id };
+        show(message);
+      };
       try {
-        const response = await fetchFn(new URL('api/dudu/inbox/notifications', baseURI).pathname, {
-          method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', credentials: 'same-origin', signal: controller.signal,
-        });
-        if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
-        reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let pending = '';
         while (!controller.signal.aborted) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          pending += decoder.decode(value, { stream: true });
-          let newline;
-          while ((newline = pending.indexOf('\n')) >= 0) {
-            const line = pending.slice(0, newline).trim();
-            pending = pending.slice(newline + 1);
-            if (line) show(JSON.parse(line));
+          const began = Date.now();
+          let lines = 0;
+          const response = await fetchFn(new URL('api/dudu/inbox/notifications', baseURI).pathname, {
+            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cursor ?? {}), credentials: 'same-origin', signal: controller.signal,
+          });
+          if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+          reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let pending = '';
+          while (!controller.signal.aborted) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            pending += decoder.decode(value, { stream: true });
+            let newline;
+            while ((newline = pending.indexOf('\n')) >= 0) {
+              const line = pending.slice(0, newline).trim();
+              pending = pending.slice(newline + 1);
+              if (line) { lines++; receive(JSON.parse(line)); }
+            }
           }
+          await reader.cancel().catch(() => {});
+          reader.releaseLock();
+          reader = undefined;
+          // A stream that ended at once with nothing in it (something is wrong; a good one starts with a line saying where the feed is) is not asked for again at once.
+          if (lines === 0 && Date.now() - began < 500) await pause(1000, controller.signal);
         }
       } catch (error) {
         if (!controller.signal.aborted) warn(`[dudu] Collector notifications disconnected: ${error?.message ?? error}`);
