@@ -45,8 +45,12 @@ before(async () => {
     model: { replies: [
       // a collection that reads through the connector: it first tries the tool that saves (it is in DSH for every session, but not for this one), then reads
       { when: (context: any) => context.system.includes(COLLECTION) && context.prompt.includes('Connector: Stand-in'),
-        calls: [{ name: 'mcp__stand-in__save', arguments: { q: 'from the collection' }, force: true }, { name: 'mcp__stand-in__look-up', arguments: { q: 'mail' } }],
-        then: (results: string[]) => JSON.stringify({ ok: true, records: [{ id: 'stand-in-1', title: 'from the stand-in', text: results.at(-1) ?? '' }] }) },
+        calls: [
+          { name: 'mcp__stand-in__save', arguments: { q: 'from the collection' }, force: true },
+          { name: 'mcp__stand-in__look-up', arguments: { q: 'mail' } },
+          { name: 'collector_submit', arguments: { ok: true, records: [{ id: 'stand-in-1', title: 'from the stand-in', text: 'found mail' }] } },
+        ],
+        then: () => 'Submitted.' },
       // an ordinary session (an issue given to DeepSeek) and the conversation with 嘟嘟
       { when: 'LOOK-ONE', calls: [{ name: 'mcp__stand-in__look-up', arguments: { q: 'one' } }], then: (results: string[]) => `读到了：${results.at(-1)}` },
       { when: 'LOOK-TWO', calls: [{ name: 'mcp__stand-in__look-up', arguments: { q: 'two' } }], then: (results: string[]) => `又读到了：${results.at(-1)}` },
@@ -148,7 +152,7 @@ test('a collection through the connector sees its read-only tools and nothing el
   assert.ok(collections.length >= 1, 'the collection ran on the model');
   const first = collections[0];
   // DSH offers `subagent` to every session whatever is hidden (it is added after a plugin limits the list); a call of it is refused by the guard (unit test)
-  assert.deepEqual(first.tools.filter((name: string) => name !== 'subagent'), ['mcp__stand-in__look-up'], `only the tool that reads: ${first.tools.join(', ')}`);
+  assert.deepEqual(first.tools.filter((name: string) => name !== 'subagent').sort(), ['collector_submit', 'mcp__stand-in__look-up'], `only source reading and scoped submission: ${first.tools.join(', ')}`);
   const tried = collections.find((request: any) => request.toolResults.length > 0);
   assert.ok(tried, 'it tried the tool that saves anyway');
   assert.ok(!tried.toolResults[0].includes('saved'), `and that was refused, not run: ${tried.toolResults[0]}`);
