@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, createWriteStream, copyFileSync, writeFileSync, 
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startAndroidFixture } from '../native-android/test/fixture.mjs';
+import { startAndroidFixture } from '../native/android/test/fixture.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const args = new Set(process.argv.slice(2));
@@ -25,8 +25,8 @@ function adbRun(...arguments_) {
 }
 async function gradle(tasks, extra = []) {
   const log = createWriteStream(path.join(runFolder, 'gradle.log'), { flags: 'a' });
-  const process_ = spawn(path.join(root, 'native-android/gradlew'), [...tasks, ...extra, '--no-daemon', '--console=plain'],
-    { cwd: path.join(root, 'native-android'), env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const process_ = spawn(path.join(root, 'native/android/gradlew'), [...tasks, ...extra, '--no-daemon', '--console=plain'],
+    { cwd: path.join(root, 'native/android'), env, stdio: ['ignore', 'pipe', 'pipe'] });
   for (const output of [process_.stdout, process_.stderr]) output.on('data', data => {
     process.stdout.write(data); log.write(data);
   });
@@ -68,7 +68,7 @@ try {
       try { adbRun('pull', '/sdcard/Download/dudu-android-review', path.join(runFolder, 'screenshots')); }
       catch { /* An early runner failure may produce no screenshots. */ }
     }
-    const reports = path.join(root, 'native-android/app/build/outputs/androidTest-results/connected/debug');
+    const reports = path.join(root, 'native/android/app/build/outputs/androidTest-results/connected/debug');
     function cases(folder) {
       if (!existsSync(folder)) return 0;
       return readdirSync(folder, { withFileTypes: true }).reduce((sum, entry) => sum + (entry.isDirectory()
@@ -81,7 +81,7 @@ try {
     await gradle([':app:testDebugUnitTest']);
   } else {
     await gradle([':app:assembleDebug', ':app:testDebugUnitTest', ':app:lintDebug']);
-    const apk = path.join(root, 'native-android/app/build/outputs/apk/debug/app-debug.apk');
+    const apk = path.join(root, 'native/android/app/build/outputs/apk/debug/app-debug.apk');
     copyFileSync(apk, path.join(runFolder, 'dudu-debug.apk'));
     result.apk = apk;
     if (args.has('--install')) {

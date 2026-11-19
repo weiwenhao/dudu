@@ -9,7 +9,7 @@ import { nativeLocale, nativeText } from './native-locale.mjs';
  * Navigation for the phone: the sidebar panels, conversation views and settings
  * sections DSH shows, as DSH itself registered them.
  *
- * Those registries live in DSH's browser runtime. The dsbot client module reads them there (so a
+ * Those registries live in DSH's browser runtime. The plugin's client module reads them there (so a
  * plugin that adds a panel or a conversation tab shows up here by itself) and posts a snapshot to
  * `ingest`. The phone only ever sees the validated snapshot from `get`, with an `open` descriptor per
  * item that says how to show it. The routing below is the single place that knows DSH's ids, so a DSH
@@ -209,7 +209,7 @@ function buildView(raw) {
 /** Sections the phone has no use for: pairing configures the desktop, and general settings are the
  * desktop's appearance, language and shortcuts. */
 // The plugin's own section is hidden under both of its names: a DSH window may still run the client module of the plugin's former name.
-const HIDDEN_SETTINGS = new Set(['dudu-mobile-control', 'dudu-providers', 'dsbot-mobile-control', 'general']);
+const HIDDEN_SETTINGS = new Set(['dudu-mobile-control', 'dudu-providers', 'general']);
 
 function buildSettings(raw) {
   const base = common(raw);

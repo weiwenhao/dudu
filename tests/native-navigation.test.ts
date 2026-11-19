@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createDsbotControl } from '../host/dsbot-control.mjs';
+import { createDuduControl } from '../host/dudu-control.mjs';
 import { createNativeBridge } from '../host/native-bridge.mjs';
 import {
   createNavigationStore,
@@ -49,7 +49,7 @@ const snapshot = {
   settings: [
     { id: 'models', title: '模型', order: 10, icon },
     { id: 'dudu-mobile-control', title: '手机控制', order: 50 },
-    { id: 'dsbot-mobile-control', title: '手机控制', order: 51 },
+    { id: 'dudu-mobile-control', title: '手机控制', order: 51 },
     { id: 'dudu-providers', title: '供应商', order: 51 },
     { id: 'general', title: '通用设置', order: 5 },
     { id: 'account', title: '账号', order: 0 },
@@ -269,7 +269,7 @@ test('an entry that later arrives without its icon keeps the one it had, and a n
 });
 
 test('the snapshot survives a restart and is routed again by the running plugin', async (t) => {
-  const folder = await mkdtemp(join(tmpdir(), 'dsbot-navigation-'));
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-navigation-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
 
   const store = await createNavigationStore({ folder, now: () => 5000 });
@@ -291,7 +291,7 @@ test('the snapshot survives a restart and is routed again by the running plugin'
 });
 
 test('an unreadable snapshot file is ignored rather than breaking the plugin', async (t) => {
-  const folder = await mkdtemp(join(tmpdir(), 'dsbot-navigation-bad-'));
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-navigation-bad-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
   await writeFile(join(folder, 'navigation.json'), '{"updatedAt": 1, "sidebar": "nope"');
   const store = await createNavigationStore({ folder });
@@ -316,14 +316,14 @@ test('the phone asks for navigation through the native API and gets an empty ans
 });
 
 test('DSH reports its navigation to the plugin, which keeps only a bounded, validated copy', async (t) => {
-  const folder = await mkdtemp(join(tmpdir(), 'dsbot-navigation-control-'));
-  const control = await createDsbotControl({
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-navigation-control-'));
+  const control = await createDuduControl({
     folder, host: '127.0.0.1', port: 0, dispatch: async () => ({}), resolveLanAddress: () => '127.0.0.1',
   });
   t.after(async () => {
     try { await control.close(); } finally { await rm(folder, { recursive: true, force: true }); }
   });
-  const post = (body: string) => control.handle('nav', new Request('http://localhost/api/dsbot/nav', { method: 'POST', body }));
+  const post = (body: string) => control.handle('nav', new Request('http://localhost/api/dudu/nav', { method: 'POST', body }));
 
   const accepted = await post(JSON.stringify(snapshot));
   assert.equal(accepted.status, 200);

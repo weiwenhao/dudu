@@ -418,4 +418,4 @@ iOS 使用系统的 App 语言设置；Android 在 App 内提供同一语言偏�
 - 嵌入的第三方 DSH 网页使用原页面与已认证的页面会话，不作为另一套 native 页面重绘。
 - Android 后台推送、生产签名和真实供应商运行不在本轮界面修正的验收范围。
 - 曾出现一次 Compose 列表索引异常；侧边栏改为一次发布会话与工作区，并在测量前固定分组结构。修正后的两条相关流程通过，未做压力测试；记录保留在验证回执中。
-- `native-android/wording-pending.json` 与 `wording-sources.json` 中的十条英文仍待所有者逐字审阅；已沿用的中文和现有译文不作重新命名。
+- `native/android/wording-pending.json` 与 `wording-sources.json` 中的十条英文仍待所有者逐字审阅；已沿用的中文和现有译文不作重新命名。

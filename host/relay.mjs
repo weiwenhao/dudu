@@ -70,7 +70,7 @@ export async function createRelay({
     let url;
     try { url = new URL(req.url ?? '/', 'http://relay.local'); }
     catch { fail(res, 400, 'Invalid URL'); return; }
-    if (healthId && req.method === 'GET' && url.pathname === '/.well-known/dsbot') {
+    if (healthId && req.method === 'GET' && url.pathname === '/.well-known/dudu') {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify({ id: healthId }));
       return;

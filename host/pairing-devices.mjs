@@ -31,8 +31,8 @@ export function connectionAddress(value) {
   } catch { throw new Error('请输入完整的连接地址。'); }
   const originalProtocol = url.protocol;
   if (!['http:', 'https:', 'ws:', 'wss:'].includes(originalProtocol) || url.username || url.password
-    || !['', '/', '/dsbot'].includes(url.pathname) || url.search || url.hash || /[?#]/.test(value)) {
-    throw new Error('连接地址只需填写主机和端口，可选 /dsbot 路径。');
+    || !['', '/'].includes(url.pathname) || url.search || url.hash || /[?#]/.test(value)) {
+    throw new Error('连接地址只需填写主机和端口。');
   }
   if (originalProtocol === 'ws:') url.protocol = 'http:';
   else if (originalProtocol === 'wss:') url.protocol = 'https:';
@@ -66,11 +66,11 @@ export async function createPairingStore({
     data = { version: 1, id: randomUUID(), secret: randomBytes(32).toString('base64url'), devices: [] };
   }
   if (data.version !== 1 || !validToken(data.secret) || !Array.isArray(data.devices)
-    || typeof data.id !== 'string') throw new Error('Invalid dsbot device registry.');
+    || typeof data.id !== 'string') throw new Error('Invalid dudu device registry.');
   if (data.legacyImportedTokenHash !== undefined
     && (typeof data.legacyImportedTokenHash !== 'string'
       || !/^[0-9a-f]{64}$/.test(data.legacyImportedTokenHash))) {
-    throw new Error('Invalid legacy dsbot migration marker.');
+    throw new Error('Invalid legacy dudu migration marker.');
   }
   data.devices = data.devices.map((device) => ({ ...device }));
   // Preserve the cookie policy of codes created before each code stored its own policy.
@@ -111,7 +111,7 @@ export async function createPairingStore({
     if (flushTimer) return;
     flushTimer = setTimeout(() => {
       flushTimer = undefined;
-      void save().catch(() => console.error('[dsbot] Device activity could not be saved.'));
+      void save().catch(() => console.error('[dudu] Device activity could not be saved.'));
     }, 1000);
     flushTimer.unref();
   };
@@ -122,10 +122,10 @@ export async function createPairingStore({
     id: data.id,
     proof(nonce) {
       if (typeof nonce !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) {
-        throw new Error('Invalid dsbot probe nonce.');
+        throw new Error('Invalid dudu probe nonce.');
       }
       return createHmac('sha256', data.secret)
-        .update(`dsbot-probe:v1:${nonce}`).digest('base64url');
+        .update(`dudu-probe:v1:${nonce}`).digest('base64url');
     },
     routeProof(deviceId, nonce) {
       if (typeof deviceId !== 'string' || typeof nonce !== 'string'
@@ -138,7 +138,7 @@ export async function createPairingStore({
         computerId: data.id,
         deviceId: device.id,
         deviceProof: createHmac('sha256', Buffer.from(device.tokenHash, 'hex'))
-          .update(`dsbot-route:v1:${nonce}:${data.id}:${device.id}`).digest('base64url'),
+          .update(`dudu-route:v1:${nonce}:${data.id}:${device.id}`).digest('base64url'),
       };
     },
     list() {

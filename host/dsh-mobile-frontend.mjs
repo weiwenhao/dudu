@@ -17,10 +17,10 @@ const STATIC_CACHE_LIMIT = 48 * 1024 * 1024;
 const STATIC_CACHE_MAX_ENTRIES = 128;
 const COMPAT_ASSET_CACHE_LIMIT = 48 * 1024 * 1024;
 const COMPAT_ASSET_CACHE_MAX_ENTRIES = 8;
-const INTERNAL_ROOT = '/__dsbot';
+const INTERNAL_ROOT = '/__dudu';
 const DYNAMIC_EXPR_UNAVAILABLE = 'DSH dynamic configuration expressions are disabled in the mobile embedded view.';
 const KNOWN_DYNAMIC_EXPR_EVALUATOR = /const ([$A-Z_a-z][$\w]*)=new Function\("ctx","expr",`\n  with \(ctx\) \{\n    return eval\(expr\)\n  \}\n`\);/gu;
-const HTTP_BASE_PATH = /^\/dsbot\/ui\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/$/iu;
+const HTTP_BASE_PATH = /^\/ui\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/$/iu;
 const MIME_TYPES = Object.freeze({
   '.avif': 'image/avif',
   '.css': 'text/css; charset=utf-8',
@@ -111,13 +111,13 @@ function staticAssetKey(requestPath) {
 
 function documentResourcePath(path, basePath) {
   if (!basePath || typeof path !== 'string'
-    || !/^\/(?:assets|plugins|__dsbot)\//u.test(path)) return path;
+    || !/^\/(?:assets|plugins|__dudu)\//u.test(path)) return path;
   return `${basePath}${path.slice(1)}`;
 }
 
 function rewriteRootResourceURLs(value, basePath) {
   if (!basePath || typeof value !== 'string') return value;
-  return value.replace(/(^|[\s"'`(=,:])\/(assets|plugins|__dsbot)\//gu,
+  return value.replace(/(^|[\s"'`(=,:])\/(assets|plugins|__dudu)\//gu,
     (_match, boundary, root) => `${boundary}${basePath}${root}/`);
 }
 
@@ -247,24 +247,24 @@ const appUIModuleIDs=new Set([
 function exposeAppUI(moduleID,ctx){
   if(ctx===null||(typeof ctx!=="object"&&typeof ctx!=="function"))return;
   try{
-    let ui=window.__DSBOT_APP_UI__;
+    let ui=window.__DUDU_APP_UI__;
     if(!ui||typeof ui!=="object"){
       ui={contexts:Object.create(null)};
-      window.__DSBOT_APP_UI__=ui;
+      window.__DUDU_APP_UI__=ui;
     }
     if(!ui.contexts||typeof ui.contexts!=="object")ui.contexts=Object.create(null);
     ui.contexts[moduleID]=ctx;
     ui.ctx=ctx;
     ui.context=ctx;
     ui.moduleId=moduleID;
-    window.dispatchEvent(new CustomEvent("dsbot:app-ui-ready",{detail:{moduleId:moduleID}}));
+    window.dispatchEvent(new CustomEvent("dudu:app-ui-ready",{detail:{moduleId:moduleID}}));
   }catch{}
 }
 function wrapAppUIExports(moduleID,exports){
   if(exports===null||(typeof exports!=="object"&&typeof exports!=="function")
     ||typeof exports.apply!=="function")return exports;
   const originalApply=exports.apply;
-  if(originalApply.__dsbotAppUIWrapped)return exports;
+  if(originalApply.__duduAppUIWrapped)return exports;
   const wrappedApply=function(ctx,...args){
     if(moduleID===localeModuleID)ctx=isolateLocaleContext(ctx);
     const result=originalApply.apply(this,[ctx,...args]);
@@ -277,7 +277,7 @@ function wrapAppUIExports(moduleID,exports){
     if(appUIModuleIDs.has(moduleID))exposeAppUI(moduleID,ctx);
     return result;
   };
-  Object.defineProperty(wrappedApply,"__dsbotAppUIWrapped",{value:true});
+  Object.defineProperty(wrappedApply,"__duduAppUIWrapped",{value:true});
   const applyDescriptor=Object.getOwnPropertyDescriptor(exports,"apply");
   const wrappedDescriptor=applyDescriptor&&"value" in applyDescriptor
     ? {...applyDescriptor,value:wrappedApply}
@@ -304,13 +304,13 @@ function wrapAppUIExports(moduleID,exports){
 function wrapAppUIRegistration(registration){
   if(!registration||(!appUIModuleIDs.has(registration.id)&&registration.id!==localeModuleID)
     ||typeof registration.factory!=="function"
-    ||registration.factory.__dsbotAppUIWrapped)return registration;
+    ||registration.factory.__duduAppUIWrapped)return registration;
   const moduleID=registration.id;
   const originalFactory=registration.factory;
   const wrappedFactory=function(...args){
     return wrapAppUIExports(moduleID,originalFactory.apply(this,args));
   };
-  Object.defineProperty(wrappedFactory,"__dsbotAppUIWrapped",{value:true});
+  Object.defineProperty(wrappedFactory,"__duduAppUIWrapped",{value:true});
   const descriptors=Object.getOwnPropertyDescriptors(registration);
   const factoryDescriptor=descriptors.factory||{};
   descriptors.factory={
@@ -428,7 +428,7 @@ function rewriteAssetTags(html, staticManifest, resourceOverrides = new Map(), b
 }
 
 function cspMeta(nonce, httpTransport = false) {
-  const localSource = httpTransport ? "'self'" : 'dsbot-ui:';
+  const localSource = httpTransport ? "'self'" : 'dudu-ui:';
   const policy = [
     "default-src 'none'",
     `script-src ${localSource} 'nonce-${nonce}'`,
@@ -585,7 +585,7 @@ export function createDshMobileFrontend({
 
     const version = createHash('sha256').update(data).digest('hex');
     const entry = {
-      path: `${assetPath}?dsbot=${version}`,
+      path: `${assetPath}?dudu=${version}`,
       resource: { mimeType: original.mimeType, data },
       byteCount: data.byteLength,
     };

@@ -32,7 +32,7 @@ test('context reads call only exact in-process plugin routes with the owner peer
       ok: true, value: { rev: 3, requests: [{ seq: 20 }] },
     });
     assert.deepEqual(calls.at(-1), {
-      url: `http://dsbot.invalid/api/dsh-context/${path}`,
+      url: `http://dudu.invalid/api/dsh-context/${path}`,
       method: 'POST', body: args,
       headers: { 'content-type': 'application/json' }, peer,
     });

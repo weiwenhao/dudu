@@ -81,7 +81,7 @@ function ConnectScreen({ previous, error: externalError, onConnect, onCancel }: 
           {!manualEntry ? <>
             <View style={styles.pairingCard}>
               <Text style={styles.pairingTitle}>电脑端</Text>
-              <Text style={styles.pairingDetail}>在 DSH 中打开 dsbot 配对插件并显示二维码。手机扫码自动连接，无需查 IP。</Text>
+              <Text style={styles.pairingDetail}>在 DSH 中打开 dudu 配对插件并显示二维码。手机扫码自动连接，无需查 IP。</Text>
             </View>
             <Pressable accessibilityRole="button" accessibilityLabel="扫描电脑二维码" disabled={saving} onPress={() => void scan()}
               style={({ pressed }) => [styles.primary, styles.scanPrimary, pressed && styles.pressed, saving && { opacity: .6 }]}>
@@ -277,7 +277,7 @@ function HarnessApp() {
     }).catch((cause) => {
       if (!active) return;
       logEvent('connection.load-error', { error: cause }, 'error');
-      setPairingError('无法读取已保存的电脑，请重新打开 dsbot 后重试。');
+      setPairingError('无法读取已保存的电脑，请重新打开 dudu 后重试。');
       setBooting(false);
     });
     const subscription = Linking.addEventListener('url', ({ url }) => {
@@ -432,7 +432,7 @@ function HarnessApp() {
           accessibilityLabel={`切换视图，当前${conversationViews.find((view) => view.selected)?.label ?? '对话'}`}
           accessibilityState={{ expanded: viewMenuOpen, disabled: conversationViews.length < 2 }}
           style={({ pressed }) => [styles.toolbarTitle, pressed && { opacity: .55 }]}>
-          <Text numberOfLines={1} style={[styles.toolbarName, dark && { color: '#f2f3f7' }]}>{title === 'DeepSeek Harness' ? 'dsbot' : title}</Text>
+          <Text numberOfLines={1} style={[styles.toolbarName, dark && { color: '#f2f3f7' }]}>{title === 'DeepSeek Harness' ? 'dudu' : title}</Text>
           {conversationViews.length > 1 && <View style={viewMenuOpen && { transform: [{ rotate: '180deg' }] }}>
             <Icon name="down" size={14} color={dark ? '#92949d' : '#8c8f98'} />
           </View>}

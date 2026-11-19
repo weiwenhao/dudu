@@ -84,7 +84,7 @@ npm run native:install     # 构建 iOS App 并装到 iPhone
 npm run android:install    # 构建安卓 App 并装进模拟器
 ```
 
-构建 iOS App 前，把 `native/project.yml` 里的开发者团队和 Bundle ID 换成你自己的。
+构建 iOS App 前，把 `native/ios/project.yml` 里的开发者团队和 Bundle ID 换成你自己的。
 
 不用 `desktop:update` 时，运行 `npm run package:desktop`，再在 DSH 的「添加插件」里安装 `.local/release/` 下的 `dsh-dudu-<版本>.tgz`。
 

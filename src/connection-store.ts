@@ -8,9 +8,9 @@ type SecretStorage = {
   remove(key: string): Promise<void>;
 };
 
-const INDEX_KEY = 'dsbot.computers.v2';
-const LEGACY_KEY = 'dsbot.connection.v1';
-const computerKey = (id: string) => `dsbot.computer.${id}`;
+const INDEX_KEY = 'dudu.computers.v2';
+const LEGACY_KEY = 'dudu.connection.v1';
+const computerKey = (id: string) => `dudu.computer.${id}`;
 const validId = (id: unknown): id is string => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(id);
 const credentialAddress = (url: string) => {
   const value = new URL(url);

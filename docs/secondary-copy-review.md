@@ -69,12 +69,12 @@
 
 | 位置 | 当前原文 |
 |---|---|
-| 连接引导，`native/DSBot/Views/ConnectionGuideView.swift` | 在电脑的「设置 → 手机控制」中生成配对码 |
+| 连接引导，`native/ios/Dudu/Views/ConnectionGuideView.swift` | 在电脑的「设置 → 手机控制」中生成配对码 |
 | 同上：2026-11-03 起手机控制只在嘟嘟自己的设置里（嘟嘟页右上角的设置 → 手机控制），DSH 自己的设置里没有；这句话的位置对不上了，改字等主人定，本轮没有改手机 | （同上） |
-| 新会话模式选择，`native/DSBot/Views/ChatView.swift` | 模式在会话开始前选择，之后不能更改。 |
-| 新会话项目选择，`native/DSBot/Views/ChatView.swift` | 选择一个工作区开始 |
-| 输出达到上限，`native/DSBot/Views/ConversationFeatureViews.swift` | 回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。 |
-| DSH 进程中断，`native/DSBot/Views/ConversationFeatureViews.swift` | DSH 进程在本轮完成前退出（例如被强制结束、崩溃或关闭超时），重新启动后本轮已中止。未完成的工具调用结果未知。 |
+| 新会话模式选择，`native/ios/Dudu/Views/ChatView.swift` | 模式在会话开始前选择，之后不能更改。 |
+| 新会话项目选择，`native/ios/Dudu/Views/ChatView.swift` | 选择一个工作区开始 |
+| 输出达到上限，`native/ios/Dudu/Views/ConversationFeatureViews.swift` | 回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。 |
+| DSH 进程中断，`native/ios/Dudu/Views/ConversationFeatureViews.swift` | DSH 进程在本轮完成前退出（例如被强制结束、崩溃或关闭超时），重新启动后本轮已中止。未完成的工具调用结果未知。 |
 
 手机里的项目 / 模式描述、文件说明、计划和会话摘要还有来自 DSH 或用户的动态内容，不能当作固定副文本逐句翻译或改写。本轮只做代码检索，没有做原生界面的渲染检查。
 
@@ -88,10 +88,10 @@
 重复提示和冗余交互。旧头部已经按主人给出的原文改成“取消 / 编辑 / 保存”；本轮沿用这一标准。
 前文“手机原生界面发现项”是 11 月 2 日检查的历史记录，当前处置以本节为准。
 
-检查范围是当前 `native/DSBot/` 的 SwiftUI 页面、弹窗、菜单、状态和结果反馈，以及
+检查范围是当前 `native/ios/Dudu/` 的 SwiftUI 页面、弹窗、菜单、状态和结果反馈，以及
 `host/mobile-page-adapter.mjs` 的嵌入页适配。覆盖会话、输入与附件、排队、目标、任务、模式和模型选择、
 计划与问题、重试与中断、文件与图片、侧栏与搜索、设置、电脑连接、手动配对和扫码。
-同时追踪 `DSBotStore`、`SessionCommands`、`PermissionLabels`、`Models` 中生成这些文字的分支。
+同时追踪 `DuduStore`、`SessionCommands`、`PermissionLabels`、`Models` 中生成这些文字的分支。
 未将旧 Expo 原型当成当前手机实现，也未将第三方 DSH 页面和模型正文宣称为已逐字审核。
 
 ### 已清理的重复表达
@@ -133,7 +133,7 @@
 | 输出上限标题下 | 回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。 | 发送“继续”可接着输出。 | 标题“已达到输出 token 上限”已交代状态，正文只保留可执行动作 |
 | 进程中断标题下 | DSH 进程在本轮完成前退出（例如被强制结束、崩溃或关闭超时），重新启动后本轮已中止。未完成的工具调用结果未知。 | DSH 在运行中退出，未完成的工具结果未知。 | 标题“任务已停止”已经交代结果，去掉原因枚举和重复的停止描述，保留工具执行结果未知这一事实 |
 
-以上是具体改字建议，不是已批准用词。遵循根目录和 `native/AGENTS.md` 的逐字审阅要求，在主人确认前保留原文，
+以上是具体改字建议，不是已批准用词。遵循根目录和 `native/ios/AGENTS.md` 的逐字审阅要求，在主人确认前保留原文，
 不将文档中的建议自动写入 App。
 
 ### 检查后保留

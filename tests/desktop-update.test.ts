@@ -7,7 +7,7 @@ import { desktopPackageIdentity, matchesDesktopRuntime, waitForDesktopRuntime, w
 import { acquireUpdateLock, activateDesktopUpdate, assertDesktopContinuity, parseUpdateArguments, requestDesktopReload, runsInsideDesktop } from '../scripts/update-desktop.mjs';
 
 async function temporary(t: any) {
-  const folder = await mkdtemp(join(tmpdir(), 'dsbot-update-test-'));
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-update-test-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
   return folder;
 }
@@ -17,7 +17,7 @@ test('desktop identity detects code changes even when the package version stays 
   await mkdir(join(folder, 'dist'));
   for (const [name, text] of Object.entries({
     'package.json': JSON.stringify({ name: 'dsh-dudu', version: '0.4.0' }),
-    'index.mjs': 'export const name = "dsbot";',
+    'index.mjs': 'export const name = "dudu";',
     'client.js': 'window.ready = true;',
     'cordis.patch.yml': '[]',
     'dist/server.mjs': 'export const ready = true;',

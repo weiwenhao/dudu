@@ -70,7 +70,7 @@
     "preandroid": "npm run build:adapter",
     "android": "expo run:android",
     "ios": "node scripts/native-ios.mjs --install",
-    "native:project": "xcodegen generate --spec native/project.yml --project native",
+    "native:project": "xcodegen generate --spec native/ios/project.yml --project native/ios",
     "native:review-pages": "node scripts/export-review-pages.mjs",
     "native:build": "node scripts/native-ios.mjs",
     "native:install": "node scripts/native-ios.mjs --install",

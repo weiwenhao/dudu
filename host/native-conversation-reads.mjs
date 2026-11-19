@@ -47,7 +47,7 @@ export function createConversationReads({ connection, peer, workspaceChanges, at
         controller.signal.addEventListener('abort', stop, { once: true });
         if (controller.signal.aborted) stop();
       });
-      const url = new URL(`http://dsbot.invalid${ROUTES[kind]}`);
+      const url = new URL(`http://dudu.invalid${ROUTES[kind]}`);
       for (const [key, value] of Object.entries(coordinates)) url.searchParams.set(key, String(value));
       const read = async () => {
         controller.signal.throwIfAborted();

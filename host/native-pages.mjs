@@ -153,7 +153,7 @@ export function createNativePages({
     if (typeof frontend?.document !== 'function' || typeof pageRpc?.invoke !== 'function'
       || typeof pageRpc?.open !== 'function') fail('UPSTREAM_UNAVAILABLE');
     const id = randomUUID();
-    const httpBasePath = transport === 'http' ? `/dsbot/ui/${id}/` : undefined;
+    const httpBasePath = transport === 'http' ? `/ui/${id}/` : undefined;
     const page = {
       id, kind: params.page, sessionId: params.sessionId, target: params.target, httpBasePath,
       streams: new Map(), resources: new Map(), resourceBytes: 0,

@@ -56,9 +56,9 @@ function createHarness(initialPanel = null, { delayedUI = false } = {}) {
     disconnect() {}
   }
   const window = {
-    __DSBOT_PAGE__: { kind: 'plugins' },
-    __DSBOT_APP_UI__: delayedUI ? undefined : ui,
-    __DSBOT_NATIVE__: {
+    __DUDU_PAGE__: { kind: 'plugins' },
+    __DUDU_APP_UI__: delayedUI ? undefined : ui,
+    __DUDU_NATIVE__: {
       ready() { readyCount += 1; },
       fail() { failCount += 1; },
     },
@@ -80,7 +80,7 @@ function createHarness(initialPanel = null, { delayedUI = false } = {}) {
   return {
     get readyCount() { return readyCount; },
     get failCount() { return failCount; },
-    startUI() { window.__DSBOT_APP_UI__ = ui; },
+    startUI() { window.__DUDU_APP_UI__ = ui; },
     async advance(milliseconds) {
       now += milliseconds;
       const pending = [...timers.values()];
@@ -188,7 +188,7 @@ function createRouteHarness({
         return { parentElement: { querySelector: () => more } };
       }
       if (selector === '[data-conversation-content]') return state.content ? {} : null;
-      if (selector === '[data-dsbot-rightbar]') return state.rightbar ? rightbarNode : null;
+      if (selector === '[data-dudu-rightbar]') return state.rightbar ? rightbarNode : null;
       if (selector.includes('> header [class*="_toolbar"]')) {
         return toolbarButtons.length ? { querySelectorAll: () => toolbarButtons } : null;
       }
@@ -218,9 +218,9 @@ function createRouteHarness({
     disconnect() {}
   }
   const window = {
-    __DSBOT_PAGE__: page,
-    __DSBOT_APP_UI__: ui,
-    __DSBOT_NATIVE__: {
+    __DUDU_PAGE__: page,
+    __DUDU_APP_UI__: ui,
+    __DUDU_NATIVE__: {
       ready() { readyCount += 1; }, fail() {},
       settingsCategories(value: Array<{ id: string; label: string }>) { categories.push(value); },
     },
@@ -274,8 +274,8 @@ test('a sidebar panel from another plugin is selected by its id and is ready onc
   await harness.settle();
   assert.deepEqual(selected, ['insight']);
   assert.equal(harness.readyCount, 0);
-  assert.equal(harness.dataset.dsbotPageKind, 'panel');
-  assert.equal('dsbotPageSession' in harness.dataset, false);
+  assert.equal(harness.dataset.duduPageKind, 'panel');
+  assert.equal('duduPageSession' in harness.dataset, false);
 
   await harness.step(200);
   assert.equal(harness.readyCount, 0, 'DSH was still drawing the panel a moment ago');
@@ -295,7 +295,7 @@ test('a conversation view from another plugin is opened in its session and picke
     ],
     tabs,
   });
-  assert.equal('dsbotPageSession' in harness.dataset, true, 'the conversation chrome is hidden like the other session pages');
+  assert.equal('duduPageSession' in harness.dataset, true, 'the conversation chrome is hidden like the other session pages');
   await harness.settle();
   assert.deepEqual(opened, ['session-1']);
   await harness.step(200);
@@ -338,7 +338,7 @@ test('settings select the registry ID despite duplicate labels and clear a remov
     click() { clicked = true; selected = id; },
   }));
   const dialog = {
-    querySelector(selector: string) { return selector === '[data-dsbot-settings-body]' ? {} : null; },
+    querySelector(selector: string) { return selector === '[data-dudu-settings-body]' ? {} : null; },
     querySelectorAll: () => buttons,
   };
   const harness = createRouteHarness({
@@ -355,7 +355,7 @@ test('settings select the registry ID despite duplicate labels and clear a remov
   assert.equal(harness.categories.at(-1)?.length, 2);
 
   entries = [];
-  harness.fire('dsbot:settings-select', null);
+  harness.fire('dudu:settings-select', null);
   await harness.step(0);
   assert.equal(harness.categories.at(-1)?.length, 0, 'unloaded sections must disappear on the phone');
 

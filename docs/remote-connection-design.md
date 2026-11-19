@@ -28,7 +28,7 @@
 `pair`、`computer`、`name`，新增设备探测标识 `device`，并通过重复的 `lan` / `public` 参数携带带类型的候选 HTTP/HTTPS origin。
 扫码后先核验内网候选，内网不能建立连接时再试公网；选中线路后完成一次配对，全部地址保存在同一台电脑下。
 
-手机向 `/dsbot/api/v1/probe` 发送随机 nonce 和设备标识，不带 Authorization、配对凭据或 URL 查询。
+手机向 `/api/v1/probe` 发送随机 nonce 和设备标识，不带 Authorization、配对凭据或 URL 查询。
 电脑用已保存的凭据 SHA-256 摘要作为 HMAC-SHA256 密钥，对版本、nonce、电脑身份和设备标识签名。
 手机用自身持有的凭据计算并验证签名；只有证明匹配的地址才会收到认证请求。探测不会提前兑换配对码，
 未配对码的十分钟有效期和已撤销设备的限制同样适用；HTTP 重定向不被跟随。
@@ -156,7 +156,7 @@
 通过 USB 拉取 build 29 的真机诊断，在 17:18:33–17:26:10（北京时间）内记录到
 125 次 `network.path.changed`、129 次连接尝试、68 次连接成功和 61 次连接失败。
 多次成功连接后数秒又由网络回调主动断开；失败记录为 `other.1`，
-恢复逻辑将非 `DSBotFailure` 的错误统一转换为 `CONNECTION_FAILED`。
+恢复逻辑将非 `DuduFailure` 的错误统一转换为 `CONNECTION_FAILED`。
 当前公网 HTTPS 探测可响应，不能将这种持续重连归因于端口未放行。
 
 原因及本轮修复：
@@ -190,12 +190,12 @@
 
 - 原生连接、断开、事件长轮询、RPC 及图片读取：无凭据或错误 Bearer 返回 401；
   伪造内网转发头或提交页面 Cookie 不能代替原生认证。
-- `/dsbot/web/open`：无凭据 / 错误凭据返回 401，带跨站 Origin 的打开请求返回 403。
+- `/web/open`：无凭据 / 错误凭据返回 401，带跨站 Origin 的打开请求返回 403。
 - 页面文档、静态资源、RPC 和流：缺少页面 Cookie 或 Cookie 错误返回 401；
   Bearer 不能代替页面的独立 Cookie。服务端按页面保存随机 Cookie 摘要，
   客户端安装 `HttpOnly` 且以单页路径为作用域的 Cookie，HTTPS 时标为 `Secure`。
 - 根路径、通用 DSH RPC 与非页面作用域的静态资源返回 404；不开放通用 DSH 转发。
-- `/dsbot/api/v1/probe` 的无设备 nonce 探测按设计公开，只返回协议版本和 nonce 绑定的 HMAC 证明，
+- `/api/v1/probe` 的无设备 nonce 探测按设计公开，只返回协议版本和 nonce 绑定的 HMAC 证明，
   不返回配对凭据、会话或文件。不存在的设备标识返回 401。
 - HTTPS 的域名与证书链校验通过；Nginx 仅配置 TLS 1.2 / 1.3。
   Nginx 转发保留认证头和 Cookie，不提供绕过上游认证的规则。

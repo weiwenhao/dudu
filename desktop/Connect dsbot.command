@@ -1,2 +1,0 @@
-#!/bin/sh
-exec /usr/bin/open 'http://127.0.0.1:3098/'

@@ -83,7 +83,7 @@ async function fixture(t, {
 
 function internalPath(html, name) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-  const match = html.match(new RegExp(`(?:src|href)="(/__dsbot/[a-f0-9]{64}/${escaped})"`, 'u'));
+  const match = html.match(new RegExp(`(?:src|href)="(/__dudu/[a-f0-9]{64}/${escaped})"`, 'u'));
   assert.ok(match, `expected a generated resource reference for ${name}`);
   return match[1];
 }
@@ -93,7 +93,7 @@ function bytes(data) {
 }
 
 function assertResourceHash(path, resource) {
-  const match = path.match(/^\/__dsbot\/([a-f0-9]{64})\/[^/]+$/u);
+  const match = path.match(/^\/__dudu\/([a-f0-9]{64})\/[^/]+$/u);
   assert.ok(match, `expected content-addressed resource path, received ${path}`);
   assert.equal(createHash('sha256').update(resource.data).digest('hex'), match[1]);
 }
@@ -242,9 +242,9 @@ test('wraps known UI registrations after the bootstrap installs the live loader'
     liveLayoutRegistration.factory().apply(layoutContext, 'after-create'),
     'sync:after-create',
   );
-  assert.strictEqual(window.__DSBOT_APP_UI__.ctx, layoutContext);
-  assert.strictEqual(window.__DSBOT_APP_UI__.contexts[layoutId], layoutContext);
-  assert.equal(events.at(-1)?.type, 'dsbot:app-ui-ready');
+  assert.strictEqual(window.__DUDU_APP_UI__.ctx, layoutContext);
+  assert.strictEqual(window.__DUDU_APP_UI__.contexts[layoutId], layoutContext);
+  assert.equal(events.at(-1)?.type, 'dudu:app-ui-ready');
 
   const afterContext = { source: 'live' };
   const settingsRegistration = {
@@ -263,9 +263,9 @@ test('wraps known UI registrations after the bootstrap installs the live loader'
     await liveSettingsRegistration.factory().apply(afterContext, 'after-create'),
     'async:after-create',
   );
-  assert.strictEqual(window.__DSBOT_APP_UI__.ctx, afterContext);
-  assert.strictEqual(window.__DSBOT_APP_UI__.contexts[settingsId], afterContext);
-  assert.equal(events.filter((event) => event.type === 'dsbot:app-ui-ready').length, 2);
+  assert.strictEqual(window.__DUDU_APP_UI__.ctx, afterContext);
+  assert.strictEqual(window.__DUDU_APP_UI__.contexts[settingsId], afterContext);
+  assert.equal(events.filter((event) => event.type === 'dudu:app-ui-ready').length, 2);
 
   const ordinaryRegistration = { id: 'ordinary-module', factory() {} };
   loader.load(ordinaryRegistration);
@@ -306,7 +306,7 @@ test('removes only the known eager expression compiler and fails closed if invok
   });
   const document = await frontend.document({ kind: 'plugins' });
   const compatiblePath = document.html.match(
-    /<script\b[^>]*src="([^"]*\/assets\/index-mobiletest\.js\?dsbot=[a-f0-9]{64})"/u,
+    /<script\b[^>]*src="([^"]*\/assets\/index-mobiletest\.js\?dudu=[a-f0-9]{64})"/u,
   )?.[1];
   assert.ok(compatiblePath);
   const compatibleResource = await document.resource(compatiblePath);
@@ -318,12 +318,12 @@ test('removes only the known eager expression compiler and fails closed if invok
 
   assert.ok(document.html.includes(`src="${compatiblePath}"`));
   assert.equal(
-    new URL('./vendor.js', `dsbot-ui://dsh${compatiblePath}`).pathname,
+    new URL('./vendor.js', `dudu-ui://dsh${compatiblePath}`).pathname,
     '/assets/vendor.js',
     'relative module imports retain the original asset directory',
   );
   assert.equal(
-    new URL(compatiblePath, 'dsbot-ui://dsh/').searchParams.get('dsbot'),
+    new URL(compatiblePath, 'dudu-ui://dsh/').searchParams.get('dudu'),
     createHash('sha256').update(compatibleResource.data).digest('hex'),
   );
   assert.doesNotMatch(mobileAsset, /new Function|eval\\(expr\\)/u);
@@ -367,7 +367,7 @@ test('reuses compatible main assets across documents and isolates hashed asset v
   const transformedPath = (source: string, version: string) => {
     const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
     const match = source.match(new RegExp(
-      `<script\\b[^>]*src="([^"]*\\/assets\\/${escapedVersion}\\.js\\?dsbot=[a-f0-9]{64})"`,
+      `<script\\b[^>]*src="([^"]*\\/assets\\/${escapedVersion}\\.js\\?dudu=[a-f0-9]{64})"`,
       'u',
     ));
     assert.ok(match, `expected a transformed asset path for ${version}`);
@@ -391,11 +391,11 @@ test('reuses compatible main assets across documents and isolates hashed asset v
   assert.match(bytes(firstV1.data).toString('utf8'), /version-one/u);
   assert.match(bytes(firstV2.data).toString('utf8'), /version-two/u);
   assert.equal(
-    new URL(firstV1Path, 'dsbot-ui://dsh/').searchParams.get('dsbot'),
+    new URL(firstV1Path, 'dudu-ui://dsh/').searchParams.get('dudu'),
     createHash('sha256').update(firstV1.data).digest('hex'),
   );
   assert.equal(
-    new URL(firstV2Path, 'dsbot-ui://dsh/').searchParams.get('dsbot'),
+    new URL(firstV2Path, 'dudu-ui://dsh/').searchParams.get('dudu'),
     createHash('sha256').update(firstV2.data).digest('hex'),
   );
 
@@ -420,7 +420,7 @@ test('the expression compatibility transform survives upstream minifier renaming
     files: { 'index-renamed.js': expression },
   });
   const document = await frontend.document({ kind: 'plugins' });
-  const path = document.html.match(/src="(\/assets\/index-renamed\.js\?dsbot=[a-f0-9]+)"/u)?.[1];
+  const path = document.html.match(/src="(\/assets\/index-renamed\.js\?dudu=[a-f0-9]+)"/u)?.[1];
   assert.ok(path);
   const script = bytes((await document.resource(path)).data).toString('utf8');
   assert.doesNotMatch(script, /new Function/u);
@@ -557,10 +557,10 @@ test('uses a restrictive local-only CSP and strips the upstream permissive polic
   const csp = document.html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/u)?.[1];
   assert.ok(csp);
   assert.match(csp, /default-src 'none'/u);
-  assert.match(csp, /script-src dsbot-ui: 'nonce-[^']+'/u);
-  assert.match(csp, /style-src dsbot-ui: 'unsafe-inline'/u);
-  assert.match(csp, /img-src dsbot-ui: data: blob:/u);
-  assert.match(csp, /font-src dsbot-ui:/u);
+  assert.match(csp, /script-src dudu-ui: 'nonce-[^']+'/u);
+  assert.match(csp, /style-src dudu-ui: 'unsafe-inline'/u);
+  assert.match(csp, /img-src dudu-ui: data: blob:/u);
+  assert.match(csp, /font-src dudu-ui:/u);
   assert.match(csp, /connect-src 'none'/u);
   assert.match(csp, /base-uri 'none'/u);
   assert.match(csp, /form-action 'none'/u);
@@ -575,14 +575,14 @@ test('uses a restrictive local-only CSP and strips the upstream permissive polic
 
 test('builds direct HTTP documents with page-scoped roots and rewrites manifest text resources', async (t) => {
   const pageId = '36b8f84d-df4e-4d49-b662-bcde71a8764f';
-  const basePath = `/dsbot/ui/${pageId}/`;
+  const basePath = `/ui/${pageId}/`;
   const fetched = [];
   const { frontend } = await fixture(t, {
     files: {
       'app.js': [
         'window.assetPath = "/assets/logo.png";',
         'window.pluginPath = "/plugins/example/client.js?rev=entry-r1";',
-        'window.internalPath = "/__dsbot/cache/item.js";',
+        'window.internalPath = "/__dudu/cache/item.js";',
         'window.externalPath = "https://example.invalid/assets/remote.png";',
       ].join('\n'),
       'site.css': 'body{background:url(/assets/logo.png)}@font-face{src:url("/assets/nested/font.woff2")}',
@@ -607,17 +607,17 @@ test('builds direct HTTP documents with page-scoped roots and rewrites manifest 
   assert.ok(document.html.includes(`href="${basePath}assets/site.css"`));
   assert.ok(document.html.includes(`src="${basePath}assets/app.js"`));
   assert.ok(document.html.includes(`href="${basePath}plugins/app/client.js?rev=app-r1"`));
-  assert.match(document.html, new RegExp(`src="${basePath}__dsbot/[a-f0-9]{64}/client-module-graph\\.js"`,'u'));
+  assert.match(document.html, new RegExp(`src="${basePath}__dudu/[a-f0-9]{64}/client-module-graph\\.js"`,'u'));
   assert.match(document.html, /script-src 'self' 'nonce-[^']+'/u);
   assert.match(document.html, /style-src 'self' 'unsafe-inline'/u);
   assert.match(document.html, /img-src 'self' data: blob:/u);
   assert.match(document.html, /connect-src 'self'/u);
-  assert.doesNotMatch(document.html, /dsbot-ui:/u);
+  assert.doesNotMatch(document.html, /dudu-ui:/u);
 
   const script = bytes((await document.resource(`${basePath}assets/app.js`)).data).toString('utf8');
   assert.ok(script.includes(`"${basePath}assets/logo.png"`));
   assert.ok(script.includes(`"${basePath}plugins/example/client.js?rev=entry-r1"`));
-  assert.ok(script.includes(`"${basePath}__dsbot/cache/item.js"`));
+  assert.ok(script.includes(`"${basePath}__dudu/cache/item.js"`));
   assert.match(script, /"https:\/\/example\.invalid\/assets\/remote\.png"/u);
 
   const stylesheet = bytes((await document.resource(`${basePath}assets/site.css`)).data).toString('utf8');
@@ -625,7 +625,7 @@ test('builds direct HTTP documents with page-scoped roots and rewrites manifest 
   assert.ok(stylesheet.includes(`url("${basePath}assets/nested/font.woff2")`));
 
   const graphPath = document.html.match(new RegExp(
-    `src="(${basePath}__dsbot/[a-f0-9]{64}/client-module-graph\\.js)"`, 'u',
+    `src="(${basePath}__dudu/[a-f0-9]{64}/client-module-graph\\.js)"`, 'u',
   ))?.[1];
   assert.ok(graphPath);
   const graphScript = bytes((await document.resource(graphPath)).data).toString('utf8');
@@ -634,7 +634,7 @@ test('builds direct HTTP documents with page-scoped roots and rewrites manifest 
   assert.deepEqual(fetched, ['/plugins/example/client.js?rev=entry-r1']);
 
   await assert.rejects(frontend.document({
-    kind: 'plugins', transport: 'http', basePath: '/dsbot/ui/not-a-uuid/',
+    kind: 'plugins', transport: 'http', basePath: '/ui/not-a-uuid/',
   }), TypeError);
 });
 

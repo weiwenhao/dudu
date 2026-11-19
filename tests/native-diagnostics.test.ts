@@ -6,7 +6,7 @@ import test from 'node:test';
 import { createNativeDiagnostics } from '../host/native-diagnostics.mjs';
 
 test('upstream diagnostics retain bounded categories without upstream messages or request content', async (t) => {
-  const folder = await mkdtemp(join(tmpdir(), 'dsbot-diagnostics-'));
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-diagnostics-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
   const diagnostics = createNativeDiagnostics(folder);
   diagnostics.failure({
@@ -31,7 +31,7 @@ test('upstream diagnostics retain bounded categories without upstream messages o
 });
 
 test('upstream diagnostics rotate privately and bound pending writes', async (t) => {
-  const folder = await mkdtemp(join(tmpdir(), 'dsbot-diagnostics-'));
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-diagnostics-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
   await mkdir(join(folder, 'diagnostics'));
   const file = join(folder, 'diagnostics/upstream.jsonl');

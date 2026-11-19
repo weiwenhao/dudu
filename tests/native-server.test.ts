@@ -9,9 +9,9 @@ import { createPairingStore } from '../host/pairing-devices.mjs';
 import { createNativeBridge } from '../host/native-bridge.mjs';
 import { createNativePages } from '../host/native-pages.mjs';
 
-const API = '/dsbot/api/v1';
+const API = '/api/v1';
 
-async function directory(prefix = 'dsbot-native-http-') {
+async function directory(prefix = 'dudu-native-http-') {
   return mkdtemp(join(tmpdir(), prefix));
 }
 
@@ -64,7 +64,7 @@ test('Android clients identify their platform without changing existing iPhone c
   const { pairingStore, server } = await setup(t, {
     dispatch: async (_method, _params, connection) => ({ clientName: connection.clientName }),
   });
-  const code = await pairingStore.issue({ address: `${server.address}/dsbot` });
+  const code = await pairingStore.issue({ address: `${server.address}` });
   const token = tokenFrom(code);
   const response = await fetch(`${server.address}${API}/connect`, {
     method: 'POST', headers: headers(token, { 'x-dudu-client': 'android' }),
@@ -82,7 +82,7 @@ test('native API uses authenticated HTTP only and limits the public probe to a m
     dispatch: async () => { dispatchCount++; return { sessions: [] }; },
   });
 
-  for (const path of ['/', '/dsbot', '/api/remote.mux', '/.well-known/dsbot']) {
+  for (const path of ['/', '/api/remote.mux', '/.well-known/dudu']) {
     const response = await fetch(`${server.address}${path}`);
     assert.equal(response.status, 404, path);
     assert.equal(response.headers.get('set-cookie'), null);
@@ -99,10 +99,10 @@ test('native API uses authenticated HTTP only and limits the public probe to a m
   assert.deepEqual(Object.keys(proof).sort(), ['proof', 'protocol']);
   assert.equal(proof.protocol, 1);
   assert.equal(proof.proof, pairingStore.proof(nonce));
-  assert.equal(await probeNativeAddress(`${server.address}/dsbot`, nonce), proof.proof);
+  assert.equal(await probeNativeAddress(`${server.address}`, nonce), proof.proof);
   assert.equal(await probeNativeAddress(server.address, nonce), proof.proof);
 
-  const code = await pairingStore.issue({ address: `${server.address}/dsbot`, name: 'Office Mac' });
+  const code = await pairingStore.issue({ address: `${server.address}`, name: 'Office Mac' });
   const token = tokenFrom(code);
   const anonymous = await post(server, `${API}/request`, 'x'.repeat(43), {
     id: randomUUID(), method: 'session.list', params: {},
@@ -168,7 +168,7 @@ test('native file transfers authenticate before streaming and bypass only the JS
     assert.equal(denied.status, 401);
   }
   assert.equal(uploads + downloads, 0);
-  const code = await pairingStore.issue({ address: `${server.address}/dsbot` });
+  const code = await pairingStore.issue({ address: `${server.address}` });
   const token = tokenFrom(code);
   await connect(server, token);
   const id = randomUUID();
@@ -223,7 +223,7 @@ test('authenticated long polling delivers watch events and disconnect cancels th
       return {};
     },
   });
-  const code = await pairingStore.issue({ address: `${server.address}/dsbot` });
+  const code = await pairingStore.issue({ address: `${server.address}` });
   const token = tokenFrom(code);
   await connect(server, token);
   const watch = await rpc(server, token, 'session.watch', { id: 's1' });
@@ -247,7 +247,7 @@ test('authenticated long polling delivers watch events and disconnect cancels th
 });
 
 test('authenticated HTTP disconnect disposes embedded page streams', { timeout: 5000 }, async (t) => {
-  const folder = await directory('dsbot-page-disconnect-http-');
+  const folder = await directory('dudu-page-disconnect-http-');
   const pairingStore = await createPairingStore({ folder });
   let releaseDisposed;
   const disposed = new Promise((resolve) => { releaseDisposed = resolve; });
@@ -295,7 +295,7 @@ test('authenticated HTTP disconnect disposes embedded page streams', { timeout: 
     await pairingStore.close();
     await rm(folder, { recursive: true, force: true });
   });
-  const credential = await pairingStore.issue({ address: `${server.address}/dsbot` });
+  const credential = await pairingStore.issue({ address: `${server.address}` });
   const token = tokenFrom(credential);
   await connect(server, token);
   const request = async (method, params) => {

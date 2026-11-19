@@ -7,8 +7,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { NATIVE_METHODS } from './native-bridge.mjs';
 
-const PATH = '/dsbot';
-const API = `${PATH}/api/v1`;
+const API = '/api/v1';
 const ROUTES = Object.freeze({
   connect: `${API}/connect`,
   disconnect: `${API}/disconnect`,
@@ -31,7 +30,7 @@ const NONCE = /^[A-Za-z0-9_-]{16,128}$/;
 
 const SAFE_ERRORS = nativeLabels(Object.freeze({
   AUTH_FAILED: '配对已失效，请重新配对。',
-  AUTH_REQUIRED: '请更新电脑端的 dsbot 插件。',
+  AUTH_REQUIRED: '请更新电脑端的 dudu 插件。',
   BAD_REQUEST: '请求参数不正确。',
   DUPLICATE_REQUEST: '请求标识已在使用。',
   FORBIDDEN: '电脑拒绝了此操作。',
@@ -132,9 +131,9 @@ export async function probeNativeAddress(address, nonce = randomBytes(24).toStri
     url = new URL(address);
     if (url.protocol === 'ws:') url.protocol = 'http:';
     else if (url.protocol === 'wss:') url.protocol = 'https:';
-    if (!['http:', 'https:'].includes(url.protocol) || !['/', PATH].includes(url.pathname)
+    if (!['http:', 'https:'].includes(url.protocol) || url.pathname !== '/'
       || url.username || url.password || url.search || url.hash || !NONCE.test(nonce)) {
-      throw new Error('Invalid dsbot address');
+      throw new Error('Invalid dudu address');
     }
     url.pathname = ROUTES.probe;
   } catch {
@@ -153,11 +152,11 @@ export async function probeNativeAddress(address, nonce = randomBytes(24).toStri
   } catch {
     throw new Error(nativeText('连接地址未连接到这台电脑，请检查地址、TLS 证书和网络配置。'));
   }
-  if (!response.ok) throw new Error(nativeText('连接地址未连接到兼容的 dsbot 服务。'));
+  if (!response.ok) throw new Error(nativeText('连接地址未连接到兼容的 dudu 服务。'));
   let value;
   try { value = await response.json(); } catch { throw new Error(nativeText('探测响应格式不正确。')); }
   if (!isRecord(value) || value.protocol !== 1 || typeof value.proof !== 'string') {
-    throw new Error(nativeText('连接地址未连接到兼容的 dsbot 服务。'));
+    throw new Error(nativeText('连接地址未连接到兼容的 dudu 服务。'));
   }
   return value.proof;
 }
@@ -341,7 +340,7 @@ export async function createNativeServer({
 
   async function handle(request, response) {
     let url;
-    try { url = new URL(request.url ?? '/', 'http://dsbot.local'); }
+    try { url = new URL(request.url ?? '/', 'http://dudu.local'); }
     catch { throw new HTTPError(400, 'BAD_REQUEST'); }
 
     if (url.pathname === ROUTES.probe) {

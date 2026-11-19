@@ -121,7 +121,7 @@ async function hasDependency(profile, name) {
 
 async function probe(port) {
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/dsbot/api/v1/probe`, {
+    const response = await fetch(`http://127.0.0.1:${port}/api/v1/probe`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ nonce: randomBytes(24).toString('base64url') }),
       signal: AbortSignal.timeout(1500), redirect: 'error',
@@ -193,9 +193,9 @@ async function main() {
     const expected = await desktopPackageIdentity(join(root, 'host', 'dudu-plugin'));
     const runtimeFolder = join(dshHome, 'dudu');
     if (running && !restartRequired) await assertHotRuntime();
-    // Earlier names of this plugin that may still be installed: dsbot, then dudu (before the npm package became dsh-dudu).
+    // An earlier name of this plugin that may still be installed: dudu (before the npm package became dsh-dudu).
     const legacy = [];
-    for (const name of ['dsbot', 'dudu']) if (await hasDependency(profile, name)) legacy.push(name);
+    for (const name of ['dudu']) if (await hasDependency(profile, name)) legacy.push(name);
     const installed = join(profile, 'node_modules', 'dsh-dudu');
     const current = await waitForDesktopRuntime({ folder: runtimeFolder, expected, timeoutMs: 0, probe });
     if (!restartRequired && current && running) {
@@ -226,7 +226,7 @@ async function main() {
     const identity = await desktopPackageIdentity(installed);
     if (identity.fingerprint !== expected.fingerprint) throw new Error('Installed package differs from the packaged source.');
     for (const name of legacy) {
-      // The plugin was called dsbot, then dudu; two copies would fight over the same port, so an old one leaves in this same update.
+      // The plugin was called dudu before the npm package became dsh-dudu; two copies would fight over the same port, so an old one leaves in this same update.
       console.log(`Removing the former ${name} plugin...`);
       try { await run(carrier, ['plugin', '--profile', 'desktop', 'remove', name], `remove-${name}`); }
       catch (error) {

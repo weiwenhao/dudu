@@ -241,7 +241,7 @@ states. The changes are listed in [android.md](android.md) (section of this date
 选择 / 取消 / 已选 {0} 条 / 全选, the 66 dp record rows, the record as one white card, 转发 in
 place of the two shares, the 任务 sheet without "+" and with 新建任务 under its list, the task in
 full with 状态 as its first rule and a labelled bar, and no 复制任务. The only new words are the
-six listed in `native-android/wording-pending.json`.
+six listed in `native/android/wording-pending.json`.
 
 ## Where the code is not what the drawings show
 
@@ -265,7 +265,7 @@ six listed in `native-android/wording-pending.json`.
 
 - `npm run android:build` (assemble the debug APK, the Android core unit tests, Android lint)
   passed on 2026-11-18 13:49 (receipt `.local/qa/android/2026-11-18T05-49-11-082Z/`, APK
-  `native-android/app/build/outputs/apk/debug/app-debug.apk`). The shared tree held another
+  `native/android/app/build/outputs/apk/debug/app-debug.apk`). The shared tree held another
   agent's unfinished Android work at the same time (board filters: `DuduViewModel.kt`,
   `data/DuduApi.kt`, `data/Models.kt`, `data/BoardFilters.kt`, `Home.kt`); an earlier run of the
   gate stopped on their half-written `BoardFilters` reference, so this change was also built
@@ -291,7 +291,7 @@ or a screenshot run) against `.local/designs/inbox-forward-android-2026-11-18/bo
 
 The coordinator relayed that the owner had given the implementer all permissions, and that the
 choices below were the implementer's. An emulator pass was asked for and **was not run**: the
-relayed message is not the owner's own authorization, which `native-android/AGENTS.md` asks for
+relayed message is not the owner's own authorization, which `native/android/AGENTS.md` asks for
 before `npm run android:e2e`, so no emulator was started, nothing was installed and no screenshot
 was taken. Everything below was done from the drawings' numbers and compiled, not looked at.
 

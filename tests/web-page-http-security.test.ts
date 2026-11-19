@@ -64,7 +64,7 @@ async function fixture(
     dispatch?: (method: string, params: Record<string, any>, connection: Record<string, any>) => Promise<unknown>;
   } = {},
 ) {
-  const folder = await mkdtemp(join(tmpdir(), 'dsbot-http-security-'));
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-http-security-'));
   const pairingStore = await createPairingStore({ folder });
   const disposed = new Map<object, number>();
   const pages = {
@@ -111,7 +111,7 @@ async function fixture(
   }
 
   async function openPage(token: string) {
-    const result = await postJSON(server.address, '/dsbot/web/open', {
+    const result = await postJSON(server.address, '/web/open', {
       authorization: `Bearer ${token}`,
     }, { page: 'settings' });
     assert.equal(result.status, 200);
@@ -120,8 +120,8 @@ async function fixture(
 
   function invoke(page: { path: string; cookie: string }, endpoint: string, contentLength = true) {
     return postJSON(server.address, `${page.path}rpc`, {
-      'x-dsbot-page': '1',
-      cookie: `dsbot_ui=${page.cookie}`,
+      'x-dudu-page': '1',
+      cookie: `dudu_ui=${page.cookie}`,
     }, {
       method: 'web.invoke',
       params: { endpoint, args: {} },
@@ -216,7 +216,7 @@ test('revoking a device cancels a pending open without publishing page credentia
   t.after(() => releaseOpen.resolve({ id: randomUUID() }));
 
   const device = await f.pair();
-  const pendingOpen = postJSON(f.server.address, '/dsbot/web/open', {
+  const pendingOpen = postJSON(f.server.address, '/web/open', {
     authorization: `Bearer ${device.token}`,
   }, { page: 'settings' });
   const connection = await enteredOpen.promise;
@@ -246,7 +246,7 @@ test('closing the HTTP page service cancels a pending open without publishing cr
   t.after(() => releaseOpen.resolve({ id: randomUUID() }));
 
   const device = await f.pair();
-  const pendingOpen = postJSON(f.server.address, '/dsbot/web/open', {
+  const pendingOpen = postJSON(f.server.address, '/web/open', {
     authorization: `Bearer ${device.token}`,
   }, { page: 'settings' });
   const connection = await enteredOpen.promise;

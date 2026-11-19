@@ -15,7 +15,7 @@ import {
 } from '../host/native-files.mjs';
 
 async function makeFixture() {
-  const temporary = await mkdtemp(join(tmpdir(), 'dsbot-native-files-'));
+  const temporary = await mkdtemp(join(tmpdir(), 'dudu-native-files-'));
   const root = join(temporary, 'workspace');
   const outside = join(temporary, 'outside');
   await mkdir(join(root, 'nested'), { recursive: true });

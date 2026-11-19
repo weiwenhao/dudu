@@ -84,7 +84,7 @@ npm run native:install     # build the iOS app and install it on an iPhone
 npm run android:install    # build the Android app and install it on an emulator
 ```
 
-Before building the iOS app, replace the developer team and the bundle ID in `native/project.yml` with your own.
+Before building the iOS app, replace the developer team and the bundle ID in `native/ios/project.yml` with your own.
 
 Without `desktop:update`, run `npm run package:desktop`, then install `dsh-dudu-<version>.tgz` from `.local/release/` in DSH's "Add plugin".
 

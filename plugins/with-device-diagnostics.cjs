@@ -7,11 +7,11 @@ const {
 } = require('@expo/config-plugins');
 
 function withDeviceDiagnostics(config) {
-  const sourcePath = path.join(__dirname, 'device-diagnostics', 'DSBotDiagnostics.swift');
+  const sourcePath = path.join(__dirname, 'device-diagnostics', 'DuduDiagnostics.swift');
   const sourceContents = fs.readFileSync(sourcePath, 'utf8');
 
   config = IOSConfig.XcodeProjectFile.withBuildSourceFile(config, {
-    filePath: 'DSBotDiagnostics.swift',
+    filePath: 'DuduDiagnostics.swift',
     contents: sourceContents,
     overwrite: true,
   });
@@ -25,7 +25,7 @@ function withDeviceDiagnostics(config) {
       );
     }
 
-    if (appDelegate.contents.includes('DSBotDiagnostics.start()')) {
+    if (appDelegate.contents.includes('DuduDiagnostics.start()')) {
       return modConfig;
     }
 
@@ -50,7 +50,7 @@ function withDeviceDiagnostics(config) {
     const followingText = appDelegate.contents.slice(bodyLineStart);
     const indent = (followingText.match(/^[ \t]*/) || [''])[0];
     const insertAt = bodyLineStart + indent.length;
-    const startupCall = `DSBotDiagnostics.start()\n${indent}`;
+    const startupCall = `DuduDiagnostics.start()\n${indent}`;
 
     appDelegate.contents =
       appDelegate.contents.slice(0, insertAt) +

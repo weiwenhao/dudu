@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createDsbotControl } from '../host/dsbot-control.mjs';
+import { createDuduControl } from '../host/dudu-control.mjs';
 import { createNativePages } from '../host/native-pages.mjs';
 import { createTypertPageRpc } from '../host/native-page-rpc.mjs';
 
@@ -60,7 +60,7 @@ test('phone requests leave the bootstrap HMR transaction before invoking plugin 
       },
     }),
   });
-  control = await otherContext.run('plugin-owner', () => executing.run(true, () => createDsbotControl({
+  control = await otherContext.run('plugin-owner', () => executing.run(true, () => createDuduControl({
     folder, host: '127.0.0.1', port: 0, pages,
     resolveLanAddress: () => '127.0.0.1',
     runRequest: (operation) => executing.exit(operation),
@@ -80,13 +80,13 @@ test('phone requests leave the bootstrap HMR transaction before invoking plugin 
     method: 'POST', headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(body),
   });
-  const opened = await post('/dsbot/web/open', { page: 'plugins' }, { authorization: `Bearer ${token}` });
+  const opened = await post('/web/open', { page: 'plugins' }, { authorization: `Bearer ${token}` });
   assert.equal(opened.status, 200);
   const page = await opened.json();
   const invoke = async (endpoint, args) => {
     const response = await post(`${page.path}rpc`, {
       method: 'web.invoke', params: { endpoint, args },
-    }, { 'x-dsbot-page': '1', cookie: `dsbot_ui=${page.cookie}` });
+    }, { 'x-dudu-page': '1', cookie: `dudu_ui=${page.cookie}` });
     assert.equal(response.status, 200);
     return response.json();
   };
@@ -99,8 +99,8 @@ test('phone requests leave the bootstrap HMR transaction before invoking plugin 
     ok: true, value: { application: 'applied', changed: true },
   });
   assert.equal(mutations, 2);
-  assert.equal((await post('/dsbot/api/v1/connect', {}, { authorization: `Bearer ${token}` })).status, 200);
-  const native = await post('/dsbot/api/v1/request', {
+  assert.equal((await post('/api/v1/connect', {}, { authorization: `Bearer ${token}` })).status, 200);
+  const native = await post('/api/v1/request', {
     id: randomUUID(), method: 'session.list', params: {},
   }, { authorization: `Bearer ${token}` });
   assert.equal((await native.json()).result.detached, true);

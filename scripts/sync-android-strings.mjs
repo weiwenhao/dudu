@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { DICTIONARIES } from '../host/dudu-plugin/ui/strings.js';
 
 const root = new URL('../', import.meta.url);
-const native = JSON.parse(await readFile(new URL('native/DSBot/Resources/Localizable.xcstrings', root), 'utf8')).strings;
+const native = JSON.parse(await readFile(new URL('native/ios/Dudu/Resources/Localizable.xcstrings', root), 'utf8')).strings;
 const keys = {
   app_name: '嘟嘟', dudu: '嘟嘟', active: '进行中', backlog: '待规划', all: '全部事项',
   cancel: '取消', close: '关闭', back: '返回', retry: '重试', connect: '添加并连接',
@@ -43,14 +43,14 @@ for (const [key, text] of Object.entries(keys)) {
   if (!en[key]) throw new Error(`No existing translation for ${key}: ${text}`);
 }
 for (const [locale, words] of [['values', en], ['values-zh-rCN', keys]]) {
-  const directory = new URL(`native-android/app/src/main/res/${locale}/`, root);
+  const directory = new URL(`native/android/app/src/main/res/${locale}/`, root);
   await mkdir(directory, { recursive: true });
   await writeFile(new URL('strings.xml', directory), '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
     + Object.entries(words).map(([key, text]) => `    <string name="${key}">${escape(text)}</string>`).join('\n')
     + '\n</resources>\n');
 }
-await writeFile(new URL('native-android/wording-sources.json', root),
-  JSON.stringify({ native: 'native/DSBot/Resources/Localizable.xcstrings',
+await writeFile(new URL('native/android/wording-sources.json', root),
+  JSON.stringify({ native: 'native/ios/Dudu/Resources/Localizable.xcstrings',
     desktop: 'host/dudu-plugin/ui/strings.js', chinese: keys,
     englishAwaitingOwnerReview: pending }, null, 2) + '\n');
 console.log(`Synced ${Object.keys(keys).length} existing labels; two English menu translations remain for review.`);

@@ -25,7 +25,7 @@ setLocale(config.locale ?? navigator.language);
 /** The plugin's POST helper, as the desktop interface has it, with the header that says this is one of the app's pages. */
 async function request(action, body = {}, { signal } = {}) {
   const response = await fetch(new URL(`api/dudu/${action}`, document.baseURI).pathname, {
-    method: 'POST', headers: { 'content-type': 'application/json', 'x-dsbot-page': '1' }, body: JSON.stringify(body), credentials: 'same-origin', signal,
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-dudu-page': '1' }, body: JSON.stringify(body), credentials: 'same-origin', signal,
   });
   const value = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(value.error || T.settings.failed);
@@ -47,5 +47,5 @@ function Page() {
 
 createRoot(document.getElementById('root')).render(<Page />);
 // The native page waits for this before it takes its own loading sign away; a page that cannot start says so.
-window.addEventListener('error', () => window.__DSBOT_NATIVE__?.fail?.('page'));
-requestAnimationFrame(() => requestAnimationFrame(() => window.__DSBOT_NATIVE__?.ready?.()));
+window.addEventListener('error', () => window.__DUDU_NATIVE__?.fail?.('page'));
+requestAnimationFrame(() => requestAnimationFrame(() => window.__DUDU_NATIVE__?.ready?.()));

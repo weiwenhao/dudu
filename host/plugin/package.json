@@ -4,7 +4,7 @@
   "type": "module",
   "main": "./index.mjs",
   "exports": "./index.mjs",
-  "description": "Pair your own DeepSeek Harness Desktop with dsbot",
+  "description": "Pair your own DeepSeek Harness Desktop with dudu",
   "license": "MIT",
   "files": ["index.mjs", "cordis.patch.yml", "dist/"],
   "engines": {

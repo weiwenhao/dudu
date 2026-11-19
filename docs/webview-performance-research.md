@@ -40,12 +40,12 @@
 
 | 位置 | 实际行为 | 影响 |
 | --- | --- | --- |
-| `native/DSBot/Views/EmbeddedPageView.swift` | 每个新 WebView 创建独立的 `.nonPersistent()` 数据存储；文档请求使用 `.reloadIgnoringLocalCacheData` | WebView 之间没有主动共用数据存储；文档请求绕过本地缓存 |
-| `native/DSBot/Core/EmbeddedPagePool.swift` | 按 page、target、sessionID 保留实例；最多保留 3 个已离开的页面，5 分钟后释放 | 能帮助短时间返回同一个页面，不能复用另一个页面的 DSH 运行实例 |
+| `native/ios/Dudu/Views/EmbeddedPageView.swift` | 每个新 WebView 创建独立的 `.nonPersistent()` 数据存储；文档请求使用 `.reloadIgnoringLocalCacheData` | WebView 之间没有主动共用数据存储；文档请求绕过本地缓存 |
+| `native/ios/Dudu/Core/EmbeddedPagePool.swift` | 按 page、target、sessionID 保留实例；最多保留 3 个已离开的页面，5 分钟后释放 | 能帮助短时间返回同一个页面，不能复用另一个页面的 DSH 运行实例 |
 | `host/web-page-http.mjs` | HTML、JS、CSS 等资源统一 `Cache-Control: no-store` | 即使换成持久数据存储，这些响应仍不允许缓存 |
-| `host/dsh-mobile-frontend.mjs` | 资源、模块图中的 URL 改写到每次生成的 `/dsbot/ui/<page UUID>/` | 相同资源的完整 URL 每次不同；部分 JS 改写后的字节也不同 |
+| `host/dsh-mobile-frontend.mjs` | 资源、模块图中的 URL 改写到每次生成的 `/ui/<page UUID>/` | 相同资源的完整 URL 每次不同；部分 JS 改写后的字节也不同 |
 | `host/mobile-page-adapter.mjs` | DSH 启动后，才通过 layout、uiWorkspace 等服务定位目标页面 | 在当前路线中，打开一个功能也要先经过 DSH 前端启动 |
-| `native/DSBot/Resources/EmbeddedTransport.js` | 启动时固定 page、httpPageBase 等信息 | 不能仅靠复用 WKWebView 或改 SwiftUI 的 `.id` 实现跨页面导航 |
+| `native/ios/Dudu/Resources/EmbeddedTransport.js` | 启动时固定 page、httpPageBase 等信息 | 不能仅靠复用 WKWebView 或改 SwiftUI 的 `.id` 实现跨页面导航 |
 
 HTTP 资源已经支持 gzip；宿主也已有静态资源内存缓存。它们不等同于 WebKit 的资源缓存，更不等同于保留已启动的 JS。
 `EmbeddedResourceCache` 服务于旧的模拟器私有协议路径，不能解决真机 HTTP 页面的缓存。
@@ -99,7 +99,7 @@ Resource Timing 的 `transferSize` 等字段须检查真机支持情况；单个
 
 ### 2. 静态资源与页面操作分开管理
 
-保留 `/dsbot/ui/` 下的 HTTP/HTTPS 和 page-session 认证。以下是待实现的协议设计，不是当前已有能力：
+保留 `/ui/` 下的 HTTP/HTTPS 和 page-session 认证。以下是待实现的协议设计，不是当前已有能力：
 
 - **页面文档、RPC、长轮询与动态数据**仍绑定实际页面范围并使用 `no-store`。
 - **纯 JS/CSS/字体/图片资源**由单独的、仅可读取冻结资源清单的页面会话授权；它没有 RPC、流、目录读取或通用转发能力。
@@ -186,7 +186,7 @@ adapter 的通用 panel 就绪条件目前包含 500 ms 的 DOM 静止等待。�
 现已先接入现有认证页面池的有界预加载；上文的稳定资源地址、跨页面共享运行实例等架构改造尚未实现。
 
 - App 前台连接成功、原生恢复和首批会话及模型读取结束后，从实际导航目录挑选至多 3 个网页入口。优先插件管理和当前会话已注册的 context 页面，其余名额按目录顺序选侧边栏网页面板。没有目录时不猜测 DSH 路由，不加载其他会话，也不预开原生设置首页后的 DSH 设置。
-- 串行启动实际 WKWebView，经过认证、HTML、模块与目标页面就绪，才准备下一页；不仅获取 `/dsbot/web/open` 句柄。页面池及屏幕共用 `EmbeddedPageRoute` 和 location，点击同一页时复用正在进行或已完成的加载。
+- 串行启动实际 WKWebView，经过认证、HTML、模块与目标页面就绪，才准备下一页；不仅获取 `/web/open` 句柄。页面池及屏幕共用 `EmbeddedPageRoute` 和 location，点击同一页时复用正在进行或已完成的加载。
 - 用 WebKit 公开的 inactiveSchedulingPolicy 保证离开窗口的页面仍可完成启动；准备好后使用 throttle。隐藏页面保留 DSH 原有事件流，未新增定时刷新页面、保活请求或模型调用。App 后台、断开、换电脑和内存警告会取消队列并释放未显示页面。
 - 选中的有限页面在前台保留；其他已访问页面继续使用原来的 5 分钟保留期。当前屏幕接管后，取消预加载不能中断其页面身份请求或关闭该页。当前会话变化会清理尚未使用的旧会话预加载。
 - 没有新增 App 文案或可见控件。失败不自动重复加载；用户实际打开时仍可走已有重试。

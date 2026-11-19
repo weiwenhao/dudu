@@ -78,7 +78,7 @@ export async function apply(ctx) {
   };
 }
 `);
-  transport = await readFile(new URL('../../native/DSBot/Resources/EmbeddedTransport.js', import.meta.url), 'utf8');
+  transport = await readFile(new URL('../../native/ios/Dudu/Resources/EmbeddedTransport.js', import.meta.url), 'utf8');
   dudu = await startDudu({ plugins: [folder], model: {
     replies: [{ say: 'Embedded page history is available.' }],
   }, files: { 'page-result.txt': 'PHONE-RESULT-JSON' } });
@@ -116,7 +116,7 @@ async function assertEventually(check: () => Promise<boolean>) {
 }
 
 async function openPage(kind: string, target?: string) {
-  const response = await dudu.context.request.post(`${origin}/dsbot/web/open`, {
+  const response = await dudu.context.request.post(`${origin}/web/open`, {
     headers: { authorization: `Bearer ${credential}` },
     data: { page: kind, ...(['trace', 'view'].includes(kind) ? { sessionId } : {}), ...(target ? { target } : {}) },
   }).catch(() => {
@@ -125,7 +125,7 @@ async function openPage(kind: string, target?: string) {
   assert.equal(response.ok(), true, `page.open: ${response.status()}`);
   const opened = await response.json();
   await dudu.context.addCookies([{
-    name: 'dsbot_ui', value: opened.cookie, domain: '127.0.0.1', path: opened.path, httpOnly: true, sameSite: 'Strict',
+    name: 'dudu_ui', value: opened.cookie, domain: '127.0.0.1', path: opened.path, httpOnly: true, sameSite: 'Strict',
   }]);
   const page = await dudu.context.newPage();
   await page.setViewportSize({ width: 390, height: 844 });
@@ -133,9 +133,9 @@ async function openPage(kind: string, target?: string) {
     id: opened.id, kind, target, sessionId, transport: 'http', basePath: opened.path, reviewDiagnostics: true,
   };
   await page.addInitScript({ content: `
-window.__DSBOT_PAGE__ = ${JSON.stringify(descriptor)};
+window.__DUDU_PAGE__ = ${JSON.stringify(descriptor)};
 window.__pageMessages = [];
-window.webkit = { messageHandlers: { dsbot: { async postMessage(encoded) {
+window.webkit = { messageHandlers: { dudu: { async postMessage(encoded) {
   window.__pageMessages.push(JSON.parse(encoded));
   return JSON.stringify(null);
 } } } };
@@ -165,7 +165,7 @@ for (const kind of ['plugins', 'settings', 'trace']) {
         message.method === 'ready' || message.method === 'bootstrap.failure'), undefined, { timeout: 40_000 });
       const reports = await messages(page);
       const viewState = await page.evaluate(() => {
-        const ctx = (window as any).__DSBOT_APP_UI__?.ctx;
+        const ctx = (window as any).__DUDU_APP_UI__?.ctx;
         return {
           tabs: [...document.querySelectorAll('[data-conversation-tabs] [role="tab"]')].map((tab) => tab.textContent),
           entries: ctx?.slots?.entries?.('conversation.view')?.map((entry: any) => entry.options.id),
@@ -186,11 +186,11 @@ for (const kind of ['plugins', 'settings', 'trace']) {
       if (kind === 'plugins') {
         await page.locator('[data-plugin-panel]').waitFor();
         assert.equal(await page.locator('[data-plugin-header-part="title"]').first().isVisible(), false);
-        await page.evaluate(() => window.dispatchEvent(new CustomEvent('dsbot:command', { detail: 'add' })));
+        await page.evaluate(() => window.dispatchEvent(new CustomEvent('dudu:command', { detail: 'add' })));
         await page.getByRole('dialog').waitFor();
         await page.keyboard.press('Escape');
       }
-      if (kind === 'settings') await page.locator('[data-dsbot-settings-body]').waitFor();
+      if (kind === 'settings') await page.locator('[data-dudu-settings-body]').waitFor();
       if (kind === 'trace') {
         await page.getByText('PHONE-PAGE-HISTORY', { exact: false }).first().waitFor();
         const clearance = await page.locator('[class*="_ledger"]').evaluate((ledger) =>

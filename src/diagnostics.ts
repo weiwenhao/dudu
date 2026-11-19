@@ -26,7 +26,7 @@ const storage: DiagnosticStorage = {
 };
 const logger = new DiagnosticLogger(storage, {
   maxTotalBytes: 16 * 1024 * 1024,
-  onStorageFailure: (error) => originalWarn('[dsbot diagnostics] Local log write failed:', error),
+  onStorageFailure: (error) => originalWarn('[dudu diagnostics] Local log write failed:', error),
 });
 
 export function logEvent(
