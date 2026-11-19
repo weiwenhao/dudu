@@ -98,7 +98,18 @@ jobs:
             done
           fi
           echo "Running ${#files[@]} files; skipping ${#skips[@]} tests and ${#excluded[@]} files."
-          npm run test:e2e -- --test-timeout=900000 "${skips[@]}" "${files[@]}"
+          log="$RUNNER_TEMP/e2e.log"
+          npm run test:e2e -- --test-timeout=900000 "${skips[@]}" "${files[@]}" 2>&1 | tee "$log"
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            # Now and then a test fails on a slow runner (one did on 2026-11-19 and passed in the runs before and after).
+            # The files that had a failed test get one more run, and that run decides.
+            failed=$(grep -o '^test at tests/e2e/[^:]*' "$log" | sed 's/^test at //' | sort -u)
+            if [ -z "$failed" ]; then exit "$status"; fi
+            echo "::warning::A test failed; running its files once more: ${failed//$'\n'/ }"
+            # shellcheck disable=SC2086 # $failed is a list of file names, one on each line
+            npm run test:e2e -- --test-timeout=900000 "${skips[@]}" $failed
+          fi
 
       - name: Keep the pictures of the failed tests
         if: failure()
