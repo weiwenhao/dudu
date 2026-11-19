@@ -5,7 +5,7 @@ This is a separate DSH plugin, using the `dudu.widget` slot. Its source does not
 In a separate copy of this folder, install dependencies with the locally packaged `dsh-dudu` tarball as the peer, then build:
 
 ```sh
-npm install /absolute/path/dsh-dudu-0.1.0-beta.tgz
+npm install /absolute/path/dsh-dudu-0.1.0.tgz
 npm run dev
 DSH_HOME=/absolute/path/development-home dsh plugin --profile web add /absolute/path/widget-copy
 DSH_HOME=/absolute/path/development-home dsh web --host 127.0.0.1 --no-open --port 0

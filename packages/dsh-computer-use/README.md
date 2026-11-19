@@ -58,7 +58,7 @@ the normal host configuration. Do not install the companion without Dudu.
 `npm run computer-use:prepare` prepares the engine. `npm run package:desktop`
 prepares it again, includes the compatibility entry and MIT attribution in the
 main Dudu archive, checks the packaged entry outside the repository, and produces
-the separate `dsh-dudu-computer-use-0.1.0-beta.tgz` companion. Ordinary
+the separate `dsh-dudu-computer-use-0.1.0.tgz` companion. Ordinary
 `desktop:update` does not install the companion automatically. Activating it is
 an explicit deployment step through the host's supported bundle installation.
 

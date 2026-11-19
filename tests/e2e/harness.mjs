@@ -222,7 +222,7 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
         const response = context ? await context.request.post(`${base}/api/dudu/${action}`, { data: body })
           : await fetch(`${base}/api/dudu/${action}`, { method: 'POST', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify(body) });
         const ok = context ? response.ok() : response.ok;
-        if (!ok) throw new Error(`${action}: HTTP ${context ? response.status() : response.status}`);
+        if (!ok) throw new Error(`${action}: HTTP ${context ? response.status() : response.status}: ${(await response.text()).slice(0, 600)}`);
         return response.json();
       },
       /** A new page, on the 嘟嘟 panel. `views` is what the page remembers of its display options (per tab), set before it loads. */
@@ -241,12 +241,27 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
         }, JSON.stringify(views ?? {}));
         pages.add(page);
         page.once('close', () => pages.delete(page));
+        // CI sets DUDU_E2E_DIAG: what the page itself complains about (errors, failed requests), as it happens.
+        if (process.env.DUDU_E2E_DIAG) {
+          page.on('pageerror', (error) => console.log(`[page error] ${String(error.stack ?? error).slice(0, 800)}`));
+          page.on('console', (message) => { if (['error', 'warning'].includes(message.type())) console.log(`[page ${message.type()}] ${message.text().slice(0, 400)}`); });
+          page.on('requestfailed', (request) => console.log(`[request failed] ${request.url().replace(/[?#].*$/, '')} ${request.failure()?.errorText}`));
+          page.on('response', (response) => { if (response.status() >= 400) console.log(`[http ${response.status()}] ${response.url().replace(/[?#].*$/, '')}`); });
+        }
         await page.goto(`${base}/`);
         if (selectPanel) await page.getByRole('button', { name: 'Dudu' }).first().click({ timeout: 60_000 });
         return page;
       },
       /** After a failed test: a picture of every page still open (in .local/e2e-failures, or DUDU_E2E_SHOTS), then close them all. */
       async settle(name, failed) {
+        // CI sets DUDU_E2E_DIAG: what DSH and the plugin wrote (the login address is left out), for the test that failed.
+        if (failed && process.env.DUDU_E2E_DIAG) {
+          console.log(`--- DSH output after "${name}"\n${state.output.text.replace(/https?:\/\/\S+/g, '[URL redacted]').slice(-6000)}\n---`);
+          for (const page of pages) {
+            const tree = await page.locator('body').ariaSnapshot({ timeout: 10_000 }).catch((error) => `(no snapshot: ${error.message})`);
+            console.log(`--- page after "${name}" (${page.viewportSize()?.width}x${page.viewportSize()?.height})\n${String(tree).slice(0, 7000)}\n---`);
+          }
+        }
         if (failed) {
           const dir = process.env.DUDU_E2E_SHOTS ?? join(root, '.local', 'e2e-failures');
           await mkdir(dir, { recursive: true });

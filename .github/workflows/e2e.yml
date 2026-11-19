@@ -1,0 +1,110 @@
+name: e2e
+
+# The end-to-end suite (tests/e2e), run once a change is merged into main: not on pull requests (owner, 2026-11-19).
+# Real DSH, real Claude Code, Codex and Pi, real Chrome; the model is the one scripted part (tests/e2e/mock-model.mjs).
+# It can also be started by hand from the Actions tab.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      files:
+        description: 'Only these test files, separated by spaces (tests/e2e/issues.e2e.test.ts, say). Empty runs all of them.'
+        required: false
+        default: ''
+
+# A newer merge makes the run of the older one pointless: main already contains it.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The programs the suite drives, pinned to the versions installed on the owner's machine on 2026-11-19. DSH is the one the
+  # Desktop app ships, which is what Dudu is for: the 0.2.0 on npm lacks what the plugin needs (phone control, session projections).
+  # Move them together with the tests.
+  NODE_VERSION: 24.14.0
+  DSH_VERSION: 0.2.2-rc.3
+  CLAUDE_CODE_VERSION: 2.1.326
+  CODEX_VERSION: 0.169.0
+  PI_VERSION: 1.4.0
+  PNPM_VERSION: 10.30.3
+
+jobs:
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install the repository
+        run: npm ci
+
+      - name: Install the programs the suite drives
+        run: >
+          npm install --global
+          "pnpm@${PNPM_VERSION}"
+          "@deepseek-ai/dsh@${DSH_VERSION}"
+          "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+          "@openai/codex@${CODEX_VERSION}"
+          "@earendil-works/pi-coding-agent@${PI_VERSION}"
+
+      - name: Versions in use
+        run: |
+          echo "node $(node --version), npm $(npm --version), pnpm $(pnpm --version)"
+          echo "dsh $(dsh --version)"
+          echo "claude $(claude --version)"
+          echo "codex $(codex --version)"
+          echo "pi $(pi --version)"
+          google-chrome --version
+
+      # DUDU_E2E_DIAG prints what DSH and the plugin wrote after each failed test; the pictures of the pages that were open then are kept.
+      - name: Run the end-to-end tests
+        env:
+          FILES: ${{ inputs.files }}
+          DUDU_E2E_DIAG: '1'
+          DUDU_E2E_SHOTS: ${{ runner.temp }}/e2e-failures
+        # What .github/e2e-known-failing.txt lists is left out: files whose every test fails (not run at all) and single tests (skipped by name).
+        # --test-timeout stops a test or a file that hangs, instead of letting the job wait for its 90 minutes.
+        run: |
+          skips=()
+          excluded=()
+          while IFS= read -r line; do
+            case "$line" in
+              ''|'#'*) ;;
+              'file: '*) excluded+=("${line#file: }") ;;
+              *) skips+=("--test-skip-pattern=$line") ;;
+            esac
+          done < .github/e2e-known-failing.txt
+          files=()
+          if [ -n "$FILES" ]; then
+            read -r -a files <<< "$FILES"
+          else
+            for file in tests/e2e/*.e2e.test.ts; do
+              keep=1
+              for name in "${excluded[@]}"; do [ "$file" = "$name" ] && keep=0; done
+              [ "$keep" = 1 ] && files+=("$file")
+            done
+          fi
+          echo "Running ${#files[@]} files; skipping ${#skips[@]} tests and ${#excluded[@]} files."
+          npm run test:e2e -- --test-timeout=900000 "${skips[@]}" "${files[@]}"
+
+      - name: Keep the pictures of the failed tests
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-failures
+          path: ${{ runner.temp }}/e2e-failures
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,6 +1,6 @@
 {
   "name": "dsh-dudu",
-  "version": "0.1.0-beta",
+  "version": "0.1.0",
   "type": "module",
   "main": "./index.mjs",
   "exports": {
@@ -26,6 +26,10 @@
   "description": "An efficient multi-agent collaboration assistant built on DSH",
   "icon": "./icon.png",
   "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/weiwenhao/dudu.git" },
+  "homepage": "https://github.com/weiwenhao/dudu#readme",
+  "bugs": { "url": "https://github.com/weiwenhao/dudu/issues" },
+  "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "multi-agent"],
   "files": ["index.mjs", "client.js", "widget.mjs", "widget.d.ts", "widget-ui.mjs", "widget-ui.d.ts", "widget-testing.mjs", "widget-testing.d.ts", "widget.css", "icon.png", "cordis.patch.yml", "locale/", "WIDGETS.md", "dist/"],
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
