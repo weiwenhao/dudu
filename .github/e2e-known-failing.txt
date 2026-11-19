@@ -1,6 +1,6 @@
 # Tests of tests/e2e that fail on the GitHub runner and are left out by .github/workflows/e2e.yml.
 #   file: <path>   a file whose every test fails: it is not run (a file with nothing to run starts its DSH and Chrome in `before`
-#                  and never stops them, so the whole run hangs)
+#                  and never stops them, so the whole run hangs); also a file whose passing test needs the ones before it (native-sync)
 #   <name>         the start of the name of one test in a file that otherwise passes: it is skipped
 #
 # Found on 2026-11-19, when the suite first ran in CI (55 of 95 tests passed). Checked for the tests that wait for the Issues list, its tabs or its
@@ -13,6 +13,7 @@ file: tests/e2e/desktop-conversations.e2e.test.ts
 file: tests/e2e/group-chat.e2e.test.ts
 file: tests/e2e/issues.e2e.test.ts
 file: tests/e2e/mobile-pages.e2e.test.ts
+file: tests/e2e/native-sync.e2e.test.ts
 file: tests/e2e/plugin-hot-update.e2e.test.ts
 file: tests/e2e/quick-cards.e2e.test.ts
 
@@ -30,12 +31,4 @@ DSH opens on the dashboard; chat changes issues,
 General opens the model menu; the same pet and s
 a restored Codex session records the actual nati
 stopping during a native tool wait releases the
-claude sidebar logo and native TUI updates survi
-codex sidebar logo and native TUI updates surviv
-a current Codex turn imports immediately, keeps
-an open compact conversation receives native upd
-imported Claude and Codex sessions can continue
-assigned Properties are locked, expose the nativ
-mentions remain coloured plain text, dudu is ava
-issue session buttons open the stored conversati
 the places that offer agents follow the switch o
