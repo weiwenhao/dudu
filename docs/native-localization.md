@@ -4,7 +4,7 @@
 
 ## 原生界面
 
-`native/DSBot/Resources/Localizable.xcstrings` 存放原生固定文案；`InfoPlist.xcstrings` 存放相机、本地网络、麦克风、语音识别和照片权限提示。`project.yml` 和 `Info.plist` 声明支持的语言，保留原来的 bundle identifier、签名团队及开发版本号。
+`native/ios/Dudu/Resources/Localizable.xcstrings` 存放原生固定文案；`InfoPlist.xcstrings` 存放相机、本地网络、麦克风、语音识别和照片权限提示。`project.yml` 和 `Info.plist` 声明支持的语言，保留原来的 bundle identifier、签名团队及开发版本号。
 
 `Core/Localization.swift` 从 `Bundle.main.preferredLocalizations` 解析 iOS 为 Dudu 选择的语言。因此可跟随系统，也可以使用 iOS 为单个 App 设置的语言；没有另存一份与系统冲突的语言偏好。语言在本次进程内保持稳定，切换由系统重启 App 生效。
 
@@ -29,7 +29,7 @@
 
 ## 内嵌页面
 
-`/dsbot/web/open` 从通过配对验证的请求中取得语言，并把它冻结在独立页面连接上。后续页面 RPC、允许的 Dudu 设置动作和已认证页面的错误提示使用该页面的语言，后续请求头不能改变页面语言。页面 Cookie、来源校验、资源清单和动作 allowlist 保持原规则。
+`/web/open` 从通过配对验证的请求中取得语言，并把它冻结在独立页面连接上。后续页面 RPC、允许的 Dudu 设置动作和已认证页面的错误提示使用该页面的语言，后续请求头不能改变页面语言。页面 Cookie、来源校验、资源清单和动作 allowlist 保持原规则。
 
 DSH 页面仍加载电脑上已安装的 DSH 前端。启动队列在 `dsh-client-locale` 初始化时：
 
@@ -54,7 +54,7 @@ DSH 页面仍加载电脑上已安装的 DSH 前端。启动队列在 `dsh-clien
 
 ## 模拟器验收（2026-11-14）
 
-主人本轮明确要求“那你虚拟机验收一下”。在现有 `dudu-iPhone-Air-iOS27` 模拟器（iOS 27.0，420pt 宽）构建并安装 Debug App，通过 `-AppleLanguages` / `-AppleLocale` 分别启动英文和简体中文进程。使用现有 `-dsbot-ui-review`，电脑、会话和事项均为内存样例，不连接主人的 DSH，不生成配对码，不调用模型。
+主人本轮明确要求“那你虚拟机验收一下”。在现有 `dudu-iPhone-Air-iOS27` 模拟器（iOS 27.0，420pt 宽）构建并安装 Debug App，通过 `-AppleLanguages` / `-AppleLocale` 分别启动英文和简体中文进程。使用现有 `-dudu-ui-review`，电脑、会话和事项均为内存样例，不连接主人的 DSH，不生成配对码，不调用模型。
 
 实际打开并查看了以下界面：
 

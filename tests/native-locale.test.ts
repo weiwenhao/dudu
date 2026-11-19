@@ -145,25 +145,25 @@ test('authenticated API and page sessions keep phone languages isolated on a sha
     const response = await fetch(`${server.address}${path}`, {
       method: 'POST', headers: {
         'content-type': 'application/json', 'accept-language': language,
-        ...(cookie ? { cookie: `dsbot_ui=${cookie}`, 'x-dsbot-page': '1' } : { authorization: `Bearer ${token}` }),
+        ...(cookie ? { cookie: `dudu_ui=${cookie}`, 'x-dudu-page': '1' } : { authorization: `Bearer ${token}` }),
       }, body: JSON.stringify(body),
     });
     assert.equal(response.status, status);
     return response.json();
   };
-  await post('/dsbot/api/v1/connect', {}, 'en');
+  await post('/api/v1/connect', {}, 'en');
   const input = { title: '原文 {0}' };
   const results = await Promise.all(['en', 'zh'].map((language) =>
-    post('/dsbot/api/v1/request', { id: randomUUID(), method: 'session.list', params: input }, language)));
+    post('/api/v1/request', { id: randomUUID(), method: 'session.list', params: input }, language)));
   assert.deepEqual(results.map((row) => row.result), [
     { language: 'en', after: 'en', params: input }, { language: 'zh-CN', after: 'zh-CN', params: input },
   ]);
   const errors = await Promise.all(['en', 'zh'].map((language) =>
-    post('/dsbot/api/v1/request', { id: randomUUID(), method: 'arbitrary.rpc', params: {} }, language)));
+    post('/api/v1/request', { id: randomUUID(), method: 'arbitrary.rpc', params: {} }, language)));
   assert.equal(errors[0].error.code, errors[1].error.code);
   assert.notEqual(errors[0].error.message, errors[1].error.message);
-  const english = await post('/dsbot/web/open', { page: 'dudu', target: 'general' }, 'en');
-  const chinese = await post('/dsbot/web/open', { page: 'dudu', target: 'general' }, 'zh');
+  const english = await post('/web/open', { page: 'dudu', target: 'general' }, 'en');
+  const chinese = await post('/web/open', { page: 'dudu', target: 'general' }, 'zh');
   assert.deepEqual(languages, ['en', 'zh-CN']);
   const pageErrors = [];
   for (const [page, header, expected] of [[english, 'zh', 'en'], [chinese, 'en', 'zh-CN']]) {

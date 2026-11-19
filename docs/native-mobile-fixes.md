@@ -18,7 +18,7 @@
 
 高度：页面高度 = 表单高度 + 顶栏高度，顶栏高度原来是“表单在页面里的位置 + 顶栏的安全区”。这个位置是从屏幕顶量的，页面一升高它就变大，
 高度档位跟着变大，页面再升高……直到满屏（量到的数：表单 261，应加的顶栏 74，实际加了 216，档位 477，页面却 844）。现在只加顶栏的安全区，再加主屏幕底部横条的高度
-（`DSBotLayout.windowSafeAreaBottom`，键盘出来时它不变）。高度档位变了，页面认的是另一个档位，所以档位的选择跟着表单走（和智能体团队页同一做法），
+（`DuduLayout.windowSafeAreaBottom`，键盘出来时它不变）。高度档位变了，页面认的是另一个档位，所以档位的选择跟着表单走（和智能体团队页同一做法），
 这也是加照片、出现失败提示这些改变表单高度的情况需要的。相册选择器放在表单上，不再和页面的高度修饰并排。
 
 检查：模拟器 Debug（含界面测试）看了键盘在、键盘不在、3 张图、9 张图、选项没到五种状态，页面都刚好包住表单，最下面一排按钮在底部横条上面；
@@ -41,7 +41,7 @@ Release 构建通过，已装到手机 build 128。没有做：真机上目视�
 检查：`PhotoAttachments.swift`、`NewIssueSheet.swift` 等在模拟器 Debug 和 `npm run native:build`（Release）下编译通过；
 主机的 `native-board` 单元测试 21 项通过（含新增的“新建事项带图片”一项），typecheck、eslint 通过。模拟器里量了真实菜单：
 三个图标墨迹 16.3、16、16pt，同一列对齐。这个模拟器的系统相册选择器一直停在“正在加载…”（系统组件，不是这次的代码），
-所以“选照片”这一步没有走完；用只在模拟器 Debug 构建里存在的预置参数 `-dsbot-review-new-issue-photos N`（Release 不含）
+所以“选照片”这一步没有走完；用只在模拟器 Debug 构建里存在的预置参数 `-dudu-review-new-issue-photos N`（Release 不含）
 放进假照片，界面测试确认：3 张时有“+”块，点小块进全屏预览，× 能移除，点“+”会打开选择器；9 张时没有“+”块，菜单项变灰。
 没有做的：真机、真实选择器选照片、手机到电脑的真实上传（要配对，按规则不生成配对链接）。新增的“添加图片”一度只有中文，
 英文界面里会显示中文，主人指出后补了英文 Add photos（待审，见 `docs/native-localization-wording.md`），随 build 129 装到手机。
@@ -81,12 +81,12 @@ bundle identifier 与签名团队保持不变，未卸载或清除 App 数据；
 16 MB 来自手机选取文件、插件的 Base64 RPC 和视频预览的独立限额。
 实际安装的 DSH `dsh-client-file-upload` 已有 `uploadStream`，原始文件流不受这个限额。
 手机改为离开主线程复制系统选择器的临时文件，并让 URLSession 从文件直接上传；
-插件的 `/dsbot/api/v1/file/upload` 在配对认证后把请求流交给 DSH，
+插件的 `/api/v1/file/upload` 在配对认证后把请求流交给 DSH，
 仍返回会话专属 receipt，普通发言只携带该 receipt。
 嘟嘟 `@` 文件转发在电脑解析源会话的 receipt，再用同一 DSH 附件流上传到接收会话；
 手机不再保存并重新 Base64 编码整份文件。保留五文件数量、失败草稿恢复和切换范围校验。
 
-会话视频预览改用 `/dsbot/api/v1/file/video` 的认证下载流，直接落到本机临时文件，
+会话视频预览改用 `/api/v1/file/video` 的认证下载流，直接落到本机临时文件，
 再由视频缓存 actor 保存并提取可用封面。没有封面的文件仍可发送。
 引用必须来自当前 watch 的真实用户消息或用户排队项，流的每段仍检查同一 watch；
 电脑撤销配对或关闭连接会取消传输。响应在 DSH 完成完整性检查后才结束，
@@ -181,7 +181,7 @@ lint、typecheck、任务差异检查和签名 Release `npm run native:build` �
 ## 待办展开与收起保留同一正文，移除灰框（2026-11-13）
 
 主人反馈展开时仍有灰框，并要求展开、关闭不改变字体或其他正文样式，
-采用消息内容展开时的逻辑。代码中条目使用的 `DSBotRowButtonStyle`
+采用消息内容展开时的逻辑。代码中条目使用的 `DuduRowButtonStyle`
 会在按下时画 6% 不透明度、12pt 圆角的灰底；原来的切换还带有 0.2s
 整体动画，并把 13pt 灰色纯文本换成 15pt 正文 Markdown。
 这些是可从实现直接确认的差异，本轮没有通过运行中界面复现动画。
@@ -288,7 +288,7 @@ Desktop 的 `plugin-operations/operations.jsonl` 记录了当天北京时间 13:
 手机页面直接调用同一进程的 Typert Gateway，再进入插件管理的 `configure`，
 于是启动事务结束后的独立请求仍被误判为嵌套事务。单纯延时或重试不会清除这个上下文。
 
-现在由插件入口读取 HMR 的事务存储，经 `createDsbotControl` 将请求作用域传入
+现在由插件入口读取 HMR 的事务存储，经 `createDuduControl` 将请求作用域传入
 `createNativeServer`，在每次 HTTP 请求入口使用该存储的 `exit`。
 这个边界同时覆盖原生 API 和嵌入页面，其他异步上下文继续保留；
 页面会话、owner peer、固定接口清单和已读取的插件／组件包清单校验沿用原实现。
@@ -388,7 +388,7 @@ DSH 会话通过现有接口停止和持久归档，原生 Claude/Codex 记录�
 ## 滚动边缘统一使用 iOS 26 系统效果（2026-11-09）
 
 主人确认会话顶部的系统效果后，要求把其余同类区域一起统一。
-`DSBotScrollEdgeBar` 把实际控件交给 `safeAreaBar(edge:spacing:)`，
+`DuduScrollEdgeBar` 把实际控件交给 `safeAreaBar(edge:spacing:)`，
 并指定 `.scrollEdgeEffectStyle(.soft, for:)`，不再通过多层模糊和白色渐变仿制：
 
 - 根页面顶栏统一使用该组件，包括普通会话、从看板进入的会话、看板、信息和设置等页面。
@@ -398,7 +398,7 @@ DSH 会话通过现有接口停止和持久归档，原生 Claude/Codex 记录�
   没有修改发送、键盘和跟随滚动规则。
 - 信息列表选择操作栏、信息详情底栏、侧栏电脑和设置按钮使用同一个系统组件。
   列表相应扣除旧的操作栏占位，避免与系统栏的预留重复。
-- `DSBotEdgeBlur` 和浮动面板的 `DSBotPanelBackdrop` 只在 iOS 18–25 使用。
+- `DuduEdgeBlur` 和浮动面板的 `DuduPanelBackdrop` 只在 iOS 18–25 使用。
   现有按钮、输入框和搜索框的系统玻璃样式，以及语音光晕和侧栏展开动画不变。
 
 没有新增 App 文案。这轮没有运行全量测试、浏览器、模拟器或界面测试；构建只能验证接线和编译，
@@ -537,7 +537,7 @@ CoreDevice 1011；这次没有以模拟器检查替代真机安装确认，也�
 ## 排队操作闪烁（2026-11-05）
 
 排队操作等待期间，整行禁用配合默认按钮样式会让编辑、删除和发送图标一起变淡。
-现在复用现有的 `DSBotQuietPressStyle`，仅被按下的按钮有按压反馈；请求仍会阻止重复提交。
+现在复用现有的 `DuduQuietPressStyle`，仅被按下的按钮有按压反馈；请求仍会阻止重复提交。
 图标与 44pt 触摸区域保持稳定，仅在等待超过 150ms 时显示对应操作的进度，避免短请求闪一下。
 
 5 个相关模拟器界面用例通过，覆盖等待时邻近按钮画面不变、发送触摸区域、编辑失败重试、
@@ -699,7 +699,7 @@ esbuild 的依赖打包集合，产物包含 Croner 代码及其许可证。补�
   iOS 26.3 上菜单/模式/历史按钮的 XCTest 命中判定改用项目已有的坐标点击辅助方法后通过；
   通知查询按 SwiftUI 实际合并后的按钮查找，未改生产触摸行为来迎合测试。
 - 已逐张查看两种系统的菜单、目标编辑、模式选择、通知展开、重试详情截图，核对短标题、当前选项、
-  行内对齐与移除说明后的高度。截图沿用 `-dsbot-review-no-blur`，不能证明正常运行时的边缘模糊、
+  行内对齐与移除说明后的高度。截图沿用 `-dudu-review-no-blur`，不能证明正常运行时的边缘模糊、
   实体手机系统的渲染或 200ms 逐帧反馈时间。连接/配对、文件、权限和嵌入设置的其余分支是代码检查，
   没有将其报告为完整视觉验证。
 - `npm run lint`、`npm run typecheck` 和变更文件的空白检查通过。
@@ -768,7 +768,7 @@ DSH 的 `inbox.next-turn` 保持为排队区。单条直接显示，多条折叠
 
 ## 误报断连
 
-`DSBotHTTPClient.request` 此前把 `CancellationError` 归为 `disconnected`，
+`DuduHTTPClient.request` 此前把 `CancellationError` 归为 `disconnected`，
 从而取消整条连接。历史文件卡片离开视口或旧图片请求被取消时，也可能触发这一行为。
 现在取消只终止该请求；真正的协议、认证和服务端断连仍走原有断线处理。
 手机日志中多次几乎立即失败的 `session.changes` 与此路径相符；日志不足以将全部断连归为同一原因。
@@ -1010,7 +1010,7 @@ DSH 持久保存 `workspace/changes` 通知，但对应的比较摘要和快照�
 改用项目既有的坐标点击辅助方法并等待键盘后，单独重跑通过，没有改生产触摸行为来迎合测试。
 
 已查看最终缓存恢复、长历史与运行中切换的模拟器截图，以及发送失败轮次的录屏帧。
-XCUITest 沿用 `-dsbot-review-no-blur`；这些断言不等同于实体手机的持续全白复现。
+XCUITest 沿用 `-dudu-review-no-blur`；这些断言不等同于实体手机的持续全白复现。
 `npm run lint`、`npm run typecheck` 和本轮变更的空白检查通过，没有运行全量测试。
 恢复验证结果为 `.local/ios-resources-diff-send-nov04/history-recovery.*`、
 `send-recovery.*` 及对应的 `*-shots/`。
@@ -1179,7 +1179,7 @@ Desktop 进程保持打开；未手工编辑配置值或终止进程。回执为
 
 ## 队列与输入框重复显示同一条消息（2026-11-08）
 
-消息发送时，`DSBotStore.send` 立即显示本地回显，但 `ChatView` 等 HTTP 回执返回后
+消息发送时，`DuduStore.send` 立即显示本地回显，但 `ChatView` 等 HTTP 回执返回后
 才移除正文与附件。主机的队列快照可能更早到达，因此同一条消息会同时出现在队列和
 输入框，发送按钮也一直转动。
 
@@ -1280,7 +1280,7 @@ lint、typecheck、native:build 签名 Release 构建及改动空白检查通过
 主人确认构建 54 在手机上仍不正确。112pt 的顶部 inset 只能证明安全区恢复，不能证明
 渐变效果恢复，之前仅根据安全区作出的归因不完整。
 
-构建 55 当时依据外部资料对新系统默认效果的解读，将共用的 `DSBotScrollEdgeBar`
+构建 55 当时依据外部资料对新系统默认效果的解读，将共用的 `DuduScrollEdgeBar`
 在 iOS 27 及以上改为 `automatic`；iOS 26 保留
 已检查的 `soft`，不加自制模糊、不透明底板或分隔线。输入框的底部边缘仍显式隐藏。
 后来复核发现原先的视频 URL 指向「Principles of great design」，不是所写的视频，
@@ -1368,7 +1368,7 @@ UIKit 对照进一步绕过 SwiftUI 的 `safeAreaBar` 关联：明确设置 `con
 已立即删除，没有用于结论。两种系统的阅读偏移不同，对照用于判断标题区的效果，
 不是逐像素或整页一致性检查。
 
-随后还只在临时程序中对照了已有 `DSBotEdgeBlur` 与系统栏结合的兼容方案，
+随后还只在临时程序中对照了已有 `DuduEdgeBlur` 与系统栏结合的兼容方案，
 主人明确不接受其外观，要求保留 SwiftUI 原生效果。这个方案没有进入 Dudu 代码，
 没有编译或安装正式 App。不要将临时截图当作新版本或已批准的设计。
 
@@ -1467,7 +1467,7 @@ lint、typecheck 及构建脚本语法检查通过；没有运行全量测试、
 顶部保留原生 `.soft`，只在带事项标题的工具栏补充 SwiftUI 的 regular Material，
 透明度为 0.6，使用上下各延伸 12pt 的短蒙版过渡。工具栏仍为 44pt，标题、按钮和正文
 预留空间未加高。这是系统材质的补衬，不是修改原生模糊半径，也没有重新启用旧的
-`DSBotEdgeBlur` 渐变层。独立原生示例的 `native-readability.png` 比默认效果降低了
+`DuduEdgeBlur` 渐变层。独立原生示例的 `native-readability.png` 比默认效果降低了
 标题后正文的干扰；未采用产生矩形色带的整块材质，也未采用无改善的留白扩展。
 
 实际 Dudu build 57 的 `dudu-b57-start.png` 确认底部已恢复，输入框上方正文保持清晰。
@@ -1487,7 +1487,7 @@ DSH / 浏览器 e2e。仍通过 `npm run native:install` 原位安装，设备�
 约束系统 soft 边缘向上延伸的范围；上一节的截图不足以说明这个边界已经验收通过。
 
 会话保留原来的 `safeAreaBar` 布局，仅关闭它的底部 scroll edge，改由
-`DSBotComposerBackdrop` 在实际输入框后绘制 SwiftUI regular Material。
+`DuduComposerBackdrop` 在实际输入框后绘制 SwiftUI regular Material。
 渐变和裁切均在这块背景内部；背景只向左右屏幕边缘及原有底部间距延伸，不向上扩展。
 背景直接使用输入框的布局尺寸，不取整个底栏高度，也不依赖上一帧记录的输入框高度。
 输入框自身的玻璃、键盘间距、附件、跳转按钮和历史滚动逻辑均未修改。
@@ -1496,8 +1496,7 @@ DSH / 浏览器 e2e。仍通过 `npm run native:install` 原位安装，设备�
 
 Release、Debug 模拟器构建、lint、typecheck 通过。通过 `npm run native:install`
 原位安装后，设备查询确认 **Dudu 0.3.0 (58)**，并已成功启动。
-应用显示名和 bundle 名均为 Dudu；`dsbot.app`、可执行文件及部分工程、协议、
-Keychain 标识仍是内部兼容名称，不是手机上的 App 名称。
+应用显示名和 bundle 名均为 Dudu。
 
 模拟器正常短对话已显示新版完整界面，但没有正文经过上下边缘，不能据此宣称两处
 效果已完整通过视觉验收。离线长回放仍只得到空白画面，已排除该图并恢复模拟器原状，
@@ -1678,7 +1677,7 @@ iOS 27.0 模拟器使用既有离线响应打开真实 App，截图
 折叠和会话侧滑路由仍按原有实现保留。删除仍使用预览、确认和单次令牌。
 
 原生菜单的 Lucide 图像先前栅格化为黑色，未跟随删除文字的破坏性按钮颜色。
-`DSBotGlyph.menuImage` 与 `DSBotLabel` 的自定义图像入口现统一为模板渲染，让
+`DuduGlyph.menuImage` 与 `DuduLabel` 的自定义图像入口现统一为模板渲染，让
 菜单中的图标和文字一起使用系统的删除颜色。现有左滑红底白色图标保持原样。
 操作标题取自主人的截图，其余提示复用已有 App 文案，没有增加解释性副文本。
 
@@ -1926,7 +1925,7 @@ UIKit offset 写入，也没有改变界面或文案。
 
 验证（iOS 27.0 虚拟机，离线数据，XCUITest 真实触摸，脚本在 `.local/ui-touch`，数据 `make-scroll.mjs`）：
 在线程上面读着点“待办”，14 条的高卡片停在第一条距屏幕顶 170pt（工具栏下面），按钮不出现；
-3 条的矮卡片整张在底部；回执先到、卡片 1.5 秒后才到（`-dsbot-review-late-card`）同样滑到；
+3 条的矮卡片整张在底部；回执先到、卡片 1.5 秒后才到（`-dudu-review-late-card`）同样滑到；
 再点一次同样的卡片（`unchanged`）回到它的顶部；读到卡片中间时按钮仍去卡片底部；等待点在
 自己那条 `@` 行和下一条之间（量过位置）。同一批检查在合并了另一个会话的 build 78
 改动后的代码上再跑过一遍，全部通过。`GroupChat.placingTyping` 还有一份 swiftc 纯逻辑检查
@@ -2126,12 +2125,12 @@ lint、typecheck 和差异检查通过；使用 `npm run native:install -- --dev
 ### 嘟嘟标题顶部遮挡与看板详情一致（2026-11-13）
 
 主人提供 build 102 手机截图，指出“嘟嘟”标题后面的正文比看板详情更透。
-代码中两者共用 `DSBotScrollEdgeBar` 的原生 `.soft` 顶部边缘，
-但附加的 `DSBotToolbarTitleBackdrop` 只在 `boardConversationTitle != nil` 时启用。
+代码中两者共用 `DuduScrollEdgeBar` 的原生 `.soft` 顶部边缘，
+但附加的 `DuduToolbarTitleBackdrop` 只在 `boardConversationTitle != nil` 时启用。
 新增的居中“嘟嘟”标题来自 `toolbarTitle`，没有经过该条件，因而缺少看板详情已有的标题补衬。
 
 现在用 `conversationHasTitle` 统一判定带标题的会话，事项／子智能体的行内标题和
-嘟嘟的居中标题均启用同一个 `DSBotToolbarTitleBackdrop`。
+嘟嘟的居中标题均启用同一个 `DuduToolbarTitleBackdrop`。
 复用现有 regular Material、0.85 不透明度、贯通状态栏和 44pt 工具栏的范围，
 及末尾 20pt 淡出、向下延伸 12pt 的设置。没有重写背景组件或新增一套材质参数。
 旧系统的带标题顶部配置也使用相同判定。嘟嘟仍居中，事项标题仍靠左，
@@ -2305,7 +2304,7 @@ Button 外用等量负 padding 抵消布局占位，沿用原来的图标尺寸�
 ### 设置页版本信息与手机安装（2026-11-15，build 107）
 
 按照主人提供的 Muse 设置截图，将版本信息从白色卡片的独立行移到设置内容末尾。
-使用现有 13pt 字号、`DSBotStyle.muted` 灰色与列表间距，居中显示 `Dudu v0.1.0`；
+使用现有 13pt 字号、`DuduStyle.muted` 灰色与列表间距，居中显示 `Dudu v0.1.0`；
 不再显示版本图标、行标题、分隔线和括号内的构建号。
 版本从运行中 App 的 `CFBundleShortVersionString` 读取，品牌与版本格式不参与翻译查找。
 隐私政策与关于保留原有的卡片、入口和交互。
@@ -2519,7 +2518,7 @@ Claude 日志没有收到这些输入。电脑的 Workspace 持久化归档集�
 及复制/选择操作。
 
 主人随后指出 loading 与原图不一致：最初实现误用了系统分段式 `ProgressView`。
-重新对照 Lark 截图后，这三处改用同一个 `DSBotLoadingRing`：细线连续圆弧、
+重新对照 Lark 截图后，这三处改用同一个 `DuduLoadingRing`：细线连续圆弧、
 渐淡尾部、每秒一圈的匀速旋转，消息旁为浅蓝，连接条和空记录处为灰色。
 保持设计稿 LoaderCircle 的 24pt 网格尺寸和线宽比例；动画沿用头像工作环的
 合成层方式，不按帧更新 SwiftUI，遮挡、后台、离屏或减少动态效果时停止。
@@ -2538,7 +2537,7 @@ Claude 日志没有收到这些输入。电脑的 Workspace 持久化归档集�
 
 没有新增未经审核的中文副文本，没有新增外观测试。定向检查包括离线发送、
 后台后重连、未知投递结果的同 ID 重试、已确认消息不重复恢复、切换目标和认证失败，
-与既有的投递/队列/草稿用例一起在 macOS 运行实际 `DSBotStore` 源码；
+与既有的投递/队列/草稿用例一起在 macOS 运行实际 `DuduStore` 源码；
 Markdown 文档值、未使用的历史卡片载荷、媒体、通知及日志为平台替身，
 因此不是实际网络或 UI 测试。检查日志及复现脚本位于
 `.local/mobile-pending-loading-2026-11-17/`。
@@ -2553,7 +2552,7 @@ Markdown 文档值、未使用的历史卡片载荷、媒体、通知及日志�
 而首页旧条件把所有非 `connected` 状态都当成异常，没有要求实际失败，
 也没有区分前台与后台。正常启动、恢复连接的短暂中间态因此也会触发提示。
 
-`DSBotStore.isComputerUnavailable` 现在只在当前前台期间实际收到连接失败后成立。
+`DuduStore.isComputerUnavailable` 现在只在当前前台期间实际收到连接失败后成立。
 确认过的故障在重试和退避期间保留，连接成功、切换电脑或后台挂起后清除；
 从后台回来先检查连接，失败后再显示。根视图额外要求 `scenePhase == .active`，
 让后台挂起本身不触发红条。沿用原来的断开、探测与重连流程，没有增加计时器、
@@ -2561,7 +2560,7 @@ Markdown 文档值、未使用的历史卡片载荷、媒体、通知及日志�
 
 一个直接相关的核心生命周期回归用例通过（0.021 秒），覆盖首次连接、
 前台断线、失败重试、后台清除、恢复后的失败和成功恢复；通过已有定向 macOS
-测试脚手架运行实际 `DSBotStore`，媒体等平台边界为替身，不是界面测试。
+测试脚手架运行实际 `DuduStore`，媒体等平台边界为替身，不是界面测试。
 `npm run native:build`、lint、typecheck 通过；随后使用 `npm run native:install`
 将 0.1.0 (130) 覆盖安装到主人的实体 iPhone，安装回执成功，保留原 bundle identifier
 `com.harnessmobile.app` 与签名团队 `S3549488QR`，未卸载 App。
@@ -2656,7 +2655,7 @@ request ID 收敛。真实电脑切换和服务端明确拒绝保留原来的草
 
 改了什么：
 
-- **页签和标记**：`CollectorTab` 只剩 todo / done，收件箱的页签是“待处理”“已处理”两个；`CollectorRecord.ignored`、`CollectorMark.ignore`（和提示“已忽略”）删掉；只有忽略用的图标 `DSBotGlyph.hide`（eye-off）一起删掉。`inbox.list` 只问 `todo` 和 `done`，`inbox.mark` 只发 `done`、`delete`、`restore`。
+- **页签和标记**：`CollectorTab` 只剩 todo / done，收件箱的页签是“待处理”“已处理”两个；`CollectorRecord.ignored`、`CollectorMark.ignore`（和提示“已忽略”）删掉；只有忽略用的图标 `DuduGlyph.hide`（eye-off）一起删掉。`inbox.list` 只问 `todo` 和 `done`，`inbox.mark` 只发 `done`、`delete`、`restore`。
 - **左滑**：待处理是 已处理 / 删除；已处理（没挂事项的）是 恢复 / 删除。
 - **长按菜单**：待处理里没有“忽略”；已处理里不变（恢复、删除）；“已忽略”页和它菜单里的 恢复 / 已处理 一起没了。
 - **选择栏**：转发 / 已处理 / 删除。
@@ -2668,7 +2667,7 @@ request ID 收敛。真实电脑切换和服务端明确拒绝保留原来的草
 
 检查：
 
-- `npm run native:build` 通过（Release、iphoneos；只有 `EmbeddedPageSession.swift` 里原来就有的一条“will never be executed”警告）。`Localizable.xcstrings` 是合法 JSON，编出来的 `zh-Hans` 和 `en` 表里都没有这两条。`native/` 下的源码、测试、String Catalog 里再没有这个功能的引用（`native/DSBotTests` 里没有用例碰它，没有跑单元测试）。
+- `npm run native:build` 通过（Release、iphoneos；只有 `EmbeddedPageSession.swift` 里原来就有的一条“will never be executed”警告）。`Localizable.xcstrings` 是合法 JSON，编出来的 `zh-Hans` 和 `en` 表里都没有这两条。`native/` 下的源码、测试、String Catalog 里再没有这个功能的引用（`native/ios/DuduTests` 里没有用例碰它，没有跑单元测试）。
 - 手机：build 133（`project.yml` 的 `CURRENT_PROJECT_VERSION` 132 → 133）已用 `npm run native:install` 原位装到“chuchu的iPhone”（设备上读到 0.1.0 / 133，bundle id 和签名团队没变，日志 `.local/native-install-133.log`）；第一次安装撞上另一个同时在跑的 `native:build`（同一个 DerivedData，“database is locked”），没有装上，等它跑完后重装成功。这一版带着当时共享目录里所有人没提交的改动。
 - 没看过：页签变成两个后的样子、左滑两个按钮、三项的选择栏、记录页“更多”里只剩补全上下文和删除，都没有在模拟器或手机上看过，也没有点过；没有跑 UI 或端到端测试。
 
@@ -2676,9 +2675,9 @@ request ID 收敛。真实电脑切换和服务端明确拒绝保留原来的草
 
 电脑端这天接了 Grok、Kimi、OpenCode、Antigravity、CodeBuddy、Devin、Factory、Qwen、Qoder（见 `docs/providers.md`）。手机上的改动只有名字和标志，没有新的界面文字。
 
-- **名单只有一份**：`scripts/sync-agent-assets.mjs`（`native:build` 会跑）从桌面的 `AGENT_NAMES`（`host/dudu-plugin/ui/issues/model.js`）生成 `native/DSBot/Core/AgentNames.swift` 和九个 `Agent-<id>.imageset`。`SessionAgent.name`、`AgentChoices.known` 都读它，以后电脑端加供应商，手机不用再改代码。
+- **名单只有一份**：`scripts/sync-agent-assets.mjs`（`native:build` 会跑）从桌面的 `AGENT_NAMES`（`host/dudu-plugin/ui/issues/model.js`）生成 `native/ios/Dudu/Core/AgentNames.swift` 和九个 `Agent-<id>.imageset`。`SessionAgent.name`、`AgentChoices.known` 都读它，以后电脑端加供应商，手机不用再改代码。
 - **列表不闪**：电脑还没把供应商发过来时，“智能体”原来列出 App 认识的全部（那时是四个）。现在认识十三个，所以这时只列常用的四个（Claude、ChatGPT、Pi、DeepSeek，`AgentChoices.usual`）加上事项已有的那个；其余九个要等电脑说它可用才出现。
-- **标志**：取自 OAR 0.120.0 自带的品牌图（来源和许可在 `native/DSBot/Resources/AgentLogoNotices.txt`）。单色的跟随文字颜色；Kimi、Devin、Antigravity 保留自己的颜色。Factory 只画字形（去掉了原图的深色方块底），Antigravity 画成单色蓝的轮廓（原图的渐变遮罩在 asset catalog 里画不出来），这两个和原图不同，等你看。
+- **标志**：取自 OAR 0.120.0 自带的品牌图（来源和许可在 `native/ios/Dudu/Resources/AgentLogoNotices.txt`）。单色的跟随文字颜色；Kimi、Devin、Antigravity 保留自己的颜色。Factory 只画字形（去掉了原图的深色方块底），Antigravity 画成单色蓝的轮廓（原图的渐变遮罩在 asset catalog 里画不出来），这两个和原图不同，等你看。
 
 检查：
 

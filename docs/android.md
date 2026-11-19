@@ -12,7 +12,7 @@ On 2026-11-18 the inbox, forward and task pages were redone from the owner's app
 drawings (see the section of that date below); their rendering has not been looked at yet.
 
 The Android app is a separate Kotlin / Jetpack Compose Material 3 target in
-`native-android/`. This pass implements the current phone service's main
+`native/android/`. This pass implements the current phone service's main
 workflows, using the iPhone app as the functional reference and the approved
 Android homepage and Material popup examples as the visual reference. It is
 no longer a homepage with a text-only conversation. The root `android/`
@@ -53,7 +53,7 @@ and issue execution remain the host's responsibility.
 
 ## Architecture and safety
 
-`native-android/app/src/main/java/app/dudu/android/` contains:
+`native/android/app/src/main/java/app/dudu/android/` contains:
 
 - `data/Endpoint.kt`: pairing normalization, validated routes and saved-link
   serialization. Credentials never enter request origins or diagnostic strings.
@@ -76,9 +76,9 @@ and issue execution remain the host's responsibility.
   drafts/outboxes/caches, explicit mutations and return navigation.
 - `ui/`: Compose screens using shared controls, existing assets and App wording.
 
-The transport remains authenticated HTTP/HTTPS under `/dsbot/api/v1/`, with
+The transport remains authenticated HTTP/HTTPS under `/api/v1/`, with
 HTTP long polling. There are no WebSockets, anonymous pages or generic DSH RPC
-proxies. Complex pages use `/dsbot/web/open` and `/dsbot/ui/<page-session>/`.
+proxies. Complex pages use `/web/open` and `/ui/<page-session>/`.
 
 Address switching follows the existing iPhone protocol. A probe contains a
 fresh nonce and device ID, without a pairing token. The app verifies computer
@@ -151,8 +151,8 @@ release. Their existing Chinese actions are reused unchanged:
 | 已转发到 (with the trailing space, the record's line) | Forwarded to |
 | 搜索 | Search |
 
-They are recorded in `native-android/wording-sources.json` and
-`native-android/wording-pending.json`. This document does not approve App copy.
+They are recorded in `native/android/wording-sources.json` and
+`native/android/wording-pending.json`. This document does not approve App copy.
 
 ## Inbox, forward and tasks redesign (2026-11-18)
 
@@ -200,7 +200,7 @@ npm run android:install
 
 - `android:build` assembles the debug APK, runs Android core unit tests and
   Android lint. The APK is
-  `native-android/app/build/outputs/apk/debug/app-debug.apk`.
+  `native/android/app/build/outputs/apk/debug/app-debug.apk`.
 - `android:test` runs only the Android core unit tests.
 - `android:install` performs the build/checks, updates a running emulator and
   opens the app. Physical IDs are rejected. Set `ANDROID_SERIAL` when multiple
@@ -263,7 +263,7 @@ The earlier `verification.json` and
 [the per-page comparison](android-ui-parity-comparison.md) describe the rejected
 historical build. No latest-build screenshot or E2E pass is claimed.
 
-`native-android/test/fixture.mjs` uses the real native HTTP server, SQLite issue
+`native/android/test/fixture.mjs` uses the real native HTTP server, SQLite issue
 and task stores, inbox/settings APIs and scoped page transport. Agent execution,
 host session content and a small embedded host document are controlled fixtures.
 It binds localhost and is reached through `10.0.2.2`; it never starts the owner's

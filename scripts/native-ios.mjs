@@ -26,17 +26,17 @@ const derived = join(root, '.local', 'native-ios');
 await mkdir(derived, { recursive: true });
 await syncAgentAssets();
 const run = (command, options) => execFileSync(command, options, { cwd: root, stdio: 'inherit' });
-run('xcodegen', ['generate', '--spec', 'native/project.yml', '--project', 'native']);
+run('xcodegen', ['generate', '--spec', 'native/ios/project.yml', '--project', 'native/ios']);
 run('xcodebuild', [
-  '-project', 'native/DSBotNative.xcodeproj', '-scheme', 'dsbot',
+  '-project', 'native/ios/Dudu.xcodeproj', '-scheme', 'Dudu',
   '-configuration', configuration, '-sdk', 'iphoneos',
   '-destination', 'generic/platform=iOS', '-derivedDataPath', derived,
   '-jobs', '2', '-allowProvisioningUpdates', '-allowProvisioningDeviceRegistration', 'build',
 ]);
-const app = join(derived, 'Build', 'Products', `${configuration}-iphoneos`, 'dsbot.app');
+const app = join(derived, 'Build', 'Products', `${configuration}-iphoneos`, 'Dudu.app');
 console.log(`Native SwiftUI app: ${app}`);
 if (install || testing) {
-  const requested = option('--device', process.env.DSBOT_DEVICE);
+  const requested = option('--device', process.env.DUDU_DEVICE);
   const report = join(derived, 'devices.json');
   run('xcrun', ['devicectl', 'list', 'devices', '--json-output', report]);
   const data = JSON.parse(await readFile(report, 'utf8'));
@@ -55,7 +55,7 @@ if (install || testing) {
   if (testing) {
     const result = join(derived, `tests-${Date.now()}.xcresult`);
     run('xcodebuild', [
-      '-project', 'native/DSBotNative.xcodeproj', '-scheme', 'dsbot',
+      '-project', 'native/ios/Dudu.xcodeproj', '-scheme', 'Dudu',
       '-configuration', configuration, '-destination', `platform=iOS,id=${device.hardwareProperties.udid}`,
       '-destination-timeout', '30', '-derivedDataPath', derived,
       '-resultBundlePath', result, '-parallel-testing-enabled', 'NO',

@@ -11,8 +11,8 @@ export function installBrowserDiagnostics(
   post: (message: object) => void,
 ): { record(event: string, data?: unknown, level?: BrowserDiagnostic['level']): void; destroy(): void } {
   const w = window as typeof window & {
-    __DSBOT_ACTIVE_SOCKETS__?: Set<WebSocket>;
-    __DSBOT_DIAGNOSTICS__?: {
+    __DUDU_ACTIVE_SOCKETS__?: Set<WebSocket>;
+    __DUDU_DIAGNOSTICS__?: {
       record(event: string, data?: unknown, level?: BrowserDiagnostic['level']): void;
       snapshot(): BrowserDiagnostic[];
       flush(): void;
@@ -240,7 +240,7 @@ export function installBrowserDiagnostics(
   const NativeWebSocket = window.WebSocket;
   // The relay may replace its page adapter during bootstrap. Keep live socket
   // references so the final native adapter can resume diagnostics on those sockets.
-  const sockets = w.__DSBOT_ACTIVE_SOCKETS__ ??= new Set<WebSocket>();
+  const sockets = w.__DUDU_ACTIVE_SOCKETS__ ??= new Set<WebSocket>();
   const socketIds = new WeakMap<WebSocket, number>();
   const size = (data: unknown) => typeof data === 'string' ? { characters: data.length }
     : { bytes: data instanceof Blob ? data.size : (data as ArrayBuffer | undefined)?.byteLength };
@@ -346,7 +346,7 @@ export function installBrowserDiagnostics(
   }, 500);
   cleanup.push(() => clearInterval(timer));
   const api = { record, snapshot: () => recent.slice(), flush };
-  w.__DSBOT_DIAGNOSTICS__ = api;
+  w.__DUDU_DIAGNOSTICS__ = api;
   record('page.start', { path: path(location.href), userAgent: navigator.userAgent,
     supportedPerformanceEntries: typeof PerformanceObserver === 'undefined' ? [] : PerformanceObserver.supportedEntryTypes });
   return {
@@ -356,7 +356,7 @@ export function installBrowserDiagnostics(
       flush();
       active = false;
       cleanup.forEach((fn) => fn());
-      if (w.__DSBOT_DIAGNOSTICS__ === api) delete w.__DSBOT_DIAGNOSTICS__;
+      if (w.__DUDU_DIAGNOSTICS__ === api) delete w.__DUDU_DIAGNOSTICS__;
     },
   };
 }

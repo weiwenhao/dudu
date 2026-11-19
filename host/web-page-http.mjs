@@ -4,11 +4,11 @@ import { promisify } from 'node:util';
 import { gzip } from 'node:zlib';
 import { nativeText, resolveNativeLocale, withNativeLocale } from './native-locale.mjs';
 
-const OPEN_PATH = '/dsbot/web/open';
-const PAGE_PREFIX = '/dsbot/ui/';
+const OPEN_PATH = '/web/open';
+const PAGE_PREFIX = '/ui/';
 const PLUGIN_ROUTE = 'api/dudu/';
 const TOKEN = /^[A-Za-z0-9_-]{43}$/u;
-const PAGE_PATH = /^\/dsbot\/ui\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(.*)$/u;
+const PAGE_PATH = /^\/ui\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(.*)$/u;
 const MAX_BODY_BYTES = 1024 * 1024;
 const digest = (value) => createHash('sha256').update(value).digest();
 const gzipBytes = promisify(gzip);
@@ -38,7 +38,7 @@ function responseJSON(response, status, value) {
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
-    ...(status === 401 ? { 'www-authenticate': 'Bearer realm="dsbot-pages"' } : {}),
+    ...(status === 401 ? { 'www-authenticate': 'Bearer realm="dudu-pages"' } : {}),
   });
   response.end(body);
 }
@@ -102,9 +102,9 @@ function bearer(request) {
 
 function pageCookie(request) {
   const values = String(request.headers.cookie ?? '').split(';')
-    .map((part) => part.trim()).filter((part) => part.startsWith('dsbot_ui='));
+    .map((part) => part.trim()).filter((part) => part.startsWith('dudu_ui='));
   if (values.length !== 1) throw new PageHttpError(401, 'AUTH_REQUIRED');
-  const value = values[0].slice('dsbot_ui='.length);
+  const value = values[0].slice('dudu_ui='.length);
   if (!TOKEN.test(value)) throw new PageHttpError(401, 'AUTH_FAILED');
   return value;
 }
@@ -303,7 +303,7 @@ export function createWebPageHttp({
         try {
           const resource = match[2];
           if (resource === 'rpc') {
-            if (request.method !== 'POST' || raw !== pathname || request.headers['x-dsbot-page'] !== '1') {
+            if (request.method !== 'POST' || raw !== pathname || request.headers['x-dudu-page'] !== '1') {
               throw new PageHttpError(400, 'BAD_REQUEST');
             }
             releaseBody = reserveBody(request, session.connection.deviceId);
@@ -324,7 +324,7 @@ export function createWebPageHttp({
           } else if (resource.startsWith(PLUGIN_ROUTE)) {
             // A page of 嘟嘟's own asks the plugin for one of the actions its settings pages use; no other kind of page may, and nothing outside the list.
             const action = resource.slice(PLUGIN_ROUTE.length);
-            if (request.method !== 'POST' || raw !== pathname || request.headers['x-dsbot-page'] !== '1'
+            if (request.method !== 'POST' || raw !== pathname || request.headers['x-dudu-page'] !== '1'
               || session.kind !== 'dudu' || !duduPages?.allowed(action)) throw new PageHttpError(404, 'NOT_FOUND');
             releaseBody = reserveBody(request, session.connection.deviceId);
             const body = await readJSON(request, MAX_BODY_BYTES, bodyTimeoutMs);

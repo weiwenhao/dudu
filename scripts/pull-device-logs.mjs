@@ -32,7 +32,7 @@ async function main() {
     await summarize(destination, minutes);
     return;
   }
-  const temporary = await mkdtemp(path.join(tmpdir(), 'dsbot-logs-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'dudu-logs-'));
   try {
     let device = option('--device');
     if (!device) {

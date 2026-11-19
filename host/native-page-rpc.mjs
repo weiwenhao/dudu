@@ -102,7 +102,7 @@ function failure(code = 'gateway/unavailable') {
 
 function encodeBytes(value) {
   if (value instanceof Uint8Array) {
-    return { $dsbotBytes: Buffer.from(value).toString('base64') };
+    return { $duduBytes: Buffer.from(value).toString('base64') };
   }
   if (value instanceof ArrayBuffer) return encodeBytes(new Uint8Array(value));
   if (Array.isArray(value)) return value.map(encodeBytes);

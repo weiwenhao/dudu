@@ -25,17 +25,17 @@ async function makeHarness({
   marketResult?: Record<string, unknown>;
 } = {}) {
   const source = await readFile(
-    new URL('../native/DSBot/Resources/EmbeddedTransport.js', import.meta.url),
+    new URL('../native/ios/Dudu/Resources/EmbeddedTransport.js', import.meta.url),
     'utf8',
   );
   const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
   const resourceFetches: unknown[][] = [];
   const appendedScripts: Array<{ src: string; onload?: () => void; onerror?: () => void }> = [];
   const pageId = '11111111-2222-4333-8444-555555555555';
-  const basePath = `/dsbot/ui/${pageId}/`;
+  const basePath = `/ui/${pageId}/`;
   let resolveInvoke: ((value: string) => void) | undefined;
   const window = {
-    __DSBOT_PAGE__: {
+    __DUDU_PAGE__: {
       id: transport === 'http' ? pageId : 'page-1',
       kind,
       sessionId,
@@ -43,7 +43,7 @@ async function makeHarness({
     },
     webkit: {
       messageHandlers: {
-        dsbot: {
+        dudu: {
           async postMessage(encoded: string) {
             const message = JSON.parse(encoded) as {
               method: string;
@@ -88,7 +88,7 @@ async function makeHarness({
     document: {
       baseURI: transport === 'http'
         ? `https://device.test${basePath}`
-        : 'dsbot-ui://page-1/',
+        : 'dudu-ui://page-1/',
       addEventListener() {},
       createElement() {
         return { src: '', onload: undefined, onerror: undefined };
@@ -172,7 +172,7 @@ test('dsh-context fetch routes map real page requests to narrow web.invoke argum
     },
     {
       kind: 'context',
-      input: 'dsbot-ui://page-1/api/dsh-context/skills',
+      input: 'dudu-ui://page-1/api/dsh-context/skills',
       body: { cwd: '/Users/private/project', sessionId: null },
       endpoint: 'dshContext/skills',
       args: { sessionId: 'page-session' },
@@ -229,7 +229,7 @@ test('dsh-context fetch rejects external, noncanonical, scoped, and malformed re
     {
       label: 'URL credentials',
       kind: 'context',
-      input: 'dsbot-ui://user:secret@page-1/api/dsh-context/detail',
+      input: 'dudu-ui://user:secret@page-1/api/dsh-context/detail',
       body: { sessionId: 'session-1' },
     },
     {
@@ -430,7 +430,7 @@ test('HTTP page RPC uses scoped same-origin fetch and never posts page calls to 
   assert.equal(init.redirect, 'error');
   assert.deepEqual(JSON.parse(JSON.stringify(init.headers)), {
     'content-type': 'application/json',
-    'X-DSBot-Page': '1',
+    'X-Dudu-Page': '1',
   });
   assert.deepEqual(JSON.parse(String(init.body)), {
     method: 'web.invoke',
@@ -438,7 +438,7 @@ test('HTTP page RPC uses scoped same-origin fetch and never posts page calls to 
   });
   assert.deepEqual(harness.calls, []);
   assert.equal(
-    vm.runInContext("'pairingToken' in window.__DSBOT_NATIVE__.page", harness.context),
+    vm.runInContext("'pairingToken' in window.__DUDU_NATIVE__.page", harness.context),
     false,
   );
 });
@@ -519,7 +519,7 @@ test('HTTP bundle URLs are scoped once and external or encoded traversal paths a
   await assert.rejects(
     fetchInPage(
       harness.context,
-      '/dsbot/ui/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/assets/private',
+      '/ui/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/assets/private',
       '{}',
     ),
     { name: 'TypeError' },

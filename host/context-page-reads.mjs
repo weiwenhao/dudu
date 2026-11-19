@@ -77,7 +77,7 @@ export function createContextPageReads({ connection, peer, timeoutMs = 15_000 })
       try {
         controller.signal.throwIfAborted();
         // Invoke one fixed in-process plugin reader; no URL or HTTP carrier comes from the page.
-        const request = new Request(`http://dsbot.invalid${ROUTES[endpoint]}`, {
+        const request = new Request(`http://dudu.invalid${ROUTES[endpoint]}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(args),

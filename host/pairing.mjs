@@ -17,7 +17,7 @@ export async function loadPairingToken(folder) {
   const path = join(folder, 'pairing-key');
   try {
     const token = (await readFile(path, 'utf8')).trim();
-    if (!validToken(token)) throw new Error('Invalid dsbot pairing key.');
+    if (!validToken(token)) throw new Error('Invalid dudu pairing key.');
     return token;
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;

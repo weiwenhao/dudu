@@ -48,9 +48,9 @@ window.__ModuleLoader__.load({
     };
 
     const styles = `
-.dsbot-input{display:flex;width:100%;max-width:100%;min-width:0;box-sizing:border-box}
-.dsbot-input input{flex:1 1 auto;width:100%;min-width:0;box-sizing:border-box}
-.dsbot-error{color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;margin:12px 0 0}
+.dudu-input{display:flex;width:100%;max-width:100%;min-width:0;box-sizing:border-box}
+.dudu-input input{flex:1 1 auto;width:100%;min-width:0;box-sizing:border-box}
+.dudu-error{color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;margin:12px 0 0}
 /* The frame's shell.leading seat holds the native reopen / New Session controls. The plugin wraps that component, preserving its actions and locale,
    then appends Home (owner, 2026-11-09). Match its 28px controls and 8px gap, and reserve one more control's width in the frame's existing clearance.
    Older hosts and non-macOS windows keep the conversation-header entry; hide it whenever the frame seat is present so there is only one Home.
@@ -838,7 +838,7 @@ window.__ModuleLoader__.load({
             session.cwd && h('span', { title: session.cwd }, shortPath(session.cwd, home)),
             h('span', null, ago(session.updatedAt)),
             h(Button, {
-              size: 'sm', variant: session.dshSessionId ? 'outline' : 'primary', className: 'dsbot-button', disabled: busy,
+              size: 'sm', variant: session.dshSessionId ? 'outline' : 'primary', className: 'dudu-button', disabled: busy,
               onClick: (event) => { event.stopPropagation(); onOpen(); },
             }, busy ? '加载中…' : session.dshSessionId ? '打开' : '加载到 DSH'))),
         session.evidence && h('div', { className: 'dudu-preview' }, highlight(session.evidence.text, terms)),
@@ -848,7 +848,7 @@ window.__ModuleLoader__.load({
           session.cwd && h('div', null, '目录：', h('code', null, session.cwd)),
           h('div', null, '会话 ID：', h('code', null, session.id)),
           h('div', { className: 'dudu-actions' },
-            h(Button, { size: 'sm', variant: 'outline', className: 'dsbot-button', onClick: copy }, copied ? (S?.copied ?? '已复制') : '复制恢复命令'))));
+            h(Button, { size: 'sm', variant: 'outline', className: 'dudu-button', onClick: copy }, copied ? (S?.copied ?? '已复制') : '复制恢复命令'))));
     }
 
     function DuduPage({ openSession }) {
@@ -900,19 +900,19 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dudu-wrap' },
           h('div', { className: 'dudu-bar' },
             h('div', { className: 'dudu-search' }, h(Input, {
-              type: 'text', className: 'dsbot-input', value: query, placeholder: '搜索会话', 'aria-label': '搜索会话',
+              type: 'text', className: 'dudu-input', value: query, placeholder: '搜索会话', 'aria-label': '搜索会话',
               autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false, onChange: (event) => setQuery(event.target.value),
             })),
             data?.indexing?.running && h('span', { className: 'dudu-index', role: 'status' }, `索引 ${data.indexing.done} / ${data.indexing.total}`),
             h('div', { className: 'dudu-tabs', role: 'group', 'aria-label': '筛选' }, AGENTS.map((item) => h('button', {
               key: item.id, type: 'button', className: 'dudu-tab', 'aria-pressed': agent === item.id, onClick: () => setAgent(item.id),
             }, item.name))),
-            h(Button, { size: 'sm', variant: 'outline', className: 'dsbot-button', onClick: () => { void fetchList(true); } }, '刷新'),
+            h(Button, { size: 'sm', variant: 'outline', className: 'dudu-button', onClick: () => { void fetchList(true); } }, '刷新'),
             phone && h('span', { className: 'dudu-phone', 'data-testid': 'dudu-phone' }, h('i', { className: `dudu-dot${online ? ' dudu-dot--on' : ''}` }), online ? '手机已连接' : '手机未连接')),
           !searching && h('div', { className: 'dudu-grid' },
             h('div', { className: 'dudu-col' }, h(RunningCard, { running, home, onOpen: (sessionId) => openSession({ sessionId }) }))),
-          error && h('p', { className: 'dsbot-error', role: 'alert' }, `读取会话失败：${error}`),
-          unavailable.map((provider) => h('p', { key: provider.id, className: 'dsbot-error', role: 'alert' }, `${provider.name}：${provider.error}`)),
+          error && h('p', { className: 'dudu-error', role: 'alert' }, `读取会话失败：${error}`),
+          unavailable.map((provider) => h('p', { key: provider.id, className: 'dudu-error', role: 'alert' }, `${provider.name}：${provider.error}`)),
           !searching && h('div', { className: 'dudu-section' }, h('span', null, '最近'),
             data && data.total > RECENT && h('button', { type: 'button', className: 'dudu-fold', onClick: () => setShowAll(!showAll) }, showAll ? '收起' : `全部 ${data.total}`)),
           !data && !error && h('div', { className: 'dudu-note' }, '…'),
@@ -1473,7 +1473,7 @@ window.__ModuleLoader__.load({
             }, h(DuduGlyph, { size: 16 })));
         }
         ctx.slots.inject('conversation.header.leading', () => ctx.slots.register({ name: 'conversation.header.leading' }, HomeEntry));
-        if (!window.__DSBOT_PAGE__ && document.documentElement?.dataset?.platform === 'darwin') {
+        if (!window.__DUDU_PAGE__ && document.documentElement?.dataset?.platform === 'darwin') {
           // shell.leading is a single slot. Shadow it the same way the hero mode chip is wrapped above, cloning the host occupant into a private child slot.
           // Never reimplement sidebar actions: the original component keeps its shortcuts, remote-access behavior and locale.
           const leadingSlot = 'shell.leading';
@@ -1523,7 +1523,7 @@ window.__ModuleLoader__.load({
         });
         // 嘟嘟 is set up in its own settings window (the gear of its page); DSH's Settings has nothing of it.
         // Phone pages run this same module inside their own frontend; only DSH's own window reports.
-        if (!window.__DSBOT_PAGE__) {
+        if (!window.__DUDU_PAGE__) {
           ctx.effect(() => ui?.installChatAutoHistory(document));
           ctx.effect(() => {
             try { return startNavigationPublisher(ctx); } catch { return undefined; }

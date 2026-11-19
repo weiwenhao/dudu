@@ -123,7 +123,7 @@ test('serves direct HTTP documents and raw manifest resources per connection and
   ]));
   const { pages, connection } = createHarness({ frontend });
   const page = await pages.openHttp({ page: 'plugins' }, connection);
-  const basePath = `/dsbot/ui/${page.id}/`;
+  const basePath = `/ui/${page.id}/`;
 
   assert.match(page.id, /^[0-9a-f-]{36}$/iu);
   assert.deepEqual(frontend.calls.documents, [{
@@ -141,7 +141,7 @@ test('serves direct HTTP documents and raw manifest resources per connection and
 
   await assert.rejects(pages.documentHttp({ id: page.id }, { closed: false }), { code: 'NOT_FOUND' });
   await assert.rejects(pages.resourceHttp({
-    id: page.id, path: `/dsbot/ui/${'0'.repeat(8)}-0000-0000-0000-000000000000/assets/page.js`,
+    id: page.id, path: `/ui/${'0'.repeat(8)}-0000-0000-0000-000000000000/assets/page.js`,
   }, connection), { code: 'NOT_FOUND' });
   await assert.rejects(pages.resourceHttp({
     id: page.id, path: `${basePath}../../etc/passwd`,

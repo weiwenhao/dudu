@@ -12,7 +12,7 @@ function fixture() {
   const storage = {
     async get(key: string) { return values.get(key) ?? null; },
     async set(key: string, value: string) {
-      if (failIndex && key === 'dsbot.computers.v2') throw new Error('Keychain unavailable');
+      if (failIndex && key === 'dudu.computers.v2') throw new Error('Keychain unavailable');
       values.set(key, value);
     },
     async remove(key: string) {
@@ -45,8 +45,8 @@ test('multiple desktop credentials survive switching and re-opening, without tok
   const restored = await f.open().load();
   assert.equal(activeComputer(restored)?.id, office.id);
   assert.equal(restored.computers.find((computer) => computer.id === home.id)?.url, home.url);
-  assert.ok(!f.values.get('dsbot.computers.v2')!.includes('test-token'));
-  assert.equal([...f.values.keys()].filter((key) => key.startsWith('dsbot.computer.')).length, 2);
+  assert.ok(!f.values.get('dudu.computers.v2')!.includes('test-token'));
+  assert.equal([...f.values.keys()].filter((key) => key.startsWith('dudu.computer.')).length, 2);
 });
 
 test('pairing another address for the same desktop updates that computer and preserves other desktops', async () => {
@@ -64,11 +64,11 @@ test('pairing another address for the same desktop updates that computer and pre
 
 test('legacy credentials migrate before deletion and can acquire a stable desktop identity', async () => {
   const f = fixture();
-  f.values.set('dsbot.connection.v1', JSON.stringify(parseConnection('https://office.example.com/?pair=old', '书房')));
+  f.values.set('dudu.connection.v1', JSON.stringify(parseConnection('https://office.example.com/?pair=old', '书房')));
   const store = f.open();
   const migrated = await store.load();
   assert.equal(activeComputer(migrated)?.name, '书房');
-  assert.equal(f.values.has('dsbot.connection.v1'), false);
+  assert.equal(f.values.has('dudu.connection.v1'), false);
   const updated = await store.pair(pair('office', 'office.example.com', 'old'));
   assert.equal(updated.computers.length, 1);
   assert.equal(updated.activeId, migrated.activeId);
@@ -88,12 +88,12 @@ test('legacy computers sharing an address are not overwritten by different crede
 test('a failed migration leaves the original credential available for retry', async () => {
   const f = fixture();
   const previous = JSON.stringify(parseConnection('https://office.example.com/?pair=old', 'Office'));
-  f.values.set('dsbot.connection.v1', previous);
+  f.values.set('dudu.connection.v1', previous);
   f.failIndex(true);
   const store = f.open();
   await assert.rejects(store.load(), /Keychain unavailable/);
-  assert.equal(f.values.get('dsbot.connection.v1'), previous);
-  assert.equal([...f.values.keys()].filter((key) => key.startsWith('dsbot.computer.')).length, 0);
+  assert.equal(f.values.get('dudu.connection.v1'), previous);
+  assert.equal([...f.values.keys()].filter((key) => key.startsWith('dudu.computer.')).length, 0);
   f.failIndex(false);
   assert.equal(activeComputer(await store.load())?.name, 'Office');
 });
@@ -121,7 +121,7 @@ test('failed list writes preserve the previous active computer and all listed cr
   await assert.rejects(store.remove(first.activeId!), /Keychain unavailable/);
   assert.deepEqual(await store.load(), first);
   assert.deepEqual(await f.open().load(), first);
-  assert.equal([...f.values.keys()].filter((key) => key.startsWith('dsbot.computer.')).length, 1);
+  assert.equal([...f.values.keys()].filter((key) => key.startsWith('dudu.computer.')).length, 1);
 });
 
 test('failed index writes roll back a replacement credential and a selection timestamp', async () => {
@@ -144,13 +144,13 @@ test('failed credential deletion is recorded for cleanup after reopening without
   f.failRemove(true);
   const remaining = await store.remove(office.id);
   assert.equal(remaining.computers.length, 1);
-  assert.equal(f.values.has(`dsbot.computer.${office.id}`), true);
-  assert.deepEqual(JSON.parse(f.values.get('dsbot.computers.v2')!).pendingDeletes, [office.id]);
+  assert.equal(f.values.has(`dudu.computer.${office.id}`), true);
+  assert.deepEqual(JSON.parse(f.values.get('dudu.computers.v2')!).pendingDeletes, [office.id]);
   f.failRemove(false);
   assert.equal(activeComputer(await f.open().load())?.id, home.id);
-  assert.equal(f.values.has(`dsbot.computer.${office.id}`), false);
-  assert.equal(f.values.has(`dsbot.computer.${home.id}`), true);
-  assert.equal(JSON.parse(f.values.get('dsbot.computers.v2')!).pendingDeletes, undefined);
+  assert.equal(f.values.has(`dudu.computer.${office.id}`), false);
+  assert.equal(f.values.has(`dudu.computer.${home.id}`), true);
+  assert.equal(JSON.parse(f.values.get('dudu.computers.v2')!).pendingDeletes, undefined);
 });
 
 test('concurrent pairing is serialized, and a missing computer cannot replace the current selection', async () => {
@@ -169,9 +169,9 @@ test('a damaged record does not hide the remaining desktop, while a damaged inde
   const store = f.open();
   await store.pair(pair('office'));
   const current = activeComputer(await store.pair(pair('home')))!;
-  f.values.set(`dsbot.computer.${current.id}`, '{"url":');
+  f.values.set(`dudu.computer.${current.id}`, '{"url":');
   assert.equal(activeComputer(await f.open().load())?.computerId, 'office');
-  f.values.set('dsbot.computers.v2', '{"version":2,"ids":"invalid","activeId":null}');
+  f.values.set('dudu.computers.v2', '{"version":2,"ids":"invalid","activeId":null}');
   await assert.rejects(f.open().pair(pair('another')), /无法读取/);
-  assert.match(f.values.get('dsbot.computers.v2')!, /"ids":"invalid"/);
+  assert.match(f.values.get('dudu.computers.v2')!, /"ids":"invalid"/);
 });

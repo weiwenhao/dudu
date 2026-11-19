@@ -40,5 +40,5 @@ export async function apply(ctx, config = {}) {
       if (saved.url === relay.pairUrl) await unlink(path);
     } catch { /* Another plugin activation may already own the pairing file. */ }
   });
-  console.info(`[dsbot] Ready on ${relay.address}. Connect phone: ${pairing.address}`);
+  console.info(`[dudu] Ready on ${relay.address}. Connect phone: ${pairing.address}`);
 }

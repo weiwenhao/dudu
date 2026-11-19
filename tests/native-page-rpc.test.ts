@@ -76,7 +76,7 @@ test('restores attachment paths before serializing bytes to the frontend bridge'
   const rpc = createTypertPageRpc({ gateway, peer: ownerPeer });
   assert.deepEqual(await rpc.invoke('session/page', {}), {
     ok: true,
-    value: { result: { attachment: { $dsbotBytes: Buffer.from(bytes).toString('base64') } } },
+    value: { result: { attachment: { $duduBytes: Buffer.from(bytes).toString('base64') } } },
   });
 });
 
@@ -93,7 +93,7 @@ test('fallback invocation preserves its argument envelope and encodes typed byte
   const signal = new AbortController().signal;
   assert.deepEqual(await rpc.invoke('account/getBalance', { client: 'mobile' }, signal), {
     ok: true,
-    value: { payload: { $dsbotBytes: Buffer.from(bytes).toString('base64') } },
+    value: { payload: { $duduBytes: Buffer.from(bytes).toString('base64') } },
   });
   assert.deepEqual(calls, [{
     namespace: 'account',

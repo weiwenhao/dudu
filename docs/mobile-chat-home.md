@@ -120,7 +120,7 @@ lint、typecheck、签名 Release 原生编译和 Desktop 打包检查已运行�
 
 环境为 iPhone Air / iOS 27.0（420pt 宽）和新建的临时 iPhone 16e / iOS 18.6（390pt 宽）。最新源码完成 Debug 模拟器构建、签名 Release 构建及 `codesign --verify --strict`；lint、typecheck 和直接相关的 3 项主页单元测试通过。
 
-测试会话为既有 DEBUG 模拟器样例；事项、工作流、主页置顶、会话活动投影和已读回执使用真正的生产模块，但数据放在本次 `.local/qa/mobile-chat-home-2026-11-15/` 的隔离 SQLite／内存库。`-dsbot-review-home-url` 仅在 DEBUG 模拟器中把明确列出的主页方法交给 `127.0.0.1` 的临时测试服务；Release 不包含这个入口，不生成配对码，也不借用正式认证。它验证原生交互到真实存储的闭环，不能替代正式配对、DSH 流或公网传输的验证。
+测试会话为既有 DEBUG 模拟器样例；事项、工作流、主页置顶、会话活动投影和已读回执使用真正的生产模块，但数据放在本次 `.local/qa/mobile-chat-home-2026-11-15/` 的隔离 SQLite／内存库。`-dudu-review-home-url` 仅在 DEBUG 模拟器中把明确列出的主页方法交给 `127.0.0.1` 的临时测试服务；Release 不包含这个入口，不生成配对码，也不借用正式认证。它验证原生交互到真实存储的闭环，不能替代正式配对、DSH 流或公网传输的验证。
 
 已观察并核对存储结果：
 

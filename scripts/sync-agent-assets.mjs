@@ -7,7 +7,7 @@ import { AGENT_NAMES } from '../host/dudu-plugin/ui/issues/model.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** The ink of the phone (DSBotStyle.ink): what a mark's `currentColor` part is drawn in there, on its one light appearance. */
+/** The ink of the phone (DuduStyle.ink): what a mark's `currentColor` part is drawn in there, on its one light appearance. */
 const PHONE_INK = '#17181B';
 
 /** Whether the mark has colours of its own (several parts, or one colour that is not ink): such a mark is a picture, not a shape the app tints. */
@@ -33,7 +33,7 @@ export async function syncAgentAssets() {
     const picture = Object.hasOwn(HARNESS_MARKS, agent) && hasOwnColors(mark);
     if (picture) pictured.push(agent);
     const name = `Agent-${agent}`;
-    const folder = join(root, 'native', 'DSBot', 'Assets.xcassets', `${name}.imageset`);
+    const folder = join(root, 'native', 'ios', 'Dudu', 'Assets.xcassets', `${name}.imageset`);
     await mkdir(folder, { recursive: true });
     await writeFile(join(folder, `${name}.svg`), picture ? markPicture(mark, PHONE_INK)
       : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="${mark.path}" fill="#000000"${mark.transform ? ` transform="${mark.transform}"` : ''}/></svg>\n`);
@@ -43,7 +43,7 @@ export async function syncAgentAssets() {
       properties: { 'preserves-vector-representation': true, 'template-rendering-intent': picture ? 'original' : 'template' },
     }, null, 2) + '\n');
   }
-  await writeFile(join(root, 'native', 'DSBot', 'Core', 'AgentNames.swift'),
+  await writeFile(join(root, 'native', 'ios', 'Dudu', 'Core', 'AgentNames.swift'),
     '// Written by scripts/sync-agent-assets.mjs from AGENT_NAMES in host/dudu-plugin/ui/issues/model.js. Do not edit: change that list and build again.\n\n'
     + 'extension SessionAgent {\n'
     + '    /// The agents the Desktop names, in the order it offers them (the last is DSH\'s own).\n'
@@ -53,7 +53,7 @@ export async function syncAgentAssets() {
     + '    /// The agents whose mark is a picture in its own colours; every other mark in the asset catalog is a template of one colour that the app tints.\n'
     + `    static let pictured: Set<String> = [${pictured.map((id) => JSON.stringify(id)).join(', ')}]\n}\n`);
   const notices = await Promise.all(['agent-marks.txt', 'lobe-icons.txt', 'qwen-code.txt'].map((file) => readFile(join(root, 'licenses', file), 'utf8')));
-  await writeFile(join(root, 'native', 'DSBot', 'Resources', 'AgentLogoNotices.txt'), notices.map((text) => text.trim()).join('\n\n----------------------------------------\n\n') + '\n');
+  await writeFile(join(root, 'native', 'ios', 'Dudu', 'Resources', 'AgentLogoNotices.txt'), notices.map((text) => text.trim()).join('\n\n----------------------------------------\n\n') + '\n');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await syncAgentAssets();

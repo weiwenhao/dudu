@@ -17,7 +17,7 @@ export default memo(forwardRef<HarnessHandle, HarnessViewProps>(function Harness
     const id = ++sequence.current;
     logEvent('bridge.command', { id, method });
     webview.current?.injectJavaScript(
-      `(()=>{const d=window.__DSBOT_DIAGNOSTICS__;const s=performance.now();d?.record('bridge.command-received',${JSON.stringify({ id, method })});try{window.__HARNESS_MOBILE__?.[${JSON.stringify(method)}](...${JSON.stringify(args)});}finally{d?.record('bridge.command-complete',{id:${id},method:${JSON.stringify(method)},durationMs:performance.now()-s});}})();true;`,
+      `(()=>{const d=window.__DUDU_DIAGNOSTICS__;const s=performance.now();d?.record('bridge.command-received',${JSON.stringify({ id, method })});try{window.__HARNESS_MOBILE__?.[${JSON.stringify(method)}](...${JSON.stringify(args)});}finally{d?.record('bridge.command-complete',{id:${id},method:${JSON.stringify(method)},durationMs:performance.now()-s});}})();true;`,
     );
   }, []);
   useEffect(() => { command('setComputerName', computerName); }, [command, computerName]);

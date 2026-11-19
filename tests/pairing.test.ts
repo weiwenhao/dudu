@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { createPairingServer, loadPairingToken } from '../host/pairing.mjs';
 
 test('each computer creates its own persistent pairing key with private file permissions', async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), 'dsbot-pairing-test-'));
+  const directory = await mkdtemp(join(tmpdir(), 'dudu-pairing-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const first = join(directory, 'first');
   const token = await loadPairingToken(first);

@@ -6,19 +6,19 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { connectionAddress, createPairingStore } from '../host/pairing-devices.mjs';
 
-test('native addresses omit the suffix and keep legacy address imports compatible', () => {
+test('native addresses are the origin and nothing else', () => {
   assert.equal(connectionAddress('https://desktop.example.com'), 'https://desktop.example.com');
-  assert.equal(connectionAddress('wss://desktop.example.com/dsbot'), 'https://desktop.example.com');
+  assert.equal(connectionAddress('wss://desktop.example.com'), 'https://desktop.example.com');
   assert.equal(connectionAddress('http://192.168.1.20:3170'), 'http://192.168.1.20:3170');
-  assert.equal(connectionAddress('http://laptop.local:3170/dsbot'), 'http://laptop.local:3170');
+  assert.equal(connectionAddress('http://laptop.local:3170'), 'http://laptop.local:3170');
   assert.equal(connectionAddress('ws://desktop.example.com:3170'), 'http://desktop.example.com:3170');
-  assert.equal(connectionAddress('http://8.8.8.8:3170/dsbot'), 'http://8.8.8.8:3170');
+  assert.equal(connectionAddress('http://8.8.8.8:3170'), 'http://8.8.8.8:3170');
   assert.throws(() => connectionAddress('https://user:pass@desktop.example.com'), /连接地址只需/);
-  assert.throws(() => connectionAddress('https://desktop.example.com/dsbot?token=abc'), /连接地址只需/);
+  assert.throws(() => connectionAddress('https://desktop.example.com/?token=abc'), /连接地址只需/);
 });
 
 test('pairing links use root addresses and preserve secure authentication for legacy imports', async (t) => {
-  const folder = await mkdtemp(join(tmpdir(), 'dsbot-pairing-address-'));
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-pairing-address-'));
   const store = await createPairingStore({ folder });
   t.after(async () => {
     await store.close();
@@ -29,12 +29,12 @@ test('pairing links use root addresses and preserve secure authentication for le
   assert.equal(new URL(legacyHttp.url).protocol, 'http:');
   assert.equal(new URL(legacyHttp.url).pathname, '/');
 
-  const httpEndpoint = await store.issue({ address: 'http://desktop.example.com/dsbot' });
+  const httpEndpoint = await store.issue({ address: 'http://desktop.example.com' });
   assert.equal(new URL(httpEndpoint.url).protocol, 'http:');
   assert.equal(new URL(httpEndpoint.url).pathname, '/');
   assert.equal((await store.redeem(new URL(httpEndpoint.url).searchParams.get('pair'))).secureCookie, false);
 
-  const httpsEndpoint = await store.issue({ address: 'https://desktop.example.com/dsbot' });
+  const httpsEndpoint = await store.issue({ address: 'https://desktop.example.com' });
   assert.equal(new URL(httpsEndpoint.url).protocol, 'https:');
   assert.equal(new URL(httpsEndpoint.url).pathname, '/');
   assert.equal((await store.redeem(new URL(httpsEndpoint.url).searchParams.get('pair'))).secureCookie, true);
@@ -45,7 +45,7 @@ test('pairing links use root addresses and preserve secure authentication for le
 });
 
 test('concurrent legacy authentication imports one credential and revoke cannot reimport it', async (t) => {
-  const folder = await mkdtemp(join(tmpdir(), 'dsbot-native-pairing-'));
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-native-pairing-'));
   const legacyKeyPath = join(folder, 'pairing-key');
   const token = randomBytes(32).toString('base64url');
   await writeFile(legacyKeyPath, token, { mode: 0o600 });
@@ -100,7 +100,7 @@ test('one multi-address code has one credential and nonce-bound route proofs exp
   assert.equal(proof.computerId, store.id);
   const key = createHash('sha256').update(token).digest();
   assert.equal(proof.deviceProof, createHmac('sha256', key)
-    .update(`dsbot-route:v1:${nonce}:${store.id}:${code.id}`).digest('base64url'));
+    .update(`dudu-route:v1:${nonce}:${store.id}:${code.id}`).digest('base64url'));
   assert.notEqual(store.routeProof(code.id, 'nonce_for_other_route_12345').deviceProof, proof.deviceProof);
   assert.equal(store.routeProof('unknown', nonce), undefined);
   assert.equal(store.routeProof(code.id, 'bad'), undefined);

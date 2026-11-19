@@ -816,7 +816,7 @@ Lucide `ListTodo`。复用原有导航图标的尺寸、颜色、线宽和圆角
 | 手机：侧栏的第四行（插件发的 `dudu.tasks` 标题）、页面的标题、输入框上面的快捷项 | 定时任务 | **任务** | — |
 | 空的任务卡片、手机任务页空着 | 没有定时任务 | **没有任务** | No scheduled tasks → **No tasks** |
 
-窗口里的其他字不变（新建任务、任务运行记录、自动化任务名称/内容 等）。`ui/strings.js` 的 `tasks.title`、`pet.noTasks`，手机的 `QuickCardKind.title`、`DSBotRootView` 的页面标题和 `TasksView` 的空态。文档里更早的“定时任务”是当时的说法，不改。
+窗口里的其他字不变（新建任务、任务运行记录、自动化任务名称/内容 等）。`ui/strings.js` 的 `tasks.title`、`pet.noTasks`，手机的 `QuickCardKind.title`、`DuduRootView` 的页面标题和 `TasksView` 的空态。文档里更早的“定时任务”是当时的说法，不改。
 
 ## 收集信息里的“补全上下文”（2026-11-11，主人说的字）
 

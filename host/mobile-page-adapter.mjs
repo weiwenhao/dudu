@@ -1,6 +1,6 @@
 export const MOBILE_PAGE_CSS = `
-html[data-dsbot-page-kind],
-html[data-dsbot-page-kind] body {
+html[data-dudu-page-kind],
+html[data-dudu-page-kind] body {
   width: 100%;
   height: 100%;
   min-width: 0 !important;
@@ -10,58 +10,58 @@ html[data-dsbot-page-kind] body {
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
 }
-html[data-dsbot-page-kind] #root {
+html[data-dudu-page-kind] #root {
   width: 100%;
   min-width: 0 !important;
   height: 100%;
 }
-html[data-dsbot-page-kind] button,
-html[data-dsbot-page-kind] a,
-html[data-dsbot-page-kind] [role="button"],
-html[data-dsbot-page-kind] input,
-html[data-dsbot-page-kind] textarea,
-html[data-dsbot-page-kind] [contenteditable="true"] {
+html[data-dudu-page-kind] button,
+html[data-dudu-page-kind] a,
+html[data-dudu-page-kind] [role="button"],
+html[data-dudu-page-kind] input,
+html[data-dudu-page-kind] textarea,
+html[data-dudu-page-kind] [contenteditable="true"] {
   touch-action: manipulation;
 }
-html[data-dsbot-page-kind] [data-dsbot-frame] > [class*="_leadingSeat"],
-html[data-dsbot-page-kind] [data-dsbot-frame] > [class*="_handle"],
-html[data-dsbot-page-kind] [data-dsbot-frame] > [class*="_drawerMask"] {
+html[data-dudu-page-kind] [data-dudu-frame] > [class*="_leadingSeat"],
+html[data-dudu-page-kind] [data-dudu-frame] > [class*="_handle"],
+html[data-dudu-page-kind] [data-dudu-frame] > [class*="_drawerMask"] {
   display: none !important;
 }
-html[data-dsbot-page-kind="plugins"] [data-dsbot-sidebar],
-html[data-dsbot-page-kind="plugins"] [data-dsbot-rightbar],
-html[data-dsbot-page-kind="plugins"] [data-slot="conversation.composer"],
-html[data-dsbot-page-kind="plugins"] [data-slot="conversation.composer.bar"],
-html[data-dsbot-page-kind="panel"] [data-dsbot-sidebar],
-html[data-dsbot-page-kind="panel"] [data-dsbot-rightbar],
-html[data-dsbot-page-kind="panel"] [data-slot="conversation.composer"],
-html[data-dsbot-page-kind="panel"] [data-slot="conversation.composer.bar"] {
+html[data-dudu-page-kind="plugins"] [data-dudu-sidebar],
+html[data-dudu-page-kind="plugins"] [data-dudu-rightbar],
+html[data-dudu-page-kind="plugins"] [data-slot="conversation.composer"],
+html[data-dudu-page-kind="plugins"] [data-slot="conversation.composer.bar"],
+html[data-dudu-page-kind="panel"] [data-dudu-sidebar],
+html[data-dudu-page-kind="panel"] [data-dudu-rightbar],
+html[data-dudu-page-kind="panel"] [data-slot="conversation.composer"],
+html[data-dudu-page-kind="panel"] [data-slot="conversation.composer.bar"] {
   display: none !important;
 }
 /* Fit DSH's shell to the native viewport; the selected page owns its layout and scrolling. */
-html[data-dsbot-page-kind="plugins"] [data-dsbot-frame],
-html[data-dsbot-page-kind="panel"] [data-dsbot-frame] {
+html[data-dudu-page-kind="plugins"] [data-dudu-frame],
+html[data-dudu-page-kind="panel"] [data-dudu-frame] {
   grid-template-columns: minmax(0, 1fr) !important;
   min-width: 0 !important;
   padding: 0 !important;
 }
-html[data-dsbot-page-kind="plugins"] [data-dsbot-center],
-html[data-dsbot-page-kind="panel"] [data-dsbot-center] {
+html[data-dudu-page-kind="plugins"] [data-dudu-center],
+html[data-dudu-page-kind="panel"] [data-dudu-center] {
   grid-column: 1 !important;
   grid-row: 1 !important;
   min-height: 0;
   border: 0 !important;
   border-radius: 0 !important;
 }
-html[data-dsbot-page-kind="plugins"] [data-global-panel],
-html[data-dsbot-page-kind="panel"] [data-global-panel] {
+html[data-dudu-page-kind="plugins"] [data-global-panel],
+html[data-dudu-page-kind="panel"] [data-global-panel] {
   padding-top: 0 !important;
 }
-html[data-dsbot-page-kind="settings"] #root,
-html[data-dsbot-page-kind="settings"] #root * {
+html[data-dudu-page-kind="settings"] #root,
+html[data-dudu-page-kind="settings"] #root * {
   visibility: hidden !important;
 }
-html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] {
+html[data-dudu-page-kind="settings"] [data-shortcut-modal="settings"] {
   position: fixed !important;
   inset: 0 !important;
   z-index: 100 !important;
@@ -78,12 +78,12 @@ html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] {
   border-radius: 0 !important;
   transform: none !important;
 }
-html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] > nav,
-html[data-dsbot-page-kind="settings"] [data-dsbot-settings-nav] {
+html[data-dudu-page-kind="settings"] [data-shortcut-modal="settings"] > nav,
+html[data-dudu-page-kind="settings"] [data-dudu-settings-nav] {
   display: none !important;
 }
-html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_content"],
-html[data-dsbot-page-kind="settings"] [data-dsbot-settings-body] {
+html[data-dudu-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_content"],
+html[data-dudu-page-kind="settings"] [data-dudu-settings-body] {
   flex: 1 1 auto !important;
   width: 100% !important;
   min-width: 0 !important;
@@ -92,11 +92,11 @@ html[data-dsbot-page-kind="settings"] [data-dsbot-settings-body] {
   overflow: auto !important;
   overscroll-behavior: contain;
 }
-html[data-dsbot-page-session] [data-dsbot-sidebar],
-html[data-dsbot-page-session] [data-dsbot-rightbar] {
+html[data-dudu-page-session] [data-dudu-sidebar],
+html[data-dudu-page-session] [data-dudu-rightbar] {
   display: none !important;
 }
-html[data-dsbot-page-session] [data-dsbot-frame] {
+html[data-dudu-page-session] [data-dudu-frame] {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) !important;
   width: 100% !important;
@@ -104,7 +104,7 @@ html[data-dsbot-page-session] [data-dsbot-frame] {
   height: 100% !important;
   padding: 0 !important;
 }
-html[data-dsbot-page-session] [data-dsbot-center] {
+html[data-dudu-page-session] [data-dudu-center] {
   display: flex !important;
   flex-direction: column !important;
   grid-column: 1 !important;
@@ -115,39 +115,39 @@ html[data-dsbot-page-session] [data-dsbot-center] {
   border: 0 !important;
   border-radius: 0 !important;
 }
-html[data-dsbot-page-session] [data-slot="main"],
-html[data-dsbot-page-session] [data-slot="main.conversation"],
-html[data-dsbot-page-session] [data-conversation-content] {
+html[data-dudu-page-session] [data-slot="main"],
+html[data-dudu-page-session] [data-slot="main.conversation"],
+html[data-dudu-page-session] [data-conversation-content] {
   width: 100% !important;
   min-width: 0 !important;
   height: 100% !important;
   margin: 0 !important;
 }
-html[data-dsbot-page-session] [data-slot="conversation.header"],
-html[data-dsbot-page-session] [data-slot="conversation.composer"],
-html[data-dsbot-page-session] [data-slot="conversation.composer.bar"],
-html[data-dsbot-page-session] [data-composer-seat],
-html[data-dsbot-page-session] [data-sidebar-right-expand],
-html[data-dsbot-page-session] [data-sidebar-right-collapse] {
+html[data-dudu-page-session] [data-slot="conversation.header"],
+html[data-dudu-page-session] [data-slot="conversation.composer"],
+html[data-dudu-page-session] [data-slot="conversation.composer.bar"],
+html[data-dudu-page-session] [data-composer-seat],
+html[data-dudu-page-session] [data-sidebar-right-expand],
+html[data-dudu-page-session] [data-sidebar-right-collapse] {
   display: none !important;
 }
-html[data-dsbot-page-session] [data-conversation-scroll] {
+html[data-dudu-page-session] [data-conversation-scroll] {
   min-width: 0 !important;
   margin: 0 !important;
   padding-inline: 0 !important;
   overscroll-behavior-y: contain;
 }
-html[data-dsbot-page-kind="context"] [data-conversation-scroll] {
+html[data-dudu-page-kind="context"] [data-conversation-scroll] {
   overflow: hidden !important;
 }
-html[data-dsbot-page-kind="context"] [class*="_viewArea"] {
+html[data-dudu-page-kind="context"] [class*="_viewArea"] {
   flex: 1 1 0 !important;
   min-height: 0 !important;
   height: 100%;
   overflow-y: auto;
 }
-html[data-dsbot-page-kind="trace"] aside[aria-label="事件详情"],
-html[data-dsbot-page-kind="trace"] aside[aria-label="Event details"] {
+html[data-dudu-page-kind="trace"] aside[aria-label="事件详情"],
+html[data-dudu-page-kind="trace"] aside[aria-label="Event details"] {
   position: absolute !important;
   inset: 0 !important;
   z-index: 200 !important;
@@ -158,54 +158,54 @@ html[data-dsbot-page-kind="trace"] aside[aria-label="Event details"] {
   border: 0 !important;
   background: var(--dsw-alias-bg-layer-1, #fff) !important;
 }
-html[data-dsbot-page-kind="trace"] [data-conversation-composer-overlay] > [class*="_ledger"] {
+html[data-dudu-page-kind="trace"] [data-conversation-composer-overlay] > [class*="_ledger"] {
   --dsh-trajectory-bottom-clearance: 0px;
 }
-html[data-dsbot-page-kind="trace"] [data-conversation-composer-overlay]:has(aside[aria-label]) > :not([class*="_ledger"]) {
+html[data-dudu-page-kind="trace"] [data-conversation-composer-overlay]:has(aside[aria-label]) > :not([class*="_ledger"]) {
   display: none !important;
 }
-html[data-dsbot-page-kind="trace"] aside[aria-label] [role="separator"] {
+html[data-dudu-page-kind="trace"] aside[aria-label] [role="separator"] {
   display: none !important;
 }
-html[data-dsbot-page-kind="trace"] aside[aria-label] [role="tablist"] {
+html[data-dudu-page-kind="trace"] aside[aria-label] [role="tablist"] {
   overflow-x: auto;
   flex-shrink: 0;
 }
-html[data-dsbot-page-kind="trace"] aside[aria-label] > [class*="_detailsHeader"] {
+html[data-dudu-page-kind="trace"] aside[aria-label] > [class*="_detailsHeader"] {
   min-height: 48px;
   height: auto;
 }
-html[data-dsbot-page-kind="trace"] aside[aria-label] button[aria-label="关闭详情"],
-html[data-dsbot-page-kind="trace"] aside[aria-label] button[aria-label="Close details"],
-html[data-dsbot-page-kind="trace"] aside[aria-label] [role="tab"] {
+html[data-dudu-page-kind="trace"] aside[aria-label] button[aria-label="关闭详情"],
+html[data-dudu-page-kind="trace"] aside[aria-label] button[aria-label="Close details"],
+html[data-dudu-page-kind="trace"] aside[aria-label] [role="tab"] {
   min-width: 44px;
   min-height: 44px;
 }
-html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_navTitle"],
-html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_header"],
-html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_content"] > [class*="_header"],
-html[data-dsbot-page-kind="settings"] [data-dsbot-settings-body] > [class*="_header"] {
+html[data-dudu-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_navTitle"],
+html[data-dudu-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_header"],
+html[data-dudu-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_content"] > [class*="_header"],
+html[data-dudu-page-kind="settings"] [data-dudu-settings-body] > [class*="_header"] {
   display: none !important;
 }
-html[data-dsbot-page-kind="settings"] [data-dsbot-duplicate-heading] {
+html[data-dudu-page-kind="settings"] [data-dudu-duplicate-heading] {
   display: none !important;
 }
-html[data-dsbot-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_content"] > [class*="_options"],
-html[data-dsbot-page-kind="settings"] [data-dsbot-settings-body][class*="_options"],
-html[data-dsbot-page-kind="settings"] [data-dsbot-settings-body] > [class*="_options"] {
+html[data-dudu-page-kind="settings"] [data-shortcut-modal="settings"] > [class*="_content"] > [class*="_options"],
+html[data-dudu-page-kind="settings"] [data-dudu-settings-body][class*="_options"],
+html[data-dudu-page-kind="settings"] [data-dudu-settings-body] > [class*="_options"] {
   width: 100% !important;
   min-width: 0 !important;
   padding: 16px !important;
 }
-html[data-dsbot-page-kind] input,
-html[data-dsbot-page-kind] textarea,
-html[data-dsbot-page-kind] select {
+html[data-dudu-page-kind] input,
+html[data-dudu-page-kind] textarea,
+html[data-dudu-page-kind] select {
   font-size: 16px !important;
 }
 @media (prefers-reduced-motion: reduce) {
-  html[data-dsbot-page-kind] *,
-  html[data-dsbot-page-kind] *::before,
-  html[data-dsbot-page-kind] *::after {
+  html[data-dudu-page-kind] *,
+  html[data-dudu-page-kind] *::before,
+  html[data-dudu-page-kind] *::after {
     scroll-behavior: auto !important;
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;
@@ -215,16 +215,16 @@ html[data-dsbot-page-kind] select {
 `;
 
 export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
-  const page = window.__DSBOT_PAGE__;
+  const page = window.__DUDU_PAGE__;
   const supported = new Set(["trace", "context", "team", "tools", "view", "panel", "plugins", "settings"]);
   if (!page || !supported.has(page.kind)) return;
   // The id of a panel, view or settings section the phone asked for.
   let target = typeof page.target === "string" && page.target ? page.target : null;
 
   const html = document.documentElement;
-  html.dataset.dsbotPageKind = page.kind;
+  html.dataset.duduPageKind = page.kind;
   if (["trace", "context", "team", "tools", "view"].includes(page.kind)) {
-    html.dataset.dsbotPageSession = "";
+    html.dataset.duduPageSession = "";
   }
 
   const tabLabels = {
@@ -253,7 +253,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
 
   function reviewDiagnostic(message) {
     if (!page.reviewDiagnostics) return;
-    void window.webkit?.messageHandlers?.dsbot?.postMessage(JSON.stringify({
+    void window.webkit?.messageHandlers?.dudu?.postMessage(JSON.stringify({
       method: "review.diagnostic",
       params: {stage: "transport.error", message}
     })).catch(() => {});
@@ -269,7 +269,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
   }
 
   function appUI() {
-    return window.__DSBOT_APP_UI__ || null;
+    return window.__DUDU_APP_UI__ || null;
   }
 
   function contextOf(ui) {
@@ -292,23 +292,23 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     const center = document.querySelector('[class*="_centerCol"]');
     const rightbar = document.querySelector("[data-rightbar-col]");
     const frame = sidebar?.parentElement || center?.parentElement || rightbar?.parentElement;
-    sidebar?.setAttribute("data-dsbot-sidebar", "");
-    center?.setAttribute("data-dsbot-center", "");
-    rightbar?.setAttribute("data-dsbot-rightbar", "");
-    frame?.setAttribute("data-dsbot-frame", "");
+    sidebar?.setAttribute("data-dudu-sidebar", "");
+    center?.setAttribute("data-dudu-center", "");
+    rightbar?.setAttribute("data-dudu-rightbar", "");
+    frame?.setAttribute("data-dudu-frame", "");
     if (page.kind === "settings") {
       const dialog = document.querySelector('[data-shortcut-modal="settings"]');
       const nav = dialog?.querySelector("nav");
       const options = dialog?.querySelector(':scope > [class*="_options"]');
       const body = options || dialog?.querySelector('[class*="_content"]');
-      nav?.setAttribute("data-dsbot-settings-nav", "");
-      body?.setAttribute("data-dsbot-settings-body", "");
+      nav?.setAttribute("data-dudu-settings-nav", "");
+      body?.setAttribute("data-dudu-settings-body", "");
       const ui = appUI();
       const section = settingsEntries(contextOf(ui)).find(item => item.id === selectedSection);
       const heading = (options || body?.querySelector('[class*="_options"]'))?.querySelector("h1,h2");
       if (heading) {
         const label = section ? resolveLabel(ui, contextOf(ui), section.entry) : "";
-        heading.toggleAttribute("data-dsbot-duplicate-heading",
+        heading.toggleAttribute("data-dudu-duplicate-heading",
           Boolean(label) && cleanText(heading.textContent) === label);
       }
     }
@@ -377,7 +377,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
 
   function settingsEntries(ctx) {
     return slotEntries(ctx, "settings.section")
-      .filter(entry => entry?.options?.id && !["dudu-mobile-control", "dudu-providers", "dsbot-mobile-control", "general"].includes(entry.options.id))
+      .filter(entry => entry?.options?.id && !["dudu-mobile-control", "dudu-providers", "dudu-mobile-control", "general"].includes(entry.options.id))
       .map((entry, index) => ({ entry, index, id: entry.options.id }))
       .sort((a, b) => {
         const ao = Number(a.entry?.options?.order);
@@ -398,7 +398,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     if (signature === settingsSignature) return;
     settingsSignature = signature;
     try {
-      const result = window.__DSBOT_NATIVE__?.settingsCategories?.(categories);
+      const result = window.__DUDU_NATIVE__?.settingsCategories?.(categories);
       result?.catch?.(() => {});
     } catch {}
   }
@@ -409,7 +409,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
 
   function settingsReady(ui, ctx) {
     const dialog = settingsModal();
-    if (!settingsSignature || !dialog?.querySelector("[data-dsbot-settings-body]")) return false;
+    if (!settingsSignature || !dialog?.querySelector("[data-dudu-settings-body]")) return false;
     if (!selectedSection) return true;
     const section = settingsEntries(ctx).find(item => item.id === selectedSection);
     if (!section) return false;
@@ -452,7 +452,7 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
   function selectSettingsSection(ui, ctx, id) {
     if (page.kind !== "settings" || typeof id !== "string") return false;
     const entry = settingsEntries(ctx).find(item => item.id === id);
-    if (!entry || ["dudu-mobile-control", "dudu-providers", "dsbot-mobile-control", "general"].includes(id)) return false;
+    if (!entry || ["dudu-mobile-control", "dudu-providers", "dudu-mobile-control", "general"].includes(id)) return false;
     const dialog = settingsModal();
     const label = resolveLabel(ui, ctx, entry.entry);
     const matches = [...(dialog?.querySelectorAll("nav button") || [])]
@@ -637,14 +637,14 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
     if (page.kind === "plugins" && event.detail === "add") addPlugin();
   }
 
-  window.addEventListener("dsbot:app-ui-ready", onAppUIReady);
-  window.addEventListener("dsbot:settings-select", onSettingsSelect);
-  window.addEventListener("dsbot:command", onCommand);
-  window.addEventListener("dsbot:visibility", onVisibility);
+  window.addEventListener("dudu:app-ui-ready", onAppUIReady);
+  window.addEventListener("dudu:settings-select", onSettingsSelect);
+  window.addEventListener("dudu:command", onCommand);
+  window.addEventListener("dudu:visibility", onVisibility);
   async function finishRoute() {
     if (routeFinished || closed) return;
     markShell();
-    await window.__DSBOT_NATIVE__?.ready?.();
+    await window.__DUDU_NATIVE__?.ready?.();
     routeFinished = true;
     clearTimeout(timer);
     observer?.disconnect();
@@ -689,10 +689,10 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
           layout: Boolean(service(ui, "layout")),
           workspace: Boolean(service(ui, "uiWorkspace")),
           slots: Boolean(service(ui, "slots")),
-          frame: Boolean(document.querySelector("[data-dsbot-frame]")),
+          frame: Boolean(document.querySelector("[data-dudu-frame]")),
           tabs: document.querySelectorAll('[data-conversation-tabs] [role="tab"]').length,
           settingsDialog: Boolean(settingsModal()),
-          settingsBody: Boolean(settingsModal()?.querySelector("[data-dsbot-settings-body]")),
+          settingsBody: Boolean(settingsModal()?.querySelector("[data-dudu-settings-body]")),
           settingsShell: Boolean(settingsShell(ui)?.actions?.open),
           settingsCategories: Boolean(settingsSignature),
           requestedSession,
@@ -703,24 +703,24 @@ export const MOBILE_PAGE_SCRIPT = String.raw`(()=>{
       closed = true;
       observer?.disconnect();
       if (page.reviewDiagnostics) console.error = originalConsoleError;
-      void window.__DSBOT_NATIVE__?.fail?.("page");
+      void window.__DUDU_NATIVE__?.fail?.("page");
       return;
     }
     schedule();
     timer = setTimeout(tick, 200);
   }
 
-  window.__DSBOT_MOBILE_PAGE_ADAPTER__ = Object.freeze({
+  window.__DUDU_MOBILE_PAGE_ADAPTER__ = Object.freeze({
     kind: page.kind,
     sessionId: page.sessionId || null,
     close() {
       closed = true;
       clearTimeout(timer);
       observer?.disconnect();
-      window.removeEventListener("dsbot:app-ui-ready", onAppUIReady);
-      window.removeEventListener("dsbot:settings-select", onSettingsSelect);
-      window.removeEventListener("dsbot:command", onCommand);
-      window.removeEventListener("dsbot:visibility", onVisibility);
+      window.removeEventListener("dudu:app-ui-ready", onAppUIReady);
+      window.removeEventListener("dudu:settings-select", onSettingsSelect);
+      window.removeEventListener("dudu:command", onCommand);
+      window.removeEventListener("dudu:visibility", onVisibility);
     }
   });
   markShell();

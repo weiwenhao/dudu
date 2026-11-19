@@ -32,7 +32,7 @@
    ```
 
    配置文件与私钥权限建议为 0600。适用环境由安装包和注册所带的 `environment` 决定；要使用该环境对应的签名密钥。私钥无效只会使 `notifications.state.configured` 为 false，不影响配对、采集和会话。
-4. `native/project.yml` 是 entitlement 的配置源。`DUDU_APNS_ENVIRONMENT` 默认 `development`，适合当前 Xcode 本地开发安装；App 的 Info 值与签名 entitlement 共用这个设置。用于生产 APNs 的分发构建必须设置 `DUDU_APNS_ENVIRONMENT=production`，并使用对应的分发签名和 APNs 密钥，不能只在代码里按 Debug/Release 猜环境。
+4. `native/ios/project.yml` 是 entitlement 的配置源。`DUDU_APNS_ENVIRONMENT` 默认 `development`，适合当前 Xcode 本地开发安装；App 的 Info 值与签名 entitlement 共用这个设置。用于生产 APNs 的分发构建必须设置 `DUDU_APNS_ENVIRONMENT=production`，并使用对应的分发签名和 APNs 密钥，不能只在代码里按 Debug/Release 猜环境。
 5. 用已有 `npm run desktop:update` 更新插件，`npm run native:install` 原位更新手机，再由用户允许系统通知。本机手机安装已完成；主人现已授权电脑端强制更新，独立执行器只调用既有 `npm run desktop:update -- --force`，状态与官方回执存入本次任务目录。实际通知送达尚未验证。
 
 ## 隐私政策文案待审核
@@ -49,7 +49,7 @@
 - `tests/collector-notifications.test.ts`：保留已有实时通知、清理脱敏、桌面权限与流生命周期检查。
 - 运行 lint、typecheck、手机源码编译以及插件打包。没有运行全量测试、e2e、浏览器、DSH 场景或模拟器。
 - 初次 `npm run native:build` 在签名阶段被 Xcode 的 `No Accounts` 和现有描述文件缺少 Push Notifications / `aps-environment` 阻断，曾用 `CODE_SIGNING_ALLOWED=NO` 验证源码。主人完成 Xcode 登录后，正常签名构建及 `npm run native:install` 均通过；当前产物已是正常签名的 Build 106。
-- 原始旧签名产物备份仍在 `.local/mobile-collector-notifications-2026-11-14/previous-signed-dsbot.app`。当前成品通过 `codesign --verify --strict`，实际签名、嵌入描述文件与 App 注册配置均为 `development`，沿用原团队和 bundle identifier，包含当前 iPhone。
+- 原始旧签名产物备份仍在 `.local/mobile-collector-notifications-2026-11-14/previous-signed-dudu.app`。当前成品通过 `codesign --verify --strict`，实际签名、嵌入描述文件与 App 注册配置均为 `development`，沿用原团队和 bundle identifier，包含当前 iPhone。
 - 尚未验证真实 APNs 送达、系统权限弹窗、通知点击、手机铃铛的渲染和触控尺寸。代码检查与编译不代表这些已通过验收。手机已安装，Desktop 当前运行版本尚未更新。
 
 ## Apple 参考

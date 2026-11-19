@@ -66,7 +66,7 @@ function installMobileAdapter(config: AdapterConfiguration, startDiagnostics: ty
   let speechFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
   let speechSendRaf = 0;
   let speechSendToken = 0;
-  const sidebarDefaultsKey = 'dsbot.sidebar.defaults.v1';
+  const sidebarDefaultsKey = 'dudu.sidebar.defaults.v1';
   let sidebarDefaults: string[] = ['单列表', '最近更新'];
   let sidebarDefaultMenuRequested = false;
   let sidebarExpansionRequested = false;
@@ -886,7 +886,7 @@ function installMobileAdapter(config: AdapterConfiguration, startDiagnostics: ty
     if (title !== lastTitle) {
       lastTitle = title;
       const heading = q('#hm-toolbar strong');
-      if (heading) heading.textContent = title === 'DeepSeek Harness' ? 'dsbot' : title;
+      if (heading) heading.textContent = title === 'DeepSeek Harness' ? 'dudu' : title;
       post({ type: 'title', title });
     }
     updateBackState();

@@ -12,7 +12,7 @@ import { createPairingStore } from '../host/pairing-devices.mjs';
 import { createWebPageHttp } from '../host/web-page-http.mjs';
 
 async function fixture(t, options = {}) {
-  const folder = await mkdtemp(join(tmpdir(), 'dsbot-http-pages-'));
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-http-pages-'));
   const pairingStore = await createPairingStore({ folder });
   const calls = [];
   const documents = [];
@@ -74,7 +74,7 @@ async function fixture(t, options = {}) {
   };
   const credential = await issue();
   const open = async (body = { page: 'settings' }, token = credential.token) => {
-    const response = await fetch(`${server.address}/dsbot/web/open`, {
+    const response = await fetch(`${server.address}/web/open`, {
       method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
@@ -83,7 +83,7 @@ async function fixture(t, options = {}) {
   const invoke = (page, method, params = {}, extraHeaders = {}) => fetch(`${server.address}${page.path}rpc`, {
     method: 'POST',
     headers: {
-      'content-type': 'application/json', 'x-dsbot-page': '1', cookie: `dsbot_ui=${page.cookie}`,
+      'content-type': 'application/json', 'x-dudu-page': '1', cookie: `dudu_ui=${page.cookie}`,
       ...extraHeaders,
     },
     body: JSON.stringify({ method, params }),
@@ -101,7 +101,7 @@ test('HTTP pages exchange pairing auth for a page-scoped session and serve real 
   const page = opened.value;
   assert.equal(page.computerId, f.pairingStore.id);
   assert.match(page.id, /^[0-9a-f-]{36}$/u);
-  assert.equal(page.path, `/dsbot/ui/${page.id}/`);
+  assert.equal(page.path, `/ui/${page.id}/`);
   assert.match(page.cookie, /^[A-Za-z0-9_-]{43}$/u);
   assert.notEqual(page.cookie, f.credential.token);
   assert.deepEqual(Object.keys(page).sort(), ['computerId', 'cookie', 'id', 'path']);
@@ -109,7 +109,7 @@ test('HTTP pages exchange pairing auth for a page-scoped session and serve real 
   assert.equal(f.documents[0].transport, 'http');
   assert.equal(f.documents[0].basePath, page.path);
 
-  const headers = { cookie: `dsbot_ui=${page.cookie}` };
+  const headers = { cookie: `dudu_ui=${page.cookie}` };
   const document = await fetch(`${f.server.address}${page.path}`, { headers });
   assert.equal(document.status, 200);
   assert.match(await document.text(), /mobile page/u);
@@ -119,14 +119,14 @@ test('HTTP pages exchange pairing auth for a page-scoped session and serve real 
   assert.match(resource.headers.get('content-type'), /^text\/css/u);
   assert.equal(await resource.text(), 'body{width:100%}');
 
-  for (const path of ['/', '/dsbot', '/api', '/assets/site.css', '/dsbot/pages']) {
+  for (const path of ['/', '/api', '/ui', '/ui/pages', '/assets/site.css']) {
     assert.equal((await fetch(`${f.server.address}${path}`)).status, 404, path);
   }
 });
 
 test('Android page pairing retains the platform name', async (t) => {
   const f = await fixture(t);
-  const response = await fetch(`${f.server.address}/dsbot/web/open`, {
+  const response = await fetch(`${f.server.address}/web/open`, {
     method: 'POST', headers: { authorization: `Bearer ${f.credential.token}`,
       'content-type': 'application/json', 'x-dudu-client': 'android' },
     body: JSON.stringify({ page: 'settings' }),
@@ -148,7 +148,7 @@ test('HTTP page assets use negotiated gzip while retaining scoped authentication
       response.on('error', reject);
     }).on('error', reject);
   });
-  const headers = { cookie: `dsbot_ui=${page.cookie}`, 'accept-encoding': 'gzip, deflate, br' };
+  const headers = { cookie: `dudu_ui=${page.cookie}`, 'accept-encoding': 'gzip, deflate, br' };
   const zipped = await read(resourceURL, headers);
   assert.equal(zipped.code, 200);
   assert.equal(zipped.headers['content-encoding'], 'gzip');
@@ -179,13 +179,13 @@ test('documents, assets and RPC all require their own page cookie; pair credenti
   for (const path of [page.path, `${page.path}assets/site.css`]) {
     assert.equal((await fetch(`${f.server.address}${path}`)).status, 401);
     assert.equal((await fetch(`${f.server.address}${path}`, {
-      headers: { cookie: `dsbot_ui=${'x'.repeat(43)}` },
+      headers: { cookie: `dudu_ui=${'x'.repeat(43)}` },
     })).status, 401);
   }
   assert.equal((await fetch(`${f.server.address}${page.path}?pair=${f.credential.token}`)).status, 401);
   const other = (await f.open()).value;
   assert.equal((await fetch(`${f.server.address}${other.path}`, {
-    headers: { cookie: `dsbot_ui=${page.cookie}` },
+    headers: { cookie: `dudu_ui=${page.cookie}` },
   })).status, 401);
   assert.equal((await f.invoke(page, 'web.invoke', { endpoint: 'settings/describe', args: {} }, {
     cookie: '',
@@ -195,13 +195,13 @@ test('documents, assets and RPC all require their own page cookie; pair credenti
 
 test('open rejects absent and invalid pairing credentials before reading frontend data', async (t) => {
   const f = await fixture(t);
-  assert.equal((await fetch(`${f.server.address}/dsbot/web/open`, {
+  assert.equal((await fetch(`${f.server.address}/web/open`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"page":"settings"}',
   })).status, 401);
   assert.equal((await f.open({ page: 'settings' }, 'x'.repeat(43))).response.status, 401);
   assert.equal((await f.open({ page: 'settings', url: 'file:///private' })).response.status, 400);
   assert.equal(f.documents.length, 0);
-  assert.equal((await fetch(`${f.server.address}/dsbot/web/open?pair=${f.credential.token}`, {
+  assert.equal((await fetch(`${f.server.address}/web/open?pair=${f.credential.token}`, {
     method: 'POST',
   })).status, 404);
 });
@@ -241,9 +241,9 @@ test('browser cross-origin requests and simple-form posts cannot open or invoke 
     origin: f.server.address,
   })).status, 200);
   assert.equal((await f.invoke(page, 'web.invoke', { endpoint: 'settings/describe', args: {} }, {
-    'x-dsbot-page': '',
+    'x-dudu-page': '',
   })).status, 400);
-  assert.equal((await fetch(`${f.server.address}/dsbot/web/open`, {
+  assert.equal((await fetch(`${f.server.address}/web/open`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${f.credential.token}`, 'content-type': 'application/json',
@@ -269,7 +269,7 @@ test('closing or revoking an HTTP page disposes streams and immediately removes 
   assert.equal((await pending).status, 410);
   assert.equal(f.disposed, 1);
   assert.equal((await fetch(`${f.server.address}${page.path}`, {
-    headers: { cookie: `dsbot_ui=${page.cookie}` },
+    headers: { cookie: `dudu_ui=${page.cookie}` },
   })).status, 401);
 
   const credential = await f.issue();
@@ -284,19 +284,19 @@ test('idle sessions expire, oversized bodies fail early and limits are enforced 
   assert.equal((await f.open()).response.status, 429);
   assert.equal((await fetch(`${f.server.address}${page.path}rpc`, {
     method: 'POST',
-    headers: { cookie: `dsbot_ui=${page.cookie}`, 'content-type': 'application/json', 'x-dsbot-page': '1' },
+    headers: { cookie: `dudu_ui=${page.cookie}`, 'content-type': 'application/json', 'x-dudu-page': '1' },
     body: 'x'.repeat(1024 * 1024 + 1),
   })).status, 413);
   await new Promise((resolve) => setTimeout(resolve, 225));
   assert.equal((await fetch(`${f.server.address}${page.path}`, {
-    headers: { cookie: `dsbot_ui=${page.cookie}` },
+    headers: { cookie: `dudu_ui=${page.cookie}` },
   })).status, 401);
 });
 
 test('encoded traversal and duplicate cookies cannot bypass the frozen asset manifest', async (t) => {
   const f = await fixture(t);
   const page = (await f.open()).value;
-  const rawGet = (path, cookie = `dsbot_ui=${page.cookie}`) => new Promise((resolve, reject) => {
+  const rawGet = (path, cookie = `dudu_ui=${page.cookie}`) => new Promise((resolve, reject) => {
     const request = http.get(`${f.server.address}${path}`, { headers: { cookie } }, (response) => {
       response.resume();
       response.on('end', () => resolve(response.statusCode));
@@ -306,5 +306,5 @@ test('encoded traversal and duplicate cookies cannot bypass the frozen asset man
   for (const path of ['assets/%2e%2e/private', 'assets/%2Fetc%2Fpasswd', 'assets/nested\\private']) {
     assert.equal(await rawGet(`${page.path}${path}`), 404, path);
   }
-  assert.equal(await rawGet(page.path, `dsbot_ui=${page.cookie}; dsbot_ui=${page.cookie}`), 401);
+  assert.equal(await rawGet(page.path, `dudu_ui=${page.cookie}; dudu_ui=${page.cookie}`), 401);
 });

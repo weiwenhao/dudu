@@ -67,7 +67,7 @@
 | {0}：{1} | {0}: {1} | 新增，待审 | GroupChat.swift |
 | 一周后 | In one week | 复用 due.oneWeek | IssueCreationPickers.swift |
 | 一条命令 | One command | 复用 settings.connectorsPage.custom.how.command | native-settings.mjs |
-| 上一条事项 | Previous issue | 复用 detail.previous | DSBotRootView.swift |
+| 上一条事项 | Previous issue | 复用 detail.previous | DuduRootView.swift |
 | 上一题 | Previous question | 新增，待审 | ConversationQuestionsView.swift |
 | 上下文 | Context | 新增，待审 | CollectorView.swift |
 | 上下文已压缩 | Context compacted | 新增，待审 | Transcript.swift |
@@ -75,7 +75,7 @@
 | 上次 {0} · 没有新的 | Last {0} · Nothing new | 新增，待审 | native-settings.mjs |
 | 上次 {0} · 读取失败 | Last {0} · Read failed | 新增，待审 | native-settings.mjs |
 | 上移 | Move up | 复用 settings.statuses.moveUp | native-settings.mjs |
-| 下一条事项 | Next issue | 复用 detail.next | DSBotRootView.swift |
+| 下一条事项 | Next issue | 复用 detail.next | DuduRootView.swift |
 | 下一题 | Next question | 新增，待审 | ConversationQuestionsView.swift |
 | 下次 {0} | Next {0} | 新增，待审 | LibraryView.swift |
 | 下次运行 | Next run | 复用 tasks.next | TaskSheets.swift |
@@ -97,8 +97,8 @@
 | 仅显示已归档 | Archived only | 新增，待审 | SidebarView.swift |
 | 代码 | Code | 新增，待审 | Transcript.swift |
 | 令牌 | Token | 复用 settings.connectorsPage.custom.token | native-settings.mjs |
-| 任务 | Tasks | 复用 tasks.title | QuickCards.swift、DSBotRootView.swift、TaskPanel.swift、TaskSheets.swift、TasksView.swift、Navigation or embedded pages |
-| 定时任务 | Scheduled tasks | App 菜单中文由主人 2026-11-17 指定；英文原先复用 Tasks，2026-11-17 主人说“就按你定的来吧”，改成 Scheduled tasks（Tasks 放在 Agent team / Background tasks 旁边容易和后台任务混）。同一个词也是对话「…」菜单的第三项和它的面板标题（SessionTasksSheet.swift） | SidebarView.swift（包括无障碍名称，兼容旧导航目录）、DSBotRootView.swift、SessionActivity.swift |
+| 任务 | Tasks | 复用 tasks.title | QuickCards.swift、DuduRootView.swift、TaskPanel.swift、TaskSheets.swift、TasksView.swift、Navigation or embedded pages |
+| 定时任务 | Scheduled tasks | App 菜单中文由主人 2026-11-17 指定；英文原先复用 Tasks，2026-11-17 主人说“就按你定的来吧”，改成 Scheduled tasks（Tasks 放在 Agent team / Background tasks 旁边容易和后台任务混）。同一个词也是对话「…」菜单的第三项和它的面板标题（SessionTasksSheet.swift） | SidebarView.swift（包括无障碍名称，兼容旧导航目录）、DuduRootView.swift、SessionActivity.swift |
 | 任务分配 | Issue assignment | 复用 settings.rules.files.ASSIGN.md.title | native-settings.mjs |
 | 任务已停止 | Task stopped | 新增，待审 | ConversationFeatureViews.swift |
 | 任务已因退出 DeepSeek 登录而停止。 | The task stopped because you signed out of DeepSeek. | 新增，待审 | ConversationFeatureViews.swift |
@@ -127,11 +127,11 @@
 | 允许 | Allow | 新增，待审 | ChatView.swift |
 | 元数据 | Metadata | 新增，待审 | ConversationFeatureViews.swift |
 | 先写点内容。 | Write a message first. | 复用 detail.messageErrors.invalid_message | AssistantComposer.swift |
-| 先打开一个会话 | Open a session first | 新增，待审 | DSBotRootView.swift |
+| 先打开一个会话 | Open a session first | 新增，待审 | DuduRootView.swift |
 | 先添加一个连接器 | Add a connector first | 复用 settings.collectors.needConnector | native-settings.mjs |
 | 先选择智能体。 | Choose an agent first. | 复用 detail.messageErrors.choose_agent | AssistantComposer.swift |
 | 先选项目，再把工作交给智能体。 | Choose a project before sending work to an agent. | 复用 detail.messageErrors.choose_project | AssistantComposer.swift |
-| 全选 | Select all | 复用 bulk.selectAll | CollectorView.swift、DSBotRootView.swift |
+| 全选 | Select all | 复用 bulk.selectAll | CollectorView.swift、DuduRootView.swift |
 | 全部 | All | 复用 display.completed.all | Tasks.swift |
 | 全部 %lld 个文件 | one: All %lld file<br>other: All %lld files | 新增，待审 | TurnFilesView.swift |
 | 全部事项 | All issues | 复用 tabs.all | Board.swift |
@@ -142,9 +142,9 @@
 | 关联会话 | Linked conversation | 复用 tasks.linked | TaskSheets.swift |
 | 关联工作区 | Workspace | 复用 tasks.workspace | TaskSheets.swift |
 | 关闭 | Close | 复用 descriptionHistory.close | CollectorView.swift、ConversationFeatureViews.swift、IssueActionsSheet.swift、NewIssueSheet.swift、QuickSheetPage.swift、SessionActivitySheet.swift、TaskSheets.swift、TurnFilesView.swift |
-| 关闭会话列表 | Close session list | 新增，待审 | DSBotRootView.swift |
+| 关闭会话列表 | Close session list | 新增，待审 | DuduRootView.swift |
 | 关闭侧边栏 | Close sidebar | 新增，待审 | DrawerMotion.swift |
-| 关闭提示 | Dismiss notification | 新增，待审 | DSBotToast.swift |
+| 关闭提示 | Dismiss notification | 新增，待审 | DuduToast.swift |
 | 关闭文件 | Close file | 新增，待审 | WorkPanelView.swift |
 | 关闭照片预览 | Close photo preview | 新增，待审 | PhotoAttachmentPreview.swift |
 | 关闭电脑连接 | Close computer connections | 新增，待审 | ComputerListView.swift |
@@ -189,14 +189,14 @@
 | 取消归档 | Unarchive | 新增，待审 | SidebarView.swift |
 | 取消归档后才能打开。 | Unarchive this session to open it. | 新增，待审 | SidebarView.swift |
 | 取消置顶 | Unpin | 新增，待审 | SidebarView.swift |
-| 取消选择 | Clear selection | 复用 bulk.clear | DSBotRootView.swift |
+| 取消选择 | Clear selection | 复用 bulk.clear | DuduRootView.swift |
 | 受阻的目标 | Blocked goal | 新增，待审 | Transcript.swift |
 | 变量名 | Variable name | 复用 settings.connectorsPage.custom.envName | NativeSettingsView.swift |
 | 只移除工作区的登记。目录和其中的会话都会保留，会话会显示在「未分组」下。 | Only the workspace registration will be removed. Its folder and sessions will remain. Sessions will appear under “Ungrouped”. | 新增，待审 | SidebarView.swift |
 | 只能 @ 当前事项的处理者。 | Mention the recipient assigned to this issue. | 复用 detail.messageErrors.recipient_unavailable | AssistantComposer.swift |
 | 同意执行 | Approve and run | 新增，待审 | PlanReview.swift |
 | 名称 | Name | 复用 settings.statuses.name | native-settings.mjs |
-| 后台任务 | Background tasks | 新增，待审 | SessionActivity.swift、DSBotRootView.swift |
+| 后台任务 | Background tasks | 新增，待审 | SessionActivity.swift、DuduRootView.swift |
 | 后台任务状态更新 | Background task status updated | 新增，待审 | Transcript.swift |
 | 向用户提出了问题 | Asked a question | 新增，待审 | Transcript.swift |
 | 启用完全权限 | Enable full access | 新增，待审 | PermissionLabels.swift |
@@ -214,7 +214,7 @@
 | 周日 | Sun | 新增，待审 | Quota.swift、Tasks.swift、LibraryView.swift |
 | 命令行 | Command line | 复用 settings.connectorsPage.custom.kind.sentence | native-settings.mjs |
 | 命令行 · {0} | CLI · {0} | 新增，待审 | native-settings.mjs |
-| 嘟嘟 | Dudu | 复用 brand | Tasks.swift、DSBotRootView.swift、native-bridge.mjs |
+| 嘟嘟 | Dudu | 复用 brand | Tasks.swift、DuduRootView.swift、native-bridge.mjs |
 | 嘟嘟 · 默认 | Dudu · Default | 新增，待审 | native-settings.mjs |
 | 回到最新消息 | Jump to latest message | 新增，待审 | ChatView.swift |
 | 回复 | Reply | 复用 pet.reply | MessageActions.swift、QuickTodoViews.swift |
@@ -242,7 +242,7 @@
 | 完全权限 | Full access | 新增，待审 | PermissionLabels.swift |
 | 完成 | Done | 复用 dashboard.done | SessionCommands.swift、ConversationFeatureViews.swift、MessageActions.swift、PairingView.swift、PlanReview.swift |
 | 对准电脑上显示的配对码 | Point at the pairing code on your computer | 新增，待审 | QRScannerView.swift |
-| 对话 | Conversation | 新增，待审 | DSBotRootView.swift |
+| 对话 | Conversation | 新增，待审 | DuduRootView.swift |
 | 将事项移至：{0} | Move issues to: {0} | 新增，待审 | native-settings.mjs |
 | 将删除这条事项、活动和本地关联。来源消息和会话历史会保留。 | This issue, its activity and local links will be deleted. Source messages and session history stay. | 复用 deleteIssue.scope | BoardView.swift |
 | 将要删除 | This will be deleted | 复用 settings.confirmDelete.title | native-settings.mjs |
@@ -317,7 +317,7 @@
 | 已连接 | Connected | 复用 settings.connectorsPage.views.connected | SettingsView.swift、native-settings.mjs |
 | 已连接 · {0} | Connected · {0} | 新增，待审 | ComputerConnectionView.swift、ComputerListView.swift |
 | 已退出计划模式 | Left plan mode | 新增，待审 | SessionCommands.swift |
-| 已选 {0} 条 | Selected: {0} | 新增，待审 | CollectorView.swift、DSBotRootView.swift |
+| 已选 {0} 条 | Selected: {0} | 新增，待审 | CollectorView.swift、DuduRootView.swift |
 | 已重试模型请求 | Model request retried | 新增，待审 | ConversationFeatureViews.swift |
 | 常用频率 | Common frequencies | 复用 settings.collectors.common | native-settings.mjs |
 | 开发 | Development | 复用 settings.connectorsPage.groups.dev | native-settings.mjs |
@@ -343,11 +343,11 @@
 | 恢复目标 | Resume goal | 新增，待审 | GoalBanner.swift |
 | 截止日期 | Due date | 复用 display.orderBy.due | IssueActionsSheet.swift、IssueCreationPickers.swift、NewIssueSheet.swift |
 | 所属会话 | Session | 新增，待审 | LibraryView.swift |
-| 手机端暂不支持「{0}」 | “{0}” is not supported on the phone yet | 新增，待审 | DSBotRootView.swift |
+| 手机端暂不支持「{0}」 | “{0}” is not supported on the phone yet | 新增，待审 | DuduRootView.swift |
 | 打开一次电脑上的 DSH 窗口后，这里会显示 DSH 的入口。 | Open DSH on your computer once to see its entries here. | 新增，待审 | SidebarView.swift |
 | 打开事项 | Open issue | 复用 widgets.sessions.openIssue | CollectorView.swift |
 | 打开会话 | Open session | 复用 detail.openSession | GroupChatViews.swift、LibraryView.swift、QuickTodoViews.swift |
-| 打开会话列表 | Open session list | 新增，待审 | DSBotRootView.swift |
+| 打开会话列表 | Open session list | 新增，待审 | DuduRootView.swift |
 | 打开会话后查看项目文件 | Open a session to view project files | 新增，待审 | WorkPanelView.swift |
 | 打开来源 | Open source | 复用 detail.openSource | CollectorView.swift |
 | 执行了命令 | Ran commands | 新增，待审 | Transcript.swift |
@@ -372,7 +372,7 @@
 | 提交 | Submit | 新增，待审 | ConversationQuestionsView.swift |
 | 提醒内容 | Reminder | 新增，待审 | LibraryView.swift |
 | 提问 | Ask a question | 新增，待审 | Transcript.swift |
-| 插件 | Plugins | 新增，待审 | DSBotRootView.swift |
+| 插件 | Plugins | 新增，待审 | DuduRootView.swift |
 | 插件状态更新 | Plugin status updated | 新增，待审 | Transcript.swift |
 | 插话发送 | Send now | 新增，待审 | QueuedMessagesPanel.swift |
 | 插话发送失败，请重试。 | Could not send this message now. Try again. | 新增，待审 | ChatView.swift |
@@ -402,8 +402,8 @@
 | 新增 {0} 条 | one: Added {0} item<br>other: Added {0} items | 新增，待审 | native-settings.mjs |
 | 新增 {0} 项技能 | one: Added {0} skill<br>other: Added {0} skills | 新增，待审 | native-settings.mjs |
 | 新对话 | New conversation | 新增，待审 | native-bridge.mjs |
-| 新建事项 | New issue | 复用 newIssue.title | CollectorView.swift、DSBotRootView.swift、NewIssueSheet.swift |
-| 新建任务 | New task | 复用 tasks.create | DSBotRootView.swift、TaskSheets.swift、TasksView.swift |
+| 新建事项 | New issue | 复用 newIssue.title | CollectorView.swift、DuduRootView.swift、NewIssueSheet.swift |
+| 新建任务 | New task | 复用 tasks.create | DuduRootView.swift、TaskSheets.swift、TasksView.swift |
 | 新建会话 | New session | 新增，待审 | SidebarView.swift |
 | 新建对话并复用 | Create a conversation and reuse it | 复用 tasks.targets.reuse | Tasks.swift |
 | 新建标签：“{0}” | New label: “{0}” | 新增，待审 | IssueCreationPickers.swift |
@@ -419,7 +419,7 @@
 | 明天 | Tomorrow | 复用 snooze.tomorrow | IssueCreationPickers.swift |
 | 昨天 | Yesterday | 复用 activity.yesterday | SidebarView.swift |
 | 智能体 | Agent | 复用 fields.agent | IssueActionsSheet.swift、NewIssueSheet.swift |
-| 智能体团队 | Agent team | 新增，待审 | SessionActivity.swift、DSBotRootView.swift |
+| 智能体团队 | Agent team | 新增，待审 | SessionActivity.swift、DuduRootView.swift |
 | 智能体状态 | Agent state | 复用 fields.agentState | IssueActionsSheet.swift |
 | 暂不支持此操作。 | This action is not supported yet. | 新增，待审 | Models.swift |
 | 暂停任务 | Pause task | 复用 tasks.pause | TaskSheets.swift、TasksView.swift |
@@ -436,7 +436,7 @@
 | 暂无文件 | No files | 新增，待审 | WorkPanelView.swift |
 | 暂无权限选项 | No permission options | 新增，待审 | ComposerAttachmentSheet.swift |
 | 暂无用量 | No usage to show | 复用 widgets.quota.empty | QuotaSheet.swift |
-| 更多 | More | 复用 detail.more | BoardView.swift、CollectorView.swift、DSBotRootView.swift、IssueActionsSheet.swift、NewIssueSheet.swift |
+| 更多 | More | 复用 detail.more | BoardView.swift、CollectorView.swift、DuduRootView.swift、IssueActionsSheet.swift、NewIssueSheet.swift |
 | 更改没能保存 | Could not save the change | 复用 toast.failed | Board.swift、NativeSettings.swift、Tasks.swift、CollectorView.swift、IssueActionsSheet.swift、TaskSheets.swift、native-settings.mjs |
 | 更新 {0} 条 | one: Updated {0} item<br>other: Updated {0} items | 新增，待审 | native-settings.mjs |
 | 更新了计划 | Updated the plan | 新增，待审 | Transcript.swift |
@@ -567,7 +567,7 @@
 | 目标指令，点按取消 | Goal command. Tap to cancel. | 新增，待审 | ChatView.swift |
 | 目标操作 | Goal actions | 新增，待审 | GoalBanner.swift |
 | 目标操作失败 | Goal action failed | 新增，待审 | SessionCommands.swift |
-| 看板 | Board | 新增，待审 | DSBotRootView.swift、Navigation or embedded pages |
+| 看板 | Board | 新增，待审 | DuduRootView.swift、Navigation or embedded pages |
 | 确认启用完全权限？ | Enable full access? | 新增，待审 | PermissionLabels.swift |
 | 确认启用自动审查（实验）？ | Enable auto review (experimental)? | 新增，待审 | PermissionLabels.swift |
 | 移除截止日期 | Remove due date | 复用 due.remove | IssueCreationPickers.swift |
@@ -624,12 +624,12 @@
 | 说明 | Description | 新增，待审 | LibraryView.swift |
 | 请允许语音识别权限。 | Allow speech recognition access. | 新增，待审 | NativeSpeechCapture.swift |
 | 请允许麦克风权限。 | Allow microphone access. | 新增，待审 | NativeSpeechCapture.swift |
-| 请先在电脑上更新 Dudu 插件，再使用此功能。 | Update the Dudu plugin on your computer to use this feature. | 新增，待审 | DSBotStore.swift、SessionSearch.swift |
+| 请先在电脑上更新 Dudu 插件，再使用此功能。 | Update the Dudu plugin on your computer to use this feature. | 新增，待审 | DuduStore.swift、SessionSearch.swift |
 | 请先完成这道问题。 | Complete this question first. | 新增，待审 | ConversationQuestionsView.swift |
 | 请先登录 DeepSeek，并确认请求地址支持账号认证。 | Sign in to DeepSeek and check that the request URL supports account authentication. | 新增，待审 | ConversationFeatureViews.swift |
 | 请在系统设置中允许相机访问。 | Allow camera access in Settings. | 新增，待审 | QRScannerView.swift |
 | 请更新电脑端的 Dudu 插件 | Update the Dudu plugin on your computer | 新增，待审 | Models.swift |
-| 请更新电脑端的 dsbot 插件。 | Update the Dudu plugin on your computer. | 新增，待审 | native-server.mjs |
+| 请更新电脑端的 dudu 插件。 | Update the Dudu plugin on your computer. | 新增，待审 | native-server.mjs |
 | 请更新电脑端的手机控制插件 | Update the mobile control plugin on your computer | 新增，待审 | Models.swift |
 | 请检查状态名称和颜色。 | Check the status name and color. | 复用 settings.statuses.errors.invalid_status | native-settings.mjs |
 | 请求内容无效，请检查后重试。 | Invalid request. Check it and try again. | 新增，待审 | Models.swift |
@@ -659,7 +659,7 @@
 | 运行命令 | Run command | 新增，待审 | Transcript.swift |
 | 运行失败 | Run failed | 复用 tasks.runFailed | GroupChat.swift |
 | 运行时间 | Run time | 复用 tasks.timing | TaskSheets.swift |
-| 返回 | Back | 复用 settings.connectorsPage.back | AboutView.swift、ComposerAttachmentSheet.swift、ComputerListView.swift、ConversationSearchView.swift、DSBotRootView.swift、IssueActionsSheet.swift、QuickSheetPage.swift、SessionActivitySheet.swift、SettingsView.swift |
+| 返回 | Back | 复用 settings.connectorsPage.back | AboutView.swift、ComposerAttachmentSheet.swift、ComputerListView.swift、ConversationSearchView.swift、DuduRootView.swift、IssueActionsSheet.swift、QuickSheetPage.swift、SessionActivitySheet.swift、SettingsView.swift |
 | 返回上一级 | Go up one level | 新增，待审 | WorkPanelView.swift |
 | 返回电脑连接 | Back to computer connection | 新增，待审 | ComputerConnectionView.swift |
 | 返回设置栏目 | Back to settings sections | 新增，待审 | SettingsView.swift |
@@ -680,7 +680,7 @@
 | 连接 | Connect | 复用 settings.connectorsPage.connect | native-settings.mjs |
 | 连接器 | Connectors | 复用 settings.nav.connectors | NativeSettings.swift、native-settings.mjs |
 | 连接地址 | Connection addresses | 复用 shell.addresses | ComputerConnectionView.swift |
-| 连接地址未连接到兼容的 dsbot 服务。 | This address does not connect to a compatible Dudu service. | 新增，待审 | native-server.mjs |
+| 连接地址未连接到兼容的 dudu 服务。 | This address does not connect to a compatible Dudu service. | 新增，待审 | native-server.mjs |
 | 连接地址未连接到这台电脑，请检查地址、TLS 证书和网络配置。 | This address does not connect to this computer. Check the address, TLS certificate, and network settings. | 新增，待审 | native-server.mjs |
 | 连接地址格式不正确。 | Invalid connection address. | 新增，待审 | native-server.mjs |
 | 连接已断开 | Disconnected | 新增，待审 | Models.swift |
@@ -734,7 +734,7 @@
 | 预览照片 | Preview photo | 新增，待审 | PhotoAttachmentPreview.swift |
 | 频率，如 30m、2h、1d，或 cron | How often, such as 30m, 2h, 1d, or cron | 复用 settings.collectors.frequency | native-settings.mjs |
 | 颜色 | Color | 复用 settings.statuses.color | native-settings.mjs |
-| 额度 | Quota | 复用 widgets.titles.quota | DSBotRootView.swift、QuotaSheet.swift |
+| 额度 | Quota | 复用 widgets.titles.quota | DuduRootView.swift、QuotaSheet.swift |
 | 首 token 平均（TTFT） | Average time to first token (TTFT) | 新增，待审 | ConversationFileStorage.swift |
 | 高 | High | 复用 priority.high | IssueCreation.swift |
 | 黄色 | Yellow | 复用 labels.colors.yellow | IssuePropertyIcons.swift |

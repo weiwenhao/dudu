@@ -107,7 +107,7 @@ jobs:
           echo "DUDU_KEYSTORE_FILE=$RUNNER_TEMP/dudu-release.jks" >> "$GITHUB_ENV"
 
       - name: Build the release APK
-        working-directory: native-android
+        working-directory: native/android
         env:
           DUDU_KEYSTORE_PASSWORD: ${{ secrets.DUDU_KEYSTORE_PASSWORD }}
           DUDU_KEY_ALIAS: ${{ secrets.DUDU_KEY_ALIAS }}
@@ -118,7 +118,7 @@ jobs:
       - name: Check the signature
         run: |
           version=$(jq -r .version host/dudu-plugin/package.json)
-          apk=$(ls native-android/app/build/outputs/apk/release/*.apk)
+          apk=$(ls native/android/app/build/outputs/apk/release/*.apk)
           apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)
           "$apksigner" verify --verbose --print-certs "$apk"
           mkdir out

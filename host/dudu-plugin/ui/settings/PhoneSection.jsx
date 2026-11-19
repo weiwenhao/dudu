@@ -19,7 +19,7 @@ function normalize(address) {
     const url = new URL(address);
     if (url.protocol === 'ws:') url.protocol = 'http:';
     else if (url.protocol === 'wss:') url.protocol = 'https:';
-    if (['/', '', '/dsbot'].includes(url.pathname) && !url.search && !url.hash) return url.origin;
+    if (['/', ''].includes(url.pathname) && !url.search && !url.hash) return url.origin;
     return url.href;
   } catch { return address; }
 }

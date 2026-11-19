@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDsbotControl } from './dist/dsbot-control.mjs';
+import { createDuduControl } from './dist/dudu-control.mjs';
 import { createTypertRpcAdapter } from './dist/native-bridge.mjs';
 import { createTypertPageRpc } from './dist/native-page-rpc.mjs';
 import { createDshMobileFrontend } from './dist/dsh-mobile-frontend.mjs';
@@ -15,7 +15,6 @@ import { createNativeQuestions } from './dist/native-questions.mjs';
 import { desktopPackageIdentity, writeDesktopRuntime } from './dist/desktop-runtime.mjs';
 import { createNativeDiagnostics } from './dist/native-diagnostics.mjs';
 import { createSessionDiagnostics } from './dist/session-diagnostics.mjs';
-import { migrateLegacyState } from './dist/legacy-state.mjs';
 import { createProviders } from './dist/providers/index.mjs';
 import { createSessionTools } from './dist/providers/cron-tools.mjs';
 import { createLinkStore, createNativeSessions } from './dist/providers/native/index.mjs';
@@ -998,7 +997,7 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
         return questions.attachWait(request.agent, request.wait.callId, signal);
       },
     });
-    control = await createDsbotControl({
+    control = await createDuduControl({
       folder,
       rpc,
       pages,
@@ -1091,8 +1090,6 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
 export async function apply(ctx, config = {}) {
   const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh');
   const folder = join(dshHome, 'dudu');
-  // Paired phones were stored by the plugin's former name; carry them over before anything reads the folder.
-  await migrateLegacyState({ dshHome });
   ctx.effect(() => installSessionHistoryCoalescing(ctx.sessionQuery, ctx.sessions));
 
   const stops = [];

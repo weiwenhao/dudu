@@ -16,22 +16,22 @@ Expo、React Native 或 Metro。核心交互使用原生界面；
 
 ## 连接
 
-电脑端安装 `dudu` DSH 插件（`0.4.0` 前叫 `dsbot`），监听 `3170`。用户填写 HTTP 或 HTTPS 地址：
+电脑端安装 `dudu` DSH 插件（`0.4.0` 前叫 `dudu`），监听 `3170`。用户填写 HTTP 或 HTTPS 地址：
 
 ```text
-iPhone 原生聊天 ── HTTP/HTTPS /dsbot/api/v1 ── 电脑 3170
-iPhone WebView  ── HTTP/HTTPS /dsbot/ui/ ── 电脑 3170
+iPhone 原生聊天 ── HTTP/HTTPS /api/v1 ── 电脑 3170
+iPhone WebView  ── HTTP/HTTPS /ui/ ── 电脑 3170
 ```
 
-配置了 TLS 的反向代理或隧道可以填写 `https://your-domain.example/dsbot`，
-局域网可以填写 `http://电脑地址:3170/dsbot`。原生 API 和 WebView 都使用用户填写的
+配置了 TLS 的反向代理或隧道可以填写 `https://your-domain.example`，
+局域网可以填写 `http://电脑地址:3170`。原生 API 和 WebView 都使用用户填写的
 HTTP 或 HTTPS；实时会话更新通过带鉴权的 HTTP 长轮询获取。HTTPS 用于 TLS 隧道，
 HTTP 适用于用户自行配置的局域网地址。旧版 WS/WSS 配对链接仅在导入时转换为
 HTTP/HTTPS 地址，不会建立 WebSocket 连接。
 
 配对凭据只通过 Authorization 请求头发送。认证通过后，客户端才能调用限定的会话、
 工作区、模型、权限、附件和功能列表操作。
-打开复杂页面时，原生 App 使用已有配对凭据向 `/dsbot/web/open` 请求页面会话，
+打开复杂页面时，原生 App 使用已有配对凭据向 `/web/open` 请求页面会话，
 再将只对该页面有效的 HttpOnly Cookie 放入独立 WebView。页面文档、资源、操作
 和数据订阅均通过 HTTP/HTTPS，并校验此会话；配对密钥不会进入网页脚本或请求 URL。
 插件不提供任意 URL 转发或任意 DSH RPC，页面仍受原有方法清单和会话范围限制。
@@ -67,10 +67,6 @@ DSH 原先未开启时，脚本安装后正常打开它。
 只记录接口、失败阶段和错误码，不记录请求参数、会话正文或凭据。
 
 插件 `0.3.19` 起不声明 DSH 版本约束，升级 DSH 不会仅因版本号变化而被标记为不兼容。
-
-插件 `0.4.0` 起改名为 `dudu`，状态目录改为 `~/.dsh/dudu/`。首次启动会把原 `~/.dsh/dsbot/` 里的
-已配对设备和设置复制过来，旧目录原样保留。已配对的手机无需任何操作，手机协议路径 `/dsbot` 不变。
-`npm run desktop:update` 装好 dudu 后会卸载同一个 profile 里旧的 dsbot 插件，两者不会同时运行。
 
 插件 `0.3.20` 起，DSH 窗口自己绘制的侧栏图标（例如「上下文洞察」）只绘制一次，之后某次上报没带图标时沿用已有的，手机侧栏的图标不再时有时无。
 
@@ -214,13 +210,12 @@ npm run native:build
 npm run native:install -- --device YOUR_COREDEVICE_ID
 ```
 
-`native:build` 使用 `native/project.yml` 生成 Xcode 项目并构建 Release。
-产物为 `.local/native-ios/Build/Products/Release-iphoneos/dsbot.app`。
+`native:build` 使用 `native/ios/project.yml` 生成 Xcode 项目并构建 Release。
+产物为 `.local/native-ios/Build/Products/Release-iphoneos/Dudu.app`。
 `native:install` 覆盖安装，保留同一 App 的数据。只有一个已配对设备时可省略
 `--device`。指定 Debug 构建可添加 `--configuration Debug`。
 
 App 显示名称为 `Dudu`，bundle identifier 为 `com.harnessmobile.app`。
-内部构建目标和配对协议（`/dsbot` 路径）继续使用 `dsbot`，现有配对和数据保持兼容。
 本地开发签名只适用于签名允许的设备。向其他用户分发 iOS App 需要自己的
 TestFlight、App Store 或适用的设备签名；本项目不包含商店发布凭据。
 
@@ -288,8 +283,8 @@ npm run native:test -- --device YOUR_COREDEVICE_ID
 测试只留关键的（主人 2026-11-07：“只留关键的 e2e 或者单元测试就行”）：`tests/` 是纯逻辑和数据安全的单元测试（毫秒级）；
 `tests/e2e/` 是少数几条真实隔离 DSH 里的端到端（插件加载与热更新、事项到智能体会话、对话、Claude/Codex 供应商的恢复与失败、
 原生会话同步、手机页面）加一条办公室场景测试。看起来对不对（尺寸、间距、字样、动画）不写测试，由主人看。
-`native/DSBotTests/` 只留对话投影、存储、HTTP 客户端、连接、滚动位置、智能体状态这些核心逻辑的单元测试；
-原生界面测试（XCUITest）已删除，原生端的检查是 `native:build`。`native:test` 在指定的真机上跑 `DSBotTests`：
+`native/ios/DuduTests/` 只留对话投影、存储、HTTP 客户端、连接、滚动位置、智能体状态这些核心逻辑的单元测试；
+原生界面测试（XCUITest）已删除，原生端的检查是 `native:build`。`native:test` 在指定的真机上跑 `DuduTests`：
 不生成真实配对码、不注入配对链接，也不删除用户现有连接；它使用 Debug 测试构建，结束后用 `native:install` 恢复 Release。
 删掉的测试都备份在 `.local/test-archive-2026-11-07/`（不进 git）。
 
@@ -297,14 +292,14 @@ npm run native:test -- --device YOUR_COREDEVICE_ID
 
 | 位置 | 用途 |
 | --- | --- |
-| `native/DSBot/Core/` | 原生连接、HTTP 页面会话、模型、电脑存储和诊断日志 |
-| `native/DSBot/Views/` | SwiftUI 聊天、侧栏、功能列表、设置和配对 |
-| `native/DSBot/Media/` | 系统扫码、照片和语音 |
-| `native/project.yml` | XcodeGen 项目定义 |
+| `native/ios/Dudu/Core/` | 原生连接、HTTP 页面会话、模型、电脑存储和诊断日志 |
+| `native/ios/Dudu/Views/` | SwiftUI 聊天、侧栏、功能列表、设置和配对 |
+| `native/ios/Dudu/Media/` | 系统扫码、照片和语音 |
+| `native/ios/project.yml` | XcodeGen 项目定义 |
 | `host/native-server.mjs` | 鉴权 HTTP API、事件长轮询和 HTTP 页面入口 |
 | `host/web-page-http.mjs` | HTTP 页面鉴权、资源和受限操作 |
 | `host/native-bridge.mjs` | 允许的业务方法与 DSH 私有接口转换 |
-| `host/dsbot-control.mjs` | 电脑地址配置、配对和撤销 |
+| `host/dudu-control.mjs` | 电脑地址配置、配对和撤销 |
 | `host/dudu-plugin/` | DSH Desktop 插件 |
 | `host/providers/` | 供应商：在 DSH 里使用电脑上的 Claude Code 和 Codex，基于 OAR，见 `docs/providers.md` |
 | `host/providers/native/` | 嘟嘟：读 Claude / Codex 已有的会话，搜索，加载进 DSH，见 `docs/providers.md` |

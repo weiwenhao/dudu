@@ -1,7 +1,7 @@
 Mode: built-in image_gen, precise edit with transparent background.
-Source: native/DSBot/Assets.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png
-Asset: native/DSBot/Assets.xcassets/DuduLogo.imageset/DuduLogo.png
-Rendering: alpha mask, template rendering in DSBotStyle.blue, high-quality interpolation.
+Source: native/ios/Dudu/Assets.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png
+Asset: native/ios/Dudu/Assets.xcassets/DuduLogo.imageset/DuduLogo.png
+Rendering: alpha mask, template rendering in DuduStyle.blue, high-quality interpolation.
 The Home Screen icon remains opaque and unchanged.
 
 Final prompt:

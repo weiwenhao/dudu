@@ -2,7 +2,7 @@ import { readFile, writeFile, readdir } from 'node:fs/promises';
 import { DICTIONARIES } from '../host/dudu-plugin/ui/strings.js';
 
 const root = new URL('../', import.meta.url);
-const native = JSON.parse(await readFile(new URL('native/DSBot/Resources/Localizable.xcstrings', root))).strings;
+const native = JSON.parse(await readFile(new URL('native/ios/Dudu/Resources/Localizable.xcstrings', root))).strings;
 const words = {};
 for (const [zh, value] of Object.entries(native)) {
   const en = value.localizations?.en?.stringUnit?.value ?? value.localizations?.en?.variations?.plural?.other?.stringUnit?.value;
@@ -26,7 +26,7 @@ const pending = { '添加图片': 'Add pictures', '发送视频': 'Send video',
   '转发': 'Forward', '转发给': 'Forward to', '最近会话': 'Recent conversations',
   '已转发到 {0}': 'Forwarded to {0}', '已转发到 ': 'Forwarded to ', '搜索': 'Search' };
 Object.assign(words, pending);
-const src = new URL('native-android/app/src/main/java/app/dudu/android/', root);
+const src = new URL('native/android/app/src/main/java/app/dudu/android/', root);
 async function sources(directory) {
   return (await Promise.all((await readdir(directory, { withFileTypes: true })).map(async entry =>
     entry.isDirectory() ? sources(new URL(`${entry.name}/`, directory)) :
@@ -43,7 +43,7 @@ const singular = used.flatMap(key => {
 });
 await writeFile(new URL('ui/Wording.kt', src), `// Generated from existing App dictionaries by scripts/sync-android-words.mjs.\npackage app.dudu.android.ui\n\nimport androidx.compose.runtime.Composable\nimport androidx.compose.ui.platform.LocalConfiguration\n\nprivate val english = mapOf(\n${used.map(zh => `    ${literal(zh)} to ${literal(words[zh])}`).join(',\n')}\n)\nprivate val englishSingular = mapOf<String, String>(\n${singular.join(',\n')}\n)\n\n@Composable\nfun w(key: String): String {\n    val chinese = LocalConfiguration.current.locales[0].language == "zh"\n    return if (chinese) key else english[key] ?: key\n}\n\n@Composable\nfun wp(key: String, count: Int): String {\n    val chinese = LocalConfiguration.current.locales[0].language == "zh"\n    val pattern = if (chinese) key else if (count == 1) englishSingular[key] ?: english[key] ?: key else english[key] ?: key\n    return pattern.replace("%lld", count.toString())\n}\n`);
 console.log(`Synced ${used.length} existing App phrases.`);
-await writeFile(new URL('native-android/wording-pending.json', root), JSON.stringify({
+await writeFile(new URL('native/android/wording-pending.json', root), JSON.stringify({
   status: 'awaiting-owner-review-before-release', words: pending,
   also: 'wording-sources.json: englishAwaitingOwnerReview',
 }, null, 2) + '\n');
