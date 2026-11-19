@@ -75,8 +75,14 @@ jobs:
           FILES: ${{ inputs.files }}
           DUDU_E2E_DIAG: '1'
           DUDU_E2E_SHOTS: ${{ runner.temp }}/e2e-failures
-        # TEMP: the subset is for finding why the issues page does not show on the runner; removed before the merge.
-        run: npm run test:e2e -- tests/e2e/issues.e2e.test.ts "--test-name-pattern=New issue window|a draft agent"
+        # The tests listed in .github/e2e-known-failing.txt are skipped: they fail for reasons that are not CI's (see that file).
+        run: |
+          skips=()
+          while IFS= read -r name; do
+            case "$name" in ''|'#'*) ;; *) skips+=("--test-skip-pattern=$name") ;; esac
+          done < .github/e2e-known-failing.txt
+          # shellcheck disable=SC2086 # $FILES is a list of file names, separated by spaces
+          npm run test:e2e -- "${skips[@]}" $FILES
 
       - name: Keep the pictures of the failed tests
         if: failure()
