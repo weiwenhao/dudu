@@ -75,14 +75,30 @@ jobs:
           FILES: ${{ inputs.files }}
           DUDU_E2E_DIAG: '1'
           DUDU_E2E_SHOTS: ${{ runner.temp }}/e2e-failures
-        # The tests listed in .github/e2e-known-failing.txt are skipped: they fail for reasons that are not CI's (see that file).
+        # What .github/e2e-known-failing.txt lists is left out: files whose every test fails (not run at all) and single tests (skipped by name).
+        # --test-timeout stops a test or a file that hangs, instead of letting the job wait for its 90 minutes.
         run: |
           skips=()
-          while IFS= read -r name; do
-            case "$name" in ''|'#'*) ;; *) skips+=("--test-skip-pattern=$name") ;; esac
+          excluded=()
+          while IFS= read -r line; do
+            case "$line" in
+              ''|'#'*) ;;
+              'file: '*) excluded+=("${line#file: }") ;;
+              *) skips+=("--test-skip-pattern=$line") ;;
+            esac
           done < .github/e2e-known-failing.txt
-          # shellcheck disable=SC2086 # $FILES is a list of file names, separated by spaces
-          npm run test:e2e -- "${skips[@]}" $FILES
+          files=()
+          if [ -n "$FILES" ]; then
+            read -r -a files <<< "$FILES"
+          else
+            for file in tests/e2e/*.e2e.test.ts; do
+              keep=1
+              for name in "${excluded[@]}"; do [ "$file" = "$name" ] && keep=0; done
+              [ "$keep" = 1 ] && files+=("$file")
+            done
+          fi
+          echo "Running ${#files[@]} files; skipping ${#skips[@]} tests and ${#excluded[@]} files."
+          npm run test:e2e -- --test-timeout=900000 "${skips[@]}" "${files[@]}"
 
       - name: Keep the pictures of the failed tests
         if: failure()
