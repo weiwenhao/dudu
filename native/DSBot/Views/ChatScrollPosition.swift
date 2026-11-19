@@ -12,10 +12,13 @@ enum ChatScrollPosition {
     /// The follow tolerance must not pull a reader back after a small drag away from the end.
     static func shouldFollowAfterDrag(
         contentHeight: CGFloat, containerHeight: CGFloat, contentOffset: CGFloat, topInset: CGFloat = 0,
-        beganFollowingWithKeyboard: Bool, keyboardVisible: Bool
+        beganFollowingWithKeyboard: Bool, keyboardVisible: Bool,
+        viewportHeightBeforeKeyboard: CGFloat? = nil
     ) -> Bool {
-        (beganFollowingWithKeyboard && !keyboardVisible) || isAtEnd(
-            contentHeight: contentHeight, containerHeight: containerHeight,
+        // A keyboard that opens before deceleration ends must not turn its lost viewport into a reading gesture.
+        let height = keyboardVisible ? max(containerHeight, viewportHeightBeforeKeyboard ?? containerHeight) : containerHeight
+        return (beganFollowingWithKeyboard && !keyboardVisible) || isAtEnd(
+            contentHeight: contentHeight, containerHeight: height,
             contentOffset: contentOffset, topInset: topInset, tolerance: 1
         )
     }
@@ -154,6 +157,8 @@ struct HistoryPositioning {
         itemIDs: [String], rows: [HistoryRowFrame], viewport: HistoryViewport,
         followsLatest: Bool, latestFromTop: Bool
     ) -> HistoryScrollTarget? {
+        // Row registration can advance before the snapshot metadata. That is not a blank cached history.
+        guard rows.isEmpty || rows.contains(where: { itemIDs.contains($0.id) }) else { return nil }
         observe(rows: rows)
         guard access != .suspended, let first = itemIDs.first else { return nil }
         if case .reading(let saved) = request, !itemIDs.contains(saved.id) {

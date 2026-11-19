@@ -769,9 +769,9 @@ struct CollectorRecord: Codable, Identifiable, Equatable, Sendable {
 enum CollectorMark: String, Sendable {
     case done, delete, restore
 
-    var toast: String {
+    var toast: String? {
         switch self {
-        case .done: return L10n.text("已处理")
+        case .done: return nil
         case .delete: return L10n.text("已删除")
         case .restore: return L10n.text("已恢复")
         }
@@ -1025,7 +1025,9 @@ final class CollectorModel: ObservableObject {
         // They leave the list at once; the plugin's answer, a moment later, is what stays.
         itemsByTab[from] = (itemsByTab[from] ?? []).filter { !ids.contains($0.id) }
         stopSelecting()
-        report?(DSBotToastMessage(text: action.toast, kind: .success))
+        if let message = action.toast {
+            report?(DSBotToastMessage(text: message, kind: .success))
+        }
         await refresh(from, using: store)
         await refreshCount(using: store)
         return true

@@ -322,6 +322,28 @@ export function createInbox(db, { now = Date.now } = {}) {
     return filled;
   }
 
+  /** Explicit owner edits preserve source identity, deduplication, handling marks and issue associations. */
+  function update(id, patch) {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch) || !Object.keys(patch).length
+      || Object.keys(patch).some((key) => !['title', 'text'].includes(key))
+      || patch.title !== undefined && (typeof patch.title !== 'string' || !patch.title.trim() || patch.title.length > 300)
+      || patch.text !== undefined && (typeof patch.text !== 'string' || patch.text.length > 60_000)) {
+      return { outcome: 'needs_clarification', code: 'invalid_patch' };
+    }
+    return transaction(() => {
+      const got = get(id);
+      if (!got || got.record.deletedAt !== null) return { outcome: 'needs_clarification', code: 'unknown_record' };
+      const before = got.record;
+      const title = patch.title?.trim() ?? before.title;
+      const text = patch.text ?? before.text;
+      if (title === before.title && text === before.text) return { outcome: 'no_op', record: before };
+      sql('UPDATE inbox_records SET title = ?, text = ? WHERE id = ?').run(title, text, before.id);
+      sql('DELETE FROM inbox_fts WHERE rowid = ?').run(before.id);
+      sql('INSERT INTO inbox_fts (rowid, title, text, author) VALUES (?,?,?,?)').run(before.id, ...indexed({ title, text, author: before.from }));
+      return { outcome: 'success', record: get(before.id).record };
+    });
+  }
+
   function known(row) {
     const same = sql("SELECT issue_id AS issueId, verdict FROM inbox_records WHERE connector = ? AND source_id = ? AND state = 'done' AND id <> ? ORDER BY id DESC LIMIT 1").get(row.connector, row.source_id, row.id);
     if (same) return { ...same, where: 'source' };
@@ -470,5 +492,5 @@ export function createInbox(db, { now = Date.now } = {}) {
   const lastMe = (connector) => meOf(sql("SELECT me FROM collect_runs WHERE connector = ? AND me IS NOT NULL ORDER BY id DESC LIMIT 1").get(connector)?.me);
   const lastStarted = (connector) => sql('SELECT MAX(started_at) AS at FROM collect_runs WHERE connector = ?').get(connector)?.at ?? null;
 
-  return { ingest, addContext, repairTitles, pending, waiting, judge, fail, issueFor, list, search, get, forIssue, prune, dropUntouched, browse, done, remove, restore, link, startRun, finishRun, lastRun, lastFinished, lastGood, lastStarted, lastMe };
+  return { ingest, addContext, repairTitles, update, pending, waiting, judge, fail, issueFor, list, search, get, forIssue, prune, dropUntouched, browse, done, remove, restore, link, startRun, finishRun, lastRun, lastFinished, lastGood, lastStarted, lastMe };
 }

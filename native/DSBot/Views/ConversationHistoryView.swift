@@ -83,6 +83,7 @@ struct ConversationHistoryView<Content: View>: View {
     /// scrolls never redraws this view.
     @State private var topRow = TopRowHolder()
     @State private var dragBeganFollowingWithKeyboard = false
+    @State private var dragViewportWithoutKeyboard: CGFloat?
     @State private var metrics = ScrollMetrics()
     @State private var latestFrame = PagePresentationFrame()
 
@@ -175,13 +176,18 @@ struct ConversationHistoryView<Content: View>: View {
             metrics.recordLayout(messageCount: items.count, following: followsLatest)
             positionHistory(proxy, reason: "layout")
         }
-        .onChange(of: items.map(\.id), initial: true) { _, ids in
-            metrics.itemIDs = ids
+        .onChange(of: historyRows, initial: true) { _, rows in
+            metrics.itemIDs = rows.ids
+            metrics.latestID = rows.ids.last
+            metrics.latestIsCard = rows.latestIsCard
+            // Keep the after-layout callback on the same snapshot as its metadata.
+            metrics.onLayout = {
+                scrollGate?.keepsReader = false
+                metrics.observeLayout()
+                positionHistory(proxy, reason: "materialized")
+                reportLatestVisibility()
+            }
             metrics.requestLayout()
-        }
-        .onChange(of: LatestRow(id: items.last?.id, isCard: items.last?.isCard ?? false), initial: true) { _, latest in
-            metrics.latestID = latest.id
-            metrics.latestIsCard = latest.isCard
             reportLatestVisibility()
         }
         .onChange(of: cardFromTop, initial: true) { _, asked in
@@ -210,23 +216,29 @@ struct ConversationHistoryView<Content: View>: View {
                 metrics.pausePositioning()
                 metrics.positioning.interrupt()
                 dragBeganFollowingWithKeyboard = followsLatest && keyboardVisible
+                dragViewportWithoutKeyboard = keyboardVisible ? nil : context.geometry.containerSize.height
                 followsLatest = false
                 record("chat.scroll.begin", geometry: context.geometry)
             }
             if newPhase == .idle, metrics.jumpStartedAt == nil, oldPhase == .interacting || oldPhase == .decelerating {
                 let dismissedKeyboard = dragBeganFollowingWithKeyboard && !keyboardVisible
+                let openedKeyboard = dragViewportWithoutKeyboard != nil && keyboardVisible
                 followsLatest = ChatScrollPosition.shouldFollowAfterDrag(
                     contentHeight: context.geometry.contentSize.height,
                     containerHeight: context.geometry.containerSize.height,
                     contentOffset: context.geometry.contentOffset.y,
                     topInset: context.geometry.contentInsets.top,
                     beganFollowingWithKeyboard: dragBeganFollowingWithKeyboard,
-                    keyboardVisible: keyboardVisible
+                    keyboardVisible: keyboardVisible,
+                    viewportHeightBeforeKeyboard: dragViewportWithoutKeyboard
                 )
                 dragBeganFollowingWithKeyboard = false
-                // A normal drag has already landed. Only keyboard dismissal needs realignment.
+                dragViewportWithoutKeyboard = nil
+                // A normal drag has landed; a keyboard change may still need the end realigned.
                 if !followsLatest { metrics.rememberReadingPosition() }
-                if dismissedKeyboard, !isCovered { positionHistory(proxy, reason: "keyboard.dismiss") }
+                if followsLatest, dismissedKeyboard || openedKeyboard, !isCovered {
+                    positionHistory(proxy, reason: dismissedKeyboard ? "keyboard.dismiss" : "keyboard.show")
+                }
                 record("chat.scroll.end", geometry: context.geometry)
                 if !isCovered, isAtStart(context.geometry) { onReachedStart() }
             }
@@ -249,15 +261,6 @@ struct ConversationHistoryView<Content: View>: View {
                 metrics.recordLayout(event: "chat.foreground.rows", messageCount: items.count, following: followsLatest)
                 metrics.requestLayout()
             }
-        }
-        .onAppear {
-            metrics.onLayout = {
-                scrollGate?.keepsReader = false
-                metrics.observeLayout()
-                positionHistory(proxy, reason: "materialized")
-                reportLatestVisibility()
-            }
-            metrics.requestLayout()
         }
         .task {
             DSBotLog.record(
@@ -337,6 +340,7 @@ struct ConversationHistoryView<Content: View>: View {
         guard let startedAt = metrics.jumpStartedAt else { return }
         metrics.jumpStartedAt = nil
         positionHistory(proxy, reason: "jump.complete")
+        metrics.requestLayout()
         DSBotLog.record(
             metrics.positioning.request == nil ? "chat.latest.complete" : "chat.latest.unsettled",
             historyId: metrics.diagnosticID,
@@ -347,6 +351,10 @@ struct ConversationHistoryView<Content: View>: View {
     private func positionHistory(_ proxy: ScrollViewProxy, reason: String) {
         guard metrics.positioning.access != .suspended, phase == .idle,
               metrics.jumpStartedAt == nil, !metrics.isReviewPositioning else { return }
+        // Geometry callbacks may see the next render before onChange has delivered its row identities.
+        let rows = historyRows
+        guard metrics.itemIDs == rows.ids, metrics.latestID == rows.ids.last,
+              metrics.latestIsCard == rows.latestIsCard else { return }
         if let completed = metrics.completePositioningIfReached() {
             if completed == .latest { followsLatest = true }
             return
@@ -375,10 +383,14 @@ struct ConversationHistoryView<Content: View>: View {
         geometry.contentOffset.y + geometry.contentInsets.top <= geometry.containerSize.height * 1.5
     }
 
-    /// The last row of the thread and whether it is a card: what following and the jump to the latest aim at.
-    private struct LatestRow: Equatable {
-        let id: String?
-        let isCard: Bool
+    private var historyRows: HistoryRows {
+        HistoryRows(ids: items.map(\.id), latestIsCard: items.last?.isCard ?? false)
+    }
+
+    /// Synchronize the occurrence list and its latest-row kind together.
+    private struct HistoryRows: Equatable {
+        let ids: [String]
+        let latestIsCard: Bool
     }
 
     private struct ViewportChange: Equatable {

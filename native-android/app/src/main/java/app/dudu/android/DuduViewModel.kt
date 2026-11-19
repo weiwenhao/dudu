@@ -12,6 +12,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -81,6 +83,10 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     private var api: DuduApi? = null
     private var computerId = ""
     private var generation = 0
+    val collectorNotifications = CollectorNotifications(viewModelScope, { generation }) { body ->
+        request("settings.act", body)
+        Unit
+    }
     private var refreshRevision = 0
     private var eventCursor = 0L
     private var eventJob: Job? = null
@@ -101,6 +107,13 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     private val cachedSessions = mutableMapOf<String, Session>()
     private val outboxes = mutableMapOf<String, List<Outgoing>>()
     private val outboxWrites = Mutex()
+    // A snapshot rebuilds every message's JSONObject from scratch, so an attachment row backed by a new object still names the same
+    // picture; without this, scrolling or an unrelated event during a long poll re-downloaded and re-decoded it each time (measured:
+    // one photo fetched seven times in a minute). Keyed by the exact request this image would send, which already names it uniquely.
+    // (Named `attachmentCache`, not `attachments`: `UiState.attachments` is the composer's own staged files and a same-named
+    // property on this class would read as the same thing at a glance.)
+    private val attachmentCache = LinkedHashMap<String, JSONObject>()
+    private val attachmentWrites = Mutex()
     private val routes = mutableListOf<Route>()
     private data class ConversationReturn(val id: String?, val title: String?, val issue: Long?,
         val assistant: Boolean, val subagent: JSONObject?, val route: Route?, val routes: List<Route>)
@@ -109,6 +122,23 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingLink: String? = null
 
     init {
+        // The diagnostics follow what the person sees: the 电脑未连接 notice, the connection and the problem code, each as it changes.
+        // The line just before says what raised it (`board.load.fail`, `events.fail`, `http.request.fail` …).
+        viewModelScope.launch {
+            state.map { it.computerUnavailable }.distinctUntilChanged().collect {
+                DuduLog.record(if (it) "notice.unavailable.on" else "notice.unavailable.off", if (it) "warn" else "info",
+                    state = if (visible) "foreground" else "background")
+            }
+        }
+        viewModelScope.launch {
+            state.map { if (it.connected) "connected" else if (it.connecting) "connecting" else "disconnected" }
+                .distinctUntilChanged().collect { DuduLog.record("connection.state", state = it) }
+        }
+        viewModelScope.launch {
+            state.map { it.problem }.distinctUntilChanged().collect {
+                if (it == null) DuduLog.record("problem.clear") else DuduLog.record("problem.set", "warn", code = it)
+            }
+        }
         viewModelScope.launch {
             val computers = vault.read("computers")?.let {
                 runCatching { JSONArray(it).objects().map(SavedComputer::parse) }.getOrNull()
@@ -129,11 +159,16 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                     api = DuduApi(endpoint, computerId)
                     mutable.update { it.copy(computer = data.getString("name"), initialized = true,
                         home = cachedHome(it.scope), computerId = computerId) }
+                    DuduLog.record("app.restore", state = "paired", counts = mapOf("rowCount" to (cachedHome(Scope.All)?.rows?.size ?: 0).toLong()))
                     if (visible && pendingLink == null) connect(link)
-                } catch (_: Exception) {
+                } catch (error: Exception) {
+                    DuduLog.failure("app.restore.fail", error)
                     mutable.update { it.copy(initialized = true, panel = Panel.Computers) }
                 }
-            } else mutable.update { it.copy(initialized = true, panel = Panel.Computers) }
+            } else {
+                DuduLog.record("app.restore", state = "unpaired")
+                mutable.update { it.copy(initialized = true, panel = Panel.Computers) }
+            }
             pendingLink?.let { pendingLink = null; connect(it) }
         }
     }
@@ -143,6 +178,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun foreground(active: Boolean) {
+        if (visible != active) DuduLog.record(if (active) "app.foreground" else "app.background",
+            state = if (state.value.connected) "connected" else if (state.value.connecting) "connecting" else "disconnected")
         visible = active
         if (!active) {
             eventJob?.cancel()
@@ -159,8 +196,13 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
 
     fun connect(link: String, displayName: String? = null) {
         val endpoint = try { Endpoint.parse(link) } catch (_: Exception) {
+            DuduLog.record("connection.fail", "warn", code = "INVALID_LINK")
             mutable.update { it.copy(problem = "INVALID_LINK") }; return
         }
+        val began = System.nanoTime()
+        DuduLog.record("connection.begin", state = if (visible) "foreground" else "background", counts = mapOf(
+            "lanAddressCount" to endpoint.addresses.count { it.kind == "lan" }.toLong(),
+            "publicAddressCount" to endpoint.addresses.count { it.kind == "public" }.toLong()))
         connectionJob?.cancel()
         eventJob?.cancel()
         refreshJob?.cancel()
@@ -191,6 +233,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 require(id.matches(Regex("[A-Za-z0-9_-]{1,100}")))
                 if (computerId != id) {
                     homes.clear(); savedHomeJson = null; sessions.clear(); cachedSessions.clear(); outboxes.clear()
+                    attachmentCache.clear()
                 }
                 computerId = id
                 routes.clear()
@@ -214,11 +257,14 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                     computers = allComputers, computerId = id, route = null, attachments = emptyList(),
                     outbox = emptyList(), navigation = json(), catalog = json(), computerUnavailable = false,
                     quota = if (it.computerId == id) it.quota else null) }
+                DuduLog.record("connection.ready", elapsedMs = (System.nanoTime() - began) / 1_000_000)
                 refresh()
                 loadCatalog()
                 if (visible) startEvents()
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
+                DuduLog.failure("connection.fail", error, elapsedMs = (System.nanoTime() - began) / 1_000_000,
+                    state = if (next == generation) "current" else "superseded")
                 if (next == generation) mutable.update { it.copy(connecting = false, problem = code(error),
                     computerUnavailable = visible && isConnectionProblem(code(error))) }
             }
@@ -242,6 +288,22 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun request(method: String, params: JSONObject = json()) =
         value(method, params) as? JSONObject ?: throw ApiFailure("PROTOCOL_ERROR")
 
+    /**
+     * Like `request`, but for a payload that never changes once the computer has answered once (an attachment's bytes): the exact
+     * request this would send is already that attachment's identity, so it serves a repeat of the same request from memory instead
+     * of asking again. Never used for a mutation.
+     */
+    suspend fun attachment(method: String, params: JSONObject): JSONObject {
+        val key = "$method:$params"
+        attachmentCache[key]?.let { return it }
+        val result = request(method, params)
+        attachmentWrites.withLock {
+            attachmentCache[key] = result
+            while (attachmentCache.size > 40) attachmentCache.remove(attachmentCache.keys.first())
+        }
+        return result
+    }
+
     suspend fun openPage(page: String, target: String?, sessionId: String?): OpenPage {
         val client = api ?: throw ApiFailure("CONNECTION_FAILED")
         val current = generation
@@ -257,6 +319,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun navigate(route: Route?) {
+        DuduLog.record(if (route == null) "route.close" else "route.open", state = route?.name)
         stopQuota()
         if (route == null) routes.clear()
         else state.value.route?.let { routes.add(it) }
@@ -268,7 +331,10 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun routesBehindCurrent(): List<Route> = routes.toList()
 
-    fun selectComputer(id: String) { state.value.computers.find { it.id == id }?.let { connect(it.link) } }
+    fun selectComputer(id: String) {
+        DuduLog.record("computer.select", state = if (id == computerId) "same" else "other")
+        state.value.computers.find { it.id == id }?.let { connect(it.link) }
+    }
 
     suspend fun updateConnectionAddresses(id: String, values: List<ConnectionAddress>) {
         val current = generation
@@ -289,6 +355,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun forgetComputer(id: String) {
+        DuduLog.record("computer.forget", state = if (id == computerId) "current" else "other")
         viewModelScope.launch {
             val updated = state.value.computers.filterNot { it.id == id }
             vault.write("computers", JSONArray(updated.map { it.json() }).toString())
@@ -298,6 +365,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 previous?.retire(); generation++; api = null; eventJob?.cancel(); watchJob?.cancel()
                 if (previous != null) viewModelScope.launch(Dispatchers.IO) { runCatching { previous.disconnect() } }
                 homes.clear(); savedHomeJson = null; sessions.clear(); cachedSessions.clear(); outboxes.clear()
+                attachmentCache.clear()
                 vault.delete("computer")
                 mutable.update { UiState(initialized = true, computers = updated, language = it.language,
                     panel = Panel.Computers) }
@@ -345,10 +413,11 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refresh() {
         val client = api ?: return
-        if (!state.value.connected) return
+        if (!state.value.connected) { DuduLog.record("board.load.skip", state = "disconnected"); return }
         refreshJob?.cancel()
         val revision = ++refreshRevision
         val currentGeneration = generation
+        val began = System.nanoTime()
         mutable.update { it.copy(refreshing = true) }
         refreshJob = viewModelScope.launch {
             try {
@@ -356,6 +425,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 if (currentGeneration != generation || revision != refreshRevision) return@launch
                 homes.clear()
                 homes[Scope.All] = home
+                DuduLog.record("board.load.complete", elapsedMs = (System.nanoTime() - began) / 1_000_000,
+                    counts = mapOf("rowCount" to home.rows.size.toLong(), "payloadBytes" to raw.length.toLong()))
                 mutable.update { it.copy(home = home, refreshing = false, problem = null, computerUnavailable = false) }
                 if (savedHomeJson != raw) {
                     // A canceled write may already have replaced the on-disk snapshot.
@@ -365,6 +436,9 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
+                // What was thrown and where: a list the app could not read is told apart from a computer it could not reach.
+                DuduLog.failure("board.load.fail", error, elapsedMs = (System.nanoTime() - began) / 1_000_000,
+                    state = if (currentGeneration == generation && revision == refreshRevision) "current" else "superseded")
                 if (currentGeneration == generation && revision == refreshRevision)
                     mutable.update { it.copy(refreshing = false, problem = code(error),
                         computerUnavailable = it.computerUnavailable || visible && isConnectionProblem(code(error))) }
@@ -373,6 +447,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun show(panel: Panel) {
+        DuduLog.record("panel.show", state = panel.javaClass.simpleName)
         if (panel != Panel.Quota) stopQuota()
         mutable.update { it.copy(panel = panel, problem = null) }
         if (panel == Panel.Create) loadOptions()
@@ -410,6 +485,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
+                DuduLog.failure("quota.load.fail", error)
                 if (currentGeneration == generation && revision == quotaRevision)
                     mutable.update { it.copy(problem = code(error),
                         computerUnavailable = it.computerUnavailable || visible && isConnectionProblem(code(error))) }
@@ -552,6 +628,9 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         val currentGeneration = generation
         val nextWatch = UUID.randomUUID().toString()
         watchId = nextWatch
+        val began = System.nanoTime()
+        DuduLog.record("conversation.open", requestId = nextWatch,
+            state = if (assistant) "assistant" else if (subagent != null) "subagent" else if (id == null) "issue" else "session")
         mutable.update { it.copy(opening = true, conversationTitle = title,
             session = id?.let(cachedSessions::get)?.copy(watchId = nextWatch), conversationKey = nextWatch,
             issueId = issue, message = "", attachments = emptyList(), outbox = emptyList(),
@@ -587,9 +666,14 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 if (!current()) return@launch
                 receiveSession(detail, nextWatch, resolved)
                 if (!current()) return@launch
+                DuduLog.record("conversation.open.complete", requestId = nextWatch, elapsedMs = (System.nanoTime() - began) / 1_000_000,
+                    state = if (cache == null) "fresh" else "cached",
+                    counts = mapOf("messageCount" to (state.value.session?.messages?.size ?: 0).toLong(), "pendingCount" to outgoing.size.toLong()))
                 mutable.update { it.copy(opening = false) }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
+                DuduLog.failure("conversation.open.fail", error, requestId = nextWatch, elapsedMs = (System.nanoTime() - began) / 1_000_000,
+                    state = if (currentGeneration == generation && watchId == nextWatch) "current" else "superseded")
                 if (currentGeneration == generation && watchId == nextWatch)
                     mutable.update { it.copy(opening = false, problem = code(error),
                         computerUnavailable = it.computerUnavailable || visible && isConnectionProblem(code(error))) }
@@ -599,6 +683,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
 
     fun leaveConversation() {
         val oldWatch = watchId
+        DuduLog.record("conversation.close", requestId = oldWatch)
         watchId = null
         watchJob?.cancel()
         val returning = conversationBack.removeLastOrNull()
@@ -700,6 +785,9 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         val outgoingKey = storageKey("outbox", computerId, session.id)
         val assistant = state.value.isAssistant
         if (sendingDrafts.containsKey(name)) return
+        val began = System.nanoTime()
+        DuduLog.record("message.send.begin", requestId = next, state = if (outgoing.failed) "retry" else "first",
+            counts = mapOf("attachmentCount" to outgoing.attachments.size.toLong()))
         sendingDrafts[name] = next
         val updated = outboxes[session.id].orEmpty().filterNot { it.requestId == next } + outgoing
         outboxes[session.id] = updated
@@ -721,6 +809,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                         attachment.copyJson().apply { if (has("receiptId")) remove("name") }
                     })))
                 if (!forwarded && receipt.optString("requestId") != next) throw ApiFailure("PROTOCOL_ERROR")
+                DuduLog.record("message.send.accepted", requestId = next, elapsedMs = (System.nanoTime() - began) / 1_000_000,
+                    state = if (forwarded) "forwarded" else "sent")
                 clearSentDraft(name, next)
                 if (currentGeneration != generation) return@launch
                 changeOutgoing(session.id, next) { it.copy(accepted = true) }
@@ -736,6 +826,9 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 fun received() = next in observedInputs || sessions[session.id]?.observed(next) == true
+                // `admitted`: the answer was lost and the conversation shows the message all the same.
+                DuduLog.failure("message.send.fail", error, requestId = next, elapsedMs = (System.nanoTime() - began) / 1_000_000,
+                    state = if (received()) "admitted" else "failed")
                 if (currentGeneration == generation) {
                     changeOutgoing(session.id, next) { it.copy(failed = !received()) }
                     // A watch may admit the input while its failed HTTP receipt is being saved.
@@ -847,6 +940,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
+                DuduLog.failure("conversation.page.fail", e)
                 mutable.update { it.copy(problem = code(e)) }
             } finally { if (state.value.session?.watchId == session.watchId) mutable.update { it.copy(pageLoading = false) } }
         }
@@ -872,6 +966,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
             try { block(client) }
             catch (error: Exception) {
                 if (error is CancellationException) throw error
+                DuduLog.failure("operation.fail", error)
                 if (currentGeneration == generation) mutable.update { it.copy(problem = code(error),
                     computerUnavailable = it.computerUnavailable || visible && isConnectionProblem(code(error))) }
             } finally {
@@ -885,12 +980,27 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         val client = api ?: return
         val currentGeneration = generation
         eventJob = viewModelScope.launch {
-            while (visible && currentGeneration == generation) {
+            DuduLog.record("events.start")
+            var quiet = 0L
+            try { while (visible && currentGeneration == generation) {
                 try {
+                    val asked = System.nanoTime()
                     val batch = client.events(eventCursor)
                     eventCursor = batch.getLong("cursor")
                     var changed = false
-                    batch.getJSONArray("events").objects().forEach { event ->
+                    val events = batch.getJSONArray("events").objects()
+                    // Every poll that brought something is a line; the ones that only waited are counted, a line for every ten (about four minutes).
+                    if (events.isEmpty()) {
+                        quiet += 1
+                        if (quiet % 10 == 0L) DuduLog.record("events.idle", counts = mapOf("attempt" to quiet))
+                    } else {
+                        quiet = 0
+                        DuduLog.record("events.batch", elapsedMs = (System.nanoTime() - asked) / 1_000_000,
+                            counts = mapOf("eventCount" to events.size.toLong()),
+                            state = if (state.value.conversationTitle == null) "board" else "conversation",
+                            detail = events.map { it.optString("topic") }.distinct().take(3).joinToString(":").take(64))
+                    }
+                    events.forEach { event ->
                         val topic = event.getString("topic")
                         val params = event.getJSONObject("params")
                         if (topic == "session.snapshot") {
@@ -908,10 +1018,12 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                     if (changed && state.value.conversationTitle == null) refresh()
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
+                    DuduLog.failure("events.fail", error, state = if (visible) "foreground" else "background")
                     // Read-only reconnects never replay a mutation or discard the cached home.
                     mutable.update { it.copy(problem = code(error),
                         computerUnavailable = visible && isConnectionProblem(code(error))) }
                     delay(2000)
+                    val again = System.nanoTime()
                     try {
                         client.connect()
                         if (currentGeneration != generation) break
@@ -929,16 +1041,20 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                             val detail = client.request("session.watch", params)
                             receiveSession(detail, active.watchId, active.id)
                         }
+                        DuduLog.record("events.reconnect.complete", elapsedMs = (System.nanoTime() - again) / 1_000_000)
                         refresh()
                     }
                     catch (e: Exception) {
                         if (e is CancellationException) throw e
+                        DuduLog.failure("events.reconnect.fail", e, elapsedMs = (System.nanoTime() - again) / 1_000_000)
                         if (e is ApiFailure && e.code in listOf("AUTH_FAILED", "UNAUTHORIZED")) {
                             mutable.update { it.copy(connected = false) }
                             break
                         }
                     }
                 }
+            } } finally {
+                DuduLog.record("events.stop", state = if (currentGeneration != generation) "superseded" else if (visible) "foreground" else "background")
             }
         }
     }

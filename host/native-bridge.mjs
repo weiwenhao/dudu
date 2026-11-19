@@ -306,7 +306,7 @@ function createRemote(rpc) {
   };
 }
 
-function streamHandle(stream) {
+export function streamHandle(stream) {
   if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') {
     throw new NativeBridgeError('UPSTREAM_UNAVAILABLE');
   }
@@ -334,7 +334,7 @@ function projectionsFrom(value) {
   return values;
 }
 
-function summaryFrom(row) {
+export function summaryFrom(row) {
   const values = row?.projections?.values ?? {};
   const title = typeof values.title === 'string' ? values.title : values.title?.title;
   const questionCount = values.userQuestions?.active?.length ?? 0;
@@ -1575,7 +1575,7 @@ function mapModelCatalog(result) {
 }
 
 /** Agent presets ("modes" in DSH): the roster minus any that cannot compose a session. */
-function mapPresets(result) {
+export function mapPresets(result) {
   return arrayValue(result, 'presets').filter((preset) => isRecord(preset)
     && typeof preset.id === 'string' && PRESET_ID.test(preset.id) && typeof preset.broken !== 'string')
     .map((preset) => ({

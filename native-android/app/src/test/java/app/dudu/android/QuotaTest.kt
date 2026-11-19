@@ -19,12 +19,16 @@ class QuotaTest {
             json("id" to "account", "name" to "DeepSeek", "kind" to "balance",
                 "balance" to JSONArray(listOf(json("text" to "-¥0.08")))),
             json("id" to "api", "name" to "DeepSeek", "kind" to "balance",
-                "balance" to JSONArray(listOf(json("text" to "¥735.29"), json("text" to "$0.00")))),
+                "balance" to JSONArray(listOf(json("text" to "$0.00"), json("text" to "¥735.29"), json("text" to "$3.00")))),
+            json("id" to "zero", "name" to "DeepSeek", "kind" to "balance",
+                "balance" to JSONArray(listOf(json("text" to "$0.00"), json("text" to "¥0.00")))),
+            json("id" to "tiny", "name" to "DeepSeek", "kind" to "balance",
+                "balance" to JSONArray(listOf(json("text" to "<¥0.01")))),
             json("id" to "empty", "name" to "Unavailable", "windows" to JSONArray()),
         )))
         val blocks = quotaProviders(source)
-        assertEquals(listOf("account", "api"), blocks.map { it.id })
-        assertEquals(listOf("-¥0.08", "¥735.29 + $0.00"), blocks.map { it.amount })
+        assertEquals(listOf("account", "api", "tiny"), blocks.map { it.id })
+        assertEquals(listOf("-¥0.08", "¥735.29 + $3.00", "<¥0.01"), blocks.map { it.amount })
         assertTrue(blocks.all { it.windows.isEmpty() })
     }
 }

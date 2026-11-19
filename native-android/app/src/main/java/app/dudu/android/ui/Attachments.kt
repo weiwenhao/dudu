@@ -225,7 +225,7 @@ fun Attachment(sessionId: String, file: JSONObject, seq: Long?, model: DuduViewM
     }
     val image = file.optString("kind") == "image" || file.has("source")
     fun read() = actions.run {
-        payload = if (file.has("dataBase64")) file else model.request(
+        payload = if (file.has("dataBase64")) file else model.attachment(
             if (file.optString("kind") in listOf("produced", "uploaded", "mentioned")) "session.file" else "session.attachment",
             json("id" to sessionId).apply {
                 if (file.has("source")) put("source", file.getString("source"))
@@ -254,7 +254,7 @@ fun Attachment(sessionId: String, file: JSONObject, seq: Long?, model: DuduViewM
             exporting = json(); launcher.launch(file.optString("name", "video.mp4")); return@run
         }
         if (payload == null) {
-            payload = model.request(if (file.optString("kind") == "video") "session.attachment" else "session.file",
+            payload = model.attachment(if (file.optString("kind") == "video") "session.attachment" else "session.file",
                 json("id" to sessionId).apply {
                     if (file.optString("kind") == "video") {
                         put("attachmentId", file.getString("id")); put("kind", "video")

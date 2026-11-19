@@ -2497,6 +2497,12 @@
     "发送视频": {
       "extractionState": "manual",
       "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send video"
+          }
+        },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
@@ -3222,6 +3228,12 @@
     "子事项": {
       "extractionState": "manual",
       "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sub-issues"
+          }
+        },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
@@ -4877,6 +4889,12 @@
     "打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码": {
       "extractionState": "manual",
       "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open DSH and install the Dudu plugin, then open the pairing QR code in Dudu's settings"
+          }
+        },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
@@ -7183,6 +7201,12 @@
     "电脑未连接": {
       "extractionState": "manual",
       "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Computer not connected"
+          }
+        },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
@@ -9625,6 +9649,12 @@
     "连接嘟嘟": {
       "extractionState": "manual",
       "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect to Dudu"
+          }
+        },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",

@@ -55,6 +55,8 @@ private fun SettingsField(title: String, value: String, enabled: Boolean, multil
 @Composable
 fun SettingsScreen(route: Route, model: DuduViewModel) {
     val actions = rememberActions()
+    val notifications = model.collectorNotifications
+    val notificationChoices by notifications.state.collectAsState()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var page by remember { mutableStateOf<JSONObject?>(null) }
     val values = remember { mutableStateMapOf<String, String>() }
@@ -69,8 +71,9 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
     val section = route.target ?: "general"
     val target = route.params.nullableString("target")
     fun params() = json("section" to section).apply { target?.let { put("target", it) } }
-    fun receive(next: JSONObject) {
+    fun receive(next: JSONObject, notificationRevision: Long) {
         page = next
+        if (section == "collectors") notifications.receive(notificationRevision)
         next.rows("sections").flatMap { it.rows("rows") }.forEach { row ->
             row.nullableString("key")?.let { key ->
                 val value = row.optString("value", row.optString("selected"))
@@ -89,6 +92,7 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
     }
     fun perform(act: JSONObject, value: String? = null) {
         actions.run {
+            val notificationRevision = notifications.checkpoint()
             val body = params().put("name", act.getString("name")).put("args", act.optJSONObject("args") ?: json())
                 .put("values", JSONObject(values.toMap()))
             value?.let { body.put("value", it) }
@@ -96,7 +100,7 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
             confirmation = null
             notice = result.optJSONObject("toast")?.nullableString("message")
             if (result.optBoolean("back")) model.backRoute()
-            else if (result.optJSONObject("page") != null) receive(result.getJSONObject("page"))
+            else if (result.optJSONObject("page") != null) receive(result.getJSONObject("page"), notificationRevision)
             else actions.refresh()
         }
     }
@@ -106,7 +110,10 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
         else button.optJSONObject("act")?.let { perform(it) }
     }
     LaunchedEffect(actions.revision) {
-        actions.run { receive(model.request("settings.page", params()).getJSONObject("page")) }
+        actions.run {
+            val notificationRevision = notifications.checkpoint()
+            receive(model.request("settings.page", params()).getJSONObject("page"), notificationRevision)
+        }
     }
     LaunchedEffect(page?.optDouble("poll", 0.0), lifecycle) {
         val seconds = page?.optDouble("poll", 0.0) ?: 0.0
@@ -126,11 +133,12 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
             try {
                 delay(400)
                 val act = preview.getJSONObject("act")
+                val notificationRevision = notifications.checkpoint()
                 val result = model.request("settings.act", params().put("name", act.getString("name"))
                     .put("args", act.optJSONObject("args") ?: json())
                     .put("values", json(preview.getString("key") to previewValue)))
                 if (values[preview.getString("key")]?.trim() == previewValue) {
-                    receive(result.getJSONObject("page")); previewedValue = previewValue; actions.error = null
+                    receive(result.getJSONObject("page"), notificationRevision); previewedValue = previewValue; actions.error = null
                 }
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
@@ -237,13 +245,22 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
                                         Text(button.optString("title"), fontSize = 14.sp)
                                     } }
                                     val notification = row.optJSONObject("notification")
-                                    if (notification != null) IconButton(onClick = {
-                                        notification.optJSONObject("act")?.let { perform(it, (!notification.optBoolean("on")).toString()) }
-                                    }, enabled = !actions.busy) {
-                                        Glyph(if (notification.optBoolean("on")) R.drawable.ic_bell else R.drawable.ic_bell_off,
-                                            notification.optString("title"), 19, MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    else if (row.has("to")) Glyph(R.drawable.ic_chevron_right, size = 16,
+                                    if (notification != null) {
+                                        val on = notificationChoices[swipeKey]?.on ?: notification.optBoolean("on")
+                                        IconButton(onClick = {
+                                            notification.optJSONObject("act")?.let { act ->
+                                                actions.error = null
+                                                notifications.set(swipeKey, notification.optBoolean("on"), !on,
+                                                    params().put("name", act.getString("name"))
+                                                        .put("args", act.optJSONObject("args") ?: json())) {
+                                                    actions.error = it
+                                                }
+                                            }
+                                        }, enabled = !actions.busy) {
+                                            Glyph(if (on) R.drawable.ic_bell else R.drawable.ic_bell_off,
+                                                notification.optString("title"), 19, MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    } else if (row.has("to")) Glyph(R.drawable.ic_chevron_right, size = 16,
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 })
                         }

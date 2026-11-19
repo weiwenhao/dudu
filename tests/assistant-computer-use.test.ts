@@ -113,13 +113,15 @@ for (const capability of ['absent', 'disabled', 'legacy', 'enabled'] as const) {
     assert.deepEqual(seen.mounts, ['standard']);
     assert.equal(JSON.parse(readFileSync(file, 'utf8')).agentPreset, 'standard');
     assert.equal(seen.selections.length, 1, 'Computer Use never replaces the main native executor');
-    assert.deepEqual(seen.restrictions[0], ['bash', 'mcp__mail__search']);
-    assert.deepEqual(seen.restrictions.at(-1), enabled ? ['bash', 'cua_run_code', 'mcp__mail__search'] : ['bash', 'mcp__mail__search']);
+    assert.deepEqual(seen.restrictions[0], ['bash', 'mcp__mail__search', 'plugin_install']);
+    assert.deepEqual(seen.restrictions.at(-1), enabled ? ['bash', 'cua_run_code', 'mcp__mail__search', 'plugin_install'] : ['bash', 'mcp__mail__search', 'plugin_install']);
     assert.equal(seen.guard({ name: 'issues_list', agent }), undefined);
     assert.equal(seen.guard({ name: 'bash', agent }), undefined);
     assert.ok(seen.guard({ name: 'run_code', agent }));
     assert.ok(seen.guard({ name: 'run_code', parent: {}, agent }));
-    assert.ok(seen.guard({ name: 'plugin_install', parent: {}, agent }), 'nested PTC calls do not bypass the capability guard');
+    assert.equal(seen.guard({ name: 'plugin_install', parent: {}, agent }), undefined, 'inherit host capabilities in the standard session scope');
+    assert.ok(seen.guard({ name: 'plugin_install', parent: {}, agent, toolSet: { allowed: new Set(['bash']) } }), 'inherited capabilities retain the host admission mask');
+    assert.ok(seen.guard({ name: 'not_registered', parent: {}, agent }), 'a parent token grants no missing capability');
     assert.ok(seen.guard({ name: 'cua', agent }));
     assert.equal(seen.guard({ name: 'cua_run_code', agent }) === undefined, enabled);
     const toolSet = { allowed: new Set(['bash']) };
@@ -160,7 +162,8 @@ test('only an active standalone Computer Use dispatch can invoke its private CUA
     assert.ok(seen.guard({ ...nested, agent: {} }), 'another agent cannot reuse the parent token');
     assert.ok(seen.guard({ ...nested, rootCallId: 'other' }), 'another root call cannot reuse the token');
     assert.ok(seen.guard({ ...nested, name: 'run_code' }), 'the entry does not grant a general program transport');
-    assert.ok(seen.guard({ ...nested, name: 'plugin_install' }), 'Computer Use does not expand the daily capability scope');
+    assert.equal(seen.guard({ ...nested, name: 'plugin_install' }), undefined, 'the ordinary inherited capability is still available');
+    assert.ok(seen.guard({ ...nested, name: 'not_registered' }), 'Computer Use does not invent additional capabilities');
     assert.ok(seen.guard({ ...nested, name: 'bash', toolSet: { allowed: new Set(['cua']) } }), 'nested calls retain their admission mask');
     seen.provider = false;
     assert.ok(seen.guard(nested), 'provider removal also revokes an active binding');

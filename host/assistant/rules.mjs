@@ -1,4 +1,4 @@
-// The settings page edits the owner's rules. The memory and model tools keep their read-only access.
+// The settings page and an explicitly owner-requested assistant edit share this revision-checked writer.
 import { randomBytes } from 'node:crypto';
 import { chmodSync, lstatSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

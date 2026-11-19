@@ -58,7 +58,7 @@ struct BoardConversationSwipeRow<Content: View>: View {
                 content()
                     .compositingGroup()
                     .offset(x: offset)
-                    .gesture(HomePanGesture(enabled: enabled && !isCompleting, allowsCompletion: canComplete || isRevealed,
+                    .gesture(SwipeRowPanGesture(enabled: enabled && !isCompleting, allowsCompletion: canComplete || isRevealed,
                         onBegan: { start = offset; onSwipe(true) }, onChanged: { translation in
                             offset = min(geometry.size.width, max(-trailingWidth, start + translation))
                             if !canComplete { offset = min(0, offset) }
@@ -140,8 +140,10 @@ struct BoardConversationSwipeRow<Content: View>: View {
     }
 }
 
-/// Reject vertical movement before recognition so the list keeps its ordinary scroll gesture.
-private struct HomePanGesture: UIGestureRecognizerRepresentable {
+/// Reject vertical movement before recognition so the list keeps its ordinary scroll gesture. The board list's rows and the inbox's (`RevealSwipeRow`) share it.
+struct SwipeRowPanGesture: UIGestureRecognizerRepresentable {
+    /// The name its diagnostics are recorded under.
+    var event = "board.row.swipe"
     let enabled: Bool
     let allowsCompletion: Bool
     let onBegan: () -> Void
@@ -166,14 +168,14 @@ private struct HomePanGesture: UIGestureRecognizerRepresentable {
         switch pan.state {
         case .began:
             context.coordinator.tracking = true
-            DSBotLog.record("board.row.swipe", state: "begin")
+            DSBotLog.record(event, state: "begin")
             onBegan()
             onChanged(pan.translation(in: nil).x)
         case .changed: onChanged(pan.translation(in: nil).x)
         case .ended, .cancelled, .failed:
             guard context.coordinator.tracking else { return }
             context.coordinator.tracking = false
-            DSBotLog.record("board.row.swipe", geometry: ["dragX": pan.translation(in: nil).x],
+            DSBotLog.record(event, geometry: ["dragX": pan.translation(in: nil).x],
                             state: pan.state == .ended ? "ended" : "cancelled")
             if pan.state == .ended { onChanged(pan.translation(in: nil).x) }
             onEnded(pan.state == .ended, pan.velocity(in: nil).x)

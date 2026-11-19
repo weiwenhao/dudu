@@ -1,11 +1,11 @@
 # Dudu Computer Use compatibility
 
-This is the optional compatibility boundary for the Computer Use request of
+This is the built-in compatibility boundary for the Computer Use request of
 2026-11-19: Dudu uses the `standard` preset and native tool calling in ordinary
 work, and only its `cua_run_code` capability runs a PTC program.
 
 It does not copy a native driver, screen-capture implementation, input protocol,
-permission store or approval UI. The companion bundle mounts the **installed
+permission store or approval UI. Dudu's main bundle mounts the **installed
 official macOS provider**. Its native helper, settings, stored application grants,
 real calling Agent, screenshot attachment handling and disposal remain owned by
 that provider.
@@ -45,22 +45,24 @@ that provider.
 - On a host exporting the upstream `CuaPrograms` owner, the provider wrapper
   delegates to the installed implementation instead of enabling this backport.
 
-## Optional bundle and packaging
+## Single-package installation
 
-`desktop/computer-use-compat/` is a separate, explicit opt-in bundle. Its
-declarative patch disables the old `cua` row and mounts `dsh-dudu/computer-use`.
+`host/dudu-plugin/cordis.patch.yml` includes the adapter in the main Dudu bundle.
+Its declarative patch disables the old macOS `cua` row and mounts
+`dsh-dudu/computer-use` on macOS, alongside Dudu's main entry. Users install only
+`dsh-dudu`; there is no companion package or separate activation step.
 The wrapper reads and validates the **existing** row's settings through the
 host's config editor. It does not write a profile, alter stored grants, enable a
-different sandbox mode, make PTC persistent, or edit the DSH installation.
-Removing the companion removes its patch and returns provider composition to
-the normal host configuration. Do not install the companion without Dudu.
+different sandbox mode, make PTC persistent, or edit the DSH installation. The
+adapter row is disabled on other platforms. Removing Dudu's bundle removes its
+patch and returns provider composition to the normal host configuration.
 
 `npm run computer-use:prepare` prepares the engine. `npm run package:desktop`
 prepares it again, includes the compatibility entry and MIT attribution in the
-main Dudu archive, checks the packaged entry outside the repository, and produces
-the separate `dsh-dudu-computer-use-0.1.0.tgz` companion. Ordinary
-`desktop:update` does not install the companion automatically. Activating it is
-an explicit deployment step through the host's supported bundle installation.
+main Dudu archive and checks the packaged entry outside the repository. Ordinary
+`desktop:update` installs the complete bundle through the host's supported
+installation flow. The early separate companion was never installed; it has
+been removed from the source and release output.
 
 The upstream development implementation that inspired this adapter is
 `packages/experimental/cua/src/tool-registration.ts` and the standalone
