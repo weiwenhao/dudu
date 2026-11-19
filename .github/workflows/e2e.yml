@@ -75,7 +75,8 @@ jobs:
           FILES: ${{ inputs.files }}
           DUDU_E2E_DIAG: '1'
           DUDU_E2E_SHOTS: ${{ runner.temp }}/e2e-failures
-        run: npm run test:e2e -- $FILES
+        # TEMP: the subset is for finding why the issues page does not show on the runner; removed before the merge.
+        run: npm run test:e2e -- tests/e2e/issues.e2e.test.ts "--test-name-pattern=New issue window|a draft agent"
 
       - name: Keep the pictures of the failed tests
         if: failure()

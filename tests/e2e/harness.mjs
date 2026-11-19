@@ -241,6 +241,13 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
         }, JSON.stringify(views ?? {}));
         pages.add(page);
         page.once('close', () => pages.delete(page));
+        // CI sets DUDU_E2E_DIAG: what the page itself complains about (errors, failed requests), as it happens.
+        if (process.env.DUDU_E2E_DIAG) {
+          page.on('pageerror', (error) => console.log(`[page error] ${String(error.stack ?? error).slice(0, 800)}`));
+          page.on('console', (message) => { if (['error', 'warning'].includes(message.type())) console.log(`[page ${message.type()}] ${message.text().slice(0, 400)}`); });
+          page.on('requestfailed', (request) => console.log(`[request failed] ${request.url().replace(/[?#].*$/, '')} ${request.failure()?.errorText}`));
+          page.on('response', (response) => { if (response.status() >= 400) console.log(`[http ${response.status()}] ${response.url().replace(/[?#].*$/, '')}`); });
+        }
         await page.goto(`${base}/`);
         if (selectPanel) await page.getByRole('button', { name: 'Dudu' }).first().click({ timeout: 60_000 });
         return page;
