@@ -6,7 +6,6 @@ name: release
 # Started by hand from the Actions tab, it builds the same files and keeps them as artifacts of the run, and publishes nothing.
 on:
   push:
-    branches: [ci/e2e-and-release] # TEMP: removed before the merge
     tags: ['v*']
   workflow_dispatch:
 

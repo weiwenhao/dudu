@@ -7,6 +7,11 @@ on:
   push:
     branches: [main, ci/e2e-and-release] # TEMP: the second branch is removed before the merge
   workflow_dispatch:
+    inputs:
+      files:
+        description: 'Only these test files, separated by spaces (tests/e2e/issues.e2e.test.ts, say). Empty runs all of them.'
+        required: false
+        default: ''
 
 # A newer merge makes the run of the older one pointless: main already contains it.
 concurrency:
@@ -18,7 +23,8 @@ permissions:
 
 env:
   # The programs the suite drives, pinned to the versions it was last run with (the owner's machine, 2026-11-19).
-  # Move them together with the tests, and keep this list in step with .github/workflows/release.yml.
+  # Move them together with the tests.
+  NODE_VERSION: 24.14.0
   DSH_VERSION: 0.2.0-rc.2
   CLAUDE_CODE_VERSION: 2.1.326
   CODEX_VERSION: 0.169.0
@@ -38,7 +44,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
       - name: Install the repository
@@ -62,5 +68,20 @@ jobs:
           echo "pi $(pi --version)"
           google-chrome --version
 
+      # DUDU_E2E_DIAG prints what DSH and the plugin wrote after each failed test; the pictures of the pages that were open then are kept.
+      # TEMP: the subset below is for finding why the suite fails on the runner; removed before the merge.
       - name: Run the end-to-end tests
-        run: npm run test:e2e
+        env:
+          FILES: ${{ inputs.files }}
+          DUDU_E2E_DIAG: '1'
+          DUDU_E2E_SHOTS: ${{ runner.temp }}/e2e-failures
+        run: npm run test:e2e -- tests/e2e/agent-sessions.e2e.test.ts tests/e2e/mobile-pages.e2e.test.ts tests/e2e/native-sync.e2e.test.ts tests/e2e/conversation.e2e.test.ts "--test-name-pattern=ASSIGN.md chooses|mobile embedded|claude sidebar logo|dudu forwards the current reply"
+
+      - name: Keep the pictures of the failed tests
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-failures
+          path: ${{ runner.temp }}/e2e-failures
+          if-no-files-found: ignore
+          retention-days: 7
