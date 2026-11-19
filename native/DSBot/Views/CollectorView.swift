@@ -122,7 +122,7 @@ struct CollectorView: View {
                 if model.state == .loaded, !model.items.isEmpty {
                     VStack(spacing: 0) {
                         ForEach(model.items) { record in
-                            SwipeActionRow(actions: swipeActions(for: record), isRevealed: revealed == record.id, onReveal: { revealed = $0 ? record.id : nil }) {
+                            RevealSwipeRow(completion: swipeCompletion(for: record), trailing: swipeTrailing(for: record), enabled: canSwipe(record), isRevealed: revealed == record.id, onReveal: { revealed = $0 ? record.id : nil }, event: "inbox.row.swipe") {
                                 Button { tap(record) } label: {
                                     CollectorRow(
                                         record: record, tab: model.tab, selecting: model.isSelecting,
@@ -214,7 +214,7 @@ struct CollectorView: View {
     private var list: some View {
         List {
             ForEach(model.items) { record in
-                SwipeActionRow(actions: swipeActions(for: record), isRevealed: revealed == record.id, onReveal: { revealed = $0 ? record.id : nil }) {
+                RevealSwipeRow(completion: swipeCompletion(for: record), trailing: swipeTrailing(for: record), enabled: canSwipe(record), isRevealed: revealed == record.id, onReveal: { revealed = $0 ? record.id : nil }, event: "inbox.row.swipe") {
                     Button { tap(record) } label: {
                         CollectorRow(record: record, tab: model.tab, selecting: model.isSelecting, selected: model.selection.contains(record.id), completing: model.completing.contains(record.id))
                     }
@@ -226,8 +226,10 @@ struct CollectorView: View {
                         CollectorRowCard(record: record, tab: model.tab, completing: model.completing.contains(record.id))
                     }
                     .accessibilityIdentifier("collector.record.\(record.id)")
+                    // The row is as wide as the page, so that its swipe blocks reach the edges as the board list's do; the record keeps the side padding it had.
+                    .padding(.horizontal, DSBotLayout.sidebarPadding)
                 }
-                .listRowInsets(EdgeInsets(top: 0, leading: DSBotLayout.sidebarPadding, bottom: 2, trailing: DSBotLayout.sidebarPadding))
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 2, trailing: 0))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
                 .onAppear {
@@ -266,17 +268,30 @@ struct CollectorView: View {
         Task { await model.mark(action, [record], using: store) }
     }
 
-    /// What a swipe to the left offers (owner, 2026-11-07: the marks go in the swipe), the same words as pressing and holding, no issue needed: on the
-    /// to-do list Handled and Delete; on Handled, Restore and Delete. A record that went to an issue is the issue's.
-    /// Not while rows are being chosen.
-    private func swipeActions(for record: CollectorRecord) -> [SwipeAction] {
-        guard !model.isSelecting, !model.changing.contains(record.id), model.tab == .todo || record.issue == nil else { return [] }
-        let done = SwipeAction(id: "done", title: L10n.text("已处理"), symbol: "checkmark", color: DSBotStyle.ink) { mark(.done, record) }
-        let restore = SwipeAction(id: "restore", title: L10n.text("恢复"), symbol: "arrow.counterclockwise", color: DSBotStyle.blue) { mark(.restore, record) }
-        let delete = SwipeAction(id: "delete", title: L10n.text("删除"), symbol: "trash", color: SwipeAction.red) { mark(.delete, record) }
+    /// The board list's swipe on a record (owner, 2026-11-19: "右滑已处理，左滑点击转发，参考看板列表"; the marks went into the swipe on 2026-11-07, and 删除 stays in it). On the to-do
+    /// list a swipe to the right is Handled (a tap on its block, or a swipe past two thirds of the row: the row slides away and closes) and a swipe to the left offers Forward and
+    /// Delete; on Handled the left offers Restore and Delete, and the right nothing. A record that went to an issue is the issue's. Not while rows are being chosen, nor while the
+    /// record is being changed (the blocks themselves stay what they are then, so that a row that is closing keeps its colour).
+    private func canSwipe(_ record: CollectorRecord) -> Bool {
+        !model.isSelecting && !model.changing.contains(record.id)
+    }
+
+    private func swipeCompletion(for record: CollectorRecord) -> RevealSwipeCompletion? {
+        guard model.tab == .todo else { return nil }
+        return RevealSwipeCompletion(title: L10n.text("已处理"), asset: "Home-SwipeComplete", color: RevealSwipeAction.teal) {
+            _ = await model.mark(.done, [record], using: store)
+        }
+    }
+
+    private func swipeTrailing(for record: CollectorRecord) -> [RevealSwipeAction] {
+        guard model.tab == .todo || record.issue == nil else { return [] }
+        let delete = RevealSwipeAction(id: "delete", title: L10n.text("删除"), glyph: .icon(.trash), color: SwipeAction.red) { mark(.delete, record) }
         switch model.tab {
-        case .todo: return [done, delete]
-        case .done: return [restore, delete]
+        case .todo:
+            guard record.issue == nil else { return [delete] }
+            return [RevealSwipeAction(id: "forward", title: L10n.text("转发"), glyph: .icon(.forward), color: RevealSwipeAction.blue) { picking = PickRequest(records: [record]) }, delete]
+        case .done:
+            return [RevealSwipeAction(id: "restore", title: L10n.text("恢复"), glyph: .icon(.restore), color: RevealSwipeAction.blue) { mark(.restore, record) }, delete]
         }
     }
 

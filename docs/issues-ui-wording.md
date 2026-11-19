@@ -4,15 +4,13 @@
 
 所有界面上的固定字在 `host/dudu-plugin/ui/strings.js`（带 `NEW` 注释的是设计稿里没有的）。
 
-## 2026-11-19 Computer Use 可选兼容补丁（待审，尚未安装）
+## 2026-11-19 Computer Use 内置适配（待审，尚未启用）
 
 没有新增页面、按钮或权限弹窗。电脑控制、应用授权与系统权限页沿用已安装的 DSH 原生界面。
-兼容补丁的包元信息和新增的失败诊断可能出现在 DSH 的插件与错误信息里，以下原样用词须在安装前由主人审阅：
+适配随嘟嘟主包安装，不再提供单独的兼容包。包装器名称和新增的失败诊断可能出现在 DSH 的插件与错误信息里，以下原样用词须在安装前由主人审阅：
 
 | 位置 | 原样用词 |
 | --- | --- |
-| 兼容补丁包名 | `dsh-dudu-computer-use` |
-| 兼容补丁描述 | `Computer Use compatibility for Dudu on DSH 0.2.2` |
 | 包装器名称 | `dudu-computer-use-compat` |
 | 找不到原生 provider | `The Computer Use compatibility bundle requires DSH’s built-in macOS provider.` |
 | 不支持的工具注册 | `Unsupported Computer Use provider registration.` |

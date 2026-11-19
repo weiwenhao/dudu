@@ -26,5 +26,6 @@ export function windowName(label) {
 /** The bar's colour by how much is used: blue below 70 %, amber to 90 %, red from there (the number is always beside it). */
 export const toneOf = (percent) => (percent >= 90 ? 'bg-destructive' : percent >= 70 ? 'bg-warning' : 'bg-ring');
 
-/** A wallet's amounts as DSH writes them, one per currency ("¥12.34 + $3.00"); empty when there is none. */
-export const amountText = (provider) => (provider.balance ?? []).map((amount) => amount.text).join(' + ');
+/** Keep each currency's total, omitting zero wallets; negative and sub-cent balances still matter. */
+export const amountText = (provider) => (provider.balance ?? []).map((amount) => amount.text)
+  .filter((text) => text && !/^-?[$¥]?0\.00$/.test(text)).join(' + ');

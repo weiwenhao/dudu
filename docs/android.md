@@ -57,6 +57,13 @@ and issue execution remain the host's responsibility.
 
 - `data/Endpoint.kt`: pairing normalization, validated routes and saved-link
   serialization. Credentials never enter request origins or diagnostic strings.
+- `data/DuduLog.kt` and `Diagnostics.kt`: the app's diagnostics (2026-11-19). One JSON
+  line per thing that happened (requests, connection, long poll, board loads, the
+  电脑未连接 notice, foreground, conversations, sends), kept in
+  `no_backup/diagnostics/` (1 MB a file, five files) and in logcat under `Dudu`; a
+  crash leaves `crash-<time>.txt`. Words and counts only: no message, title, address,
+  link, token or id of a session or computer. Pull them from a debug build with
+  `npm run logs:pull -- --android [--device <adb serial>]`.
 - `data/DuduApi.kt`: authenticated allowlisted requests, JSON scalar/object/array
   contracts, bounded response bodies, cancellable long polling, binary transfer,
   page opening, and signed connection probes. Redirects and automatic mutation

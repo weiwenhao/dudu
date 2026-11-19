@@ -27,7 +27,8 @@ test('the panel lists what the service lists, a block for a balance has its amou
     providers: [
       { id: 'claude', agent: 'claude', name: 'Claude', plan: 'Max', windows: [window('five_hour', '5 小时', 0.2), window('seven_day', '每周', 0.3)], readAt: NOW },
       { id: 'pi', agent: 'pi', name: 'Pi', plan: '', windows: [window('x', '5 小时', 0.4)], readAt: NOW },
-      { id: 'deepseek-key', agent: 'deepseek', name: 'DeepSeek', plan: 'API', kind: 'balance', windows: [], balance: [{ text: '¥12.34' }], readAt: NOW },
+      { id: 'deepseek-key', agent: 'deepseek', name: 'DeepSeek', plan: 'API', kind: 'balance', windows: [], balance: [{ text: '$0.00' }, { text: '¥12.34' }], readAt: NOW },
+      { id: 'zero', agent: 'deepseek', name: 'DeepSeek', plan: 'Account', kind: 'balance', windows: [], balance: [{ text: '¥0.00' }], readAt: NOW },
       { id: 'empty', agent: 'empty', name: 'Empty', plan: '', windows: [], readAt: NOW },
     ],
   };

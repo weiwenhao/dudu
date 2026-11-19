@@ -26,7 +26,7 @@ for (const name of ['Menu', 'Plus', 'Gauge', 'ChevronDown', 'Check', 'X', 'Arrow
   'ChartNoAxesColumn', 'CircleDashed', 'CornerDownRight',
   'Star', 'KeyRound', 'Lock', 'Monitor', 'Brain', 'LoaderCircle', 'Settings2', 'ClipboardList', 'FoldVertical', 'CircleStop',
   'ListFilter', 'Activity', 'CalendarDays', 'Box', 'Plug',
-  'OctagonPause', 'RotateCcw', 'PencilLine', 'Reply', 'Forward', 'CircleDot']) {
+  'OctagonPause', 'RotateCcw', 'PencilLine', 'Reply', 'Forward', 'CircleDot', 'SquarePen']) {
   const svg = path.join(scratch, `${name}.svg`);
   await writeFile(svg, renderToStaticMarkup(React.createElement(icons[name], { size: 96, strokeWidth: 2 })));
   execFileSync('rsvg-convert', ['-w', '96', '-h', '96', '-o',
@@ -93,8 +93,10 @@ for (const name of ['Goal', 'Queue']) {
     path.join(resources, 'drawable-nodpi', `ic_${name.toLowerCase()}.png`),
     path.join(root, `native/DSBot/Assets.xcassets/${name}.imageset/${name}.svg`)]);
 }
+// The glyphs of the board list's swipe are the iPhone's own (owner, 2026-11-19: the two phones show the same).
 for (const [source, target] of [['Home-SwipeMarkUnread', 'home_swipe_mark_unread'],
-  ['Home-SwipeClearUnread', 'home_swipe_clear_unread']]) {
+  ['Home-SwipeClearUnread', 'home_swipe_clear_unread'], ['Home-SwipeComplete', 'home_swipe_complete'],
+  ['Home-SwipePin', 'home_swipe_pin'], ['Home-SwipeUnpin', 'home_swipe_unpin']]) {
   await copyFile(path.join(root, `native/DSBot/Assets.xcassets/${source}.imageset/${source}@3x.png`),
     path.join(resources, `drawable-nodpi/${target}.png`));
 }

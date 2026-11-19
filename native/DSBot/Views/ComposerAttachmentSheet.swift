@@ -19,7 +19,6 @@ struct ComposerAttachmentSheet: View {
     enum Layout {
         static let sideInset: CGFloat = 16
         static let titleBlock: CGFloat = 59
-        static let rootTopInset: CGFloat = 8
         static let tileSize: CGFloat = 80
         static let tileSpacing: CGFloat = 8
         static let tileRadius: CGFloat = 24
@@ -42,7 +41,7 @@ struct ComposerAttachmentSheet: View {
         /// tiles and the commands (goal and plan); a page without one goes from the tiles straight to the commands.
         static func height(commandRows: Int, primaryRows: Int = 2) -> CGFloat {
             let primary = primaryRows > 0 ? tileGap + CGFloat(primaryRows) * rowHeight : 0
-            let content = rootTopInset + tileSize + primary + sectionGap
+            let content = titleBlock + tileSize + primary + sectionGap
                 + sectionHeader + CGFloat(commandRows) * rowHeight + bottomInset
             return min(content, maximumHeight)
         }
@@ -107,14 +106,11 @@ struct ComposerAttachmentSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if page != .root {
-                titleRow
-                    .frame(height: Layout.titleBlock, alignment: .top)
-            }
+            titleRow
+                .frame(height: Layout.titleBlock, alignment: .top)
             ScrollView {
                 pageContent
                     .padding(.horizontal, Layout.sideInset)
-                    .padding(.top, page == .root ? Layout.rootTopInset : 0)
                     .padding(.bottom, Layout.bottomInset)
             }
             .scrollIndicators(.hidden)
@@ -157,7 +153,7 @@ struct ComposerAttachmentSheet: View {
 
     @ViewBuilder
     private var titleRow: some View {
-        if page == .modelSettings {
+        if page == .root || page == .modelSettings {
             Text(pageTitle)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(Color(white: 0.4))
@@ -187,7 +183,7 @@ struct ComposerAttachmentSheet: View {
 
     private var pageTitle: String {
         switch page {
-        case .root: return ""
+        case .root: return L10n.text("添加")
         case .models, .modelSettings: return L10n.text("模型")
         case .efforts: return L10n.text("推理等级")
         case .permissions: return L10n.text("权限")

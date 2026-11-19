@@ -78,7 +78,8 @@ struct ChatView: View {
             .environment(\.conversationAccess, conversationAccess)
             .environment(\.groupChat, groupChat)
             .environment(\.conversationMarkdown, transitionHistory?.markdown ?? store.conversationMarkdown)
-            .background(DSBotStyle.canvas)
+            // The retained board and sidebar must stay covered during the keyboard's safe-area transition.
+            .background(DSBotStyle.canvas.ignoresSafeArea(edges: .bottom))
             .coordinateSpace(name: "dsbot.chat")
             .sheet(item: $attachmentSheetRequest, onDismiss: handleAttachmentSheetDismiss) { request in
                 attachmentSheet(for: request.page)

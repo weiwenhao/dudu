@@ -8,9 +8,13 @@ import android.content.ClipData
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -26,6 +30,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.ClipEntry
@@ -56,6 +64,10 @@ import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** Further than any row is tall: `scrollToItem(last, END)` lands on the very end of the history, not on the top of its last row. */
+private const val END = 1_000_000
+private val markdownPicture = Regex("!\\[([^]]*)]\\(([^)]+)\\)")
+
 @Composable
 fun ConversationPage(state: UiState, model: DuduViewModel) {
     val list = rememberLazyListState()
@@ -69,6 +81,7 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
     var notice by remember { mutableStateOf<String?>(null) }
     var queueEditing by remember { mutableStateOf<Message?>(null) }
     var queueText by remember { mutableStateOf("") }
+    var queueAction by remember { mutableStateOf<Pair<String, String>?>(null) }
     var recipients by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var skills by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var showTodos by remember { mutableStateOf(false) }
@@ -115,30 +128,72 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
         state.attachments.isNotEmpty()
     val processing = session?.processing == true || state.sending || actions.busy
     val showsModeToggle = processing || isVoiceMode || !canSend
-    val messages = session?.messages.orEmpty()
-    val waiting = state.outbox.filterNot { it.failed || session?.observed(it.requestId) == true }.map { it.message() }
     val history = session?.displayRows.orEmpty()
-    val all = history + waiting.map(TranscriptRow::Entry)
+    // The history, then what the computer has taken for the agent's next step, then what this phone is still sending.
+    val all = remember(session, state.outbox) {
+        val taken = history.mapTo(HashSet()) { it.id }
+        val steering = session?.pendingInputs.orEmpty().filter { taken.add(it.id) }
+        val waiting = state.outbox.filterNot { it.failed || session?.observed(it.requestId) == true }
+            .map { it.message() }.filter { taken.add(it.id) }
+        history + (steering + waiting).map(TranscriptRow::Entry)
+    }
     val hasOlder = session?.transcript?.optBoolean("hasMore") == true
-    var following by remember(session?.id) { mutableStateOf(true) }
-    val olderOffset = if (hasOlder) 1 else 0
+    val prompts = if (session != null && !session.cached && !state.readOnly)
+        session.raw.rows("questions").size + session.raw.rows("approvals").size else 0
+    val lastIndex = all.size + prompts - 1
+    val density = LocalDensity.current
+    // The page is keyed by the conversation, so this lives as long as the conversation is open. (It was keyed by the session's id,
+    // which arrives after the page: the collector below then wrote into the first copy and the button never showed.)
+    var following by remember { mutableStateOf(true) }
+    var landed by remember { mutableStateOf(false) }
+    var dragging by remember { mutableStateOf(false) }
+    val end by rememberUpdatedState(lastIndex)
+    // The iPhone's rule (`ChatScrollPosition.isAwayFromEnd`): a tenth of the viewport above the end, and never less than 120 dp.
+    val awayFromEnd by remember { derivedStateOf {
+        val info = list.layoutInfo
+        val last = info.visibleItemsInfo.lastOrNull()
+        if (info.totalItemsCount == 0 || last == null) false
+        else if (last.index != info.totalItemsCount - 1) true
+        else last.offset + last.size + info.afterContentPadding - info.viewportEndOffset >
+            maxOf(with(density) { 120.dp.roundToPx() }, info.viewportSize.height / 10)
+    } }
     LaunchedEffect(list) {
-        snapshotFlow {
-            val info = list.layoutInfo
-            val atBottom = info.totalItemsCount == 0 || (info.visibleItemsInfo.lastOrNull()?.let {
-                it.index == info.totalItemsCount - 1 && it.offset + it.size <= info.viewportEndOffset
-            } == true)
-            list.isScrollInProgress to atBottom
-        }.distinctUntilChanged().collect { (moving, atBottom) -> if (moving || atBottom) following = atBottom }
+        launch { list.interactionSource.interactions.collect { if (it is DragInteraction.Start) dragging = true } }
+        launch { snapshotFlow { list.isScrollInProgress }.collect { if (!it) dragging = false } }
+        // A finger that moves the history away from its end stops the following at once; one that brings it to the very end resumes it.
+        launch { snapshotFlow { Triple(dragging, list.isScrollInProgress, list.canScrollForward) }
+            .collect { (byHand, moving, more) -> if (byHand && moving) following = !more } }
+        // While following, the history stays at its very end whatever grows: a new row, a reply being written, a picture, the keyboard.
+        // A streaming reply keeps `canScrollForward` continuously true, so this reads it fresh every frame rather than waiting for a
+        // snapshotFlow transition that a value stuck at `true` would never re-emit.
+        while (true) {
+            withFrameNanos { }
+            if (following && !dragging && !list.isScrollInProgress && list.canScrollForward && end >= 0) list.scrollToItem(end, END)
+        }
     }
-    LaunchedEffect(session?.id, all.lastOrNull()?.id, messages.lastOrNull()?.text) {
-        if (following && all.isNotEmpty()) list.scrollToItem(all.lastIndex + olderOffset)
+    LaunchedEffect(lastIndex >= 0) {
+        if (lastIndex < 0) return@LaunchedEffect
+        list.scrollToItem(lastIndex, END)
+        landed = true
     }
+    // Reaching the first loaded row brings the page before it, as on the iPhone (owner, 2026-11-19: "拉到了顶部没有自动加载更早").
+    // Once for that row: a page that failed is asked for again by leaving the top and coming back. The row the reader is on keeps its
+    // place by its key, which is why the wait is drawn over the list and is not a row of it.
+    val wantsOlder by rememberUpdatedState(hasOlder && !state.pageLoading && session?.cached == false)
+    val firstRow by rememberUpdatedState(all.firstOrNull()?.id)
+    LaunchedEffect(list) {
+        var asked: String? = null
+        snapshotFlow { Triple(landed && list.firstVisibleItemIndex == 0, wantsOlder, firstRow) }.collect { (atStart, wanted, first) ->
+            if (!atStart) asked = null
+            else if (wanted && first != null && first != asked) { asked = first; model.older() }
+        }
+    }
+    LaunchedEffect(actions.busy) { if (!actions.busy) queueAction = null }
     LaunchedEffect(session?.watchId, session?.readPosition?.toString(), state.panel, state.route, quickSheet, controls, permissions, attachmentMenu, capture.active) {
         if (session == null || history.isEmpty() || state.panel != null || state.route != null || session.cached ||
             quickSheet != null || controls || permissions || attachmentMenu || capture.active) return@LaunchedEffect
         snapshotFlow {
-            val last = list.layoutInfo.visibleItemsInfo.find { it.index == history.lastIndex + olderOffset }
+            val last = list.layoutInfo.visibleItemsInfo.find { it.index == history.lastIndex }
             last != null && last.offset + last.size <= list.layoutInfo.viewportEndOffset
         }.filter { it }.distinctUntilChanged().collect { model.acknowledge(session) }
     }
@@ -224,21 +279,11 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
                             } }
                         }
                     }
-                    if (session.queue.isNotEmpty()) LazyColumn(Modifier.heightIn(max = 170.dp)) {
-                        items(session.queue, key = { it.id }) { queued ->
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                if (queued.attachments.isNotEmpty()) Glyph(R.drawable.ic_paperclip, size = 16)
-                                Text(queued.text, Modifier.weight(1f).padding(horizontal = 8.dp), maxLines = 2, style = MaterialTheme.typography.bodySmall)
-                                if (queued.raw.optBoolean("editable")) {
-                                    IconButton(onClick = { queueEditing = queued; queueText = queued.text }) { Glyph(R.drawable.ic_pencil, w("编辑"), 18) }
-                                    IconButton(onClick = { perform("session.queue.update", json("itemId" to queued.id, "action" to "remove")) },
-                                        enabled = !actions.busy) { Glyph(R.drawable.ic_trash2, stringResource(R.string.delete), 18, MaterialTheme.colorScheme.error) }
-                                }
-                                IconButton(onClick = { perform("session.queue.update", json("itemId" to queued.id, "action" to "steer")) },
-                                    enabled = !actions.busy) { Glyph(R.drawable.ic_corner_up_left, w("插话发送"), 18) }
-                            }
-                        }
-                    }
+                    if (session.queue.isNotEmpty()) QueuedMessagesPanel(session.queue, running = session.processing,
+                        enabled = state.connected, pending = queueAction.takeIf { actions.busy },
+                        edit = { queueEditing = it; queueText = it.text },
+                        remove = { queueAction = it.id to "remove"; perform("session.queue.update", json("itemId" to it.id, "action" to "remove")) },
+                        steer = { queueAction = it.id to "steer"; perform("session.queue.update", json("itemId" to it.id, "action" to "steer")) })
                 }
                 if (recipients.isNotEmpty() || skills.isNotEmpty()) LazyColumn(Modifier.heightIn(max = 180.dp)) {
                     items(recipients, key = { "recipient:${it.getLong("id")}" }) { recipient ->
@@ -262,7 +307,7 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
                     Text(if (it == VoiceProblem.Microphone) w("请允许麦克风权限。") else w("语音识别暂不可用。"),
                         color = MaterialTheme.colorScheme.error, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
                 }
-                if (actions.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (actions.busy && queueAction == null) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (state.outbox.any { it.failed }) LazyColumn(Modifier.heightIn(max = 120.dp)) {
                     items(state.outbox.filter { it.failed }, key = { it.requestId }) { failed ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -366,9 +411,7 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
             else LazyColumn(Modifier.fillMaxSize().testTag("message-list"), state = list,
                 contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                if (hasOlder) item("older") { TextButton(onClick = model::older, enabled = !state.pageLoading,
-                    modifier = Modifier.fillMaxWidth()) { Text(w("加载更早")) } }
-                items(all, key = { it.id }) { row ->
+                items(all, key = { it.id }, contentType = { if (it is TranscriptRow.Turn) "turn" else "entry" }) { row ->
                     when (row) {
                         is TranscriptRow.Entry -> MessageView(row.message, state, model, actions)
                         is TranscriptRow.Turn -> TranscriptTurn(row, session,
@@ -387,9 +430,31 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
                     }
                 }
             }
-            if (!following && all.isNotEmpty()) SmallFloatingActionButton(
-                onClick = { following = true; coroutine.launch { list.animateScrollToItem(all.lastIndex + olderOffset) } },
-                modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) { Glyph(R.drawable.ic_arrow_down, w("回到底部"), 20) }
+            if (state.pageLoading) {
+                val earlier = w("加载更早")
+                CircularProgressIndicator(Modifier.align(Alignment.TopCenter).padding(top = 8.dp).size(18.dp)
+                    .semantics { contentDescription = earlier }.testTag("chat-history-loading"),
+                    strokeWidth = 2.dp, color = chatTertiary())
+            }
+            // The iPhone's button: a 44 dp circle in the middle over the composer, for a reader who has left the end. It fades in 200 ms
+            // and lands on the very end of the history; the surface is the composer's own (colour, edge, shadow).
+            val showsLatest = awayFromEnd && !following
+            val latest by animateFloatAsState(if (showsLatest) 1f else 0f, tween(200), label = "latest")
+            if (latest > 0f) Surface(onClick = {
+                coroutine.launch {
+                    val info = list.layoutInfo
+                    val last = info.visibleItemsInfo.lastOrNull()
+                    if (last != null && last.index == info.totalItemsCount - 1)
+                        list.animateScrollBy((last.offset + last.size + info.afterContentPadding - info.viewportEndOffset).toFloat())
+                    following = true
+                    if (list.canScrollForward && lastIndex >= 0) list.scrollToItem(lastIndex, END)
+                }
+            }, enabled = showsLatest, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp).size(44.dp)
+                .graphicsLayer { alpha = latest; scaleX = .85f + .15f * latest; scaleY = .85f + .15f * latest }.testTag("chat-latest"),
+                shape = CircleShape, color = MaterialTheme.colorScheme.surface, shadowElevation = 3.dp,
+                border = BorderStroke(.75.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                Box(contentAlignment = Alignment.Center) { Glyph(R.drawable.ic_chevron_down, w("回到底部"), 20) }
+            }
         }
     }
     VoiceCaptureOverlay(capture, Modifier.align(Alignment.BottomCenter).fillMaxWidth()
@@ -442,7 +507,8 @@ private fun MessageView(message: Message, state: UiState, model: DuduViewModel, 
             }
             message.attachments.forEach { attachment -> Attachment(session.id, attachment,
                 if (raw.has("seq")) raw.optLong("seq") else null, model) }
-            Regex("!\\[([^]]*)]\\(([^)]+)\\)").findAll(message.text).forEach { image ->
+            val pictures = remember(message.text) { if (raw.has("seq")) markdownPicture.findAll(message.text).toList() else emptyList() }
+            pictures.forEach { image ->
                 if (raw.has("seq")) Attachment(session.id, json("kind" to "image", "name" to image.groupValues[1],
                     "source" to image.groupValues[2]), raw.getLong("seq"), model)
             }

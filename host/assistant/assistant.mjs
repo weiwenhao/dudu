@@ -203,6 +203,11 @@ export function openAssistant({ dshHome, stateFolder, env = process.env, llm = n
     settings,
     problems,
     setLlm(fn) { model = fn; },
+    async execute(path, body = {}) {
+      if (!Object.hasOwn(CALLS, path)) return { outcome: 'error', code: 'unknown_action' };
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return { outcome: 'needs_clarification', code: 'invalid_request' };
+      return CALLS[path](body);
+    },
     /** One POST of the page: `path` is one of `paths`; the body is a JSON object. */
     async handle(path, request) {
       const call = Object.hasOwn(CALLS, path) ? CALLS[path] : null;
@@ -210,7 +215,7 @@ export function openAssistant({ dshHome, stateFolder, env = process.env, llm = n
       try {
         const body = await request.json().catch(() => { throw new SyntaxError('The request body is not JSON.'); });
         if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new SyntaxError('The request body must be a JSON object.');
-        return Response.json(await call(body), { headers: NO_STORE });
+        return Response.json(await this.execute(path, body), { headers: NO_STORE });
       } catch (error) {
         const bad = error instanceof SyntaxError;
         return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: bad ? 400 : 500, headers: NO_STORE });

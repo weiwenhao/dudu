@@ -141,6 +141,7 @@ final class SettingsPageModel: ObservableObject, Identifiable, Hashable {
     @Published private(set) var environmentRows: [Int] = []
     @Published private(set) var busy = false
     @Published private(set) var isPreviewing = false
+    @Published private(set) var notificationValues: [String: Bool] = [:]
     /// What the plugin refused, in its own words.
     @Published var problem: String?
     private let json = DSBotJSON()
@@ -151,6 +152,7 @@ final class SettingsPageModel: ObservableObject, Identifiable, Hashable {
     private var previewID: UUID?
     private var previewedValue: String?
     private var suggestedName: String?
+    private var savingNotifications: [String: Int] = [:]
 
     var canSave: Bool {
         guard page?.save != nil, !busy, !isPreviewing else { return false }
@@ -288,6 +290,87 @@ final class SettingsPageModel: ObservableObject, Identifiable, Hashable {
         }
     }
 
+    /// The bell changes immediately; its save neither locks the page nor changes its toolbar.
+    func setNotification(
+        _ notification: SettingsNotification, rowID: String, on: Bool,
+        using store: DSBotStore, report: @escaping SettingsReport
+    ) {
+        guard !busy, store.status == .connected,
+              computerID != nil, computerID == store.activeComputer?.id else { return }
+        notificationValues[rowID] = on
+        revision &+= 1
+        loadID = nil
+        let connection = store.connectionRevision
+        guard savingNotifications[rowID] != connection else { return }
+        savingNotifications[rowID] = connection
+        Task {
+            await saveNotification(notification, rowID: rowID, connection: connection, using: store, report: report)
+        }
+    }
+
+    private func saveNotification(
+        _ notification: SettingsNotification, rowID: String, connection: Int,
+        using store: DSBotStore, report: @escaping SettingsReport
+    ) async {
+        var confirmed = notification.on
+        defer {
+            if savingNotifications[rowID] == connection {
+                if computerID == store.activeComputer?.id, connection == store.connectionRevision {
+                    updateNotification(rowID: rowID, on: confirmed)
+                }
+                notificationValues.removeValue(forKey: rowID)
+                savingNotifications.removeValue(forKey: rowID)
+                revision &+= 1
+                loadID = nil
+            }
+        }
+        // One request per collector at a time; rapid taps only change the next value to save.
+        while let on = notificationValues[rowID] {
+            guard computerID == store.activeComputer?.id, connection == store.connectionRevision else { return }
+            do {
+                if on {
+                    let allowed = await AppNotifications.shared.authorize()
+                    guard computerID == store.activeComputer?.id, connection == store.connectionRevision else { return }
+                    guard notificationValues[rowID] == on else { continue }
+                    guard allowed else { return }
+                }
+                var request = params
+                request["name"] = .string(notification.act.name)
+                if let args = notification.act.args { request["args"] = .object(args) }
+                request["value"] = .string(on ? "true" : "false")
+                DSBotLog.record("settings.act")
+                let reply = try await store.request("settings.act", request, timeoutSeconds: 30)
+                let answer = try await json.decode(SettingsAnswer.self, from: reply)
+                guard computerID == store.activeComputer?.id, connection == store.connectionRevision else { return }
+                guard answer.outcome == "success" else {
+                    if notificationValues[rowID] != on { continue }
+                    report(DSBotToastMessage(text: answer.message ?? L10n.text("更改没能保存"), kind: .error))
+                    return
+                }
+                confirmed = on
+                // The reply contains a whole page. Only this collector's saved bell belongs to this request.
+                updateNotification(rowID: rowID, on: confirmed)
+                if notificationValues[rowID] == on { return }
+            } catch {
+                guard computerID == store.activeComputer?.id, connection == store.connectionRevision else { return }
+                DSBotLog.networkFailure("settings.act.fail", error: error)
+                if notificationValues[rowID] != on { continue }
+                report(DSBotToastMessage(text: L10n.text("更改没能保存"), kind: .error))
+                return
+            }
+        }
+    }
+
+    private func updateNotification(rowID: String, on: Bool) {
+        guard var next = page else { return }
+        for section in next.sections.indices {
+            for row in next.sections[section].rows.indices where next.sections[section].rows[row].id == rowID {
+                next.sections[section].rows[row].notification?.on = on
+            }
+        }
+        if page != next { page = next }
+    }
+
     /// Do what a row, a swipe or the save button asks. Returns whether to go back, and says what the plugin said.
     func act(
         _ act: SettingsAct, value: String? = nil, form: Bool = false,
@@ -298,8 +381,13 @@ final class SettingsPageModel: ObservableObject, Identifiable, Hashable {
         problem = nil
         revision &+= 1
         loadID = nil
+        let actionRevision = revision
         let connection = store.connectionRevision
-        defer { busy = false }
+        var needsRefresh = false
+        defer {
+            busy = false
+            if needsRefresh { Task { await load(using: store) } }
+        }
         var request = params
         request["name"] = .string(act.name)
         if let args = act.args { request["args"] = .object(args) }
@@ -321,7 +409,10 @@ final class SettingsPageModel: ObservableObject, Identifiable, Hashable {
                 return false
             }
             if let toast = answer.toast { report(DSBotToastMessage(text: toast.message, kind: .success)) }
-            if let page = answer.page { apply(page) }
+            if let page = answer.page {
+                if revision == actionRevision { apply(page) }
+                else { needsRefresh = true }
+            }
             return answer.back == true
         } catch {
             guard computerID == store.activeComputer?.id, connection == store.connectionRevision else { return false }

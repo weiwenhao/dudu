@@ -30,6 +30,7 @@ import { brandOf } from '../connectors/brands.mjs';
 import { loadCatalog } from '../connectors/catalog.mjs';
 import { WORDS as W } from '../dispatch/words.mjs';
 import { parseMessages } from './records.mjs';
+import { INBOX_REQUESTS } from './contract.mjs';
 
 const NO_STORE = { 'cache-control': 'no-store' };
 const HOUR = 3_600_000;
@@ -40,7 +41,7 @@ const clip = (value, size) => String(value ?? '').slice(0, size);
 // The catalog's keys that are a plain symbol and not a service's logo (the pages draw the first letter instead).
 const GENERIC = new Set(['browser', 'pencil', 'plug', 'terminal']);
 
-export const INBOX_ACTIONS = Object.freeze(['list', 'get', 'done', 'delete', 'restore', 'share', 'link', 'complete']);
+export const INBOX_ACTIONS = Object.freeze(Object.keys(INBOX_REQUESTS));
 const KEEP_ERROR_MS = 10 * 60_000;
 
 const needs = (message, code) => ({ outcome: 'needs_clarification', ...(code ? { code } : {}), message });
@@ -64,11 +65,11 @@ const cut = (text, max) => { const chars = [...String(text ?? '')]; return chars
 export function sessionMessage(records, name) {
   const share = Math.max(400, Math.floor(MESSAGE_CHARS / Math.max(1, records.length)) - 400);
   return records.map((record) => {
-    const head = [`收集到的信息：${cut(record.title, 300)}`];
+    const head = [`收集到的信息：${record.ref ?? `r${record.id}`} · ${cut(record.title, 300)}`];
     if (record.from) head.push(`发送人：${cut(record.from, 100)}`);
     const at = stamp(record.at ?? record.collectedAt);
     if (at) head.push(`时间：${at}`);
-    head.push(`来源：${[name(record), record.url].filter(Boolean).join(' · ')}`);
+    head.push(`来源：${[name(record), record.sourceId, record.url].filter(Boolean).join(' · ')}`);
     const parts = [head.join('\n')];
     if (record.text) parts.push(cut(record.text, Math.floor(share * 0.7)));
     const around = (record.context ?? []).filter((entry) => entry?.text);
@@ -223,7 +224,7 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
     const called = names(known);
     const text = sessionMessage(records, (record) => called.get(record.connector) ?? record.connector);
     let sent;
-    try { sent = await forward(issue.id, text); } catch { sent = null; }
+    try { sent = await forward(issue.id, text, { sourceRecords: records.map((record) => record.id) }); } catch { sent = null; }
     if (!sent || !['success', 'no_op'].includes(sent.outcome)) return { outcome: 'error', code: sent?.code ?? 'delivery_failed', message: 'The message could not be sent to the session.' };
     for (const record of records) if (record.issueId !== issue.id) inbox.link(record.id, { issueId: issue.id, verdict: 'note' });
     const after = one(records[0].id);
@@ -262,6 +263,10 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
 
   const CALLS = {
     list, get, share, link, complete,
+    update: ({ id, patch }) => {
+      const changed = inbox.update(id, patch);
+      return changed.record ? { ...get({ id }), outcome: changed.outcome } : changed;
+    },
     done: mark((record) => inbox.done(record.id)),
     delete: mark((record) => inbox.remove(record.id)),
     restore: mark((record) => inbox.restore(record.id)),

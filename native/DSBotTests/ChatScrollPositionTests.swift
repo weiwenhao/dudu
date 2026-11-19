@@ -159,6 +159,25 @@ final class ChatScrollPositionTests: XCTestCase {
         ))
     }
 
+    func testKeyboardOpeningBeforeADragEndsKeepsItsOriginalViewportForFollowing() {
+        // 13:10:18 device log: at the end, then the keyboard reduces the viewport before drag.end.
+        XCTAssertTrue(ChatScrollPosition.shouldFollowAfterDrag(
+            contentHeight: 22_282, containerHeight: 445, contentOffset: 21_387.67, topInset: 112,
+            beganFollowingWithKeyboard: false, keyboardVisible: true,
+            viewportHeightBeforeKeyboard: 800
+        ))
+        // Opening the keyboard while reading must still leave the reader in place.
+        XCTAssertFalse(ChatScrollPosition.shouldFollowAfterDrag(
+            contentHeight: 22_282, containerHeight: 445, contentOffset: 21_200, topInset: 112,
+            beganFollowingWithKeyboard: false, keyboardVisible: true,
+            viewportHeightBeforeKeyboard: 800
+        ))
+        XCTAssertFalse(ChatScrollPosition.shouldFollowAfterDrag(
+            contentHeight: 22_282, containerHeight: 445, contentOffset: 21_387.67, topInset: 112,
+            beganFollowingWithKeyboard: false, keyboardVisible: true
+        ))
+    }
+
     private let positioningIDs = ["first", "middle", "previous", "latest"]
     private let blankViewport = HistoryViewport(offset: 43_500, height: 912, contentHeight: 44_412)
 
@@ -190,6 +209,25 @@ final class ChatScrollPositionTests: XCTestCase {
     func testPositioningLeavesNeverPopulatedHistoryOnItsNativeInitialAnchor() {
         var positioning = positioner()
         XCTAssertNil(next(&positioning, rows: []))
+    }
+
+    func testPositioningWaitsWhenTheRealizedTailBelongsToANewerSnapshot() {
+        // 13:05:31 device log: the new tail is visible before the old item IDs are replaced.
+        let row = HistoryRowFrame(id: "new.latest", minY: 40_020, maxY: 41_316)
+        let viewport = HistoryViewport(offset: 40_404, height: 912, contentHeight: 41_316, topInset: 112)
+        for following in [true, false] {
+            var positioning = positioner()
+            positioning.observe(rows: [HistoryRowFrame(id: "latest", minY: 38_500, maxY: 39_813)])
+            XCTAssertNil(positioning.nextTarget(
+                itemIDs: positioningIDs, rows: [row], viewport: viewport,
+                followsLatest: following, latestFromTop: false
+            ))
+            XCTAssertNil(positioning.request)
+            XCTAssertNil(positioning.nextTarget(
+                itemIDs: positioningIDs + ["new.latest"], rows: [row], viewport: viewport,
+                followsLatest: following, latestFromTop: false
+            ))
+        }
     }
 
     func testPositioningUsesTheBuiltRowInsteadOfItsLazyEstimatedRectangle() {

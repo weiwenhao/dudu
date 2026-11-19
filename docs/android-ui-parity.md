@@ -314,3 +314,44 @@ was taken. Everything below was done from the drawings' numbers and compiled, no
   the task in full: 30 dp logo, 8 dp under the bar, its first label 24 dp under that
   (`Section(top = 12)`), rule rows 50 dp; the record: title 6 dp, meta 8 dp and card 10 dp
   under it; the 更多 menu at least 232 dp wide and flush with the bar.
+
+## 2026-11-19：收集器通知开关不再触发顶部进度条
+
+主人追问安卓是否也有 iPhone 的通知开关 loading 问题。源码确认安卓也有：
+铃铛调用 `perform`，后者走整页 `Actions.run`，设置 `busy`，使 `Page` 在顶栏下显示
+2dp 线性进度条，同时禁用设置按钮。请求本身已经是异步，问题在于开关共用了
+页面保存状态；铃铛图标也要等请求返回整页后才更新。
+
+现在沿用现有 Material `IconButton`、铃铛图标、颜色和尺寸，点击立即更新图标，
+通过 `DuduViewModel` 的 `CollectorNotifications` 在后台保存，不设置页面 `busy`，
+不插入任何开关 loading。保存任务随 ViewModel 存活，离开设置页面不会取消；
+每个收集器一次一个请求，连续切换保留最后选择，不同收集器独立。失败恢复最后
+确认的值，沿用已有错误提示，不自动重试。通知响应不应用整页快照；已确认的本地
+选择要等保存完成后发起的新读取才可替换，旧连接的结果不能覆盖新连接的操作。
+普通表单保存、删除及初次加载仍使用原来的页面状态。没有新增 App 文案。
+
+验证日志位于 `.local/qa/android-collector-notification-save-2026-11-19/`；
+`CollectorNotificationsTest` 的四项定向核心用例通过，覆盖独立保存与旧读取、
+连续切换、失败回退及响应丢失后的新选择、新旧连接交错。直接运行
+`:app:testDebugUnitTest --tests app.dudu.android.CollectorNotificationsTest`，
+没有执行全量单元测试。APK 构建、Android lint、仓库 lint/typecheck 均通过；
+Android lint 为 0 错误、39 警告，与修改前的报告数量相同，Gradle 共约六分钟。
+所改 Kotlin 源码在检查期间未变化。没有安装 App，没有运行模拟器、真机界面、
+浏览器、DSH 或端到端场景；实际渲染与触控未验证。
+
+## 2026-11-19：附件弹窗恢复原来的头部
+
+主人在恢复 iPhone 的旧版附件头部后追问安卓是否也改了。安卓此前仍为无标题版；
+现在恢复移除前 `189017a` 的 `ComposerSheetHeader(w("添加"))`，去掉无标题版
+额外的 8dp 顶部间距，原来的 59dp 标题行、左对齐灰色 17sp 半粗体、40dp 左边距
+和子页返回样式保持原样。整个 `ConversationControls.kt` 与该版本逐字一致，
+没有新增关闭按钮、界面文案或新的交互。
+
+同时核对收件箱列表的单条/批量操作及记录详情：它们的 `inbox.mark` 成功后原本
+就只刷新或返回，不发成功 toast，因此无需改动；失败仍由现有 `Actions` 显示。
+
+检查：`:app:assembleDebug :app:lintDebug`、仓库 lint 和 typecheck 通过；
+Android lint 为 0 错误、41 警告。此次只恢复显示，不添加外观测试，
+没有运行全量单元测试、模拟器、真机界面或端到端场景，也没有安装安卓设备。
+检查回执和日志在 `.local/qa/android-composer-header-2026-11-19/`；
+实际渲染、弹窗高度及触控未复核。
