@@ -7,9 +7,17 @@ import { apply as applyProvider } from '../host/computer-use/provider.mjs';
 
 // Contract tests only: no DSH app, model, native helper, input or GUI is started.
 const initialization = 'var cua = officialFacade(() => tools.cua);';
+const guidance = `official guidance
+
+In persistent PTC, use the host-provided bridge initialization once and retain the returned objects; cua comes from that bridge and is not a preinstalled global. Use void await for observations that emit, and never stringify screenshot image bytes.
+
+In persistent PTC, capture a large tree with const tree = await win.getAccessibilityTree({ emit: false }). Filter its lines in memory, or save it with await tools.write({ file_path: path, content: tree }) to a new workspace file. Search its contents with tools.grep({ path, pattern }) and use tools.read around a matching line. Print only the matches you need. Use element ids from the file only while that observation is current.
+
+- cua.getCapabilities() inspects permissions without requesting them.
+- sendKeyEvent holds keys only until this run_code returns; respect the user's application consent.`;
 const rawPrompt = () => ({
   name: 'computer-use:dsh-cua',
-  text: () => `official guidance\n\nPersistent PTC initialization:\n\`\`\`ts\n${initialization}\n\`\`\``,
+  text: () => `${guidance}\n\nPersistent PTC initialization:\n\`\`\`ts\n${initialization}\n\`\`\``,
 });
 
 test('the wrapper captures official CUA registration and adapts only the native key-lifetime observer', async () => {
@@ -31,10 +39,18 @@ test('the wrapper captures official CUA registration and adapts only the native 
       ? rawPrompt().text() : 'official guidance',
   };
   captured.context.systemPrompt.section(prompt);
-  assert.deepEqual(captured.registrations(), {
-    tool, prompt, programPrompt: { name: 'computer-use:dsh-cua', text: 'official guidance', interpolate: false },
-    initialization,
-  });
+  const registration = captured.registrations();
+  assert.equal(registration.tool, tool);
+  assert.equal(registration.prompt, prompt, 'original PTC consumers retain the provider’s unmodified prompt');
+  assert.equal(registration.initialization, initialization);
+  assert.equal(registration.programPrompt.name, prompt.name);
+  assert.equal(registration.programPrompt.interpolate, false);
+  const programText = registration.programPrompt.text;
+  assert.ok(programText.includes('cua_run_code'));
+  assert.ok(programText.includes('cua.getCapabilities()'));
+  assert.ok(programText.includes('respect the user\'s application consent'));
+  assert.ok(programText.includes('Use void await for observations that emit, and never stringify screenshot image bytes.'));
+  assert.doesNotMatch(programText, /\brun_code\b|tools\.(write|grep|read)\b|Persistent PTC initialization|initialize.*once/);
   assert.equal(captured.context.get('ptcRuntime').retainsState, false, 'do not change the real runtime configuration');
   captured.context.effect(() => undefined);
   assert.equal(calls.length, 1, 'native lifetimes still belong to the actual host context');
@@ -167,9 +183,10 @@ test('the pinned PTC transport binds only CUA and preserves host call identity, 
     source: any;
     constructor(_context: any, source: any) {
       this.source = source;
+      observed.source = source;
       assert.equal(source.get('bash'), undefined);
       assert.equal(source.get('cua_run_code'), undefined);
-      assert.equal(source.get('cua', undefined, { allowed: new Set(['bash']) }), undefined);
+      assert.equal(source.get('cua', undefined, { view: () => new Map([['bash', { name: 'bash' }]]) }), undefined);
     }
     executionMode() { return { kind: 'exclusive' }; }
     async prepare(input: any) { observed.input = input; return { kind: 'dispatch', exec: input }; }
@@ -210,10 +227,14 @@ test('the pinned PTC transport binds only CUA and preserves host call identity, 
     },
     release: async (owner: any) => { observed.released = owner; },
   };
+  const registered = new Map<string, any>();
   const ctx: any = {
     loader: { import: async (name: string) => { assert.ok(namespaces[name], name); return namespaces[name]; } },
     get: (name: string) => name === 'ptcRuntime' ? runtime : name === 'workingDirectory' ? { ensure: async () => '/work' } : undefined,
-    tools: {},
+    tools: {
+      executable: (name: string, scope: any, toolSet: any) =>
+        (toolSet === undefined ? registered : toolSet.view(scope)).get(name),
+    },
     logger: { warn: () => assert.fail('unexpected engine warning') },
     on() {},
     effect: (effect: any) => effects.push(effect()),
@@ -224,12 +245,18 @@ test('the pinned PTC transport binds only CUA and preserves host call identity, 
     return { platform: 'macos' };
   } };
   const program = await createComputerUseProgram(ctx, tool, initialization);
+  registered.set(program.name, program);
   const agent = { session: { id: 'dudu-assistant-unit', append: (type: any, data: any) => events.push({ type, data }) }, ctx };
   const contexts: any[] = [];
+  let admitted = true;
+  const toolSet = {
+    dispose: () => { admitted = false; },
+    view: (scope: any) => new Map(admitted && scope === agent ? [[program.name, program]] : []),
+  };
   const exec: any = {
     callId: 'one', rootCallId: 'one', token: Symbol('host-execution'), agent,
     signal: new AbortController().signal,
-    toolSet: { allowed: new Set(['cua_run_code']) },
+    toolSet,
     deferContext: (context: any) => contexts.push(context),
     concludeTurn: () => assert.fail('not a terminal tool'),
   };
@@ -244,6 +271,12 @@ test('the pinned PTC transport binds only CUA and preserves host call identity, 
   assert.notEqual(observed.request.stateOwner, agent, 'Computer Use state is separate from the main agent’s other programs');
   assert.equal(contexts[0].content[0].attachment.id, 'host-image', 'forward the real host image reference');
   assert.deepEqual(events.map((event) => event.type), ['tool/ptc-dispatch-start', 'tool/ptc-dispatch']);
+  assert.equal(observed.source.get('cua', agent, toolSet), tool);
+  assert.equal(observed.source.get('cua', {}, toolSet), undefined, 'step admission belongs to the exact calling scope');
+  toolSet.dispose();
+  assert.equal(observed.source.get('cua', agent, toolSet), undefined, 'settled step admission cannot reopen the private binding');
+  registered.delete(program.name);
+  assert.equal(observed.source.get('cua', agent), undefined, 'withdrawal of the program revokes its private binding');
   for (const dispose of effects.reverse()) await dispose();
   assert.equal(observed.released, observed.request.stateOwner);
 });

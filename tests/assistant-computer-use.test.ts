@@ -7,6 +7,10 @@ import { createConversation } from '../host/assistant/home/conversation.mjs';
 import { executeNativeTool } from '../host/dsh-tools.mjs';
 
 // Only scripted DSH services: no host instance, model, desktop helper or GUI is started.
+const stepTools = (agent: any, names: string[]) => ({
+  view: (scope: any) => new Map(scope === agent ? names.map((name) => [name, { name }]) : []),
+});
+
 function world(t: any, capability: 'absent' | 'disabled' | 'legacy' | 'enabled') {
   const folder = mkdtempSync(join(tmpdir(), 'dudu-cua-'));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
@@ -51,10 +55,10 @@ function world(t: any, capability: 'absent' | 'disabled' | 'legacy' | 'enabled')
   }
   const tools = {
     view: () => ({ restrictableNames: inherited }),
-    schemas: (_agent: any, toolSet: any) => [
+    schemas: (scope: any, toolSet: any) => [
       ...inherited.filter((name) => seen.restrictions.at(-1)?.includes(name)).map((name) => ({ name })),
       ...registered.values(),
-    ].filter((tool) => !toolSet || toolSet.allowed.has(tool.name)),
+    ].filter((tool) => !toolSet || toolSet.view(scope).has(tool.name)),
     get: () => ({ annotations: { readOnlyHint: true } }),
     selectExecutor: () => selected,
     execute: (input: any) => {
@@ -120,11 +124,11 @@ for (const capability of ['absent', 'disabled', 'legacy', 'enabled'] as const) {
     assert.ok(seen.guard({ name: 'run_code', agent }));
     assert.ok(seen.guard({ name: 'run_code', parent: {}, agent }));
     assert.equal(seen.guard({ name: 'plugin_install', parent: {}, agent }), undefined, 'inherit host capabilities in the standard session scope');
-    assert.ok(seen.guard({ name: 'plugin_install', parent: {}, agent, toolSet: { allowed: new Set(['bash']) } }), 'inherited capabilities retain the host admission mask');
+    assert.ok(seen.guard({ name: 'plugin_install', parent: {}, agent, toolSet: stepTools(agent, ['bash']) }), 'inherited capabilities retain the host admission mask');
     assert.ok(seen.guard({ name: 'not_registered', parent: {}, agent }), 'a parent token grants no missing capability');
     assert.ok(seen.guard({ name: 'cua', agent }));
     assert.equal(seen.guard({ name: 'cua_run_code', agent }) === undefined, enabled);
-    const toolSet = { allowed: new Set(['bash']) };
+    const toolSet = stepTools(agent, ['bash']);
     assert.ok(seen.guard({ name: 'cua_run_code', agent, toolSet }), 'retain the step admission mask');
 
     const sections = ['deployment:persona-prefix', 'tools:ptc-only', 'computer-use:dsh-cua', 'tools:sdk']
@@ -164,7 +168,7 @@ test('only an active standalone Computer Use dispatch can invoke its private CUA
     assert.ok(seen.guard({ ...nested, name: 'run_code' }), 'the entry does not grant a general program transport');
     assert.equal(seen.guard({ ...nested, name: 'plugin_install' }), undefined, 'the ordinary inherited capability is still available');
     assert.ok(seen.guard({ ...nested, name: 'not_registered' }), 'Computer Use does not invent additional capabilities');
-    assert.ok(seen.guard({ ...nested, name: 'bash', toolSet: { allowed: new Set(['cua']) } }), 'nested calls retain their admission mask');
+    assert.ok(seen.guard({ ...nested, name: 'bash', toolSet: stepTools(agent, ['cua']) }), 'nested calls retain their admission mask');
     seen.provider = false;
     assert.ok(seen.guard(nested), 'provider removal also revokes an active binding');
     seen.provider = true;
@@ -173,14 +177,14 @@ test('only an active standalone Computer Use dispatch can invoke its private CUA
   await assert.rejects(hooks['tools/execute'](root, async () => { throw new Error('cancelled'); }), /cancelled/);
   assert.ok(seen.guard(nested), 'failed and cancelled dispatches release their binding too');
 
-  const hidden = { ...root, toolSet: { allowed: new Set(['bash']) } };
+  const hidden = { ...root, toolSet: stepTools(agent, ['bash']) };
   await hooks['tools/execute'](hidden, async () => {
     assert.ok(seen.guard(nested), 'a program hidden by the step cannot acquire a private binding');
   });
 });
 
 test('programmatic native calls retain legacy dispatch and propagate modern errors and missing results', async () => {
-  const call = { name: 'read', arguments: { path: '/work/file' }, callId: 'read-one', toolSet: { allowed: new Set(['read']) }, signal: new AbortController().signal };
+  const call = { name: 'read', arguments: { path: '/work/file' }, callId: 'read-one', toolSet: stepTools(undefined, ['read']), signal: new AbortController().signal };
   const legacy = { execute: async (input: any) => { assert.equal(input, call); return 'legacy result'; } };
   assert.equal(await executeNativeTool(legacy, call), 'legacy result');
   const failure = { isError: true, content: [{ type: 'text', text: 'denied by host' }] };
