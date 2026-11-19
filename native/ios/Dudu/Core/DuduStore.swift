@@ -49,6 +49,9 @@ final class DuduStore: ObservableObject {
     /// Navigation and watch generations do not cancel delivery to another session on this computer.
     private var submissionComputerRevision = 0
     private var sendConnectionWaiters: [UUID: CheckedContinuation<Void, Error>] = [:]
+    /// How long a confirmed send waits for the normal snapshot-driven retirement before `scheduleDeliveryFallback` does it anyway.
+    /// Not private: a test shortens it to run the fallback in milliseconds instead of two minutes.
+    var deliveryFallbackSeconds: Double = 120
     /// Empty local arrays do not establish that the computer's conversation is empty.
     @Published private var loadedConversationTarget: DraftTarget?
     private var selectedDraftTarget: DraftTarget? {
@@ -1086,6 +1089,7 @@ final class DuduStore: ObservableObject {
                     // Older plugins cannot reconcile an echo by its request identity.
                     if receipt["requestId"]?.stringValue != submission.requestId { retire(submission, target: target) }
                     DuduLog.record("message.delivery.accepted", requestId: submission.requestId)
+                    scheduleDeliveryFallback(submission, target: target)
                     return
                 } catch {
                     if observedSendingSubmissionIDs.contains(submission.requestId) { return }
@@ -1174,6 +1178,23 @@ final class DuduStore: ObservableObject {
     private func retire(_ submission: AcceptedSubmission, target: DraftTarget) {
         guard let submissions = submissionsByTarget[target], submissions.contains(where: { $0.requestId == submission.requestId }) else { return }
         setSubmissions(submissions.filter { $0.requestId != submission.requestId }, for: target)
+    }
+
+    /// Normally a fresh snapshot names this request among its entries, pending inputs or queue within moments and
+    /// `apply(_:)` retires the echo itself (2181-2188 there). But that only runs for the conversation currently open,
+    /// and a connection that keeps dropping (owner, 2026-11-20: a message stayed "sending" for ten minutes although
+    /// the computer already had it) can keep missing it. The plugin's own receipt, matched on this request's id, is
+    /// proof enough that the message is not actually still sending; this backstops the snapshot path without racing
+    /// ahead of it in the common case where the snapshot already arrives well inside this window.
+    private func scheduleDeliveryFallback(_ submission: AcceptedSubmission, target: DraftTarget) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(deliveryFallbackSeconds))
+            guard let self else { return }
+            guard let submissions = self.submissionsByTarget[target],
+                  submissions.contains(where: { $0.requestId == submission.requestId }) else { return }
+            DuduLog.record("message.delivery.fallback", level: "warn", requestId: submission.requestId)
+            self.retire(submission, target: target)
+        }
     }
 
     func updateQueuedMessage(_ message: QueuedMessage, action: String, text: String? = nil) async throws {

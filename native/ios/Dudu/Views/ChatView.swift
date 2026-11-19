@@ -510,25 +510,34 @@ struct ChatView: View {
 
     private var historyItems: [ConversationHistoryItem] {
         guard hasConversationContent else { return [] }
-        guard store.transcript != nil else {
-            return store.messages.map(ConversationHistoryItem.message) +
+        let items: [ConversationHistoryItem]
+        if store.transcript == nil {
+            items = store.messages.map(ConversationHistoryItem.message) +
                 ConversationHistoryItem.transcriptItems(store.displayedTranscriptRows)
+        } else {
+            var built: [ConversationHistoryItem] = []
+            let isLoadingHistory = historyRequestID != nil
+                || (store.historyLoadTarget == draftTarget && draftTarget != nil)
+            if isLoadingHistory || historyFailure != nil {
+                built.append(.controls(isLoading: isLoadingHistory, failure: historyFailure))
+            }
+            var trailing: [ConversationHistoryItem] = sessionApprovals.map {
+                .approval($0, isResponding: store.isRespondingApprovals.contains($0.id))
+            }
+            if draftTarget != nil {
+                trailing += store.questions.map(ConversationHistoryItem.questions)
+            }
+            built += ConversationHistoryItem.transcriptItems(
+                store.displayedTranscriptRows, timeSeparators: store.transcriptTimeSeparators, trailing: trailing
+            )
+            items = built
         }
-        var items: [ConversationHistoryItem] = []
-        let isLoadingHistory = historyRequestID != nil
-            || (store.historyLoadTarget == draftTarget && draftTarget != nil)
-        if isLoadingHistory || historyFailure != nil {
-            items.append(.controls(isLoading: isLoadingHistory, failure: historyFailure))
+        // Owner, 2026-11-20: saw this line ahead of two just-sent messages instead of after them, phone only.
+        // transcriptItems defers it to the very end by construction, and a unit test covers exactly that; if this
+        // ever fires, the misplacement happened somewhere else, and this names where it actually landed.
+        if let index = items.firstIndex(where: { if case .running = $0 { true } else { false } }), index != items.indices.last {
+            DuduLog.record("chat.running.misplaced", level: "warn", counts: ["runningIndex": index, "itemCount": items.count])
         }
-        var trailing: [ConversationHistoryItem] = sessionApprovals.map {
-            .approval($0, isResponding: store.isRespondingApprovals.contains($0.id))
-        }
-        if draftTarget != nil {
-            trailing += store.questions.map(ConversationHistoryItem.questions)
-        }
-        items += ConversationHistoryItem.transcriptItems(
-            store.displayedTranscriptRows, timeSeparators: store.transcriptTimeSeparators, trailing: trailing
-        )
         return items
     }
 

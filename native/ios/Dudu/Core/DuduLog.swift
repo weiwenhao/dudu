@@ -40,7 +40,9 @@ enum DuduLog {
         "attachmentCount", "messageCount", "pendingCount", "realizedCount", "visibleCount",
         "registeredCount", "latestRealizedCount", "followingCount", "scrollCommandCount",
         "frameCount", "lateFrameCount",
-        "lanAddressCount", "publicAddressCount"
+        "lanAddressCount", "publicAddressCount",
+        // Where the single running indicator landed, when it is not the history's own last item (2026-11-20).
+        "runningIndex", "itemCount"
     ]
     private static let allowedGeometryKeys: Set<String> = [
         "bottomY", "viewportHeight", "lastRowHeight", "contentHeight", "contentOffset", "topInset", "bottomInset",
