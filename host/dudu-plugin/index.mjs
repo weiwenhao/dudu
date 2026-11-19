@@ -15,6 +15,7 @@ import { createNativeQuestions } from './dist/native-questions.mjs';
 import { desktopPackageIdentity, writeDesktopRuntime } from './dist/desktop-runtime.mjs';
 import { createNativeDiagnostics } from './dist/native-diagnostics.mjs';
 import { createSessionDiagnostics } from './dist/session-diagnostics.mjs';
+import { createStartupLog } from './dist/startup-log.mjs';
 import { createProviders } from './dist/providers/index.mjs';
 import { createSessionTools } from './dist/providers/cron-tools.mjs';
 import { createLinkStore, createNativeSessions } from './dist/providers/native/index.mjs';
@@ -87,9 +88,19 @@ const widgetKit = { guide: join(dirname(fileURLToPath(import.meta.url)), 'WIDGET
 // The routes the plugin registers with DSH, by path: the plugin's own pages in the phone's web view (phone-pages.mjs) ask for a few of them through the same handlers
 // the desktop interface does, so there is one set of handlers and not two. The phone's page address, not DSH's, is what reaches them there.
 const routes = new Map();
+// How this start went (host/startup-log.mjs): set by apply(), so each route is noted when it becomes available and its first answers are timed.
+let startupLog = null;
+/** A part of a start worth its own line in that log: `run`, timed (what it answers and throws is unchanged). */
+async function step(name, run) {
+  const log = startupLog;
+  if (!log) return run();
+  const started = log.now();
+  try { return await run(); } finally { log.step(name, started); }
+}
 function registerRoute(ctx, spec) {
   routes.set(spec.path, spec.fetch);
-  const dispose = ctx.connection.fetch.register(spec);
+  const dispose = ctx.connection.fetch.register(startupLog ? { ...spec, fetch: startupLog.wrap(spec.path, spec.fetch) } : spec);
+  startupLog?.route(spec.path);
   return () => { routes.delete(spec.path); return dispose?.(); };
 }
 
@@ -131,7 +142,7 @@ export const inject = {
 async function startProviders(ctx, folder, assignment) {
   const sessionDiagnostics = createSessionDiagnostics(folder);
   assignment.sessionDiagnostics = sessionDiagnostics;
-  const links = await createLinkStore(folder);
+  const links = await step('providers.links', () => createLinkStore(folder));
   // The cron tools Claude is given in place of its own (providers/cron-tools.mjs): jobs are tasks of Dudu that send their prompt into the conversation that made them. The tasks start after the providers, so they are asked for per call.
   const sessionTools = createSessionTools({
     tasks: () => assignment.tasks,
@@ -141,7 +152,7 @@ async function startProviders(ctx, folder, assignment) {
       return workspace ? { project: { id: workspace.id, name: workspace.title, path: workspace.path } } : null;
     },
   });
-  const providers = await createProviders({
+  const providers = await step('providers.create', () => createProviders({
     folder,
     providers: [claudeProvider, codexProvider, piProvider, ...universalProviders],
     host: {
@@ -168,7 +179,7 @@ async function startProviders(ctx, folder, assignment) {
       tokenUsageOf: (session) => ctx.sessionProjections?.stateOf(session, 'tokenUsage')?.totals,
       onLink: links.record,
     },
-  });
+  }));
   // The sessions the harnesses already have, to browse and load into DSH. DSH's own stores are looked up when used.
   const native = createNativeSessions({
     cacheFile: join(folder, 'session-search-native.sqlite'),
@@ -357,9 +368,9 @@ async function startIssues(ctx, folder, assignment = {}) {
 async function startAssignment(ctx, folder, assignment) {
   if (!assignment.issues) throw new Error('there are no issues');
   let closing = false;
-  const activityProjection = await ctx.sessionProjections?.register(sessionActivityProjection);
+  const activityProjection = await step('assignment.projection.activity', () => ctx.sessionProjections?.register(sessionActivityProjection));
   const readReceipts = createReadReceipts({ file: join(folder, 'assistant', 'session-reads.db') });
-  await ctx.sessionProjections?.register(harnessTimingProjection);
+  await step('assignment.projection.timing', () => ctx.sessionProjections?.register(harnessTimingProjection));
   const dsh = createDshSessions(ctx, {
     historyFacts: assignment.historyFacts,
     hidden: (id) => assignment.links?.removed(id),
@@ -372,7 +383,7 @@ async function startAssignment(ctx, folder, assignment) {
       return { model: model ?? configured.model, effort: configured.effort, access: 'workspace-write' };
     },
   });
-  const titles = await createSessionTitles({ issues: assignment.issues, dsh, file: join(folder, 'assistant', 'session-titles.json') });
+  const titles = await step('assignment.titles.create', () => createSessionTitles({ issues: assignment.issues, dsh, file: join(folder, 'assistant', 'session-titles.json') }));
   // DSH lists the models of the harnesses the first time it is asked, which takes a moment; the first issue given to an agent need not wait.
   void dsh.models().catch(() => {});
   const agentSessions = createAgentSessions({ dsh });
@@ -505,20 +516,22 @@ async function startAssignment(ctx, folder, assignment) {
   const stopSnapshots = snapshots.onChange(({ to, snapshot }) => {
     if (to != null && snapshot) void observe(snapshot);
   });
-  const startup = titles.restore()
-    .then(() => { if (!closing) return hooks.restore(); })
+  // This part carries on after the phase has ended; the startup log times each of its steps and notes when it is over.
+  const startup = step('assignment.titles.restore', () => titles.restore())
+    .then(() => { if (!closing) return step('assignment.hooks.restore', () => hooks.restore()); })
     .then(async () => {
       if (closing) return;
       try {
         const assigned = assignment.issues.sessionKeys().filter((key) => key.startsWith('dsh:')).map((key) => key.slice(4));
-        await warmActivity(assigned);
+        await step('assignment.warm', () => warmActivity(assigned));
       }
       catch (error) { if (!closing) console.warn(`[dudu] Session read boundaries could not be loaded: ${error.message}`); }
     })
-    .then(() => { if (!closing) return snapshots.poll(); })
-    .then(() => { if (!closing) return hooks.restore(); })
+    .then(() => { if (!closing) return step('assignment.poll', () => snapshots.poll()); })
+    .then(() => { if (!closing) return step('assignment.hooks.restore', () => hooks.restore()); })
     .then(() => { if (!closing) return Promise.all(snapshots.snapshots({ state: 'waiting_owner', limit: 500 }).snapshots.map(observe)); })
-    .catch((error) => console.warn(`[dudu] The sessions of the open issues could not be followed again: ${error.message}`));
+    .catch((error) => console.warn(`[dudu] The sessions of the open issues could not be followed again: ${error.message}`))
+    .finally(() => startupLog?.mark('assignment.restored'));
   const questionStops = [
     ['user-questions/request', (request) => Array.isArray(request.questions) ? questionText(request.questions) : ''],
     ['approval/request', approvalText],
@@ -646,7 +659,7 @@ async function startAssistant(ctx, dshHome, folder, assignment = {}) {
   const llm = (messages, options) => (assignment.llm ? assignment.llm(messages, options) : Promise.reject(new Error('There is no model yet.')));
   const assistant = openAssistant({
     dshHome, stateFolder: join(folder, 'assistant'), llm,
-    mountMcp: await mcpMounter(ctx), // what is connected is mounted in DSH, to be in every session
+    mountMcp: await step('assistant.mcp', () => mcpMounter(ctx)), // what is connected is mounted in DSH, to be in every session
     credentials: optionalService(ctx, 'credentials'), // where the tokens, keys and values of environment variables of the connectors are kept
     createOAuth, // the browser sign-in of the hosted MCP servers
     // A collector that is removed takes with it what it brought and the owner never dealt with (owner, 2026-11-10); what they marked or made an issue of stays.
@@ -880,7 +893,7 @@ async function startConversation(ctx, folder, assignment) {
   };
   // Restore our scoped owner before a remembered DSH conversation tab can promote the persisted session.
   // Keep the route available when no model is configured, so choosing one later can retry initialization.
-  await conversation.ensure().catch((error) => console.warn(`[dudu] The assistant conversation could not be opened: ${error.message}`));
+  await step('conversation.ensure', () => conversation.ensure()).catch((error) => console.warn(`[dudu] The assistant conversation could not be opened: ${error.message}`));
   const route = (path, answer) => registerRoute(ctx, {
     path: `/api/dudu/assistant/${path}`, methods: ['POST'], requestBody: 'buffered',
     fetch: async (request) => {
@@ -933,10 +946,10 @@ async function startConversation(ctx, folder, assignment) {
 function startChatHome(ctx, folder, assignment) {
   const home = createChatHome({
     file: join(folder, 'assistant', 'chat-home.db'),
-    issues: (action, body) => assignment.issuesApi?.execute(action, body),
+    issues: (action, body) => step(`home.issues.${action}`, () => assignment.issuesApi?.execute(action, body)),
     assistant: () => assignment.conversation?.state(),
     activity: (id) => assignment.sessionActivity?.(id),
-    warm: (ids) => assignment.warmSessionActivity?.(ids),
+    warm: (ids) => step('home.warm', () => assignment.warmSessionActivity?.(ids)),
     markUnread: (id) => assignment.markSessionUnread(id),
     acknowledge: (id, position) => assignment.acknowledgeRead(id, position),
   });
@@ -997,7 +1010,7 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
         return questions.attachWait(request.agent, request.wait.callId, signal);
       },
     });
-    control = await createDuduControl({
+    control = await step('phone.control', () => createDuduControl({
       folder,
       rpc,
       pages,
@@ -1055,7 +1068,7 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
       legacyKeyPath: join(dshHome, 'harness-mobile', 'pairing-key'),
       port: config.port ?? 3170,
       host: config.host ?? '0.0.0.0',
-    });
+    }));
     assignment.phoneOperations = async (action, body) => {
       if (action === 'state') return control.state();
       if (action === 'save') return control.save(body);
@@ -1092,19 +1105,36 @@ export async function apply(ctx, config = {}) {
   const folder = join(dshHome, 'dudu');
   ctx.effect(() => installSessionHistoryCoalescing(ctx.sessionQuery, ctx.sessions));
 
+  // How this start goes, in `<folder>/diagnostics/startup.jsonl`: each phase's time, each route when it becomes available, what stops take.
+  const startup = createStartupLog(folder, { identity: runtimeIdentity });
+  startupLog = startup;
+  startup.begin();
+  const timed = async (name, run) => {
+    const started = startup.now();
+    try {
+      const value = await run();
+      startup.phase(name, started);
+      return value;
+    } catch (error) {
+      startup.phase(name, started, error);
+      throw error;
+    }
+  };
   const stops = [];
+  const stopNames = [];
+  const keep = (name, stop) => { stops.push(stop); stopNames.push(name); };
   const assignment = {};
   let providerServices;
   try {
-    providerServices = await startProviders(ctx, folder, assignment);
-    stops.push(() => providerServices.stop());
+    providerServices = await timed('providers', () => startProviders(ctx, folder, assignment));
+    keep('providers', () => providerServices.stop());
     console.info('[dudu] Providers are ready.');
   } catch (error) {
     console.warn(`[dudu] Providers are unavailable: ${error.message}`);
   }
 
   try {
-    stops.push(await startIssues(ctx, folder, assignment));
+    keep('issues', await timed('issues', () => startIssues(ctx, folder, assignment)));
     console.info('[dudu] Issues are ready.');
   } catch (error) {
     // A database written by a newer version stays untouched (SCHEMA_TOO_NEW); the rest of the plugin keeps working.
@@ -1112,52 +1142,52 @@ export async function apply(ctx, config = {}) {
   }
 
   try {
-    stops.push(await startAssignment(ctx, folder, assignment));
+    keep('assignment', await timed('assignment', () => startAssignment(ctx, folder, assignment)));
     console.info('[dudu] Sessions for issues are ready.');
   } catch (error) {
     console.warn(`[dudu] Sessions for issues are unavailable: ${error.message}`);
   }
 
   try {
-    stops.push(await startDashboard(ctx, folder, assignment));
+    keep('dashboard', await timed('dashboard', () => startDashboard(ctx, folder, assignment)));
     console.info('[dudu] The dashboard is ready.');
   } catch (error) {
     console.warn(`[dudu] The dashboard is unavailable: ${error.message}`);
   }
 
   try {
-    stops.push(await startAssistant(ctx, dshHome, folder, assignment));
+    keep('assistant', await timed('assistant', () => startAssistant(ctx, dshHome, folder, assignment)));
     console.info('[dudu] The project folder, memory and connectors are ready.');
   } catch (error) {
     console.warn(`[dudu] The project folder, memory and connectors are unavailable: ${error.message}`);
   }
 
   try {
-    stops.push(await startDispatch(ctx, folder, assignment));
+    keep('dispatch', await timed('dispatch', () => startDispatch(ctx, folder, assignment)));
     console.info('[dudu] Reading what comes in is ready.');
   } catch (error) {
     console.warn(`[dudu] Reading what comes in is unavailable: ${error.message}`);
   }
 
   try {
-    stops.push(await startTasks(ctx, folder, assignment));
+    keep('tasks', await timed('tasks', () => startTasks(ctx, folder, assignment)));
     console.info('[dudu] Scheduled tasks are ready.');
   } catch (error) {
     console.warn(`[dudu] Scheduled tasks are unavailable: ${error.message}`);
   }
 
   try {
-    stops.push(await startConversation(ctx, folder, assignment));
+    keep('conversation', await timed('conversation', () => startConversation(ctx, folder, assignment)));
     console.info('[dudu] The assistant conversation is ready.');
   } catch (error) {
     console.warn(`[dudu] The assistant conversation is unavailable: ${error.message}`);
   }
 
-  try { stops.push(startChatHome(ctx, folder, assignment)); }
+  try { keep('home', await timed('home', async () => startChatHome(ctx, folder, assignment))); }
   catch (error) { console.error(`[dudu] Conversation home did not start: ${error.message}`); }
 
   if (typeof ctx.connection.createPeer === 'function') {
-    try { stops.push(await startPhoneControl(ctx, config, dshHome, folder, assignment)); }
+    try { keep('phone', await timed('phone', () => startPhoneControl(ctx, config, dshHome, folder, assignment))); }
     catch (error) {
       // The providers keep working; DSH shows why the phone control did not start.
       if (stops.length === 0) throw error;
@@ -1167,11 +1197,22 @@ export async function apply(ctx, config = {}) {
     console.warn('[dudu] Phone control needs a newer DSH (this one has no connection.createPeer); providers still work.');
   }
 
+  startup.ready();
+
   ctx.effect(() => async () => {
     const releasing = providerServices?.stopHarnesses();
     // Observe a rejection immediately even if another service takes time to stop.
     releasing?.catch(() => {});
-    try { for (const stop of [...stops].reverse()) await stop(); }
-    finally { await releasing; }
+    try {
+      for (let index = stops.length - 1; index >= 0; index--) {
+        const started = startup.now();
+        try { await stops[index](); } finally { startup.stop(stopNames[index], started); }
+      }
+    } finally {
+      await releasing;
+      startup.mark('stopped');
+      await startup.flush();
+      if (startupLog === startup) startupLog = null;
+    }
   });
 }
