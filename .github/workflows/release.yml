@@ -1,7 +1,7 @@
 name: release
 
 # The release bot (owner, 2026-11-19). Push a tag `v<version>`, where <version> is the one in host/dudu-plugin/package.json
-# (v0.1.0-beta, say), on a commit that is on main. It then packages the plugin, builds a signed Android APK, makes the GitHub release
+# (v0.1.0, say), on a commit that is on main. It then packages the plugin, builds a signed Android APK, makes the GitHub release
 # with both, and publishes the plugin to npm.
 # Started by hand from the Actions tab, it builds the same files and keeps them as artifacts of the run, and publishes nothing.
 on:
@@ -153,7 +153,7 @@ jobs:
           cd assets
           sha256sum ./* | sed 's|\./||' > SHA256SUMS.txt
           args=(--repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes)
-          # A version with a hyphen (0.1.0-beta) is a pre-release.
+          # A version with a hyphen (0.2.0-rc.1, say) is a pre-release.
           case "$VERSION" in *-*) args+=(--prerelease) ;; esac
           gh release create "$GITHUB_REF_NAME" "${args[@]}" ./*
 
