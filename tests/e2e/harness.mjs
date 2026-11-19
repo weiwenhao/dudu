@@ -255,7 +255,13 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
       /** After a failed test: a picture of every page still open (in .local/e2e-failures, or DUDU_E2E_SHOTS), then close them all. */
       async settle(name, failed) {
         // CI sets DUDU_E2E_DIAG: what DSH and the plugin wrote (the login address is left out), for the test that failed.
-        if (failed && process.env.DUDU_E2E_DIAG) console.log(`--- DSH output after "${name}"\n${state.output.text.replace(/https?:\/\/\S+/g, '[URL redacted]').slice(-6000)}\n---`);
+        if (failed && process.env.DUDU_E2E_DIAG) {
+          console.log(`--- DSH output after "${name}"\n${state.output.text.replace(/https?:\/\/\S+/g, '[URL redacted]').slice(-6000)}\n---`);
+          for (const page of pages) {
+            const tree = await page.locator('body').ariaSnapshot({ timeout: 10_000 }).catch((error) => `(no snapshot: ${error.message})`);
+            console.log(`--- page after "${name}" (${page.viewportSize()?.width}x${page.viewportSize()?.height})\n${String(tree).slice(0, 7000)}\n---`);
+          }
+        }
         if (failed) {
           const dir = process.env.DUDU_E2E_SHOTS ?? join(root, '.local', 'e2e-failures');
           await mkdir(dir, { recursive: true });
