@@ -1,5 +1,23 @@
 # Android interface corrections
 
+## Approved Lark scope styling, 2026-11-20
+
+The owner approved `.local/designs/lark-scope-2026-11-20/` for Desktop,
+iOS and Android. In light mode the homepage scope track and inactive filter
+circle now share `DuduStyle.scopeTrack` (`#EFF0F2`). The selected white pill
+uses Compose's `dropShadow` (10% black, 20dp radius, 3dp right offset) instead
+of the old hard outline. Only the decorative track is clipped; the existing
+48dp selectable tabs, 14sp grey labels, pill movement and active-filter
+feedback remain. The dark theme retains its existing surfaces and outline;
+the inbox and task tabs do not change. No App copy was added.
+
+Android Debug assembly and lint, the iOS Release build, Desktop client build,
+repository lint/typecheck and diff checks passed, recorded in
+`.local/qa/lark-scope-native-2026-11-20/`. No full unit
+suite, UI test, emulator, physical-device installation or Desktop update was
+run. Native rendered blur, clipping and touch acceptance remain unverified;
+the approved Desktop component preview is not an Android App screenshot.
+
 ## Native voice input, 2026-11-18
 
 After the screenshot review the owner asked to fix the missing voice entry.

@@ -14,6 +14,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -27,7 +28,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
@@ -40,6 +43,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.dudu.android.R
@@ -50,16 +54,18 @@ import kotlin.math.roundToInt
 @Composable
 internal fun BoardFilterBar(scope: Scope, active: Boolean, open: () -> Unit, select: (Scope) -> Unit) {
     val colors = MaterialTheme.colorScheme
+    val dark = isSystemInDarkTheme()
+    val track = if (dark) colors.surfaceContainerHighest else DuduStyle.scopeTrack
     Row(Modifier.fillMaxWidth().heightIn(min = 50.dp).padding(start = 8.dp, end = 16.dp),
         verticalAlignment = Alignment.CenterVertically) {
         IconButton(open, Modifier.size(48.dp).testTag("board-filter").semantics { selected = active }) {
             Box(Modifier.size(32.dp).background(
-                if (active) colors.secondaryContainer else colors.surfaceContainerHigh, CircleShape),
+                if (active) colors.secondaryContainer else if (dark) colors.surfaceContainerHigh else track, CircleShape),
                 contentAlignment = Alignment.Center) {
                 Glyph(R.drawable.ic_list_filter, w("筛选"), 18, tint = if (active) colors.onSecondaryContainer else colors.onSurface)
             }
         }
-        // The tabs sit on a grey track; the chosen one is a white pill with a thin grey edge, its words the grey of the others ("就用灰色吧"), that slides to the tab that is chosen, as Lark's message filter row does (owner, 2026-11-18:
+        // The tabs use the owner's approved #EFF0F2 track and softly shadowed white pill (2026-11-20), its words the grey of the others ("就用灰色吧"), that slides to the tab that is chosen, as Lark's message filter row does (owner, 2026-11-18:
         // "胶囊会移动到下一个选项"). The pill is one box that is moved, not one in each tab: each tab says where it is, and the first place is taken without moving.
         val density = LocalDensity.current
         val places = remember { mutableStateMapOf<Scope, Pair<Int, Int>>() }
@@ -68,14 +74,19 @@ internal fun BoardFilterBar(scope: Scope, active: Boolean, open: () -> Unit, sel
         val move: AnimationSpec<Int> = if (placed) tween(300, easing = FastOutSlowInEasing) else snap()
         val pillX by animateIntAsState(place?.first ?: 0, move, label = "scope-pill-x")
         val pillWidth by animateIntAsState(place?.second ?: 0, move, label = "scope-pill-width")
+        val pillInset = with(density) { 2.dp.roundToPx() }
         LaunchedEffect(place) { if (place != null) placed = true }
         Row(Modifier.horizontalScroll(rememberScrollState()).selectableGroup()) {
-            Box(Modifier.clip(CircleShape)) {
-                Box(Modifier.matchParentSize().padding(vertical = 8.dp).background(colors.surfaceContainerHighest, CircleShape))
-                Box(Modifier.padding(horizontal = 2.dp)) {
-                    if (place != null) Box(Modifier.align(Alignment.CenterStart).offset { IntOffset(pillX, 0) }
+            Box {
+                // Clip the shadow to the track independently of the full-height selectable tabs.
+                Box(Modifier.matchParentSize().padding(vertical = 8.dp).clip(CircleShape).background(track)) {
+                    if (place != null) Box(Modifier.align(Alignment.CenterStart).offset { IntOffset(pillX + pillInset, 0) }
                         .width(with(density) { pillWidth.toDp() }).height(28.dp)
-                        .background(colors.surface, CircleShape).border(1.dp, colors.outline, CircleShape))
+                        .then(if (dark) Modifier.border(1.dp, colors.outline, CircleShape) else Modifier.dropShadow(
+                            CircleShape, Shadow(radius = 20.dp, color = Color.Black.copy(alpha = .1f), offset = DpOffset(3.dp, 0.dp))))
+                        .background(colors.surface, CircleShape))
+                }
+                Box(Modifier.padding(horizontal = 2.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         for (option in Scope.entries) {
                             val selected = option == scope
