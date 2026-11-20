@@ -60,6 +60,8 @@
   --danger-foreground: #b91c1c;
   --dudu-soft: #eef3fd;
   --dudu-conversation-selected: #e4edfc;
+  --dudu-scope-track: #eff0f2;
+  --dudu-scope-pill-shadow: 3px 0 20px #0000001a;
   --dudu-strong: #2f5fd0;
   --dudu-on: #ffffff;
   --dudu-success: #177a3c;
@@ -90,6 +92,8 @@ body[data-ds-dark-theme] .dudu {
   --danger-foreground: #f25a5a;
   --dudu-soft: #2b3347;
   --dudu-conversation-selected: color-mix(in srgb, var(--ring) 20%, var(--background));
+  --dudu-scope-track: var(--muted);
+  --dudu-scope-pill-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 15%, transparent);
   --dudu-strong: #5686fe;
   --dudu-on: #0f1115;
   --dudu-success: #22c55e;

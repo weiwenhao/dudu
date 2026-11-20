@@ -54,7 +54,7 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   const base = savedView ? savedView.base : TABS.includes(tab) ? tab : 'active';
   const view = viewOf(tab);
   const chat = view.layout === 'chat';
-  const query = useMemo(() => listRequest(base, view, Date.now(), base === 'all' ? searched : ''), [base, view, searched]);
+  const query = useMemo(() => listRequest(base, view, Date.now(), view.layout !== 'chat' && base === 'all' ? searched : ''), [base, view, searched]);
   const list = useIssueList(request, query, !chat);
   const homeQuery = useMemo(() => ({ tab: query.tab, ...(query.filter ? { filter: query.filter } : {}) }), [query]);
   const home = usePolled(request, 'home/list', homeQuery, { every: 5000, enabled: chat });
@@ -222,7 +222,7 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
     className={cn('size-7 text-muted-foreground', chat ? 'rounded-md' : 'rounded-full')}
     aria-label={T.views.add} title={T.views.add} onClick={() => { setScopeMenuOpen(false); setNaming('new'); }}><Layers /></Button>;
   const filterTrigger = <Button ref={filterButton} variant={chat ? 'ghost' : 'outline'} size="icon-sm"
-    className={cn('size-7 rounded-full', chat && 'bg-muted text-muted-foreground', menu.open && 'bg-accent',
+    className={cn('size-7 rounded-full', chat && 'bg-[var(--dudu-scope-track)] text-muted-foreground', menu.open && 'bg-accent',
       chat && filtered && 'bg-[var(--dudu-soft)] text-[var(--dudu-strong)] hover:bg-[var(--dudu-soft)] hover:text-[var(--dudu-strong)] dark:hover:bg-[var(--dudu-soft)]')}
     aria-label={T.filterButton} title={T.filterButton} aria-haspopup="dialog" aria-expanded={menu.open}
     onClick={(event) => openFilter(event.currentTarget, chat ? 'start' : 'end')}>
@@ -242,8 +242,7 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
     <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
     <input
       type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={T.search.placeholder} aria-label={T.search.label}
-      className={cn('h-7 border bg-background pr-3 pl-8 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50',
-        chat ? 'w-full rounded-md' : 'w-[150px] rounded-full @[560px]:w-[220px]')}
+      className="h-7 w-[150px] rounded-full border bg-background pr-3 pl-8 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 @[560px]:w-[220px]"
     />
   </div>;
   const clearFilters = () => update(tab, { filter: {} });
@@ -263,14 +262,12 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
       setMenu({ open: false, anchor: { element: filterButton.current, align: 'end' } });
     }}
   />;
-  const conversationSearch = searchControl && <div className="px-3 pb-2">{searchControl}</div>;
   const conversationHeader = (compact) => <header className="dudu-conversation-toolbar">
     {compact ? (
       <IssueScopeMenu value={tab} saved={saved} onChange={selectView} onRename={setNaming} onDelete={setRemovingView}
         open={scopeMenuOpen} onOpenChange={setScopeMenuOpen} triggerRef={scopeButton} compact highlighted={filtered}>
         <div data-conversation-compact-tools>
           <div className="flex items-center justify-end gap-1.5 px-1.5 pt-1.5 pb-2">{addViewButton}{filterTrigger}{actions}</div>
-          {conversationSearch}
         </div>
       </IssueScopeMenu>
     ) : <div className="ml-auto flex shrink-0 items-center gap-1.5">{addViewButton}{actions}</div>}
@@ -282,7 +279,6 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
       {saved.length > 0 && <IssueScopeMenu value={tab} saved={saved} onChange={selectView} onRename={setNaming} onDelete={setRemovingView}
         open={scopeMenuOpen} onOpenChange={setScopeMenuOpen} triggerRef={scopeButton} iconOnly={!savedView} />}
     </div>
-    {conversationSearch}
   </>;
 
   return (

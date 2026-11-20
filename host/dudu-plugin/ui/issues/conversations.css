@@ -11,6 +11,7 @@
 .dudu-conversations { display: flex; flex: 1; min-height: 0; min-width: 0; overflow-x: auto; background: var(--secondary); }
 .dudu-conversation-sidebar { --background: var(--card); display: flex; flex: 0 0 var(--dudu-conversation-sidebar-width); width: var(--dudu-conversation-sidebar-width); min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; background: var(--card); }
 .dudu-conversation-toolbar { display: flex; height: 44px; flex: none; min-width: 0; align-items: center; padding: 0 12px 0 8px; }
+.dudu-conversation-scope-pill { box-shadow: var(--dudu-scope-pill-shadow); }
 .dudu-conversation-scroll { flex: 1; min-height: 0; overflow: auto; padding-top: 8px; padding-bottom: 24px; }
 .dudu-conversation-pane { display: flex; min-height: 0; min-width: 480px; flex: 1; flex-direction: column; overflow: hidden; background: var(--card); }
 .dudu-conversation-splitter { position: relative; z-index: 1; flex: 0 0 8px; width: 8px; cursor: col-resize; touch-action: none; outline: none; }
