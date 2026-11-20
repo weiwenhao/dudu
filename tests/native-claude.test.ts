@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isHumanPrompt, listClaudeSessions, promptText } from '../host/providers/native/claude-store.mjs';
 import { readClaudeHistory } from '../host/providers/native/claude-history.mjs';
+import { readClaudeSearch } from '../host/providers/native/claude-search.mjs';
 
 // Claude Code's transcripts, written the way it writes them: one record per line, an assistant message as one record
 // per content block, the results of tool calls in user records, titles appended as the conversation grows.
@@ -243,4 +244,42 @@ test('a Claude tool loop is not imported as completed turns while it is still gr
   const history = await readClaudeHistory(source);
   assert.equal(history.turns.length, 2);
   assert.deepEqual(history.turns[1].steps[1].usage, { inputTokens: 10, outputTokens: 5, totalTokens: 35, cacheReadTokens: 20 });
+});
+
+test('search indexing drops a rewound branch and sidechains the same way history does', async (t) => {
+  const source = await transcript(t, [
+    user('u1', null, 'first question'),
+    assistant('a1', 'u1', 'm1', { type: 'text', text: 'first answer' }),
+    user('u2', 'a1', 'second question, later rewound'),
+    assistant('a2', 'u2', 'm2', { type: 'text', text: 'answer on the abandoned branch' }),
+    // The person went back to the first answer and asked something else.
+    user('u2b', 'a1', 'second question, reworded'),
+    assistant('a2b', 'u2b', 'm3', { type: 'text', text: 'answer on the kept branch' }),
+    { ...assistant('side', 'a2b', 'm4', { type: 'text', text: 'subagent chatter' }), isSidechain: true },
+    user('u3', 'a2b', 'third question'),
+    assistant('a3', 'u3', 'm5', { type: 'text', text: 'third answer' }),
+  ]);
+  const indexed = await readClaudeSearch(source.file, { includeMessages: true });
+  assert.equal(indexed.user, 'first question\nsecond question, reworded\nthird question');
+  assert.equal(indexed.assistant, 'first answer\nanswer on the kept branch\nthird answer');
+  assert.deepEqual(indexed.messages.map((message: { text: string }) => message.text), [
+    'first question', 'first answer', 'second question, reworded', 'answer on the kept branch', 'third question', 'third answer',
+  ]);
+});
+
+test('a huge transcript is capped so search indexing cannot grow past its text budget', async (t) => {
+  // A conversation left running for days once grew past a gigabyte and crashed the host's indexing worker with an
+  // out-of-memory error (2026-11-20); the budget keeps the newest text and drops the oldest first.
+  const size = 2_000_000;
+  const big = (label: string) => `${label}:${'x'.repeat(size - label.length - 1)}`;
+  const labels = [1, 2, 3, 4, 5].map((n) => `entry${n}`);
+  const records: unknown[] = [];
+  let parent: string | null = null;
+  for (const label of labels) {
+    records.push(user(label, parent, big(label)));
+    parent = label;
+  }
+  const source = await transcript(t, records);
+  const indexed = await readClaudeSearch(source.file);
+  assert.equal(indexed.user, labels.slice(2).map(big).join('\n'), 'only the newest text stays once the budget is passed; the oldest is dropped first');
 });
