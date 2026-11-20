@@ -38,6 +38,7 @@ import { installSessionHistoryCoalescing } from './dist/session-history-coalesci
 import { createAssignment } from './dist/assistant/home/assign.mjs';
 import { createDispatch } from './dist/assistant/dispatch/index.mjs';
 import { createCollectorNotifications } from './dist/assistant/collectors/notifications.mjs';
+import { createCollectorAcknowledgements } from './dist/assistant/collectors/acknowledgements.mjs';
 import { createDshLlm } from './dist/assistant/dispatch/dsh-llm.mjs';
 import { createHandOut } from './dist/assistant/dispatch/hand-out.mjs';
 import { createScheduler } from './dist/assistant/schedule/index.mjs';
@@ -704,6 +705,7 @@ async function startDispatch(ctx, folder, assignment) {
     collectors: () => assignment.assistant?.collectors ?? null,
     collect: assignment.collectSource,
     onCollected: notifications.publish,
+    acknowledge: createCollectorAcknowledgements(),
     rules: () => assignment.assistant?.memory?.rules?.() ?? { rules: {} },
     llm,
     agents: async () => {
@@ -745,7 +747,10 @@ async function startDispatch(ctx, folder, assignment) {
   });
   const disposeNotifications = registerRoute(ctx, {
     path: '/api/dudu/inbox/notifications', methods: ['POST'], requestBody: 'buffered',
-    fetch: (request) => notifications.follow(request.signal),
+    fetch: async (request) => {
+      const stopped = await request.json().catch(() => null); // `{ epoch, after }`: where the page's last stream stopped
+      return notifications.follow(request.signal, stopped && typeof stopped === 'object' && !Array.isArray(stopped) ? stopped : {});
+    },
   });
   const disposeTidy = registerRoute(ctx, {
     path: '/api/dudu/issues/tidy', methods: ['POST'], requestBody: 'buffered',

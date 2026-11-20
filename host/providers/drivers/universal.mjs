@@ -16,7 +16,9 @@ import { canonicalInput, fallbackSpecOf, kindOf, mirrorName, toolSpecs } from '.
 //     refused instead of running with a write access the person asked it not to have. The other modes run as the harness runs.
 //   * A message written while the harness works waits for the next turn (`steering: false`): a steer that misses the turn runs as the
 //     harness's own turn, which DSH would not wait for.
-//   * No native background tasks, subagents or goals of DSH's own, and no panel that lists the harness's own sessions.
+//   * No DSH-created background tasks, subagents or goals. OAR's native child reports still pass through the shared
+//     team observer; OpenCode 2.3+ explicitly marks its children as background. Task reports without that flag do not
+//     establish independent background execution. These runtimes do not support our native terminal-output extension.
 
 const text = (value) => (typeof value === 'string' ? value : '');
 

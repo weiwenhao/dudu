@@ -23,7 +23,7 @@ await mkdir(runtime);
 const copied = new Set();
 // Bundle runtime dependencies that Desktop cannot resolve from the source repository's node_modules.
 // The licenses of everything inside the bundles travel with the plugin.
-const bundled = new Set(['providers/oar-runtimes.mjs', 'providers/oar-pi.mjs', 'providers/stats.mjs', 'assistant/dashboard/engine.mjs', 'assistant/connectors/mcp.mjs', 'assistant/sessions/activity-projection.mjs', 'native-markdown-images.mjs', 'assistant/schedule/cron.mjs', 'providers/quota/system-proxy.mjs', 'computer-use/engine.mjs']);
+const bundled = new Set(['providers/oar-runtimes.mjs', 'providers/oar-pi.mjs', 'providers/stats.mjs', 'assistant/dashboard/engine.mjs', 'assistant/connectors/mcp.mjs', 'assistant/inbox/submission.mjs', 'assistant/sessions/activity-projection.mjs', 'native-markdown-images.mjs', 'assistant/schedule/cron.mjs', 'providers/quota/system-proxy.mjs', 'computer-use/engine.mjs']);
 const noticeBlocks = [];
 async function bundleRuntime(file) {
   const target = join(runtime, file);

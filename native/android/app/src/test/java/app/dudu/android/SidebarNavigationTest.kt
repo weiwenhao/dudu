@@ -17,4 +17,31 @@ class SidebarNavigationTest {
         assertEquals(listOf("dudu.board", "dudu.collector", "dudu.tasks", "extension"), navigation.primary.map { it.getString("id") })
         assertEquals(listOf("plugins", "schedules", "insight"), navigation.additional.map { it.getString("id") })
     }
+
+    @Test fun selectedDestinationFollowsThePageUnderSheetsAndDoesNotMistakeAConversationForBoard() {
+        val board = json("open" to json("native" to "board"))
+        val inbox = json("open" to json("native" to "collector"))
+        val tasks = json("id" to "dudu.tasks", "open" to json("native" to "schedule"))
+        assertTrue(sidebarItemSelected(board, null, false))
+        assertFalse(sidebarItemSelected(board, null, true))
+        val page = pageRoute(Route("settings"), listOf(Route("collector"), Route("record", target = "17")), false)
+        assertTrue(sidebarItemSelected(inbox, page, false))
+        assertFalse(sidebarItemSelected(board, page, false))
+        assertFalse(sidebarItemSelected(tasks, page, false))
+        assertTrue(sidebarItemSelected(tasks, pageRoute(Route("task", target = "23"), listOf(Route("tasks")), true), true))
+    }
+
+    @Test fun registryOpeningAndSelectionDistinguishNativeAndEmbeddedPages() {
+        val tasks = json("id" to "dudu.tasks", "open" to json("native" to "schedule",
+            "web" to json("page" to "schedule")))
+        val schedules = json("id" to "schedule", "open" to json("native" to "schedule",
+            "web" to json("page" to "schedule")))
+        val insight = json("id" to "insight", "open" to json("web" to json("page" to "insight")))
+        val schedulePage = navigationRoute(schedules, "session")!!
+        assertEquals("tasks", navigationRoute(tasks)?.name)
+        assertEquals("session", schedulePage.params.getString("sessionId"))
+        assertTrue(sidebarItemSelected(schedules, schedulePage, false))
+        assertFalse(sidebarItemSelected(insight, schedulePage, false))
+        assertFalse(sidebarItemSelected(tasks, schedulePage, false))
+    }
 }

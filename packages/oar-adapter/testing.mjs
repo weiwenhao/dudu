@@ -8,3 +8,4 @@ export { trackPendingCleanup } from './.generated/oar/dist/shared/executable/own
 export { killEntries, readProcessTable } from './.generated/oar/dist/shared/executable/process-tree.js';
 export { rememberOwnedProcess, recoveryDecision } from './.generated/oar/dist/shared/executable/process-recovery.js';
 export { createSessionKernel } from './.generated/oar/dist/shared/session-kernel.js';
+export { claudeCompaction } from './.generated/oar/dist/runtimes/claude/compaction.js';

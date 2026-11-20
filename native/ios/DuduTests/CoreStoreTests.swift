@@ -327,6 +327,26 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertFalse(row.isPending)
     }
 
+    /// Owner, 2026-11-20: a message stayed "sending" for ten minutes on the phone although the computer already had
+    /// it, because the connection kept dropping and the normal path (the echo retires once a fresh snapshot names
+    /// its request id, but only for the conversation currently open) kept missing the moment to run. The plugin's
+    /// own receipt is proof enough on its own, so a confirmed send must not depend on that snapshot forever.
+    func testAConfirmedSendRetiresItsEchoOnItsOwnWhenNoSnapshotEverConfirmsIt() async throws {
+        let transport = StoreTransportFixture()
+        let store = DuduStore(repository: StoreComputerFixture(), client: transport)
+        store.deliveryFallbackSeconds = 0.05
+        await store.start()
+        await transport.holdNextRequest("session.send")
+        let sending = Task { try await store.send(text: "continue") }
+        await transport.waitForRequest("session.send")
+        await transport.finishRequest("session.send")
+        try await sending.value
+        XCTAssertEqual(store.acceptedSubmissions.count, 1, "Still shown: no snapshot has confirmed it yet.")
+        try await Task.sleep(for: .seconds(0.3))
+        XCTAssertTrue(store.acceptedSubmissions.isEmpty, "A confirmed send must not wait forever for a snapshot a dropped connection keeps missing.")
+        XCTAssertTrue(store.displayedTranscriptRows.isEmpty)
+    }
+
     func testSubmissionReconciliationAllowsRepeatedIdenticalMessages() async throws {
         let transport = StoreTransportFixture()
         let store = DuduStore(repository: StoreComputerFixture(), client: transport)

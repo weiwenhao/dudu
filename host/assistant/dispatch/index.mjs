@@ -1,14 +1,15 @@
 // 嘟嘟's dispatch: from what comes in to who does it (docs/assistant.md 1.2, 3.1 "收进来", 3.3).
 //
-//   const dispatch = createDispatch({ issues, collectors, collect, onCollected, rules, llm, agents, now = Date.now, file, limits });
+//   const dispatch = createDispatch({ issues, collectors, collect, onCollected, acknowledge, rules, llm, agents, now = Date.now, file, limits });
 //
 //   issues      createIssues(...): the inbox of collected records lives in it, and the issues that `assign` hands out
 //   collectors  createCollectors(...), or a function giving the current registry after a folder move. Dispatch only lists them, each with the
 //               connector it reads through (`via`: { id, name, kind, prompt, server } | null).
-//   collect     async (collector, { signal, since }) -> { outcome, records }. Reads through an isolated DSH collection session using
+//   collect     async (collector, { signal, since, submit }) -> { outcome, records }. Reads through an isolated DSH collection session using
 //               installed tools and skills (or the one MCP server of an MCP connector); it never executes launch configuration from a registry.
-//               `records` are the raw records the session wrote (inbox/records.mjs checks them).
+//               The session submits raw records with submit(records); it returns a receipt only after validation and database commit.
 //   onCollected (collector, records) -> void. Live notification of successfully stored new/changed records, using the current collector settings.
+//   acknowledge (collector, raw, stored, { signal }) -> receipt. Optional source acknowledgement after commit; its failure does not undo storage.
 //   rules       () -> { rules: { 'ASSIGN.md': text | null } } (memory.rules; sync or async), read on every call
 //   llm         async (messages: [{ role: 'system' | 'user', content }], { signal }) -> string. Used by `assign` only, one call per assignment. Called
 //               with an AbortSignal that fires after 60 seconds (and when dispatch is disposed): a model that does not answer by then is given up on
@@ -48,6 +49,7 @@
 // Nothing here logs, and nothing that holds a secret is stored in an issue, in intake.json or in a result.
 import { redact } from '../memory/secrets.mjs';
 import { normalizeRecords } from '../inbox/records.mjs';
+import { checkCollectorResult } from '../inbox/submission.mjs';
 import { parseAssign } from './answer.mjs';
 import { assignMessages } from './prompts.mjs';
 import { allowedAccess, grantAccess, sameKind, sessionOptions } from './rules.mjs';
@@ -69,7 +71,7 @@ const isFinished = (status) => status === 'done' || status === 'canceled';
 class ModelError extends Error {}
 class Stopped extends Error {}
 
-export function createDispatch({ issues, collectors = null, collect = null, onCollected = null, rules = null, llm = null, agents = null, now = Date.now, file, limits = {} } = {}) {
+export function createDispatch({ issues, collectors = null, collect = null, onCollected = null, acknowledge = null, rules = null, llm = null, agents = null, now = Date.now, file, limits = {} } = {}) {
   if (!issues || typeof issues.add !== 'function' || !issues.inbox) throw new TypeError('createDispatch needs the issues store, with its inbox.');
   const { inbox } = issues;
   if (typeof file !== 'string' || !file) throw new TypeError('createDispatch needs the file to keep the intake state in (intake.json).');
@@ -138,6 +140,71 @@ export function createDispatch({ issues, collectors = null, collect = null, onCo
     }
   }
 
+  const sourceKey = (view) => JSON.stringify([
+    view.prompt ?? view.description, view.connector,
+    view.via?.id, view.via?.kind, view.via?.prompt, view.via?.server, view.via?.spec, view.via?.via,
+  ]);
+
+  /** A write capability bound to one run or one context request, never an arbitrary collector or row supplied by the model. */
+  function submissionFor(view, { signal, runId = null, recordId = null }) {
+    let active = true;
+    let saved = null;
+    let tail = Promise.resolve();
+    const submit = (raw) => {
+      const job = tail.then(async () => {
+        const stopped = () => !active || disposed || signal.aborted;
+        if (stopped()) return { ok: false, code: 'collection_stopped' };
+        if (saved) return saved.receipt;
+        const checked = checkCollectorResult({ ok: true, records: raw });
+        if (!checked.ok) return checked;
+        const normalized = normalizeRecords(checked.value.records, { now });
+        if (normalized.rejected.length || normalized.dropped) return {
+          ok: false, code: 'invalid_records',
+          errors: normalized.rejected.map(({ index, message }) => ({ path: `records.${index}`, message })),
+          dropped: normalized.dropped,
+        };
+        const current = (await listViews()).views?.find((item) => item.id === view.id);
+        if (!current || sourceKey(current) !== sourceKey(view)) return { ok: false, code: 'collector_changed', message: W.readFailed };
+        if (stopped()) return { ok: false, code: 'collection_stopped' };
+
+        if (recordId !== null) {
+          const target = inbox.get(recordId)?.record;
+          // addContext's compatibility matching must not let a tool import another thread into the selected row.
+          if (!target || target.connector !== view.id || normalized.records.length !== 1 ||
+              normalized.records[0].update || normalized.records[0].sourceId !== target.sourceId) {
+            return { ok: false, code: 'wrong_record', message: 'Submit context for the requested source item or thread only.' };
+          }
+          const result = inbox.addContext(recordId, normalized.records);
+          if (result.outcome !== 'success') return { ok: false, code: result.code, message: result.message };
+          saved = { result, receipt: { ok: true, recordIds: [recordId], added: result.added } };
+          return saved.receipt;
+        }
+
+        // ingest is transactional. Nothing is acknowledged or notified until its COMMIT has returned.
+        const stored = inbox.ingest(view.id, normalized.records, { runId });
+        const fresh = [...stored.added, ...stored.updated];
+        const receipt = {
+          ok: true, runId, recordIds: [...new Set(fresh.map((record) => record.id))],
+          added: stored.added.length, updated: stored.updated.length, seen: stored.seen,
+          unmatched: stored.missed, duplicates: normalized.duplicates, truncated: normalized.truncated,
+        };
+        saved = { stored, normalized, empty: raw.length === 0, receipt };
+        if (fresh.length && onCollected) {
+          try { onCollected(current, fresh); }
+          catch { /* A failed notification does not undo storage. */ }
+        }
+        if (fresh.length && acknowledge) {
+          try { receipt.acknowledgement = await acknowledge(current, checked.value.records, fresh, { signal }); }
+          catch { receipt.acknowledgement = { ok: false }; }
+        }
+        return receipt;
+      });
+      tail = job.catch(() => {});
+      return job;
+    };
+    return { submit, close: () => { active = false; }, get saved() { return saved; } };
+  }
+
   // One collector: collect it and keep what came back, and nothing else: the owner reads the records in the Collector widget and decides what to do with
   // each. Returns { op, failed?, items, added }.
   async function processCollector(view, run) {
@@ -153,49 +220,49 @@ export function createDispatch({ issues, collectors = null, collect = null, onCo
     let read;
     // A collection is a session that works with the owner's own tools (a command-line client, a skill), a step at a time: it is given ten minutes.
     const timeout = AbortSignal.timeout(cap.collectMs);
+    const signal = AbortSignal.any([stop.signal, timeout]);
+    const submission = submissionFor(view, { signal, runId });
     try {
       if (!collect) throw new Error('The DSH collection service is unavailable.');
       if (!view.via && view.via !== undefined) throw new Error(W.noConnector);
       run.collections++;
-      const signal = AbortSignal.any([stop.signal, timeout]);
-      read = await collect(view, { signal, since: inbox.lastGood(view.id)?.startedAt ?? null });
+      read = await collect(view, { signal, since: inbox.lastGood(view.id)?.startedAt ?? null, submit: submission.submit });
     } catch (error) {
       read = { outcome: 'error', message: timeout.aborted ? W.collectTimeout(Math.round(cap.collectMs / 60_000)) : error?.message };
+    } finally {
+      submission.close();
     }
+    const { saved } = submission;
+    const counts = saved ? { added: saved.stored.added.length + saved.stored.updated.length, seen: saved.stored.seen } : {};
     if (disposed) {
-      end({ ok: false, error: W.disposed });
+      end({ ok: false, ...counts, error: W.disposed });
       throw new Stopped(W.disposed);
     }
-    if (read?.outcome !== 'success') {
+    if (read?.outcome !== 'success' || !saved) {
       const error = safe(read?.message ?? W.readFailed, 300);
-      end({ ok: false, error });
-      return failed(error);
+      // A model that fails after submitting cannot undo the commit. Keep its counts, but do not advance lastGood/since.
+      end({ ok: false, ...counts, error });
+      return { ...failed(error), items: counts.added ?? 0, added: counts.added ?? 0 };
     }
     const current = (await listViews()).views?.find((item) => item.id === view.id);
-    if (!current || (current.prompt ?? current.description) !== (view.prompt ?? view.description)) {
-      end({ ok: true });
-      return { op: { ...op, status: 'skipped' }, skipped: true };
+    if (!current || sourceKey(current) !== sourceKey(view)) {
+      end({ ok: false, ...counts, error: W.readFailed });
+      return { ...failed(W.readFailed), items: counts.added ?? 0, added: counts.added ?? 0 };
     }
 
-    const normalized = normalizeRecords(read.records, { now });
-    const stored = inbox.ingest(view.id, normalized.records, { runId });
+    const { stored } = saved;
     // A conversation that went on in a row that was waiting is something new as much as a row that is added, and so is a row the collector changed (`update`: an alert that is over).
     const fresh = stored.added.length + stored.updated.length;
 
-    const empty = read.records.length === 0;
+    const empty = saved.empty;
     const unchanged = !empty && fresh === 0;
     const summary = {
       status: empty ? 'empty' : unchanged ? 'unchanged' : 'read',
       added: fresh, seen: stored.seen,
       ...(stored.updated.length ? { updated: stored.updated.length } : {}),
       ...(stored.missed ? { unmatched: stored.missed } : {}),
-      ...(normalized.rejected.length || normalized.dropped ? { notCollected: normalized.rejected.map(({ index, id, message }) => ({ index, id: safe(id, 40), message: safe(message, 200) })), dropped: normalized.dropped } : {}),
     };
-    end({ ok: true, added: fresh, seen: stored.seen, rejected: normalized.rejected.length + normalized.dropped, created: 0, error: null, me: read.me ?? null });
-    if (fresh && onCollected) {
-      try { onCollected(current, [...stored.added, ...stored.updated]); }
-      catch { /* A failed notification does not undo a completed collection. */ }
-    }
+    end({ ok: true, added: fresh, seen: stored.seen, rejected: 0, created: 0, error: null });
     return { op: { ...op, ...summary }, items: fresh, added: fresh };
   }
 
@@ -214,15 +281,19 @@ export function createDispatch({ issues, collectors = null, collect = null, onCo
     if (!view) return { outcome: 'needs_clarification', code: 'no_collector', message: 'The collector that brought this record is no longer saved.' };
     if (!view.via && view.via !== undefined) return { outcome: 'error', message: W.noConnector };
     const timeout = AbortSignal.timeout(cap.collectMs);
+    const signal = AbortSignal.any([stop.signal, timeout]);
+    const submission = submissionFor(view, { signal, recordId: got.record.id });
     let read;
     try {
-      read = await collect.fill(view, got.record, { signal: AbortSignal.any([stop.signal, timeout]) });
+      read = await collect.fill(view, got.record, { signal, submit: submission.submit });
     } catch (error) {
       read = { outcome: 'error', message: timeout.aborted ? W.collectTimeout(Math.round(cap.collectMs / 60_000)) : error?.message };
+    } finally {
+      submission.close();
     }
     if (disposed) return { outcome: 'error', message: W.disposed };
     if (read?.outcome !== 'success') return { outcome: 'error', message: safe(read?.message ?? W.readFailed, 300) };
-    return inbox.addContext(got.record.id, normalizeRecords(read.records, { now }).records);
+    return submission.saved?.result ?? { outcome: 'error', message: W.readFailed };
   }
 
   async function runIntake(only, run) {

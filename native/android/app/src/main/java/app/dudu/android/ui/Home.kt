@@ -66,14 +66,9 @@ fun DuduApp(state: UiState, model: DuduViewModel) {
         drawerState = drawer, gesturesEnabled = state.conversationTitle == null,
         drawerContent = { DuduSidebar(state, model, drawer.isOpen) { coroutine.launch { drawer.close() } } },
     ) {
-        fun isSheetRoute(it: Route): Boolean =
-            it.name in setOf("preferences", "settings", "about", "computers", "computer", "subissues", "task", "issue", "record") ||
-                it.name == "files" && it.params.optBoolean("file") ||
-                state.conversationTitle != null &&
-                (it.name in setOf("activity", "session-tasks", "task", "delivered-files", "tool", "changes", "diff", "issue") ||
-                    it.name == "files" && it.params.optBoolean("file"))
-        val sheetRoute = state.route?.takeIf(::isSheetRoute)
-        val pageRoute = if (sheetRoute == null) state.route else model.routesBehindCurrent().lastOrNull { !isSheetRoute(it) }
+        val conversationOpen = state.conversationTitle != null
+        val sheetRoute = state.route?.takeIf { it.isSheet(conversationOpen) }
+        val pageRoute = pageRoute(state.route, model.routesBehindCurrent(), conversationOpen)
         if (pageRoute != null) FeatureScreen(pageRoute, state, model) { coroutine.launch { drawer.open() } }
         else if (state.conversationTitle != null) key(state.computerId, state.conversationKey) { ConversationPage(state, model) }
         else Scaffold(containerColor = MaterialTheme.colorScheme.surface,

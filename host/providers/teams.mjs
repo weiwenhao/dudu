@@ -90,6 +90,7 @@ export function createHarnessTeams({ host, driver, log = console }) {
           sessionId: record.sessionId, agentPath: record.agentPath ?? [], taskId: event.taskId,
           ...(event.childSessionId ? { childSessionId: event.childSessionId } : {}),
           ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+          ...(typeof event.background === 'boolean' ? { background: event.background } : {}),
           ...(event.nativeType ? { nativeType: event.nativeType } : {}), description: label,
         },
       };
@@ -216,7 +217,10 @@ export function createHarnessTeams({ host, driver, log = console }) {
       });
       await sampleUsage(child, record, child.normalizer.isMessageEnd?.(record)
         || normalized.some((event) => ['step-end', 'turn-end', 'tool-result'].includes(event.type)));
+      const failed = normalized.some((event) => event.type === 'turn-end' && !event.ok);
       for (const event of normalized) {
+        // A failed native ending must reach the mirror before a tool-free stop could commit it as success.
+        if (failed && event.type === 'step-end' && event.reason === 'stop') continue;
         if (event.type === 'text-delta') child.hasText = true;
         if (event.type === 'turn-end' && event.error?.code === 'ABORTED') child.handle?.agent.cancel({ kind: 'parent' });
         child.channel.push(event);
@@ -239,7 +243,17 @@ export function createHarnessTeams({ host, driver, log = console }) {
       await publishTask(child);
     }
 
-    async function recordOne(record) {
+    async function recordOne(record, nativeTasks) {
+      if (record.kind === 'response' && record.body?.kind === 'exited' && record.sessionId === root
+        && (record.agentPath?.length ?? 0) === 0) {
+        // OAR already distinguishes an intentional disposal from an unexpected exit. Apply those same task
+        // facts to the child views instead of treating a stopped parent's outcome as every child's outcome.
+        for (const child of tasks.values()) {
+          const task = nativeTasks?.get(child.facts.taskId);
+          if (task && ['completed', 'failed', 'stopped'].includes(task.status)) await settle(child, task, record);
+        }
+        return;
+      }
       if (record.kind !== 'frame') return;
       const native = record.body.native?.item;
       if (native?.type === 'collabAgentToolCall' && native.status === 'inProgress'
@@ -262,12 +276,14 @@ export function createHarnessTeams({ host, driver, log = console }) {
         }
         const key = keyOf(record, event.taskId);
         let child = typeof event.taskId === 'string'
-          ? tasks.get(key) ?? [...tasks.values()].find((candidate) => candidate.nativeSession === event.taskId) : undefined;
+          ? tasks.get(key) ?? [...tasks.values()].find((candidate) => candidate.nativeSession === event.taskId
+            || candidate.facts.taskId === event.taskId && matches(candidate, record)) : undefined;
         if (event.kind === 'task_started' && event.taskType === 'agent' && !event.ambient) {
           const call = calls.get(keyOf(record, event.toolCallId)) ?? {};
           if (!child) {
             child = remember(record, event, call);
           }
+          if (typeof event.background === 'boolean') child.facts.background = event.background;
           // Claude's SendMessage resume names a new dispatch call, but child frames keep the original Agent path.
           child.prompt = text(call.prompt) || text(call.message) || inputs.get(child.nativeId) || text(native?.prompt);
           inputs.delete(child.nativeId);
@@ -279,6 +295,7 @@ export function createHarnessTeams({ host, driver, log = console }) {
           }
           await publishTask(child);
         } else if (child && event.kind === 'task_updated') {
+          if (typeof event.background === 'boolean') child.facts.background = event.background;
           if (event.status) {
             child.status = event.status;
             if (event.status === 'running') {
@@ -303,7 +320,7 @@ export function createHarnessTeams({ host, driver, log = console }) {
     const observer = {
       seed: facts,
       async checkpoint() { await tail; return facts(); },
-      record(record, rootId) { root = rootId; if (!ending) void enqueue(() => recordOne(record)); },
+      record(record, rootId, nativeTasks) { root = rootId; if (!ending) void enqueue(() => recordOne(record, nativeTasks)); },
       end(outcome) {
         if (ending) return ending;
         ending = enqueue(async () => {

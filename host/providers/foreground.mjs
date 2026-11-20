@@ -1,3 +1,4 @@
+import { LONG_POLL_MS } from '../long-poll.mjs';
 import { abortReason } from './async.mjs';
 
 /** Transient, session-scoped observation. Waiting for native work is not another model turn or a durable status. */
@@ -23,7 +24,7 @@ export function createForegroundWatch(read) {
         };
         const settle = () => { cleanup(); resolve(snapshot(id)); };
         const abort = () => { cleanup(); reject(abortReason(signal)); };
-        const timer = setTimeout(settle, 25_000);
+        const timer = setTimeout(settle, LONG_POLL_MS);
         listeners.add(settle);
         waiting.set(id, listeners);
         signal?.addEventListener('abort', abort, { once: true });

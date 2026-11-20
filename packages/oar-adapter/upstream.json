@@ -69,7 +69,7 @@
     },
     {
       "file": "patches/claude-session.patch",
-      "purpose": "Opening cancellation, private task-output readback and settings changes over the native process.",
+      "purpose": "Opening cancellation, private task-output/settings controls and compact-specific command provenance.",
       "files": {
         "dist/runtimes/claude/open-settings.js": {
           "before": "3b0901154dd70c80b76314fe526d8dd5f4f48233e95727ca22bbfec31a6a6c3a",
@@ -86,6 +86,10 @@
         "dist/runtimes/claude/tasks.js": {
           "before": "f8a7de535648917351caac7ed9e71daa08637d91301ac3fce663a9544271f777",
           "after": "3ed2a80ad6e27fb9c086a09da2510668e0bc09541371b9c5d84993a5328553e4"
+        },
+        "dist/runtimes/claude/compaction.js": {
+          "before": "2d9f8720762fc61da3933a9d170940155c018effb858444d04a24eafd49beda7",
+          "after": "23a2306631333b6dd67a62738795a34bf3bd313bf1f8e660a11a1b38bc8a2b21"
         }
       }
     },

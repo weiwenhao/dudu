@@ -78,9 +78,8 @@ enum DuduStyle {
     static let sheet = Color(red: 247.0 / 255, green: 247.0 / 255, blue: 248.0 / 255)
     static let canvas = Color(red: 250.0 / 255, green: 250.0 / 255, blue: 250.0 / 255)
     static let selected = Color(red: 234.0 / 255, green: 234.0 / 255, blue: 237.0 / 255)
-    /// The light grey circle of the board's filter button, on the white page (Lark's: F1F1F0 measured from the owner's screenshot, 2026-11-18). The tabs beside it sit on a track of `selected`, the chosen one a white pill
-    /// with a thin grey edge and blue words that slides to the next, as in Lark's message filter row.
-    static let track = Color(red: 0xf2 / 255, green: 0xf3 / 255, blue: 0xf5 / 255)
+    /// The board's scope track and inactive filter button share the owner's approved Lark grey (2026-11-20).
+    static let scopeTrack = Color(red: 0xef / 255, green: 0xf0 / 255, blue: 0xf2 / 255)
     static let settingsBackground = Color(uiColor: .systemGroupedBackground)
 
     // Chat palette taken from DSH's own light theme (neutral-bluish scale and the bubble tint).

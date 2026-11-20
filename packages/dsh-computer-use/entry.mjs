@@ -4,12 +4,14 @@ import { ToolExecutionPipeline } from '@deepseek-ai/dsh-tools/pipeline';
 import { createRunCodeTool } from './vendor/ptc.ts';
 import { PtcCalls } from './vendor/ptc-calls.ts';
 
-const available = (toolSet) => !toolSet || toolSet.allowed.has('cua_run_code');
-
 export function createProgramTransport(ctx, tool, runtime) {
+  // Admission is a host-owned, scope-bound view, not a set of allowed names.
+  // Re-resolve the enclosing capability through the public registry so a closed
+  // step, another agent, a restriction or an unloaded registration cannot bind CUA.
+  const available = (agent, toolSet) => ctx.tools.executable('cua_run_code', agent, toolSet) !== undefined;
   const tools = new Proxy(ctx.tools, {
     get(target, key) {
-      if (key === 'schemas') return (_agent, toolSet) => available(toolSet) ? [projectToolSchema(tool, false)] : [];
+      if (key === 'schemas') return (agent, toolSet) => available(agent, toolSet) ? [projectToolSchema(tool, false)] : [];
       const value = Reflect.get(target, key, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
@@ -25,7 +27,7 @@ export function createProgramTransport(ctx, tool, runtime) {
   // The real host pipeline still runs approvals, guards, cancellation, image
   // admission and result observers. Its only binding is the real provider's cua.
   const pipeline = new ToolExecutionPipeline(context, {
-    get: (name, _agent, toolSet) => name === tool.name && available(toolSet) ? tool : undefined,
+    get: (name, agent, toolSet) => name === tool.name && available(agent, toolSet) ? tool : undefined,
   });
   const definition = createRunCodeTool(context, pipeline, {
     maxSubCallsPerMinute: 1024, maxParallelSubCalls: 10,

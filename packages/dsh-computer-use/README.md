@@ -20,6 +20,10 @@ that provider.
   `cua_run_code`. Its fixed tool view contains only the original provider's
   private `cua` definition. It uses the host's public `ToolExecutionPipeline`,
   retaining pre/post policies, approval, guards, cancellation and image contexts.
+  Private binding admission re-resolves `cua_run_code` through the host's public
+  `tools.executable(name, agent, toolSet)`: a resolved step exposes
+  `view(scope)`, not an `allowed` property. Closed steps, foreign scopes, disabled
+  conditions and removed registrations cannot reopen the private binding.
   The ordinary executor and other tool definitions are never changed.
 - `build.mjs` checks the source inventory and statically bundles the engine.
   `.generated/` is ignored. The generated factory receives its dependencies
@@ -31,6 +35,11 @@ that provider.
   `file:` import; no application path is guessed. Only the released native
   provider's held-key observer sees the standalone call as `run_code`, preserving
   the original token, caller signal and enclosing lifetime.
+  The standalone prompt retains the official API and consent instructions,
+  names its enclosing execution `cua_run_code`, and explains that the host
+  initializes `cua` before every call. It removes the old initialization-once
+  instruction and adapts the tree example so it does not refer to file tools
+  absent from the CUA-only program; ordinary native tools stay outside it.
 - `host/computer-use/registration.mjs` keeps the original preset-scoped raw tool
   for existing PTC agents. Only Dudu's `dudu-assistant-*` standard conversation
   receives the compatibility program tool. Other standard conversations and
@@ -72,11 +81,15 @@ host's contracts; it does not assume that the unpublished runtime APIs exist.
 
 ## Verification boundary
 
-The focused unit contracts cover standard mode preservation, private CUA
-admission, scoped registration, state separation, facade initialization,
-attachment context forwarding and the native held-key observer. Packaging checks
+The focused unit contracts cover standard mode preservation, the actual
+`ResolvedToolSet.view(scope)` admission shape, scoped registration, state
+separation, facade initialization, standalone prompt transport, attachment
+context forwarding and the native held-key observer. A library-only check on
+2026-11-20 also exercised the installed `0.2.2-rc.3` registry, step resolution and
+pipeline with a scripted runtime and private tool, including conditional,
+foreign-scope, closed-step and removed-registration denial. Packaging checks
 the actual archive's imports and notices. They are not evidence of a completed
 computer-control task. No app, model, native helper, GUI, owner profile or
-application grant is used by these tests. Actual Computer Use requires an
+application grant is used by these checks. Actual Computer Use requires an
 explicitly requested runtime/end-to-end check and the owner's normal macOS and
 application approvals.

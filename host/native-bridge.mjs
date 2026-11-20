@@ -1792,7 +1792,9 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
   });
 
   async function sessionRows() {
-    const rows = await loadSessionRows();
+    // Match DSH's sidebar: children belong in their parent's team, not the ordinary list/search.
+    // Keep the full cache for findSessionRow, which resolves their parent-addressed history.
+    const rows = (await loadSessionRows()).filter((row) => row.origin !== 'subagent');
     const known = new Set(rows.map((row) => row.sessionId ?? row.id));
     for (const id of presentationCache.keys()) if (!known.has(id)) presentationCache.delete(id);
     // DSH's list carries available cached hints. Only genuinely missing titles/providers need a

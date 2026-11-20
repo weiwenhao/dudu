@@ -6,6 +6,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TranscriptTest {
+    @Test fun changeCountsSurviveExpiryAndCacheRestoreButNeverFollowAnotherComparison() {
+        val counts = json("total" to 2, "added" to 8, "deleted" to 3)
+        fun transcript(seq: Int) = json("turns" to JSONArray(listOf(json("turn" to 1, "changesSeq" to seq))))
+        val known = transcript(12)
+        known.rows("turns").single().put("changesSummary", counts)
+        val retained = mergeTranscript(known, transcript(12))
+        assertEquals(counts.toString(), retained.rows("turns").single().getJSONObject("changesSummary").toString())
+        val cached = cachedSession(json("session" to json("id" to "session"), "transcript" to retained))
+        assertEquals(counts.toString(), cached.getJSONObject("transcript").rows("turns").single()
+            .getJSONObject("changesSummary").toString())
+        val changed = mergeTranscript(retained, transcript(14)).rows("turns").single()
+        assertEquals(14, changed.getInt("changesSeq"))
+        assertFalse(changed.has("changesSummary"))
+    }
+
     private fun step(id: String, turn: Int, text: String = "", calls: List<String> = emptyList(), reasoning: String = "") =
         Message(id, "assistant", text, false, reasoning = reasoning,
             raw = json("id" to id, "type" to "assistant", "turn" to turn, "seq" to id.filter(Char::isDigit).toInt(),

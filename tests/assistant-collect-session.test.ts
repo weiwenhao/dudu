@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { createSourceCollector, INTAKE_PREFIX, MAX_RUNS, PROMPT_VERSION, readsOnly } from '../host/assistant/home/source-collector.mjs';
+import { COLLECTOR_SUBMIT } from '../host/assistant/inbox/submission.mjs';
 
 const SOURCE: any = { id: 'lark', name: 'lark', prompt: '收集 lark 中与我相关的消息' };
 const records = (...ids: string[]) => JSON.stringify({ ok: true, records: ids.map((id) => ({ id, title: `消息 ${id}`, text: id })) });
@@ -15,7 +16,7 @@ const records = (...ids: string[]) => JSON.stringify({ ok: true, records: ids.ma
 function world(answers: any[], { listed = [] as string[], folded = [] as string[], tools = null as null | { name: string; readOnly?: boolean; writes?: boolean }[] } = {}) {
   const stored = new Map<string, any[]>(); // session id -> its events
   const live = new Map<string, any>();
-  const log: any = { created: [], resumed: [], archived: [], cancelled: [], mounted: 0, access: [], prompts: [], disposed: 0, setups: [] };
+  const log: any = { created: [], resumed: [], archived: [], cancelled: [], mounted: 0, access: [], prompts: [], disposed: 0, setups: [], receipts: [] };
   const queue = [...answers];
   const handleFor = async (id: string, setup: any) => {
     const events = stored.get(id)!;
@@ -47,8 +48,13 @@ function world(answers: any[], { listed = [] as string[], folded = [] as string[
         agent.done = new Promise<void>((resolve) => { agent.finish = () => { agent.status = 'idle'; resolve(); }; });
         const answer = queue.shift();
         if (answer === 'hang') return { accepted: true };
-        if (typeof answer === 'string') events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: answer }] } }, seq: events.length });
-        events.push({ type: 'turn/end', data: { reason: typeof answer === 'string' ? { kind: 'completed' } : { kind: 'error', error: { message: answer.error } } }, seq: events.length });
+        const submit = log.setups.at(-1).registered.find((tool: any) => tool.name === COLLECTOR_SUBMIT);
+        if (typeof answer === 'function') await answer(submit, log);
+        else if (typeof answer === 'string') {
+          log.receipts.push(JSON.parse(await submit.execute(JSON.parse(answer))));
+          events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'Submitted.' }] } }, seq: events.length });
+        }
+        events.push({ type: 'turn/end', data: { reason: answer?.error ? { kind: 'error', error: { message: answer.error } } : { kind: 'completed' } }, seq: events.length });
         agent.finish();
         return { accepted: true };
       },
@@ -90,7 +96,14 @@ function folder(t: any) {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
-const make = (ctx: any, dir: string, options: any = {}) => createSourceCollector(ctx, { folder: () => dir, file: join(dir, 'collect-sessions.json'), warn: () => {}, ...options });
+const make = (ctx: any, dir: string, options: any = {}) => {
+  const service = createSourceCollector(ctx, { folder: () => dir, file: join(dir, 'collect-sessions.json'), warn: () => {}, ...options });
+  const submit = options.submit ?? (async (raw: any[]) => ({ ok: true, added: raw.length }));
+  return Object.assign((source: any, input: any = {}) => service(source, { submit, ...input }), {
+    fill: (source: any, record: any, input: any = {}) => service.fill(source, record, { submit, ...input }),
+    tidy: service.tidy,
+  });
+};
 
 test('a connector is collected in one session, opened again for each collection', async (t) => {
   const dir = folder(t);
@@ -256,11 +269,10 @@ test('what the model is told: to give only what the prompt names, and no notes t
   assert.match(told, /an item that does not match is left out/);
   assert.match(told, /"especially" or "mainly"/);
   assert.match(told, /When you cannot tell whether an item matches, leave it out/);
-  assert.match(told, /Answer with ONE JSON object/);
-  // an answer that still carries notes gives them no way in
-  const chatty = world([JSON.stringify({ ok: true, records: [{ id: 'a', title: 't', text: 'x' }], notes: '1. 全量扫 2. 告警卡也收' })]);
-  const result: any = await make(chatty.ctx, folder(t))(SOURCE);
-  assert.deepEqual(Object.keys(result).sort(), ['outcome', 'records']);
+  assert.match(told, /Submit the result with collector_submit/);
+  // A legacy prose answer, even valid JSON, cannot claim it saved anything.
+  const chatty = world([async (_submit: any, log: any) => { log.prose = records('a'); }]);
+  await assert.rejects(make(chatty.ctx, folder(t))(SOURCE), /no usable source records/);
 });
 
 test('a collection runs with the permission the owner chose for 嘟嘟\'s sessions when DSH offers it, and read only otherwise', async (t) => {
@@ -333,16 +345,17 @@ test('a collector that reads through an MCP connector is given the tools of the 
   const collect = make(dsh.ctx, folder(t), { connections });
   await collect({ ...SOURCE, via: { id: 'notion', name: 'Notion', kind: 'mcp', prompt: '', server: '', spec: { url: 'https://mcp.notion.com/mcp' } } });
   const [setup] = dsh.log.setups;
-  const names = setup.registered.map((tool: any) => tool.name);
+  const names = setup.registered.map((tool: any) => tool.name).filter((name: string) => name !== COLLECTOR_SUBMIT);
   assert.deepEqual(names.slice(0, 2), ['mcp__notion__search', 'mcp__notion__get-comments'], 'a tool that reads by its annotation or by its name');
   assert.equal(names.length, 3);
   assert.ok(names[2].length <= 64 && /^mcp__notion__x+_[0-9a-f]{8}$/.test(names[2]), 'a name that is too long keeps its start and gets a hash');
   assert.deepEqual(setup.restricted, { allow: [] }, 'every global tool of DSH is hidden: DSH masks global tools only, and what the session registered stays visible');
   assert.equal(setup.guard({ name: 'mcp__notion__search' }), undefined);
+  assert.equal(setup.guard({ name: COLLECTOR_SUBMIT }), undefined);
   for (const name of ['mcp__notion__create-pages', 'mcp__notion__search-and-save', 'mcp__github__search', 'bash']) assert.match(setup.guard({ name }), /only read through its MCP server/, name);
   assert.match(dsh.log.prompts[0].text, /Read through its MCP tools, named mcp__notion__/);
   assert.deepEqual(dsh.log.access, ['read-only'], 'and the session stays read only');
-  assert.equal(await setup.registered[0].execute({ q: 'x' }), 'search done');
+  assert.equal(await setup.registered.find((tool: any) => tool.name === 'mcp__notion__search').execute({ q: 'x' }), 'search done');
   assert.deepEqual(calls, [['notion', 'search', { q: 'x' }]]);
   assert.deepEqual(closed, ['notion'], 'the connection to the server ends with the collection');
 
@@ -360,4 +373,24 @@ test('a collector that reads through an MCP connector is given the tools of the 
   const free = world([records('d')]);
   await make(free.ctx, folder(t))({ ...SOURCE, via: { id: 'a', name: '飞书', kind: 'prompt', prompt: 'x', server: '' } });
   assert.equal(free.log.setups[0].restricted, null);
+});
+
+test('submission errors reach the model for correction, success is a committed receipt, and duplicate calls do not write again', async (t) => {
+  let writes = 0;
+  const dsh = world([async (tool: any) => {
+    assert.equal(JSON.parse(await tool.execute('{"ok":true,"records":[')).code, 'invalid_arguments', 'a malformed string is rejected without repairing or storing it');
+    assert.equal(JSON.parse(await tool.execute({ ok: true, records: [{ id: 'a', title: 't', collector: 'another' }] })).code, 'invalid_arguments');
+    const first = JSON.parse(await tool.execute(JSON.parse(records('a'))));
+    assert.deepEqual(first, { ok: false, code: 'storage_failed' });
+    const saved = JSON.parse(await tool.execute(JSON.parse(records('a'))));
+    assert.deepEqual(saved, { ok: true, recordIds: [7], added: 1 });
+    assert.deepEqual(JSON.parse(await tool.execute(JSON.parse(records('different')))), saved, 'one accepted result per turn');
+  }]);
+  const result = await make(dsh.ctx, folder(t), {
+    submit: async () => (++writes === 1 ? { ok: false, code: 'storage_failed' } : { ok: true, recordIds: [7], added: 1 }),
+  })(SOURCE);
+  assert.equal(writes, 2, 'invalid arguments never reach the write service');
+  assert.equal(result.records[0].id, 'a');
+  const tool = dsh.log.setups[0].registered.find((item: any) => item.name === COLLECTOR_SUBMIT);
+  assert.equal(JSON.parse(await tool.execute(JSON.parse(records('late')))).code, 'collection_stopped', 'released scopes cannot write later');
 });

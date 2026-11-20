@@ -388,6 +388,41 @@ test('native session search uses DSH content search and returns bounded visible 
   assert.equal(calls.some((call) => ['session/follow', 'session/prompt'].includes(call.endpoint)), false);
 });
 
+test('native sidebar and search hide subagents while keeping ordinary forks and team access', async () => {
+  const children = ['dudu-native-child-claude', 'host-child'];
+  const rows = [
+    { sessionId: 'parent', title: '新对话', providerId: 'claude', updatedAt: 123 },
+    { sessionId: 'fork', title: 'Fork', providerId: 'codex', parentSessionId: 'parent', updatedAt: 124 },
+    ...children.map((sessionId) => ({
+      sessionId, origin: 'subagent', parentSessionId: 'parent', blank: false, updatedAt: 125,
+    })),
+  ];
+  const { bridge, calls } = makeHarness({
+    rows,
+    responses: {
+      'session/search': { items: rows.map(({ sessionId }) => ({ sessionId, snippet: 'matching content' })) },
+      'session/projections': ({ sessionId }) => ({ values: sessionId === 'parent'
+        ? { subagentCatalog: children.map((id) => ({ id, label: 'Research', mode: 'one-shot' })) }
+        : { subagent: { mode: 'one-shot' }, modelSelection: { lastUsed: { provider: 'dudu-claude-child', model: 'sonnet' } } } }),
+    },
+  });
+
+  const listed = await bridge.dispatch('session.list', {}, {});
+  assert.deepEqual(listed.map((session) => session.id), ['parent', 'fork']);
+  const searched = await bridge.dispatch('session.search', { query: 'matching' }, {});
+  assert.deepEqual(searched.items.map(({ session }) => session.id), ['parent', 'fork']);
+  assert.equal(calls.some(({ endpoint }) => endpoint === 'session/projections'), false,
+    'hidden children must not trigger sidebar decoration reads');
+
+  const team = await bridge.dispatch('session.team', { id: 'parent' }, {});
+  assert.deepEqual(team.members.map(({ id }) => id), ['parent', ...children]);
+  for (const member of team.members.slice(1)) {
+    assert.equal(member.canOpen, true);
+    assert.deepEqual(member.session.subagent, { parentSessionId: 'parent', mode: 'one-shot' });
+  }
+  assert.equal(calls.some(({ endpoint }) => ['session/create', 'session/prompt', 'session/delete'].includes(endpoint)), false);
+});
+
 test('native session search rejects blank, oversized and non-text queries before reaching DSH', async () => {
   const { bridge, calls } = makeHarness();
   for (const query of ['', '  ', 'a'.repeat(501), 17, null]) {

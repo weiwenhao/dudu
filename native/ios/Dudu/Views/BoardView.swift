@@ -1,11 +1,18 @@
 import SwiftUI
 
+private struct BoardScopeSelectionKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? { nil }
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        if let next = nextValue() { value = next }
+    }
+}
+
 struct BoardScopeBar: View {
     let selection: BoardTab
     let hasFilters: Bool
     let onSelect: (BoardTab) -> Void
     let onFilter: () -> Void
-    @Namespace private var pill
 
     var body: some View {
         HStack(spacing: 2) {
@@ -13,7 +20,7 @@ struct BoardScopeBar: View {
                 DuduIcon(.listFilter, size: 18)
                     .foregroundStyle(hasFilters ? DuduStyle.blue : DuduStyle.ink)
                     .frame(width: 32, height: 32)
-                    .background(hasFilters ? DuduStyle.chatBubble : DuduStyle.track, in: Circle())
+                    .background(hasFilters ? DuduStyle.chatBubble : DuduStyle.scopeTrack, in: Circle())
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
@@ -32,22 +39,37 @@ struct BoardScopeBar: View {
                             .minimumScaleFactor(0.85)
                             .padding(.horizontal, 13)
                             .frame(minWidth: 44, minHeight: 44)
-                            .background {
-                                if selection == tab {
-                                    // Lark's: a white pill with a thin grey edge that slides to the tab that is chosen (owner, 2026-11-18: "胶囊会移动到下一个选项").
-                                    Capsule().fill(.white).overlay(Capsule().strokeBorder(Color.black.opacity(0.14), lineWidth: 1)).frame(height: 28)
-                                        .matchedGeometryEffect(id: "board.scope.pill", in: pill)
-                                }
-                            }
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(DuduQuietPressStyle())
+                    .anchorPreference(key: BoardScopeSelectionKey.self, value: .bounds) {
+                        selection == tab ? $0 : nil
+                    }
                     .accessibilityAddTraits(selection == tab ? .isSelected : [])
                     .accessibilityIdentifier("board.tab.\(tab.id)")
                 }
             }
             .padding(.horizontal, 2)
-            .background { Capsule().fill(DuduStyle.selected).frame(height: 32) }
+            .backgroundPreferenceValue(BoardScopeSelectionKey.self) { anchor in
+                GeometryReader { geometry in
+                    Capsule().fill(DuduStyle.scopeTrack)
+                        .frame(height: 32)
+                        .overlay(alignment: .leading) {
+                            if let anchor {
+                                let bounds = geometry[anchor]
+                                Capsule().fill(.white)
+                                    .frame(width: bounds.width, height: 28)
+                                    .shadow(color: .black.opacity(0.1), radius: 10, x: 3, y: 0)
+                                    .offset(x: bounds.minX)
+                            }
+                        }
+                        // Clip only the backing: the buttons above retain their full 44pt touch regions.
+                        .clipShape(Capsule())
+                        .frame(maxHeight: .infinity)
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
             .animation(.snappy(duration: 0.3), value: selection)
             .accessibilityIdentifier("board.scope")
             Spacer(minLength: 0)

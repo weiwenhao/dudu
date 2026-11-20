@@ -56,7 +56,7 @@ are grouped by implementation area because several features share session module
 | --- | --- |
 | `session-controls.patch` | Optional control contracts, sealing and shared stream-json hooks |
 | `claude-defaults.patch` | Native model, effort and permission configuration |
-| `claude-session.patch` | Opening cancellation and private background controls |
+| `claude-session.patch` | Opening cancellation, private background controls and compact-specific command provenance |
 | `codex-subagents.patch` | Native v1/v2 child ownership and resume attribution |
 | `codex-session.patch` | Native background terminals alongside official child stopping |
 | `process-ownership.patch` | Exit/signal cleanup and idle hook removal |
@@ -94,6 +94,16 @@ and `unconfirmed` remain distinct failures/cancellation. Stopping observation
 through the caller's signal alone does not cancel native work, so Dudu also
 uses the existing native abort and always waits for process disposal before
 releasing its writer. DSH retains its full visible history.
+
+Since 2026-11-20, `claude-session.patch` also narrows Claude's compaction provenance
+invalidation to changes that affect `/compact` itself. Claude pushes its entire
+command catalog when any skill is discovered or reloaded; a push that still
+confirms built-in `compact` with no project/user override no longer invalidates
+an otherwise successful compaction. Missing/unknown provenance and an override
+still invalidate it, even if a later push restores the built-in command. Initial
+provenance, native command start, the manual compact boundary and a successful
+matching result remain required. Native failure, cancellation, process ownership
+and release continue through upstream's implementation.
 
 The old generic `stopTask` contract and normalization patches are also retired.
 Claude uses the upstream native task control. Codex uses upstream's observed

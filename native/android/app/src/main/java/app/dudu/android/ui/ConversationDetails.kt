@@ -147,10 +147,15 @@ fun DetailScreen(route: Route, state: UiState, model: DuduViewModel) {
     var query by remember { mutableStateOf("") }
     val session = state.session ?: return
     fun load(section: String? = null) = actions.run {
-        val params = route.params.copyJson().put("id", session.id)
+        val params = route.params.copyJson().put("id", route.params.nullableString("id") ?: session.id)
         if (section != null) offsets[section]?.let { params.put("${section}Offset", it) }
         val next = model.request("session.${route.name}", params)
         result = next
+        if (route.name in listOf("changes", "diff")) DuduLog.record("conversation.${route.name}.loaded",
+            counts = mapOf("rowCount" to if (route.name == "changes") next.rows("files").size.toLong()
+                else next.rows("hunks").sumOf { it.optJSONArray("lines")?.length()?.toLong() ?: 0L }),
+            state = if (route.name == "diff")
+                next.optString("kind").takeIf { it in listOf("text", "binary", "oversized") } ?: "unknown" else null)
         if (route.name == "tool") for (field in listOf("input", "output", "metadata")) {
             if (section != null && section != field) continue
             val page = next.optJSONObject(field) ?: continue
@@ -194,14 +199,14 @@ fun DetailScreen(route: Route, state: UiState, model: DuduViewModel) {
                 }
                 "changes" -> items(matching, key = { it.index }) { (index, file) ->
                     Surface(onClick = { model.navigate(Route("diff", file.optString("display"),
-                        params = json("seq" to route.params.getLong("seq"), "index" to index))) }, color = MaterialTheme.colorScheme.surface) {
+                        params = json("id" to (route.params.nullableString("id") ?: session.id),
+                            "seq" to route.params.getLong("seq"), "index" to index))) }, color = MaterialTheme.colorScheme.surface) {
                         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 20.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                 Text(file.optString("display", file.optString("path")), fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("+${file.optInt("added")}", fontSize = 12.sp, color = Color(0xFF1A8E47))
-                                    Text("−${file.optInt("deleted")}", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                                    FileChangeCounts(file.optInt("added"), file.optInt("deleted"))
                                 }
                             }
                             Glyph(R.drawable.ic_chevron_right, size = 15, tint = MaterialTheme.colorScheme.onSurfaceVariant)

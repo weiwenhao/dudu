@@ -18,6 +18,8 @@ object DuduStyle {
     val blue = Color(0xFF4176E6)
     val bubble = Color(0xFFEDF2FE)
     val settings = Color(0xFFF2F2F7)
+    val selected = Color(0xFFEAEAED)
+    val scopeTrack = Color(0xFFEFF0F2)
 }
 
 private val light = lightColorScheme(
