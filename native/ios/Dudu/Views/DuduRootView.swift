@@ -489,6 +489,10 @@ struct DuduRootView: View {
                             }
                             .modifier(DrawerToolbarEffect(motion: drawerMotion, isOpen: isSidebarOpen, width: drawerWidth))
                     })
+                    // The status bar and the translucent top bar have nothing of their own behind them: the board, kept mounted under the
+                    // conversation, showed through (its quota and + buttons, the edge of its page) (owner, 2026-11-20). Back the whole page with the canvas,
+                    // and let it move with the page.
+                    .background { DuduStyle.canvas.ignoresSafeArea() }
                     .modifier(BoardConversationMotion(
                         motion: boardMotion, position: boardPagePosition,
                         width: geometry.size.width, reduceMotion: reduceMotion
@@ -792,33 +796,47 @@ struct DuduRootView: View {
 
     /// The owner's reference (2026-11-08): a compact title after the back button, without the issue ID.
     /// Let the actual controls bound its width so long titles have all the remaining room.
+    /// A title that fits is plain text, so a tap on the bar does nothing (owner, 2026-11-20: a tap on the blurred top opened a popup that only said the title again).
+    /// A title that is cut at the end opens whole in a native popover on tap (owner, 2026-11-08).
     private func conversationTitle(_ title: String) -> some View {
-        Button {
-            showsConversationTitle = true
-        } label: {
-            Text(title)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(DuduStyle.ink)
-                .lineLimit(1)
-                .truncationMode(.tail)
+        ViewThatFits(in: .horizontal) {
+            conversationTitleText(title)
+                .fixedSize(horizontal: true, vertical: false)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: DuduLayout.toolbarHeight)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(DuduQuietPressStyle())
-        .accessibilityAddTraits(.isHeader)
-        .accessibilityIdentifier("issue.title")
-        .popover(isPresented: $showsConversationTitle, arrowEdge: .top) {
-            Text(title)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(DuduStyle.ink)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(16)
-                .frame(idealWidth: 280, maxWidth: 320)
-                .presentationCompactAdaptation(.popover)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("issue.title")
+            Button {
+                showsConversationTitle = true
+            } label: {
+                conversationTitleText(title)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: DuduLayout.toolbarHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(DuduQuietPressStyle())
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("issue.title")
+            .popover(isPresented: $showsConversationTitle, arrowEdge: .top) {
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(DuduStyle.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(16)
+                    .frame(idealWidth: 280, maxWidth: 320)
+                    .presentationCompactAdaptation(.popover)
+            }
         }
         .onChange(of: title) { _, _ in showsConversationTitle = false }
         .onDisappear { showsConversationTitle = false }
+    }
+
+    private func conversationTitleText(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(DuduStyle.ink)
+            .lineLimit(1)
     }
 
     private func boardConversationTitle(for page: MainDestination) -> String? {
