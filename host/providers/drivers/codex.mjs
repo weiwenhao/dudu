@@ -1,5 +1,6 @@
+import { harnessError } from '../harness-bridge.mjs';
 import { OarNormalizer, createOarProvider } from '../oar.mjs';
-import { codexRuntime } from '../oar-runtimes.mjs';
+import { codexRuntime, recoverOwnedProcess } from '../oar-runtimes.mjs';
 import { readCodexQuota } from '../quota/codex.mjs';
 import { CODEX_TOOLS, fallbackSpec } from './codex-tools.mjs';
 
@@ -91,6 +92,17 @@ export function createCodexProvider({ runtime = codexRuntime } = {}) {
     quota: readCodexQuota,
     // OAR sets the sandbox for the whole app-server with its own `-c`; a later one for the same key wins.
     session: ({ permission }) => ({ launchArgs: ['-c', `sandbox_mode="${sandboxOf(permission)}"`] }),
+    // Codex's app-server refuses a second writer on its own ("thread/resume failed: ... already has an active writer"), so unlike
+    // Claude there is no registry of other processes to check here; what this recovers is a process dudu itself left behind from an
+    // earlier attempt (2026-11-21: a failed resume left its app-server running, and the next attempt collided with it).
+    before: async ({ resume }) => {
+      if (!resume) return;
+      try { await recoverOwnedProcess(`codex:${resume}`); }
+      catch (error) {
+        console.warn('[dudu] Codex process recovery failed', error.code ?? error.message);
+        throw harnessError('busy', 'HARNESS_BUSY');
+      }
+    },
   });
 }
 
