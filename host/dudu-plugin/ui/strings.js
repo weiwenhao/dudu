@@ -42,7 +42,7 @@ const en = {
   },
   brand: 'Dudu',
   issues: 'Issues',
-  tabs: { active: 'Active', backlog: 'Backlog', all: 'All issues' },
+  tabs: { active: 'Active', backlog: 'Backlog', all: 'All' },
   status: { backlog: 'Backlog', todo: 'Todo', in_progress: 'In Progress', in_review: 'In Review', done: 'Done', canceled: 'Canceled' },
   priority: { none: 'No priority', urgent: 'Urgent', high: 'High', medium: 'Medium', low: 'Low' },
   priorityOf: (name) => `Priority: ${name}`,
@@ -251,7 +251,7 @@ const en = {
   },
   // The approved settings layout and Chinese copy; English translations and NEW states await review.
   settings: {
-    title: 'Dudu settings', openFolder: 'Open project folder', failed: 'Could not load this page', retry: 'Retry', unavailable: 'The project folder could not be opened.',
+    title: 'Settings', openFolder: 'Open project folder', failed: 'Could not load this page', retry: 'Retry', unavailable: 'The project folder could not be opened.',
     nav: { general: 'General', statuses: 'Status', connectors: 'Connectors', collectors: 'Collectors', rules: 'Rules', memory: 'Memory', skills: 'Skills', providers: 'Providers', phone: 'Phone control' }, // NEW: the two existing DSH sections embedded here
     // The same words as forgetting a memory (`memory.willDelete`, `cancel`, `confirmForget`): the window that asks before a connector or a collector is deleted.
     confirmDelete: { title: 'This will be deleted', cancel: 'Cancel', delete: 'Delete' },
@@ -421,7 +421,7 @@ const zh = {
     copy: '复制', copied: '已复制', noOutput: '（无输出）', confirmDelete: '再次点击确认删除',
   },
   brand: '嘟嘟', issues: '看板',
-  tabs: { active: '进行中', backlog: '待规划', all: '全部事项' },
+  tabs: { active: '进行中', backlog: '待规划', all: '全部' },
   status: { backlog: '待规划', todo: '待办', in_progress: '处理中', in_review: '待审核', done: '已完成', canceled: '已取消' },
   priority: { none: '无优先级', urgent: '紧急', high: '高', medium: '中', low: '低' },
   priorityOf: (name) => `优先级：${name}`,
@@ -575,8 +575,8 @@ const zh = {
     },
   },
   settings: {
-    title: '嘟嘟设置', openFolder: '打开项目文件夹', failed: '这一页没能加载', retry: '重试', unavailable: '项目文件夹没能打开。',
-    nav: { general: '通用', statuses: '状态', connectors: '连接器', collectors: '收集器', rules: '规则', memory: '记忆', skills: '技能', phone: '手机控制', providers: '供应商' },
+    title: '设置', openFolder: '打开项目文件夹', failed: '这一页没能加载', retry: '重试', unavailable: '项目文件夹没能打开。',
+    nav: { general: '常规', statuses: '状态', connectors: '连接器', collectors: '收集器', rules: '规则', memory: '记忆', skills: '技能', phone: '手机控制', providers: '供应商' },
     // 和忘记一条记忆用的同一套字（`memory.willDelete`、`cancel`、`confirmForget`）：删连接器和收集器之前问的那个窗口。
     confirmDelete: { title: '将要删除', cancel: '取消', delete: '删除' },
     // NEW: reviewed together with the English workflow settings above.

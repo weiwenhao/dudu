@@ -9,6 +9,7 @@ import { Globe, PenTool } from 'lucide-react';
 import airtable from './icons/airtable.svg';
 import atlassian from './icons/atlassian.svg';
 import canva from './icons/canva.svg';
+import ego from './icons/ego.svg';
 import github from './icons/github.svg';
 import gitlab from './icons/gitlab.svg';
 import gmail from './icons/gmail.svg';
@@ -25,6 +26,7 @@ export const ICONS = {
   airtable: { src: airtable },
   atlassian: { src: atlassian },
   canva: { src: canva },
+  ego: { src: ego },
   github: { src: github },
   gitlab: { src: gitlab },
   gmail: { src: gmail },

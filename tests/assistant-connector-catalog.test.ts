@@ -18,9 +18,9 @@ test('the shipped catalog loads: hosted items have an https address, command-lin
     else assert.ok(item.command && item.prompt, item.id);
   }
   assert.deepEqual(catalog.byId('notion'), catalog.items.find((item: any) => item.id === 'notion'));
-  // ego is named for what it is (owner, 2026-11-11), a command-line connector like the others: the command must run, and when it is not there the row says where to get it.
+  // ego lite is named for what it is (owner, 2026-11-11, then the full product name on 2026-11-21), a command-line connector like the others: the command must run, and when it is not there the row says where to get it.
   assert.ok(!catalog.byId('browser'), 'there is no connector that is just "a browser": another browser tool is a custom connector');
-  assert.deepEqual([catalog.byId('ego')?.name, catalog.byId('ego')?.how, catalog.byId('ego')?.command, catalog.byId('ego')?.status], ['ego', 'cli', 'ego-browser', ['--version']]);
+  assert.deepEqual([catalog.byId('ego')?.name, catalog.byId('ego')?.how, catalog.byId('ego')?.command, catalog.byId('ego')?.status], ['ego lite', 'cli', 'ego-browser', ['--version']]);
   assert.equal(new URL(catalog.byId('ego')?.install ?? '').protocol, 'https:');
   // The two Google ones are signed in when `gws auth status` says its credentials are stored.
   for (const id of ['google-calendar', 'google-drive']) assert.deepEqual([catalog.byId(id)?.status, catalog.byId(id)?.ready], [['auth', 'status'], { path: 'auth_method', equals: 'oauth2' }], id);
