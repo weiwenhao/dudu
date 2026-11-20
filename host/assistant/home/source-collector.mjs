@@ -15,9 +15,9 @@ export const INTAKE_PREFIX = 'dudu-assistant-intake-';
 export const MAX_RUNS = 24;
 /**
  * What a collection is told, as a number. A session that was told otherwise is not used again (its conversation holds the old words, and what the model does
- * next follows its conversation as much as the new question), so the next collection starts another. 2: the notes were taken out (2026-11-05). 3: the messages around an item that cannot be understood alone are required (2026-11-11). 4: a title is asked for (the session had left it out of every message it gave, 2026-11-11). 5: an item that is in the inbox already can be given again with `update`, to change it (2026-11-14). 6: submit through a checked tool and read the storage receipt, never parse the final prose (2026-11-19).
+ * next follows its conversation as much as the new question), so the next collection starts another. 2: the notes were taken out (2026-11-05). 3: the messages around an item that cannot be understood alone are required (2026-11-11). 4: a title is asked for (the session had left it out of every message it gave, 2026-11-11). 5: an item that is in the inbox already can be given again with `update`, to change it (2026-11-14). 6: submit through a checked tool and read the storage receipt, never parse the final prose (2026-11-19). 7: `acknowledge`, so that the prompt decides which Lark messages get the GET reaction (2026-11-20).
  */
-export const PROMPT_VERSION = 6;
+export const PROMPT_VERSION = 7;
 const STOP_WAIT_MS = 5_000;
 
 // Which tools of an MCP server a collection may call. DSH does not carry a server's own `readOnlyHint` into its tool registry (checked on a real DSH:
@@ -267,6 +267,7 @@ Give one record for each separate item (a mail, a message, an issue, a comment, 
 - thread: the id of the conversation, mail thread, issue or page the item belongs to.
 - context: what the item refers to: the messages before it in its thread or chat (and any after it that answer it), oldest first, at most ${RECORD_LIMITS.context}, each with from, at and text. Read them, do not guess: the command you give in more is how. A message that mentions or addresses the owner, replies to someone, or is only a few words cannot be understood alone (a bare @ asks nothing), so for such an item context is required; leave it out only for an item that says everything itself (a mail, an issue, a long message). more: one line saying how to get more of the thread (the tool and its arguments, or a link).
 - update: put true here only to change an item you gave before (the inbox has it already). Give the same id (and the same thread, if you gave one) and only the fields that change: title, text, from, at, url, context, more. They replace what the inbox kept; no record is added, and an id the inbox does not have is dropped. Do this only when the prompt asks for items it brought before to be changed.
+- acknowledge: put true here to have the item's own message answered with the GET reaction; Dudu adds it after the record is stored, you do not send anything. Only for a Lark message (kind message or comment) and only when the prompt asks for collected messages to be answered with GET, and then only for the items that the prompt says to answer. When the prompt does not ask for it, leave it out.
 - Give records only for what the prompt asks for. When it says which items it wants (those that mention the owner, those sent to them, one kind of notice), an item that does not match is left out, however important or interesting it looks; a word such as "especially" or "mainly" there names the items to give, it does not widen the prompt to every item. When you cannot tell whether an item matches, leave it out.
 - Leave out a field you cannot fill. When there is nothing new, submit {"ok":true,"records":[]}.
 If access fails, submit {"ok":false,"error":"the actual reason"}. Do not invent records or claim success without reading. Current local time: ${new Date().toISOString()}.`,

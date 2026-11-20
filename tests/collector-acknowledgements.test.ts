@@ -3,10 +3,11 @@ import { test } from 'node:test';
 import { acknowledgementTargets, createCollectorAcknowledgements } from '../host/assistant/collectors/acknowledgements.mjs';
 import { normalizeRecords } from '../host/assistant/inbox/records.mjs';
 import { createIssues } from '../host/assistant/issues/index.mjs';
+import { checkCollectorResult } from '../host/assistant/inbox/submission.mjs';
 
 const collector = { id: 'mentions', via: { kind: 'prompt', via: 'lark', prompt: '用 lark-cli 读取。' } };
 const message = (id: string, extra: any = {}) => ({
-  id, kind: 'message', title: '发布确认', from: 'Alice', text: '请确认。', at: '2026-11-19T23:15:00+08:00', thread: 'omt_one', ...extra,
+  id, kind: 'message', title: '发布确认', from: 'Alice', text: '请确认。', at: '2026-11-19T23:15:00+08:00', thread: 'omt_one', acknowledge: true, ...extra,
 });
 const stored = (raw: any[]) => normalizeRecords(raw).records.map((row: any, id: number) => ({ ...row, id, connector: collector.id }));
 
@@ -24,6 +25,17 @@ test('GET targets only the primary Lark messages present in committed rows, neve
   assert.deepEqual(acknowledgementTargets({ ...collector, via: { kind: 'prompt', via: 'google', prompt: 'read google' } }, raw, rows), []);
   assert.deepEqual(acknowledgementTargets({ ...collector, via: { kind: 'mcp', via: 'lark', prompt: '' } }, raw, rows), [], 'never use a different MCP identity via the local CLI');
   assert.deepEqual(acknowledgementTargets(collector, raw, [{ ...rows[0], text: 'different material' }]), []);
+});
+
+test('GET is made only for what the collector\'s prompt asked to answer: the session marks the record, an unmarked or refused one is left alone', () => {
+  const raw = [
+    message('om_asked'),
+    message('om_refused', { acknowledge: false, text: '另一条', thread: 'omt_refused' }),
+    message('om_unmarked', { acknowledge: undefined, text: '又一条', thread: 'omt_unmarked' }),
+  ];
+  assert.deepEqual(acknowledgementTargets(collector, raw, stored(raw)), ['om_asked']);
+  assert.equal(checkCollectorResult({ ok: true, records: [{ id: 'om_asked', kind: 'message', acknowledge: true }] }).ok, true, 'the schema the session sees has the switch');
+  assert.equal(checkCollectorResult({ ok: true, records: [{ id: 'om_asked', acknowledge: 'yes' }] }).ok, false, 'only a boolean is a switch');
 });
 
 test('GET uses the existing user login and a fixed argv command; a reaction failure is reported without changing committed records', async (t) => {

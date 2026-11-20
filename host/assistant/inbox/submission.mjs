@@ -22,6 +22,8 @@ const record = z.strictObject({
   thread: text(L.thread).optional(), text: text(L.text).optional(),
   context: z.array(context).max(L.context).describe(`At most ${L.context} context messages.`).optional(), more: text(L.more).optional(),
   update: z.boolean().optional(), to_me: z.boolean().optional(), handled: z.boolean().optional(),
+  // The prompt asked for this item's message to be answered with the GET reaction (`collectors/acknowledgements.mjs` does it after the record is stored).
+  acknowledge: z.boolean().optional(),
 });
 const result = z.strictObject({
   ok: z.boolean(),

@@ -1,18 +1,19 @@
-// Owner, 2026-11-19: a collected Lark message gets the built-in GET reaction, after it is stored. This is not an agent tool or a source-write permission.
+// Owner, 2026-11-19: a collected Lark message gets the built-in GET reaction, after it is stored. Owner, 2026-11-20 ("我希望能够在提示词里边控制"): only when the collector's prompt asks for it: the session marks the record
+// `acknowledge: true`, the reaction itself is still made here. This is not an agent tool or a source-write permission.
 import { baseEnv, runProcess, which as findOnPath } from '../connectors/cli.mjs';
 import { normalizeRecords, RECORD_LIMITS } from '../inbox/records.mjs';
 
 const MESSAGE_ID = /^om_[A-Za-z0-9_-]{1,128}$/;
 const EMOJI = 'Get';
 
-/** Only primary messages whose text is in a committed row, never context, update requests, thread ids, or another collector's rows. */
+/** Only primary messages the prompt asked to answer (`acknowledge: true`) whose text is in a committed row, never context, update requests, thread ids, or another collector's rows. */
 export function acknowledgementTargets(collector, raw, stored) {
   const via = collector.via;
   if (via?.kind !== 'prompt' || !(via.via === 'lark' || /\blark-cli\b/.test(via.prompt ?? ''))) return [];
   const kept = new Map(stored.filter((row) => row.connector === collector.id).map((row) => [row.sourceId, row]));
   const ids = new Set();
   for (const record of raw.slice(0, RECORD_LIMITS.records)) {
-    if (record.update || !['message', 'comment'].includes(record.kind) || typeof record.id !== 'string' || !MESSAGE_ID.test(record.id)) continue;
+    if (record.acknowledge !== true || record.update || !['message', 'comment'].includes(record.kind) || typeof record.id !== 'string' || !MESSAGE_ID.test(record.id)) continue;
     const primary = normalizeRecords([{ ...record, context: [] }]).records[0];
     const row = primary && kept.get(primary.sourceId);
     if (row && primary.text && row.text.includes(primary.text)) ids.add(record.id);
