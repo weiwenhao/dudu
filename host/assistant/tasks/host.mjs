@@ -67,7 +67,17 @@ export function createTaskHost({ dsh, registry, controller, agents, access = () 
         const id = item.sessionId ?? item.id;
         const projected = item.projections?.values?.title;
         const title = typeof projected === 'string' ? projected : projected?.title ?? item.title;
-        return { id, title: title || id, workspaceId: registry.list().find((entry) => entry.sessionIds.includes(id))?.id };
+        const values = item.projections?.values ?? {};
+        // The session's own provider/model, read the same way a resumed task reads it (see `modelOf`'s comment above): what a
+        // picked session is already on, so choosing one here can set the task's provider/model to match instead of leaving a
+        // mismatch for `validate`'s `session_model_mismatch` to reject later.
+        const selection = values.modelSelection?.next ?? values.modelSelection?.pending ?? values.modelSelection?.lastUsed ?? agents.get(id)?.options;
+        return {
+          id, title: title || id, workspaceId: registry.list().find((entry) => entry.sessionIds.includes(id))?.id,
+          agent: isHarness(selection?.provider) ? selection.provider : 'deepseek',
+          ...(typeof selection?.model === 'string' && selection.model ? { model: selection.model } : {}),
+          updatedAt: item.updatedAt ?? 0,
+        };
       });
       return { providers, projects: workspaces, sessions, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
     },

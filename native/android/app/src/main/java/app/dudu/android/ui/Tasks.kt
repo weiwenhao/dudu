@@ -9,6 +9,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -29,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import app.dudu.android.*
@@ -81,6 +83,7 @@ fun TasksScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
     onHeight: ((Int) -> Unit)? = null, sessionId: String? = null,
     open: (Route) -> Unit = { model.navigate(it) }, refreshKey: Int = 0, active: Boolean = true) {
     val actions = rememberActions()
+    val state by model.state.collectAsState()
     val quick = onHeight != null
     var tasks by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var filter by rememberSaveable { mutableStateOf("") }
@@ -88,6 +91,7 @@ fun TasksScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
     var deleting by remember { mutableStateOf<JSONObject?>(null) }
     var revealed by remember { mutableStateOf<String?>(null) }
     var detail by remember { mutableStateOf<Route?>(null) }
+    var pendingToggle by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     val density = LocalDensity.current
     var tabsHeight by remember { mutableIntStateOf(44) }
     fun openTask(route: Route) { if (sessionId != null) detail = route else open(route) }
@@ -118,9 +122,15 @@ fun TasksScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
         val rows = if (visible.isEmpty()) 160 else visible.size * 64 + (visible.size - 1) / 2
         LaunchedEffect(rows, tabsHeight) { onHeight(54 + tabsHeight + rows + 16 + 52 + 12) }
     }
-    fun act(name: String, task: JSONObject) = actions.run {
-        model.request("tasks.$name", json("id" to task.getString("id"), "revision" to task.getInt("revision")))
-        revealed = null; actions.refresh()
+    fun act(name: String, task: JSONObject, toggle: Boolean? = null) = actions.run {
+        val id = task.getString("id")
+        if (toggle != null) pendingToggle = id to toggle
+        revealed = null
+        try {
+            val result = model.request("tasks.$name", json("id" to id, "revision" to task.getInt("revision")))
+            result.optJSONObject("task")?.let { updated -> tasks = tasks.map { if (it.optString("id") == id) updated else it } }
+            tasks = model.request("tasks.list").rows("tasks")
+        } finally { pendingToggle = null }
     }
     fun LazyListScope.taskRows(rows: List<JSONObject>) {
         items(rows, key = { it.getString("id") }) { task ->
@@ -129,35 +139,41 @@ fun TasksScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
             val status = task.optString("status")
             val swipe = buildList {
                 if (status == "active") {
-                    add(RowSwipeAction(w("暂停任务"), R.drawable.ic_pause, androidx.compose.ui.graphics.Color(0xFF96989D)) { act("pause", task) })
-                    add(RowSwipeAction(w("立即执行"), R.drawable.ic_zap, DuduStyle.blue) { act("run", task) })
-                } else if (status == "paused") add(RowSwipeAction(w("恢复任务"), R.drawable.ic_play, DuduStyle.blue) { act("resume", task) })
-                add(RowSwipeAction(w("删除任务"), R.drawable.ic_trash2, androidx.compose.ui.graphics.Color(0xFFE14848)) { deleting = task })
+                    add(RowSwipeAction(w("暂停任务"), DuduGlyphs.pause, androidx.compose.ui.graphics.Color(0xFF96989D)) { act("pause", task) })
+                    add(RowSwipeAction(w("立即执行"), DuduGlyphs.zap, DuduStyle.blue) { act("run", task) })
+                } else if (status == "paused") add(RowSwipeAction(w("恢复任务"), DuduGlyphs.play, DuduStyle.blue) { act("resume", task) })
+                add(RowSwipeAction(w("删除任务"), DuduGlyphs.trash, SwipeColors.delete) { deleting = task })
             }
             LibraryRowGroup(task === rows.first(), task === rows.last(), grouped = sessionId != null || quick,
                 inset = if (quick) 16 else 20, dividerStart = if (quick) 56 else 16, dividerEnd = if (quick) 14 else 0) {
                 SwipeMenuRow(swipe, enabled = !actions.busy, revealed = revealed == id,
                     onReveal = { revealed = if (it) id else null }) { closeSwipe ->
-                    Box {
+                    val press = remember { PressPoint() }
+                    Box(Modifier.notePress(press)) {
                         Surface(color = if (sessionId != null || quick) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.background) {
                             Box(Modifier.fillMaxWidth().testTag("task-$id").combinedClickable(onClick = {
                                 if (revealed != null) { revealed = null; closeSwipe() }
                                 else openTask(Route("task", task.getString("title"), id))
                             }, onLongClick = { menu = true })) {
-                                TaskSummary(task, sessionId != null, horizontalPadding = if (quick) 14 else if (sessionId != null) 16 else 10, roomy = quick)
+                                TaskSummary(task, sessionId != null, busy = pendingToggle?.first == id,
+                                    horizontalPadding = if (quick) 14 else if (sessionId != null) 16 else 10, roomy = quick,
+                                    onToggle = if (status in listOf("active", "paused")) { next ->
+                                        act(if (next) "resume" else "pause", task, next)
+                                    } else null, toggleEnabled = state.connected && !actions.busy,
+                                    pendingToggle = pendingToggle?.takeIf { it.first == id }?.second)
                             }
                         }
-                        DropdownMenu(menu, { menu = false }) {
+                        DropdownMenu(menu, { menu = false }, offset = press.menuOffset()) {
                             if (status in listOf("active", "paused")) DropdownMenuItem(
                                 text = { Text(if (status == "active") w("暂停任务") else w("恢复任务")) },
-                                leadingIcon = { Glyph(if (status == "active") R.drawable.ic_pause else R.drawable.ic_play, size = 18) },
+                                leadingIcon = { Glyph(if (status == "active") DuduGlyphs.pause else DuduGlyphs.play, size = 18) },
                                 enabled = !actions.busy, onClick = { menu = false; act(if (status == "active") "pause" else "resume", task) })
-                            DropdownMenuItem(text = { Text(w("立即执行")) }, leadingIcon = { Glyph(R.drawable.ic_zap, size = 18) },
+                            DropdownMenuItem(text = { Text(w("立即执行")) }, leadingIcon = { Glyph(DuduGlyphs.zap, size = 18) },
                                 enabled = !actions.busy, onClick = { menu = false; act("run", task) })
-                            DropdownMenuItem(text = { Text(w("编辑")) }, leadingIcon = { Glyph(R.drawable.ic_pencil_line, size = 18) },
+                            DropdownMenuItem(text = { Text(w("编辑")) }, leadingIcon = { Glyph(DuduGlyphs.editLine, size = 18) },
                                 enabled = !actions.busy, onClick = { menu = false; openTask(Route("task", task.getString("title"), id, json("edit" to true))) })
                             DropdownMenuItem(text = { Text(w("删除任务"), color = MaterialTheme.colorScheme.error) },
-                                leadingIcon = { Glyph(R.drawable.ic_trash2, size = 18, tint = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { Glyph(DuduGlyphs.trash, size = 18, tint = MaterialTheme.colorScheme.error) },
                                 enabled = !actions.busy, onClick = { menu = false; deleting = task })
                         }
                     }
@@ -171,7 +187,7 @@ fun TasksScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
     Page(if (quick) w("任务") else w("定时任务"), back, actions,
         count = visible.size.takeIf { quick }, top = {
             if (sessionId == null && !quick) IconButton(onClick = { openTask(Route("task", target = "new")) }, modifier = Modifier.testTag("new-task")) {
-                Glyph(R.drawable.ic_plus, w("新建任务"))
+                Glyph(DuduGlyphs.plus, w("新建任务"))
             }
         }) {
         if (sessionId == null) Box(Modifier.onSizeChanged { tabsHeight = (it.height / density.density).roundToInt() }) {
@@ -187,10 +203,10 @@ fun TasksScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
             taskRows(if (sessionId == null) visible else current)
             if (sessionId != null && finished.isNotEmpty()) item {
                 InsetCard(Modifier.padding(start = 18.dp, end = 18.dp, top = if (current.isEmpty()) 0.dp else 14.dp)) {
-                    Line(w("已结束"), leading = { Glyph(R.drawable.ic_check, size = 18, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    Line(w("已结束"), leading = { Glyph(DuduGlyphs.check, size = 18, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                         minHeight = 52, action = { finishedOpen = !finishedIsOpen }, trailing = {
                             Text(finished.size.toString(), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Glyph(if (finishedIsOpen) R.drawable.ic_chevron_down else R.drawable.ic_chevron_right, size = 16)
+                            Glyph(if (finishedIsOpen) DuduGlyphs.down else DuduGlyphs.right, size = 16)
                         })
                 }
             }
@@ -203,14 +219,13 @@ fun TasksScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
             modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp).height(52.dp).testTag("new-task"),
             shape = RoundedCornerShape(26.dp), colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = .08f), contentColor = MaterialTheme.colorScheme.onSurface)) {
-            Glyph(R.drawable.ic_plus, size = 20)
+            Glyph(DuduGlyphs.plus, size = 20)
             Spacer(Modifier.width(8.dp))
             Text(w("新建任务"), fontSize = 16.sp, fontWeight = FontWeight.Medium)
         }
     }
     }
     detail?.let { route -> key(route) {
-        val state by model.state.collectAsState()
         TaskScreen(route, state, model, back = { detail = null; actions.refresh() }, close = back)
     } }
     }
@@ -344,21 +359,29 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
     val cancel: () -> Unit = { if (!actions.busy) { if (editing && dirty) confirmingDiscard = true else discard() } }
     val page = picker
     if (page != null && editing) {
+        val projects = options.rows("projects")
+        if (page == TaskPicker.Session) {
+            TaskSessionPage(options.rows("sessions"), projects, sessionId, w("没有可用的会话"), back = { picker = null }) { session ->
+                sessionId = session.getString("id")
+                projects.find { it.nullableString("workspaceId") == session.nullableString("workspaceId") }
+                    ?.let { projectId = it.getString("path") }
+                session.nullableString("agent")?.takeIf(String::isNotBlank)?.let { agent = it }
+                selectedModel = session.nullableString("model").orEmpty()
+                picker = null
+            }
+            return
+        }
         val providers = options.rows("providers")
         val knownModels = providers.find { it.optString("id") == agent }?.optJSONArray("models")?.strings().orEmpty()
-        val projects = options.rows("projects")
-        val project = projects.find { it.optString("path") == projectId }
         val choices = when (page) {
             TaskPicker.Provider -> providers.map { TaskChoice(it.getString("id"), it.getString("name"),
                 agent = it.getString("id"), enabled = it.optBoolean("available")) }
             TaskPicker.Model -> listOf(TaskChoice("", w("默认模型"))) +
                 (listOf(selectedModel).filter { it.isNotBlank() && it !in knownModels } + knownModels).map { TaskChoice(it, it) }
-            TaskPicker.Workspace -> projects.map { TaskChoice(it.getString("path"), it.getString("name"), it.getString("path"), icon = R.drawable.ic_folder) }
+            TaskPicker.Workspace -> projects.map { TaskChoice(it.getString("path"), it.getString("name"), it.getString("path"), icon = DuduGlyphs.workspace) }
             TaskPicker.Target -> (listOf("reuse", "new") + if (agent == "dudu") emptyList() else listOf("existing"))
-                .map { TaskChoice(it, taskTargetName(it), icon = R.drawable.ic_message_circle) }
-            TaskPicker.Session -> options.rows("sessions").filter {
-                it.nullableString("workspaceId") == (project?.nullableString("workspaceId") ?: project?.nullableString("id"))
-            }.map { TaskChoice(it.getString("id"), it.getString("title"), icon = R.drawable.ic_queue) }
+                .map { TaskChoice(it, taskTargetName(it)) }
+            TaskPicker.Session -> error("关联会话 renders TaskSessionPage, above")
             TaskPicker.Timezone -> (listOf(zone, options.optString("timezone")) + TimeZone.getAvailableIDs())
                 .filter(String::isNotBlank).distinct().sorted().map { TaskChoice(it, taskTimezone(it)) }
         }
@@ -367,7 +390,6 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
             TaskPicker.Target -> mode; TaskPicker.Session -> sessionId; TaskPicker.Timezone -> zone
         }, emptyText = when (page) {
             TaskPicker.Workspace -> w("没有可用的工作区")
-            TaskPicker.Session -> w("没有可用的会话")
             else -> null
         }, back = { picker = null }) { value ->
             when (page) {
@@ -380,7 +402,7 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
                 TaskPicker.Model -> selectedModel = value
                 TaskPicker.Workspace -> { if (projectId != value) sessionId = ""; projectId = value }
                 TaskPicker.Target -> { if (mode != value) sessionId = ""; mode = value }
-                TaskPicker.Session -> sessionId = value
+                TaskPicker.Session -> error("关联会话 renders TaskSessionPage, above")
                 TaskPicker.Timezone -> zone = value
             }
             picker = null
@@ -403,15 +425,15 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
             IssueChip(providers.find { it.optString("id") == agent }?.optString("name") ?: w("嘟嘟"),
                 !actions.busy && state.connected, "task-provider", icon = { AgentLogo(agent, 16) }) { choose(TaskPicker.Provider) }
             IssueChip(selectedModel.ifBlank { w("默认模型") }, !actions.busy && state.connected, "task-model",
-                icon = { Glyph(R.drawable.ic_bot, size = 16) }) { choose(TaskPicker.Model) }
+                icon = { Glyph(DuduGlyphs.model, size = 16) }) { choose(TaskPicker.Model) }
             if (agent != "dudu") IssueChip(options.rows("projects").find { it.optString("path") == projectId }?.optString("name")
-                ?: w("关联工作区"), !actions.busy && state.connected, icon = { Glyph(R.drawable.ic_folder, size = 16) }) { choose(TaskPicker.Workspace) }
+                ?: w("关联工作区"), !actions.busy && state.connected, icon = { Glyph(DuduGlyphs.workspace, size = 16) }) { choose(TaskPicker.Workspace) }
             IssueChip(taskTargetName(mode), !actions.busy && state.connected,
-                icon = { Glyph(R.drawable.ic_message_circle, size = 16) }) { choose(TaskPicker.Target) }
+                icon = { Glyph(DuduGlyphs.message, size = 16) }) { choose(TaskPicker.Target) }
             if (mode == "existing") {
                 val sessions = options.rows("sessions")
                 IssueChip(sessions.find { it.optString("id") == sessionId }?.optString("title") ?: w("关联会话"),
-                    !actions.busy && state.connected, icon = { Glyph(R.drawable.ic_queue, size = 16) }) { choose(TaskPicker.Session) }
+                    !actions.busy && state.connected, icon = { Glyph(DuduGlyphs.queue, size = 16) }) { choose(TaskPicker.Session) }
             }
             }
             Text(w("运行时间"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -437,7 +459,7 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
             TaskRuleDivider()
             Line(w("时区"), enabled = !actions.busy && state.connected, action = { choose(TaskPicker.Timezone) }, trailing = {
                 Text(taskTimezone(zone), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Glyph(R.drawable.ic_chevron_right, size = 16, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Glyph(DuduGlyphs.right, size = 16, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             })
             }
         } else {
@@ -476,11 +498,21 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
                 item { Section(w("自动化任务内容")) }
                 item { InsetCard(Modifier.padding(horizontal = 18.dp)) { Box(Modifier.padding(16.dp)) { Markdown(task.optString("prompt")) } } }
                 val linked = task.optJSONObject("target")?.nullableString("sessionId") ?: task.nullableString("sessionId")
-                linked?.let { id -> item { Line(w("关联会话"), icon = R.drawable.ic_message_circle,
+                linked?.let { id -> item { Line(w("关联会话"), icon = DuduGlyphs.message,
                     action = { model.openSession(id, task.getString("title")) }) } }
                 if (runs.isNotEmpty()) item { Section(w("任务运行记录")) }
                 cardItems(runs, key = { it.getString("id") }) { run ->
                     Line(DateFormat.getDateTimeInstance(DateFormat.DEFAULT, DateFormat.DEFAULT, locale).format(Date(run.getLong("at"))), taskStatus(run.optString("status")),
+                        leading = { Glyph(when (run.optString("status")) {
+                            "delivered" -> MenuGlyphs.runDelivered
+                            "failed" -> MenuGlyphs.runFailed
+                            "delivering" -> MenuGlyphs.runDelivering
+                            else -> MenuGlyphs.runUnknown
+                        }, size = 20, tint = when (run.optString("status")) {
+                            "delivered" -> androidx.compose.ui.graphics.Color(0xFF177A3C)
+                            "failed" -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }) },
                         action = run.nullableString("sessionId")?.let { id -> ({ model.openSession(id, task.getString("title")) }) })
                 }
                 if (cursor != null) item { TextButton(onClick = { actions.run {
@@ -495,10 +527,10 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
         val phase = task?.optString("status")
         ActionBar(buildList {
             if (phase == "active" || phase == "paused") add(BarItem(if (phase == "active") w("暂停任务") else w("恢复任务"),
-                if (phase == "active") R.drawable.ic_pause else R.drawable.ic_play, "task-toggle", enabled = ready) { action(if (phase == "active") "pause" else "resume") })
-            add(BarItem(w("立即执行"), R.drawable.ic_zap, "task-run", enabled = ready) { action("run") })
-            add(BarItem(w("编辑"), R.drawable.ic_pencil_line, "edit-task", enabled = ready) { task?.let(::seed); editing = true })
-            add(BarItem(w("删除任务"), R.drawable.ic_trash2, "task-delete", danger = true, enabled = ready) { deleting = true })
+                if (phase == "active") DuduGlyphs.pause else DuduGlyphs.play, "task-toggle", enabled = ready) { action(if (phase == "active") "pause" else "resume") })
+            add(BarItem(w("立即执行"), DuduGlyphs.zap, "task-run", enabled = ready) { action("run") })
+            add(BarItem(w("编辑"), DuduGlyphs.editLine, "edit-task", enabled = ready) { task?.let(::seed); editing = true })
+            add(BarItem(w("删除任务"), DuduGlyphs.trash, "task-delete", danger = true, enabled = ready) { deleting = true })
         })
         }
     }
@@ -526,6 +558,57 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
             text = { TimePicker(clock) },
             confirmButton = { TextButton(onClick = { time = "%02d:%02d".format(java.util.Locale.ROOT, clock.hour, clock.minute); choosingTime = false }) { Text(stringResource(R.string.save)) } },
             dismissButton = { TextButton(onClick = { choosingTime = false }) { Text(stringResource(R.string.cancel)) } })
+    }
+}
+
+/**
+ * 关联会话 (owner, 2026-11-22): the generic choice list this used to share with 时区/供应商 drew every conversation the same
+ * as a plain setting, and hid every conversation outside today's 关联工作区 with no explanation. This reuses 转发's own row
+ * (`ForwardRow`: a tile in the title's colour, the title, the agent's logo) and lists every conversation, searchable;
+ * picking one sets the task's 关联工作区/供应商/模型 to match it, as the desktop's picker already does.
+ */
+@Composable
+private fun TaskSessionPage(sessions: List<JSONObject>, projects: List<JSONObject>, selected: String,
+    emptyText: String?, back: () -> Unit, choose: (JSONObject) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    val sorted = sessions.sortedByDescending { it.optLong("updatedAt") }
+    val words = query.trim()
+    val shown = sorted.filter { it.getString("title").contains(words, true) }
+    Page(w("关联会话"), back, nested = true, background = MaterialTheme.colorScheme.background) {
+        Box(Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) { SearchField(query, w("关联会话")) { query = it } }
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
+            itemsIndexed(shown, key = { _, session -> session.getString("id") }) { index, session ->
+                val projectName = projects.find { it.nullableString("workspaceId") == session.nullableString("workspaceId") }
+                    ?.optString("name")?.takeIf(String::isNotBlank)
+                GroupRow(index == 0, index == shown.lastIndex, inset = 16, dividerStart = 74, dividerEnd = 14) {
+                    TaskSessionRow(session, projectName, session.getString("id") == selected) { choose(session) }
+                }
+            }
+            if (shown.isEmpty() && emptyText != null) item {
+                Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+                    Text(emptyText, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+/** A conversation as 转发's row draws it (`ForwardRow`): its tile, title, the agent's logo; here also when it was last touched, and a checkmark on the one chosen. */
+@Composable
+private fun TaskSessionRow(session: JSONObject, projectName: String?, selected: Boolean, choose: () -> Unit) {
+    val updatedAt = session.optLong("updatedAt").takeIf { it > 0 }
+    val subtitle = listOfNotNull(projectName, updatedAt?.let { relativeTime(it) }).takeIf { it.isNotEmpty() }?.joinToString(" · ")
+    Row(Modifier.fillMaxWidth().height(66.dp).testTag("task-session-option-${session.getString("id")}")
+        .clickable(onClick = choose).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        TitleTile(session.getString("title"), 48)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(session.getString("title"), fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            subtitle?.let { Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        }
+        Spacer(Modifier.width(12.dp))
+        AgentLogo(session.nullableString("agent"), 16)
+        if (selected) { Spacer(Modifier.width(8.dp)); Glyph(DuduGlyphs.check, size = 18) }
     }
 }
 

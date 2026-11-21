@@ -267,6 +267,12 @@ struct TaskSession: Codable, Identifiable, Equatable, Sendable {
     var id: String
     var title: String
     var workspaceId: String?
+    /// The session's own provider and model (owner, 2026-11-22: picking a session sets the task's own provider/model to
+    /// match, instead of leaving a mismatch for `validate`'s `session_model_mismatch` to reject later); nil for an older
+    /// plugin that does not send them yet.
+    var agent: String?
+    var model: String?
+    var updatedAt: Double?
 }
 
 /// What a task can be made of: the providers and their models, the DSH workspaces, the conversations (only when asked for), and this computer's time zone.
@@ -443,7 +449,12 @@ final class TasksModel: ObservableObject {
             let answer = try await json.decode(TasksAnswer.self, from: value)
             guard !Task.isCancelled, computer == store.activeComputer?.id, connection == store.connectionRevision else { return }
             guard answer.outcome == "success", let fresh = answer.tasks else { throw DuduFailure.protocolError }
-            if tasks != fresh { tasks = fresh }
+            let current = Dictionary(uniqueKeysWithValues: tasks.map { ($0.id, $0) })
+            let reconciled = fresh.map { task in
+                if let saved = current[task.id], saved.revision > task.revision { return saved }
+                return task
+            }
+            if tasks != reconciled { tasks = reconciled }
             state = .loaded
         } catch {
             guard !Task.isCancelled, computer == store.activeComputer?.id, connection == store.connectionRevision else { return }
@@ -510,18 +521,23 @@ final class TasksModel: ObservableObject {
     @discardableResult
     func act(_ action: TaskAction, _ task: ScheduledTask, using store: DuduStore) async -> Bool {
         guard !busy.contains(task.id) else { return false }
+        let computer = store.activeComputer?.id
+        let connection = store.connectionRevision
         busy.insert(task.id)
         defer { busy.remove(task.id) }
         let written = await write("tasks.\(action.rawValue)", ["id": .string(task.id), "revision": .number(Double(task.revision))], using: store)
-        guard case .ok = written else {
+        guard computer == store.activeComputer?.id, connection == store.connectionRevision else { return false }
+        guard case .ok(let updated) = written else {
             if action == .delete, case .failed(let code) = written, code == "not_found" { tasks.removeAll { $0.id == task.id } }
             report?(DuduToastMessage(text: L10n.text("更改没能保存"), kind: .error))
             await refresh(using: store)
             return false
         }
+        if let updated, let index = tasks.firstIndex(where: { $0.id == updated.id }) { tasks[index] = updated }
         switch action {
         case .pause, .resume:
-            report?(DuduToastMessage(text: action == .pause ? L10n.text("已暂停任务") : L10n.text("已恢复任务"), kind: .success))
+            // No toast: the switch and the row's state already show it (owner, 2026-11-21: "关闭打开任务不需要弹出层").
+            break
         case .run:
             report?(DuduToastMessage(text: L10n.text("正在投递"), kind: .success))
         case .delete:
