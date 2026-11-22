@@ -2,8 +2,8 @@ import SwiftUI
 import UIKit
 import LucideSwift
 
-/// 嘟嘟's own settings, drawn by the app (owner, 2026-11-07: "嘟嘟自己的设置不用 webview 用原生实现"): the page the plugin describes, in the settings' look (white cards on the
-/// canvas), one page over another. Its header (back, title and save) is the host's native toolbar.
+/// 嘟嘟's own settings, drawn by the app (owner, 2026-11-07: "嘟嘟自己的设置不用 webview 用原生实现"): the page `SettingsLayouts` lays out from the plugin's values (or, for an older plugin,
+/// the page it describes), in the settings' look (white cards on the canvas), one page over another. Its header (back, title and save) is the host's native toolbar.
 struct NativeSettingsView: View {
     @ObservedObject var navigator: SettingsNavigator
     @ObservedObject var store: DuduStore
@@ -126,6 +126,7 @@ private struct SettingsPageView: View {
     @ObservedObject var store: DuduStore
     let topInset: CGFloat
     let report: SettingsReport
+    @Environment(\.conversationIsCovered) private var isCovered
     @State private var revealed: String?
     @State private var confirming: PendingConfirm?
     @State private var switches: [String: Bool] = [:]
@@ -163,8 +164,14 @@ private struct SettingsPageView: View {
         .refreshable { await model.load(using: store) }
         .background(DuduStyle.settingsBackground)
         .accessibilityIdentifier("settings.page")
-        .task(id: "\(model.id)/\(store.connectionRevision)/\(store.status)/\(model.page?.poll ?? 0)") { await keepRead() }
-        .task(id: previewKey) { await model.preview(using: store) }
+        .task(id: "\(model.id)/\(store.connectionRevision)/\(store.status)/\(model.page?.poll ?? 0)/\(isCovered)") {
+            guard !isCovered else { return }
+            await keepRead()
+        }
+        .task(id: "\(previewKey)/\(isCovered)") {
+            guard !isCovered else { return }
+            await model.preview(using: store)
+        }
         .onAppear { if let title = model.page?.title { navigator.title = title } }
         .onChange(of: model.page?.title) { _, title in navigator.title = title }
         .onChange(of: model.busy) { _, busy in
@@ -200,7 +207,7 @@ private struct SettingsPageView: View {
                 .padding(.top, 80)
         case .failed:
             VStack(spacing: 14) {
-                Text(L10n.text("这一页没能加载"))
+                Text(L10n.text("配置加载失败"))
                     .font(.system(size: 15))
                     .foregroundStyle(DuduStyle.muted)
                 Button { Task { await model.load(using: store) } } label: {
@@ -235,7 +242,10 @@ private struct SettingsPageView: View {
     // MARK: Sections and rows
 
     private func sectionView(_ section: SettingsSection) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // The 状态 page is one card with a strip for each category; the form's preview tile stands on the canvas, not in a card (owner's drawing, 2026-11-21).
+        let grouped = section.rows.contains { $0.kind == "group" }
+        let bare = section.rows.count == 1 && section.rows[0].kind == "statusPreview"
+        return VStack(alignment: .leading, spacing: 0) {
             if let header = section.header {
                 Text(header)
                     .font(.system(size: 13))
@@ -244,19 +254,25 @@ private struct SettingsPageView: View {
                     .padding(.top, 18)
                     .padding(.bottom, 8)
             } else {
-                Color.clear.frame(height: 10)
+                Color.clear.frame(height: bare ? 4 : 10)
             }
-            VStack(spacing: 0) {
-                ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
-                    rowView(row)
-                    if index < section.rows.count - 1 {
-                        Divider().padding(.leading, 16)
+            if bare {
+                statusPreview(section.rows[0]).padding(.bottom, 8)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
+                        if grouped, row.kind == "group", index > 0 { Color.clear.frame(height: 8) }
+                        rowView(row)
+                        if index < section.rows.count - 1, let inset = dividerInset(row, next: section.rows[index + 1]) {
+                            Divider().padding(.leading, inset.leading).padding(.trailing, inset.trailing)
+                        }
                     }
                 }
+                .padding(.vertical, grouped ? 10 : 0)
+                .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .disabled(model.busy || store.status != .connected)
             }
-            .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .disabled(model.busy || store.status != .connected)
             if let footer = section.footer {
                 Text(footer)
                     .font(.system(size: 13))
@@ -269,6 +285,15 @@ private struct SettingsPageView: View {
 
     @ViewBuilder
     private func rowView(_ row: SettingsItem) -> some View {
+        if let menu = row.menu, !menu.isEmpty {
+            rowBody(row).contextMenu { menuButtons(menu) }
+        } else {
+            rowBody(row)
+        }
+    }
+
+    @ViewBuilder
+    private func rowBody(_ row: SettingsItem) -> some View {
         let actions = swipeActions(for: row)
         if actions.isEmpty {
             rowContent(row)
@@ -279,6 +304,49 @@ private struct SettingsPageView: View {
         }
     }
 
+    /// What a long press offers: the desktop's menu (a destructive item in red, one that cannot be done now grey, 编辑 opening the row's own page).
+    @ViewBuilder
+    private func menuButtons(_ menu: [SettingsMenuItem]) -> some View {
+        ForEach(menu) { item in
+            Button(role: item.role == "destructive" ? .destructive : nil) {
+                if let to = item.to {
+                    navigator.open(to)
+                } else if let act = item.act {
+                    run(act, confirm: item.confirm)
+                }
+            } label: {
+                if let glyph = Self.glyph(item.glyph) {
+                    DuduLabel(item.title, icon: glyph, destructive: item.role == "destructive")
+                } else {
+                    Text(item.title)
+                }
+            }
+            .disabled(item.enabled == false)
+        }
+    }
+
+    private static func glyph(_ name: String?) -> DuduGlyph? {
+        switch name {
+        case "pencil": return .rename
+        case "check": return .check
+        case "arrow-up": return .moveUp
+        case "arrow-down": return .moveDown
+        case "trash": return .trash
+        case "x": return .close
+        case "unplug": return .unplug
+        case "key-round": return .keyRound
+        case "rotate-cw": return .reconnect
+        default: return nil
+        }
+    }
+
+    /// The line between two rows of a card, or none: a category's strip has none around it, and a status row's starts at its name.
+    private func dividerInset(_ row: SettingsItem, next: SettingsItem) -> (leading: CGFloat, trailing: CGFloat)? {
+        if row.kind == "group" || next.kind == "group" { return nil }
+        if row.status != nil { return (68, 10) }
+        return (row.inline == true ? 18 : 16, 0)
+    }
+
     @ViewBuilder
     private func rowContent(_ row: SettingsItem) -> some View {
         switch row.kind {
@@ -287,6 +355,8 @@ private struct SettingsPageView: View {
         case "field": fieldRow(row)
         case "environment": environmentRow
         case "action": actionRow(row)
+        case "group": groupRow(row)
+        case "statusPreview": statusPreview(row)
         default: textRow(row)
         }
     }
@@ -326,7 +396,87 @@ private struct SettingsPageView: View {
         }
     }
 
+    @ViewBuilder
     private func textRowLabel(_ row: SettingsItem) -> some View {
+        if let status = row.status {
+            statusRowLabel(row, status)
+        } else {
+            plainRowLabel(row)
+        }
+    }
+
+    /// A status of the 状态 page as the owner drew it: its icon in a tile of its colour, the name (and the word after it), the count under it. A tap opens it; a long press has the menu.
+    private func statusRowLabel(_ row: SettingsItem, _ status: SettingsStatus) -> some View {
+        HStack(spacing: 12) {
+            StatusTile(type: status.type, color: status.color, progress: status.progress, size: 36, icon: 18, radius: 10)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(row.title)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(DuduStyle.ink)
+                        .lineLimit(1)
+                    if let tag = row.tag {
+                        Text(tag)
+                            .font(.system(size: 13))
+                            .foregroundStyle(DuduStyle.muted)
+                            .lineLimit(1)
+                    }
+                }
+                if let subtitle = row.subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(DuduStyle.muted)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.leading, 20)
+        .padding(.trailing, 10)
+        .frame(height: 62)
+        .background(Color.white)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("settings.row.\(row.id)")
+    }
+
+    /// A category's strip in the 状态 card, with its "+".
+    private func groupRow(_ row: SettingsItem) -> some View {
+        HStack(spacing: 0) {
+            Text(row.title)
+                .font(.system(size: 14))
+                .foregroundStyle(DuduStyle.muted)
+            Spacer(minLength: 0)
+            if let add = row.add {
+                Button { navigator.open(add.to) } label: {
+                    DuduIcon(.plus, size: 18, strokeWidth: 1.8)
+                        .foregroundStyle(DuduStyle.muted)
+                        .frame(width: 40, height: 34)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(add.title)
+                .accessibilityIdentifier("settings.add.\(row.id)")
+            }
+        }
+        .padding(.leading, 14)
+        .frame(height: 34)
+        .background(Color(red: 0xF1 / 255, green: 0xF2 / 255, blue: 0xF4 / 255), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.horizontal, 10)
+        .accessibilityElement(children: .contain)
+    }
+
+    /// The form's tile: the status's icon at 64pt, following the colour and progress chosen below it.
+    private func statusPreview(_ row: SettingsItem) -> some View {
+        let status = row.status ?? SettingsStatus(type: "backlog")
+        let color = row.colorKey.flatMap { model.values[$0] } ?? status.color
+        let progress = row.progressKey.flatMap { model.values[$0] }.flatMap(Double.init) ?? status.progress
+        return StatusTile(type: status.type, color: color, progress: progress, size: 64, icon: 32, radius: 18)
+            .frame(maxWidth: .infinity)
+            .accessibilityHidden(true)
+    }
+
+    private func plainRowLabel(_ row: SettingsItem) -> some View {
         HStack(alignment: .center, spacing: 12) {
             if let icon = row.icon {
                 ConnectorAvatar(icon: icon, name: row.title, size: 28)
@@ -446,7 +596,75 @@ private struct SettingsPageView: View {
         return row.selected ?? ""
     }
 
+    @ViewBuilder
     private func choiceRow(_ row: SettingsItem) -> some View {
+        switch row.style {
+        case "swatches": swatchChoice(row)
+        case "icons": iconChoice(row)
+        default: menuChoiceRow(row)
+        }
+    }
+
+    /// The colours of a status, as dots in a row, the chosen one ringed (not a menu of hex words).
+    private func swatchChoice(_ row: SettingsItem) -> some View {
+        let selected = selectedID(row)
+        return HStack(spacing: 0) {
+            ForEach(row.options ?? []) { option in
+                Button { choose(row, option) } label: {
+                    ZStack {
+                        Circle().fill(option.color.flatMap(Color.init(settingsHex:)) ?? DuduStyle.muted).frame(width: 26, height: 26)
+                        if option.id == selected {
+                            Circle().stroke(DuduStyle.ink, lineWidth: 2).frame(width: 34, height: 34)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(option.title)
+                .accessibilityAddTraits(option.id == selected ? .isSelected : [])
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 72)
+        .background(Color.white)
+        .accessibilityIdentifier("settings.row.\(row.id)")
+    }
+
+    /// How far a started status is filled: five icons in a row in the colour chosen, the chosen one on a soft block.
+    private func iconChoice(_ row: SettingsItem) -> some View {
+        let selected = selectedID(row)
+        let color = row.colorKey.flatMap { model.values[$0] }
+        let block = Color(settingsHex: "#EAEAED") ?? DuduStyle.selected
+        let edge = Color(settingsHex: "#C9CBD0") ?? DuduStyle.muted
+        return HStack(spacing: 0) {
+            ForEach(row.options ?? []) { option in
+                if let status = option.status {
+                    Button { choose(row, option) } label: {
+                        IssueStatusIcon(type: status.type, color: color ?? status.color, iconProgress: status.progress, size: 24)
+                            .frame(width: 60, height: 48)
+                            .background(option.id == selected ? block : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay {
+                                if option.id == selected {
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(edge, lineWidth: 0.8)
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(option.title)
+                    .accessibilityAddTraits(option.id == selected ? .isSelected : [])
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 76)
+        .background(Color.white)
+        .accessibilityIdentifier("settings.row.\(row.id)")
+    }
+
+    private func menuChoiceRow(_ row: SettingsItem) -> some View {
         var options = row.options ?? []
         if row.id == "permission" {
             // The host reports DSH's preset ids; the phone's own menu shows them under DSH's names.
@@ -532,7 +750,37 @@ private struct SettingsPageView: View {
         }
     }
 
+    @ViewBuilder
     private func fieldRow(_ row: SettingsItem) -> some View {
+        if row.inline == true {
+            inlineFieldRow(row)
+        } else {
+            stackedFieldRow(row)
+        }
+    }
+
+    /// A field with its title beside it (the 状态 form: 名称 and 描述).
+    private func inlineFieldRow(_ row: SettingsItem) -> some View {
+        let key = row.key ?? row.id
+        return HStack(alignment: .firstTextBaseline, spacing: 0) {
+            Text(row.title)
+                .font(.system(size: 15))
+                .foregroundStyle(DuduStyle.ink)
+                .frame(width: 74, alignment: .leading)
+            TextField(row.placeholder ?? "", text: fieldBinding(key), axis: row.multiline == true ? .vertical : .horizontal)
+                .lineLimit(row.multiline == true ? 1...4 : 1...1)
+                .font(.system(size: 15))
+                .foregroundStyle(DuduStyle.ink)
+                .textInputAutocapitalization(.never)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
+        .frame(minHeight: 56)
+        .background(Color.white)
+        .accessibilityIdentifier("settings.row.\(row.id)")
+    }
+
+    private func stackedFieldRow(_ row: SettingsItem) -> some View {
         let key = row.key ?? row.id
         return VStack(alignment: .leading, spacing: 6) {
             Text(row.title)
@@ -642,6 +890,23 @@ private struct SettingsPageView: View {
             }
         default: return item.role == "destructive" ? "trash" : "ellipsis"
         }
+    }
+}
+
+/// A status icon in a soft tile of its own colour: the rows of the 状态 page (36pt) and the form's preview (64pt) (owner's drawing, 2026-11-21).
+private struct StatusTile: View {
+    let type: String
+    var color: String?
+    var progress: Double?
+    let size: CGFloat
+    let icon: CGFloat
+    let radius: CGFloat
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: radius, style: .continuous)
+            .fill(IssueStatusIcon.ink(type: type, color: color).opacity(0.1))
+            .frame(width: size, height: size)
+            .overlay { IssueStatusIcon(type: type, color: color, iconProgress: progress, size: icon) }
     }
 }
 

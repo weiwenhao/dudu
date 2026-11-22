@@ -14,6 +14,9 @@ struct MainDestination: Equatable {
 
     static let conversation = MainDestination(id: "chat", area: .view, target: .chat, title: L10n.text("对话"))
     static let board = MainDestination(id: "dudu.board", area: .sidebar, target: .board, title: L10n.text("看板"))
+    static let inbox = MainDestination(id: "dudu.collector", area: .sidebar, target: .collector, title: L10n.text("收件箱"))
+    static let tasks = MainDestination(id: "dudu.tasks", area: .sidebar, target: .tasks, title: L10n.text("任务"))
+    static let settings = MainDestination(id: "settings", area: .sidebar, target: .settingsHome, title: L10n.text("设置"))
 
     var showsChat: Bool { target == .chat }
     var onCanvas: Bool {
@@ -28,12 +31,38 @@ struct MainDestination: Equatable {
         case .assistant: return "assistant"
         case .board: return "board"
         case .collector: return "collector"
+        case .settingsHome: return "settings"
         case .tasks: return "tasks"
         case .dshSettings: return "dshSettings"
         case .duduSettings: return "duduSettings"
         case .files: return "files"
         case let .web(page, _): return page.rawValue
         case .unsupported: return "unsupported"
+        }
+    }
+}
+
+enum HomeTab: String, CaseIterable, Identifiable {
+    case board, inbox, tasks, settings
+
+    var id: String { rawValue }
+    var destination: MainDestination {
+        switch self {
+        case .board: return .board
+        case .inbox: return .inbox
+        case .tasks: return .tasks
+        case .settings: return .settings
+        }
+    }
+    var title: String { destination.title }
+
+    init?(target: NavigationTarget) {
+        switch target {
+        case .board: self = .board
+        case .collector: self = .inbox
+        case .tasks: self = .tasks
+        case .settingsHome: self = .settings
+        default: return nil
         }
     }
 }

@@ -62,6 +62,7 @@ struct ChatView: View {
     @State private var queueOverlayHeight: CGFloat = 0
     @State private var queueEditor: QueuedMessage?
     @State private var queueEditorError: String?
+    @State private var questionSheetID: String?
     @State private var queueUpdate: QueueUpdate?
     @State private var contextPicker: ContextPicker?
     @State private var keyboardVisible = false
@@ -257,7 +258,7 @@ struct ChatView: View {
         .onChange(of: store.goal?.id) { _, _ in
             goalEditor = nil
         }
-        .onChange(of: isOverlayOpen) { _, isOpen in
+        .onChange(of: historyIsCovered) { _, isOpen in
             guard isOpen else { return }
             assistantCompletion.close()
             composerFocused = false
@@ -308,7 +309,7 @@ struct ChatView: View {
     }
 
     private var hasConversationContent: Bool {
-        !store.displayedTranscriptRows.isEmpty || !store.messages.isEmpty
+        !store.displayedTranscriptRows.isEmpty || !store.messages.isEmpty || !store.questions.isEmpty
     }
 
     private var sessionApprovals: [Approval] {
@@ -329,7 +330,6 @@ struct ChatView: View {
             request: { method, parameters in
                 try await store.conversationRequest(method, parameters: parameters, target: target)
             },
-            fork: { seq in try await store.forkConversation(at: seq, target: target) },
             loadImage: { attachment, target, fullSize in
                 await store.conversationImage(attachment, target: target, fullSize: fullSize)
             },
@@ -337,6 +337,14 @@ struct ChatView: View {
                 try await store.downloadConversationVideo(parameters, target: target)
             }
         )
+    }
+
+    private var historyIsCovered: Bool { isOverlayOpen || questionSheetID != nil }
+    /// A question opens its sheet by itself (owner, 2026-11-21) only while the chat is the page in front, the app is active and no other sheet or picker of the chat is open.
+    private var questionsMayOpen: Bool {
+        scenePhase == .active && !isOverlayOpen && !isPageTransitioning && questionSheetID == nil
+            && attachmentSheetRequest == nil && goalEditor == nil && queueEditor == nil && planPreview == nil && contextPicker == nil
+            && !isFileImporterPresented && !isPhotoPickerPresented && !isVideoPickerPresented
     }
 
     private var draftBinding: Binding<String> {
@@ -430,7 +438,7 @@ struct ChatView: View {
                 items: items, target: target,
                 topInset: historyTopInset + 7, bottomInset: chromeHeight + 11,
                 canLoadAttachments: canLoadAttachments, keyboardVisible: keyboardVisible,
-                isCovered: isOverlayOpen, isPreparingForPresentation: presentationRequest != nil,
+                isCovered: historyIsCovered, isPreparingForPresentation: presentationRequest != nil,
                 followsLatest: $followsLatestMessage,
                 awayFromLatest: $awayFromLatest, jumpToken: latestJump, cardFromTop: $cardFromTop,
                 onReachedStart: {
@@ -441,7 +449,7 @@ struct ChatView: View {
             ) { item in
                 historyContent(item, target: target, canLoadAttachments: canLoadAttachments)
                     .environment(\.conversationAccess, access)
-                    .environment(\.conversationIsCovered, isOverlayOpen)
+                    .environment(\.conversationIsCovered, historyIsCovered)
                     .tint(DuduStyle.ink)
             }
             .transaction { transaction in
@@ -498,7 +506,7 @@ struct ChatView: View {
     }
 
     private var visibleReadPosition: SessionReadPosition? {
-        guard scenePhase == .active, !isOverlayOpen, !isPageTransitioning, latestContentVisible,
+        guard scenePhase == .active, !historyIsCovered, !isPageTransitioning, latestContentVisible,
               followsLatestMessage, store.canReadConversation else { return nil }
         guard var position = store.sessionReadPosition else { return nil }
         if position.stream != nil,
@@ -512,8 +520,10 @@ struct ChatView: View {
         guard hasConversationContent else { return [] }
         let items: [ConversationHistoryItem]
         if store.transcript == nil {
-            items = store.messages.map(ConversationHistoryItem.message) +
-                ConversationHistoryItem.transcriptItems(store.displayedTranscriptRows)
+            items = ConversationHistoryItem.messageHistoryItems(
+                messages: store.messages, transcriptRows: store.displayedTranscriptRows,
+                questions: draftTarget == nil ? [] : store.questions
+            )
         } else {
             var built: [ConversationHistoryItem] = []
             let isLoadingHistory = historyRequestID != nil
@@ -582,7 +592,10 @@ struct ChatView: View {
             )
         case let .questions(batch):
             if let target {
-                ConversationQuestionsView(batch: batch, connected: canLoadAttachments) { answers in
+                ConversationQuestionsView(batch: batch, connected: canLoadAttachments, autoOpen: questionsMayOpen, onPresentationChange: { open in
+                    if open { questionSheetID = batch.id }
+                    else if questionSheetID == batch.id { questionSheetID = nil }
+                }) { answers in
                     try await store.answerQuestions(batch, answers: answers, target: target)
                 }
             }
@@ -1405,6 +1418,7 @@ struct ChatView: View {
     }
 
     private func attachmentSheet(for page: ComposerAttachmentSheet.Page) -> some View {
+        let requestID = attachmentSheetRequest?.id
         let rows = ComposerAttachmentSheet.commandRowCount(
             isTaskRunning: store.selectedSession?.status == "running",
             hasReasoningLevels: !store.currentEfforts.isEmpty
@@ -1422,7 +1436,9 @@ struct ChatView: View {
             onPlan: { dismissAttachmentSheet(then: .plan) },
             onCompact: { dismissAttachmentSheet(then: .compact) },
             onStopTask: { Task { await store.stopSession() } },
-            onClose: { attachmentSheetRequest = nil }
+            onClose: {
+                if attachmentSheetRequest?.id == requestID { attachmentSheetRequest = nil }
+            }
         )
         .presentationDetents([.height(
             page == .modelSettings

@@ -1,8 +1,10 @@
 import Combine
 import Foundation
 
-// 嘟嘟's own settings, drawn by the app (owner, 2026-11-07: "嘟嘟自己的设置不用 webview 用原生实现"). The plugin describes a page (`host/native-settings.mjs`), the app draws it with its own
-// controls, and what the person changes goes back as an act the plugin turns into the desktop interface's own action. The words are the plugin's, which are the desktop's.
+// 嘟嘟's own settings, drawn by the app (owner, 2026-11-07: "嘟嘟自己的设置不用 webview 用原生实现"). Since 2026-11-21 the layout is the app's too (owner: 「从 api 获取的是值，而不是布局」):
+// the plugin answers `settings.data` with the raw values of the desktop interface's own actions, `SettingsLayouts` lays the page out, the app draws it with its own controls, and what the
+// person changes goes back as an act the plugin turns into the desktop interface's own action. A plugin that has no `settings.data` yet describes the page itself (`settings.page`,
+// `host/native-settings.mjs`), and the page is that description, as it was before.
 
 struct SettingsAct: Codable, Equatable, Sendable {
     var name: String
@@ -43,11 +45,37 @@ struct SettingsLocation: Codable, Equatable, Hashable, Sendable {
     var target: String?
 }
 
+/// What a long press on a row offers (the `menu` of a phone that declared `settings.rich`): the acts the swipe had, the desktop's glyph for each, and the ones that cannot be done now shown grey.
+struct SettingsMenuItem: Codable, Equatable, Sendable, Identifiable {
+    var title: String
+    var glyph: String?
+    var act: SettingsAct?
+    var to: SettingsLocation?
+    var role: String?
+    var confirm: SettingsConfirm?
+    var enabled: Bool?
+    var id: String { title }
+}
+
+/// A status icon as the plugin describes it: its type, its colour and, for a started one, how far it is filled.
+struct SettingsStatus: Codable, Equatable, Sendable {
+    var type: String
+    var color: String?
+    var progress: Double?
+}
+
+/// The "+" at the end of a group's strip.
+struct SettingsAdd: Codable, Equatable, Sendable {
+    var title: String
+    var to: SettingsLocation
+}
+
 struct SettingsOption: Codable, Equatable, Sendable, Identifiable {
     var id: String
     var title: String
     var subtitle: String?
     var color: String?
+    var status: SettingsStatus?
 }
 
 struct SettingsItem: Codable, Equatable, Sendable, Identifiable {
@@ -73,6 +101,15 @@ struct SettingsItem: Codable, Equatable, Sendable, Identifiable {
     var to: SettingsLocation?
     var swipe: [SettingsSwipe]?
     var act: SettingsAct?
+    /// A phone that declared `settings.rich` is given these (host/native-settings.mjs): the long-press menu, the strip's "+", the status tile, the word after the title, the style of a choice, a field with its title beside it, and the keys the status preview follows.
+    var menu: [SettingsMenuItem]?
+    var add: SettingsAdd?
+    var status: SettingsStatus?
+    var tag: String?
+    var style: String?
+    var inline: Bool?
+    var colorKey: String?
+    var progressKey: String?
 
     var id: String { rawID ?? "\(kind):\(title)" }
 
@@ -85,6 +122,7 @@ struct SettingsItem: Codable, Equatable, Sendable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case rawID = "id"
         case kind, title, subtitle, detail, mono, tone, color, icon, on, options, selected, key, value, placeholder, multiline, secret, button, notification, to, swipe, act
+        case menu, add, status, tag, style, inline, colorKey, progressKey
     }
 }
 
@@ -117,12 +155,59 @@ struct SettingsToast: Codable, Equatable, Sendable {
     var message: String
 }
 
+/// What `settings.act` answers.
 struct SettingsAnswer: Codable, Sendable {
     var outcome: String
     var message: String?
+    /// The page an older plugin draws; a phone that reads `settings.data` lays its own out and leaves this alone.
     var page: SettingsPage?
     var back: Bool?
     var toast: SettingsToast?
+    /// What the plugin recognized in a custom connector's text (`connectors/recognize`): the add form is laid out from it.
+    var recognized: JSONValue?
+
+    private enum CodingKeys: String, CodingKey { case outcome, message, page, back, toast, recognized }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        outcome = try values.decode(String.self, forKey: .outcome)
+        message = (try? values.decodeIfPresent(String.self, forKey: .message)) ?? nil
+        // A page this app cannot read does not make the action a failure: the plugin has said it succeeded.
+        page = (try? values.decodeIfPresent(SettingsPage.self, forKey: .page)) ?? nil
+        back = (try? values.decodeIfPresent(Bool.self, forKey: .back)) ?? nil
+        toast = (try? values.decodeIfPresent(SettingsToast.self, forKey: .toast)) ?? nil
+        recognized = (try? values.decodeIfPresent(JSONValue.self, forKey: .recognized)) ?? nil
+    }
+}
+
+/// What `settings.data` answers: the raw answer of each action the page is laid out from, by the action's name (`SettingsLayouts`).
+struct SettingsDataAnswer: Decodable, Sendable {
+    var outcome: String
+    var message: String?
+    var data: [String: JSONValue]?
+}
+
+extension DuduFailure {
+    /// An older plugin answers a method it does not know with one of these codes.
+    var isUnknownMethod: Bool {
+        if case let .remote(code) = self { return ["UNSUPPORTED", "METHOD_NOT_ALLOWED"].contains(code) }
+        return false
+    }
+}
+
+/// Whether the computer's plugin answers `settings.data`, kept for the connection it was learned on (a new connection may be to a plugin that was updated).
+@MainActor
+enum SettingsDataSupport {
+    private static var known: (computer: String?, connection: Int, available: Bool)?
+
+    static func available(for store: DuduStore) -> Bool? {
+        guard let known, known.computer == store.activeComputer?.id, known.connection == store.connectionRevision else { return nil }
+        return known.available
+    }
+
+    static func note(_ available: Bool, for store: DuduStore) {
+        known = (store.activeComputer?.id, store.connectionRevision, available)
+    }
 }
 
 typealias SettingsReport = @MainActor (DuduToastMessage) -> Void
@@ -153,6 +238,9 @@ final class SettingsPageModel: ObservableObject, Identifiable, Hashable {
     private var previewedValue: String?
     private var suggestedName: String?
     private var savingNotifications: [String: Int] = [:]
+    /// Where the page on screen came from: values the app laid out (`settings.data`), or the page an older plugin describes (`settings.page`).
+    private enum Source { case data, descriptor }
+    private var source: Source?
 
     var canSave: Bool {
         guard page?.save != nil, !busy, !isPreviewing else { return false }
@@ -214,17 +302,52 @@ final class SettingsPageModel: ObservableObject, Identifiable, Hashable {
         loadID = readID
         defer { if loadID == readID { loadID = nil } }
         do {
-            let value = try await store.request("settings.page", params)
-            let answer = try await json.decode(SettingsAnswer.self, from: value)
+            let (next, origin) = try await read(using: store)
             guard !Task.isCancelled, loadID == readID, revision == readRevision,
                   computerID == store.activeComputer?.id, connection == store.connectionRevision else { return }
-            guard answer.outcome == "success", let page = answer.page else { throw DuduFailure.protocolError }
-            apply(page)
+            source = origin
+            apply(next)
         } catch {
             guard !Task.isCancelled, loadID == readID, revision == readRevision,
                   computerID == store.activeComputer?.id, connection == store.connectionRevision else { return }
             DuduLog.networkFailure("settings.page.fail", error: error)
             if page == nil { state = .failed }
+        }
+    }
+
+    /// The page, from the plugin's values laid out here; from a plugin that has no `settings.data` yet, as the page it describes. Nothing of a page's layout comes from a plugin that answers values.
+    private func read(using store: DuduStore) async throws -> (SettingsPage, Source) {
+        // The form that adds a connector is the app's alone: only what the plugin recognizes in its text changes it.
+        if SettingsLayouts.isStatic(location) { return (SettingsLayouts.customConnector(), .data) }
+        if SettingsLayouts.handles(location.section), SettingsDataSupport.available(for: store) != false {
+            do {
+                let value = try await store.request("settings.data", params)
+                let answer = try await json.decode(SettingsDataAnswer.self, from: value)
+                guard answer.outcome == "success", let data = answer.data else { throw DuduFailure.protocolError }
+                SettingsDataSupport.note(true, for: store)
+                return (try SettingsLayouts.page(for: location, values: data), .data)
+            } catch let failure as DuduFailure where failure.isUnknownMethod {
+                SettingsDataSupport.note(false, for: store)
+            }
+        }
+        let value = try await store.request("settings.page", params)
+        let answer = try await json.decode(SettingsAnswer.self, from: value)
+        guard answer.outcome == "success", let page = answer.page else { throw DuduFailure.protocolError }
+        return (page, .descriptor)
+    }
+
+    /// The values again, laid out again: what an action changed shows at once, as the page the plugin used to send back with its answer did.
+    private func reread(using store: DuduStore, connection: Int) async -> Bool {
+        do {
+            let (next, origin) = try await read(using: store)
+            guard computerID == store.activeComputer?.id, connection == store.connectionRevision else { return false }
+            source = origin
+            apply(next)
+            return true
+        } catch {
+            guard computerID == store.activeComputer?.id, connection == store.connectionRevision else { return false }
+            DuduLog.networkFailure("settings.page.fail", error: error)
+            return false
         }
     }
 
@@ -278,8 +401,15 @@ final class SettingsPageModel: ObservableObject, Identifiable, Hashable {
             guard !Task.isCancelled, previewID == readID, revision == readRevision,
                   computerID == store.activeComputer?.id, connection == store.connectionRevision,
                   values[preview.key, default: ""].trimmingCharacters(in: .whitespacesAndNewlines) == value else { return }
-            guard answer.outcome == "success", let page = answer.page else { throw DuduFailure.protocolError }
-            apply(page)
+            guard answer.outcome == "success" else { throw DuduFailure.protocolError }
+            // What the plugin recognized is laid out here; an older plugin sends the page it describes.
+            if let recognized = answer.recognized {
+                apply(SettingsLayouts.customConnector(recognized: recognized))
+            } else if let page = answer.page {
+                apply(page)
+            } else {
+                throw DuduFailure.protocolError
+            }
             previewedValue = value
             problem = nil
         } catch {
@@ -409,9 +539,18 @@ final class SettingsPageModel: ObservableObject, Identifiable, Hashable {
                 return false
             }
             if let toast = answer.toast { report(DuduToastMessage(text: toast.message, kind: .success)) }
-            if let page = answer.page {
+            if source == .data {
+                // The answer may still carry the page the plugin would draw: the app reads the values again and lays out its own.
+                if answer.back != true, !SettingsLayouts.isStatic(location) {
+                    let shown = await reread(using: store, connection: connection)
+                    if !shown || revision != actionRevision { needsRefresh = true }
+                }
+            } else if let page = answer.page {
                 if revision == actionRevision { apply(page) }
                 else { needsRefresh = true }
+            } else if answer.back != true {
+                // The plugin said it worked but sent no page this app could read: read the page again.
+                needsRefresh = true
             }
             return answer.back == true
         } catch {
@@ -433,7 +572,7 @@ final class SettingsNavigator: ObservableObject {
     private var currentChanges: AnyCancellable?
 
     private static let sectionTitles = [
-        "general": L10n.text("通用"), "statuses": L10n.text("状态"), "connectors": L10n.text("连接器"), "collectors": L10n.text("收集器"), "rules": L10n.text("规则"), "memory": L10n.text("记忆"), "skills": L10n.text("技能"),
+        "general": L10n.text("常规"), "statuses": L10n.text("状态"), "connectors": L10n.text("连接器"), "collectors": L10n.text("收集器"), "rules": L10n.text("规则"), "memory": L10n.text("记忆"), "skills": L10n.text("技能"),
     ]
 
     var current: SettingsPageModel? { pages.last }

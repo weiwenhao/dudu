@@ -50,8 +50,10 @@ struct GroupLine: Codable, Equatable, Sendable {
     /// Only a `task` line: false when the run failed, and then `text` is the reason (the plugin's own words, which may be English).
     var ok: Bool?
     var liveReply: GroupLiveReply? = nil
+    /// Only an `at` line: the pictures sent with it, drawn in its bubble above the words (owner, 2026-11-22). Read one by its `id` and the line's `seq` (`session.attachment`).
+    var pictures: [TranscriptAttachment]? = nil
 
-    private enum CodingKeys: String, CodingKey { case kind, issue, text, at, to, answer, files, task, ok, liveReply }
+    private enum CodingKeys: String, CodingKey { case kind, issue, text, at, to, answer, files, task, ok, liveReply, pictures }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -69,6 +71,7 @@ struct GroupLine: Codable, Equatable, Sendable {
         task = try container.decodeIfPresent(GroupTask.self, forKey: .task)
         ok = try container.decodeIfPresent(Bool.self, forKey: .ok)
         liveReply = try container.decodeIfPresent(GroupLiveReply.self, forKey: .liveReply)
+        pictures = try? container.decodeIfPresent([TranscriptAttachment].self, forKey: .pictures)
     }
 
     /// Whether the owner can answer the line by writing to its issue. A `task` line is 嘟嘟's own words: there is no issue to write to.

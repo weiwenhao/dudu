@@ -8,6 +8,14 @@ enum SessionCommand: String, Sendable {
     case compact
 }
 
+struct SessionConfiguration: Equatable, Sendable {
+    let id = UUID()
+    let modelId: String?
+    let permissionId: String?
+    let reasoningEffort: String?
+    let agentPreset: String?
+}
+
 struct CommandOutcome: Sendable, Equatable {
     let isError: Bool
     let text: String

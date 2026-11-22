@@ -174,14 +174,12 @@ private struct TurnRowView: View {
             if row.hasProcess {
                 VStack(alignment: .leading, spacing: 10) {
                     if let title = row.summaryTitle {
-                        ProcessHeader(title: title, isOpen: bodyVisible, isEnabled: !row.staysOpen) {
+                        ProcessHeader(title: title, isOpen: bodyVisible, isEnabled: !row.staysOpen && row.hasFoldableProcess) {
                             withAnimation(.easeOut(duration: 0.18)) { processOpen.toggle() }
                         }
                     }
-                    if bodyVisible {
-                        processBody
-                            .transition(.opacity)
-                    }
+                    // Folding hides the thinking and tool groups only; the replies between them stay (DSH's default 「全部回复」).
+                    if bodyVisible || row.hasReplies { processBody }
                 }
             }
             if let answer = row.answer {
@@ -209,17 +207,24 @@ private struct TurnRowView: View {
             ForEach(row.segments) { segment in
                 switch segment {
                 case let .group(group):
-                    ProcessGroupView(
-                        group: group,
-                        live: group.isRunning ? row.live : nil,
-                        startsOpen: row.isLastFragment && row.outcome != .running
-                    )
+                    if bodyVisible {
+                        ProcessGroupView(
+                            group: group,
+                            live: group.isRunning ? row.live : nil,
+                            startsOpen: row.isLastFragment && row.outcome != .running
+                        )
+                        .transition(.opacity)
+                    }
                 case let .reply(id, text):
-                    if id.hasPrefix("live:") {
+                    let isLive = id.hasPrefix("live:")
+                    if isLive && !row.liveTextComplete {
                         StreamingReplyText(text: text, id: id)
                             .messageActions(text: text, seq: row.messageSequences[id])
                     } else {
+                        // Text the host says is finished is a message already, though it has not recorded it yet (that can be minutes late): Markdown, not the plain streaming text.
+                        // Its read receipt waits for what was drawn, as for the streaming text.
                         MessageMarkdown(text: text, allowsTextSelection: false, sourceSequence: row.messageSequences[id])
+                            .preference(key: RenderedLiveReplies.self, value: isLive ? [id: text] : [:])
                             .messageActions(text: text, seq: row.messageSequences[id])
                     }
                 }

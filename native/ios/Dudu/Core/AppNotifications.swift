@@ -164,6 +164,22 @@ final class NotificationAppDelegate: NSObject, UIApplicationDelegate, UNUserNoti
         DuduLog.record("notifications.token.fail", level: "warn", code: "APNS_REGISTRATION_FAILED")
     }
 
+    /// The silent push that wakes the App while it is away (`BoardWake`). In front, the App is told on its own connection and reads the board itself.
+    func application(
+        _ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        guard let computerID = BoardWake.computerID(in: userInfo), application.applicationState != .active else {
+            completionHandler(.noData)
+            return
+        }
+        DuduLog.record("board.wake.received", state: "background")
+        Task {
+            let result = await BoardWake.run(computerID: computerID)
+            completionHandler(result)
+        }
+    }
+
     func userNotificationCenter(
         _ center: UNUserNotificationCenter, willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void

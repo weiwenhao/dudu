@@ -15,11 +15,8 @@ private struct MessageActions: ViewModifier {
     let seq: Double?
     var reply: GroupIssue? = nil
     var seqs: [Double] = []
-    @Environment(\.conversationAccess) private var access
     @Environment(\.groupChat) private var group
     @State private var selection: MessageSelection?
-    @State private var forkFailure: DuduToastMessage?
-    @State private var forking = false
 
     func body(content: Content) -> some View {
         content
@@ -28,7 +25,7 @@ private struct MessageActions: ViewModifier {
                 if let group {
                     groupMenu(group)
                 } else {
-                ordinaryMenu
+                    ordinaryMenu
                 }
             } preview: {
                 MessageMenuPreview(text: text, isUser: isUser, seq: seq)
@@ -37,57 +34,41 @@ private struct MessageActions: ViewModifier {
             .sheet(item: $selection) { selection in
                 MessageSelectionSheet(text: selection.text)
             }
-            .overlay(alignment: .top) {
-                DuduToastOverlay(message: forkFailure) { _ in forkFailure = nil }
-            }
     }
 
     /// The menu of 嘟嘟's thread: 回复, 复制, 删除.
     @ViewBuilder
     private func groupMenu(_ group: GroupChatContext) -> some View {
         if let reply {
-            Button { group.reply(reply) } label: { DuduLabel(L10n.text("回复"), icon: .reply) }
+            Button { group.reply(reply) } label: { DuduLabel(message: L10n.text("回复"), icon: .reply) }
                 .accessibilityIdentifier("message.reply")
         }
         if !text.isEmpty {
-            Button(action: copy) { DuduLabel(L10n.text("复制"), icon: .copy) }
+            Button(action: copy) { DuduLabel(message: L10n.text("复制"), icon: .copy) }
                 .accessibilityIdentifier("message.copy")
         }
         let lines = seqs.isEmpty ? (seq.map { [$0] } ?? []) : seqs
         if !lines.isEmpty {
-            Button(role: .destructive) { group.hide(lines) } label: { DuduLabel(L10n.text("删除"), icon: .trash) }
+            Button(role: .destructive) { group.hide(lines) } label: { DuduLabel(message: L10n.text("删除"), icon: .trash) }
                 .accessibilityIdentifier("message.delete")
         }
     }
 
     @ViewBuilder
     private var ordinaryMenu: some View {
-                if !text.isEmpty {
-                    Button(action: copy) {
-                        DuduLabel(L10n.text("复制"), icon: .copy)
-                    }
-                    .accessibilityIdentifier("message.copy")
-                    Button {
-                        selection = MessageSelection(text: text)
-                    } label: {
-                        Label(L10n.text("选择"), systemImage: "selection.pin.in.out")
-                    }
-                    .accessibilityIdentifier("message.select")
-                }
-                if let seq, let access {
-                    Button {
-                        forking = true
-                        Task { @MainActor in
-                            defer { forking = false }
-                            do { try await access.fork(seq) }
-                            catch { forkFailure = DuduToastMessage(text: error.localizedDescription, kind: .error) }
-                        }
-                    } label: {
-                        Label(L10n.text("在新对话中分支"), systemImage: "arrow.triangle.branch")
-                    }
-                    .disabled(!access.connected || forking)
-                    .accessibilityIdentifier("message.fork")
-                }
+        if !text.isEmpty {
+            Button(action: copy) {
+                DuduLabel(message: L10n.text("复制"), icon: .copy)
+            }
+            .accessibilityIdentifier("message.copy")
+            Button {
+                selection = MessageSelection(text: text)
+            } label: {
+                // The checkbox the owner chose for 选择 in the inbox's menu (2026-11-21), in the same family and size as 复制 (it was an SF Symbol).
+                DuduLabel(message: L10n.text("选择"), icon: .selectRows)
+            }
+            .accessibilityIdentifier("message.select")
+        }
     }
 
     private func copy() {

@@ -45,13 +45,11 @@ private struct TurnChangesCard: View {
         let counts = changes?.summary ?? summary
         Button { showingFiles = true } label: {
             HStack(spacing: 12) {
-                Image("ChangedFiles")
-                    .resizable()
-                    .renderingMode(.original)
-                    .frame(width: 24, height: 24)
-                    .accessibilityHidden(true)
+                if counts?.total == 1 {
+                    FileTypeIcon(name: counts?.fileName)
+                }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(counts.map { L10n.plural("已编辑 \($0.total) 个文件") } ?? L10n.text("已编辑文件"))
+                    Text(counts?.fileName ?? counts.map { L10n.plural("已编辑 \($0.total) 个文件") } ?? L10n.text("已编辑文件"))
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(DuduStyle.chatInk)
                         .lineLimit(1)
@@ -278,7 +276,9 @@ private struct ChangedFilesBrowser: View {
             .toolbar { FileBrowserClose() }
             .accessibilityIdentifier("changes.browser")
         }
-        .modifier(FileBrowserPresentation(rowCount: matching.count))
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(28)
         .task(id: access?.connected) { await loadChanges() }
     }
 

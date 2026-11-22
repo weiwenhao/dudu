@@ -474,28 +474,6 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertTrue(store.canReadConversation)
     }
 
-    func testForkRequiresAnAuthoritativeBranchAndPreservesTheSourceOnFailure() async throws {
-        let transport = StoreTransportFixture()
-        let store = DuduStore(repository: StoreComputerFixture(), client: transport)
-        await store.start()
-        let target = DraftTarget(computerID: "local-fixture", sessionID: "a")
-        await transport.setForkReply(.object(["sessionId": .string("branch")]))
-        do {
-            try await store.forkConversation(at: 1, target: target)
-            XCTFail("An absent branch must not be fabricated from the source conversation.")
-        } catch {
-            XCTAssertEqual(error as? DuduFailure, .protocolError)
-        }
-        XCTAssertEqual(store.selectedSession?.id, "a")
-        XCTAssertEqual(store.messages.first?.text, "a")
-        XCTAssertFalse(store.sessions.contains { $0.id == "branch" })
-
-        await transport.listSession("branch")
-        try await store.forkConversation(at: 1, target: target)
-        XCTAssertEqual(store.selectedSession?.id, "branch")
-        XCTAssertEqual(store.messages.first?.text, "branch")
-    }
-
     func testFreshSessionRefreshDoesNotReuseAResponseStartedBeforeMutation() async throws {
         let transport = StoreTransportFixture()
         let store = DuduStore(repository: StoreComputerFixture(), client: transport)
@@ -1977,6 +1955,7 @@ final class CoreStoreTests: XCTestCase {
         } catch {}
         await store.selectSession(session("b"))
         XCTAssertFalse(store.isChoosingProvider)
+        XCTAssertNil(store.pendingSessionConfiguration)
         await transport.finishRequest("session.configure")
         await choice.value
         XCTAssertEqual(store.selectedSession?.id, "b")
@@ -2002,6 +1981,70 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertEqual(store.selectedEffort, "max")
         XCTAssertEqual(store.selectedPresetId, "minimal")
         XCTAssertEqual(store.currentPreset?.id, "minimal")
+    }
+
+    func testModelChangeRefreshesTheWatchAndCannotBeUndoneByOldSnapshots() async throws {
+        let transport = StoreTransportFixture()
+        let store = DuduStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await store.configure(modelId: "deepseek:v4", reasoningEffort: "max")
+        let previousWatch = await transport.watchID(for: "a")
+        let previousWatchID = try XCTUnwrap(previousWatch)
+        let target = DraftTarget(computerID: "local-fixture", sessionID: "a")
+        store.messageDrafts[target] = "Keep this draft"
+        let messages = store.messages
+        await transport.holdNextRequest("session.configure")
+        await transport.holdWatch("a")
+
+        let change = Task { await store.configure(modelId: "claude:sonnet") }
+        await transport.waitForRequest("session.configure")
+        XCTAssertEqual(store.pendingSessionConfiguration?.modelId, "claude:sonnet")
+        let duplicate = await store.configure(modelId: "deepseek:v4")
+        XCTAssertFalse(duplicate)
+        let requestCount = await transport.requestCount("session.configure")
+        XCTAssertEqual(requestCount, 2)
+
+        await transport.finishRequest("session.configure")
+        await transport.waitForWatch("a")
+        XCTAssertEqual(store.selectedModelId, "claude:sonnet")
+        XCTAssertNil(store.selectedEffort)
+        await transport.emitSnapshot(
+            "a", text: "stale", watchID: previousWatchID, modelId: "deepseek:v4", reasoningEffort: "max"
+        )
+        XCTAssertEqual(store.messages, messages)
+        XCTAssertEqual(store.selectedModelId, "claude:sonnet")
+        await transport.finishWatch("a", text: "a")
+        let changed = await change.value
+        XCTAssertTrue(changed)
+        XCTAssertNil(store.pendingSessionConfiguration)
+        XCTAssertEqual(store.selectedModelId, "claude:sonnet")
+        XCTAssertEqual(store.messageDrafts[target], "Keep this draft")
+        let watches = await transport.watchCount("a")
+        XCTAssertEqual(watches, 3)
+        await transport.emitSnapshot("a", text: "a", modelId: "deepseek:v4", reasoningEffort: "high")
+        XCTAssertEqual(store.selectedModelId, "deepseek:v4")
+        XCTAssertEqual(store.selectedEffort, "high")
+    }
+
+    func testRefusedModelChangeKeepsSelectionAndReportsOnlyToItsEditor() async {
+        let transport = StoreTransportFixture()
+        let store = DuduStore(repository: StoreComputerFixture(), client: transport)
+        await store.start()
+        await store.configure(modelId: "deepseek:v4", reasoningEffort: "max")
+        let watchID = await transport.watchID(for: "a")
+        await transport.failNextRequest("session.configure", with: .remote("UPSTREAM_ERROR"))
+        var failure: String?
+
+        let changed = await store.configure(modelId: "claude:sonnet", onFailure: { failure = $0 })
+
+        XCTAssertFalse(changed)
+        XCTAssertNotNil(failure)
+        XCTAssertNil(store.error)
+        XCTAssertNil(store.pendingSessionConfiguration)
+        XCTAssertEqual(store.selectedModelId, "deepseek:v4")
+        XCTAssertEqual(store.selectedEffort, "max")
+        let currentWatchID = await transport.watchID(for: "a")
+        XCTAssertEqual(currentWatchID, watchID)
     }
 
     func testNewSessionCarriesProjectModeAndTheBlankConversationToReuse() async {
@@ -2314,10 +2357,10 @@ private actor StoreTransportFixture: DuduTransport {
     private var planModes: [String: Bool] = [:]
     private var createRequests: [[String: JSONValue]] = []
     private var configureRequests: [[String: JSONValue]] = []
+    private var sessionConfigurations: [String: [String: JSONValue]] = [:]
     private var extraListedRows: [JSONValue] = []
     private var createdWorkspaces: [String: String] = [:]
     private var navigationReply: JSONValue?
-    private var forkReply: JSONValue = .object([:])
     private var queues: [String: [JSONValue]] = [:]
     private var historyReplies: [String: JSONValue] = [:]
     private var historyPage: JSONValue?
@@ -2377,8 +2420,6 @@ private actor StoreTransportFixture: DuduTransport {
             return summary("assistant")
         case "session.list":
             return .array(listedSessions)
-        case "session.fork":
-            return forkReply
         case "session.search":
             return .object([
                 "items": .array([.object(["session": summary("a"), "snippet": params["query"] ?? .string("")])]),
@@ -2438,6 +2479,13 @@ private actor StoreTransportFixture: DuduTransport {
             return summary("new-1")
         case "session.configure":
             configureRequests.append(params)
+            let id = params["id"]!.stringValue!
+            var configuration = sessionConfigurations[id] ?? [:]
+            if params["modelId"] != nil { configuration.removeValue(forKey: "reasoningEffort") }
+            for key in ["modelId", "reasoningEffort", "permissionId", "agentPreset"] {
+                if let value = params[key] { configuration[key] = value }
+            }
+            sessionConfigurations[id] = configuration
             return .bool(true)
         case "approval.respond":
             approvalCount += 1
@@ -2523,7 +2571,6 @@ private actor StoreTransportFixture: DuduTransport {
         }
     }
     func setCommandReply(_ reply: JSONValue) { commandReply = reply }
-    func setForkReply(_ reply: JSONValue) { forkReply = reply }
     func listSession(_ id: String) { extraListedRows.append(summary(id)) }
     func watchID(for id: String) -> String? { watchIDs[id] }
     func setNavigation(_ reply: JSONValue) { navigationReply = reply }
@@ -2575,10 +2622,13 @@ private actor StoreTransportFixture: DuduTransport {
     }
 
     func emitSnapshot(
-        _ id: String, text: String, approvalID: String? = nil, watchID: String? = nil
+        _ id: String, text: String, approvalID: String? = nil, watchID: String? = nil,
+        modelId: String? = nil, reasoningEffort: String? = nil
     ) async {
         var params = detail(id, text: text, approvalID: approvalID).objectValue!
         params["watchId"] = .string(watchID ?? watchIDs[id] ?? "")
+        if let modelId { params["modelId"] = .string(modelId) }
+        if let reasoningEffort { params["reasoningEffort"] = .string(reasoningEffort) }
         await event?(.object([
             "type": .string("event"), "topic": .string("session.snapshot"),
             "params": .object(params)
@@ -2691,6 +2741,7 @@ private actor StoreTransportFixture: DuduTransport {
             } ?? [])
         ]
         if let transcript = historyReplies[id] { result["transcript"] = transcript }
+        for (key, value) in sessionConfigurations[id] ?? [:] { result[key] = value }
         return .object(result)
     }
 }

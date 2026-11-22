@@ -124,7 +124,7 @@ struct NewIssueSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(L10n.text("取消")) { dismiss() }
+                    SheetCloseButton(label: L10n.text("取消")) { dismiss() }
                         .disabled(isCreating)
                         .accessibilityIdentifier("newissue.cancel")
                 }
@@ -135,9 +135,13 @@ struct NewIssueSheet: View {
                         if isCreating {
                             ProgressView()
                         } else {
-                            Text(L10n.text("创建事项"))
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 13, weight: .medium))
+                                .frame(width: 20, height: 20)
                         }
                     }
+                    .controlSize(.small)
+                    .buttonBorderShape(.circle)
                     .disabled(!canCreate)
                     .accessibilityLabel(L10n.text("创建事项"))
                     .accessibilityIdentifier("newissue.create")

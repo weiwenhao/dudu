@@ -29,12 +29,13 @@ struct SheetCloseButton: View {
 
 /// The system reserves the footer once, including in short detents and above the home indicator.
 struct SheetFooter<Footer: View>: ViewModifier {
+    var showsEffect = true
     @ViewBuilder var footer: () -> Footer
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
-            content.modifier(DuduScrollEdgeBar(edge: .bottom, bar: footer))
+            content.modifier(DuduScrollEdgeBar(edge: .bottom, showsEffect: showsEffect, bar: footer))
         } else {
             content.safeAreaInset(edge: .bottom, spacing: 0, content: footer)
         }

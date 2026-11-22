@@ -95,10 +95,11 @@ struct SessionTasksSheet: View {
         .sheet(item: $editing) { task in
             TaskEditorSheet(model: model, store: store, task: task)
         }
-        .confirmationDialog(
-            L10n.text("删除任务"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible, presenting: deleting
+        .alert(
+            L10n.text("删除任务"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting
         ) { task in
-            Button(L10n.text("删除任务"), role: .destructive) { Task { await model.act(.delete, task, using: store) } }
+            Button(L10n.text("取消"), role: .cancel) {}
+            Button(L10n.text("删除"), role: .destructive) { Task { await model.act(.delete, task, using: store) } }
         } message: { task in
             Text(task.title)
         }
@@ -183,10 +184,9 @@ struct SessionTasksSheet: View {
             ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
                 if index > 0 { Divider().padding(.leading, 52).padding(.trailing, 16) }
                 SwipeActionRow(actions: swipeActions(for: task), isRevealed: revealed == task.id, onReveal: { revealed = $0 ? task.id : nil }) {
-                    Button { tap(task) } label: { row(task, horizontalPadding: 16) }
-                        .buttonStyle(DuduRowButtonStyle())
+                    row(task, horizontalPadding: 16)
                         // Press and hold: the row lifts as a card and the menu opens under it, as on the tasks page.
-                        .contextMenu { rowMenu(for: task) } preview: { row(task, horizontalPadding: 16).frame(width: 340).background(Color.white) }
+                        .contextMenu { rowMenu(for: task) } preview: { row(task, horizontalPadding: 16, interactive: false).frame(width: 340).background(Color.white) }
                 }
             }
         }
@@ -194,13 +194,23 @@ struct SessionTasksSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
-    private func row(_ task: ScheduledTask, horizontalPadding: CGFloat) -> some View {
+    private func row(_ task: ScheduledTask, horizontalPadding: CGFloat, interactive: Bool = true) -> some View {
         // No Agent's logo: every task here goes into this conversation, so it is the same Agent on every row.
         TaskSummaryRow(
             agent: nil, title: task.title, line: task.line, statusText: task.statusText,
             isOn: task.isActive, isBusy: model.busy.contains(task.id), horizontalPadding: horizontalPadding,
-            failed: task.status != "ended" && task.lastRun?.status == "failed"
+            failed: task.status != "ended" && task.lastRun?.status == "failed",
+            onOpen: interactive ? { tap(task) } : nil, onToggle: interactive ? toggle(task) : nil,
+            toggleEnabled: store.status == .connected
         )
+    }
+
+    private func toggle(_ task: ScheduledTask) -> ((Bool) async -> Void)? {
+        guard task.status == "active" || task.status == "paused" else { return nil }
+        return { next in
+            revealed = nil
+            await model.act(next ? .resume : .pause, task, using: store)
+        }
     }
 
     /// The finished ones in one row that opens the list, as the team sheet folds its finished members.
@@ -254,7 +264,7 @@ struct SessionTasksSheet: View {
         let pause = SwipeAction(id: "pause", title: L10n.text("暂停任务"), symbol: "pause", color: SwipeAction.grey) { act(.pause, task) }
         let resume = SwipeAction(id: "resume", title: L10n.text("恢复任务"), symbol: "play", color: DuduStyle.blue) { act(.resume, task) }
         let run = SwipeAction(id: "run", title: L10n.text("立即执行"), symbol: "bolt.fill", color: DuduStyle.blue) { act(.run, task) }
-        let delete = SwipeAction(id: "delete", title: L10n.text("删除任务"), symbol: "trash", color: SwipeAction.red) { revealed = nil; deleting = task }
+        let delete = SwipeAction(id: "delete", title: L10n.text("删除任务"), symbol: "trash", glyph: .trash, color: SwipeAction.red) { revealed = nil; deleting = task }
         switch task.status {
         case "active": return [pause, run, delete]
         case "paused": return [resume, delete]

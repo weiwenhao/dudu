@@ -11,6 +11,9 @@ struct DuduRootView: View {
     @State private var presentedSheet: RootSheet?
     @State private var pendingPairingLink: String?
     @State private var navigation = MainNavigation()
+    @State private var homeTab: HomeTab = .board
+    @State private var settingsIsAtRoot = true
+    @State private var conversationHomeReturn: MainNavigation?
     @State private var pageMotion = BoardPageMotion()
     /// The open conversation was chosen on the board: it has the way back to the board and the arrows between issues, and no views menu. A conversation chosen anywhere else
     /// (the sidebar, the Collector) is the app's own as it was: the sidebar button on the left, the views menu on the right (owner, 2026-11-07: the board is one page, it changes nothing else).
@@ -146,6 +149,10 @@ struct DuduRootView: View {
                     NavigationStack {
                         SettingsView(store: store, pagePool: pagePool)
                     }
+                case .dshSettings:
+                    NavigationStack {
+                        SettingsView(store: store, pagePool: pagePool, showsOnlyDSHSettings: true)
+                    }
                 case .computers:
                     NavigationStack {
                         ComputerListView(store: store, onClose: { presentedSheet = nil })
@@ -278,6 +285,9 @@ struct DuduRootView: View {
             assistantReturnsToBoard = false
             resetBoardTransition(showingBoard: true)
             resetNavigation(to: .board)
+            homeTab = .board
+            settingsIsAtRoot = true
+            conversationHomeReturn = nil
             board.reset(for: store.activeComputer?.id)
             collector.reset()
             tasks.reset()
@@ -300,6 +310,8 @@ struct DuduRootView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { pagePool.discardReleasedPages() }
+            // A board the phone wrote while it was woken in the background (`BoardWake`) is shown at once, before the connection is back.
+            if phase == .active { Task { await board.adoptNewerSnapshot() } }
         }
         .onChange(of: store.status) { _, status in
             if status != .connected { pagePool.discardReleasedPages() }
@@ -335,10 +347,27 @@ struct DuduRootView: View {
             async let taskList: Void = tasks.refresh(using: store)
             _ = await (navigation, count, taskList)
         }
+        // A native TabView covers inactive roots. Keep shared badge facts current
+        // outside those roots' appearance-scoped tasks.
+        .task(id: SidebarRefresh(active: scenePhase == .active, connected: store.status == .connected)) {
+            guard scenePhase == .active, store.status == .connected else { return }
+            while !Task.isCancelled {
+                async let inbox: Void = collector.refreshCount(using: store)
+                // The computer says when the board changes (`board.changed`, below); once it has, this is only the safety net, asked for when nothing has read the board for 30 s.
+                // Until then, and with a computer that does not say so, it is the timer of old: every 5 s.
+                if Date().timeIntervalSince(board.lastRefreshAt) >= (store.boardPushSeen ? 30 : 5) - 0.5 { await board.refresh(using: store) }
+                await inbox
+                do { try await Task.sleep(for: .seconds(5)) } catch { return }
+            }
+        }
+        .onReceive(store.boardChanges) { _ in
+            guard scenePhase == .active, store.status == .connected else { return }
+            Task { await board.refresh(using: store) }
+        }
         .onChange(of: store.showsConnectionGuide) { _, showsGuide in
             if showsGuide {
                 closeSidebar()
-                if presentedSheet == .settings || presentedSheet == .computers {
+                if presentedSheet == .settings || presentedSheet == .dshSettings || presentedSheet == .computers {
                     presentedSheet = nil
                 }
             }
@@ -372,7 +401,7 @@ struct DuduRootView: View {
     private var isBoardTransitioning: Bool { boardMotion.isAnimating || pageMotion.isAnimating }
 
     private var boardPagePosition: BoardPagePosition {
-        if navigation.root.target == .board { return .board }
+        if HomeTab(target: navigation.root.target) != nil { return .board }
         return navigation.root.showsChat && conversationFromBoard ? .issue : .other
     }
 
@@ -413,7 +442,7 @@ struct DuduRootView: View {
                         conversationSearch.reset()
                     },
                     onOpen: { session in
-                        showConversation()
+                        showDrawerConversation()
                         Task { await store.selectSession(session) }
                     }
                 )
@@ -442,16 +471,17 @@ struct DuduRootView: View {
         SidebarView(
             store: store,
             onChooseItem: { open($0, in: .sidebar) },
-            onChooseConversation: showConversation,
+            onChooseConversation: showDrawerConversation,
             onOpenComputers: {
                 dismissKeyboard()
                 presentedSheet = .computers
                 DuduLog.record("computers.open")
             },
+            // DSH's own settings (owner, 2026-11-21); 嘟嘟's are the bottom bar's 设置.
             onOpenSettings: {
                 dismissKeyboard()
-                presentedSheet = .settings
-                DuduLog.record("settings.open")
+                presentedSheet = .dshSettings
+                DuduLog.record("settings.dsh.open")
             },
             onSearch: {
                 isSearchActive = true
@@ -477,7 +507,22 @@ struct DuduRootView: View {
         let safeBottom = geometry.safeAreaInsets.bottom
         return ZStack(alignment: .top) {
             ZStack(alignment: .top) {
-                boardLayer(in: geometry, drawerWidth: drawerWidth)
+                HomeTabs(
+                    selection: Binding(get: { homeTab }, set: { selectHomeTab($0) }),
+                    boardUnread: board.unreadCount, inboxUnread: collector.unreadCount,
+                    hidesBar: homeTab == .inbox && collector.isSelecting,
+                    board: { boardLayer(in: geometry, drawerWidth: drawerWidth) },
+                    inbox: { homePage(.inbox, in: geometry, drawerWidth: drawerWidth) },
+                    tasks: { homePage(.tasks, in: geometry, drawerWidth: drawerWidth) },
+                    settings: { homeSettings(in: geometry, drawerWidth: drawerWidth) }
+                )
+                .modifier(BoardBackgroundMotion(
+                    motion: boardMotion, position: boardPagePosition,
+                    width: geometry.size.width, reduceMotion: reduceMotion
+                ))
+                .allowsHitTesting(HomeTab(target: destination.target) != nil && navigation.pages.isEmpty &&
+                    !isSidebarOpen && !isBoardTransitioning)
+                .accessibilityHidden(HomeTab(target: destination.target) == nil || !navigation.pages.isEmpty || isSidebarOpen)
                 cardContent(in: geometry, drawerWidth: drawerWidth)
                     .modifier(DuduScrollEdgeBar(edge: .top) {
                         toolbar(for: .conversation)
@@ -523,11 +568,12 @@ struct DuduRootView: View {
                 .accessibilityHidden(!isCurrent || isSidebarOpen || isBoardTransitioning)
                 .transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .trailing), removal: .identity))
             }
-            // The result of an action on the board or the Collector, under the toolbar; the conversation has its own.
+            // The result of an action on the board or the Collector, under the toolbar; the conversation has its own. This layer already starts below the status bar, so the
+            // toolbar's own height is all that is added: with the status bar's height too the toast sat a whole bar too low, on top of the first rows (owner, 2026-11-21: "太低了").
             DuduToastOverlay(message: destination.showsChat ? nil : pageToast) { dismissed in
                 if pageToast?.id == dismissed.id { pageToast = nil }
             }
-            .padding(.top, safeTop + DuduLayout.toolbarHeight + 8)
+            .padding(.top, DuduLayout.toolbarHeight + 8)
             .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .zIndex(3)
@@ -578,13 +624,53 @@ struct DuduRootView: View {
             .frame(width: geometry.size.width)
             .modifier(DrawerToolbarEffect(motion: drawerMotion, isOpen: isSidebarOpen, width: drawerWidth))
         })
-        .modifier(BoardBackgroundMotion(
-            motion: boardMotion, position: boardPagePosition,
-            width: geometry.size.width, reduceMotion: reduceMotion
-        ))
-        .opacity(isBoard || conversationFromBoard ? 1 : 0)
+        .opacity(homeTab == .board && (isBoard || conversationFromBoard) ? 1 : 0)
         .allowsHitTesting(isVisible && !isSidebarOpen && !isBoardTransitioning)
         .accessibilityHidden(!isVisible || isSidebarOpen || isBoardTransitioning)
+    }
+
+    /// All roots stay in the tree, keeping their native list and filter state.
+    private func homePage(_ tab: HomeTab, in geometry: GeometryProxy, drawerWidth: CGFloat) -> some View {
+        let visible = destination == tab.destination
+        return auxiliaryPage(tab.destination, in: geometry, drawerWidth: drawerWidth)
+            .id("\(store.activeComputer?.id ?? "")/\(tab.rawValue)")
+            .opacity(homeTab == tab ? 1 : 0)
+            .allowsHitTesting(visible && !isSidebarOpen && !isBoardTransitioning)
+            .accessibilityHidden(!visible || isSidebarOpen || isBoardTransitioning)
+    }
+
+    private func homeSettings(in geometry: GeometryProxy, drawerWidth: CGFloat) -> some View {
+        NavigationStack {
+            SettingsView(
+                store: store, pagePool: pagePool,
+                isHome: true, isActive: homeTab == .settings && destination.target == .settingsHome,
+                onOpenSidebar: openSidebar,
+                onRootVisibility: { settingsIsAtRoot = $0 }
+            )
+        }
+        .id(store.activeComputer?.id)
+        .environment(\.conversationIsCovered, destination.target != .settingsHome || isSidebarOpen)
+        .modifier(DrawerPageEffect(motion: drawerMotion, isOpen: isSidebarOpen, width: drawerWidth))
+        .opacity(homeTab == .settings ? 1 : 0)
+        .allowsHitTesting(destination.target == .settingsHome && !isSidebarOpen && !isBoardTransitioning)
+        .accessibilityHidden(destination.target != .settingsHome || isSidebarOpen)
+    }
+
+    private func selectHomeTab(_ tab: HomeTab) {
+        guard !isBoardTransitioning else { return }
+        sidebarNavigationRevision &+= 1
+        closeSidebar()
+        dismissKeyboard()
+        collector.stopSelecting()
+        conversationFromBoard = false
+        returnsToAssistant = false
+        assistantReturnsToBoard = false
+        conversationHomeReturn = nil
+        subagentParents = []
+        homeTab = tab
+        resetBoardTransition(showingBoard: true)
+        resetNavigation(to: tab.destination)
+        DuduLog.record("home.tab.select", state: tab.rawValue)
     }
 
     private var showsBoardConnectionNotice: Bool {
@@ -596,6 +682,7 @@ struct DuduRootView: View {
     /// button sit. Only the conversation is canvas.
     private var cardBackground: Color {
         if destination.target == .board { return .white }
+        if destination.target == .settingsHome { return DuduStyle.settingsBackground }
         return destination.onCanvas ? DuduStyle.canvas : .white
     }
 
@@ -663,9 +750,11 @@ struct DuduRootView: View {
     /// Swiping in from the left screen edge pulls the card aside like the menu button does.
     @ViewBuilder
     private func edgeStripLayer(drawerWidth: CGFloat, pageWidth: CGFloat) -> some View {
-        if !isSidebarOpen && presentedSheet == nil && !isBoardTransitioning {
+        if !isSidebarOpen && presentedSheet == nil && !isBoardTransitioning &&
+            (destination.target != .settingsHome || settingsIsAtRoot) {
             // The edge pulls the drawer out on the board and on a conversation of the sidebar's; on every page, and on a conversation opened from the board, it is the way back.
-            if destination.target == .board || (destination.showsChat && !conversationFromBoard && store.selectedSession?.subagent == nil) {
+            if HomeTab(target: destination.target) != nil && !collector.isSelecting ||
+                (destination.showsChat && !conversationFromBoard && store.selectedSession?.subagent == nil) {
                 Color.clear
                     .frame(width: DuduLayout.edgeSwipeWidth)
                     .frame(maxHeight: .infinity)
@@ -884,6 +973,8 @@ struct DuduRootView: View {
             .buttonStyle(DuduGlassButtonStyle())
             .accessibilityLabel(L10n.text("取消选择"))
             .accessibilityIdentifier("collector.selection.cancel")
+        case .collector where navigation.pages.isEmpty, .tasks where navigation.pages.isEmpty:
+            sidebarButton
         default:
             backButton
         }
@@ -1118,13 +1209,13 @@ struct DuduRootView: View {
     private func pageContent(for page: MainDestination, safeAreaTop: CGFloat) -> some View {
         let toolbarInset: CGFloat = DuduScrollEdges.usesSystemEffect ? 0 : DuduLayout.toolbarHeight
         switch page.target {
-        case .chat, .assistant, .unsupported, .dshSettings:
+        case .chat, .assistant, .unsupported, .dshSettings, .settingsHome:
             EmptyView()
         case .board:
             EmptyView()
         case .collector:
             CollectorView(model: collector, board: board, store: store, topInset: toolbarInset) { id in
-                Task { await openIssue(id: id) }
+                Task { await openIssueConversation(id: id) }
             }
         case .files:
             WorkPanelView(store: store)
@@ -1132,7 +1223,7 @@ struct DuduRootView: View {
         case .tasks:
             TasksView(model: tasks, store: store, topInset: toolbarInset) { sessionID in
                 guard let session = store.sessions.first(where: { $0.id == sessionID }) else { return }
-                showConversation()
+                showConversation(returningToHome: true)
                 Task { await store.selectSession(session) }
             }
         case .duduSettings:
@@ -1183,12 +1274,8 @@ struct DuduRootView: View {
         dismissKeyboard()
         if target == .chat {
             showConversation()
-        } else if target == .board {
-            subagentParents = []
-            conversationFromBoard = false
-            returnsToAssistant = false
-            assistantReturnsToBoard = false
-            resetNavigation(to: .board)
+        } else if let tab = HomeTab(target: target) {
+            selectHomeTab(tab)
         } else {
             openPage(MainDestination(id: item.id, area: area, target: target, title: item.title))
         }
@@ -1222,11 +1309,23 @@ struct DuduRootView: View {
     }
 
     private func showConversation() {
+        showConversation(returningToHome: false)
+    }
+
+    /// A conversation chosen in the drawer, or found by its search, comes from the home page that was open: its back button and the swipe in from the left edge return there, as they do for a conversation opened from the board (owner, 2026-11-21: "从侧边栏点会话进去之后…左上角竟然不是返回按钮，点一下应该直接能返回到首页，或者左滑也能返回到首页"). It used to become a root of its own, with the menu button in place of the back arrow.
+    private func showDrawerConversation() {
+        showConversation(returningToHome: !destination.showsChat && HomeTab(target: navigation.root.target) != nil)
+    }
+
+    private func showConversation(returningToHome: Bool) {
+        let origin = navigation
         subagentParents = []
-        conversationFromBoard = false
+        conversationFromBoard = returningToHome
+        conversationHomeReturn = returningToHome ? origin : nil
         returnsToAssistant = false
         assistantReturnsToBoard = false
         resetNavigation(to: .conversation)
+        if returningToHome { boardMotion.reset(showingConversation: true) }
         closeSidebar()
     }
 
@@ -1286,6 +1385,7 @@ struct DuduRootView: View {
         closeSidebar()
         boardTransitionMetrics.start(direction: "enter")
         boardMotion.animate(showingConversation: true, animation: boardTransitionAnimation, updates: {
+            conversationHomeReturn = navigation
             boardConversationPreparation = nil
             conversationFromBoard = true
             returnsToAssistant = false
@@ -1323,7 +1423,15 @@ struct DuduRootView: View {
             boardTransitionMetrics.finish()
             conversationFromBoard = false
             assistantReturnsToBoard = false
-            resetNavigation(to: .board)
+            let returning = conversationHomeReturn
+            conversationHomeReturn = nil
+            pageMotion.reset(showingConversation: true)
+            if let returning {
+                navigation = returning
+                if let tab = HomeTab(target: returning.root.target) { homeTab = tab }
+            } else {
+                resetNavigation(to: homeTab.destination)
+            }
         })
     }
 
@@ -1433,7 +1541,8 @@ struct DuduRootView: View {
             }
         } else {
             let assistantOrigin = returningToAssistant && assistantReturnsToBoard
-            showConversation()
+            let fromHome = !destination.showsChat && HomeTab(target: navigation.root.target) != nil
+            showConversation(returningToHome: fromHome)
             assistantReturnsToBoard = assistantOrigin
             conversationFromBoard = true
             returnsToAssistant = returningToAssistant
@@ -1490,13 +1599,6 @@ struct DuduRootView: View {
         guard let sheet = returningQuickSheet, sheet.isCurrent(store), issueDetail == nil, quickNavigation == nil else { return }
         returningQuickSheet = nil
         quickSheetRequest = sheet
-    }
-
-    /// The same for an issue known by its number (a record that went to it).
-    private func openIssue(id: Int) async {
-        guard let session = await board.session(ofIssue: id, using: store) else { return }
-        showConversation()
-        await store.selectSession(session)
     }
 
 #if DEBUG && targetEnvironment(simulator)
@@ -1576,6 +1678,7 @@ func libraryTitle(for section: String) -> String {
 
 private enum RootSheet: String, Identifiable {
     case settings
+    case dshSettings
     case computers
     case pairing
 

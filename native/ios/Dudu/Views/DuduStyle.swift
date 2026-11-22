@@ -80,6 +80,7 @@ enum DuduStyle {
     static let selected = Color(red: 234.0 / 255, green: 234.0 / 255, blue: 237.0 / 255)
     /// The board's scope track and inactive filter button share the owner's approved Lark grey (2026-11-20).
     static let scopeTrack = Color(red: 0xef / 255, green: 0xf0 / 255, blue: 0xf2 / 255)
+    static let scopeInk = Color(red: 0x73 / 255, green: 0x79 / 255, blue: 0x82 / 255)
     static let settingsBackground = Color(uiColor: .systemGroupedBackground)
 
     // Chat palette taken from DSH's own light theme (neutral-bluish scale and the bubble tint).

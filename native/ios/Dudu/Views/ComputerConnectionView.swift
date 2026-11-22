@@ -87,7 +87,7 @@ struct ComputerConnectionView: View {
         }
         .background(DuduStyle.settingsBackground.ignoresSafeArea())
         .navigationBarBackButtonHidden(false)
-        .toolbarRole(.editor)
+        .minimalBackButton()
         .tint(DuduStyle.ink)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(DuduStyle.settingsBackground, for: .navigationBar)

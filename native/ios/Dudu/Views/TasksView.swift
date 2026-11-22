@@ -27,6 +27,11 @@ struct TaskSummaryRow: View {
     var failed = false
     /// The sheet of tasks (owner, 2026-11-18, the inbox redesign): a 30pt logo, the title in 16pt, the status in 13pt, 64pt high. The other lists keep the compact row.
     var roomy = false
+    var onOpen: (() -> Void)? = nil
+    var onToggle: ((Bool) async -> Void)? = nil
+    var toggleEnabled = true
+
+    @State private var pendingToggle: Bool?
 
     /// The desktop's `--dudu-success` in its light theme.
     private static let on = Color(red: 0x17 / 255, green: 0x7a / 255, blue: 0x3c / 255)
@@ -44,6 +49,36 @@ struct TaskSummaryRow: View {
     }
 
     var body: some View {
+        HStack(spacing: 12) {
+            if let onOpen {
+                Button(action: onOpen) { summary }
+                    .buttonStyle(DuduRowButtonStyle())
+            } else {
+                summary
+            }
+            if let onToggle {
+                Toggle(title, isOn: Binding(
+                    get: { pendingToggle ?? isOn },
+                    set: { next in
+                        guard toggleEnabled, !isBusy, pendingToggle == nil, next != isOn else { return }
+                        pendingToggle = next
+                        Task {
+                            await onToggle(next)
+                            pendingToggle = nil
+                        }
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .disabled(!toggleEnabled || isBusy || pendingToggle != nil)
+            }
+        }
+        .padding(.horizontal, horizontalPadding)
+        .frame(height: roomy ? 64 : 58)
+        .accessibilityElement(children: onOpen == nil && onToggle == nil ? .combine : .contain)
+    }
+
+    private var summary: some View {
         HStack(spacing: roomy ? 12 : 14) {
             Group {
                 if let agent {
@@ -61,9 +96,9 @@ struct TaskSummaryRow: View {
                         .foregroundStyle(isOn ? DuduStyle.ink : DuduStyle.muted)
                         .lineLimit(1)
                     Spacer(minLength: 0)
-                    if isBusy {
+                    if isBusy || pendingToggle != nil {
                         ProgressView().controlSize(.small).tint(DuduStyle.muted)
-                    } else if let statusText {
+                    } else if onToggle == nil, let statusText {
                         Text(statusText)
                             .font(.system(size: roomy ? 13 : 12))
                             .foregroundStyle(isOn ? Self.on : DuduStyle.muted)
@@ -79,9 +114,8 @@ struct TaskSummaryRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, horizontalPadding)
-        .frame(height: roomy ? 64 : 58)
-        .accessibilityElement(children: .combine)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
     }
 }
 
@@ -139,16 +173,17 @@ struct TasksView: View {
         .sheet(item: $opened) { task in
             TaskSheet(initial: task, model: model, store: store, onOpenSession: onOpenSession)
         }
-        .sheet(isPresented: $model.isMaking) {
+        .sheet(isPresented: newTaskPresented) {
             TaskEditorSheet(model: model, store: store, task: nil)
         }
         .sheet(item: $editing) { task in
             TaskEditorSheet(model: model, store: store, task: task)
         }
-        .confirmationDialog(
-            L10n.text("删除任务"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible, presenting: deleting
+        .alert(
+            L10n.text("删除任务"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting
         ) { task in
-            Button(L10n.text("删除任务"), role: .destructive) { Task { await model.act(.delete, task, using: store) } }
+            Button(L10n.text("取消"), role: .cancel) {}
+            Button(L10n.text("删除"), role: .destructive) { Task { await model.act(.delete, task, using: store) } }
         } message: { task in
             Text(task.title)
         }
@@ -178,6 +213,14 @@ struct TasksView: View {
         #endif
     }
 
+    /// The retained home root and the quick sheet share this model; only the visible page presents.
+    private var newTaskPresented: Binding<Bool> {
+        Binding(
+            get: { !isCovered && model.isMaking },
+            set: { if !isCovered { model.isMaking = $0 } }
+        )
+    }
+
     private func quickPage(_ sheet: AssistantQuickSheetState) -> some View {
         QuickSheetNavigation(state: sheet) { quickContent($0) }
     }
@@ -197,8 +240,7 @@ struct TasksView: View {
                     VStack(spacing: 0) {
                         ForEach(model.items) { task in
                             SwipeActionRow(actions: swipeActions(for: task), isRevealed: revealed == task.id, onReveal: { revealed = $0 ? task.id : nil }) {
-                                Button { tap(task) } label: { row(task, roomy: true) }
-                                    .buttonStyle(DuduRowButtonStyle())
+                                row(task, roomy: true)
                                     .contextMenu { rowMenu(for: task) } preview: { TaskRowCard(task: task) }
                             }
                             .id(task.id)
@@ -269,10 +311,7 @@ struct TasksView: View {
         List {
             ForEach(model.items) { task in
                 SwipeActionRow(actions: swipeActions(for: task), isRevealed: revealed == task.id, onReveal: { revealed = $0 ? task.id : nil }) {
-                    Button { tap(task) } label: {
-                        row(task)
-                    }
-                    .buttonStyle(DuduRowButtonStyle())
+                    row(task)
                     // Press and hold: the row lifts as a card and the menu opens under it, as on a record of the Collector.
                     .contextMenu {
                         rowMenu(for: task)
@@ -298,8 +337,17 @@ struct TasksView: View {
     private func row(_ task: ScheduledTask, roomy: Bool = false) -> some View {
         TaskSummaryRow(
             agent: task.taskAgent, title: task.title, line: task.line, statusText: task.statusText,
-            isOn: task.isActive, isBusy: model.busy.contains(task.id), horizontalPadding: roomy ? 14 : 10, roomy: roomy
+            isOn: task.isActive, isBusy: model.busy.contains(task.id), horizontalPadding: roomy ? 14 : 10, roomy: roomy,
+            onOpen: { tap(task) }, onToggle: toggle(task), toggleEnabled: store.status == .connected
         )
+    }
+
+    private func toggle(_ task: ScheduledTask) -> ((Bool) async -> Void)? {
+        guard task.status == "active" || task.status == "paused" else { return nil }
+        return { next in
+            revealed = nil
+            await model.act(next ? .resume : .pause, task, using: store)
+        }
     }
 
     /// The way to make a task, with its word, under the list (owner, 2026-11-18, the inbox redesign: it was a "+" beside the ✕): a glass capsule across the sheet.
@@ -341,7 +389,7 @@ struct TasksView: View {
         let pause = SwipeAction(id: "pause", title: L10n.text("暂停任务"), symbol: "pause", color: SwipeAction.grey) { act(.pause, task) }
         let resume = SwipeAction(id: "resume", title: L10n.text("恢复任务"), symbol: "play", color: DuduStyle.blue) { act(.resume, task) }
         let run = SwipeAction(id: "run", title: L10n.text("立即执行"), symbol: "bolt.fill", color: DuduStyle.blue) { act(.run, task) }
-        let delete = SwipeAction(id: "delete", title: L10n.text("删除任务"), symbol: "trash", color: SwipeAction.red) { revealed = nil; deleting = task }
+        let delete = SwipeAction(id: "delete", title: L10n.text("删除任务"), symbol: "trash", glyph: .trash, color: SwipeAction.red) { revealed = nil; deleting = task }
         switch task.status {
         case "active": return [pause, run, delete]
         case "paused": return [resume, delete]

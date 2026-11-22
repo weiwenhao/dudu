@@ -66,6 +66,7 @@ struct ComposerAttachmentSheet: View {
     @State private var page: Page
     @State private var riskyPermission: PermissionLabels.Confirmation?
     @State private var riskyPermissionID: String?
+    @State private var configurationError: String?
 
     init(
         store: DuduStore,
@@ -109,9 +110,16 @@ struct ComposerAttachmentSheet: View {
             titleRow
                 .frame(height: Layout.titleBlock, alignment: .top)
             ScrollView {
-                pageContent
-                    .padding(.horizontal, Layout.sideInset)
-                    .padding(.bottom, Layout.bottomInset)
+                VStack(alignment: .leading, spacing: 12) {
+                    pageContent
+                    if let configurationError {
+                        Text(configurationError)
+                            .font(.system(size: 13))
+                            .foregroundStyle(DuduStyle.chatError)
+                    }
+                }
+                .padding(.horizontal, Layout.sideInset)
+                .padding(.bottom, Layout.bottomInset)
             }
             .scrollIndicators(.hidden)
             .scrollBounceBehavior(.basedOnSize)
@@ -131,8 +139,7 @@ struct ComposerAttachmentSheet: View {
             Button(confirmation.action, role: .destructive) {
                 guard let id = riskyPermissionID else { return }
                 DuduLog.record("permission.select")
-                onClose()
-                Task { await store.configure(permissionId: id) }
+                configure(permissionId: id)
             }
             Button(L10n.text("取消"), role: .cancel) {}
         } message: { confirmation in
@@ -215,11 +222,12 @@ struct ComposerAttachmentSheet: View {
                     choiceList(
                         store.currentEfforts.map { ($0.id, $0.name) },
                         selected: store.effectiveEffort,
+                        pending: store.pendingSessionConfiguration?.reasoningEffort,
                         empty: L10n.text("当前模型未提供推理等级"),
                         identifierPrefix: "composer.effort."
                     ) { id in
                         DuduLog.record("effort.select")
-                        Task { await store.configure(reasoningEffort: id) }
+                        configure(reasoningEffort: id, closesOnSuccess: false)
                     }
                 }
             }
@@ -227,17 +235,18 @@ struct ComposerAttachmentSheet: View {
             choiceList(
                 store.currentEfforts.map { ($0.id, $0.name) },
                 selected: store.effectiveEffort,
+                pending: store.pendingSessionConfiguration?.reasoningEffort,
                 empty: L10n.text("当前模型未提供推理等级"),
                 identifierPrefix: "composer.effort."
             ) { id in
                 DuduLog.record("effort.select")
-                onClose()
-                Task { await store.configure(reasoningEffort: id) }
+                configure(reasoningEffort: id)
             }
         case .permissions:
             choiceList(
                 store.permissions.map { ($0.id, $0.name) },
                 selected: store.selectedPermissionId,
+                pending: store.pendingSessionConfiguration?.permissionId,
                 empty: L10n.text("暂无权限选项"),
                 identifierPrefix: "composer.permission."
             ) { id in
@@ -248,8 +257,7 @@ struct ComposerAttachmentSheet: View {
                     return
                 }
                 DuduLog.record("permission.select")
-                onClose()
-                Task { await store.configure(permissionId: id) }
+                configure(permissionId: id)
             }
         }
     }
@@ -428,18 +436,36 @@ struct ComposerAttachmentSheet: View {
         choiceList(
             models.map { ($0.id, $0.name) },
             selected: store.selectedModelId,
+            pending: store.pendingSessionConfiguration?.modelId,
             empty: L10n.text("暂无可选模型"),
             identifierPrefix: "composer.model."
         ) { id in
             DuduLog.record("model.select")
-            if closesOnSelection { onClose() }
-            Task { await store.configure(modelId: id) }
+            configure(modelId: id, closesOnSuccess: closesOnSelection)
+        }
+    }
+
+    private func configure(
+        modelId: String? = nil,
+        permissionId: String? = nil,
+        reasoningEffort: String? = nil,
+        closesOnSuccess: Bool = true
+    ) {
+        configurationError = nil
+        Task {
+            if await store.configure(
+                modelId: modelId, permissionId: permissionId, reasoningEffort: reasoningEffort,
+                onFailure: { configurationError = $0 }
+            ), closesOnSuccess {
+                onClose()
+            }
         }
     }
 
     private func choiceList(
         _ choices: [(id: String, name: String)],
         selected: String?,
+        pending: String? = nil,
         empty: String,
         identifierPrefix: String,
         onSelect: @escaping (String) -> Void
@@ -468,7 +494,12 @@ struct ComposerAttachmentSheet: View {
                                 .foregroundStyle(Color.black)
                                 .lineLimit(1)
                             Spacer(minLength: 12)
-                            if choice.id == selected {
+                            if choice.id == pending {
+                                ProgressView()
+                                    .tint(DuduStyle.muted)
+                                    .controlSize(.small)
+                                    .frame(width: 20, height: 20)
+                            } else if choice.id == selected {
                                 DuduIcon(.check, size: 20)
                                     .foregroundStyle(DuduStyle.ink)
                             }
@@ -478,6 +509,7 @@ struct ComposerAttachmentSheet: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(ComposerSheetPressStyle())
+                    .disabled(store.pendingSessionConfiguration != nil)
                     .accessibilityLabel(choice.name)
                     .accessibilityAddTraits(choice.id == selected ? .isSelected : [])
                     .accessibilityIdentifier(identifierPrefix + choice.id)

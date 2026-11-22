@@ -28,7 +28,7 @@ final class ConversationMarkdown: @unchecked Sendable {
             switch row {
             case let .turn(turn):
                 return (turn.answer.map { [$0] } ?? []) + turn.segments.compactMap {
-                    if case let .reply(id, text) = $0, !id.hasPrefix("live:") { return text }
+                    if case let .reply(id, text) = $0, !id.hasPrefix("live:") || turn.liveTextComplete { return text }
                     return nil
                 }
             case let .command(command):

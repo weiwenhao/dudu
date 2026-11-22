@@ -39,6 +39,7 @@ targets:
     dependencies:
       - package: LucideSwift
       - package: MarkdownUI
+      - target: DuduNotificationService
     settings:
       base:
         PRODUCT_NAME: Dudu
@@ -49,6 +50,45 @@ targets:
         SUPPORTS_MACCATALYST: NO
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Dudu/Info.plist
+  DuduNotificationService:
+    type: app-extension
+    platform: iOS
+    # Runs when a notice of a reply arrives, also with the App swiped away (owner, 2026-11-22): it reads the board and writes it into the Keychain, where the App reads it. It compiles only the files below of the App.
+    sources:
+      - path: DuduNotificationService
+      - path: Dudu/Core/ConnectionEndpoint.swift
+      - path: Dudu/Core/ConnectionModels.swift
+      - path: Dudu/Core/DuduHTTPClient.swift
+      - path: Dudu/Core/KeychainStore.swift
+      - path: Dudu/Core/DuduLog.swift
+      - path: Dudu/Core/Localization.swift
+      - path: Dudu/Core/BoardWakeFetch.swift
+      - path: Dudu/Core/BoardWakeRecord.swift
+    info:
+      path: DuduNotificationService/Info.plist
+      properties:
+        CFBundleDisplayName: Dudu
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # The same sentence the App already has (Dudu/Info.plist): the extension reaches the computer on the local network too.
+        NSLocalNetworkUsageDescription: 连接你电脑上的 DSH，继续对话和管理任务。
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).NotificationService"
+    entitlements:
+      path: DuduNotificationService/DuduNotificationService.entitlements
+      properties:
+        # The saved computers are Keychain items of the App: the extension reads them from the App's own group, and writes the board there.
+        # (No App Group: it would have to be created in the Apple developer account.)
+        keychain-access-groups:
+          - "$(AppIdentifierPrefix)com.harnessmobile.app"
+    settings:
+      base:
+        PRODUCT_NAME: DuduNotificationService
+        PRODUCT_BUNDLE_IDENTIFIER: com.harnessmobile.app.NotificationService
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DUDU_APP_EXTENSION"
+        APPLICATION_EXTENSION_API_ONLY: YES
   DuduTests:
     type: bundle.unit-test
     platform: iOS

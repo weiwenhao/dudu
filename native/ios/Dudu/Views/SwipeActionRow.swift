@@ -6,8 +6,19 @@ struct SwipeAction: Identifiable {
     let title: String
     /// An SF Symbol, as the computers list draws its trash can.
     let symbol: String
+    /// The app's own glyph, drawn in the symbol's place when there is one (the trash can of the inbox: owner, 2026-11-21, one delete icon everywhere).
+    var glyph: DuduGlyph? = nil
     let color: Color
     let run: () -> Void
+
+    init(id: String, title: String, symbol: String, glyph: DuduGlyph? = nil, color: Color, run: @escaping () -> Void) {
+        self.id = id
+        self.title = title
+        self.symbol = symbol
+        self.glyph = glyph
+        self.color = color
+        self.run = run
+    }
 
     /// The red of the delete block in the computers list.
     static let red = Color(red: 0.88, green: 0.20, blue: 0.24)
@@ -73,8 +84,13 @@ struct SwipeActionRow<Content: View>: View {
             action.run()
         } label: {
             VStack(spacing: 6) {
-                Image(systemName: action.symbol)
-                    .font(.system(size: 20, weight: .regular))
+                if let glyph = action.glyph {
+                    DuduIcon(glyph, size: 20)
+                        .frame(height: 24)
+                } else {
+                    Image(systemName: action.symbol)
+                        .font(.system(size: 20, weight: .regular))
+                }
                 Text(action.title)
                     .font(.system(size: 12, weight: .medium))
             }

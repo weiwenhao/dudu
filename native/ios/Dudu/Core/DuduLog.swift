@@ -29,11 +29,11 @@ enum DuduLog {
         "web.open", "web.close", "web.resource", "web.invoke",
         "web.stream.open", "web.stream.next", "web.stream.close",
         "session.search", "session.queue.update", "session.page", "session.tool",
-        "session.changes", "session.diff", "session.file", "session.fork",
+        "session.changes", "session.diff", "session.file",
         "session.performance", "session.attachment", "question.answer",
         "session.team", "session.jobs", "session.job.output", "session.job.stop",
         "board.list", "issue.get", "issue.open", "issue.pick", "issue.create", "issue.update", "issue.assign",
-        "inbox.list", "inbox.get", "inbox.mark", "inbox.share", "inbox.complete"
+        "inbox.list", "inbox.get", "inbox.read", "inbox.mark", "inbox.share", "inbox.complete"
     ]
     private static let allowedCountKeys: Set<String> = [
         "payloadBytes", "computerCount", "sessionCount", "workspaceCount", "rowCount",
@@ -42,7 +42,9 @@ enum DuduLog {
         "frameCount", "lateFrameCount",
         "lanAddressCount", "publicAddressCount",
         // Where the single running indicator landed, when it is not the history's own last item (2026-11-20).
-        "runningIndex", "itemCount"
+        "runningIndex", "itemCount",
+        // How many of the App's Keychain items there are and how many of them can be read after the first unlock (2026-11-22): numbers only.
+        "keychainItems", "keychainAfterFirstUnlock"
     ]
     private static let allowedGeometryKeys: Set<String> = [
         "bottomY", "viewportHeight", "lastRowHeight", "contentHeight", "contentOffset", "topInset", "bottomInset",
@@ -53,14 +55,19 @@ enum DuduLog {
         "dragX", "dragY", "dragTravel", "dragVelocityX", "dragVelocityY"
     ]
 
+    /// Waits until what was recorded so far is written (the notification extension is stopped right after it answers).
+    static func flush() { queue.sync {} }
+
     static func networkFailure(
         _ event: String, error: Error, method: String? = nil,
         requestId: String? = nil, elapsedMs: Double? = nil
     ) {
+        #if !DUDU_APP_EXTENSION
         if let failure = error as? ConversationStorageError {
             record(event, level: "warn", method: method, requestId: requestId, elapsedMs: elapsedMs, code: failure.logCode)
             return
         }
+        #endif
         if let failure = error as? DuduFailure {
             record(event, level: "warn", method: method, requestId: requestId, elapsedMs: elapsedMs, code: failure.logCode)
             return

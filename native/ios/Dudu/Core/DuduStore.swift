@@ -95,6 +95,7 @@ final class DuduStore: ObservableObject {
     @Published var selectedEffort: String?
     @Published var selectedPermissionId: String?
     @Published var selectedPresetId: String?
+    @Published private(set) var pendingSessionConfiguration: SessionConfiguration?
     /// DSH's new-task home: no conversation is open until a workspace is chosen.
     @Published private(set) var isChoosingWorkspace = false
     /// What DSH shows in its sidebar, conversation tabs and settings (see `Navigation.swift`).
@@ -172,6 +173,7 @@ final class DuduStore: ObservableObject {
     private var sessionSelectionGeneration = 0 {
         didSet {
             isChoosingProvider = false
+            pendingSessionConfiguration = nil
             canceledRequestIds = []
         }
     }
@@ -190,6 +192,11 @@ final class DuduStore: ObservableObject {
     @Published private(set) var sessionReadPosition: SessionReadPosition?
     let visibleSessionReads = PassthroughSubject<VisibleSessionRead, Never>()
     let watchedSessionActivity = PassthroughSubject<WatchedSessionActivity, Never>()
+    /// The computer says what the board shows has changed (a turn ended, something was read, an issue changed): read it again now. Once one has come, the computer is
+    /// known to say so, and the board's own timer only has to be a safety net (`DuduRootView`).
+    let boardChanges = PassthroughSubject<Void, Never>()
+    private var boardPushGeneration = -1
+    var boardPushSeen: Bool { boardPushGeneration == generation }
     private var readPositionSessionID: String?
     private var lastAcknowledgedRead: (target: DraftTarget, position: SessionReadPosition)?
     private var readVisitID = UUID()
@@ -206,7 +213,7 @@ final class DuduStore: ObservableObject {
 
     convenience init() {
         self.init(
-            repository: ComputerRepository(), client: DuduHTTPClient(),
+            repository: ComputerRepository.shared, client: DuduHTTPClient(),
             conversationStorage: FileConversationStorage(), networkMonitor: ConnectionNetworkMonitor(),
             beforeRemovingComputer: { computer, store in await AppNotifications.shared.unregister(computer, using: store) }
         )
@@ -748,10 +755,12 @@ final class DuduStore: ObservableObject {
             parameters["transcript"] = .bool(true)
             let result = try await request("session.watch", parameters)
             guard currentGeneration == generation,
-                  currentSelection == sessionSelectionGeneration else { return }
+                  currentSelection == sessionSelectionGeneration,
+                  currentWatchID == watchID else { return }
             let detail = try await json.decode(SessionDetail.self, from: result)
             guard currentGeneration == generation,
-                  currentSelection == sessionSelectionGeneration else { return }
+                  currentSelection == sessionSelectionGeneration,
+                  currentWatchID == watchID else { return }
             guard detail.session.id == session.id else { throw DuduFailure.protocolError }
             if snapshotVersion == openingSnapshotVersion {
                 await apply(detail)
@@ -764,7 +773,8 @@ final class DuduStore: ObservableObject {
             )
         } catch {
             guard currentGeneration == generation,
-                  currentSelection == sessionSelectionGeneration else { return }
+                  currentSelection == sessionSelectionGeneration,
+                  currentWatchID == watchID else { return }
             currentWatchID = nil
             if case .remote("NOT_FOUND") = safeFailure(for: error) { unavailableSessionID = session.id }
             self.error = safeMessage(for: error)
@@ -1370,7 +1380,7 @@ final class DuduStore: ObservableObject {
         } catch {
             guard currentGeneration == generation, currentSelection == sessionSelectionGeneration,
                   currentWatchID == watchID, selectedSession?.id == sessionID else { return }
-            DuduLog.networkFailure("session.plan.refresh.fail", error: error)
+            DuduLog.networkFailure("session.watch.refresh.fail", error: error)
             await handleDisconnect(generation: currentGeneration, failure: safeFailure(for: error))
         }
     }
@@ -1593,19 +1603,6 @@ final class DuduStore: ObservableObject {
         questions.removeAll { $0.id == batch.id }
     }
 
-    func forkConversation(at seq: Double, target: DraftTarget) async throws {
-        let connection = generation
-        let selection = sessionSelectionGeneration
-        let result = try await conversationRequest("session.fork", parameters: ["seq": .number(seq)], target: target)
-        guard let id = result["sessionId"]?.stringValue else { throw DuduFailure.protocolError }
-        await refreshSessions(requiringNewRequest: true)
-        guard connection == generation, selection == sessionSelectionGeneration,
-              activeComputer?.id == target.computerID, selectedSession?.id == target.sessionID else { return }
-        guard sessionsError == nil else { throw DuduFailure.connectionFailed }
-        guard let branch = sessions.first(where: { $0.id == id }) else { throw DuduFailure.protocolError }
-        await selectSession(branch)
-    }
-
     func searchSessions(_ query: String) async throws -> SessionSearchPage {
         let result = try await request("session.search", ["query": .string(query)])
         return try await json.decode(SessionSearchPage.self, from: result)
@@ -1665,17 +1662,26 @@ final class DuduStore: ObservableObject {
         }
     }
 
+    @discardableResult
     func configure(
         modelId: String? = nil,
         permissionId: String? = nil,
         reasoningEffort: String? = nil,
-        agentPreset: String? = nil
-    ) async {
-        guard let selectedSession else { return }
-        guard modelId != nil || permissionId != nil || reasoningEffort != nil || agentPreset != nil else { return }
+        agentPreset: String? = nil,
+        onFailure: ((String) -> Void)? = nil
+    ) async -> Bool {
+        guard let selectedSession, pendingSessionConfiguration == nil else { return false }
+        guard modelId != nil || permissionId != nil || reasoningEffort != nil || agentPreset != nil else { return false }
         let currentGeneration = generation
         let currentSelection = sessionSelectionGeneration
         let sessionId = selectedSession.id
+        let configuration = SessionConfiguration(
+            modelId: modelId, permissionId: permissionId, reasoningEffort: reasoningEffort, agentPreset: agentPreset
+        )
+        pendingSessionConfiguration = configuration
+        defer {
+            if pendingSessionConfiguration?.id == configuration.id { pendingSessionConfiguration = nil }
+        }
         var params: [String: JSONValue] = ["id": .string(sessionId)]
         if let modelId {
             params["modelId"] = .string(modelId)
@@ -1690,7 +1696,7 @@ final class DuduStore: ObservableObject {
             _ = try await request("session.configure", params)
             guard currentGeneration == generation,
                   currentSelection == sessionSelectionGeneration,
-                  self.selectedSession?.id == sessionId else { return }
+                  self.selectedSession?.id == sessionId else { return false }
             if let modelId {
                 let preserveEffort = isAssistantConversation && modelId == selectedModelId
                 selectedModelId = modelId
@@ -1701,12 +1707,19 @@ final class DuduStore: ObservableObject {
             if let permissionId { selectedPermissionId = permissionId }
             if let agentPreset { selectedPresetId = agentPreset }
             error = nil
+            scheduleConversationSave()
+            await refreshSessionWatch(sessionID: sessionId, generation: currentGeneration, selection: currentSelection)
+            return currentGeneration == generation && currentSelection == sessionSelectionGeneration
+                && self.selectedSession?.id == sessionId
         } catch {
             if currentGeneration == generation,
                currentSelection == sessionSelectionGeneration,
                self.selectedSession?.id == sessionId {
-                self.error = featureMessage(for: error)
+                let message = featureMessage(for: error)
+                if let onFailure { onFailure(message) }
+                else { self.error = message }
             }
+            return false
         }
     }
 
@@ -2084,6 +2097,11 @@ final class DuduStore: ObservableObject {
 
     private func consume(_ event: JSONValue, generation eventGeneration: Int) async {
         guard eventGeneration == generation, event["type"]?.stringValue == "event" else { return }
+        if event["topic"]?.stringValue == "board.changed" {
+            boardPushGeneration = eventGeneration
+            boardChanges.send()
+            return
+        }
         if event["topic"]?.stringValue == "navigation.changed" {
             do {
                 guard let params = event["params"] else { throw DuduFailure.protocolError }
@@ -2536,6 +2554,7 @@ final class DuduStore: ObservableObject {
     private func nextGeneration() -> Int {
         generation &+= 1
         isChoosingProvider = false
+        pendingSessionConfiguration = nil
         isStoppingSession = false
         planCommandID = nil
         isChangingPlanMode = false

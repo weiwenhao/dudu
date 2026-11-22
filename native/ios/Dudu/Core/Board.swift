@@ -77,35 +77,40 @@ struct BoardConversation: Codable, Identifiable, Equatable, Sendable {
     var pinned: Bool
 
     var isAssistant: Bool { id == "assistant" }
+
+    static func unreadSessionCount(in rows: [Self]) -> Int {
+        Set(rows.filter(\.unread).compactMap(\.sessionId)).count
+    }
 }
 
 enum BoardTab: String, CaseIterable, Identifiable, Sendable {
-    case active, backlog, all
+    case active, unread, all
 
     var id: String { rawValue }
     var title: String {
         switch self {
         case .active: return L10n.text("进行中")
-        case .backlog: return L10n.text("待规划")
-        case .all: return L10n.text("全部事项")
+        case .unread: return L10n.text("未读")
+        case .all: return L10n.text("全部")
         }
     }
 
+    /// The workflow part of a scope. 未读 is about reading, not workflow: it holds every unread conversation.
     func includes(statusType: String) -> Bool {
         switch self {
         case .active: return ["todo", "in_progress", "in_review"].contains(statusType)
-        case .backlog: return statusType == "backlog"
-        case .all: return true
+        case .unread, .all: return true
         }
     }
 
     func includes(_ row: BoardConversation) -> Bool {
+        if self == .unread { return row.unread }
         if let issue = row.issue { return includes(statusType: issue.statusType) }
-        return self != .backlog
+        return true
     }
 }
 
-private struct BoardAnswer: Decodable, Sendable {
+struct BoardAnswer: Decodable, Sendable {
     var outcome: String
     var tab: String?
     var total: Int?
@@ -146,28 +151,33 @@ final class BoardModel: ObservableObject {
     @Published private(set) var deleting: Set<Int> = []
     @Published private(set) var conversationsByTab: [BoardTab: [BoardConversation]] = [:]
     @Published private(set) var pinOrder: [String] = []
-    @Published private(set) var unreadCount = 0
     @Published private(set) var changing: Set<String> = []
     var report: ((DuduToastMessage) -> Void)?
+    /// When the board last asked the computer for its list (a push, the timer or a pull): the timer is a safety net, so it asks only when nothing has asked for a while.
+    private(set) var lastRefreshAt = Date.distantPast
     private let json = DuduJSON()
     private var refreshID: UUID?
     private var refreshPending = false
     private var resetID = UUID()
     private var mutationRevision = 0
     private let storage: any DuduBoardStorage
+    private let wakeStore: any BoardWakeStore
     private let previewPreparation = BoardPreviewPreparation()
     private var computerID: String?
     private var restoreTask: Task<Void, Never>?
     private var writeTask: Task<Void, Never>?
     private var savedSnapshot: BoardSnapshot?
+    private var loggedServiceRun = Date.distantPast
     private struct VisibleRead {
         var receipt: VisibleSessionRead
         var originals: [BoardTab: [BoardConversation]]
-        var reducedCount: Bool
     }
     private var visibleReads: [String: VisibleRead] = [:]
 
-    init(storage: any DuduBoardStorage = FileBoardStorage.shared) { self.storage = storage }
+    init(storage: any DuduBoardStorage = FileBoardStorage.shared, wakeStore: any BoardWakeStore = KeychainVault()) {
+        self.storage = storage
+        self.wakeStore = wakeStore
+    }
 
     var state: LoadState { states[tab] ?? states[.all] ?? .loading }
 
@@ -177,6 +187,11 @@ final class BoardModel: ObservableObject {
         return tab == .all ? rows : rows.filter(tab.includes)
     }
     var conversations: [BoardConversation] { filters.matching(scopedConversations) }
+    /// Count exactly the list and pinned shelf the owner can open, once per session.
+    /// The server's all-workflow total includes hidden completed/cancelled conversations.
+    var unreadCount: Int {
+        BoardConversation.unreadSessionCount(in: conversations + pinnedConversations)
+    }
 
     var filterLabels: [String: IssueLabel] {
         let scopes = conversationsByTab[.all].map { [$0] } ?? Array(conversationsByTab.values)
@@ -191,7 +206,7 @@ final class BoardModel: ObservableObject {
         guard !pinOrder.isEmpty else { return [] }
         let keys = Set(pinOrder)
         var pinned: [String: BoardConversation] = [:]
-        for scope in [BoardTab.all, .active, .backlog] {
+        for scope in [BoardTab.all, .active] {
             for row in conversationsByTab[scope] ?? [] where row.pinned && keys.contains(row.id) {
                 if pinned[row.id] == nil { pinned[row.id] = row }
             }
@@ -199,11 +214,18 @@ final class BoardModel: ObservableObject {
         return pinOrder.compactMap { pinned[$0] }
     }
 
-    func select(_ next: BoardTab) { if tab != next { tab = next } }
+    func select(_ next: BoardTab) {
+        if tab != next { tab = next; AppNotifications.shared.setUnreadCount(unreadCount) }
+    }
 
-    func toggle(_ option: BoardFilterOption, in field: BoardFilterField) { filters.toggle(option.id, in: field) }
+    func toggle(_ option: BoardFilterOption, in field: BoardFilterField) {
+        filters.toggle(option.id, in: field)
+        AppNotifications.shared.setUnreadCount(unreadCount)
+    }
 
-    func resetFilters() { if !filters.isEmpty { filters = BoardFilters() } }
+    func resetFilters() {
+        if !filters.isEmpty { filters = BoardFilters(); AppNotifications.shared.setUnreadCount(unreadCount) }
+    }
 
     /// Forget what was read: another computer has another board.
     func reset(for computerID: String?) {
@@ -222,7 +244,6 @@ final class BoardModel: ObservableObject {
         resetFilters()
         pinOrder = []
         changing = []
-        unreadCount = 0
         AppNotifications.shared.setUnreadCount(0)
         states = [:]
         deleting = []
@@ -233,36 +254,78 @@ final class BoardModel: ObservableObject {
         restoreTask = Task {
             await precedingWrite?.value
             do {
-                guard let snapshot = try await storage.load(for: computerID) else { return }
+                guard let snapshot = try await newestWrittenSnapshot(for: computerID) else { return }
                 try snapshot.validate(for: computerID)
-                var prepared: [BoardTab: [BoardConversation]] = [:]
-                for (key, rows) in snapshot.conversationsByTab {
-                    if let tab = BoardTab(rawValue: key) {
-                        prepared[tab] = await previewPreparation.prepare(rows)
-                    }
-                }
-                guard !Task.isCancelled, reset == resetID else { return }
-                conversationsByTab = prepared
-                states = conversationsByTab.mapValues { _ in .loaded }
-                filterStatuses = snapshot.filterStatuses ?? []
-                pinOrder = snapshot.pins
-                unreadCount = snapshot.unreadCount
-                savedSnapshot = snapshot
-                AppNotifications.shared.setUnreadCount(unreadCount)
-                DuduLog.record("board.cache.restore", counts: ["rowCount": conversations.count])
+                await apply(snapshot, reset: reset)
             } catch {
                 if !Task.isCancelled, reset == resetID { DuduLog.networkFailure("board.cache.restore.fail", error: error) }
             }
         }
     }
 
+    /// Show what the cache holds. `reset` is the board it was read for: another computer, or a later reset, drops it.
+    private func apply(_ snapshot: BoardSnapshot, reset: UUID) async {
+        var prepared: [BoardTab: [BoardConversation]] = [:]
+        for (key, rows) in snapshot.conversationsByTab {
+            if let tab = BoardTab(rawValue: key) {
+                prepared[tab] = await previewPreparation.prepare(rows)
+            }
+        }
+        guard !Task.isCancelled, reset == resetID else { return }
+        conversationsByTab = prepared
+        states = conversationsByTab.mapValues { _ in .loaded }
+        filterStatuses = snapshot.filterStatuses ?? []
+        pinOrder = snapshot.pins
+        savedSnapshot = snapshot
+        AppNotifications.shared.setUnreadCount(unreadCount)
+        DuduLog.record("board.cache.restore", counts: ["rowCount": conversations.count])
+    }
+
+    /// What the phone wrote while it was away: the board in the App's own cache (`BoardWake`, the App woken by a silent push), or a newer one that the notification extension left in the
+    /// Keychain (`BoardWakeRecord`), which is turned into a snapshot, kept in the App's cache too, and returned.
+    private func newestWrittenSnapshot(for computerID: String) async throws -> BoardSnapshot? {
+        let own = try await storage.load(for: computerID)
+        guard let file = await BoardWakeRecord.read(computerID: computerID, from: wakeStore), file.savedAt > (own?.savedAt ?? .distantPast),
+              let answer = try? await json.decode(BoardAnswer.self, from: file.answer),
+              answer.outcome == "success", let rows = answer.conversations else { return own }
+        DuduLog.record("board.wake.service", state: "adopted")
+        let prepared = await previewPreparation.prepare(rows)
+        let snapshot = BoardSnapshot(
+            computerID: computerID, conversationsByTab: [BoardTab.all.rawValue: prepared], pins: answer.pins ?? [],
+            unreadCount: BoardConversation.unreadSessionCount(in: prepared), filterStatuses: answer.statuses ?? [], savedAt: file.savedAt
+        )
+        guard (try? snapshot.validate(for: computerID)) != nil else { return own }
+        if snapshot != own { try? await storage.save(snapshot) }
+        return snapshot
+    }
+
+    /// The phone was woken while it was away and wrote a newer board (`BoardWake`, or the notification extension): show it at once on coming back, before the connection is back. A board that
+    /// is not newer than the one held is left alone.
+    func adoptNewerSnapshot() async {
+        guard let computerID else { return }
+        let reset = resetID
+        await restoreTask?.value
+        // What the notification extension did the last time it ran (its own log cannot be reached): said once in the App's log.
+        if let run = await BoardWakeStatus.load(from: wakeStore), run.at > loggedServiceRun {
+            loggedServiceRun = run.at
+            DuduLog.record("board.service.last", elapsedMs: run.elapsedMs, state: run.written ? "written" : "failed", code: run.failure)
+        }
+        guard reset == resetID, changing.isEmpty, visibleReads.isEmpty,
+              let snapshot = try? await newestWrittenSnapshot(for: computerID),
+              let wrote = snapshot.savedAt, wrote > (savedSnapshot?.savedAt ?? .distantPast),
+              snapshot != savedSnapshot else { return }
+        DuduLog.record("board.wake.adopt", state: "newer")
+        await apply(snapshot, reset: reset)
+    }
+
     /// Save settled presentation facts, never an optimistic mutation that may still fail.
     private func persist() {
+        AppNotifications.shared.setUnreadCount(unreadCount)
         guard let computerID, !conversationsByTab.isEmpty, changing.isEmpty, visibleReads.isEmpty else { return }
         let snapshot = BoardSnapshot(
             computerID: computerID,
             conversationsByTab: Dictionary(uniqueKeysWithValues: conversationsByTab.map { ($0.key.rawValue, $0.value) }),
-            pins: pinOrder, unreadCount: unreadCount, filterStatuses: filterStatuses
+            pins: pinOrder, unreadCount: unreadCount, filterStatuses: filterStatuses, savedAt: Date()
         )
         guard snapshot != savedSnapshot else { return }
         savedSnapshot = snapshot
@@ -307,6 +370,7 @@ final class BoardModel: ObservableObject {
             }
         }
         let revision = mutationRevision
+        lastRefreshAt = Date()
         if conversationsByTab[.all] == nil, states[.all] != .loading { states[.all] = .loading }
         do {
             let value = try await store.request("board.list", [
@@ -316,7 +380,7 @@ final class BoardModel: ObservableObject {
             guard !Task.isCancelled, reset == resetID, revision == mutationRevision,
                   connection == store.connectionRevision else { return }
             guard answer.outcome == "success" else { throw DuduFailure.protocolError }
-            guard var conversations = answer.conversations, let count = answer.unreadCount, count >= 0 else {
+            guard var conversations = answer.conversations else {
                 DuduLog.record("board.contract.mismatch", level: "warn", state: "chat_layout_missing")
                 throw DuduFailure.protocolError
             }
@@ -325,22 +389,17 @@ final class BoardModel: ObservableObject {
                   connection == store.connectionRevision else { return }
             // A poll may race a read request. Retain immediate feedback only through that
             // exact delivered sequence, while allowing other sessions to keep updating.
-            var locallyRead: Set<String> = []
             for index in conversations.indices {
                 guard let session = conversations[index].sessionId, let pending = visibleReads[session],
                       conversations[index].unread, conversations[index].readSeq <= pending.receipt.seq else { continue }
                 conversations[index].unread = false
                 if conversations[index].sessionState == .unread { conversations[index].sessionState = .idle }
-                locallyRead.insert(session)
             }
-            let displayedCount = max(0, count - locallyRead.count)
             let boardRows: [BoardTab: [BoardConversation]] = [.all: conversations]
             if conversationsByTab != boardRows { conversationsByTab = boardRows }
             if filterStatuses != (answer.statuses ?? []) { filterStatuses = answer.statuses ?? [] }
             if pinOrder != (answer.pins ?? []) { pinOrder = answer.pins ?? [] }
-            if unreadCount != displayedCount { unreadCount = displayedCount }
             if states != [.all: .loaded] { states = [.all: .loaded] }
-            AppNotifications.shared.setUnreadCount(displayedCount)
             persist()
         } catch {
             guard !Task.isCancelled, reset == resetID, connection == store.connectionRevision else { return }
@@ -407,27 +466,22 @@ final class BoardModel: ObservableObject {
                 if changed { conversationsByTab[scope] = rows; cleared = true }
             }
             guard cleared || previous != nil else { return }
-            let reduced = cleared && previous?.reducedCount != true && unreadCount > 0
-            if reduced { unreadCount -= 1 }
-            visibleReads[session] = VisibleRead(receipt: receipt, originals: originals, reducedCount: reduced || previous?.reducedCount == true)
+            visibleReads[session] = VisibleRead(receipt: receipt, originals: originals)
             mutationRevision += 1 // An older in-flight list must not restore the red badge.
         case .saved, .failed:
             guard let pending = visibleReads[session], pending.receipt.id == receipt.id else { return }
             visibleReads[session] = nil
             mutationRevision += 1
             if receipt.phase == .failed {
-                var restored = false
                 for (scope, originals) in pending.originals {
                     guard var rows = conversationsByTab[scope] else { continue }
                     for original in originals {
                         guard let index = rows.firstIndex(where: { $0.id == original.id && $0.sessionId == session && $0.readSeq == original.readSeq }) else { continue }
                         rows[index].unread = original.unread
                         if rows[index].sessionState == .idle { rows[index].sessionState = original.sessionState }
-                        restored = true
                     }
                     if rows != conversationsByTab[scope] { conversationsByTab[scope] = rows }
                 }
-                if restored, pending.reducedCount { unreadCount += 1 }
             }
             refreshPending = true
             Task { await refresh(using: store) }
@@ -459,6 +513,7 @@ final class BoardModel: ObservableObject {
             pinOrder.removeAll { $0 == entry.id }
             if !entry.pinned { pinOrder.append(entry.id) }
         }
+        AppNotifications.shared.setUnreadCount(unreadCount)
         defer { finishHomeChange(entry.id, reset: reset, using: store) }
         var request = params
         request["target"] = .string(entry.id)
@@ -566,7 +621,7 @@ final class BoardModel: ObservableObject {
     /// The issue whose session is open, when it is still among the board's rows.
     func openedIssue(for session: SessionSummary?) -> BoardIssue? {
         guard let session else { return nil }
-        for scope in [tab, .all, .active, .backlog] {
+        for scope in [tab, .all, .active] {
             if let issue = conversationsByTab[scope]?.first(where: { $0.sessionId == session.id })?.issue {
                 return issue
             }
@@ -748,6 +803,8 @@ struct CollectorRecord: Codable, Identifiable, Equatable, Sendable {
     var at: Double?
     var url: String?
     var done: Bool?
+    var revision: Int?
+    var unread: Bool?
     /// What became of it: an issue made of it, or a note shared to one (`issue`, `note`).
     var verdict: String?
     var issue: CollectorIssue?
@@ -788,6 +845,7 @@ private struct CollectorAnswer: Decodable, Sendable {
     var items: [CollectorRecord]?
     var nextCursor: String?
     var total: Int?
+    var unreadCount: Int?
     var record: CollectorRecord?
     var draft: CollectorDraft?
     var changed: Int?
@@ -807,6 +865,7 @@ final class CollectorModel: ObservableObject {
     @Published var tab: CollectorTab = .todo
     @Published private(set) var itemsByTab: [CollectorTab: [CollectorRecord]] = [:]
     @Published private(set) var totals: [CollectorTab: Int] = [:]
+    @Published private(set) var unreadCount = 0
     @Published private(set) var states: [CollectorTab: BoardModel.LoadState] = [:]
     @Published private(set) var isLoadingMore = false
     @Published private(set) var changing: Set<Int> = []
@@ -823,6 +882,9 @@ final class CollectorModel: ObservableObject {
     private let json = DuduJSON()
     private var refreshing: Set<CollectorTab> = []
     private var followers: [Int: Task<Void, Never>] = [:]
+    private var resetID = UUID()
+    private var readRevision = 0
+    private var reading: Set<Int> = []
 
     var items: [CollectorRecord] { itemsByTab[tab] ?? [] }
     var state: BoardModel.LoadState { states[tab] ?? .loading }
@@ -833,8 +895,14 @@ final class CollectorModel: ObservableObject {
 
     /// Forget what was read: another computer has other records.
     func reset() {
+        resetID = UUID()
+        readRevision += 1
+        reading = []
+        refreshing = []
+        isLoadingMore = false
         itemsByTab = [:]
         totals = [:]
+        unreadCount = 0
         states = [:]
         cursors = [:]
         changing = []
@@ -873,19 +941,23 @@ final class CollectorModel: ObservableObject {
     func refresh(_ wanted: CollectorTab? = nil, using store: DuduStore) async {
         let target = wanted ?? tab
         guard !refreshing.contains(target), store.status == .connected else { return }
+        let reset = resetID
+        let revision = readRevision
         refreshing.insert(target)
-        defer { refreshing.remove(target) }
+        defer { if reset == resetID { refreshing.remove(target) } }
         if itemsByTab[target] == nil { states[target] = .loading }
         let computer = store.activeComputer?.id
         let connection = store.connectionRevision
         do {
             let value = try await store.request("inbox.list", ["tab": .string(target.rawValue)])
             let answer = try await json.decode(CollectorAnswer.self, from: value)
-            guard !Task.isCancelled, computer == store.activeComputer?.id, connection == store.connectionRevision else { return }
+            guard !Task.isCancelled, reset == resetID, revision == readRevision,
+                  computer == store.activeComputer?.id, connection == store.connectionRevision else { return }
             guard answer.outcome == "success" else { throw DuduFailure.protocolError }
             let fresh = answer.items ?? []
             if itemsByTab[target] != fresh { itemsByTab[target] = fresh }
             totals[target] = answer.total ?? fresh.count
+            if let count = answer.unreadCount { unreadCount = max(0, count) }
             cursors[target] = answer.nextCursor
             states[target] = .loaded
             if target == tab { selection = selection.intersection(Set(fresh.map(\.id))) }
@@ -904,12 +976,18 @@ final class CollectorModel: ObservableObject {
     func loadMore(using store: DuduStore) async {
         let wanted = tab
         guard let cursor = cursors[wanted], !isLoadingMore, store.status == .connected else { return }
+        let reset = resetID
+        let computer = store.activeComputer?.id
+        let connection = store.connectionRevision
+        let revision = readRevision
         isLoadingMore = true
-        defer { isLoadingMore = false }
+        defer { if reset == resetID { isLoadingMore = false } }
         do {
             let value = try await store.request("inbox.list", ["tab": .string(wanted.rawValue), "cursor": .string(cursor)])
             let answer = try await json.decode(CollectorAnswer.self, from: value)
-            guard answer.outcome == "success" else { return }
+            guard !Task.isCancelled, reset == resetID, revision == readRevision,
+                  computer == store.activeComputer?.id, connection == store.connectionRevision,
+                  answer.outcome == "success" else { return }
             let known = Set((itemsByTab[wanted] ?? []).map(\.id))
             itemsByTab[wanted, default: []] += (answer.items ?? []).filter { !known.contains($0.id) }
             cursors[wanted] = answer.nextCursor
@@ -924,14 +1002,54 @@ final class CollectorModel: ObservableObject {
     }
 
     private func detail(id: Int, using store: DuduStore) async -> (record: CollectorRecord, draft: CollectorDraft)? {
+        let reset = resetID
+        let computer = store.activeComputer?.id
+        let connection = store.connectionRevision
         do {
             let value = try await store.request("inbox.get", ["id": .number(Double(id))])
             let answer = try await json.decode(CollectorAnswer.self, from: value)
-            guard answer.outcome == "success", let full = answer.record, let draft = answer.draft else { return nil }
+            guard !Task.isCancelled, reset == resetID, computer == store.activeComputer?.id,
+                  connection == store.connectionRevision, answer.outcome == "success",
+                  let full = answer.record, let draft = answer.draft else { return nil }
             return (full, draft)
         } catch {
             DuduLog.networkFailure("inbox.get.fail", error: error)
             return nil
+        }
+    }
+
+    /// Only the visible record detail calls this. Fetching text to forward, create
+    /// an issue or follow context completion is not an owner read.
+    func acknowledgeVisible(_ record: CollectorRecord, using store: DuduStore) async {
+        guard record.unread == true, let revision = record.revision,
+              !reading.contains(record.id), store.status == .connected, !Task.isCancelled else { return }
+        let reset = resetID
+        let computer = store.activeComputer?.id
+        let connection = store.connectionRevision
+        reading.insert(record.id)
+        readRevision += 1
+        defer { if reset == resetID { reading.remove(record.id) } }
+        do {
+            let value = try await store.request("inbox.read", [
+                "id": .number(Double(record.id)), "revision": .number(Double(revision)),
+            ])
+            let answer = try await json.decode(CollectorAnswer.self, from: value)
+            guard !Task.isCancelled, reset == resetID, computer == store.activeComputer?.id,
+                  connection == store.connectionRevision else { return }
+            guard ["success", "no_op"].contains(answer.outcome), let saved = answer.record else {
+                throw DuduFailure.protocolError
+            }
+            readRevision += 1 // An earlier list response cannot restore this badge.
+            if let count = answer.unreadCount { unreadCount = max(0, count) }
+            for tab in CollectorTab.allCases {
+                guard var rows = itemsByTab[tab] else { continue }
+                for index in rows.indices where rows[index].id == record.id && rows[index].revision == saved.revision {
+                    rows[index].unread = saved.unread
+                }
+                if rows != itemsByTab[tab] { itemsByTab[tab] = rows }
+            }
+        } catch {
+            if !Task.isCancelled, reset == resetID { DuduLog.networkFailure("inbox.read.fail", error: error) }
         }
     }
 

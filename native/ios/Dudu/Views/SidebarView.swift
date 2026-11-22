@@ -6,13 +6,9 @@ struct SidebarView: View {
     @AppStorage("dudu.sidebar.archive") private var archiveRaw = SidebarArchiveFilter.hide.rawValue
     /// Ids of the workspaces the user folded, kept as a JSON list.
     @AppStorage("dudu.sidebar.collapsed") private var collapsedRaw = "[]"
-    @State private var renaming: SidebarGroup?
-    @State private var renameText = ""
-    @State private var deleting: SidebarGroup?
     @State private var archivedChoice: SessionSummary?
     @State private var renamingSession: SessionSummary?
     @State private var sessionTitle = ""
-    @State private var isMoreExpanded = SidebarView.startsExpanded
     /// The strip under the home indicator, which the list runs on into.
     @Environment(\.homeIndicatorInset) private var homeInset
 
@@ -121,31 +117,6 @@ struct SidebarView: View {
                 Task { await store.renameSession(id, to: title) }
             }
         }
-        .alert(L10n.text("重命名工作区"), isPresented: Binding(
-            get: { renaming != nil }, set: { if !$0 { renaming = nil } }
-        )) {
-            TextField(L10n.text("工作区名称"), text: $renameText)
-            Button(L10n.text("取消"), role: .cancel) { renaming = nil }
-            Button(L10n.text("重命名")) {
-                guard let workspaceId = renaming?.workspaceId else { return }
-                let title = renameText
-                renaming = nil
-                Task { await store.renameWorkspace(workspaceId, to: title) }
-            }
-        }
-        .alert(
-            deleting.map { L10n.text("删除工作区「{0}」？", "\($0.title)") } ?? L10n.text("删除工作区"),
-            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
-        ) {
-            Button(L10n.text("取消"), role: .cancel) { deleting = nil }
-            Button(L10n.text("删除"), role: .destructive) {
-                guard let workspaceId = deleting?.workspaceId else { return }
-                deleting = nil
-                Task { await store.deleteWorkspace(workspaceId) }
-            }
-        } message: {
-            Text(L10n.text("只移除工作区的登记。目录和其中的会话都会保留，会话会显示在「未分组」下。"))
-        }
         .alert(
             L10n.text("已归档的会话"),
             isPresented: Binding(get: { archivedChoice != nil }, set: { if !$0 { archivedChoice = nil } })
@@ -197,15 +168,6 @@ struct SidebarView: View {
         .frame(height: 44)
     }
 
-    /// `-dudu-review-sidebar-more` opens 查看更多 from the start (the simulator has no finger).
-    private static var startsExpanded: Bool {
-        #if DEBUG && targetEnvironment(simulator)
-        return ProcessInfo.processInfo.arguments.contains("-dudu-review-sidebar-more")
-        #else
-        return false
-        #endif
-    }
-
     private var searchField: some View {
         Button(action: onSearch) {
             HStack(spacing: 10) {
@@ -224,28 +186,16 @@ struct SidebarView: View {
         .accessibilityIdentifier("sidebar.search")
     }
 
-    /// The approved primary entries stay visible. The remaining registry entries share the same
-    /// rows and columns, folded by default, with no additional indentation.
+    /// DSH's entries, as it lists them, without the ones the bottom bar has (看板, 收件箱, 任务: owner, 2026-11-21, "很多按键的地方都重复了") and without 查看更多: what is left is
+    /// short, so it is all shown, with the same rows and columns.
+    private var drawerEntries: [NavigationItem] {
+        store.activeNavigation.sidebar.filter { ![NavigationTarget.assistant, .board, .collector, .tasks].contains($0.target) }
+    }
+
     private var libraryButtons: some View {
         VStack(spacing: 2) {
-            ForEach(store.activeNavigation.primarySidebar) { item in
+            ForEach(drawerEntries) { item in
                 libraryButton(item)
-            }
-            if !store.activeNavigation.additionalSidebar.isEmpty {
-                DisclosureGroup(isExpanded: $isMoreExpanded) {
-                    VStack(spacing: 2) {
-                        ForEach(store.activeNavigation.additionalSidebar) { item in
-                            libraryButton(item)
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 12) {
-                        DuduIcon(.options, size: 20)
-                            .frame(width: 24, height: 24)
-                        Text(L10n.text("查看更多"))
-                    }
-                }
-                .disclosureGroupStyle(SidebarNavigationDisclosureStyle())
             }
             if store.activeNavigation.sidebar.isEmpty, let hint = navigationHint {
                 Text(hint)
@@ -448,18 +398,7 @@ struct SidebarView: View {
         SidebarGroupHeader(
             group: group,
             isCollapsed: isCollapsed,
-            onToggle: { withAnimation(.easeOut(duration: 0.18)) { setCollapsed(group.id, !isCollapsed) } },
-            onCreate: {
-                guard let workspaceId = group.workspaceId else { return }
-                onChooseConversation()
-                DuduLog.record("session.create")
-                Task { await store.startNewSession(workspaceId: workspaceId) }
-            },
-            onRename: {
-                renameText = group.title
-                renaming = group
-            },
-            onDelete: { deleting = group }
+            onToggle: { withAnimation(.easeOut(duration: 0.18)) { setCollapsed(group.id, !isCollapsed) } }
         )
     }
 
@@ -549,39 +488,8 @@ struct SidebarView: View {
     }
 }
 
-/// SwiftUI owns the disclosure state; its presentation follows the app's existing navigation rows.
-/// Content stays at the same leading edge as the primary entries.
-private struct SidebarNavigationDisclosureStyle: DisclosureGroupStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Button {
-                withAnimation(.easeOut(duration: 0.18)) {
-                    configuration.isExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 12) {
-                    configuration.label
-                    Spacer(minLength: 0)
-                    DuduIcon(.right, size: 14)
-                        .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
-                }
-                .font(.system(size: 16))
-                .foregroundStyle(DuduStyle.muted)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .padding(.horizontal, 10)
-                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            .buttonStyle(DuduRowButtonStyle())
-            .accessibilityIdentifier("sidebar.more")
-            if configuration.isExpanded {
-                configuration.content
-            }
-        }
-    }
-}
-
-/// A workspace's header: its name, a › while it is folded, and a menu to rename or remove it. Tapping the
-/// name folds or unfolds it; an open workspace shows no icon at all.
+/// A workspace's header: its name and a › while it is folded. Tapping the name folds or unfolds it; an open workspace
+/// shows no icon at all. It has no menu: the workspaces are not operated from the phone (owner, 2026-11-21).
 /// Where the sidebar's list puts things, once, so the heading, the workspaces and the conversations share
 /// one left edge and one trailing column of controls.
 private enum SidebarMetrics {
@@ -597,9 +505,6 @@ private struct SidebarGroupHeader: View {
     let group: SidebarGroup
     let isCollapsed: Bool
     let onToggle: () -> Void
-    let onCreate: () -> Void
-    let onRename: () -> Void
-    let onDelete: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -631,25 +536,8 @@ private struct SidebarGroupHeader: View {
             .accessibilityLabel(L10n.text("{0}，{1}", "\(group.title)", "\(isCollapsed ? L10n.text("已折叠") : L10n.text("已展开"))"))
             .accessibilityHint(L10n.text("点按折叠或展开"))
             .accessibilityIdentifier("sidebar.group.\(group.id)")
-
-            if group.workspaceId != nil {
-                Menu {
-                    Button(L10n.text("新建会话"), action: onCreate)
-                    Button(L10n.text("重命名"), action: onRename)
-                    Button(L10n.text("删除工作区"), role: .destructive, action: onDelete)
-                } label: {
-                    DuduIcon(.options, size: 20)
-                        .foregroundStyle(DuduStyle.muted)
-                        .frame(width: DuduLayout.actionColumnWidth, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(DuduIconButtonStyle())
-                .accessibilityLabel(L10n.text("{0} 的更多操作", "\(group.title)"))
-                .accessibilityIdentifier("sidebar.group.menu.\(group.id)")
-            }
         }
-        // The same left edge as the heading above and the same trailing column as its options button,
-        // so the "…" of every workspace sits straight under that button (and over the times below).
+        // The same left edge as the heading above and the same trailing column as its options button.
         .padding(.leading, SidebarMetrics.textLeading)
         .padding(.trailing, SidebarMetrics.trailing)
     }

@@ -2,6 +2,9 @@ import Foundation
 import Security
 
 actor KeychainVault {
+    /// Readable after the first unlock since the phone started, not only while it is unlocked (owner, 2026-11-22: 「你说改就改」; Apple recommends it for items that need to be read by background
+    /// applications): a silent push wakes the App on a locked phone (`BoardWake`), and the saved computers have to be readable then. They never leave this device (`ThisDeviceOnly`).
+    private static let accessibility = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
     private let nativeService = "com.harnessmobile.app.dudu"
     private let legacyServices = ["app:no-auth", "app"]
 
@@ -20,7 +23,7 @@ actor KeychainVault {
         let query = itemQuery(key, service: nativeService)
         var attributes = query
         attributes[kSecValueData as String] = data
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        attributes[kSecAttrAccessible as String] = Self.accessibility
 
         let status = SecItemAdd(attributes as CFDictionary, nil)
         if status == errSecSuccess { return }
@@ -28,11 +31,30 @@ actor KeychainVault {
 
         let update: [String: Any] = [
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            kSecAttrAccessible as String: Self.accessibility
         ]
         guard SecItemUpdate(query as CFDictionary, update as CFDictionary) == errSecSuccess else {
             throw DuduFailure.storage
         }
+    }
+
+    /// Every item the App saved before 2026-11-22 can be read only while the phone is unlocked: this moves them all to the same level as the new ones. It needs the phone unlocked, so the caller
+    /// tries it whenever it has just read the Keychain.
+    func allowReadingAfterFirstUnlock() -> OSStatus {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: nativeService]
+        return SecItemUpdate(query as CFDictionary, [kSecAttrAccessible as String: Self.accessibility] as CFDictionary)
+    }
+
+    /// How many of the App's items are readable after the first unlock, and how many there are (numbers for the log).
+    func accessibilityCounts() -> (afterFirstUnlock: Int, all: Int) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: nativeService,
+            kSecReturnAttributes as String: kCFBooleanTrue as Any, kSecMatchLimit as String: kSecMatchLimitAll
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let rows = result as? [[String: Any]] else { return (0, 0) }
+        let wanted = Self.accessibility as String
+        return (rows.filter { ($0[kSecAttrAccessible as String] as? String) == wanted }.count, rows.count)
     }
 
     func remove(_ key: String) throws {
@@ -110,12 +132,15 @@ extension DuduComputerStorage {
 }
 
 actor ComputerRepository: DuduComputerStorage {
+    /// The one the App uses. The saved computers are read from the Keychain once and kept, so a silent push that wakes the App while the phone is locked (`BoardWake`) finds them in memory.
+    static let shared = ComputerRepository()
     private static let indexKey = "dudu.computers.v2"
     private static let legacyKey = "dudu.connection.v1"
     private static let recordPrefix = "dudu.computer."
 
     private let vault = KeychainVault()
     private var cachedLibrary: ComputerLibrary?
+    private var widenedKeychainAccess = false
     private var mutationHeld = false
     private var mutationWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -131,6 +156,7 @@ actor ComputerRepository: DuduComputerStorage {
         if let indexData = try await vault.get(Self.indexKey) {
             let library = try await readNativeLibrary(indexData)
             cachedLibrary = library
+            await widenKeychainAccess()
             return library
         }
 
@@ -164,6 +190,18 @@ actor ComputerRepository: DuduComputerStorage {
         try await writeIndex(empty)
         cachedLibrary = empty
         return empty
+    }
+
+    /// Right after the Keychain was read (so the phone is unlocked): the items saved before 2026-11-22 are moved to "readable after the first unlock", once it has worked.
+    private func widenKeychainAccess() async {
+        guard !widenedKeychainAccess else { return }
+        let status = await vault.allowReadingAfterFirstUnlock()
+        let counts = await vault.accessibilityCounts()
+        widenedKeychainAccess = status == errSecSuccess
+        DuduLog.record(
+            "keychain.access", counts: ["keychainAfterFirstUnlock": counts.afterFirstUnlock, "keychainItems": counts.all],
+            state: status == errSecSuccess ? "updated" : "status.\(status)"
+        )
     }
 
     func pairAuthenticated(

@@ -32,6 +32,10 @@ enum IssueQuickAction: String, CaseIterable, Identifiable, Hashable {
         default: return true
         }
     }
+    /// The actions a menu lists for an issue. Sub-issues do not nest, so a sub-issue has no "add sub-issue".
+    static func shown(for issue: BoardIssue) -> [IssueQuickAction] {
+        allCases.filter { $0 != .subIssue || issue.parent == nil }
+    }
 }
 
 struct IssueActionRequest: Identifiable {
@@ -145,7 +149,7 @@ struct IssueActionsSheet: View {
 
     private var menu: some View {
         IssueChoiceList(title: L10n.text("更多")) {
-            ForEach(IssueQuickAction.allCases) { action in
+            ForEach(IssueQuickAction.shown(for: issue)) { action in
                 if action == .subIssue { Divider().padding(.leading, 16) }
                 Button {
                     if action == .subIssue { addingSubIssue = true }
