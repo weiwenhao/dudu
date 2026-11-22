@@ -22,16 +22,19 @@ final class BoardWakeTests: XCTestCase {
             await BoardWake.run(computerID: id, repository: computers, client: transport, storage: storage, now: { Date(timeIntervalSince1970: seconds) })
         }
 
+        // The push names the computer by the id it knows itself by ("desktop-fixture"); the board looks for its cache under the phone's own id of it ("local-fixture").
         let first = await wake(at: 1_000)
         XCTAssertEqual(first, .newData)
-        let saved = try await storage.load(for: "desktop-fixture")
+        let saved = try await storage.load(for: "local-fixture")
         XCTAssertEqual(saved?.conversationsByTab["all"]?.map(\.id), ["issue:1"])
         XCTAssertEqual(saved?.conversationsByTab["all"]?.first?.preview, "Done", "the preview is prepared as the board prepares it")
         XCTAssertEqual(saved?.savedAt, Date(timeIntervalSince1970: 1_000))
+        let misplaced = try await storage.load(for: "desktop-fixture")
+        XCTAssertNil(misplaced, "nothing is kept under the id the push names: the board would never look there")
 
         let again = await wake(at: 2_000)
         XCTAssertEqual(again, .noData, "the same rows are not written again")
-        let kept = try await storage.load(for: "desktop-fixture")
+        let kept = try await storage.load(for: "local-fixture")
         XCTAssertEqual(kept?.savedAt, Date(timeIntervalSince1970: 1_000))
         let stranger = await wake("someone-else", at: 3_000)
         XCTAssertEqual(stranger, .noData, "a computer this phone does not know is not connected to")
@@ -42,7 +45,7 @@ final class BoardWakeTests: XCTestCase {
         let down = WakeTransport(reply: .null, connectFailure: .connectionFailed)
         let failed = await BoardWake.run(computerID: "desktop-fixture", repository: computers, client: down, storage: storage, now: { Date() })
         XCTAssertEqual(failed, .failed)
-        let unchanged = try await storage.load(for: "desktop-fixture")
+        let unchanged = try await storage.load(for: "local-fixture")
         XCTAssertEqual(unchanged?.savedAt, Date(timeIntervalSince1970: 1_000), "a wake that could not read writes nothing")
     }
 
@@ -91,6 +94,8 @@ final class BoardWakeTests: XCTestCase {
         let counts = await transport.counts
         XCTAssertEqual(counts.requests, ["board.list"], "the extension reads the list and nothing else")
         XCTAssertEqual([counts.connects, counts.disconnects], [1, 1])
+        let misplaced = await BoardWakeRecord.read(computerID: "desktop-fixture", from: records)
+        XCTAssertNil(misplaced, "the record is kept under the phone's own id of the computer, which is what the board asks for")
         let status = await BoardWakeStatus.load(from: records)
         XCTAssertEqual(status?.written, false, "the last run is the stranger: it wrote nothing")
         XCTAssertEqual(status?.failure, "UNKNOWN_COMPUTER")
@@ -102,19 +107,19 @@ final class BoardWakeTests: XCTestCase {
 
         // The App's own cache is older: the board takes the extension's record at once, and keeps it for a cold start.
         try await storage.save(BoardSnapshot(
-            computerID: "desktop-fixture", conversationsByTab: ["all": try Self.rows(["issue:1"])], pins: [], unreadCount: 0, savedAt: Date(timeIntervalSince1970: 100)
+            computerID: "local-fixture", conversationsByTab: ["all": try Self.rows(["issue:1"])], pins: [], unreadCount: 0, savedAt: Date(timeIntervalSince1970: 100)
         ))
         let board = BoardModel(storage: storage, wakeStore: records)
-        board.reset(for: "desktop-fixture")
+        board.reset(for: "local-fixture")
         board.select(.all)
         await board.adoptNewerSnapshot()
         XCTAssertEqual(board.conversations.map(\.id), ["issue:1", "issue:2"])
-        let kept = try await storage.load(for: "desktop-fixture")
+        let kept = try await storage.load(for: "local-fixture")
         XCTAssertEqual(kept?.conversationsByTab["all"]?.map(\.id), ["issue:1", "issue:2"])
         XCTAssertEqual(kept?.savedAt, Date(timeIntervalSince1970: 500))
 
         // A record older than what the board holds is never adopted.
-        try await BoardWakeRecord(computerID: "desktop-fixture", savedAt: Date(timeIntervalSince1970: 300), answer: Self.answer(["issue:9"])).write(to: records)
+        try await BoardWakeRecord(computerID: "local-fixture", savedAt: Date(timeIntervalSince1970: 300), answer: Self.answer(["issue:9"])).write(to: records)
         await board.adoptNewerSnapshot()
         XCTAssertEqual(board.conversations.map(\.id), ["issue:1", "issue:2"])
     }

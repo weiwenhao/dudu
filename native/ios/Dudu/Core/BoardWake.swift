@@ -24,14 +24,15 @@ enum BoardWake {
         await withCheckedContinuation { continuation in
             let gate = Gate(continuation)
             let job = Task {
-                gate.finish(await work(computerID: computerID, repository: repository, client: client, storage: storage, now: now))
+                _ = gate.finish(await work(computerID: computerID, repository: repository, client: client, storage: storage, now: now))
             }
-            // The wake must end in time even if a request does not answer: the work is cancelled and iOS is told it failed.
+            // The wake must end in time even if a request does not answer: the work is cancelled and iOS is told it failed. Only a clock that gets there first has run out of time: a job that
+            // has finished has already handed its result back, and the clock says nothing then.
             Task {
                 try? await Task.sleep(nanoseconds: budgetSeconds * 1_000_000_000)
+                guard gate.finish(.failed) else { return }
                 job.cancel()
                 DuduLog.record("board.wake.timeout", level: "warn")
-                gate.finish(.failed)
             }
         }
     }
@@ -43,19 +44,20 @@ enum BoardWake {
         let started = Date()
         do {
             // The same question the board asks when it refreshes, and nothing else: a read of the list, never a read receipt.
-            guard let value = try await BoardWakeFetch.read(computerID: computerID, repository: repository, client: client) else {
+            guard let reading = try await BoardWakeFetch.read(computerID: computerID, repository: repository, client: client) else {
                 DuduLog.record("board.wake.skip", state: "unknown_computer")
                 return .noData
             }
-            let answer = try await DuduJSON().decode(BoardAnswer.self, from: value)
+            let answer = try await DuduJSON().decode(BoardAnswer.self, from: reading.answer)
             guard answer.outcome == "success", let rows = answer.conversations else { throw DuduFailure.protocolError }
             let prepared = await BoardPreviewPreparation().prepare(rows)
+            // Kept under the phone's own id of the computer, which is what the board looks for when the App comes to the front (the push's id is the computer's own).
             let snapshot = BoardSnapshot(
-                computerID: computerID, conversationsByTab: [BoardTab.all.rawValue: prepared], pins: answer.pins ?? [],
+                computerID: reading.key, conversationsByTab: [BoardTab.all.rawValue: prepared], pins: answer.pins ?? [],
                 unreadCount: BoardConversation.unreadSessionCount(in: prepared), filterStatuses: answer.statuses ?? [], savedAt: now()
             )
-            try snapshot.validate(for: computerID)
-            let before = try? await storage.load(for: computerID)
+            try snapshot.validate(for: reading.key)
+            let before = try? await storage.load(for: reading.key)
             let changed = before != snapshot
             if changed { try await storage.save(snapshot) }
             DuduLog.record(
@@ -76,12 +78,14 @@ enum BoardWake {
 
         init(_ continuation: CheckedContinuation<UIBackgroundFetchResult, Never>) { self.continuation = continuation }
 
-        func finish(_ result: UIBackgroundFetchResult) {
+        /// True if this result is the one handed back, false if the other side was first.
+        func finish(_ result: UIBackgroundFetchResult) -> Bool {
             lock.lock()
             let next = continuation
             continuation = nil
             lock.unlock()
             next?.resume(returning: result)
+            return next != nil
         }
     }
 }
