@@ -5,6 +5,8 @@ import { test } from 'node:test';
 import { createInboxApi } from '../host/assistant/inbox/api.mjs';
 import { normalizeRecords } from '../host/assistant/inbox/records.mjs';
 import { createIssues } from '../host/assistant/issues/index.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import { migrateInboxReads } from '../host/assistant/inbox/store.mjs';
 const NOW = new Date(2026, 10, 5, 12).getTime();
 const raw = (id: string, extra: any = {}) => ({ id, title: `来信 ${id}`, text: `${id} 的原文`, from: 'Alice', url: `https://mail.test/${id}`, ...extra });
 
@@ -23,6 +25,30 @@ function world(t: any, options: any = {}) {
 
 const ids = (answer: any) => answer.items.map((item: any) => item.title);
 const later = () => new Promise((resolve) => setImmediate(resolve));
+
+test('inbox read migration establishes one historical content baseline for every existing row, handled or not, and swaps in the narrower unread index', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`CREATE TABLE inbox_records (id INTEGER PRIMARY KEY, text TEXT, done_at INTEGER, deleted_at INTEGER, issue_id INTEGER);
+      INSERT INTO inbox_records VALUES (1, 'waiting', NULL, NULL, NULL), (2, 'handled', 123, NULL, NULL);`);
+    migrateInboxReads(db);
+    migrateInboxReads(db);
+    assert.deepEqual(db.prepare('SELECT * FROM inbox_records ORDER BY id').all().map((row) => ({ ...row })), [
+      { id: 1, text: 'waiting', done_at: null, deleted_at: null, issue_id: null, revision: 1, read_revision: 1 },
+      { id: 2, text: 'handled', done_at: 123, deleted_at: null, issue_id: null, revision: 1, read_revision: 1 },
+    ]);
+    // The first version of the unread index held the handled rows too: a database that has it gets the narrower one instead.
+    db.exec('CREATE INDEX inbox_unread ON inbox_records(id) WHERE deleted_at IS NULL AND read_revision < revision');
+    migrateInboxReads(db);
+    const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'inbox_records'").all().map((row: any) => row.name);
+    assert.ok(indexes.includes('inbox_unread_open') && !indexes.includes('inbox_unread'));
+    db.exec("INSERT INTO inbox_records (id, text) VALUES (3, 'new after migration')");
+    assert.equal(db.prepare('SELECT revision > read_revision AS unread FROM inbox_records WHERE id = 3').get().unread, 1);
+    migrateInboxReads(db);
+    assert.equal(db.prepare('SELECT revision > read_revision AS unread FROM inbox_records WHERE id = 3').get().unread, 1,
+      'opening the database again must not reapply the historical baseline to new content');
+  } finally { db.close(); }
+});
 
 test('more context for a record starts at once and runs in the background: the record says it is being completed, then it has grown, or says why it could not', async (t) => {
   let finish: (answer: any) => void = () => {};

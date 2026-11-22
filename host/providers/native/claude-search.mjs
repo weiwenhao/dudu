@@ -2,10 +2,15 @@ import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { blocksOf, isHumanPrompt, promptText } from './claude-store.mjs';
 
+// A conversation this size stops growing the in-memory index further, dropping the oldest text first: a transcript
+// left to run for days reaches gigabytes, and indexing it whole crashed the host's Worker on an out-of-memory error.
+const SEARCH_TEXT_BUDGET = 6 * 1024 * 1024;
+
 /** Index conversation text only: no tool payloads, reasoning, image bytes or reconstruction of a harness turn. */
 export async function readClaudeSearch(file, { includeMessages = false } = {}) {
   const records = [];
   const positions = new Map();
+  let budget = 0;
   const input = createReadStream(file, { encoding: 'utf8' });
   const lines = createInterface({ input, crlfDelay: Infinity });
   try {
@@ -16,18 +21,28 @@ export async function readClaudeSearch(file, { includeMessages = false } = {}) {
       if (!record || !['user', 'assistant'].includes(record.type) || record.isSidechain || record.isMeta || record.isCompactSummary) continue;
       const human = isHumanPrompt(record);
       if (human && positions.has(record.parentUuid)) {
-        const from = positions.get(record.parentUuid) + 1;
-        for (const removed of records.splice(from)) positions.delete(removed.id);
+        const from = records.indexOf(positions.get(record.parentUuid)) + 1;
+        if (from > 0) for (const removed of records.splice(from)) {
+          positions.delete(removed.id);
+          budget -= removed.text.length;
+        }
       }
       const text = record.type === 'assistant'
         ? blocksOf(record.message?.content).filter((block) => block?.type === 'text' && typeof block.text === 'string').map((block) => block.text).join('\n')
         : human ? promptText(record.message.content) : '';
-      if (record.uuid) positions.set(record.uuid, records.length);
       const at = Date.parse(record.timestamp);
-      records.push({
+      const entry = {
         id: record.uuid, role: record.type, text,
         ...(includeMessages ? { messageId: record.message?.id ?? record.uuid, at: Number.isFinite(at) ? at : undefined } : {}),
-      });
+      };
+      if (record.uuid) positions.set(record.uuid, entry);
+      records.push(entry);
+      budget += text.length;
+      while (budget > SEARCH_TEXT_BUDGET && records.length > 1) {
+        const [evicted] = records.splice(0, 1);
+        positions.delete(evicted.id);
+        budget -= evicted.text.length;
+      }
     }
   } finally { lines.close(); input.destroy(); }
   const messages = [];

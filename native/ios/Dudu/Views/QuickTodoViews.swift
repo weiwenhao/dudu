@@ -171,7 +171,6 @@ private extension AssistantQuickSheetState {
             target: DraftTarget(computerID: target.computerID, sessionID: session),
             connected: isCurrent(store) && store.status == .connected,
             request: { _, _ in throw DuduFailure.remote("UNSUPPORTED") },
-            fork: { _ in throw DuduFailure.remote("UNSUPPORTED") },
             loadImage: { attachment, _, fullSize in await self.image(attachment, of: issue, fullSize: fullSize, using: store) }
         )
     }

@@ -1,5 +1,197 @@
 # Android interface corrections
 
+## Desktop context-menu icons and task switches, 2026-11-21
+
+The owner's later Desktop screenshot replaces the system-symbol counterparts
+listed in the 2026-11-20 section. iOS and Android now use the Desktop issue menu's
+pin/unpin arrows, Pencil, CircleDot, Signal, User, Tag, Box, details and trash
+marks, plus the exact solid-top DueIcon. Android uses the generated `DuduGlyphs`
+mapping instead of a separate set of board-menu choices. Both context menus put
+状态 above 重命名 and 详情 after 智能体, with existing business handlers and locks.
+Active/paused task rows use the settings' native switch across the full, quick
+and session-scoped lists. The detailed change and verification limits are in
+`docs/native-mobile-fixes.md`; no new runtime UI check was authorized.
+
+## Follow-up icon and control alignment to iOS, 2026-11-20
+
+The owner explicitly chose the current iPhone implementation as the Android
+reference after the source audit in
+`.local/qa/native-icon-audit-2026-11-20/`. The shared 92-entry glyph mapping
+already matched; this correction addresses the page-specific choices and
+drawing differences that the audit found.
+
+- Board context actions distinguish pin/unpin and use the iPhone's menu choices
+  for detail, rename, priority, status, project and due date. These OS menu
+  symbols use matching Android/Lucide counterparts, not copied SF Symbols.
+  The no-host-icon sidebar fallback, project pickers, unassigned Agent and
+  due-date removal also follow the iPhone's respective controls.
+- Filter choices use the existing blue 18dp rounded-square mark. New-issue
+  overflow icons normalize their visible ink to 16dp. Task workspace and run
+  history now carry the corresponding workspace and result marks.
+- Avatar working marks have the fixed 28-percent arc and one-second linear
+  rotation; connection and pending-message marks have the thin fading tail.
+  Subissue progress uses the iPhone's indigo, light-grey track and butt caps.
+  Status marks share its upper-right anchor and white halo. Pi's optical size
+  and single-ink Agent logo colour also follow the iPhone sources.
+- The goal banner uses the Goal asset and three icon-labelled menu actions.
+  Goal and multi-message queue expansion keep the same 44dp layout reservation
+  and overlay upward, correcting the queue difference recorded below. Their
+  existing command handlers and input identities are retained; goal editing
+  still stages the existing edit command in the composer.
+- Staged and received pictures share a full-screen preview with Close on the
+  left and Download on the right, including saving/saved/failed feedback.
+  Controls hide during zoom or downward dismissal, and tapping a zoomed image
+  restores its original fit. Android retains its native document picker for
+  saving. Image decoding and file writes remain off the UI thread.
+
+All phrases reuse the approved current iPhone catalog; no new product wording
+was composed. `scripts/sync-android-assets.mjs` generates the separate menu
+mapping alongside the shared glyphs; a regeneration after the final generator
+fix left all 308 Android main-source/resource files unchanged.
+
+Android Debug assembly and Android lint, repository lint, the generator's
+targeted ESLint check, TypeScript check and whitespace check passed. Logs,
+source hashes and the checked APK hash are recorded under
+`.local/qa/android-icon-parity-fix-2026-11-20/`. This follow-up did not install
+an App, update Desktop, run a full unit suite, launch a simulator/browser or
+execute an E2E flow. The preceding screenshots show the earlier build.
+Rendered alignment, popup hit regions, animation and photo gestures remain
+unverified; the next runtime check is those controls in an isolated Android
+fixture, compared with the current iPhone interface.
+
+## Owner-requested runtime screenshots, 2026-11-20
+
+After the owner's explicit screenshot request, the current native apps were built
+and installed only in an iOS simulator and an Android emulator. Local example
+conversations supplied the file summaries, long diffs, pictures and queued inputs;
+no production DSH, live pairing, physical-phone installation or Desktop update was
+involved. Screenshots and capture-driver logs are under
+`.local/qa/mobile-review-2026-11-20/`.
+
+The Android captures show single-file type icons without a reserved column on
+multiple-file cards, wrapped diff lines with both line-number columns, a white
+file-sheet surface, separate picture/text messages, queue thumbnails and inline
+actions, muted sidebar More, workspace checklist/options, and icons on every
+visible inbox context action. The owner's visual review remains outstanding;
+screenshots do not establish animation or gesture acceptance. Navigation fixture
+rows omit host icon metadata, so their fallback glyphs are not evidence of the
+production host's icon appearance.
+
+The multiple-queue expansion remains a known difference: Android increases the
+bottom panel's measured height, whereas iOS overlays the expanded list upward.
+Both expanded states were captured; this behaviour was not changed. Initial
+Compose capture attempts timed out waiting for UI idleness. A passive native
+capture then succeeded, including an actual tap to expand the queue; the initial
+capture-driver failures are retained in the logs and are not treated as proof of
+an App freeze.
+
+## File cards, picture messages and icon alignment, 2026-11-20
+
+The owner's current iPhone interface is the reference. Android inbox press-and-hold
+actions now all have the corresponding iPhone glyphs: Select, Open issue, Forward,
+New issue, Complete context, Handled, Restore and Delete. Sidebar More uses the
+existing muted colour (`#96989D` in the light theme); its workspace view-options
+button uses the iPhone's two-ring checklist geometry, rather than sliders.
+
+The icon audit also corrected conversation pin/unpin, rename and archive actions,
+unassigned-Agent marks, task targets, model modes, tool activity, reconnect, and
+composer Stop. `scripts/sync-android-assets.mjs` now derives `DuduGlyphs.kt` from
+the iPhone's semantic mapping, copies its special glyph assets and traces its
+custom tilted pin from `DuduPinGlyph.swift`. Normal action symbols therefore use
+the same Lucide designs and proportional strokes; native menu framing and OS
+symbols still belong to their respective platform controls. Plugin-supplied
+navigation pictures retain their aspect ratio instead of being stretched.
+
+Both phones wrap diff lines within their available width while retaining old/new
+line numbers and additions/deletions. The Android file sheet's grabber and content
+share the surface colour. The iPhone edited-files sheet opens at its large detent,
+as the owner now requested; the delivered-files sheet keeps its previous sizing.
+
+The owner's follow-up explicitly limits the leading file icon to **one edited
+file**. A multiple-file card has no icon or reserved icon column. For one file,
+the transcript can carry an optional basename, never a host directory or cwd.
+It comes from the retained comparison summary and needs no file read. The card
+then shows that filename with its corresponding file-type mark. The checked-in
+48 code/language marks and name rules come from DSH; `native/shared/file-type-icons.json`
+and `scripts/sync-native-file-icons.mjs` generate both phones' mapping. Other types
+use the existing ChangedFiles mark. Receiving this extra transcript metadata
+requires the next Desktop plugin update; no Desktop update was performed here.
+
+Android queued images now have the iPhone's 30dp thumbnails in a bounded strip,
+with text and non-image names beside the existing inline actions. The two text
+lines have explicit line heights so they fit the 44dp row. Android sent pictures
+stand above the separate text bubble, with one pending mark on the final visible
+part. Attachment caching, sending, input identity and queue commands are unchanged.
+The existing Android multiple-queue expansion still increases the panel height;
+this change does not port the iPhone's upward overlay.
+
+Verification and final build receipts are under
+`.local/qa/mobile-files-and-icons-2026-11-20/`. No appearance tests, full unit
+suite, browser, DSH, emulator or native UI flow was run. Source comparison and
+compilation do not establish rendered icon, menu, wrapping, sheet-inset or
+gesture acceptance. At the device check the physical Android phone was absent
+from adb; the attached emulator was not used for installation or inspection.
+
+## Homepage connection recovery, 2026-11-20
+
+The owner reported the isolated 电脑连接 text in the centre of an empty board.
+The phone diagnostics showed `app.restore.fail` at `Endpoint.kt:85`, followed
+by `INVALID_LINK` when the saved computer was selected. Before the rename
+commit `49d3a54`, Android saved pairing URLs with the removed path prefix;
+the current protocol deliberately rejects that format and requires manual
+pairing again. No credentials were decrypted or printed for this diagnosis.
+
+Android now uses the existing iOS connection states with its current Material
+controls. An invalid saved configuration opens the existing 连接嘟嘟 guide,
+retaining the saved computer chooser and offering 重新扫码配对 / 粘贴配对链接.
+Closing a sheet does not clear the connection-recovery requirement. A failed
+new pairing attempt retains that guide until a successful connection.
+Ordinary disconnections retain the cached board and its existing top notice;
+saved-computer connection retries run only in the foreground and stop for
+pairing/authentication failures. New pairing and user mutations are not
+automatically retried.
+
+The cache restores by computer identity before endpoint parsing, so an old
+link no longer prevents reading the stored snapshot. With no snapshot yet,
+the board's grey loading mark is below the scope row, as on iOS. A board-load
+failure uses the existing 事项没能加载 and 重试 controls at that position.
+The centred computer-list fallback is removed. No new product wording,
+legacy endpoint acceptance, pairing generation or data reset was added.
+
+All five focused JVM recovery/endpoint/cache-contract checks passed, as did
+Android Debug assembly and lint and repository lint/typecheck. The checked
+APK was installed in place on the same physical Android phone; its installed
+hash matches the build and the system launch succeeded. The new launch logs
+confirm that 59 cached rows restored before `INVALID_LINK` and that the
+connection guide became active. The old pairing is still rejected; pairing
+again remains the owner's action.
+
+Receipts and diagnostics are in
+`.local/qa/android-connection-recovery-2026-11-20/`. No emulator, browser,
+real-DSH or end-to-end flow was run. Rendered spacing and scan/reconnection
+gestures need the owner's on-device review; a build, state log or installation
+alone does not verify them. The next runtime check is manual re-pairing with
+the new protocol, followed by an ordinary network disconnect while cached
+board content is present.
+
+## Approved question entry A and native sheet, 2026-11-20
+
+The owner approved the Android A drawings after choosing the iOS text entry.
+`ConversationQuestions.kt` replaces the old inline all-question card with the
+unboxed 回答问题 entry and a content-fitted `DuduSheet`. It retains native
+Material choice controls, the shared sheet header, one question per page,
+direct text input and loading inside the main button. Closing keeps the
+current page and draft without sending an answer or stopping the agent.
+`QuestionDraft` owns the pure paging and answer-assembly rules; the operation
+is still `question.answer`. See [mobile-questions.md](mobile-questions.md)
+for the exact references, checks and outstanding native visual acceptance.
+No emulator, E2E, installation or production Desktop update was run.
+The owner's subsequent installation request was completed on the connected
+physical Android phone on 2026-11-20: an in-place APK update, exact installed
+hash match and successful system launch. The receipt is
+`.local/qa/mobile-questions-2026-11-20/android-install/result.json`;
+this does not establish native UI or question-flow acceptance.
+
 ## Approved Lark scope styling, 2026-11-20
 
 The owner approved `.local/designs/lark-scope-2026-11-20/` for Desktop,

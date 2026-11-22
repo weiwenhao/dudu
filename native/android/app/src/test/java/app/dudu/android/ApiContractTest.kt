@@ -47,6 +47,33 @@ class ApiContractTest {
         } finally { client.retire(); server.shutdown() }
     }
 
+    // Owner, 2026-11-21: the first send after a while always failed (a pooled connection the computer had closed) and the second went out. A send carries its own input id, which the computer
+    // keeps its message by, so a connection that died on reuse is replayed once on a new one; the same send without an id is never replayed.
+    @Test fun aSendWithItsOwnIdIsReplayedOnceWhenAPooledConnectionDied() = runBlocking {
+        val server = MockWebServer()
+        var calls = 0
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                calls++
+                if (calls == 2 || calls == 4) return MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST)
+                val id = JSONObject(request.body.readUtf8()).getString("id")
+                return MockResponse().setBody(json("id" to id, "ok" to true, "result" to json("requestId" to "r")).toString())
+            }
+        }
+        server.start()
+        val address = server.url("/").newBuilder().host("127.0.0.1").build()
+        val client = DuduApi(Endpoint.parse("$address?pair=$token"))
+        try {
+            client.request("session.send", json("id" to "s", "text" to "one", "requestId" to "r1"))
+            assertEquals(1, calls)
+            client.request("session.send", json("id" to "s", "text" to "two", "requestId" to "r2"))
+            assertEquals("the dead pooled connection is replayed once", 3, calls)
+            try { client.request("session.send", json("id" to "s", "text" to "three")); fail("no id, no replay") }
+            catch (_: java.io.IOException) { }
+            assertEquals("a send without its own id is not replayed", 4, calls)
+        } finally { client.retire(); server.shutdown() }
+    }
+
     @Test fun routeFailoverRequiresANonceBoundProofBeforeSendingCredentials() = runBlocking {
         val wrong = MockWebServer()
         val good = MockWebServer()

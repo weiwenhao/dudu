@@ -25,7 +25,7 @@ struct QuickSheetNavigation<Content: View>: View {
     var body: some View { content(state) }
 }
 
-private struct QuickSheetMetricsKey: PreferenceKey {
+struct QuickSheetMetricsKey: PreferenceKey {
     static let defaultValue: QuickSheetMetrics? = nil
     static func reduce(value: inout QuickSheetMetrics?, nextValue: () -> QuickSheetMetrics?) {
         if let next = nextValue() { value = next }

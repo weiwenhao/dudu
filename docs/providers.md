@@ -39,7 +39,7 @@ DSH 的 loop ──一步一条助手消息──▶ harness 适配器（LLM ada
   - `commands.mjs`：在原生 Agent 作用域内接管 DSH 既有的 `/compact`，保留命令身份和原生控件；
     通过 `runMaintenance` 保留空闲边界，直到 OAR 释放 writer 后才让排队输入开始。
   - `drivers/claude.mjs`、`drivers/codex.mjs`：各 harness 的差别（工具名、访问模式怎么落实、环境变量）。
-  - `cron-tools.mjs`（2026-11-17）：给插件开的 Claude 会话提供 DSH 自己的工具的唯一办法是 MCP（harness 自己跑循环，DSH 的工具表它看不到，OAR 的会话选项里只有 `mcpServers` 能加工具）。这里用 OAR 的 `serveMcpTools` 为每个 Claude 会话起一份本机服务，带 `CronCreate`、`CronDelete`、`CronList` 三个同名工具，同时把 Claude 自带的三个禁掉，任务由嘟嘟的任务引擎保存，见 [scheduled-tasks.md](scheduled-tasks.md)。网桥每次启动都把 `hostTools`（`mcpServers`、`disallowedTools`、`launchArgs`）交给驱动（OAR 不记这些）。
+  - `cron-tools.mjs`（2026-11-17，2026-11-20 扩展）：harness 自己跑循环，看不到 DSH 的工具表，通过 OAR 的 `mcpServers` 提供宿主工具。每个会话有独立的 OAR `serveMcpTools` 本机服务；Claude 的 `CronCreate`、`CronDelete`、`CronList` 替换原生三个工具，任务由嘟嘟保存，见 [scheduled-tasks.md](scheduled-tasks.md)。所有 12 个路由同时获得 `question-tools.mjs` 的 `ask_user_question`，见下。每次启动都交给驱动 `hostTools`（`mcpServers`、`env`、`disallowedTools`、`launchArgs`），原生保留进程使用同一份配置。
   - `index.mjs`：按安装情况注册路由 `claude`、`codex`；每个会话只在选中该路由时才有镜像工具；设置存在 `providers.json`。
 - **界面**（`host/dudu-plugin/client.js`，只用 DSH 公开的客户端接口，没改任何 DSH 包）：供应商下拉框占用聊天框上方
   `conversation.hero.agentPreset` 这个槽（优先级 -1，把原来的模式按钮挪到子槽里继续显示）；模型菜单通过包装
@@ -47,6 +47,67 @@ DSH 的 loop ──一步一条助手消息──▶ harness 适配器（LLM ada
   供应商的选择写进会话日志（`model/selection` 事件）。这部分是一个单独的 Cordis 插件，依赖的服务缺失时只是不出现，
   不会影响手机控制和设置页。嘟嘟设置里的"供应商"页（DSH 自己的设置里没有）显示是否找到、版本、路径，可以启用/停用、指定可执行文件路径、重新检测。
   选择器左侧使用当前供应商自己的 Logo，复用侧栏与事项的 `AgentLogo`（16 px，跟随浅色/深色主题），切换供应商时同步更新。
+
+## 原生 Agent 使用 DSH 提问框（2026-11-20）
+
+主人要求 Codex 等其他 Agent 一并接入。此前 Claude 的 `AskUserQuestion` 明确禁用，Codex 的原生
+`item/tool/requestUserInput` 由 OAR 返回空答案，DSH 的 `ask_user_question` 没有交给原生进程。
+当前固定的 OAR 0.120.0 仍无公开通用回复入口，因此这里不解禁无法作答的原生控制请求。
+
+`question-tools.mjs` 给 Claude、Codex、Pi、Grok、Kimi、OpenCode、Antigravity、CodeBuddy、Devin、
+Factory、Qwen、Qoder 统一提供 MCP `ask_user_question`。问题参数取自当前 Agent 可见的 DSH 工具 schema，
+调用现有 `ctx.userQuestions.ask`，弹出 DSH 原生选择框。单选、多选、自填和明确跳过的完整答案作为同一
+MCP 工具调用的结果回到原生 Agent；不伪造用户消息，不启动新的模型轮次。原生 CLI 自己的其他提问工具
+不因此获得 OAR 回复能力；Agent 使用这里新增的宿主工具。
+
+Codex、Pi、Factory、Qwen、Qoder 直接使用 OAR 的认证 HTTP MCP 服务。Claude 和六个 ACP 路由使用
+`mcp-stdio.mjs`：现有 MCP SDK 的 stdio Server 连接同一服务，仅提供工具列表和这些工具的调用。
+这样不依赖各家 ACP 是否声明 HTTP 能力，也避开 Claude HTTP 传输对静默响应的 60 秒超时。
+Antigravity 会将 MCP `env`/`headers` 写入自己的数据库，
+所以 stdio 配置只带程序路径和环境变量名；地址、认证值通过 OAR 的原生启动环境传递，不放在 MCP 配置、
+argv 或日志里。没有改上游协议，没有新的 OAR 补丁或依赖。
+
+SDK stdio 辅助进程的工具调用等待期限使用 Node 支持的最大定时器值；Claude 沿用其原生 stdio
+工具期限。Codex 的原生 MCP 工具默认也只等待 60 秒，因此只给这个 `dudu` 服务设置
+`tool_timeout_sec=2147483`，通过现有 OAR `launchArgs` 传递原生 `-c` 选项；不修改用户配置或其他
+MCP 服务的期限。app-server 启动时先拿到真实本机端点与 `enabled=false` 的有效表，OAR 在
+`thread/start` / `thread/resume` 合并认证头和 `enabled=true` 后才连接，认证值不进入 argv。
+取消仍由调用和运行 signal 立即结束，与等待期限无关。
+
+DSH 在模型开始流式返回前冻结本步可执行工具。已知的宿主 MCP 工具预先建立镜像，并在
+`turn/start` / `step/start` 按实际供应商核对：新会话的初始供应商可能在 `agent/created` 之后才填入
+AgentOptions，且没有 `model/selection` 事件。只在流式调用时注册、或只监听模型切换，都会使首次调用
+误记 `UNKNOWN_TOOL`；原生 MCP 一侧虽然收到答案，DSH 展示的工具结果却不正确。
+
+每个工具调用绑定确切的 DSH Agent、当前运行 signal、MCP 请求 signal 和宿主服务 lifetime；
+停止、断开、换 Agent 或卸载会取消尚未回答的请求，不以空答案代替取消。DSH 服务继续验证调用者是
+当前存活的根 Agent。原生子智能体共享其根会话的 MCP 配置，不是另建一个可以越过 DSH 边界的人类交互服务。
+
+`native-questions.mjs` 同时保留阻塞请求的临时列表，合并 DSH 已持久化的继续提问投影，以 call ID 去重；
+手机从现有会话快照收到问题变化，沿用现有问题界面和作答接口。显式的 `dudu_execute` 会话提问查询和
+作答操作也使用同一请求。问题未回答时不写入额外 Activity；原生工具调用及其结果仍由现有镜像日志保存。
+
+验证：相关定向单测通过，覆盖 12 路工具配置、认证的 OAR HTTP MCP 与真实 SDK stdio 进程通信、
+多选/自填/跳过、会话隔离、停止/断开/切换撤销、手机快照及显式 Dudu 作答。另用 Desktop 的 Electron
+以 Node 模式重复通过 stdio 通信检查。lint、typecheck、插件打包及仓库外安装包导入检查通过，
+其中安装包检查也加载独立打包的 stdio 辅助模块。
+
+主人随后明确要求 DSH web 验证。本轮使用 Desktop 自带 DSH **0.2.2-rc.5**、独立 HOME/DSH_HOME、
+真实 Chrome 和真实 Claude **2.1.329** / Codex **0.169.0** 进程，模型脚本化检查三题的单选、多选、
+自填，核对实际工具结果包含原始 ID、选项和文本；两端停止待答问题后都能正常续聊。Claude 的 HTTP
+版本实测在 **60,102 ms** 报 `The operation timed out`；切到 SDK stdio 后，等待超过 **94 秒**
+再提交仍成功。记录和截图在 `.local/qa/harness-questions-2026-11-20/`。
+
+另一次全新隔离会话实际调用已配置的 **GPT-6.2-Sol**：模型通过 Codex 工具搜索发现 MCP 工具，
+原生提问停留超过一分钟后选择 Beta，DSH 的同一工具结果为
+`{"answers":[{"id":"live-choice","selected":["Beta"]}]}`、`isError=false`，模型随后回复
+`LIVE_ANSWER: Beta`。这次检查也覆盖没有 `model/selection` 事件的新会话首轮注册；
+不是只凭模型的结束语判断成功。Claude 的远端模型未在这次隔离检查中调用。
+
+手机问题界面后续已按主人选定的 v4 A 入口和 Android A 设计实现为原生底部弹窗，
+复用同一作答接口，关闭保留当前题与未提交的答案，见 [mobile-questions.md](mobile-questions.md)。
+没有更新正式 Desktop、安装手机或进行本轮手机 UI/E2E；
+其他供应商目前只有协议与配置检查，没有逐一调用真实模型。
 
 ## 长会话切换模型被 DSH 自动压缩拦住（2026-11-18）
 

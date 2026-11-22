@@ -87,6 +87,12 @@ struct GroupLineView: View {
 private struct GroupAtBubble: View {
     let line: GroupLine
     let seq: Double?
+    @Environment(\.conversationAccess) private var access
+
+    private static let shape = UnevenRoundedRectangle(topLeadingRadius: 24, bottomLeadingRadius: 24, bottomTrailingRadius: 4, topTrailingRadius: 24, style: .continuous)
+    /// Inset 8pt in the bubble: the first picture's top corners follow the bubble's (24 - 8), the rest are the inner corners.
+    private static let firstPicture = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 10, bottomTrailingRadius: 10, topTrailingRadius: 16, style: .continuous)
+    private static let laterPicture = UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 10, bottomTrailingRadius: 10, topTrailingRadius: 10, style: .continuous)
 
     private var text: AttributedString {
         var token = AttributedString("@\(line.issue.name)")
@@ -96,23 +102,60 @@ private struct GroupAtBubble: View {
         return token + rest
     }
 
+    private var pictures: [TranscriptAttachment] { (line.pictures ?? []).filter { $0.id != nil } }
+
     var body: some View {
+        if pictures.isEmpty { words } else { wordsWithPictures }
+    }
+
+    private var words: some View {
         Text(text)
             .font(.system(size: 17))
             .lineSpacing(6)
             .textSelection(.disabled)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(
-                DuduStyle.chatBubble,
-                in: UnevenRoundedRectangle(topLeadingRadius: 24, bottomLeadingRadius: 24, bottomTrailingRadius: 4, topTrailingRadius: 24, style: .continuous)
-            )
+            .background(DuduStyle.chatBubble, in: Self.shape)
             .messageActions(
                 text: "@\(line.issue.name) \(line.text ?? "")", isUser: true, seq: seq,
                 reply: line.issue, seqs: seq.map { [$0] } ?? []
             )
             .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in width * 0.82 }
             .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    /// The pictures sent with the line and its words in one bubble, the pictures stacked above (owner, 2026-11-22, 方案一 of `.local/designs/mention-image-bubble-2026-11-22/`):
+    /// each picture is as wide as one sent alone (4:5, 56% of the column, at most 260pt), and tapping one opens it as a picture alone opens.
+    private var wordsWithPictures: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(spacing: 4) {
+                ForEach(Array(pictures.enumerated()), id: \.offset) { index, picture in
+                    ConversationImageThumbnail(
+                        attachment: picture, target: access?.target, canLoadAttachment: access?.connected ?? false,
+                        identifier: "chat.group.at.image.\(picture.id ?? String(index))",
+                        loadImage: access?.loadImage ?? { _, _, _ in nil },
+                        alignment: .leading,
+                        tileShape: index == 0 ? Self.firstPicture : Self.laterPicture
+                    )
+                }
+            }
+            .padding([.horizontal, .top], 8)
+            Text(text)
+                .font(.system(size: 17))
+                .lineSpacing(6)
+                .textSelection(.disabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 12)
+        }
+        .background(DuduStyle.chatBubble, in: Self.shape)
+        .messageActions(
+            text: "@\(line.issue.name) \(line.text ?? "")", isUser: true, seq: seq,
+            reply: line.issue, seqs: seq.map { [$0] } ?? []
+        )
+        .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in min(width * 0.56, 260) + 16 }
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
 
@@ -126,8 +169,8 @@ private struct GroupGuestBubble: View {
     @Environment(\.groupChat) private var group
     @State private var expanded = false
 
-    /// Eight lines of the answer's 23pt line.
-    private static let clampedHeight: CGFloat = 184
+    /// Twelve lines of the answer's 23.9pt line (`ChatTypography`). It was eight, of which the fade and the capsule covered the last three, so about five could be read (owner, 2026-11-22: "隐藏消息可以多显示几行，现在显示得太小了").
+    private static let clampedHeight: CGFloat = 12 * 23.9
     private var text: String { line.text ?? "" }
     /// Stop counting at the threshold, including for very long answers. Swift characters keep Chinese and composed emoji intact.
     private var isLong: Bool { !text.dropFirst(1_000).isEmpty }

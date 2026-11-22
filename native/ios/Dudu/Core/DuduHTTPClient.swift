@@ -10,8 +10,10 @@ protocol DuduTransport: Sendable {
         onDisconnect: @escaping @Sendable () async -> Void
     ) async throws -> (id: String, name: String)
     func request(_ method: String, params: [String: JSONValue], timeoutSeconds: UInt64) async throws -> JSONValue
+    #if !DUDU_APP_EXTENSION
     func uploadFile(_ file: PickedFile, sessionID: String) async throws -> JSONValue
     func downloadVideo(_ parameters: [String: JSONValue]) async throws -> URL
+    #endif
     func disconnect() async
     func disconnect(throughGeneration: Int) async
     func resolvedEndpoint() async -> ConnectionEndpoint?
@@ -19,8 +21,10 @@ protocol DuduTransport: Sendable {
 }
 
 extension DuduTransport {
+    #if !DUDU_APP_EXTENSION
     func uploadFile(_ file: PickedFile, sessionID: String) async throws -> JSONValue { throw DuduFailure.remote("UNSUPPORTED") }
     func downloadVideo(_ parameters: [String: JSONValue]) async throws -> URL { throw DuduFailure.remote("UNSUPPORTED") }
+    #endif
     func resolvedEndpoint() async -> ConnectionEndpoint? { nil }
     func verifyEndpoint(_ endpoint: ConnectionEndpoint) async throws -> ConnectionEndpoint {
         throw DuduFailure.remote("AUTH_REQUIRED")
@@ -139,6 +143,25 @@ actor DuduHTTPClient: DuduTransport {
         configuration.timeoutIntervalForRequest = 35
         redirectDelegate = NativeHTTPNoRedirectDelegate()
         session = URLSession(configuration: configuration, delegate: redirectDelegate, delegateQueue: nil)
+    }
+
+    /// What the app says about itself when it connects: its platform, version and build, and the new shapes it understands. The plugin answers an app that says
+    /// nothing as the build that was first released (App Store build 143, API v1); an app that says what it understands is given more (host/native-client.mjs).
+    /// `settings.rich`: the long-press menus of the settings rows, the 状态 page as drawn on 2026-11-21 (strips, tiles, swatches, progress icons), inline fields.
+    /// `board.push`: it reads the board again when the computer says `board.changed` (a turn ended, something was read, an issue changed), instead of waiting for its timer.
+    /// `board.latest`: its chat rows are drawn as the plugin sends them, so it may be sent the owner's own last message as a row's preview and time (the newest message of either side).
+    /// `board.wake`: while it is away, the computer may send it a silent push when the board changes, and it reads the board and writes it down before it is opened (`BoardWake`).
+    /// `notifications.service`: it has a notification extension (`DuduNotificationService`). The plugin does not branch on it today (a notice carries `mutable-content` and `content-available` both); it tells which phones have the extension.
+    static let capabilities = ["settings.rich", "board.push", "board.latest", "board.wake", "notifications.service"]
+    private static var declaration: Data {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let app = [
+            "platform": "ios",
+            "version": info["CFBundleShortVersionString"] as? String ?? "",
+            "build": info["CFBundleVersion"] as? String ?? "",
+        ]
+        let body: [String: Any] = ["app": app, "capabilities": capabilities]
+        return (try? JSONSerialization.data(withJSONObject: body)) ?? Data("{}".utf8)
     }
 
     func connect(
@@ -271,7 +294,7 @@ actor DuduHTTPClient: DuduTransport {
         let data: Data
         let response: HTTPURLResponse
         do {
-            (data, response) = try await perform(endpoint: endpoint, route: "connect", body: nil, timeout: 12)
+            (data, response) = try await perform(endpoint: endpoint, route: "connect", body: Self.declaration, timeout: 12)
         } catch {
             if generation == latestGeneration {
                 // Finish cleanup before trying another route of this same device.
@@ -454,6 +477,7 @@ actor DuduHTTPClient: DuduTransport {
         }
     }
 
+    #if !DUDU_APP_EXTENSION
     func uploadFile(_ file: PickedFile, sessionID: String) async throws -> JSONValue {
         guard let connection = active, connection.generation == latestGeneration else { throw DuduFailure.disconnected }
         let id = UUID().uuidString.lowercased()
@@ -523,6 +547,7 @@ actor DuduHTTPClient: DuduTransport {
             throw failure
         }
     }
+    #endif
 
     private func fileRequest(_ endpoint: ConnectionEndpoint, route: String, id: String) throws -> URLRequest {
         guard let url = endpointURL(endpoint, route: route) else { throw DuduFailure.invalidLink }

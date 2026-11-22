@@ -6,6 +6,7 @@ import { networkInterfaces } from 'node:os';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { NATIVE_METHODS } from './native-bridge.mjs';
+import { cleanClient } from './native-client.mjs';
 
 const API = '/api/v1';
 const ROUTES = Object.freeze({
@@ -25,6 +26,9 @@ const MAX_EVENTS = 128;
 const MAX_EVENT_BYTES = 8 * 1024 * 1024;
 const MAX_POLL_MS = 25_000;
 const IDLE_TIMEOUT_MS = 2 * 60_000;
+// A phone that asked this computer for anything within this long is in front of its owner: the App holds an events request open and asks again at once, so one that has gone quiet for longer has
+// been put away (its connection is kept two minutes more). Only a phone that is away is woken by Apple (native-board-wake.mjs); one in front is told on its connection.
+const LIVE_WINDOW_MS = 45_000;
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NONCE = /^[A-Za-z0-9_-]{16,128}$/;
 
@@ -202,6 +206,7 @@ export async function createNativeServer({
   };
 
   const touchConnection = (connection) => {
+    connection.touchedAt = Date.now();
     clearTimeout(connection.idleTimer);
     connection.idleTimer = setTimeout(() => { void closeConnection(connection); }, IDLE_TIMEOUT_MS);
     connection.idleTimer.unref?.();
@@ -227,6 +232,7 @@ export async function createNativeServer({
     const connection = {
       id: ++nextConnectionId,
       deviceId,
+      touchedAt: Date.now(),
       clientName,
       authenticated: true,
       closed: false,
@@ -246,10 +252,12 @@ export async function createNativeServer({
         const event = { id: ++connection.eventSequence, topic, params };
         const bytes = Buffer.byteLength(JSON.stringify(event));
         if (bytes > maxBufferedBytes) return false;
-        if (topic === 'session.snapshot') {
-          const watchId = params?.watchId;
-          const index = connection.events.findIndex((item) => item.event.topic === topic
-            && item.event.params?.watchId === watchId);
+        // A newer snapshot of a watched conversation, and a newer "the board changed", make the one still waiting for the phone's next poll pointless.
+        const replaced = topic === 'session.snapshot'
+          ? (item) => item.event.topic === topic && item.event.params?.watchId === params?.watchId
+          : topic === 'board.changed' ? (item) => item.event.topic === topic : null;
+        if (replaced) {
+          const index = connection.events.findIndex(replaced);
           if (index >= 0) {
             connection.eventBytes -= connection.events[index].bytes;
             connection.events.splice(index, 1);
@@ -371,9 +379,13 @@ export async function createNativeServer({
       if (connections.size >= maxClients && !connections.has(deviceId)) {
         throw new HTTPError(429, 'TOO_MANY_REQUESTS');
       }
+      // What the app says about itself, if it says anything: an app that predates this sends no body at all (see native-client.mjs).
+      const declared = await readJson(request, MAX_PREAUTH_BYTES).catch(() => ({}));
       await closeConnection(connections.get(deviceId));
       const clientName = request.headers['x-dudu-client'] === 'android' ? 'Android' : 'iPhone';
       const connection = makeConnection(deviceId, clientName);
+      connection.client = cleanClient(declared, clientName === 'Android' ? 'android' : 'ios');
+      pairingStore.recordClient?.(deviceId, connection.client);
       connections.set(deviceId, connection);
       const readyComputer = typeof computer === 'function' ? computer() : computer;
       reply(response, 200, {
@@ -537,6 +549,17 @@ export async function createNativeServer({
     server,
     address,
     port: addressInfo.port,
+    /** Whether this phone's App is in front: it asked this computer for something within the last 45 seconds. */
+    isLive(deviceId) {
+      const connection = connections.get(deviceId);
+      return Boolean(connection && !connection.closed && Date.now() - connection.touchedAt < LIVE_WINDOW_MS);
+    },
+    /** One event for every connected phone `accepts` (an app that did not declare what the event is for is never sent it: native-client.mjs). */
+    broadcast(topic, params, accepts = () => true) {
+      for (const connection of connections.values()) {
+        if (!connection.closed && connection.authenticated && accepts(connection)) connection.sendEvent(topic, params);
+      }
+    },
     async close() {
       if (closed) return;
       closed = true;

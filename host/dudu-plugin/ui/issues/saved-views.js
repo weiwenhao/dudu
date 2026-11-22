@@ -6,7 +6,9 @@ import { useCallback, useState } from 'react';
 
 const STORAGE_KEY = 'dudu.issues.saved-views.v1';
 export const MAX_NAME = 60;
-export const BASES = ['active', 'backlog', 'all'];
+export const BASES = ['active', 'unread', 'all'];
+// A view saved on 待规划 before 未读 replaced it keeps working: its base is still one the stores understand, it is only no longer offered as a built-in tab.
+const SAVED_BASES = [...BASES, 'backlog'];
 
 /** The tab key of a saved view. */
 export const viewKey = (id) => `view:${id}`;
@@ -19,7 +21,7 @@ export function readSaved(text) {
     if (!Array.isArray(list)) return [];
     const seen = new Set();
     return list.filter((entry) => entry && typeof entry.id === 'string' && entry.id && !seen.has(entry.id) && seen.add(entry.id)
-      && typeof entry.name === 'string' && cleanName(entry.name) && BASES.includes(entry.base)).map((entry) => ({ id: entry.id, name: cleanName(entry.name), base: entry.base }));
+      && typeof entry.name === 'string' && cleanName(entry.name) && SAVED_BASES.includes(entry.base)).map((entry) => ({ id: entry.id, name: cleanName(entry.name), base: entry.base }));
   } catch { return []; }
 }
 

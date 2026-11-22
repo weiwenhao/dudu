@@ -108,9 +108,10 @@ struct RevealSwipeRow<Content: View>: View {
                     .offset(x: completionArmed ? max(0, offset - actionWidth) : 0)
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: completionArmed)
                     .frame(width: max(actionWidth, offset), alignment: .leading)
-                    .background(completion.color.opacity(collapsed ? 0 : 1))
             }
             .buttonStyle(.plain)
+            .background(completion.color.opacity(collapsed ? 0 : 1), in: Rectangle())
+            .contentShape(Rectangle())
             .frame(width: offset, alignment: .leading)
             .clipped()
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -118,12 +119,14 @@ struct RevealSwipeRow<Content: View>: View {
             HStack(spacing: 0) {
                 ForEach(trailing) { action in
                     Button { close(); action.run() } label: {
-                        block(action.title, glyph: action.glyph).background(action.color)
+                        block(action.title, glyph: action.glyph)
                     }
+                    .buttonStyle(.plain)
                     .frame(width: actionWidth)
+                    .background(action.color, in: Rectangle())
+                    .contentShape(Rectangle())
                 }
             }
-            .buttonStyle(.plain)
             .frame(width: -offset, alignment: .trailing)
             .clipped()
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
@@ -134,7 +137,7 @@ struct RevealSwipeRow<Content: View>: View {
         VStack(spacing: 4) {
             switch glyph {
             case .asset(let name): Image(name).resizable().renderingMode(.template).frame(width: 22, height: 22)
-            case .icon(let icon): DuduIcon(icon, size: 22)
+            case .icon(let icon): DuduInboxIcon(glyph: icon, slot: 22)
             }
             Text(title).font(.system(size: 14)).lineLimit(1).frame(height: 18)
         }

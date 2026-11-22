@@ -116,7 +116,7 @@ export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpen
           </ContextMenuSub>)}
           <ContextMenuSeparator />
           <ContextMenuItem onSelect={() => { close(); setRenaming(true); }}><Pencil aria-hidden="true" />{T.views.rename}</ContextMenuItem>
-          {onAddSub && <ContextMenuItem onSelect={() => onAddSub(issue)}><CornerDownRight aria-hidden="true" />{T.subIssues.add}</ContextMenuItem>}
+          {onAddSub && !issue.parent && <ContextMenuItem onSelect={() => onAddSub(issue)}><CornerDownRight aria-hidden="true" />{T.subIssues.add}</ContextMenuItem>}
           <ContextMenuSub>
             <ContextMenuSubTrigger><Copy aria-hidden="true" /><span>{T.copy.menu}</span></ContextMenuSubTrigger>
             <ContextMenuSubContent className="w-[240px]">

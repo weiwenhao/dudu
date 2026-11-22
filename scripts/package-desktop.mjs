@@ -23,7 +23,7 @@ await mkdir(runtime);
 const copied = new Set();
 // Bundle runtime dependencies that Desktop cannot resolve from the source repository's node_modules.
 // The licenses of everything inside the bundles travel with the plugin.
-const bundled = new Set(['providers/oar-runtimes.mjs', 'providers/oar-pi.mjs', 'providers/stats.mjs', 'assistant/dashboard/engine.mjs', 'assistant/connectors/mcp.mjs', 'assistant/inbox/submission.mjs', 'assistant/sessions/activity-projection.mjs', 'native-markdown-images.mjs', 'assistant/schedule/cron.mjs', 'providers/quota/system-proxy.mjs', 'computer-use/engine.mjs']);
+const bundled = new Set(['providers/oar-runtimes.mjs', 'providers/oar-pi.mjs', 'providers/mcp-stdio.mjs', 'providers/stats.mjs', 'assistant/dashboard/engine.mjs', 'assistant/connectors/mcp.mjs', 'assistant/inbox/submission.mjs', 'assistant/sessions/activity-projection.mjs', 'native-markdown-images.mjs', 'assistant/schedule/cron.mjs', 'providers/quota/system-proxy.mjs', 'computer-use/engine.mjs']);
 const noticeBlocks = [];
 async function bundleRuntime(file) {
   const target = join(runtime, file);
@@ -57,6 +57,7 @@ const roots = [...entrypoint.matchAll(/from\s*['"]\.\/dist\/([^'"]+\.mjs)['"]/g)
 if (!roots.length) throw new Error('The desktop plugin has no runtime entrypoints.');
 for (const file of roots) await copyRuntime(file);
 await copyRuntime('computer-use/provider.mjs');
+await copyRuntime('providers/mcp-stdio.mjs');
 // The interface (React, Radix, Tailwind output) is built into dist/client.js, around the hand-written client.js.
 noticeBlocks.push(...(await writeClient(join(runtime, 'client.js'))).notices);
 // The settings pages the phone opens in its web view: a script and a stylesheet next to the client, served by host/phone-pages.mjs.
@@ -93,7 +94,7 @@ try {
     '--prefer-offline', join(folder, packed[0].filename),
   ], { cwd: check, timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] });
   execFileSync(process.execPath, ['--input-type=module', '--eval',
-    'const plugin = await import(process.argv[1]); if (plugin.name !== "dudu" || typeof plugin.apply !== "function") throw new Error("Invalid desktop plugin entry."); const cua = await import("dsh-dudu/computer-use"); if (typeof cua.apply !== "function") throw new Error("Invalid Computer Use compatibility entry.");',
+    'const plugin = await import(process.argv[1]); if (plugin.name !== "dudu" || typeof plugin.apply !== "function") throw new Error("Invalid desktop plugin entry."); const cua = await import("dsh-dudu/computer-use"); if (typeof cua.apply !== "function") throw new Error("Invalid Computer Use compatibility entry."); const mcp = await import(new URL("./dist/providers/mcp-stdio.mjs", process.argv[1])); if (typeof mcp.connectStdioHostTools !== "function") throw new Error("Invalid session tools entry.");',
     pathToFileURL(join(check, 'node_modules', 'dsh-dudu', 'index.mjs')).href,
   ], { cwd: check, env: { ...process.env, NODE_PATH: '' }, timeout: 20_000, stdio: ['ignore', 'pipe', 'pipe'] });
   // The guide 嘟嘟 reads to write a widget (WIDGETS.md, in the package root) must be in the package.

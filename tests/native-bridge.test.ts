@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { contentDigest } from '../host/assistant/sessions/session-state.mjs';
+import { createNativeQuestions } from '../host/native-questions.mjs';
 import {
   NATIVE_METHODS,
   createNativeBridge,
@@ -492,6 +493,22 @@ test('watch preserves attempt, revision, index, emits watchId, and streams text/
   );
 });
 
+test('a live reply says when its text is finished, which the stream knows before the host has recorded the message', async () => {
+  const live = async (chunks: any[]) => {
+    const { bridge } = makeHarness({ snapshot: {
+      type: 'snapshot', records: [], projections: { values: {} },
+      assistantStream: { revision: 0, activeAttempt: { attemptId: 'attempt-A', nextIndex: chunks.length, stream: chunks.map((chunk, index) => ({ index, chunk })) } },
+    } });
+    return (await bridge.dispatch('session.open', { id: 'session-1', transcript: true }, {})).transcript.live;
+  };
+  const written = [{ type: 'block-start', index: 0, blockType: 'text' }, { type: 'text-delta', index: 0, text: 'Done **now**' }];
+  const ended = { type: 'block-end', index: 0, block: { type: 'text', text: 'Done **now**' } };
+  assert.equal((await live(written)).complete, undefined, 'still being written: an app draws it as streaming');
+  assert.deepEqual(await live([...written, ended]), { id: 'live:attempt-A', text: 'Done **now**', complete: true });
+  const next = [{ type: 'block-start', index: 1, blockType: 'text' }, { type: 'text-delta', index: 1, text: ' more' }];
+  assert.equal((await live([...written, ended, ...next])).complete, undefined, 'a block that follows is not finished yet');
+});
+
 test('chat follows human source and append-origin messages without showing injected context or model replacements', async () => {
   const record = (type, seq, data, surfaceOp = 'append') => ({
     type: 'event', event: { type, seq, time: seq, surfaceOp, data },
@@ -902,6 +919,43 @@ function attachmentConnection() {
     sendEvent() {},
   };
 }
+
+test('blocking harness questions publish to the watched phone and answers return to the exact live request without a timed projection', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let request;
+  const questions = createNativeQuestions({ events: { on(_event, listener) { request = listener; return () => {}; } } });
+  const { bridge, calls } = makeHarness({
+    snapshot: { type: 'snapshot', cursor: 0, records: [], projections: { values: {} } },
+    questionBridge: questions,
+  });
+  const connection = attachmentConnection();
+  const events = [];
+  connection.sendEvent = (topic, payload) => events.push({ topic, payload });
+  const lifetime = new AbortController();
+  t.after(async () => { lifetime.abort(); await connection.stopWatch(); questions.close(); });
+  const watchId = 'b47cfb71-423d-4680-9d75-1dc8d8bf1449';
+  const initial = await bridge.dispatch('session.watch', { id: 'session-1', watchId, transcript: true }, connection, { watchGeneration: 1 });
+  assert.deepEqual(initial.questions, []);
+  const pending = request({
+    agent: { session: { id: 'session-1' } }, signal: lifetime.signal,
+    wait: { callId: 'native-host-question' },
+    questions: [{ id: 'choice', question: 'Continue?', options: [{ label: 'Yes' }] }],
+  }, () => Promise.reject(Object.assign(new Error('no desktop'), { code: 'NO_PROVIDER' })));
+  await new Promise((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(100);
+  assert.deepEqual(events[0].payload.questions, [{
+    id: 'native-host-question', sessionId: 'session-1', state: 'open',
+    questions: [{ id: 'choice', question: 'Continue?', multiSelect: false, options: [{ label: 'Yes' }] }],
+  }]);
+  await assert.rejects(bridge.dispatch('question.answer', { id: 'session-2', callId: 'native-host-question', answers: [] }, connection), { code: 'NOT_FOUND' });
+  const answers = [{ id: 'choice', selected: ['Yes'] }];
+  assert.equal(await bridge.dispatch('question.answer', { id: 'session-1', callId: 'native-host-question', answers }, connection), true);
+  assert.deepEqual(await pending, { answers });
+  t.mock.timers.tick(100);
+  assert.deepEqual(events.at(-1).payload.questions, []);
+  assert.equal(calls.some((call) => call.endpoint === 'userQuestions/answer'), false, 'blocking answers do not become unrelated steered messages');
+  await assert.rejects(bridge.dispatch('question.answer', { id: 'session-1', callId: 'native-host-question', answers }, connection), { code: 'STALE_APPROVAL' });
+});
 
 test('native child history keeps its canonical parent address through watch and pagination', async () => {
   const followRequests = [];

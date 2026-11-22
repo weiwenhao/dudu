@@ -143,6 +143,8 @@ enum NavigationTarget: Equatable, Sendable {
     case board
     /// What the collectors brought back.
     case collector
+    /// The app's settings root, also reachable from the bottom navigation.
+    case settingsHome
     /// DSH's own settings pages, listed one level down in the settings.
     case dshSettings
     /// 嘟嘟's own configuration, drawn in SwiftUI.

@@ -62,19 +62,29 @@ export function createLatest({ file = null, relevant = () => true, read = null, 
     later();
   }
 
-  /** What one message of a session changes: the owner's own words, or a message of the agent. Anything else is not a message to show. */
+  /**
+   * What one message of a session changes: the owner's own words, or a message of the agent. Anything else is not a message to show. Answers the side it kept (`'me'` or `'agent'`), or null,
+   * so that a caller can tell the board that the owner just said something (the conversation list shows it: `mine`).
+   */
   function observe(sessionId, event) {
-    if (typeof sessionId !== 'string' || !sessionId || !event) return;
+    if (typeof sessionId !== 'string' || !sessionId || !event) return null;
     const data = event.data ?? {};
     const message = data.message ?? data;
     let side = null;
     if (event.type === 'user/message' && message?.source?.kind === 'user') side = 'me';
     else if (event.type === 'assistant/message') side = 'agent';
-    if (!side) return;
+    if (!side) return null;
     const text = cut(textOf(message?.content ?? data.content));
-    if (!text) return;
-    try { if (!relevant(sessionId)) return; } catch { return; }
+    if (!text) return null;
+    try { if (!relevant(sessionId)) return null; } catch { return null; }
     remember(sessionId, side, { text, at: Number.isFinite(event.time) ? event.time : now() });
+    return side;
+  }
+
+  /** The owner's own last words in a session, `{ text, at }`, or null: the conversation list shows them when they are newer than the agent's last answer (owner, 2026-11-22). */
+  function mine(sessionId) {
+    const side = kept.get(sessionId)?.me;
+    return side ? { text: side.text, at: side.at } : null;
   }
 
   /** The latest message of a session, whoever said it: `{ who: 'me' | 'agent', text, at }`, or null. */
@@ -112,7 +122,7 @@ export function createLatest({ file = null, relevant = () => true, read = null, 
   }
 
   return {
-    observe, get, ensure,
+    observe, get, mine, ensure,
     forget(sessionId) { if (kept.delete(sessionId)) later(); },
     flush() { if (timer !== null) { clearTimer(timer); save(); } },
     dispose() { if (timer !== null) { clearTimer(timer); save(); } disposed = true; },

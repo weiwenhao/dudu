@@ -7,7 +7,10 @@ struct IssueStatusIcon: View {
     var iconProgress: Double?
     var size: CGFloat = 16
 
-    private var ink: Color {
+    private var ink: Color { Self.ink(type: type, color: color) }
+
+    /// The colour a status draws in: its own, else its type's (the settings' status tile tints with it too).
+    static func ink(type: String, color: String?) -> Color {
         if let color = color.flatMap(Color.init(issueHex:)) { return color }
         let hex = [
             "backlog": "95a2b3", "todo": "a0a5ad", "in_progress": "f2c94c",

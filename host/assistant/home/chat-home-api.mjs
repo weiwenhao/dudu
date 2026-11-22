@@ -9,11 +9,11 @@ export function createChatHomeApi(home, issues) {
       let answer;
       if (action === 'list') {
         const tab = body.tab ?? 'active';
-        if (!['active', 'backlog', 'all'].includes(tab)
+        if (!['active', 'backlog', 'unread', 'all'].includes(tab)
           || body.filter !== undefined && (!body.filter || typeof body.filter !== 'object' || Array.isArray(body.filter))) fail('BAD_REQUEST');
-        answer = await home.list(tab, (issue) => issue, body.filter, { includePinnedConversations: true });
+        answer = await home.list(tab, (issue) => issue, body.filter, { includePinnedConversations: true, ownMessages: true });
         // Reuse the issue store's facet counts (each leaves its own filter out), after warming session facts.
-        const summary = await issues('list', { tab, filter: body.filter, limit: 1 });
+        const summary = await issues('list', { tab: tab === 'unread' ? 'all' : tab, filter: body.filter, limit: 1 });
         if (summary.outcome !== 'success') fail('BAD_REQUEST');
         answer = { ...answer, counts: summary.counts, statuses: summary.statuses };
       } else if (action === 'pin') answer = await home.pin(body, fail);

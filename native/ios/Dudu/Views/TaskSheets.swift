@@ -104,8 +104,9 @@ struct TaskSheet: View {
         .sheet(isPresented: $editing) {
             TaskEditorSheet(model: model, store: store, task: task)
         }
-        .confirmationDialog(L10n.text("删除任务"), isPresented: $confirmingDelete, titleVisibility: .visible) {
-            Button(L10n.text("删除任务"), role: .destructive) {
+        .alert(L10n.text("删除任务"), isPresented: $confirmingDelete) {
+            Button(L10n.text("取消"), role: .cancel) {}
+            Button(L10n.text("删除"), role: .destructive) {
                 act(.delete)
             }
         } message: {
@@ -388,6 +389,81 @@ private struct TaskChoicePage: View {
         .background(DuduStyle.canvas)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// 关联会话 (owner, 2026-11-22): the generic settings-row list this used to share with 时区/供应商 drew every conversation the
+/// same as a plain setting, and hid every conversation outside today's 关联工作区 with no explanation. This reuses 转发's own
+/// row (`ForwardPickerSheet`: a tile in the title's colour, the title, the agent's logo) and lists every conversation,
+/// searchable; picking one sets the task's 关联工作区/供应商/模型 to match it, as the desktop's picker already does.
+private struct TaskSessionPicker: View {
+    let sessions: [TaskSession]
+    let projects: [TaskProject]
+    let selected: String?
+    var emptyText: String?
+    let onSelect: (TaskSession) -> Void
+
+    @State private var query = ""
+
+    private var shown: [TaskSession] {
+        let words = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sorted = sessions.sorted { ($0.updatedAt ?? 0) > ($1.updatedAt ?? 0) }
+        return words.isEmpty ? sorted : sorted.filter { $0.title.localizedCaseInsensitiveContains(words) }
+    }
+
+    private func project(of session: TaskSession) -> TaskProject? {
+        projects.first { $0.workspaceId == session.workspaceId }
+    }
+
+    private func subtitle(for session: TaskSession) -> String? {
+        let parts = [project(of: session)?.name, session.updatedAt.map(relativeTime)].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        ScrollView {
+            if shown.isEmpty, let emptyText, !emptyText.isEmpty {
+                Text(emptyText).font(.system(size: 15)).foregroundStyle(DuduStyle.muted).frame(maxWidth: .infinity, minHeight: 160)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(shown) { session in
+                        row(session)
+                        if session.id != shown.last?.id { QuickTodoSeparator(leading: 74) }
+                    }
+                }
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+            }
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .background(DuduStyle.canvas)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: L10n.text("关联会话"))
+        .navigationTitle(L10n.text("关联会话"))
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func row(_ session: TaskSession) -> some View {
+        Button { onSelect(session) } label: {
+            HStack(spacing: 12) {
+                ConversationTile(title: session.title, size: 48)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(session.title).font(.system(size: 16)).foregroundStyle(DuduStyle.ink).lineLimit(1)
+                    if let subtitle = subtitle(for: session) {
+                        Text(subtitle).font(.system(size: 13)).foregroundStyle(DuduStyle.muted).lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if let raw = session.agent, let agent = SessionAgent(rawValue: raw) { AgentLogo(agent: agent, size: 16) }
+                if session.id == selected { DuduIcon(.check, size: 18).foregroundStyle(DuduStyle.ink) }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 66)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(DuduRowButtonStyle())
+        .accessibilityIdentifier("task.session.\(session.id)")
     }
 }
 
@@ -857,23 +933,23 @@ struct TaskEditorSheet: View {
         case .target:
             TaskChoicePage(
                 title: L10n.text("执行位置"),
-                choices: TaskTarget.choices(for: draft.agent).map { TaskChoice(id: $0, title: TaskTarget.name($0), glyph: .message) },
+                choices: TaskTarget.choices(for: draft.agent).map { TaskChoice(id: $0, title: TaskTarget.name($0)) },
                 selected: draft.target.mode
             ) { id in
                 if id != draft.target.mode { draft.target = TaskTarget(mode: id, sessionId: id == "existing" ? "" : nil) }
                 path.removeLast()
             }
         case .session:
-            let workspace = draft.project?.workspaceId
-            let rows = (sessions ?? []).filter { $0.workspaceId == workspace }
-            TaskChoicePage(
-                title: L10n.text("关联会话"),
-                choices: rows.map { TaskChoice(id: $0.id, title: $0.title, glyph: .queue) },
+            TaskSessionPicker(
+                sessions: sessions ?? [],
+                projects: options?.projects ?? [],
                 selected: draft.target.sessionId,
-                searchPrompt: L10n.text("关联会话"),
                 emptyText: sessions == nil ? (sessionsFailed ? L10n.text("任务没能加载") : "") : L10n.text("没有可用的会话")
-            ) { id in
-                draft.target.sessionId = id
+            ) { session in
+                draft.target.sessionId = session.id
+                if let project = options?.projects.first(where: { $0.workspaceId == session.workspaceId }) { draft.project = project }
+                if let raw = session.agent { draft.agent = raw }
+                draft.model = session.model
                 path.removeLast()
             }
         case .timezone:

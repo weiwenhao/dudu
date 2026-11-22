@@ -376,7 +376,7 @@ iOS 截图多出“文件”入口，是审阅数据为打开项目文件页提�
 
 ### Android 语言选择
 
-iOS 使用系统的 App 语言设置；Android 在 App 内提供同一语言偏好。
+iOS 使用系统的 App 语言设置；Android 自 2026-11-21 起也用系统设置（安卓 13 以上在系统里给嘟嘟单独选语言），App 内不再提供语言选择。
 
 ![Android 语言选择](../.local/qa/android/ui-parity-2026-11-17/android/07-language.png)
 

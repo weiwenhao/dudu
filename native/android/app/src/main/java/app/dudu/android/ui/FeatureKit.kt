@@ -4,6 +4,7 @@ package app.dudu.android.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -13,6 +14,8 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -21,11 +24,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
@@ -115,7 +120,11 @@ fun DuduSheet(dismiss: () -> Unit, containerColor: Color = MaterialTheme.colorSc
         }
         CompositionLocalProvider(LocalSheet provides true, LocalSheetColor provides containerColor,
             LocalSheetDismissGuard provides guard) {
-            Column(Modifier.fillMaxWidth().heightIn(max = maxHeight), content = content)
+            Box {
+                Column(Modifier.fillMaxWidth().heightIn(max = maxHeight), content = content)
+                // A sheet is a window of its own, over the page's message: it shows the message over itself, under its bar.
+                DuduToastOverlay(LocalToastHost.current, 60.dp)
+            }
         }
     }
 }
@@ -135,7 +144,7 @@ fun SheetHeader(title: String, dismiss: () -> Unit, enabled: Boolean = true,
         actions = {
             action?.invoke()
             IconButton(onClick = dismiss, enabled = enabled, modifier = Modifier.testTag("close-sheet")) {
-                Glyph(R.drawable.ic_x, stringResource(R.string.close), 20)
+                Glyph(DuduGlyphs.close, stringResource(R.string.close), 20)
             }
         },
     )
@@ -152,7 +161,8 @@ fun Page(title: String, back: () -> Unit, actions: Actions? = null,
     close: (() -> Unit)? = null,
     top: @Composable RowScope.() -> Unit = {}, content: @Composable ColumnScope.() -> Unit) {
     val sheet = LocalSheet.current
-    BackHandler { back() }
+    val home = LocalHomePage.current.takeUnless { sheet }
+    BackHandler(enabled = home?.active != false && (home == null || cancels)) { back() }
     Scaffold(containerColor = background,
         topBar = {
             if (sheet) CenterAlignedTopAppBar(
@@ -168,21 +178,25 @@ fun Page(title: String, back: () -> Unit, actions: Actions? = null,
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = background),
                 navigationIcon = { if (cancels) TextButton(onClick = back) { Text(stringResource(R.string.cancel)) }
                     else if (nested) IconButton(onClick = back) {
-                    Glyph(R.drawable.ic_arrow_left, stringResource(R.string.back), 22)
+                    Glyph(DuduGlyphs.back, stringResource(R.string.back), 22)
                 } },
                 actions = {
                     top()
                     if ((!nested && !cancels) || close != null) IconButton(onClick = close ?: back, modifier = Modifier.testTag("page-back")) {
-                        Glyph(R.drawable.ic_x, stringResource(R.string.close), 20)
+                        Glyph(DuduGlyphs.close, stringResource(R.string.close), 20)
                     }
                 },
             ) else CenterAlignedTopAppBar(
-                title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                title = { Text(if (!cancels) home?.title ?: title else title, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     fontSize = 17.sp, fontWeight = FontWeight.SemiBold) },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = background),
-                navigationIcon = { IconButton(onClick = back, modifier = Modifier.testTag("page-back")) {
-                    Glyph(R.drawable.ic_arrow_left, stringResource(R.string.back), 22)
-                } },
+                navigationIcon = {
+                    if (cancels) TextButton(onClick = back) { Text(stringResource(R.string.cancel)) }
+                    else IconButton(onClick = home?.openDrawer ?: back, modifier = Modifier.testTag(if (home == null) "page-back" else "open-drawer")) {
+                        Glyph(if (home == null) DuduGlyphs.back else DuduGlyphs.menu,
+                            stringResource(if (home == null) R.string.back else R.string.more), 22)
+                    }
+                },
                 actions = top,
             )
         },
@@ -196,7 +210,7 @@ fun Page(title: String, back: () -> Unit, actions: Actions? = null,
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(problemText(code), Modifier.weight(1f).testTag("page-error"), color = MaterialTheme.colorScheme.error, fontSize = 14.sp)
                     IconButton(onClick = { actions.error = null; actions.refresh() }, modifier = Modifier.testTag("page-retry")) {
-                        Glyph(R.drawable.ic_refresh_cw, stringResource(R.string.retry), 20)
+                        Glyph(DuduGlyphs.completeContext, stringResource(R.string.retry), 20)
                     }
                 }
             }
@@ -251,10 +265,12 @@ fun Line(title: String, detail: String? = null, icon: Int? = null, danger: Boole
     enabled: Boolean = true, tag: String = "", leading: @Composable (() -> Unit)? = null,
     trailing: @Composable (() -> Unit)? = null,
     minHeight: Int = 56,
+    onLongClick: (() -> Unit)? = null,
     action: (() -> Unit)? = null) {
     val color = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
     Row(Modifier.fillMaxWidth().testTag(tag).then(
-        if (action == null) Modifier else Modifier.clickable(enabled = enabled, onClick = action))
+        if (action == null) Modifier else if (onLongClick == null) Modifier.clickable(enabled = enabled, onClick = action)
+        else Modifier.combinedClickable(enabled = enabled, onClick = action, onLongClick = onLongClick))
         .heightIn(min = minHeight.dp).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         if (leading != null) leading() else icon?.let { Glyph(it, size = 21, tint = color) }
@@ -267,7 +283,7 @@ fun Line(title: String, detail: String? = null, icon: Int? = null, danger: Boole
             }
         }
         if (trailing != null) trailing() else if (action != null) {
-            Glyph(R.drawable.ic_chevron_right, size = 15, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Glyph(DuduGlyphs.right, size = 15, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -325,7 +341,7 @@ fun SearchField(value: String, placeholder: String, tag: String = "", autoFocus:
     Row(Modifier.fillMaxWidth().heightIn(min = if (prominent) 48.dp else 44.dp)
         .background(containerColor, RoundedCornerShape(if (capsule || prominent) 50.dp else 13.dp))
         .padding(start = if (prominent) 15.dp else 13.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Glyph(R.drawable.ic_search, size = iconSize, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Glyph(DuduGlyphs.search, size = iconSize, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.width(if (prominent) 11.dp else 9.dp))
         BasicTextField(value, changed, Modifier.weight(1f).testTag(tag).focusRequester(focus), singleLine = true,
             textStyle = words.copy(color = MaterialTheme.colorScheme.onSurface),
@@ -335,28 +351,79 @@ fun SearchField(value: String, placeholder: String, tag: String = "", autoFocus:
                 inner()
             })
         if (value.isNotEmpty()) IconButton(onClick = { changed(""); focus.requestFocus() }, modifier = Modifier.size(40.dp)) {
-            Glyph(R.drawable.ic_x, stringResource(R.string.close), 16,
+            Glyph(DuduGlyphs.close, stringResource(R.string.close), 16,
                 MaterialTheme.colorScheme.onSurfaceVariant)
         } else Spacer(Modifier.width(12.dp))
     }
 }
 
 /**
- * The tabs of the inbox and of the tasks: pill chips, 34 dp high with 8 dp between them, the chosen one filled with the ink colour (owner's drawings, 2026-11-18; they were 40 dp: the 13 sp words
- * inherited a 24 sp line, and Material made each chip a 48 dp touch box). The row starts 4 dp under the bar (the page's own 2 dp strip is the rest) and has 8 dp under it.
+ * The iPhone's glass, where the owner lets a control go without it on Android (2026-11-22, "some buttons without glass"): a nearly white fill, a hairline and a faint shadow, as the quick
+ * buttons of 嘟嘟's chat (`QuickChip`). In the dark the raised surface.
+ */
+internal fun Modifier.duduGlass(shape: Shape, glass: Glass): Modifier =
+    shadow(2.dp, shape, ambientColor = Color.Black.copy(alpha = .06f), spotColor = Color.Black.copy(alpha = .06f))
+        .background(glass.fill, shape).border(.5.dp, glass.edge, shape)
+
+/** The fill and the hairline of `duduGlass` in the theme of the moment. */
+internal class Glass(val fill: Color, val edge: Color)
+
+@Composable
+internal fun glass(): Glass = Glass(
+    if (androidx.compose.foundation.isSystemInDarkTheme()) MaterialTheme.colorScheme.surfaceContainerHigh else Color.White.copy(alpha = .94f),
+    MaterialTheme.colorScheme.onSurface.copy(alpha = .08f))
+
+/**
+ * The tabs of the inbox and of the tasks, the iPhone's `GlassTabs` (owner, 2026-11-22, in place of the chips of 2026-11-18): one capsule across the page, 16 dp from its sides, 44 dp high with 4 dp
+ * inside, the tabs sharing its width 2 dp apart, each 36 dp high with its word in 15 sp (medium and in ink when chosen, muted otherwise) and the chosen one on a light grey pill. `bottom` is what stands
+ * under it (6 dp, and 14 dp more in a quick sheet), `top` what stands over it (the home pages' 10 dp).
  */
 @Composable
-fun FilterTabs(selected: String, options: List<Pair<String, String>>, changed: (String) -> Unit) {
-    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 18.dp, end = 18.dp, top = 2.dp, bottom = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            options.forEach { (id, title) ->
-                Surface(onClick = { changed(id) }, shape = RoundedCornerShape(50),
-                    color = if (selected == id) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainer) {
-                    Text(title, Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, lineHeight = 18.sp,
-                        fontWeight = if (selected == id) FontWeight.Medium else FontWeight.Normal,
-                        color = if (selected == id) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+fun GlassTabs(selected: String, options: List<Pair<String, String>>, top: Int = 0, bottom: Int = 6, changed: (String) -> Unit) {
+    val pill = if (androidx.compose.foundation.isSystemInDarkTheme()) MaterialTheme.colorScheme.surfaceContainerHighest else DuduStyle.selected
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = top.dp, bottom = bottom.dp).height(44.dp)
+        .duduGlass(CircleShape, glass()).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        options.forEach { (id, title) ->
+            val chosen = selected == id
+            Box(Modifier.weight(1f).height(36.dp).clip(CircleShape).background(if (chosen) pill else Color.Transparent, CircleShape)
+                .selectable(chosen, interactionSource = null, indication = null, role = Role.Tab) { changed(id) }
+                .testTag("tab-$id"), contentAlignment = Alignment.Center) {
+                Text(title, fontSize = 15.sp, lineHeight = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    fontWeight = if (chosen) FontWeight.Medium else FontWeight.Normal,
+                    color = if (chosen) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+/** A list that reads again when it is pulled down (the iPhone's `refreshable`), or, not `enabled`, a plain box (a quick sheet's list). */
+@Composable
+fun PullRefresh(enabled: Boolean, refreshing: Boolean, refresh: () -> Unit, modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
+    if (enabled) androidx.compose.material3.pulltorefresh.PullToRefreshBox(isRefreshing = refreshing, onRefresh = refresh, modifier = modifier, content = content)
+    else Box(modifier, content = content)
+}
+
+/** A list that is being read the first time: the spinner in the middle, muted (the iPhone's `ProgressView` of the inbox, the tasks and the todo list). */
+@Composable
+fun ListLoading(modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/**
+ * A list that could not be read, the iPhone's: what did not load (15 sp, muted) over 重试 in a capsule (15 sp medium, 44 dp high, 20 dp at its sides), 14 dp apart, in the middle. `retry` null leaves
+ * only the words (the forward picker's).
+ */
+@Composable
+fun ListFailure(text: String, modifier: Modifier = Modifier, retry: (() -> Unit)? = null) {
+    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Text(text, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (retry != null) {
+            Spacer(Modifier.height(14.dp))
+            Box(Modifier.height(44.dp).duduGlass(CircleShape, glass()).clip(CircleShape).clickable(role = Role.Button, onClick = retry)
+                .padding(horizontal = 20.dp).testTag("list-retry"), contentAlignment = Alignment.Center) {
+                Text(w("重试"), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
             }
         }
     }
@@ -438,7 +505,7 @@ private fun BarCell(item: BarItem, modifier: Modifier) {
             .padding(top = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
                 if (item.busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 1.5.dp, color = color)
-                else Glyph(item.icon, null, 22, color)
+                else InboxGlyph(item.icon, 22, color)
             }
             Spacer(Modifier.height(4.dp))
             Text(item.title, fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.Medium, color = color,
@@ -469,7 +536,7 @@ fun FeatureScreen(route: Route, state: UiState, model: DuduViewModel, openDrawer
             "about" -> AboutScreen(model)
             "computer" -> ComputerScreen(route, state, model)
             "computers" -> ComputersScreen(state, model)
-            "pair" -> PairingScreen(state, model, adding = true)
+            "pair" -> AddComputerScreen(route, state, model)
             "web" -> EmbeddedScreen(route, state, model)
             "scan" -> PairingScanner(model)
             "issue" -> IssueScreen(route, state, model)
@@ -489,7 +556,16 @@ fun DuduViewModel.navigateItem(item: JSONObject) {
     when (open.optString("native")) {
         "assistant" -> state.value.home?.rows?.find { it.id == "assistant" }?.let(::open)
             ?: openSession(null, title, assistant = true)
-        "board" -> navigate(null)
-        else -> navigationRoute(item, state.value.session?.id)?.let(::navigate)
+        "board" -> selectHomeTab(HomeTab.Board)
+        else -> {
+            // An entry the phone has no page for, or a conversation's page with no conversation open, says so, as the iPhone's drawer does.
+            val route = navigationRoute(item, state.value.session?.id)
+                ?: return toast(word("手机端暂不支持「{0}」"), ToastKind.Information, args = listOf(title)).also { DuduLog.record("navigation.unsupported") }
+            if (route.name == "web" && embeddedPageNeedsSession(route.params.optString("page")) && state.value.session == null)
+                return toast(word("先打开一个会话"), ToastKind.Information)
+            DuduLog.record("navigation.open", state = route.name)
+            val tab = HomeTab.forRoute(route)
+            if (tab != null) selectHomeTab(tab) else navigate(route)
+        }
     }
 }

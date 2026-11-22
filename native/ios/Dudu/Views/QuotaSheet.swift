@@ -54,21 +54,32 @@ struct QuotaSheet: View {
                 .foregroundStyle(Color(white: 0.4))
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 12)
-            HStack(spacing: 4) {
-                if model.refreshing {
-                    ProgressView().controlSize(.mini).accessibilityHidden(true)
-                }
-                if let updated = QuotaText.updated(model.readAt) {
-                    Text(updated)
-                        .font(.system(size: 12))
-                        .monospacedDigit()
-                        .foregroundStyle(DuduStyle.muted)
-                }
-            }
+            updatedLine
         }
         .padding(.leading, 40.5)
         .padding(.trailing, 40.5)
         .padding(.top, 22)
+    }
+
+    /// The time of the reading is a Text of its own, so that the title's baseline is its baseline. The spinner used to share a stack with it, and that stack took its baseline from the spinner, so the line sat
+    /// about 9pt below the title (owner, 2026-11-22: "额度和更新不在一条线上，看着好别扭"). The spinner is now an overlay to the left of the text, which cannot move it; with no reading yet it stands by a blank.
+    /// The offset sits on a ZStack that is always there: put on a view inside the `if`, it is ignored and the spinner lands on the first character (found by drawing both in a scratch program).
+    private var updatedLine: some View {
+        let updated = QuotaText.updated(model.readAt)
+        return Text(updated ?? " ")
+            .font(.system(size: 12))
+            .monospacedDigit()
+            .foregroundStyle(DuduStyle.muted)
+            .accessibilityHidden(updated == nil)
+            .overlay(alignment: .leading) {
+                ZStack {
+                    if model.refreshing {
+                        ProgressView().controlSize(.mini).accessibilityHidden(true)
+                    }
+                }
+                .fixedSize()
+                .alignmentGuide(.leading) { $0[.trailing] + 4 }
+            }
     }
 
     @ViewBuilder

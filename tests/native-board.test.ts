@@ -36,7 +36,7 @@ test('the phone can ask for every one of these methods, and the bridge knows the
   for (const method of NATIVE_BOARD_METHODS) assert.ok(NATIVE_METHODS.includes(method), method);
   assert.deepEqual([...NATIVE_BOARD_METHODS], [
     'board.list', 'board.pin', 'board.read', 'issue.get', 'issue.delete', 'issue.update', 'issue.assign', 'issue.open', 'issue.pick', 'issue.options', 'issue.parents', 'issue.project.create', 'issue.label.create', 'issue.create',
-    'inbox.list', 'inbox.get', 'inbox.mark', 'inbox.share', 'inbox.complete',
+    'inbox.list', 'inbox.get', 'inbox.read', 'inbox.mark', 'inbox.share', 'inbox.complete',
   ]);
 });
 
@@ -446,6 +446,68 @@ test('a conversation record in full also says its messages one by one (for the p
   assert.equal('messages' in (await call('inbox.get', { id: mail.id }) as any).record, false);
 });
 
+test('inbox unread receipts name the displayed revision; fetching never acknowledges it, and handling clears it', async (t) => {
+  const { call, inbox, ingest } = world(t);
+  const [record] = ingest('lark', [{
+    id: 'm1', kind: 'message', thread: 'read-thread', title: 'First',
+    from: 'Alice', at: '2026-11-17T19:15:00', text: 'First message',
+  }]);
+  const list = async (tab = 'todo') => await call('inbox.list', { tab }) as any;
+  const detail = async () => (await call('inbox.get', { id: record.id }) as any).record;
+  const first = await detail();
+  assert.equal(first.unread, true);
+  assert.equal((await list()).unreadCount, 1, 'getting text for an agent or an action does not mark it read');
+
+  ingest('lark', [{
+    id: 'm2', kind: 'message', thread: 'read-thread', title: 'Second',
+    from: 'Alice', at: '2026-11-17T19:16:00', text: 'Second message',
+  }]);
+  const newer = await detail();
+  assert.ok(newer.revision > first.revision);
+  const stale: any = await call('inbox.read', { id: record.id, revision: first.revision });
+  assert.equal(stale.record.unread, true, 'an old screen cannot read a message that arrived later');
+  assert.equal(stale.unreadCount, 1);
+
+  await call('inbox.mark', { action: 'done', ids: [record.id] });
+  assert.equal((await list()).items.length, 0);
+  assert.equal((await list('done')).unreadCount, 0, 'a handled message carries no unread state (owner, 2026-11-21)');
+  const read: any = await call('inbox.read', { id: record.id, revision: newer.revision });
+  assert.equal(read.unreadCount, 0);
+  assert.equal(read.record.unread, false);
+  assert.equal(read.record.done, true);
+  assert.equal(read.outcome, 'no_op', 'handling had already brought the receipt up to date');
+  assert.equal((await call('inbox.read', { id: record.id, revision: newer.revision }) as any).outcome, 'no_op');
+  await call('inbox.mark', { action: 'restore', ids: [record.id] });
+  assert.equal((await list()).items[0].unread, false, 'restoring a handled row does not make its old content unread');
+  await assert.rejects(call('inbox.read', { id: record.id, revision: 0 }), { code: 'BAD_REQUEST' });
+  assert.equal((await call('inbox.read', { id: record.id, revision: newer.revision + 1 }) as any).code, 'invalid_request');
+  await call('inbox.mark', { action: 'delete', ids: [record.id] });
+  assert.equal((await call('inbox.read', { id: record.id, revision: newer.revision }) as any).code, 'unknown_record');
+  assert.equal(inbox.execute('list').unreadCount, 0);
+});
+
+test('a handled message carries no unread state: handling clears it, a later change to its text does not bring it back, an issue made of it is handled too', async (t) => {
+  const { call, issues, ingest } = world(t);
+  const [marked, linked] = ingest('lark', [raw('h1'), raw('h2')]);
+  const count = async (tab: string) => (await call('inbox.list', { tab }) as any).unreadCount;
+  const card = async (id: number) => (await call('inbox.get', { id }) as any).record;
+  assert.equal(await count('todo'), 2);
+
+  await call('inbox.mark', { action: 'done', ids: [marked.id] });
+  assert.equal((await card(marked.id)).unread, false);
+  assert.equal(await count('done'), 1, 'the other message is still unread');
+
+  const before = (await card(marked.id)).revision;
+  ingest('lark', [{ id: 'h1', update: true, title: '改了标题' }]);
+  assert.ok((await card(marked.id)).revision > before, 'its content did change');
+  assert.equal((await card(marked.id)).unread, false);
+  assert.equal(await count('done'), 1);
+
+  issues.inbox.link(linked.id, { issueId: issues.add({ title: '跟进' }).issue.id, verdict: 'note' });
+  assert.equal((await card(linked.id)).unread, false);
+  assert.equal(await count('todo'), 0);
+});
+
 test('the owner\'s marks work on several records at once, and Restore takes them off', async (t) => {
   const { call, ingest } = world(t);
   const [a, b, c] = ingest('mail', [raw('a'), raw('b'), raw('c')]);
@@ -498,8 +560,8 @@ test('a plugin whose issues are not open yet, and a request that is not an objec
   await assert.rejects(idle.dispatch('board.list', {}), { code: 'UPSTREAM_UNAVAILABLE' });
   await assert.rejects(idle.dispatch('board.list', null as any), { code: 'BAD_REQUEST' });
   await assert.rejects(idle.dispatch('board.nope', {}), { code: 'UNSUPPORTED' });
-  const bridge = createNativeBridge({ rpc: { async call() { return {}; }, async open() { throw new Error('no streams'); } } as any, board: { issues: () => ({ outcome: 'success', items: [], groups: [], total: 0 }), inbox: () => ({ outcome: 'success', items: [], facets: { connector: [] } }) } });
+  const bridge = createNativeBridge({ rpc: { async call() { return {}; }, async open() { throw new Error('no streams'); } } as any, board: { issues: () => ({ outcome: 'success', items: [], groups: [], total: 0 }), inbox: () => ({ outcome: 'success', items: [], unreadCount: 0, facets: { connector: [] } }) } });
   const connection = { authenticated: true, deviceId: 'd', closed: false } as any;
   assert.deepEqual(await bridge.dispatch('board.list', { tab: 'active' }, connection), { outcome: 'success', tab: 'active', total: 0, groups: [] });
-  assert.deepEqual(await bridge.dispatch('inbox.list', { tab: 'todo' }, connection), { outcome: 'success', tab: 'todo', items: [], nextCursor: null, names: {}, total: 0 });
+  assert.deepEqual(await bridge.dispatch('inbox.list', { tab: 'todo' }, connection), { outcome: 'success', tab: 'todo', items: [], nextCursor: null, names: {}, total: 0, unreadCount: 0 });
 });

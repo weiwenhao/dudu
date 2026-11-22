@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bot, CircleDot, Rss, X } from 'lucide-react';
+import { Bot, Brain, CircleDashed, Cog, Rss, Split, X } from 'lucide-react';
 import { Button } from '../components/button.jsx';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '../components/dialog.jsx';
 import { ConnectorsPage } from '../connectors/ConnectorsPage.jsx';
@@ -7,7 +7,7 @@ import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
 import { CollectorsSection } from './CollectorsSection.jsx';
 import { GeneralSection } from './GeneralSection.jsx';
-import { FileText, ListChecks, Plug, SlidersHorizontal, Smartphone, Sparkles } from './icons.jsx';
+import { Plug, Smartphone, Sparkles } from './icons.jsx';
 import { MemorySection } from './MemorySection.jsx';
 import { PhoneSection } from './PhoneSection.jsx';
 import { ProvidersSection } from './ProvidersSection.jsx';
@@ -17,12 +17,12 @@ import { StatusesSection } from './StatusesSection.jsx';
 
 // Two groups of pages, with a line between them: what 嘟嘟 does with the work (and keeps), then how it reaches this computer's phone and agents.
 const PAGES = {
-  general: { Icon: SlidersHorizontal, Page: GeneralSection },
-  statuses: { Icon: CircleDot, Page: StatusesSection },
+  general: { Icon: Cog, Page: GeneralSection },
+  statuses: { Icon: CircleDashed, Page: StatusesSection },
   connectors: { Icon: Plug, Page: ConnectorsPage },
   collectors: { Icon: Rss, Page: CollectorsSection },
-  rules: { Icon: ListChecks, Page: RulesSection },
-  memory: { Icon: FileText, Page: MemorySection },
+  rules: { Icon: Split, Page: RulesSection },
+  memory: { Icon: Brain, Page: MemorySection },
   skills: { Icon: Sparkles, Page: SkillsSection },
   phone: { Icon: Smartphone, Page: PhoneSection },
   providers: { Icon: Bot, Page: ProvidersSection },

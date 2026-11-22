@@ -83,4 +83,30 @@ class TranscriptTest {
         assertTrue(row.staysOpen)
         assertTrue(row.segments.isNotEmpty())
     }
+
+    /** The iPhone's `TranscriptTimeGrouping`: a time over a prompt after five quiet minutes or on another day, none over the turn that answers it, none when time runs backwards. */
+    @Test fun timeSeparatorsFollowTheIPhonesGrouping() {
+        val utc = java.util.TimeZone.getTimeZone("UTC")
+        val minute = 60_000L
+        val day = 24 * 60 * minute
+        fun user(id: String, time: Long) = Message(id, "user", "hi", false, raw = json("time" to time))
+        fun turn(id: Int, start: Long, end: Long) = json("turn" to id, "start" to start, "end" to end)
+        val base = 10 * day + 8 * 60 * minute
+        val messages = listOf(
+            user("u1", base), step("a1", 1, "One"),
+            user("u2", base + 3 * minute), step("a2", 2, "Two"),
+            user("u3", base + 9 * minute), step("a3", 3, "Three"),
+            user("u4", base + 8 * minute),
+            user("u5", base + day + 9 * minute),
+        )
+        val transcript = json("turns" to JSONArray(listOf(turn(1, base, base + minute), turn(2, base + 3 * minute, base + 4 * minute),
+            turn(3, base + 9 * minute, base + 10 * minute))))
+        val separators = timeSeparators(transcriptRows(messages, transcript, false), utc)
+        // u2 is 2 minutes after turn 1 ended, u4 is earlier than what came before, the turns answer their prompts.
+        assertEquals(mapOf("u1" to base, "u3" to base + 9 * minute, "u5" to base + day + 9 * minute), separators)
+        // A chain of retries shows its latest notice only.
+        val notices = turnNotices(json("notices" to JSONArray(listOf(json("id" to "r1", "kind" to "retry", "retryId" to "x"),
+            json("id" to "e", "kind" to "error"), json("id" to "r2", "kind" to "retry", "retryId" to "x")))))
+        assertEquals(listOf("e", "r2"), notices.map { it.getString("id") })
+    }
 }

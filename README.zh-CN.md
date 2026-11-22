@@ -4,7 +4,7 @@
 
 ### 基于 DSH 的多智能体高效协作助手
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) ![version](https://img.shields.io/badge/version-0.1.0-orange?style=flat-square) ![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2024-339933?style=flat-square&logo=node.js&logoColor=white) ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-0.2.2--rc.1-4D6BFE?style=flat-square)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) ![version](https://img.shields.io/badge/version-0.1.1-orange?style=flat-square) ![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2024-339933?style=flat-square&logo=node.js&logoColor=white) ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-0.2.2--rc.1-4D6BFE?style=flat-square)
 
 [设计理念](#设计理念) • [功能](#功能) • [开发指南](#开发指南) • [English](README.md) · **简体中文**
 
@@ -16,10 +16,10 @@ Dudu 是基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harnes
     <img src="docs/images/hero.zh-CN.png" width="900" alt="Dudu 在 DSH Desktop 里：左边是各个事项的对话和打开的一段对话，右上是收件箱，右下是办公室">
 </div>
 
-Dudu 支持手机端管理，iOS 在 App Store 搜索 dudu，安卓通过 [GitHub Release](https://github.com/weiwenhao/dudu/releases) 中的 apk 进行安装。
+Dudu 支持手机端管理，iOS 通过 [TestFlight](https://testflight.apple.com/join/TNUPd6n7) 安装，安卓通过 [GitHub Release](https://github.com/weiwenhao/dudu/releases) 中的 apk 进行安装。
 
 <div align="center">
-  <img src="docs/images/phone.zh-CN.png" alt="手机 App，从左到右：会话列表；对话；对话里点「+」弹出的菜单；任务" width="900">
+  <img src="docs/images/phone.zh-CN.png" alt="手机 App，从左到右：会话列表；对话；收件箱；任务" width="900">
 </div>
 
 工作台主页面采用了仪表盘的形式，可以自由组合布局，并且可以开发自己的小组件。

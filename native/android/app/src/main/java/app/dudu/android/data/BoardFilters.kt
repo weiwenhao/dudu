@@ -2,6 +2,8 @@ package app.dudu.android.data
 
 import java.time.Instant
 import java.time.ZoneId
+import org.json.JSONArray
+import org.json.JSONObject
 
 enum class BoardFilterField(val choices: List<String>? = null, val isDate: Boolean = false) {
     Status,
@@ -14,6 +16,9 @@ enum class BoardFilterField(val choices: List<String>? = null, val isDate: Boole
     Project,
     Label,
     Source(listOf("owner", "dudu", "connector", "session"));
+
+    /** Its name where the choices are kept, the iPhone's raw value (`status`, `sessionState`, …). */
+    val wire: String get() = name.replaceFirstChar(Char::lowercaseChar)
 
     fun keys(row: Conversation): List<String?> {
         val issue = row.issue ?: return emptyList()
@@ -67,6 +72,24 @@ data class BoardFilters(private val values: Map<BoardFilterField, Set<String?>> 
     val isEmpty: Boolean get() = values.isEmpty()
 
     fun selected(field: BoardFilterField): Set<String?> = values[field].orEmpty()
+
+    /** The choices as the phone keeps them, per computer (`DuduViewModel.keepBoardFilters`): field → keys, null being the 无 choice; the iPhone's `BoardFilterStore` keeps the same. */
+    fun saved(): String = JSONObject().apply {
+        values.forEach { (field, keys) -> put(field.wire, JSONArray(keys.map { it ?: JSONObject.NULL })) }
+    }.toString()
+
+    companion object {
+        /** What was kept, read back: a field this build does not know is dropped, a date field keeps only one of its own choices. */
+        fun parse(text: String): BoardFilters = runCatching {
+            val saved = JSONObject(text)
+            BoardFilters(BoardFilterField.entries.mapNotNull { field ->
+                val keys = saved.optJSONArray(field.wire) ?: return@mapNotNull null
+                var selected = (0 until minOf(keys.length(), 256)).map { if (keys.isNull(it)) null else keys.optString(it) }.toSet()
+                if (field.isDate) selected = selected.filterNotNull().filter { it in field.choices.orEmpty() }.take(1).toSet()
+                if (selected.isEmpty()) null else field to selected
+            }.toMap())
+        }.getOrDefault(BoardFilters())
+    }
 
     fun toggle(field: BoardFilterField, key: String?): BoardFilters {
         val current = selected(field)

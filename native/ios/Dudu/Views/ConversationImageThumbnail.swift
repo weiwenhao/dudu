@@ -8,6 +8,8 @@ struct ConversationImageThumbnail: View {
     let loadImage: (TranscriptAttachment, DraftTarget, Bool) async -> PreparedPhotoImage?
     var alignment: Alignment = .trailing
     var isPending = false
+    /// A tile inside a bubble (the pictures of an @ line): it fills the bubble's width, with this shape, instead of standing alone at 56% of the column with 18pt corners.
+    var tileShape: UnevenRoundedRectangle? = nil
 
     @State private var image: PreparedPhotoImage?
     @State private var isPreviewPresented = false
@@ -43,9 +45,7 @@ struct ConversationImageThumbnail: View {
                     DuduIcon(.image, size: 28).foregroundStyle(DuduStyle.chatTertiary)
                 }
             }
-            .containerRelativeFrame(.horizontal, alignment: alignment) { width, _ in min(width * 0.56, 260) }
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .modifier(ThumbnailFrame(tileShape: tileShape, alignment: alignment))
         }
         .buttonStyle(.plain)
         .disabled(isLoading || (image == nil && !canLoadAttachment))
@@ -87,5 +87,25 @@ struct ConversationImageThumbnail: View {
         let prepared = await loadImage(attachment, target, false)
         guard !Task.isCancelled, loadingID == identifier, key == imageKey else { return }
         image = prepared
+    }
+}
+
+/// A picture alone in the column: 56% of it (at most 260pt) with 18pt corners. A picture in a bubble: the bubble's width (the bubble sets it), in the bubble's shape.
+private struct ThumbnailFrame: ViewModifier {
+    let tileShape: UnevenRoundedRectangle?
+    let alignment: Alignment
+
+    func body(content: Content) -> some View {
+        if let tileShape {
+            content
+                .frame(maxWidth: .infinity)
+                .clipShape(tileShape)
+                .contentShape(tileShape)
+        } else {
+            content
+                .containerRelativeFrame(.horizontal, alignment: alignment) { width, _ in min(width * 0.56, 260) }
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
     }
 }

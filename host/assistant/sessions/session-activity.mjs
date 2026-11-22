@@ -6,8 +6,9 @@ const LIST_WAIT_MS = 1_500; // how long a request waits for DSH's list of all se
 const LIST_RETRY_MS = 30_000; // after a list failed, none is started for this long
 
 /** Shared session status and exact read boundaries. Lifecycle and workflow remain their own facts. */
-export function createSessionActivity({ receipts, projected, readProjection, listProjections, snapshotOf, nativeSnapshotOf, liveOf, diagnostics }) {
+export function createSessionActivity({ receipts, projected, readProjection, listProjections, snapshotOf, nativeSnapshotOf, liveOf, diagnostics, changed, readLog, onContent, now = Date.now }) {
   const cache = new Map();
+  const published = new Map(); // session -> the last published answer's position, for the read log
   const flights = new Map();
   const stop = new AbortController();
   let listing;
@@ -123,21 +124,52 @@ export function createSessionActivity({ receipts, projected, readProjection, lis
   };
   return {
     observe, attentionOf, warm, refresh, statusOf,
-    async markUnread(id) {
+    /**
+     * An answer, a question or an error was published for the session: the read log says whether it is unread now or was already read as it streamed (the first one seen is the baseline),
+     * and `onContent` is told, which is what a phone that is away is notified of (native-board-announce.mjs).
+     */
+    noteContent(id, attention) {
+      if (!attention || !Number.isSafeInteger(attention.seq)) return;
+      const before = published.get(id);
+      published.set(id, attention.seq);
+      if (before !== undefined && attention.seq <= before) return;
+      const unread = statusOf(`dsh:${id}`).unread === true;
+      // The first thing seen of a session is the baseline of the log; `onContent` decides for itself whether it was news.
+      if (before !== undefined) readLog?.record({ event: 'content', session: id, source: { screen: 'plugin', how: 'unknown' }, seq: attention.seq, kind: attention.kind, nowUnread: unread });
+      try { void Promise.resolve(onContent?.({ id, attention, unread, baseline: before === undefined })).catch(() => {}); } catch { /* A notice that cannot be made changes nothing here. */ }
+    },
+    /** `source` says which screen asked and how (read-log.mjs `cleanReadSource`); it only goes to the log. */
+    async markUnread(id, source) {
       if (typeof id !== 'string' || !id || id.length > 512) throw new TypeError('Invalid session');
       await warm([id]);
       if (stop.signal.aborted) throw new Error('Session activity is closed');
-      receipts.markUnread(`dsh:${id}`, { seq: exactAttentionOf(id).seq });
+      const key = `dsh:${id}`;
+      const wasUnread = statusOf(key).unread === true;
+      const seq = exactAttentionOf(id).seq;
+      receipts.markUnread(key, { seq });
+      readLog?.record({ event: 'unread-mark', session: id, source, seq, wasUnread, nowUnread: statusOf(key).unread === true, changed: true });
+      changed?.(id);
     },
-    async acknowledge(id, position) {
+    async acknowledge(id, position, source) {
       if (typeof id !== 'string' || !id || id.length > 512 || !validReadPosition(position)) throw new TypeError('Invalid read position');
       await warm([id]);
       if (stop.signal.aborted) throw new Error('Session activity is closed');
       const latest = exactAttentionOf(id);
       // Visible partial content remains readable after a stop, without treating control events as content.
       if (position.seq > Math.max(latest.seq, latest.readableSeq ?? -1)) throw new TypeError('Read position is ahead of the conversation');
-      receipts.acknowledge(`dsh:${id}`, position);
-      return { sessionState: statusOf(`dsh:${id}`).sessionState };
+      const key = `dsh:${id}`;
+      const before = statusOf(key);
+      const previous = receipts.get(key);
+      // A read that moves nothing (the same position again) changes nothing a phone shows and is not logged; one that does is told to the phones at once.
+      if (receipts.acknowledge(key, position).changed) {
+        const after = statusOf(key);
+        readLog?.record({ event: 'read', session: id, source, seq: position.seq, previousSeq: previous?.seq ?? -1, stream: Boolean(position.stream),
+          wasUnread: before.unread === true, nowUnread: after.unread === true, changed: true,
+          ageMs: before.unread && before.attention?.at > 0 ? now() - before.attention.at : undefined, kind: before.attention?.kind });
+        changed?.(id);
+        return { sessionState: after.sessionState };
+      }
+      return { sessionState: statusOf(key).sessionState };
     },
     async rebind(previousId, nextId) {
       await warm([previousId, nextId]);
@@ -146,7 +178,9 @@ export function createSessionActivity({ receipts, projected, readProjection, lis
       // A replacement has different journal coordinates. Transfer only an already-read identical last answer.
       if (previous?.kind === 'message' && next?.kind === 'message' && previous.digest === next.digest
         && next.at <= previous.at && !receipts.unread(`dsh:${previousId}`, previous)) {
+        const wasUnread = statusOf(`dsh:${nextId}`).unread === true;
         receipts.acknowledge(`dsh:${nextId}`, { seq: next.seq });
+        readLog?.record({ event: 'read', session: nextId, source: { screen: 'plugin', how: 'rebind' }, seq: next.seq, wasUnread, nowUnread: statusOf(`dsh:${nextId}`).unread === true, changed: true });
       }
     },
     async close() {

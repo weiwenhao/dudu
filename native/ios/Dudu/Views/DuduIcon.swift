@@ -16,6 +16,7 @@ enum DuduGlyph: CaseIterable {
     case privacy, version
     case inbox, selectRows, forward, restore, openLink, selectAll, listTodo, zap, reply
     case issueProject, issueLabel, dueDate, issueStatus, issuePriority
+    case pin, unpin, rename, issueDetails
     case listFilter, issueSource, filterStatus, filterDates
     /// Fill in the context of a collected record (the desktop's `RefreshCw`, in its record menu and the row's buttons; the owner, 2026-11-11: "刷新图标吧").
     case completeContext
@@ -27,6 +28,10 @@ enum DuduGlyph: CaseIterable {
     case stateFailed
     /// The square Stop in the approved background-job detail.
     case jobStop
+    /// The long-press menus of the settings pages (the desktop's menus: ArrowUp / ArrowDown to move a status, Unplug for a connector, KeyRound to authorize one).
+    case moveUp, moveDown, unplug, keyRound
+    /// The seven pages of 嘟嘟's settings (the desktop settings window's own icons: Cog, CircleDashed, Plug, Rss, Split, Brain, Sparkles), fixed in the app (owner, 2026-11-21).
+    case settingsGeneral, settingsStatuses, settingsConnectors, settingsCollectors, settingsRules, settingsMemory, settingsSkills
 
     var lucide: LucideIconName {
         switch self {
@@ -100,7 +105,7 @@ enum DuduGlyph: CaseIterable {
         case .inbox: return .inbox
         case .listTodo: return .listTodo
         case .zap: return .zap
-        case .selectRows: return .listChecks
+        case .selectRows: return .squareCheckBig
         case .forward: return .forward
         case .restore: return .rotateCcw
         case .openLink: return .externalLink
@@ -110,6 +115,10 @@ enum DuduGlyph: CaseIterable {
         case .dueDate: return .calendar
         case .issueStatus: return .circleDot
         case .issuePriority: return .signal
+        case .pin: return .arrowUpToLine
+        case .unpin: return .arrowDownFromLine
+        case .rename: return .pencil
+        case .issueDetails: return .squareArrowOutUpRight
         case .listFilter: return .listFilter
         case .issueSource: return .plug
         case .filterStatus: return .circleDashed
@@ -122,11 +131,24 @@ enum DuduGlyph: CaseIterable {
         case .stateUnassigned: return .user
         case .stateFailed: return .circleAlert
         case .jobStop: return .square
+        case .moveUp: return .arrowUp
+        case .moveDown: return .arrowDown
+        case .unplug: return .unplug
+        case .keyRound: return .keyRound
+        case .settingsGeneral: return .cog
+        case .settingsStatuses: return .circleDashed
+        case .settingsConnectors: return .plug
+        case .settingsCollectors: return .rss
+        case .settingsRules: return .split
+        case .settingsMemory: return .brain
+        case .settingsSkills: return .sparkles
         }
     }
 
     var assetName: String? {
         switch self {
+        // The sidebar button: DeepSeek's two lines, the lower one half as long (owner, 2026-11-23: 「我们的太复杂了，DeepSeek 这个比较简洁」), drawn from their screenshot in Lucide's 24 box and line.
+        case .menu: return "Menu"
         case .goal: return "Goal"
         case .queue: return "Queue"
         case .mode: return "AgentPreset"
@@ -143,21 +165,67 @@ enum DuduGlyph: CaseIterable {
     fileprivate var menuImage: Image {
         if let assetName { return Image(assetName).renderingMode(.template) }
         if let image = Self.menuImages[self] { return image }
-        let image = Image(lucide: lucide, strokeWidth: 2).renderingMode(.template)
+        let image = Image(lucide: lucide, strokeWidth: self == .pin || self == .unpin ? 1.8 : 2).renderingMode(.template)
         Self.menuImages[self] = image
         return image
     }
 
     @MainActor private static var menuImages: [DuduGlyph: Image] = [:]
 
-    /// How far the glyph's ink reaches in a 24pt box, line included: Lucide's corner arrow 18pt (16 of path and the 2pt line), its plus 16pt, the due date's asset 21pt (a 14pt ink in its 16pt box).
+    /// The trash can of a menu, drawn red: a native menu draws a template icon in the plain ink whatever its button's role, and the owner wants every delete icon red, the red
+    /// a destructive title has (2026-11-21: "删除图标应该要有红色，和删除任务的红色保持颜色一致").
+    @MainActor
+    fileprivate var destructiveMenuImage: Image {
+        let key = MenuInkKey(glyph: self, ink: -1)
+        if let image = Self.inkMenuImages[key] { return image }
+        let renderer = ImageRenderer(content: DuduIcon(self, size: 24, strokeWidth: 2, scalesStroke: false).foregroundStyle(Color(uiColor: .systemRed)))
+        renderer.scale = max(UITraitCollection.current.displayScale, 2)
+        guard let drawn = renderer.uiImage else { return menuImage }
+        let image = Image(uiImage: drawn).renderingMode(.original)
+        Self.inkMenuImages[key] = image
+        return image
+    }
+
+    /// The same red menu icon at the box that gives it this ink (the inbox's set: the trash can at the visual size of the others).
+    @MainActor
+    fileprivate func destructiveMenuImage(ink: CGFloat) -> Image {
+        let key = MenuInkKey(glyph: self, ink: -ink)
+        if let image = Self.inkMenuImages[key] { return image }
+        let box = 24 * ink / inkIn24
+        let renderer = ImageRenderer(content: DuduIcon(self, size: box, strokeWidth: 2, scalesStroke: false).foregroundStyle(Color(uiColor: .systemRed)))
+        renderer.scale = max(UITraitCollection.current.displayScale, 2)
+        guard let drawn = renderer.uiImage else { return menuImage }
+        let image = Image(uiImage: drawn).renderingMode(.original)
+        Self.inkMenuImages[key] = image
+        return image
+    }
+
+    /// How far the glyph's ink reaches in a 24pt box, line included (visual size for the inbox's actions, below): Lucide's corner arrow 18pt (16 of path and the 2pt line), its plus 16pt, the due date's asset 21pt (a 14pt ink in its 16pt box).
     fileprivate var inkIn24: CGFloat {
         switch self {
         case .dueDate: return 21
         case .plus: return 16
+        // The inbox's actions, drawn as one set (owner, 2026-11-21: "一堆图标感觉大小不一，尤其是补全上下文"): here the side of the square that has the area of the glyph's ink box, measured from Lucide's
+        // drawing (`.local/designs/inbox-menu-icons-2026-11-21/measure.mjs`): the checkbox 21 x 20, the arrow and the check 18 x 13, the refresh and the rotate and the external link 20 x 20, the trash can 20 x 22.
+        case .selectRows: return 20.5
+        case .forward, .check, .reply: return 15.3
+        case .copy: return 22
+        case .completeContext, .restore, .openLink: return 20
+        case .trash: return 21
         default: return 18
         }
     }
+
+    /// The glyphs of the inbox's actions: each is drawn at the box that gives it the same visual size as the others (17pt in a 24pt place), wherever the inbox shows them.
+    fileprivate var isInboxAction: Bool {
+        switch self {
+        case .selectRows, .forward, .plus, .completeContext, .check, .restore, .trash, .openLink: return true
+        default: return false
+        }
+    }
+
+    /// The box that draws this glyph in a `slot`-pt icon place (a bar's 22, a swipe block's 22): the slot for any glyph that is not one of the inbox's actions.
+    func inboxBox(slot: CGFloat) -> CGFloat { isInboxAction ? slot * 17 / inkIn24 : slot }
 
     private struct MenuInkKey: Hashable {
         let glyph: DuduGlyph
@@ -215,13 +283,47 @@ struct DuduIcon: View {
     }
 }
 
+/// A glyph of the inbox's set in a `slot`-pt icon place (the bars' and the swipe blocks' 22): at the box that gives the set one visual size, with the line of an icon of that slot for all of them.
+struct DuduInboxIcon: View {
+    let glyph: DuduGlyph
+    var slot: CGFloat = 22
+
+    var body: some View {
+        DuduIcon(glyph, size: glyph.inboxBox(slot: slot), strokeWidth: slot / 12, scalesStroke: false)
+            .frame(width: slot, height: slot)
+    }
+}
+
 struct DuduLabel: View {
     let title: String
     let image: Image
 
     init(_ title: String, icon: DuduGlyph) {
         self.title = title
-        image = icon.menuImage
+        image = icon == .dueDate ? icon.menuImage(ink: 21) : icon == .trash ? icon.destructiveMenuImage : icon.menuImage
+    }
+
+    /// A menu item of the inbox's set: the icon of every action at the same visual size (17pt), the delete red; a glyph that is not one of them is drawn as in any other menu.
+    init(inbox title: String, icon: DuduGlyph, destructive: Bool = false) {
+        self.title = title
+        if icon.isInboxAction {
+            image = destructive || icon == .trash ? icon.destructiveMenuImage(ink: 17) : icon.menuImage(ink: 17)
+        } else {
+            image = destructive || icon == .trash ? icon.destructiveMenuImage : icon.menuImage
+        }
+    }
+
+    /// A menu item of a message's long-press menu (复制, 选择, 回复, 删除): the icons at one visual size (17pt, the inbox's set) and one line, the delete red. They were a Lucide icon drawn full size and an SF Symbol,
+    /// 21.8pt with a 2.2pt line next to 13.8pt with a 1.3pt one (owner, 2026-11-21: "这个按钮有大有小，有粗有细，你发现了吗？").
+    init(message title: String, icon: DuduGlyph) {
+        self.title = title
+        image = icon == .trash ? icon.destructiveMenuImage(ink: 17) : icon.menuImage(ink: 17)
+    }
+
+    /// A menu item that deletes or ends something: its icon is red as its title is, for any glyph (the trash can is always red; the unplug of a connector is too).
+    init(_ title: String, icon: DuduGlyph, destructive: Bool) {
+        self.title = title
+        image = destructive ? icon.destructiveMenuImage : icon.menuImage
     }
 
     /// A menu item whose icon has the same ink as the others of its menu (`DuduGlyph.menuImage(ink:)`).
@@ -230,10 +332,9 @@ struct DuduLabel: View {
         image = icon.menuImage(ink: ink)
     }
 
-    /// A menu item whose icon is not one of the app's glyphs (the pin, which is drawn by hand).
-    init(_ title: String, image: Image) {
+    init(_ title: String, image: Image, renderingMode: Image.TemplateRenderingMode = .template) {
         self.title = title
-        self.image = image.renderingMode(.template)
+        self.image = image.renderingMode(renderingMode)
     }
 
     var body: some View {

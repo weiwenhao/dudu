@@ -409,6 +409,24 @@ test('update edits any field, says no_op when nothing changed, and refuses what 
   assert.equal(s.issues.update(404, { kind: 'x' }).outcome, 'error');
 });
 
+test('sub-issues do not nest: a sub-issue cannot be a parent, and a parent cannot become a sub-issue', (t) => {
+  const s = store();
+  t.after(s.cleanup);
+  const top = s.add({ title: 'top' });
+  const child = s.add({ title: 'child', parent: top.id });
+  const other = s.add({ title: 'other' });
+  const refused = (result: any, mentions: RegExp) => { assert.equal(result.outcome, 'needs_clarification', JSON.stringify(result)); assert.match(result.message, mentions); };
+
+  refused(s.issues.add({ title: 'grandchild', parent: child.id }), /sub-issue/);
+  refused(s.issues.update(other.id, { parent: child.id }), /sub-issue/);
+  refused(s.issues.update(top.id, { parent: other.id }), /has sub-issues/); // top has a child, so it cannot go under another issue
+  refused(s.issues.update(other.id, { parent: other.id }), /itself/);
+  assert.equal(s.issues.list({ tab: 'all' }).items.length, 3, 'nothing was created by the refused add');
+
+  assert.equal(s.ok(s.issues.update(other.id, { parent: top.id })).issue.parent.id, top.id, 'an issue without sub-issues can go under a top-level issue');
+  assert.equal(s.ok(s.issues.update(child.id, { parent: null })).issue.parent, null, 'a sub-issue can leave its parent');
+  assert.equal(s.add({ title: 'new sub-issue', parent: child.id }).parent.id, child.id, 'and once it is top-level again it can have sub-issues of its own');
+});
 test('assign links an agent and a session, remembers every session, and closes the one it replaces', (t) => {
   const s = store();
   t.after(s.cleanup);

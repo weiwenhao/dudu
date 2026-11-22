@@ -62,7 +62,8 @@ internal fun BoardFilterBar(scope: Scope, active: Boolean, open: () -> Unit, sel
             Box(Modifier.size(32.dp).background(
                 if (active) colors.secondaryContainer else if (dark) colors.surfaceContainerHigh else track, CircleShape),
                 contentAlignment = Alignment.Center) {
-                Glyph(R.drawable.ic_list_filter, w("筛选"), 18, tint = if (active) colors.onSecondaryContainer else colors.onSurface)
+                Glyph(DuduGlyphs.listFilter, w("筛选"), 18, tint = if (active) colors.onSecondaryContainer
+                    else if (dark) colors.onSurfaceVariant else DuduStyle.scopeInk)
             }
         }
         // The tabs use the owner's approved #EFF0F2 track and softly shadowed white pill (2026-11-20), its words the grey of the others ("就用灰色吧"), that slides to the tab that is chosen, as Lark's message filter row does (owner, 2026-11-18:
@@ -90,16 +91,17 @@ internal fun BoardFilterBar(scope: Scope, active: Boolean, open: () -> Unit, sel
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         for (option in Scope.entries) {
                             val selected = option == scope
-                            Box(Modifier.widthIn(min = if (option == Scope.All) 84.dp else 68.dp).heightIn(min = 48.dp)
+                            Box(Modifier.widthIn(min = if (option == Scope.All) 78.dp else 65.dp).heightIn(min = 48.dp)
                                 .testTag("scope-${option.wire}")
                                 .onGloballyPositioned { places[option] = it.positionInParent().x.roundToInt() to it.size.width }
                                 .clip(CircleShape)
                                 .selectable(selected, interactionSource = remember(option) { MutableInteractionSource() },
                                     indication = null, role = Role.Tab, onClick = { select(option) }),
                                 contentAlignment = Alignment.Center) {
-                                Text(scopeTitle(option), Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                    fontSize = 14.sp, maxLines = 1, color = filterSecondary(),
-                                    fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal)
+                                Text(scopeTitle(option), Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
+                                    fontSize = 13.sp, maxLines = 1,
+                                    color = if (dark) colors.onSurfaceVariant else DuduStyle.scopeInk,
+                                    fontWeight = FontWeight.Normal)
                             }
                         }
                     }
@@ -110,14 +112,14 @@ internal fun BoardFilterBar(scope: Scope, active: Boolean, open: () -> Unit, sel
 }
 
 private enum class FilterCategory(val fields: List<BoardFilterField>, @param:DrawableRes val icon: Int? = null) {
-    Status(listOf(BoardFilterField.Status), R.drawable.ic_circle_dashed),
-    Agent(listOf(BoardFilterField.Agent), R.drawable.ic_bot),
-    Session(listOf(BoardFilterField.SessionState), R.drawable.ic_activity),
+    Status(listOf(BoardFilterField.Status), DuduGlyphs.filterStatus),
+    Agent(listOf(BoardFilterField.Agent), DuduGlyphs.model),
+    Session(listOf(BoardFilterField.SessionState), DuduGlyphs.trace),
     Priority(listOf(BoardFilterField.Priority)),
-    Dates(listOf(BoardFilterField.Due, BoardFilterField.Created, BoardFilterField.Updated), R.drawable.ic_calendar_days),
-    Project(listOf(BoardFilterField.Project), R.drawable.ic_box),
-    Label(listOf(BoardFilterField.Label), R.drawable.ic_tag),
-    Source(listOf(BoardFilterField.Source), R.drawable.ic_plug);
+    Dates(listOf(BoardFilterField.Due, BoardFilterField.Created, BoardFilterField.Updated), DuduGlyphs.filterDates),
+    Project(listOf(BoardFilterField.Project), DuduGlyphs.issueProject),
+    Label(listOf(BoardFilterField.Label), DuduGlyphs.issueLabel),
+    Source(listOf(BoardFilterField.Source), DuduGlyphs.issueSource);
 
     @Composable fun title() = if (this == Dates) w("日期") else fields.first().title()
 
@@ -204,7 +206,7 @@ internal fun BoardFilterSheet(
             navigationIcon = {
                 if (section != null) {
                     IconButton(onClick = { show(null) }, modifier = Modifier.padding(start = 10.dp)) {
-                        Glyph(R.drawable.ic_arrow_left, stringResource(R.string.back), 22)
+                        Glyph(DuduGlyphs.back, stringResource(R.string.back), 22)
                     }
                 } else {
                     FilledTonalButton(reset, Modifier.padding(start = 16.dp).minimumInteractiveComponentSize()
@@ -217,7 +219,7 @@ internal fun BoardFilterSheet(
             },
             actions = {
                 IconButton(onClick = close, modifier = Modifier.testTag("close-sheet")) {
-                    Glyph(R.drawable.ic_x, stringResource(R.string.close), 20)
+                    Glyph(DuduGlyphs.close, stringResource(R.string.close), 20)
                 }
             },
         )
@@ -271,7 +273,7 @@ private fun FilterCategoryRow(row: CategoryRow, open: () -> Unit) {
             if (row.summary.isNotEmpty()) Text(row.summary, fontSize = 14.sp,
                 color = MaterialTheme.colorScheme.onSecondaryContainer, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Glyph(R.drawable.ic_chevron_right, size = 14, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Glyph(DuduGlyphs.right, size = 14, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -284,8 +286,13 @@ private fun FilterChoiceRow(
     Row(Modifier.fillMaxWidth().toggleable(selected, role = Role.Checkbox, onValueChange = { toggle() })
         .heightIn(min = 48.dp).padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Checkbox(selected, onCheckedChange = null, modifier = Modifier.size(18.dp), colors = CheckboxDefaults.colors(
-            checkedColor = colors.onSecondaryContainer, uncheckedColor = colors.outline, checkmarkColor = colors.surface))
+        Box(Modifier.size(18.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+            .background(if (selected) DuduStyle.blue else colors.surface)
+            .then(if (selected) Modifier else Modifier.border(1.dp,
+                colors.onSurfaceVariant.copy(alpha = .45f), androidx.compose.foundation.shape.RoundedCornerShape(4.dp))),
+            contentAlignment = Alignment.Center) {
+            if (selected) Glyph(DuduGlyphs.check, size = 14, tint = Color.White)
+        }
         val id = row.option.key
         when (field) {
             BoardFilterField.Agent -> if (id != null) AgentLogo(id, 16)

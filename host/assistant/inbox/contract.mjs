@@ -16,6 +16,7 @@ export const INBOX_REQUESTS = Object.freeze({
     limit: { type: 'integer', minimum: 1, maximum: 200 }, cursor: { type: ['string', 'null'] },
   }),
   get: object({ id: RECORD_ID }, ['id']),
+  read: object({ id: RECORD_ID, revision: { type: 'integer', minimum: 1 } }, ['id', 'revision']),
   ...Object.fromEntries(['done', 'delete', 'restore'].map((action) => [action, object(selection)])),
   share: object({ ...selection, issue: ISSUE_ID, to: { type: 'string', enum: ['issue', 'session'] } }, ['issue']),
   link: object({ id: RECORD_ID, issue: ISSUE_ID }, ['id', 'issue']),

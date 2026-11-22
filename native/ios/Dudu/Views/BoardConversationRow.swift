@@ -15,22 +15,8 @@ enum BoardHomeLayout {
 
 // Read/unread artwork is shared between the native menu and the supplied Lark swipe design.
 extension BoardConversation {
-    var pinActionSystemImage: String { pinned ? "pin.slash" : "pin" }
+    var pinActionGlyph: DuduGlyph { pinned ? .unpin : .pin }
     var readActionImage: String { unread ? "Home-SwipeClearUnread" : "Home-SwipeMarkUnread" }
-}
-
-extension IssueQuickAction {
-    var homeMenuSystemImage: String {
-        switch self {
-        case .priority: return "chart.bar"
-        case .agent: return "person"
-        case .status: return "circle.dashed"
-        case .due: return "calendar"
-        case .labels: return "tag"
-        case .project: return "folder"
-        case .subIssue: return "arrow.turn.down.right"
-        }
-    }
 }
 
 /// The approved C layout: issue avatar, two text lines, time with a small Agent logo below.

@@ -30,8 +30,11 @@ const COMPLETED_DAYS = { day: 1, week: 7, month: 30 };
  * change on every render.
  */
 export function listRequest(tab, view, now = Date.now(), search = '') {
-  const request = { tab };
+  // 未读 is about reading, not workflow. The conversation list asks the home for it; the other layouts ask the issue store for the issues whose session is unread.
+  const unreadScope = tab === 'unread' && view.layout !== 'chat';
+  const request = { tab: unreadScope ? 'all' : tab };
   const filter = storeFilter(view.filter, now);
+  if (unreadScope) filter.sessionState = ['unread'];
   // The desktop's Updated control follows the phone's completed-message clock.
   for (const edge of ['From', 'To']) {
     if (filter[`updated${edge}`] !== undefined) {
@@ -53,7 +56,7 @@ export function listRequest(tab, view, now = Date.now(), search = '') {
   if (view.layout === 'list') request.pinnedFirst = true;
   // The store's own default is on for All issues and off elsewhere; only a different choice is sent.
   const recency = view.recency ?? (tab === 'all' && view.order !== 'updated');
-  if (recency !== (tab === 'all')) request.completedLast = recency;
+  if (recency !== (request.tab === 'all')) request.completedLast = recency;
   return request;
 }
 

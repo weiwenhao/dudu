@@ -5,12 +5,16 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../components/tooltip.j
 import { cn } from '../lib/cn.js';
 import { when } from '../issues/activity.js';
 import { AgentLogo } from '../issues/AgentLogo.jsx';
+import { ConversationAvatar } from '../issues/ConversationAvatar.jsx';
 import { T } from '../strings.js';
 import { Highlighted } from './Markdown.jsx';
 import { agentOf, projectOf } from './model.js';
 import { searchSnippet } from './highlight.js';
 
 const W = T.widgets.sessions;
+// The next page is asked for by scrolling, not by a button (owner, 2026-11-21: "下拉自动加载更多，不用我手动点"): as the inbox does (collector/CollectorWidget.jsx), a page being 50 rows, more than the list shows,
+// so there is always something to scroll while there is more.
+const NEAR_END = 120; // px from the end of the list at which the next page is asked for
 
 /**
  * One session of a list. The task window's picker (tasks/SessionPicker.jsx) draws the same row: `checked` marks the one that is the value now (the trailing check the window's menus have), `disabled` a
@@ -19,12 +23,13 @@ const W = T.widgets.sessions;
 export function Row({ session, selected, terms, now, optionRef, onSelect, onKeyDown, checked = false, disabled = false }) {
   return <button type="button" role="option" aria-selected={selected} aria-disabled={disabled || undefined} ref={optionRef} tabIndex={selected ? 0 : -1} onClick={disabled ? undefined : onSelect} onKeyDown={onKeyDown}
     className={cn('flex w-full items-center gap-3 rounded-[10px] px-2 py-2.5 text-left outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', selected && 'bg-accent', disabled && 'opacity-55')}>
-    <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted/70"><AgentLogo agent={agentOf(session)} className="size-4" /></span>
+    <ConversationAvatar title={session.title || session.id} size={32} />
     <span className="min-w-0 flex-1">
       <span className="block truncate text-[14px]/5 font-medium"><Highlighted text={session.title || session.id} terms={terms} /></span>
       <span className="block truncate text-xs/4 text-muted-foreground" title={session.cwd}>{projectOf(session)} · {when(session.updatedAt, now)}</span>
       {session.evidence?.text && <span className="block truncate text-xs/4 text-muted-foreground"><Highlighted text={searchSnippet(session.evidence.text, terms)} terms={terms} /></span>}
     </span>
+    <AgentLogo agent={agentOf(session)} className="size-4 shrink-0" />
     {session.issue && <span className="shrink-0 rounded-md border px-1.5 text-[11px]/4 text-muted-foreground tabular-nums">{session.issue.ref}</span>}
     {checked && <Check className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
   </button>;
@@ -66,7 +71,8 @@ export function SessionList({ query, onQuery, onSearch, onRetry, terms, now, sta
     </div>
       : (status === 'loading' || searching) && !sessions.length ? <p role="status" className="flex items-center justify-center gap-2 px-5 py-10 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" aria-hidden="true" />{T.shell.loading}</p>
       : sessions.length === 0 ? <p className="px-5 py-10 text-center text-sm text-muted-foreground">{W.empty}</p>
-      : <ul role="listbox" aria-label={T.widgets.titles.sessions} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-auto overscroll-contain px-3 pb-3">
+      : <ul role="listbox" aria-label={T.widgets.titles.sessions} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-auto overscroll-contain px-3 pb-3"
+        onScroll={(event) => { const element = event.currentTarget; if (total > sessions.length && canMore && element.scrollHeight - element.scrollTop - element.clientHeight < NEAR_END) onMore(); }}>
         {sessions.map((session, index) => <li key={session.key} role="none">
           <Row session={session} selected={session.key === selectedKey} terms={terms} now={now}
             optionRef={(element) => { if (element) options.current.set(session.key, element); else options.current.delete(session.key); }}
@@ -76,7 +82,6 @@ export function SessionList({ query, onQuery, onSearch, onRetry, terms, now, sta
               if (next !== undefined) { event.preventDefault(); choose(next); }
             }} />
         </li>)}
-        {total > sessions.length && canMore && <li role="none" className="pt-1"><Button variant="ghost" size="sm" className="w-full" onClick={onMore}>{W.more}</Button></li>}
       </ul>}
     {unavailable && sessions.length > 0 && <p role="status" data-sessions-note="" className="flex shrink-0 items-start gap-1.5 px-5 pt-1 pb-3 text-xs text-muted-foreground">
       <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />{W.listPartial}

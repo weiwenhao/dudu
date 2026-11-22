@@ -1,7 +1,12 @@
 package app.dudu.android.ui
 
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateOffsetAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -13,9 +18,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
@@ -23,17 +32,24 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.toSize
 import app.dudu.android.media.AndroidSpeechCapture
 import app.dudu.android.media.VoicePhase
 import kotlin.math.*
 
+/** Where the finger is while it holds the talk bar, in the window's coordinates (the iPhone's `VoiceTouch`); only the light under it in the overlay reads it. */
+internal class VoiceTouch {
+    var location by mutableStateOf<Offset?>(null)
+}
+
 @Composable
-internal fun HoldToTalkBar(capture: AndroidSpeechCapture, enabled: Boolean, modifier: Modifier, begin: () -> Boolean) {
+internal fun HoldToTalkBar(capture: AndroidSpeechCapture, touch: VoiceTouch, enabled: Boolean, modifier: Modifier, begin: () -> Boolean) {
     val latestBegin by rememberUpdatedState(begin)
     val threshold = with(LocalDensity.current) { 160.dp.toPx() }
     val description = w("按住说话，上滑取消")
     val cancelLabel = w("取消")
-    Box(modifier.height(44.dp).testTag("composer-hold-to-talk")
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    Box(modifier.height(44.dp).testTag("composer-hold-to-talk").onGloballyPositioned { origin = it.positionInWindow() }
         .semantics {
             role = Role.Button
             contentDescription = description
@@ -52,12 +68,14 @@ internal fun HoldToTalkBar(capture: AndroidSpeechCapture, enabled: Boolean, modi
                 val down = awaitFirstDown()
                 if (!enabled) return@awaitEachGesture
                 down.consume()
-                if (!latestBegin()) return@awaitEachGesture
+                touch.location = origin + down.position
+                if (!latestBegin()) { touch.location = null; return@awaitEachGesture }
                 var released = false
                 try {
                     while (true) {
                         val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
                         if (change.isConsumed) break
+                        touch.location = origin + change.position
                         capture.move(change.position.y - down.position.y < -threshold)
                         change.consume()
                         if (!change.pressed) {
@@ -108,9 +126,17 @@ internal fun ComposerModeGlyph(keyboard: Boolean, description: String) {
     }
 }
 
-/** Reuses the iPhone's blue/red bottom wash, transcript, hint and 54-bar audio meter. */
 @Composable
-internal fun VoiceCaptureOverlay(capture: AndroidSpeechCapture, modifier: Modifier) {
+private fun followed(target: Offset): Offset =
+    animateOffsetAsState(target, spring(dampingRatio = .86f, stiffness = 815f), label = "voice-finger").value
+
+/**
+ * The iPhone's `VoiceCaptureLayer` / `VoiceCaptureOverlay`: over a frosted backdrop that fades in from the top, the blue (or, moved up to cancel, red) wash rising from the bottom edge and swelling
+ * in its middle, a soft light under the finger that follows it and breathes, the words so far, the hint and the 54-bar level meter. Android draws no blur of what is behind: the backdrop is the
+ * page's colour at 92 %.
+ */
+@Composable
+internal fun VoiceCaptureOverlay(capture: AndroidSpeechCapture, touch: VoiceTouch, modifier: Modifier) {
     if (!capture.active) return
     val cancelling = capture.cancelling
     val finishing = capture.phase == VoicePhase.Finishing
@@ -118,14 +144,42 @@ internal fun VoiceCaptureOverlay(capture: AndroidSpeechCapture, modifier: Modifi
     val colors = if (cancelling) listOf(0xFFFFE2E4, 0xFFFFDEE0, 0xFFFFDADB, 0xFFFFDEE0, 0xFFFFE2E4)
         else listOf(0xFF37B1FE, 0xFF239BF9, 0xFF1380F5, 0xFF239BF9, 0xFF37B1FE)
     val level by animateFloatAsState(capture.level, tween(90, easing = LinearEasing), label = "voice-level")
-    Box(modifier.testTag(if (cancelling) "voice-overlay-cancel" else "voice-overlay-recording")) {
+    val backdrop = MaterialTheme.colorScheme.background.copy(alpha = .92f)
+    var origin by remember { mutableStateOf<Offset?>(null) }
+    var area by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
+    // The light under the finger (low in the middle until there is one): it follows with a soft spring (the iPhone's response 0.22 s, damping 0.86) and breathes, 1 ± 7 % every 2.4 s.
+    // It starts where the finger is once the overlay knows where it stands itself.
+    val point = origin?.let { at -> followed(touch.location?.let { it - at } ?: Offset(area.width / 2, area.height * .9f)) }
+    val breath by rememberInfiniteTransition(label = "voice-glow").animateFloat(0f, (2 * PI).toFloat(),
+        infiniteRepeatable(tween(2417, easing = LinearEasing)), label = "voice-glow-phase")
+    val glow = if (cancelling) listOf(Color(0xFFFA7779).copy(alpha = .29f), Color(0xFFFF9C9E).copy(alpha = .09f), Color.Transparent)
+        else listOf(Color(0xFF0061FF).copy(alpha = .4f), Color(0xFF006BFF).copy(alpha = .15f), Color.Transparent)
+    Box(modifier.onGloballyPositioned { origin = it.positionInWindow(); area = it.size.toSize() }
+        .testTag(if (cancelling) "voice-overlay-cancel" else "voice-overlay-recording")) {
+        Canvas(Modifier.matchParentSize()) {
+            drawRect(Brush.verticalGradient(0f to Color.Transparent, .34f to backdrop, 1f to backdrop, endY = size.height))
+        }
         Canvas(Modifier.matchParentSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }) {
             drawRect(Brush.horizontalGradient(colors.map(::Color)))
+            // The wash's own mask: a gradient up from the bottom, together with a wide ellipse (1.3 × the width, 2.2 × the height, its middle 0.85 of the height below the middle) blurred 56 dp.
+            drawContext.canvas.saveLayer(Rect(Offset.Zero, size), Paint().apply { blendMode = BlendMode.DstIn })
             drawRect(Brush.verticalGradient(
                 0f to Color.Transparent, .25f to Color.Transparent,
                 .4f to Color.Black.copy(alpha = .02f), .56f to Color.Black.copy(alpha = .12f),
                 .8f to Color.Black.copy(alpha = .58f), 1f to Color.Black,
-                endY = size.height), blendMode = BlendMode.DstIn)
+                endY = size.height))
+            val centre = Offset(size.width / 2, size.height * 1.35f)
+            val radius = size.height * 1.1f
+            val soft = 56.dp.toPx()
+            scale(scaleX = size.width * .65f / radius, scaleY = 1f, pivot = centre) {
+                drawCircle(Brush.radialGradient(0f to Color.Black, ((radius - soft) / (radius + soft)).coerceAtLeast(0f) to Color.Black,
+                    1f to Color.Transparent, center = centre, radius = radius + soft), radius + soft, centre)
+            }
+            drawContext.canvas.restore()
+            point?.let { drawRect(Brush.radialGradient(glow, center = it, radius = (145.dp.toPx() * (1 + .07f * sin(breath))).coerceAtLeast(1f))) }
+            // The whole of it fades out towards the top: clear for the first tenth, full from just under the middle.
+            drawRect(Brush.verticalGradient(0f to Color.Transparent, .1f to Color.Transparent, .3f to Color.Black.copy(alpha = .55f),
+                .48f to Color.Black, 1f to Color.Black, endY = size.height), blendMode = BlendMode.DstIn)
         }
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 74.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {
@@ -133,8 +187,8 @@ internal fun VoiceCaptureOverlay(capture: AndroidSpeechCapture, modifier: Modifi
                 Text(capture.transcript, Modifier.padding(horizontal = 28.dp).padding(bottom = 20.dp),
                     fontSize = 19.sp, lineHeight = 26.sp, fontWeight = FontWeight.Medium,
                     maxLines = 2, color = ink, textAlign = TextAlign.Center)
-            Text(if (cancelling) w("松手取消") else if (finishing || capture.phase == VoicePhase.Starting)
-                w("正在识别…") else w("松手发送，上移取消"),
+            // The hint is there at once: 正在识别… only once the finger has let go (the iPhone's `isFinishing`).
+            Text(if (cancelling) w("松手取消") else if (finishing) w("正在识别…") else w("松手发送，上移取消"),
                 fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium,
                 color = ink.copy(alpha = if (cancelling) 1f else .78f))
             Spacer(Modifier.height(46.dp))

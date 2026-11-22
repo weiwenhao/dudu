@@ -11,7 +11,7 @@ struct StreamingReplyText: View {
             if paragraphs.isEmpty {
                 StreamingReplyParagraph(text: text)
             } else {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: ChatTypography.blockGap) {
                     ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
                         StreamingReplyParagraph(text: paragraph)
                             .equatable()
@@ -41,7 +41,9 @@ private struct StreamingReplyParagraph: View, Equatable {
 
     var body: some View {
         Text(text.isEmpty ? "\u{200B}" : text)
-            .font(.system(size: 16))
+            .font(.system(size: ChatTypography.size))
+            .tracking(ChatTypography.tracking)
+            .lineSpacing(ChatTypography.lineSpacing)
             .foregroundStyle(DuduStyle.chatInk)
             .textSelection(.disabled)
             .fixedSize(horizontal: false, vertical: true)

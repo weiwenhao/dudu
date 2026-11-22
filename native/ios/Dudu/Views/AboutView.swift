@@ -28,7 +28,7 @@ struct AboutView: View {
         }
         .background(DuduStyle.settingsBackground.ignoresSafeArea())
         .navigationBarBackButtonHidden(false)
-        .toolbarRole(.editor)
+        .minimalBackButton()
         .tint(DuduStyle.ink)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)

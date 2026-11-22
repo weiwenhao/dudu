@@ -426,9 +426,6 @@ private actor ReviewTransport: DuduTransport {
             case "session.file":
                 return try encode(ConversationFilePayload(name: "report.txt", mediaType: "text/plain",
                                                          dataBase64: Data("报告\n新内容\n已验证".utf8).base64EncodedString()))
-            case "session.fork":
-                newSessionCount += 1
-                return .object(["sessionId": .string("review-new-\(newSessionCount)")])
             case "question.answer":
                 answeredParityQuestions = true
                 await publishSnapshot(selectedID)

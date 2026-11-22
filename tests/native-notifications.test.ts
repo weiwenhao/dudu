@@ -155,6 +155,23 @@ test('APNs uses a verifiable ES256 JWT, fixed Apple hosts and the Dudu topic, wi
   await sender.send(params, event, 'computer');
   assert.notEqual(requests[2].headers.authorization, first.headers.authorization);
   await assert.rejects(sender.send(params, { ...event, body: '汉'.repeat(2000) }, 'computer'), /APNS_PAYLOAD_TOO_LARGE/);
+  // The board wake shows nothing: a background push with content-available and no alert, sound or number, low priority as Apple requires, kept for an hour and collapsed so a newer one replaces it.
+  await sender.send(params, { kind: 'board' }, 'computer');
+  const wake = requests.at(-1);
+  assert.deepEqual(JSON.parse(wake.body), { aps: { 'content-available': 1 }, dudu: { version: 1, computerId: 'computer', kind: 'board' } });
+  assert.deepEqual([wake.headers['apns-push-type'], wake.headers['apns-priority']], ['background', '5']);
+  assert.equal(wake.headers['apns-expiration'], String(now / 1000 + 3600));
+  assert.equal(typeof wake.headers['apns-collapse-id'], 'string');
+  // A notice of a reply is an alert that also carries the wake: the conversation named, no sound, high priority, and a collapse id of its own conversation so the next one replaces it.
+  await sender.send(params, { kind: 'announce', conversationId: 'issue:12', title: 'nature main', body: 'Done.' }, 'computer');
+  const notice = requests.at(-1);
+  const noticeBody = JSON.parse(notice.body);
+  assert.deepEqual([noticeBody.aps.alert, noticeBody.aps['content-available'], 'sound' in noticeBody.aps], [{ title: 'nature main', body: 'Done.' }, 1, false]);
+  assert.deepEqual(noticeBody.dudu, { version: 1, computerId: 'computer', kind: 'board', conversationId: 'issue:12' });
+  assert.deepEqual([notice.headers['apns-push-type'], notice.headers['apns-priority']], ['alert', '10']);
+  assert.equal(noticeBody.aps['mutable-content'], 1, 'the notification extension runs before the notice is shown, also with the App swiped away');
+  await sender.send(params, { kind: 'announce', conversationId: 'issue:13', title: 'other', body: 'Hi.' }, 'computer');
+  assert.notEqual(requests.at(-1).headers['apns-collapse-id'], notice.headers['apns-collapse-id'], 'each conversation has its own');
   await assert.rejects(sender.send({ ...params, token: '../other' }, event, 'computer'));
   sender.close();
 });

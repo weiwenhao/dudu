@@ -20,7 +20,7 @@ import app.dudu.android.data.*
 import org.json.JSONObject
 
 @Composable
-fun NavigationGlyph(icon: JSONObject?) {
+fun NavigationGlyph(icon: JSONObject?, iconSize: Int = 22) {
     val color = MaterialTheme.colorScheme.onSurface
     val raster = remember(icon) {
         icon?.nullableString("png")?.takeIf { it.length <= 16 * 1024 }?.let {
@@ -33,7 +33,7 @@ fun NavigationGlyph(icon: JSONObject?) {
             }.getOrNull()
         }
     }
-    if (raster != null) Image(raster, null, Modifier.size(22.dp), colorFilter = ColorFilter.tint(color))
+    if (raster != null) Image(raster, null, Modifier.size(iconSize.dp), colorFilter = ColorFilter.tint(color))
     else {
         val box = icon?.optJSONArray("viewBox")
         val geometry = remember(icon) {
@@ -61,11 +61,14 @@ fun NavigationGlyph(icon: JSONObject?) {
                 path to node
             }.getOrNull() }.orEmpty()
         }
-        Canvas(Modifier.size(22.dp)) {
+        Canvas(Modifier.size(iconSize.dp)) {
             if (box != null && box.length() == 4 && box.optDouble(2) > 0 && box.optDouble(3) > 0) drawIntoCanvas { wrapper ->
                 val canvas = wrapper.nativeCanvas
                 canvas.save()
-                canvas.scale(size.width / box.optDouble(2).toFloat(), size.height / box.optDouble(3).toFloat())
+                val scale = minOf(size.width / box.optDouble(2).toFloat(), size.height / box.optDouble(3).toFloat())
+                canvas.translate((size.width - box.optDouble(2).toFloat() * scale) / 2,
+                    (size.height - box.optDouble(3).toFloat() * scale) / 2)
+                canvas.scale(scale, scale)
                 canvas.translate(-box.optDouble(0).toFloat(), -box.optDouble(1).toFloat())
                 geometry.forEach { (path, node) ->
                     for (kind in listOf("fill", "stroke")) {

@@ -3,20 +3,20 @@
 package app.dudu.android.ui
 
 import android.content.Intent
-import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -24,55 +24,73 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 import app.dudu.android.*
 import app.dudu.android.R
 import app.dudu.android.data.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import org.json.JSONObject
 
+/** The canvas of the settings' pages (the iPhone's grouped background); the theme's own in the dark. */
 @Composable
-private fun settingsBackground() = if (isSystemInDarkTheme()) MaterialTheme.colorScheme.background else DuduStyle.settings
+internal fun settingsCanvas() = if (isSystemInDarkTheme()) MaterialTheme.colorScheme.background else DuduStyle.settings
 
-@Composable
-private fun SettingsField(title: String, value: String, enabled: Boolean, multiline: Boolean,
-    secret: Boolean, tag: String, changed: (String) -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (title.isNotBlank()) Text(title, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        BasicTextField(value, changed, enabled = enabled,
-            modifier = Modifier.fillMaxWidth().testTag(tag),
-            textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface),
-            cursorBrush = SolidColor(DuduStyle.blue),
-            minLines = if (multiline) 3 else 1, maxLines = if (multiline) 12 else 1,
-            singleLine = !multiline, visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None)
-    }
-}
-
+/**
+ * One of 嘟嘟's settings pages, laid out here from the computer's values (`SettingsPages`), the iPhone's `SettingsPageView`: white cards on the settings canvas, pulled down to read again,
+ * read again every few seconds while the page asks to be (`poll`). What the plugin refuses is said in its own words: under the form for 保存, as a message at the top for anything else
+ * (更改没能保存 when it said nothing); what it reports done is a message too. While something is saved, and while the computer is not connected, the rows wait and the page cannot be left.
+ */
 @Composable
 fun SettingsScreen(route: Route, model: DuduViewModel) {
-    val actions = rememberActions()
+    val scope = rememberCoroutineScope()
     val notifications = model.collectorNotifications
     val notificationChoices by notifications.state.collectAsState()
+    // Turning a bell on asks the phone to let the app notify, as the iPhone asks then; allowed, the background connection that shows them starts.
+    val bellContext = androidx.compose.ui.platform.LocalContext.current
+    val notificationPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        DuduLog.record("notifications.permission", state = if (granted) "granted" else "denied")
+        if (granted) model.syncBackgroundNotifications()
+    }
+    fun askToNotify() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            androidx.core.content.ContextCompat.checkSelfPermission(bellContext, android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+    }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val ui by model.state.collectAsState()
+    // The page is laid out here from the values the computer sends (`SettingsPages`); `words` are its words in the screen's language.
+    val words = rememberPageWords()
     var page by remember { mutableStateOf<JSONObject?>(null) }
+    var failed by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var refreshing by remember { mutableStateOf(false) }
+    // What the plugin refused on the form, in its own words (the iPhone's `problem`).
+    var problem by remember { mutableStateOf<String?>(null) }
     val values = remember { mutableStateMapOf<String, String>() }
+    val switches = remember { mutableStateMapOf<String, Boolean>() }
     var confirmation by remember { mutableStateOf<JSONObject?>(null) }
     var addMenu by remember { mutableStateOf(false) }
-    var notice by remember { mutableStateOf<String?>(null) }
     var suggestedName by remember { mutableStateOf<String?>(null) }
     var previewedValue by remember { mutableStateOf<String?>(null) }
     var previewing by remember { mutableStateOf(false) }
     var environmentRows by remember { mutableStateOf<List<Int>>(emptyList()) }
     var revealedRow by remember { mutableStateOf<String?>(null) }
+    // The row whose long-press menu is open.
+    var menuRow by remember { mutableStateOf<String?>(null) }
+    var reads by remember { mutableIntStateOf(0) }
     val section = route.target ?: "general"
     val target = route.params.nullableString("target")
+    val failedWords = w("更改没能保存")
     fun params() = json("section" to section).apply { target?.let { put("target", it) } }
     fun receive(next: JSONObject, notificationRevision: Long) {
         page = next
+        failed = false
         if (section == "collectors") notifications.receive(notificationRevision)
         next.rows("sections").flatMap { it.rows("rows") }.forEach { row ->
             row.nullableString("key")?.let { key ->
@@ -90,37 +108,61 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
             }
         }
     }
-    fun perform(act: JSONObject, value: String? = null) {
-        actions.run {
+    /** Read the page. A page that was read keeps what it shows when a later read fails; only a page never read says 配置加载失败. */
+    suspend fun load() {
+        try {
             val notificationRevision = notifications.checkpoint()
-            val body = params().put("name", act.getString("name")).put("args", act.optJSONObject("args") ?: json())
-                .put("values", JSONObject(values.toMap()))
-            value?.let { body.put("value", it) }
-            val result = model.request("settings.act", body)
-            confirmation = null
-            notice = result.optJSONObject("toast")?.nullableString("message")
-            if (result.optBoolean("back")) model.backRoute()
-            else if (result.optJSONObject("page") != null) receive(result.getJSONObject("page"), notificationRevision)
-            else actions.refresh()
+            receive(model.settingsPage(section, target, words), notificationRevision)
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            DuduLog.failure("settings.page.fail", error, state = section)
+            if (page == null) failed = true
         }
     }
-    fun activate(button: JSONObject) {
+    fun perform(act: JSONObject, value: String? = null, form: Boolean = false) {
+        if (busy) return
+        busy = true; problem = null
+        scope.launch {
+            try {
+                val notificationRevision = notifications.checkpoint()
+                val name = act.getString("name")
+                val body = params().put("name", name).put("args", act.optJSONObject("args") ?: json())
+                if (form) body.put("values", JSONObject(values.toMap()))
+                value?.let { body.put("value", it) }
+                DuduLog.record("settings.act", state = section)
+                // A first local MCP launch may spend the desktop's 60-second budget installing what it needs (the iPhone waits as long).
+                val result = model.request("settings.act", body, timeoutSeconds = if (section == "connectors" && name == "add") 120 else 30)
+                confirmation = null
+                result.optJSONObject("toast")?.nullableString("message")?.let { model.toast(it, ToastKind.Success, literal = true) }
+                if (result.optBoolean("back")) model.backRoute()
+                else if (model.settingsPagesFromComputer() && result.optJSONObject("page") != null) receive(result.getJSONObject("page"), notificationRevision)
+                else load()
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                DuduLog.failure("settings.act.fail", error, state = section)
+                confirmation = null
+                val words = (error as? ApiFailure)?.words
+                if (form) problem = words ?: failedWords
+                else if (words != null) model.toast(words, ToastKind.Error, literal = true)
+                else model.toast(word("更改没能保存"), ToastKind.Error)
+            } finally { busy = false; switches.clear() }
+        }
+    }
+    fun activate(button: JSONObject, form: Boolean = false) {
         revealedRow = null
         if (button.optJSONObject("confirm") != null) confirmation = button
-        else button.optJSONObject("act")?.let { perform(it) }
+        else button.optJSONObject("act")?.let { perform(it, form = form) }
     }
-    LaunchedEffect(actions.revision) {
-        actions.run {
-            val notificationRevision = notifications.checkpoint()
-            receive(model.request("settings.page", params()).getJSONObject("page"), notificationRevision)
-        }
+    // Read when the page opens and again once the computer is connected again; with no computer and nothing read, the page says it could not be read (a mark while one is being reached).
+    LaunchedEffect(reads, ui.connected, ui.connectionInFlight) {
+        if (ui.connected) load() else if (page == null && !ui.connectionInFlight) failed = true
     }
-    LaunchedEffect(page?.optDouble("poll", 0.0), lifecycle) {
+    LaunchedEffect(page?.optDouble("poll", 0.0), lifecycle, ui.connected) {
         val seconds = page?.optDouble("poll", 0.0) ?: 0.0
-        if (seconds > 0) lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        if (seconds > 0 && ui.connected) lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
                 delay((seconds.coerceAtLeast(1.0) * 1000).toLong())
-                if (!actions.busy) actions.refresh()
+                if (!busy) load()
             }
         }
     }
@@ -138,11 +180,14 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
                     .put("args", act.optJSONObject("args") ?: json())
                     .put("values", json(preview.getString("key") to previewValue)))
                 if (values[preview.getString("key")]?.trim() == previewValue) {
-                    receive(result.getJSONObject("page"), notificationRevision); previewedValue = previewValue; actions.error = null
+                    // The computer says what it recognized and the page is laid out here again; a plugin that lays pages out itself sends the page.
+                    val next = result.optJSONObject("recognized")?.let { SettingsPages.customConnector(it, words) } ?: result.getJSONObject("page")
+                    receive(next, notificationRevision); previewedValue = previewValue; problem = null
                 }
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
-                actions.error = "UPSTREAM_ERROR"
+                DuduLog.failure("settings.preview.fail", error, state = section)
+                problem = failedWords
             } finally { previewing = false }
         }
     }
@@ -155,20 +200,36 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
     fun addEnvironment() {
         (0 until 40).firstOrNull { it !in environmentRows }?.let { environmentRows = environmentRows + it }
     }
-    fun go(row: JSONObject) {
-        row.optJSONObject("to")?.let {
-            model.navigate(Route("settings", row.optString("title"), it.optString("section", section),
-                json("target" to it.nullableString("target"))))
-        }
+    fun goTo(to: JSONObject, title: String) {
+        model.navigate(Route("settings", title, to.optString("section", section), json("target" to to.nullableString("target"))))
     }
-    Page(page?.optString("title") ?: route.title, model::backRoute, actions,
-        nested = true, background = settingsBackground(), top = {
+    fun go(row: JSONObject) { row.optJSONObject("to")?.let { goTo(it, row.optString("title")) } }
+    // An item of a long press opens the row's own page, or acts (asking first when it says to), as the swipe did.
+    fun chooseMenu(item: JSONObject, title: String) {
+        val to = item.optJSONObject("to")
+        if (to != null) goTo(to, title) else activate(item)
+    }
+    val enabled = !busy && ui.connected
+    val save = page?.optJSONObject("save")
+    val canSave = save != null && !busy && !previewing && ui.connected &&
+        (preview == null || !previewValue.isNullOrEmpty() && previewedValue == previewValue)
+    // Leaving while a change is being saved would lose what it answers (the iPhone hides the back button then).
+    BackHandler(enabled = busy) {}
+    Page(page?.optString("title") ?: w(route.title), { if (!busy) model.backRoute() }, nested = true, background = settingsCanvas(), top = {
+        if (save != null) TextButton(onClick = { activate(save, form = true) }, enabled = canSave, modifier = Modifier.testTag("settings-save")) {
+            if (busy || previewing) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.onSurface)
+            else Text(save.getString("title"), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        } else if (busy) Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if (additions.isNotEmpty() || environment != null) Box {
             IconButton(onClick = {
                 if (additions.isEmpty()) addEnvironment()
                 else if (additions.size == 1 && environment == null) go(additions[0]) else addMenu = true
-            }, enabled = !actions.busy && !previewing) {
-                Glyph(R.drawable.ic_plus, w("添加"))
+            }, enabled = !busy && !previewing && ui.connected && (additions.isNotEmpty() || environmentRows.size < 40),
+                modifier = Modifier.testTag("settings-add")) {
+                Glyph(DuduGlyphs.plus, if (additions.size == 1 && environment == null) additions[0].optString("title")
+                    else if (additions.isEmpty()) environment?.optString("title") else w("添加"), 22)
             }
             DropdownMenu(addMenu, { addMenu = false }) {
                 additions.forEach { row -> DropdownMenuItem(text = { Text(row.getString("title")) },
@@ -176,186 +237,253 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
                 environment?.let { DropdownMenuItem(text = { Text(it.optString("title")) }, onClick = { addMenu = false; addEnvironment() }) }
             }
         }
-        page?.optJSONObject("save")?.let { save ->
-            TextButton(onClick = { activate(save) }, enabled = !actions.busy && !previewing &&
-                (preview == null || !previewValue.isNullOrEmpty() && previewedValue == previewValue)) { Text(save.getString("title")) }
-        }
     }) {
-        LazyColumn(Modifier.fillMaxSize()) {
-            notice?.let { item { Text(it, Modifier.padding(20.dp)) } }
+        PullToRefreshBox(isRefreshing = refreshing, onRefresh = {
+            refreshing = true
+            scope.launch { try { load() } finally { refreshing = false } }
+        }, modifier = Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 10.dp, bottom = 40.dp)) {
+            // The page is drawn from what the computer sends: until it has, a mark, not a blank sheet (owner, 2026-11-21: "为什么设置打开是白屏").
+            if (page == null && !failed) item {
+                Box(Modifier.fillMaxWidth().padding(top = 80.dp), contentAlignment = Alignment.TopCenter) { DeliveryLoadingMark(22) }
+            }
+            if (page == null && failed) item {
+                Column(Modifier.fillMaxWidth().padding(top = 80.dp).testTag("settings-failed"), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text(w("配置加载失败"), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    FilledTonalButton(onClick = { failed = false; reads++ }, shape = CircleShape,
+                        colors = ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            contentColor = MaterialTheme.colorScheme.onSurface),
+                        contentPadding = PaddingValues(horizontal = 20.dp), modifier = Modifier.heightIn(min = 44.dp)) {
+                        Text(stringResource(R.string.retry), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
             sections.forEachIndexed { partIndex, part ->
-                if (partIndex > 0 && part.nullableString("header") == null) item { Spacer(Modifier.height(12.dp)) }
-                part.nullableString("header")?.let { item { Section(it) } }
-                cardItems(part.rows("rows").filter { it !in additions && (it.optString("kind") != "environment" || environmentRows.isNotEmpty()) }) { row ->
+                // What 添加 opens is the bar's +, and the 环境变量 rows show only once one is added: a section left with nothing is not drawn (the iPhone's `contentSections`).
+                val partRows = part.rows("rows").filter { it !in additions && (it.optString("kind") != "environment" || environmentRows.isNotEmpty()) }
+                if (partRows.isEmpty()) return@forEachIndexed
+                // The 状态 page is one card with a strip for each category; the form's tile stands on the canvas, not in a card (owner's drawing, 2026-11-21).
+                val grouped = partRows.any { it.optString("kind") == "group" }
+                val bare = partRows.size == 1 && partRows[0].optString("kind") == "statusPreview"
+                val header = part.nullableString("header")
+                item { if (header != null) SettingsSectionText(header, top = 18, bottom = 8) else Spacer(Modifier.height(if (bare) 4.dp else 10.dp)) }
+                if (bare) item {
+                    val row = partRows[0]
+                    StatusPreview(row, row.nullableString("colorKey")?.let { values[it] }, row.nullableString("progressKey")?.let { values[it] })
+                } else if (grouped) item {
+                    InsetCard(Modifier.padding(horizontal = 18.dp)) {
+                        Column(Modifier.padding(vertical = 10.dp)) {
+                            partRows.forEachIndexed { index, row ->
+                                if (row.optString("kind") == "group") {
+                                    if (index > 0) Spacer(Modifier.height(8.dp))
+                                    val add = row.optJSONObject("add")
+                                    GroupStrip(row.optString("title"), add?.optString("title"), enabled) {
+                                        add?.optJSONObject("to")?.let { goTo(it, row.optString("title")) }
+                                    }
+                                } else {
+                                    val menu = row.rows("menu")
+                                    val key = row.optString("id")
+                                    val press = remember { PressPoint() }
+                                    Box(Modifier.notePress(press)) {
+                                        if (row.has("status")) StatusRow(row, enabled, onClick = { go(row) },
+                                            onLongClick = if (menu.isEmpty()) null else ({ menuRow = key }))
+                                        else SettingsRowLabel(row, enabled, action = { go(row) })
+                                        if (menu.isNotEmpty()) SettingsRowMenu(menuRow == key, { menuRow = null }, menu, press.menuOffset()) { chooseMenu(it, row.optString("title")) }
+                                    }
+                                    if (partRows.getOrNull(index + 1)?.let { it.optString("kind") != "group" } == true)
+                                        HorizontalDivider(Modifier.padding(start = 68.dp, end = 10.dp), thickness = .5.dp,
+                                            color = MaterialTheme.colorScheme.outlineVariant)
+                                }
+                            }
+                        }
+                    }
+                } else cardItems(partRows) { row ->
                     val id = row.optString("key")
                     val act = row.optJSONObject("act")
                     val title = row.optString("title")
                     val current = values[id] ?: row.optString("value", row.optString("selected"))
                     val swipeKey = row.optString("id", "$partIndex:$id:$title")
+                    val menu = row.rows("menu")
                     SwipeMenuRow(row.rows("swipe").map { button ->
                         RowSwipeAction(button.optString("title"), settingsActionIcon(button),
-                            if (button.optString("role") == "destructive") Color(0xFFE14848) else Color(0xFF96989D)) {
+                            if (button.optString("role") == "destructive") SwipeColors.delete else Color(0xFF96989D)) {
                             activate(button)
                         }
-                    }, enabled = !actions.busy, revealed = revealedRow == swipeKey,
+                    }, enabled = enabled, revealed = revealedRow == swipeKey,
                         onReveal = { revealedRow = if (it) swipeKey else null }) { closeSwipe ->
-                    Column {
+                    val press = remember { PressPoint() }
+                    Box(Modifier.notePress(press)) { Column {
                         when (row.optString("kind")) {
-                            "field" -> SettingsField(title, current, !actions.busy, row.optBoolean("multiline"),
-                                row.optBoolean("secret"), "settings-$id") { values[id] = it }
-                            "environment" -> {
-                                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    environmentRows.forEach { index -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Box(Modifier.weight(1f)) { Field(w("名称"), values["envName$index"].orEmpty(), !actions.busy) { values["envName$index"] = it } }
-                                        Box(Modifier.weight(1f)) { Field(w("值"), values["envValue$index"].orEmpty(), !actions.busy, secret = true) { values["envValue$index"] = it } }
-                                        IconButton(onClick = { environmentRows = environmentRows - index; values.remove("envName$index"); values.remove("envValue$index") }, enabled = !actions.busy) {
-                                            Glyph(R.drawable.ic_trash2, w("删除"), 20, MaterialTheme.colorScheme.error)
-                                        }
-                                    } }
-                                }
+                            "field" -> if (row.optBoolean("inline")) InlineField(title, current, row.optString("placeholder"), row.optBoolean("multiline"),
+                                enabled, "settings-$id") { values[id] = it }
+                            else StackedField(row, current, enabled, "settings-$id") { values[id] = it }
+                            "environment" -> EnvironmentRows(environmentRows, values, enabled) { index ->
+                                environmentRows = environmentRows - index; values.remove("envName$index"); values.remove("envValue$index")
                             }
-                            "switch" -> Line(title, row.nullableString("subtitle"), minHeight = 48, trailing = {
-                                Switch(row.optBoolean("on"), enabled = !actions.busy, onCheckedChange = {
-                                    act?.let { a -> perform(a, it.toString()) }
-                                })
-                            })
-                            "choice" -> Box {
-                                val options = row.rows("options")
-                                Choice(title, options.find { it.optString("id") == current }?.optString("title") ?: current,
-                                    options.map { it.optString("id") to it.optString("title") }, !actions.busy) { value ->
-                                    if (id.isNotEmpty()) {
-                                        values[id] = value
-                                        if (id == "common" && value.isNotBlank()) values["frequency"] = value
+                            "switch" -> SettingsSwitchRow(title, switches[swipeKey] ?: row.optBoolean("on"), enabled, "settings-row-$swipeKey") { next ->
+                                switches[swipeKey] = next
+                                act?.let { perform(it, next.toString()) }
+                            }
+                            "choice" -> if (row.optString("style") == "swatches") SwatchChoice(row.rows("options"), current, enabled) { values[id] = it }
+                            else if (row.optString("style") == "icons") StatusIconChoice(row.rows("options"), current,
+                                row.nullableString("colorKey")?.let { values[it] }, enabled) { values[id] = it }
+                            else SettingsChoiceRow(row, current, enabled) { value ->
+                                if (id.isNotEmpty()) {
+                                    values[id] = value
+                                    if (id == "common" && value.isNotBlank()) values["frequency"] = value
+                                }
+                                else act?.let { perform(it, value) }
+                            }
+                            "action" -> SettingsActionRow(row, enabled) { row.optJSONObject("button")?.let { if (!closeSwipe()) activate(it) } }
+                            else -> {
+                                val notification = row.optJSONObject("notification")
+                                // The bell changes at once and saves on its own: it neither waits for the page nor locks it (owner, 2026-11-19).
+                                val bell: (@Composable () -> Unit)? = if (notification == null) null else ({
+                                    val saved = notification.optBoolean("on")
+                                    val on = notificationChoices[swipeKey]?.on ?: saved
+                                    NotificationBell(on, notification.optString("title"), enabled) {
+                                        val act = notification.optJSONObject("act") ?: return@NotificationBell
+                                        DuduLog.record("settings.act", state = section)
+                                        if (!on) askToNotify()
+                                        notifications.set(swipeKey, saved, !on,
+                                            params().put("name", act.getString("name")).put("args", act.optJSONObject("args") ?: json())) {
+                                            model.toast(word("更改没能保存"), ToastKind.Error)
+                                        }
                                     }
-                                    else act?.let { perform(it, value) }
-                                }
-                            }
-                            else -> Line(title, row.nullableString("subtitle"), minHeight = 48,
-                                danger = row.optString("tone") == "bad",
-                                leading = row.nullableString("color")?.let { hex -> ({
-                                    Box(Modifier.size(12.dp).background(runCatching { Color(android.graphics.Color.parseColor(hex)) }
-                                        .getOrDefault(MaterialTheme.colorScheme.onSurfaceVariant), CircleShape))
-                                }) },
-                                enabled = !actions.busy,
-                                action = if (row.has("to")) ({ if (!closeSwipe()) go(row) })
-                                    else row.optJSONObject("button")?.let { ({ if (!closeSwipe()) activate(it) }) },
-                                trailing = {
-                                    row.nullableString("detail")?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                                    row.optJSONObject("button")?.takeIf { it.optString("title") != title }?.let { button -> TextButton(onClick = { activate(button) }, enabled = !actions.busy) {
-                                        Text(button.optString("title"), fontSize = 14.sp)
-                                    } }
-                                    val notification = row.optJSONObject("notification")
-                                    if (notification != null) {
-                                        val on = notificationChoices[swipeKey]?.on ?: notification.optBoolean("on")
-                                        IconButton(onClick = {
-                                            notification.optJSONObject("act")?.let { act ->
-                                                actions.error = null
-                                                notifications.set(swipeKey, notification.optBoolean("on"), !on,
-                                                    params().put("name", act.getString("name"))
-                                                        .put("args", act.optJSONObject("args") ?: json())) {
-                                                    actions.error = it
-                                                }
-                                            }
-                                        }, enabled = !actions.busy) {
-                                            Glyph(if (on) R.drawable.ic_bell else R.drawable.ic_bell_off,
-                                                notification.optString("title"), 19, MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    } else if (row.has("to")) Glyph(R.drawable.ic_chevron_right, size = 16,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 })
+                                SettingsRowLabel(row, enabled, bell = bell,
+                                    onLongClick = if (menu.isEmpty()) null else ({ if (!closeSwipe()) menuRow = swipeKey }),
+                                    action = if (row.has("to")) ({ if (!closeSwipe()) go(row) }) else null,
+                                    capsule = row.optJSONObject("button")?.let { button -> { if (!closeSwipe()) activate(button) } })
+                            }
                         }
+                    }
+                    if (menu.isNotEmpty()) SettingsRowMenu(menuRow == swipeKey, { menuRow = null }, menu, press.menuOffset()) { chooseMenu(it, title) }
                     }
                     }
                 }
-                part.nullableString("footer")?.let { item {
-                    Text(it, Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } }
+                part.nullableString("footer")?.let { item { SettingsSectionText(it, top = 8, bottom = 0) } }
             }
+            problem?.let { item {
+                Text(it, Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 16.dp).testTag("settings-problem"),
+                    fontSize = 14.sp, color = SwipeColors.delete)
+            } }
+        }
         }
     }
     confirmation?.let { button ->
         val dialog = button.getJSONObject("confirm")
-        Confirm(dialog.optString("title"), dialog.nullableString("message"), actions,
+        DuduConfirmation(dialog.optString("title"), dialog.nullableString("message"), !busy,
             dismiss = { confirmation = null }, confirm = { perform(button.getJSONObject("act")) },
-            destructive = button.optString("role") == "destructive")
+            destructive = button.optString("role") == "destructive", confirmLabel = dialog.nullableString("button"))
     }
+}
+
+/** A section's header or footer: 13 sp in the muted ink, 6 dp in from the cards' edge. */
+@Composable
+private fun SettingsSectionText(text: String, top: Int, bottom: Int) {
+    Text(text, Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = top.dp, bottom = bottom.dp),
+        fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 private fun settingsActionIcon(button: JSONObject): Int {
     val act = button.optJSONObject("act")
     return when (act?.optString("name")) {
-        "remove", "forget" -> R.drawable.ic_trash2
+        "remove", "forget" -> DuduGlyphs.trash
         "default" -> R.drawable.ic_star
-        "move" -> if ((act.optJSONObject("args")?.optInt("direction") ?: 1) < 0) R.drawable.ic_arrow_up else R.drawable.ic_arrow_down
+        "move" -> if ((act.optJSONObject("args")?.optInt("direction") ?: 1) < 0) DuduGlyphs.send else R.drawable.ic_arrow_down
         "verb" -> when (act.optJSONObject("args")?.optString("verb")) {
             "authorize" -> R.drawable.ic_key_round
-            "retry" -> R.drawable.ic_refresh_cw
-            "cancel" -> R.drawable.ic_x
-            else -> R.drawable.ic_ellipsis
+            "retry" -> DuduGlyphs.completeContext
+            "cancel" -> DuduGlyphs.close
+            else -> DuduGlyphs.options
         }
-        else -> if (button.optString("role") == "destructive") R.drawable.ic_trash2 else R.drawable.ic_ellipsis
+        else -> if (button.optString("role") == "destructive") DuduGlyphs.trash else DuduGlyphs.options
     }
 }
 
+/** One row of 嘟嘟's settings list. The plug of 连接器 is the narrowest of the seven and is drawn a tenth larger (owner, 2026-11-21: 「小了一点」), as on the iPhone. */
+private class DuduSettingsPage(val section: String, val title: String, val glyph: Int, val iconSize: Int = 22)
+
+private val DuduSettingsPages = listOf(
+    DuduSettingsPage("general", "常规", DuduGlyphs.settingsGeneral),
+    DuduSettingsPage("statuses", "状态", DuduGlyphs.settingsStatuses),
+    DuduSettingsPage("connectors", "连接器", DuduGlyphs.settingsConnectors, iconSize = 24),
+    DuduSettingsPage("collectors", "收集器", DuduGlyphs.settingsCollectors),
+    DuduSettingsPage("rules", "规则", DuduGlyphs.settingsRules),
+    DuduSettingsPage("memory", "记忆", DuduGlyphs.settingsMemory),
+    DuduSettingsPage("skills", "技能", DuduGlyphs.settingsSkills),
+)
+
+/** The hairline between the rows of a settings card, from the words on (56 dp), as the iPhone's `rowDivider`. */
+@Composable
+private fun SettingsDivider() = HorizontalDivider(Modifier.padding(start = 56.dp), thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
+
+@Composable
+private fun SettingsChevron() = Glyph(DuduGlyphs.right, size = 16, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+
+/**
+ * The bottom bar's 设置, the iPhone's `SettingsView`: the computer (its name, a dot and 已连接 / 正在连接 / 未连接), 嘟嘟's seven pages, 隐私政策 and 关于, and the version. Each opens a page
+ * of its own over the tab, the bar hidden (owner, 2026-11-22).
+ */
 @Composable
 fun PreferencesScreen(state: UiState, model: DuduViewModel) {
     val context = LocalContext.current
-    val entries = state.navigation.rows("settings").filter {
-        it.optString("group") == "dudu" || it.optJSONObject("open")?.optString("native") in listOf("dudu-settings", "dsh-settings")
-    }
-    Page(w("设置"), model::backRoute, background = settingsBackground()) {
-        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(20.dp),
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp)) {
+    Page(w("设置"), model::backRoute, background = settingsCanvas()) {
+        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(22.dp),
+            contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 30.dp)) {
             item { InsetCard {
-                Surface(onClick = { model.navigate(Route("computers")) }, color = MaterialTheme.colorScheme.surface) {
-                    Row(Modifier.fillMaxWidth().heightIn(min = 68.dp).padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) { Glyph(R.drawable.ic_monitor, size = 22) }
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(state.computer.ifBlank { w("选择电脑") }, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Box(Modifier.size(6.dp).background(when {
-                                    state.connecting -> Color(0xFFF2C94C)
-                                    state.connected -> Color(0xFF4CB782)
-                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                }, CircleShape))
-                                Text(if (state.connecting) w("正在连接…") else if (state.connected) w("已连接") else w("未连接"),
-                                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                Row(Modifier.fillMaxWidth().heightIn(min = 68.dp).testTag("settings-computers")
+                    .clickable { DuduLog.record("computers.open"); model.navigate(Route("computers")) }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) { Glyph(DuduGlyphs.computer, size = 22) }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(state.computer.ifBlank { w("选择电脑") }, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Box(Modifier.size(6.dp).background(when {
+                                state.connected -> Color(0xFF33A866)
+                                state.connectionInFlight -> DuduStyle.blue
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            }, CircleShape))
+                            Text(if (state.connected) w("已连接") else if (state.connectionInFlight) w("正在连接") else w("未连接"),
+                                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Glyph(R.drawable.ic_chevron_right, size = 16, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    SettingsChevron()
                 }
             } }
             item { InsetCard {
-                entries.forEachIndexed { index, item ->
-                    Line(if (item.optJSONObject("open")?.optString("native") == "dsh-settings") w("其他设置") else item.optString("title"),
-                        leading = { if (item.has("icon")) NavigationGlyph(item.optJSONObject("icon"))
-                            else Glyph(R.drawable.ic_settings, size = 21) }, action = { model.navigateItem(item) })
-                    if (index < entries.lastIndex) HorizontalDivider(Modifier.padding(start = 48.dp), thickness = .5.dp)
-                }
-                if (entries.none { it.optJSONObject("open")?.optString("native") == "dudu-settings" }) {
-                    Line(w("嘟嘟"), icon = R.drawable.ic_settings,
-                        action = { model.navigate(Route("settings", target = "general")) })
+                // 嘟嘟's own pages are a fixed list in the app (owner, 2026-11-21: 「这个列表应该是原生组件写死的…不需要从 API 加载」): the plugin supplies what is on a page, not which pages there
+                // are, nor their names or icons, so an older plugin cannot bring back older icons. DSH's settings are the drawer gear's, not a row here.
+                DuduSettingsPages.forEachIndexed { index, page ->
+                    if (index > 0) SettingsDivider()
+                    SettingsCardRow(page.glyph, w(page.title), glyphSize = page.iconSize, tag = "settings-${page.section}",
+                        trailing = { SettingsChevron() }) { model.navigate(Route("settings", page.title, page.section)) }
                 }
             } }
-            item { Choice(w("语言"), when (state.language) {
-                    "zh" -> "简体中文"; "en" -> "English"; else -> w("跟随系统")
-                }, listOf("" to w("跟随系统"), "zh" to "简体中文", "en" to "English"), true) { model.language(it) }
-            }
             item { InsetCard {
-                Line(w("隐私政策"), icon = R.drawable.ic_lock, action = {
+                // The privacy row ends with the external-link glyph and About with the chevron, both 16 as on the iPhone (owner, 2026-11-21: the privacy row's icon differed).
+                SettingsCardRow(DuduGlyphs.privacy, w("隐私政策"), tag = "settings-privacy", trailing = {
+                    Glyph(DuduGlyphs.openLink, size = 16, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }) {
+                    DuduLog.record("settings.privacy.open")
                     context.startActivity(Intent(Intent.ACTION_VIEW,
                         android.net.Uri.parse("https://github.com/weiwenhao/dudu/blob/main/docs/privacy.md")))
-                })
-                HorizontalDivider(Modifier.padding(start = 48.dp), thickness = .5.dp)
-                Line(w("关于"), icon = R.drawable.ic_info, action = { model.navigate(Route("about")) })
+                }
+                SettingsDivider()
+                SettingsCardRow(DuduGlyphs.info, w("关于"), tag = "settings-about", trailing = { SettingsChevron() }) {
+                    model.navigate(Route("about"))
+                }
             } }
             item {
                 val info = context.packageManager.getPackageInfo(context.packageName, 0)
-                Text("Dudu v${info.versionName}", Modifier.fillMaxWidth(),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontSize = 13.sp,
+                // The release version and the build number, without the app's name (owner, 2026-11-21).
+                @Suppress("DEPRECATION")
+                val build = if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
+                Text("v${info.versionName} ($build)", Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center, fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -364,28 +492,84 @@ fun PreferencesScreen(state: UiState, model: DuduViewModel) {
 
 @Composable
 fun AboutScreen(model: DuduViewModel) {
-    Page(w("关于"), model::backRoute, nested = true) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 72.dp),
+    Page(w("关于"), model::backRoute, nested = true, background = settingsCanvas()) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(top = 72.dp, bottom = 30.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
             androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(R.drawable.dudu), null, Modifier.size(76.dp))
-            Text("Dudu", fontSize = 29.sp, fontWeight = FontWeight.Medium)
-            Text(w("基于 DSH 的多 Agent 高效协作助手"), fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Dudu", fontSize = 29.sp, letterSpacing = (-0.7).sp, fontWeight = FontWeight.Medium)
+                Text(w("基于 DSH 的多 Agent 高效协作助手"), fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+            }
         }
     }
 }
 
 @Composable
 fun NavigationScreen(route: Route, state: UiState, model: DuduViewModel) {
+    if (route.target == "settings") return DshSettingsScreen(state, model)
     Page(route.title, model::backRoute) {
         LazyColumn {
-            cardItems(state.navigation.rows(route.target ?: "sidebar").filter {
-                route.target != "settings" || (it.optString("group") != "dudu" &&
-                    it.optJSONObject("open")?.optString("native") !in listOf("dudu-settings", "dsh-settings"))
-            }) { item ->
+            cardItems(state.navigation.rows(route.target ?: "sidebar")) { item ->
                 Line(item.optString("title"), action = { model.navigateItem(item) })
             }
         }
+    }
+}
+
+/**
+ * DSH 设置, what the drawer's gear opens (the iPhone's DSH-only `SettingsView`): DSH's own sections as the plugin lists them, each with DSH's icon (or one guessed from its name) and a
+ * chevron, opening its page of DSH's settings. The list is read again when the page opens; until it has come, 加载设置…, and 重试 when the computer did not answer.
+ */
+@Composable
+private fun DshSettingsScreen(state: UiState, model: DuduViewModel) {
+    var reading by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
+    var attempt by remember { mutableIntStateOf(0) }
+    LaunchedEffect(attempt, state.connected) {
+        if (!state.connected) return@LaunchedEffect
+        reading = true; failed = false
+        failed = !model.refreshNavigation()
+        reading = false
+    }
+    val rows = state.navigation.rows("settings").filter {
+        it.optString("group") != "dudu" && it.optJSONObject("open")?.optString("native") !in listOf("dudu-settings", "dsh-settings")
+    }
+    Page(w("DSH 设置"), model::backRoute, background = settingsCanvas()) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 30.dp)) {
+            if (rows.isNotEmpty() || reading || failed || !state.connected) InsetCard {
+                rows.forEachIndexed { index, item ->
+                    if (index > 0) SettingsDivider()
+                    SettingsCardRow(dshCategoryGlyph(item), item.optString("title"), tag = "settings-dsh-${item.optString("id")}",
+                        leading = item.optJSONObject("icon")?.let { icon -> { NavigationGlyph(icon, 22) } },
+                        trailing = { SettingsChevron() }) {
+                        DuduLog.record("settings.dsh.section")
+                        model.navigateItem(item)
+                    }
+                }
+                if (rows.isEmpty() && !failed) SettingsCardRow(DuduGlyphs.settings, w("加载设置…"), tag = "settings-dsh-loading",
+                    titleColor = MaterialTheme.colorScheme.onSurfaceVariant, trailing = {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    })
+                if (rows.isEmpty() && failed) SettingsCardRow(DuduGlyphs.reconnect, w("重试"), tag = "settings-dsh-retry",
+                    trailing = { SettingsChevron() }) { attempt++ }
+            }
+        }
+    }
+}
+
+/** A glyph for a section DSH sent no icon for, guessed from its id and name (the iPhone's `categoryGlyph`). */
+private fun dshCategoryGlyph(item: JSONObject): Int {
+    val key = "${item.optString("id")} ${item.optString("title")}".lowercase()
+    fun has(vararg words: String) = words.any { key.contains(it) }
+    return when {
+        has("account", "user", "账号", "账户", "余额", "登录") -> DuduGlyphs.account
+        has("model", "模型", "provider") -> DuduGlyphs.model
+        has("plugin", "market", "插件", "市场") -> DuduGlyphs.plugins
+        has("skill", "agent", "preset", "技能", "智能体", "预设") -> DuduGlyphs.skills
+        has("schedule", "automation", "定时", "计划", "自动化") -> DuduGlyphs.schedule
+        has("permission", "security", "权限", "安全") -> DuduGlyphs.permission
+        has("tool", "terminal", "工具", "终端") -> DuduGlyphs.terminal
+        else -> DuduGlyphs.settings
     }
 }

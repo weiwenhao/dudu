@@ -10,6 +10,10 @@ import { connectionAddress, connectionKind, createPairingStore } from './pairing
 import { renderPairingSvg } from './qr.mjs';
 import { createWebPageHttp } from './web-page-http.mjs';
 import { createNativeNotifications } from './native-notifications.mjs';
+import { createBoardChanges } from './native-board-changes.mjs';
+import { createBoardWake } from './native-board-wake.mjs';
+import { createWakeLog } from './wake-log.mjs';
+import { understands } from './native-client.mjs';
 
 const MAX_ADDRESSES = 32;
 const DEFAULT_PORT = 3170;
@@ -76,6 +80,36 @@ export async function createDuduControl({
   };
 
   const lanAddress = () => connectionAddress(`http://${resolveLanAddress()}:${server.port}`);
+  // "The board changed", told to the phones that declared `board.push` as soon as it does, instead of waiting for their next poll (native-board-changes.mjs).
+  const boardChanges = createBoardChanges({
+    send: (revision) => {
+      server.broadcast?.('board.changed', { revision }, (connection) => understands(connection.client, 'board.push'));
+      boardWake.changed();
+    },
+  });
+  // And to a phone that is away, one silent push from Apple that wakes its App for a few seconds to read the board and write it down (native-board-wake.mjs). Only a phone that declared
+  // `board.wake` is sent it, so App Store build 143 is sent nothing; what Apple answered, and when, goes to `diagnostics/wake.jsonl`.
+  const wakeLog = createWakeLog(folder);
+  const boardWake = createBoardWake({
+    candidates: () => (devices?.list() ?? []).filter((device) => understands(device.client, 'board.wake')).map((device) => device.id),
+    isAway: (deviceId) => server?.isLive?.(deviceId) !== true,
+    wake: async (deviceId) => {
+      const result = await notifications?.wake(deviceId);
+      if (result) wakeLog.record({ kind: 'wake', device: deviceId, status: result.status, reason: result.reason });
+    },
+    notice: async (deviceId, event) => {
+      const result = await notifications?.notice(deviceId, event);
+      if (result) wakeLog.record({ kind: 'notice', device: deviceId, status: result.status, reason: result.reason });
+    },
+  });
+  // A phone that keeps its own connection open in the background (the Android app's foreground service, as OpenClaw's app does; owner, 2026-11-22: 「就按 openclaw 的方式做」) is told on that
+  // connection what the iPhone is pushed by Apple: one `notification` event with the same title and words (`apns.mjs`). Only an app that declared `notifications.events` is sent it.
+  const stopNotificationEvents = collectorNotifications?.subscribe?.((event) => {
+    server?.broadcast?.('notification', {
+      kind: 'collector', collectorId: String(event?.collector ?? ''),
+      title: String(event?.title ?? '').slice(0, 200), body: String(event?.body ?? '').slice(0, 2000),
+    }, (connection) => understands(connection.client, 'notifications.events'));
+  }) ?? (() => {});
   let legacySecureCookie = false;
   if (stored && !Object.hasOwn(stored, 'addresses')) {
     if (!['lan', 'public'].includes(stored.mode)) throw new Error('配置格式不正确。');
@@ -190,6 +224,10 @@ export async function createDuduControl({
     navigation,
     state,
     save,
+    boardChanged: () => boardChanges.changed(),
+    boardSessionChanged: (id, attention) => boardChanges.sessionChanged(id, attention),
+    /** A reply or a question nobody has read: told to the phones that are away, as a notice that also wakes their App (native-board-announce.mjs). */
+    announce: (event) => boardWake.announce(event),
     async generate(value) {
       const next = validate(value);
       const address = value.address === undefined ? lanAddress() : connectionAddress(value.address);
@@ -249,6 +287,9 @@ export async function createDuduControl({
     },
     async close() {
       await saving;
+      boardChanges.close();
+      boardWake.close();
+      stopNotificationEvents();
       try {
         await notifications.close();
         await httpPages?.close();

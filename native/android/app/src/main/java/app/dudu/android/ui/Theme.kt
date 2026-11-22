@@ -20,6 +20,7 @@ object DuduStyle {
     val settings = Color(0xFFF2F2F7)
     val selected = Color(0xFFEAEAED)
     val scopeTrack = Color(0xFFEFF0F2)
+    val scopeInk = Color(0xFF737982)
 }
 
 private val light = lightColorScheme(

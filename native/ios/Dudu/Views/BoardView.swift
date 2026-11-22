@@ -18,7 +18,7 @@ struct BoardScopeBar: View {
         HStack(spacing: 2) {
             Button(action: onFilter) {
                 DuduIcon(.listFilter, size: 18)
-                    .foregroundStyle(hasFilters ? DuduStyle.blue : DuduStyle.ink)
+                    .foregroundStyle(hasFilters ? DuduStyle.blue : DuduStyle.scopeInk)
                     .frame(width: 32, height: 32)
                     .background(hasFilters ? DuduStyle.chatBubble : DuduStyle.scopeTrack, in: Circle())
                     .frame(width: 44, height: 44)
@@ -32,9 +32,8 @@ struct BoardScopeBar: View {
                 ForEach(BoardTab.allCases) { tab in
                     Button { onSelect(tab) } label: {
                         Text(tab.title)
-                            // The chosen tab's words stay the grey of the others; only the white pill marks it (owner, 2026-11-18: "就用灰色吧").
-                            .font(.system(size: 14, weight: selection == tab ? .medium : .regular))
-                            .foregroundStyle(DuduStyle.chatSecondary)
+                            .font(.system(size: 13))
+                            .foregroundStyle(DuduStyle.scopeInk)
                             .lineLimit(1)
                             .minimumScaleFactor(0.85)
                             .padding(.horizontal, 13)

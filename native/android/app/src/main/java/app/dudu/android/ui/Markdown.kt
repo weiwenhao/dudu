@@ -16,16 +16,38 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import android.content.ClipData
 import androidx.compose.ui.platform.ClipEntry
 
+/**
+ * The body text of a reply, set to Codex's (owner, 2026-11-21: 「参考 Codex 调整吧」, after three screenshots were measured: `.local/designs/font-compare-2026-11-21/`), the iPhone's `ChatTypography`:
+ * 17 with -0.41 tracking (16.6 from one character to the next), 24 from line to line and 40 from the last line of a paragraph to the first of the next (24 + the gap).
+ */
+private object ChatTypography {
+    val size = 17.sp
+    val lineHeight = 24.sp
+    val tracking = (-0.41).sp
+    val blockGap = 16.dp
+    /** A heading is as big as the text (Codex's "第二步：…" lines): 24 + 24 from the paragraph before it, 24 + 8 to what follows (48.1pt and 32.3pt from line to line). */
+    val beforeHeading = 24.dp
+    val afterHeading = 8.dp
+}
+
 @Composable
-fun Markdown(text: String, compact: Boolean = false, selectable: Boolean = true) {
+fun Markdown(text: String, compact: Boolean = false, selectable: Boolean = true,
+    picture: (@Composable (words: String, source: String) -> Unit)? = null) {
     val blocks = remember(text) { markdownBlocks(text) }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 12.dp)) {
-        blocks.forEach { block ->
+    Column(Modifier.fillMaxWidth()) {
+        blocks.forEachIndexed { index, block ->
+            if (index > 0) Spacer(Modifier.height(when {
+                compact -> 6.dp
+                block.kind.toIntOrNull() != null -> ChatTypography.beforeHeading
+                blocks[index - 1].kind.toIntOrNull() != null -> ChatTypography.afterHeading
+                else -> ChatTypography.blockGap
+            }))
             when (block.kind) {
                 "code" -> CodeBlock(block.text, block.language)
                 "table" -> {
@@ -44,13 +66,17 @@ fun Markdown(text: String, compact: Boolean = false, selectable: Boolean = true)
                     }
                 }
                 "rule" -> HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                // A picture where it stands; where nothing can read it, its words, as before.
+                "image" -> if (picture != null) picture(block.text, block.language)
+                    else Text(block.text, fontSize = if (compact) 14.sp else ChatTypography.size, color = MaterialTheme.colorScheme.onSurface)
                 else -> {
                     val paragraph: @Composable () -> Unit = {
                     val heading = block.kind.toIntOrNull()
                     Text(inlineMarkdown(block.text), modifier = if (block.kind == "quote")
                         Modifier.background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(8.dp)).padding(12.dp) else Modifier,
-                        fontSize = when (heading) { 1 -> 24.sp; 2 -> 21.sp; 3 -> 18.sp; else -> if (compact) 14.sp else 16.sp },
-                        lineHeight = if (compact) 22.sp else 26.sp,
+                        fontSize = when (heading) { 1 -> 24.sp; 2 -> 21.sp; 3 -> ChatTypography.size; else -> if (compact) 14.sp else ChatTypography.size },
+                        lineHeight = if (compact) 22.sp else when (heading) { 1 -> 31.sp; 2 -> 27.sp; else -> ChatTypography.lineHeight },
+                        letterSpacing = if (compact) TextUnit.Unspecified else ChatTypography.tracking,
                         fontWeight = if (heading != null) FontWeight.SemiBold else FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onSurface)
                     }
@@ -62,6 +88,25 @@ fun Markdown(text: String, compact: Boolean = false, selectable: Boolean = true)
 }
 
 data class MarkdownBlock(val kind: String, val text: String, val language: String = "")
+
+private val pictureInText = Regex("!\\[([^]]*)]\\(([^)]+)\\)")
+
+/**
+ * A paragraph, with each picture in it taken out as a block of its own where it stands (`image`: its words in `text`, its address in `language`), so that it is drawn there and not after the
+ * message (the iPhone's Markdown draws a picture in its place; owner, 2026-11-22: 「安卓也要一样吧」). A paragraph without pictures stays as it was.
+ */
+private fun paragraphBlocks(text: String): List<MarkdownBlock> {
+    if (!pictureInText.containsMatchIn(text)) return listOf(MarkdownBlock("text", text))
+    val blocks = mutableListOf<MarkdownBlock>()
+    var from = 0
+    for (match in pictureInText.findAll(text)) {
+        text.substring(from, match.range.first).trim().takeIf { it.isNotEmpty() }?.let { blocks.add(MarkdownBlock("text", it)) }
+        blocks.add(MarkdownBlock("image", match.groupValues[1], match.groupValues[2]))
+        from = match.range.last + 1
+    }
+    text.substring(from).trim().takeIf { it.isNotEmpty() }?.let { blocks.add(MarkdownBlock("text", it)) }
+    return blocks
+}
 
 fun markdownBlocks(text: String): List<MarkdownBlock> {
     val result = mutableListOf<MarkdownBlock>()
@@ -90,7 +135,7 @@ fun markdownBlocks(text: String): List<MarkdownBlock> {
                 while (i + 1 < lines.size && lines[i + 1].isNotBlank() &&
                     !lines[i + 1].matches(Regex("^(?:#{1,6} |[-*+] |\\d+\\. |>|```|~~~).*")) &&
                     !lines[i + 1].contains('|')) { i++; paragraph.add(lines[i]) }
-                result.add(MarkdownBlock("text", paragraph.joinToString("\n")))
+                result.addAll(paragraphBlocks(paragraph.joinToString("\n")))
             }
         }
         i++
@@ -138,7 +183,7 @@ fun CodeBlock(text: String, language: String = "") {
             Text(language, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             IconButton(onClick = { scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("code", text))) } }) {
-                Glyph(app.dudu.android.R.drawable.ic_copy, w("复制"), 16)
+                Glyph(DuduGlyphs.copy, w("复制"), 16)
             }
         }
         SelectionContainer { Text(text, Modifier.horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, bottom = 12.dp),

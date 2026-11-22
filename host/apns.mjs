@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { createHash, createPrivateKey, randomUUID, sign } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { connect } from 'node:http2';
@@ -65,16 +66,34 @@ export function createAPNsSender({ teamId, keyId, key, now = Date.now, connectHT
       if (closed || !Object.hasOwn(HOSTS, registration.environment)
         || !/^(?:[a-f0-9]{2}){16,256}$/u.test(registration.token)) throw new Error('APNS_REGISTRATION_INVALID');
       signal?.throwIfAborted();
-      const group = createHash('sha256').update(`${computerId}:${event.collector}`).digest('hex');
-      const body = JSON.stringify({
-        aps: { alert: { title: event.title, body: event.body }, sound: 'default', 'thread-id': group },
-        dudu: { version: 1, computerId, collectorId: event.collector },
-      });
+      // Three things are pushed. A collector's notification is an alert. The board wake (owner, 2026-11-22: 「通过通知唤醒，然后将消息写入」) is nothing the person sees: no alert, no sound, no number;
+      // it only wakes an App that iOS has suspended for a few seconds, so that it can read the board and write it down before it is opened (native-board-wake.mjs). A notice of a reply or a question
+      // (「弹通知也行」, native-board-announce.mjs) is an alert, without a sound, that also carries the wake (and the notification extension's `mutable-content`): Apple delivers an alert at once, and the next
+      // notice of the same conversation replaces it.
+      const wake = event.kind === 'board';
+      const notice = event.kind === 'announce';
+      const group = createHash('sha256').update(`${computerId}:${wake ? 'board' : notice ? `conversation:${event.conversationId}` : event.collector}`).digest('hex');
+      const body = JSON.stringify(wake
+        ? { aps: { 'content-available': 1 }, dudu: { version: 1, computerId, kind: 'board' } }
+        : notice
+          ? {
+            // Both ways to write the board: the notification extension runs before the notice is shown, also with the App swiped away (`mutable-content`), and the App is woken after it (`content-available`),
+            // which still works if the extension could not reach the computer. A phone without the extension ignores the first.
+            aps: { alert: { title: event.title, body: event.body }, 'mutable-content': 1, 'content-available': 1, 'thread-id': group },
+            dudu: { version: 1, computerId, kind: 'board', conversationId: event.conversationId },
+          }
+          : {
+            aps: { alert: { title: event.title, body: event.body }, sound: 'default', 'thread-id': group },
+            dudu: { version: 1, computerId, collectorId: event.collector },
+          });
       if (Buffer.byteLength(body) > 4096) throw new Error('APNS_PAYLOAD_TOO_LARGE');
       const headers = {
         ':method': 'POST', ':path': `/3/device/${registration.token}`,
-        authorization: `bearer ${jwt()}`, 'apns-topic': TOPIC, 'apns-push-type': 'alert',
-        'apns-priority': '10', 'apns-expiration': '0', 'apns-collapse-id': group, 'apns-id': randomUUID(),
+        authorization: `bearer ${jwt()}`, 'apns-topic': TOPIC, 'apns-push-type': wake ? 'background' : 'alert',
+        'apns-priority': wake ? '5' : '10',
+        // A wake that Apple could not hand over at once is kept for an hour (the App reads the board as it is then, and a newer wake replaces it); an alert is not kept.
+        'apns-expiration': wake ? String(Math.floor(now() / 1000) + 3600) : '0',
+        'apns-collapse-id': group, 'apns-id': randomUUID(),
         'content-type': 'application/json',
       };
       return new Promise((resolve, reject) => {

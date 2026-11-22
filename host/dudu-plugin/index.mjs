@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -15,6 +16,8 @@ import { createNativeQuestions } from './dist/native-questions.mjs';
 import { desktopPackageIdentity, writeDesktopRuntime } from './dist/desktop-runtime.mjs';
 import { createNativeDiagnostics } from './dist/native-diagnostics.mjs';
 import { createSessionDiagnostics } from './dist/session-diagnostics.mjs';
+import { cleanReadSource, createReadLog } from './dist/read-log.mjs';
+import { createBoardAnnounce } from './dist/native-board-announce.mjs';
 import { createStartupLog } from './dist/startup-log.mjs';
 import { createProviders } from './dist/providers/index.mjs';
 import { createSessionTools } from './dist/providers/cron-tools.mjs';
@@ -147,6 +150,13 @@ async function startProviders(ctx, folder, assignment) {
   // The cron tools Claude is given in place of its own (providers/cron-tools.mjs): jobs are tasks of Dudu that send their prompt into the conversation that made them. The tasks start after the providers, so they are asked for per call.
   const sessionTools = createSessionTools({
     tasks: () => assignment.tasks,
+    question: {
+      schema: (agent) => ctx.tools.get('ask_user_question', agent),
+      ask: (request) => {
+        if (!ctx.tools.get('ask_user_question', request.agent)) throw new Error('Unknown tool: ask_user_question');
+        return ctx.userQuestions.ask(request);
+      },
+    },
     describe: (sessionId) => {
       let workspace;
       try { workspace = ctx.workspaceRegistry?.list().find((item) => item.sessionIds.includes(sessionId)); } catch { workspace = undefined; }
@@ -299,10 +309,20 @@ async function startIssues(ctx, folder, assignment = {}) {
     try { sent = await (assignment.forward?.(target, text, content) ?? { outcome: 'error' }); }
     catch (error) { if (waiting) assignment.group.cancel(waiting); throw error; }
     if (waiting) {
-      if (['success', 'no_op'].includes(sent?.outcome)) await assignment.group.sent(waiting, { issue: current, text, files: Array.isArray(content) ? content.length : 0 });
-      else assignment.group.cancel(waiting);
+      if (['success', 'no_op'].includes(sent?.outcome)) {
+        const pictures = await keepPictures(content);
+        await assignment.group.sent(waiting, { issue: current, text, files: Array.isArray(content) ? content.length : 0, pictures });
+      } else assignment.group.cancel(waiting);
     }
     return sent;
+  };
+  // The pictures sent with a line of 嘟嘟's chat are kept in DSH's store, as an issue's are, so that the thread shows them in the line's own bubble (owner, 2026-11-22:
+  // 「把消息和一起发的图片绑定在一个消息框里边」). A DSH that cannot keep them leaves the line as it was: its words, and how many files went with them.
+  const keepPictures = async (content) => {
+    const images = (Array.isArray(content) ? content : []).filter((part) => part?.type === 'image' && typeof part.data === 'string');
+    if (!images.length || !attachmentApi.available()) return [];
+    try { return await attachmentApi.saveImages(images.map(({ name, mediaType, data }) => ({ name, mediaType, data: Buffer.from(data, 'base64') }))); }
+    catch (error) { console.warn(`[dudu] The pictures of a line to an issue could not be kept: ${error.message}`); return []; }
   };
   const api = createIssuesApi({
     issues,
@@ -482,7 +502,20 @@ async function startAssignment(ctx, folder, assignment) {
     pinned: (key) => (assignment.issues?.sessionOwners(key)?.length ?? 0) > 0,
   });
   assignment.snapshots = snapshots;
+  // Which screen made a conversation read, and how, in `diagnostics/reads.jsonl` (read-log.mjs).
+  const readLog = createReadLog(folder);
+  // A reply or a question nobody has read is shown on a phone that is away, as a notice that also wakes its App to write the board (native-board-announce.mjs).
+  const boardAnnounce = createBoardAnnounce({
+    announce: (event) => assignment.announcePhones?.(event),
+    conversationOf: (sessionId) => {
+      if (sessionId === assignment.conversation?.state()?.sessionId) return { id: 'assistant', title: '嘟嘟' };
+      const issue = assignment.issues?.findBySession(`dsh:${sessionId}`)?.issue;
+      return issue ? { id: `issue:${issue.id}`, title: issue.title } : null;
+    },
+  });
   const sessionActivity = createSessionActivity({
+    readLog,
+    onContent: (details) => boardAnnounce.content(details),
     receipts: readReceipts,
     projected: (id) => { const session = ctx.sessions.get(id); return session ? activityProjection?.stateOf(session) : null; },
     readProjection: async (sessionId, signal) => {
@@ -492,13 +525,23 @@ async function startAssignment(ctx, folder, assignment) {
     listProjections: async (signal) => (await ctx.sessionController.list({}, signal)).items,
     diagnostics: assignment.sessionDiagnostics,
     snapshotOf: hooks.snapshotOf, nativeSnapshotOf: (key) => snapshots.snapshotOf(key), liveOf: (id) => ctx.agents?.get(id),
+    // A read or an unread mark that moved something is told to the phones at once (native-board-changes.mjs).
+    changed: () => assignment.boardChanged?.(),
   });
   const stopAttention = ctx.on('session/event', (session) => {
-    if (session?.id && activityProjection) sessionActivity.observe(session.id, activityProjection.stateOf(session));
+    if (!session?.id || !activityProjection) return;
+    const attention = activityProjection.stateOf(session);
+    sessionActivity.observe(session.id, attention);
+    sessionActivity.noteContent(session.id, attention);
+    // A turn began or ended, a question or an answer was recorded: the phones read the board again now, not at their next poll.
+    assignment.boardSessionChanged?.(session.id, attention);
   }, { global: true });
+  // A change of an issue (its title, status, agent), made on the desktop or by Dudu, is one more thing the phones' board shows.
+  const stopIssueChanges = assignment.issues?.onChange?.(() => assignment.boardChanged?.());
   assignment.sessionHistoryAppended = (id, events) => {
     // Cold native imports append through persistence, without publishing a live session/event.
     const session = ctx.sessions.get(id);
+    assignment.boardChanged?.();
     if (session && activityProjection) { sessionActivity.observe(id, activityProjection.stateOf(session)); return; }
     const attention = events.reduce((state, event) => sessionActivityProjection.apply(state, event), sessionActivity.attentionOf(id));
     // The previous display hint may predate this append. It can update the list, but only a
@@ -593,7 +636,8 @@ async function startAssignment(ctx, folder, assignment) {
       const body = await request.json().catch(() => null);
       if (!body || typeof body.sessionId !== 'string' || !validReadPosition(body.position)) return Response.json({ code: 'invalid_read' }, { status: 400 });
       try {
-        return Response.json(await acknowledgeRead(body.sessionId, body.position), { headers: { 'cache-control': 'no-store' } });
+        // The desktop says which of its panes it was and what the person did (`ui/lib/session-read-receipts.js`); only the log gets it.
+        return Response.json(await acknowledgeRead(body.sessionId, body.position, cleanReadSource(body.source, { screen: 'desktop' })), { headers: { 'cache-control': 'no-store' } });
       } catch { return Response.json({ code: 'invalid_read' }, { status: 400 }); }
     },
   });
@@ -602,11 +646,13 @@ async function startAssignment(ctx, folder, assignment) {
     disposeRead();
     disposeActivity();
     stopAttention();
+    stopIssueChanges?.();
     delete assignment.sessionHistoryAppended;
     delete assignment.acknowledgeRead;
     delete assignment.markSessionUnread;
     delete assignment.warmSessionActivity;
     await sessionActivity.close();
+    await readLog.flush();
     await folding.close();
     await deepSleep.close();
     for (const stop of questionStops) stop();
@@ -833,17 +879,23 @@ async function startConversation(ctx, folder, assignment) {
   const dsh = createDshSessions(ctx, { historyFacts: assignment.historyFacts });
   // The latest message of each issue's session, fed by what DSH says of every live session (home/latest.mjs), and the lines of the group chat (home/group.mjs): the owner's @ messages to issues
   // and their answers come into the thread as commands of the conversation.
+  // 嘟嘟's own session is kept too: what the owner types to it is what its row in the chat list shows (the `@` lines are the group's: `group.ownLine()`).
   const latest = createLatest({
     file: join(folder, 'assistant', 'latest.json'),
-    relevant: (sessionId) => Boolean(assignment.issues?.findBySession(`dsh:${sessionId}`)),
+    relevant: (sessionId) => Boolean(assignment.issues?.findBySession(`dsh:${sessionId}`)) || sessionId === assignment.conversation?.state()?.sessionId,
     read: (sessionId, signal) => dsh.latestMessages(sessionId, signal),
   });
-  const stopLatest = ctx.on?.('session/event', (session, event) => latest.observe(session?.id, event), { global: true });
+  const stopLatest = ctx.on?.('session/event', (session, event) => {
+    // What the owner just said is what the chat list shows for that conversation (home/chat-home.mjs, `ownMessages`): the phones read the board again now, not at their next poll.
+    if (latest.observe(session?.id, event) === 'me') assignment.boardChanged?.();
+  }, { global: true });
   const group = createGroup({
     file: join(folder, 'assistant', 'group.json'),
     sessions: () => assignment.sessions,
     say: (kind, record) => assignment.conversation.say(kind, record),
   });
+  // The owner's `@` line to an issue is what they said last to 嘟嘟 (its row in the chat list): the phones read the board again when one comes into the thread.
+  const stopGroupBoard = group.onChange((commandId) => { if (group.get(commandId)?.kind === 'at') assignment.boardChanged?.(); });
   const cards = createCards({
     file: join(folder, 'assistant', 'cards.json'),
     issues: () => assignment.issuesApi, inbox: () => assignment.inboxApi, tasks: () => assignment.tasks, quota: () => assignment.quota, latest,
@@ -890,7 +942,7 @@ async function startConversation(ctx, folder, assignment) {
         sessionPeer = ctx.connection.createPeer({ principal: { kind: 'owner' } });
         sessionOperations = createAssistantSessionOperations({
           rpc: createTypertRpcAdapter({ gateway: ctx.typertGateway, peer: sessionPeer }),
-          dsh, controller: ctx.sessionController,
+          dsh, controller: ctx.sessionController, questionBridge: assignment.questionBridge,
         });
       }
       return sessionOperations.execute(action, args);
@@ -938,6 +990,7 @@ async function startConversation(ctx, folder, assignment) {
   return async () => {
     for (const dispose of disposers) dispose();
     stopLatest?.();
+    stopGroupBoard();
     group.dispose();
     latest.dispose();
     await conversation.close();
@@ -955,8 +1008,12 @@ function startChatHome(ctx, folder, assignment) {
     assistant: () => assignment.conversation?.state(),
     activity: (id) => assignment.sessionActivity?.(id),
     warm: (ids) => step('home.warm', () => assignment.warmSessionActivity?.(ids)),
-    markUnread: (id) => assignment.markSessionUnread(id),
-    acknowledge: (id, position) => assignment.acknowledgeRead(id, position),
+    markUnread: (id, source) => assignment.markSessionUnread(id, source),
+    acknowledge: (id, position, source) => assignment.acknowledgeRead(id, position, source),
+    changed: () => assignment.boardChanged?.(),
+    // What the owner said last (home/latest.mjs, home/group.mjs): a list asked with `ownMessages` shows it when it is newer than the agent's last answer.
+    mine: (sessionId) => assignment.latest?.mine(sessionId) ?? null,
+    assistantLine: () => assignment.group?.ownLine() ?? null,
   });
   const handle = createChatHomeApi(home, (action, body) => assignment.issuesApi.execute(action, body));
   const disposers = [];
@@ -987,7 +1044,7 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
   // Older hosts without this transaction scope need no detachment.
   const reloadTransaction = ctx.get('hmr')?.executing;
   let control;
-  let questionBridge;
+  const questionBridge = assignment.questionBridge;
   const chatHome = assignment.chatHome;
   const disposers = [];
   try {
@@ -1007,14 +1064,6 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
       webServer: ctx.webServer,
     });
     const pages = createNativePages({ frontend, pageRpc });
-    questionBridge = createNativeQuestions({
-      events: ctx,
-      attachWait: (request, signal) => {
-        const questions = ctx.get('userQuestions');
-        if (typeof questions?.attachWait !== 'function') throw new Error('User question wait service is unavailable.');
-        return questions.attachWait(request.agent, request.wait.callId, signal);
-      },
-    });
     control = await step('phone.control', () => createDuduControl({
       folder,
       rpc,
@@ -1030,7 +1079,7 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
       }),
       questionBridge,
       sessionActivity: (id) => assignment.sessionActivity?.(id),
-      acknowledgeRead: (id, position) => assignment.acknowledgeRead?.(id, position),
+      acknowledgeRead: (id, position, source) => assignment.acknowledgeRead?.(id, position, source),
       sessionSearch: assignment.searchSessions,
       assistantConversation: () => assignment.conversation?.ensure(),
       assistant: {
@@ -1074,6 +1123,9 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
       port: config.port ?? 3170,
       host: config.host ?? '0.0.0.0',
     }));
+    assignment.boardChanged = control.boardChanged;
+    assignment.announcePhones = control.announce;
+    assignment.boardSessionChanged = control.boardSessionChanged;
     assignment.phoneOperations = async (action, body) => {
       if (action === 'state') return control.state();
       if (action === 'save') return control.save(body);
@@ -1087,7 +1139,6 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
       }));
     }
   } catch (error) {
-    questionBridge?.close();
     for (const dispose of disposers) dispose();
     try { await control?.close(); }
     finally { await peer.dispose(); await diagnostics.flush(); }
@@ -1098,7 +1149,9 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
   console.info(`[dudu] Ready on port ${control.state().port}. Open the 嘟嘟 page, then Settings > 手机控制 to pair.`);
   return async () => {
     delete assignment.phoneOperations;
-    questionBridge.close();
+    delete assignment.boardChanged;
+    delete assignment.announcePhones;
+    delete assignment.boardSessionChanged;
     for (const dispose of disposers) dispose();
     try { await control.close(); }
     finally { await peer.dispose(); await diagnostics.flush(); }
@@ -1129,6 +1182,17 @@ export async function apply(ctx, config = {}) {
   const stopNames = [];
   const keep = (name, stop) => { stops.push(stop); stopNames.push(name); };
   const assignment = {};
+  // The same requests serve Desktop, native phones and explicit Dudu session
+  // operations. Their lifetime does not depend on phone control being available.
+  assignment.questionBridge = createNativeQuestions({
+    events: ctx,
+    attachWait: (request, signal) => {
+      const questions = ctx.get('userQuestions');
+      if (typeof questions?.attachWait !== 'function') throw new Error('User question wait service is unavailable.');
+      return questions.attachWait(request.agent, request.wait.callId, signal);
+    },
+  });
+  keep('questions', () => assignment.questionBridge.close());
   let providerServices;
   try {
     providerServices = await timed('providers', () => startProviders(ctx, folder, assignment));

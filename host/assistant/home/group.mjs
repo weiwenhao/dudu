@@ -43,6 +43,15 @@ export function briefIssue(issue) {
   };
 }
 const nameOf = (issue) => issue?.ref ?? (issue?.id != null ? `#${issue.id}` : '');
+const MAX_PICTURES = 20;
+
+/** The complete references DSH's store needs to give a picture back (`session/attachment`): the id, the type, the size in bytes and in pixels, and the name it was sent with. */
+export function pictureRefs(value) {
+  const count = (number) => Number.isSafeInteger(number) && number > 0;
+  return (Array.isArray(value) ? value : []).filter((ref) => isRecord(ref) && typeof ref.attachmentId === 'string' && ref.attachmentId
+    && typeof ref.mediaType === 'string' && count(ref.bytes) && count(ref.width) && count(ref.height)).slice(0, MAX_PICTURES)
+    .map(({ attachmentId, mediaType, bytes, width, height, name }) => ({ attachmentId, mediaType, bytes, width, height, ...(typeof name === 'string' && name ? { name: clip(name, 160) } : {}) }));
+}
 
 /** The line of a scheduled task's result: who it is (the task's id and title), what it says (its last message, or why the run failed: `ok` false) and when. */
 export function taskLine({ task, text, ok = true, at }) {
@@ -205,6 +214,13 @@ export function createGroup({ file = null, sessions = () => null, say = async ()
   return {
     command, pend, take, put, get,
     revision: () => revision,
+    /** The owner's latest `@` line, as the thread shows it (`@DUD-18 …`): `{ text, at }`, or null. The conversation list shows it as what the owner said last to 嘟嘟 (owner, 2026-11-22). */
+    ownLine() {
+      let found = null;
+      for (const record of kept.values()) if (record?.kind === 'at' && Number.isFinite(record.at) && (!found || record.at >= found.at)) found = record;
+      const text = found ? sayText(found) : '';
+      return text ? { text, at: found.at } : null;
+    },
     onChange(callback) { listeners.add(callback); return () => listeners.delete(callback); },
     many(ids) {
       const found = {};
@@ -225,13 +241,18 @@ export function createGroup({ file = null, sessions = () => null, say = async ()
       waits.delete(token);
       if (wait && liveReplies.delete(wait.atId)) changed(wait.atId);
     },
-    /** The line was delivered: it comes into the thread (its tick), and its answer when it comes. */
-    async sent(token, { issue, text, files = 0 }) {
+    /**
+     * The line was delivered: it comes into the thread (its tick), and its answer when it comes. `pictures` are the references DSH's store gave to the pictures that went with it
+     * (`ImageAttachmentRef`): the thread shows them in the line's bubble, and the phone reads one by the line's place (native-bridge.mjs).
+     */
+    async sent(token, { issue, text, files = 0, pictures = [] }) {
       const wait = waits.get(token);
       if (!wait) return null;
       wait.issue = briefIssue(issue);
+      const kept = pictureRefs(pictures);
       try {
-        wait.atId = await say('at', { v: VERSION, kind: 'at', issue: wait.issue, text: clip(text, MAX_TEXT), files: Number.isSafeInteger(files) && files > 0 ? files : 0, at: now() });
+        wait.atId = await say('at', { v: VERSION, kind: 'at', issue: wait.issue, text: clip(text, MAX_TEXT), files: Number.isSafeInteger(files) && files > 0 ? files : 0,
+          ...(kept.length ? { pictures: kept } : {}), at: now() });
       } catch (error) {
         waits.delete(token);
         log.warn?.(`[dudu] The line to an issue could not be put in the group chat: ${error.message}`);

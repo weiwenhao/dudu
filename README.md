@@ -4,7 +4,7 @@
 
 ### An efficient multi-agent collaboration assistant built on DSH
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) ![version](https://img.shields.io/badge/version-0.1.0-orange?style=flat-square) ![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2024-339933?style=flat-square&logo=node.js&logoColor=white) ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-0.2.2--rc.1-4D6BFE?style=flat-square)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) ![version](https://img.shields.io/badge/version-0.1.1-orange?style=flat-square) ![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2024-339933?style=flat-square&logo=node.js&logoColor=white) ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-0.2.2--rc.1-4D6BFE?style=flat-square)
 
 [Design philosophy](#design-philosophy) • [Features](#features) • [Development guide](#development-guide) • **English** · [简体中文](README.zh-CN.md)
 
@@ -16,10 +16,10 @@ Dudu is a multi-agent collaboration workspace built on [DeepSeek Harness](https:
     <img src="docs/images/hero.en.png" width="900" alt="Dudu inside DSH Desktop: the conversations of the issues on the left with one of them open, the Inbox on the top right and the Office below it">
 </div>
 
-Dudu can be managed from your phone too: on iOS, search for dudu in the App Store; on Android, install the apk from [GitHub Release](https://github.com/weiwenhao/dudu/releases).
+Dudu can be managed from your phone too: on iOS, search for dudu in the App Store or join the [TestFlight beta](https://testflight.apple.com/join/TNUPd6n7); on Android, install the apk from [GitHub Release](https://github.com/weiwenhao/dudu/releases).
 
 <div align="center">
-  <img src="docs/images/phone.en.png" alt="The mobile app, from left to right: the conversation list; the chat; the menu that opens from + in the chat; tasks" width="900">
+  <img src="docs/images/phone.en.png" alt="The mobile app, from left to right: the conversation list; the chat; the inbox; tasks" width="900">
 </div>
 
 The workspace's home page is a dashboard: you can arrange its layout freely and develop widgets of your own.

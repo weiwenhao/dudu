@@ -13,19 +13,31 @@ private struct SettingsRow: Identifiable, Hashable {
 struct SettingsView: View {
     @ObservedObject var store: DuduStore
     @ObservedObject var pagePool: EmbeddedPagePool
+    var isHome = false
+    var isActive = true
+    var onOpenSidebar: (() -> Void)?
+    var onRootVisibility: ((Bool) -> Void)?
+    /// The drawer's gear opens DSH's settings on their own (owner, 2026-11-21): its list and sections, with no 嘟嘟 settings around them.
+    var showsOnlyDSHSettings = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     /// Only DSH's own settings need an embedded page, created when its list is entered.
     @StateObject private var embeddedSession = EmbeddedPageSession()
     @State private var embeddedRetryToken = 0
     @State private var selectedRow: SettingsRow?
-    /// DSH's own pages are one level down, behind "其他设置" (owner, 2026-11-08), not listed beside 嘟嘟's.
-    @State private var showsDSHSettings = false
 
-    /// 嘟嘟's own settings pages, and the entry that leads to DSH's, from the plugin.
-    private var duduItems: [NavigationItem] {
-        store.activeNavigation.settings.filter { $0.group == "dudu" }
-    }
+    /// 嘟嘟's own settings pages: a fixed list in the app (owner, 2026-11-21: 「这个列表应该是原生组件写死的…不需要从 API 加载」). The plugin supplies the values a page shows (`settings.data`;
+    /// the layout of each page is `SettingsLayouts`), not which pages there are, nor their names or icons, so an older plugin cannot bring back older icons. DSH's settings are not one of
+    /// these rows: the drawer's gear opens them.
+    private static let duduPages: [DuduSettingsEntry] = [
+        DuduSettingsEntry(section: "general", title: "常规", glyph: .settingsGeneral),
+        DuduSettingsEntry(section: "statuses", title: "状态", glyph: .settingsStatuses),
+        DuduSettingsEntry(section: "connectors", title: "连接器", glyph: .settingsConnectors, iconSize: 24.2),
+        DuduSettingsEntry(section: "collectors", title: "收集器", glyph: .settingsCollectors),
+        DuduSettingsEntry(section: "rules", title: "规则", glyph: .settingsRules),
+        DuduSettingsEntry(section: "memory", title: "记忆", glyph: .settingsMemory),
+        DuduSettingsEntry(section: "skills", title: "技能", glyph: .settingsSkills),
+    ]
 
     /// DSH's own settings sections, from the plugin. A host that cannot list them yet falls back to the
     /// sections the settings page itself reports once it has loaded.
@@ -46,21 +58,66 @@ struct SettingsView: View {
     }
 
     var body: some View {
+        Group {
+            if showsOnlyDSHSettings { dshOnlyBody } else { homeBody }
+        }
+        .task(id: isActive) {
+            guard isActive else { return }
+            await store.refreshNavigation()
+        }
+        .onChange(of: rows) { _, current in
+            if embeddedSession.isCurrent, embeddedSession.hasReceivedSettingsCategories,
+               let selectedRow, !current.contains(where: { $0.id == selectedRow.id }) {
+                self.selectedRow = nil
+            }
+        }
+        .onDisappear(perform: refreshCatalogAfterEmbeddedSettings)
+    }
+
+    /// DSH's own settings, as the drawer's gear opens them: its list and sections alone, closed by the sheet's own button.
+    private var dshOnlyBody: some View {
+        dshSettingsRoot
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton(label: L10n.text("关闭设置")) {
+                        refreshCatalogAfterEmbeddedSettings()
+                        dismiss()
+                    }
+                    .accessibilityIdentifier("settings.close")
+                }
+            }
+    }
+
+    private var homeBody: some View {
         settingsHome
+        .onAppear { onRootVisibility?(true) }
+        .onDisappear { onRootVisibility?(false) }
         .background(DuduStyle.settingsBackground.ignoresSafeArea())
         .navigationBarBackButtonHidden(true)
+        // This root has no back button of its own; the pages pushed from it are the ones that take the chevron alone from it.
+        .minimalBackButton()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(DuduStyle.settingsBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.light, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                SheetCloseButton(label: L10n.text("关闭设置")) {
-                    refreshCatalogAfterEmbeddedSettings()
-                    dismiss()
+            if !isHome {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SheetCloseButton(label: L10n.text("关闭设置")) {
+                        refreshCatalogAfterEmbeddedSettings()
+                        dismiss()
+                    }
+                    .accessibilityIdentifier("settings.close")
                 }
-                .accessibilityIdentifier("settings.close")
+            } else {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { onOpenSidebar?() } label: {
+                        DuduIcon(.menu, size: 22)
+                    }
+                    .buttonBorderShape(.circle)
+                    .accessibilityLabel(L10n.text("打开会话列表"))
+                }
             }
             ToolbarItem(placement: .principal) {
                 Text(L10n.text("设置"))
@@ -70,27 +127,6 @@ struct SettingsView: View {
                     .truncationMode(.middle)
             }
         }
-        .navigationDestination(isPresented: $showsDSHSettings) { dshSettingsRoot }
-        .task { await store.refreshNavigation() }
-        #if DEBUG && targetEnvironment(simulator)
-        .task {
-            // Review launch flag: open a settings section without tapping.
-            let arguments = ProcessInfo.processInfo.arguments
-            if let index = arguments.firstIndex(of: "-dudu-review-settings-section"),
-               arguments.indices.contains(index + 1) {
-                try? await Task.sleep(nanoseconds: 800_000_000)
-                showsDSHSettings = true
-                selectedRow = rows.first { $0.id == arguments[index + 1] }
-            }
-        }
-        #endif
-        .onChange(of: rows) { _, current in
-            if embeddedSession.isCurrent, embeddedSession.hasReceivedSettingsCategories,
-               let selectedRow, !current.contains(where: { $0.id == selectedRow.id }) {
-                self.selectedRow = nil
-            }
-        }
-        .onDisappear(perform: refreshCatalogAfterEmbeddedSettings)
     }
 
     private var dshSettingsRoot: some View {
@@ -105,14 +141,14 @@ struct SettingsView: View {
             dshSettingsPage
         }
         .navigationBarBackButtonHidden(false)
-        .toolbarRole(.editor)
+        .minimalBackButton()
         .tint(DuduStyle.ink)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(DuduStyle.settingsBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text(L10n.text("其他设置"))
+                Text(L10n.text("DSH 设置"))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(DuduStyle.ink)
             }
@@ -174,6 +210,7 @@ struct SettingsView: View {
     private var computerRow: some View {
         NavigationLink {
             ComputerListView(store: store)
+                .hidesTabBarWhenPushed()
         } label: {
             HStack(spacing: 12) {
                 DuduIcon(.computer)
@@ -210,28 +247,21 @@ struct SettingsView: View {
     /// 嘟嘟's native settings pages, and the separate entry to DSH's own pages.
     private var duduSettingsCard: some View {
         VStack(spacing: 0) {
-            ForEach(Array(duduItems.enumerated()), id: \.element.id) { index, item in
+            ForEach(Array(Self.duduPages.enumerated()), id: \.element.id) { index, page in
                 if index > 0 { rowDivider }
-                duduRow(item)
+                duduRow(page)
             }
         }
         .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     @ViewBuilder
-    private func duduRow(_ item: NavigationItem) -> some View {
+    private func duduRow(_ page: DuduSettingsEntry) -> some View {
         let label = HStack(spacing: 12) {
-            Group {
-                if let icon = item.icon {
-                    NavigationIconView(icon: icon, size: 22)
-                } else {
-                    DuduIcon(.settings)
-                }
-            }
-            .foregroundStyle(DuduStyle.ink)
-            .frame(width: 28)
-            // Keep the approved name when an older plugin or cached catalog supplies the old label.
-            Text(item.target == .dshSettings ? L10n.text("其他设置") : item.title)
+            DuduIcon(page.glyph, size: page.iconSize)
+                .foregroundStyle(DuduStyle.ink)
+                .frame(width: 28)
+            Text(L10n.text(page.title))
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(DuduStyle.ink)
                 .lineLimit(1)
@@ -243,21 +273,13 @@ struct SettingsView: View {
         .padding(.vertical, 12)
         .frame(minHeight: 58)
         .contentShape(Rectangle())
-        if item.target == .dshSettings {
-            Button {
-                showsDSHSettings = true
-                DuduLog.record("settings.dsh.open")
-            } label: { label }
-                .buttonStyle(DuduRowButtonStyle())
-                .accessibilityIdentifier("settings.dsh")
-        } else {
-            NavigationLink {
-                DuduSettingsPage(store: store, item: item)
-                    .id(store.activeComputer?.id)
-            } label: { label }
-                .buttonStyle(DuduRowButtonStyle())
-                .accessibilityIdentifier("settings.\(item.id)")
-        }
+        NavigationLink {
+            DuduSettingsPage(store: store, entry: page)
+                .id(store.activeComputer?.id)
+                .hidesTabBarWhenPushed()
+        } label: { label }
+            .buttonStyle(DuduRowButtonStyle())
+            .accessibilityIdentifier("settings.\(page.section)")
     }
 
     /// The privacy and About entries keep the settings' rows; the version follows the card as a quiet footer.
@@ -279,6 +301,7 @@ struct SettingsView: View {
 
             NavigationLink {
                 AboutView()
+                    .hidesTabBarWhenPushed()
             } label: {
                 aboutRowLabel(.info, L10n.text("关于")) {
                     DuduIcon(.right, size: 16)
@@ -460,20 +483,29 @@ struct SettingsView: View {
 /// One of 嘟嘟's settings pages, using the app's own controls and navigation bar.
 private struct DuduSettingsPage: View {
     @ObservedObject var store: DuduStore
-    let item: NavigationItem
+    let entry: DuduSettingsEntry
     @StateObject private var navigator: SettingsNavigator
 
-    init(store: DuduStore, item: NavigationItem) {
+    init(store: DuduStore, entry: DuduSettingsEntry) {
         self.store = store
-        self.item = item
-        _navigator = StateObject(wrappedValue: SettingsNavigator(section: item.target.settingsSection ?? "general"))
+        self.entry = entry
+        _navigator = StateObject(wrappedValue: SettingsNavigator(section: entry.section))
     }
 
     var body: some View {
         if let model = navigator.pages.first {
-            DuduSettingsScreen(store: store, navigator: navigator, model: model, fallbackTitle: item.title)
+            DuduSettingsScreen(store: store, navigator: navigator, model: model, fallbackTitle: L10n.text(entry.title))
         }
     }
+}
+
+/// One row of 嘟嘟's settings list: which page, its name, its icon. The plug of 连接器 is the narrowest of the seven and is drawn a tenth larger (owner, 2026-11-21: 「小了一点」).
+private struct DuduSettingsEntry: Identifiable {
+    let section: String
+    let title: String
+    let glyph: DuduGlyph
+    var iconSize: CGFloat = 22
+    var id: String { section }
 }
 
 /// Each model is a real destination, so the system owns interactive movement and cancellation.
@@ -502,7 +534,7 @@ private struct DuduSettingsScreen: View {
         }
         .background(DuduStyle.settingsBackground.ignoresSafeArea())
         .navigationBarBackButtonHidden(model.busy)
-        .toolbarRole(.editor)
+        .minimalBackButton()
         .tint(DuduStyle.ink)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
@@ -524,6 +556,7 @@ private struct DuduSettingsScreen: View {
         }
         .navigationDestination(item: nextPage) { child in
             DuduSettingsScreen(store: store, navigator: navigator, model: child)
+                .hidesTabBarWhenPushed()
         }
         .interactiveDismissDisabled(model.busy)
     }
@@ -549,7 +582,7 @@ private struct EmbeddedSettingsSection: View {
         )
         .background(Color.white.ignoresSafeArea())
         .navigationBarBackButtonHidden(false)
-        .toolbarRole(.editor)
+        .minimalBackButton()
         .tint(DuduStyle.ink)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Color.white, for: .navigationBar)

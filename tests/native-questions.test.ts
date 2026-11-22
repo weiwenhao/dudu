@@ -59,6 +59,37 @@ test('desktop answers win normally and a phone can join an already open question
   bridge.close();
 });
 
+test('legacy questions without wait metadata answer only their exact live request', async () => {
+  const { bridge, invoke } = harness(() => { throw new Error('legacy questions have no timed wait'); });
+  const parent = new AbortController();
+  const release = bridge.watch('session');
+  const requests = ['first', 'second'].map((id) => ({
+    agent: { session: { id: 'session' } }, signal: parent.signal,
+    questions: [{ id, question: `${id}?`, options: [{ label: 'Yes', description: id }] }],
+  }));
+  const results = requests.map((request) => invoke(request, () => new Promise((_, reject) => {
+    request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
+  })));
+  const calls = bridge.list('session');
+  assert.equal(calls.length, 2);
+  assert.notEqual(calls[0].callId, calls[1].callId);
+  assert.deepEqual(calls.map((call) => call.questions), requests.map((request) => request.questions));
+  assert.deepEqual(bridge.list('other-session'), []);
+  assert.equal(bridge.answer('other-session', calls[0].callId, []), false);
+  for (const index of [1, 0]) {
+    const answers = [{ id: requests[index].questions[0].id, selected: ['Yes'] }];
+    assert.equal(bridge.answer('session', calls[index].callId, answers), true);
+    assert.deepEqual(await results[index], { answers });
+    assert.equal(bridge.answer('session', calls[index].callId, answers), false);
+    assert.equal(Object.hasOwn(requests[index], 'wait'), false);
+    assert.equal(requests[index].signal, parent.signal);
+  }
+  assert.deepEqual(bridge.list('session'), []);
+  assert.equal(parent.signal.aborted, false);
+  release();
+  bridge.close();
+});
+
 test('mobile-only questions stay answerable and disconnect releases the foreground claim', async () => {
   let claimAborted = false;
   const { bridge, invoke } = harness((_request, signal) => (async function* () {

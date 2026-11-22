@@ -52,31 +52,47 @@ export async function createNativeNotifications({
     registrations.delete(deviceId);
     void save().catch(() => report('APNS_REGISTRY_WRITE_FAILED'));
   });
+  /** One push to one registration. Resolves with what Apple answered (`{ status, reason }`), or nothing if it could not be sent. A registration that Apple says is dead is dropped. */
+  async function deliver(registration, event) {
+    const delivery = { deviceId: registration.deviceId, abort: new AbortController() };
+    deliveries.add(delivery);
+    try {
+      const result = await sender.send(registration, event, devices.id, delivery.abort.signal);
+      if (closed || delivery.abort.signal.aborted) return undefined;
+      if (result.status === 410 || ['BadDeviceToken', 'DeviceTokenNotForTopic', 'Unregistered'].includes(result.reason)) {
+        if (registrations.get(registration.deviceId)?.revision === registration.revision) {
+          registrations.delete(registration.deviceId);
+          await save();
+        }
+      }
+      if (result.status !== 200) report('APNS_DELIVERY_REJECTED');
+      return result;
+    } catch {
+      if (!closed && !delivery.abort.signal.aborted) report('APNS_DELIVERY_FAILED');
+      return undefined;
+    } finally {
+      deliveries.delete(delivery);
+    }
+  }
   async function publish(event) {
     if (closed || !sender) return;
-    await Promise.allSettled([...registrations.values()].map(async (registration) => {
-      if (!paired(registration.deviceId)) return;
-      const delivery = { deviceId: registration.deviceId, abort: new AbortController() };
-      deliveries.add(delivery);
-      try {
-        const result = await sender.send(registration, event, devices.id, delivery.abort.signal);
-        if (closed || delivery.abort.signal.aborted) return;
-        if (result.status === 410 || ['BadDeviceToken', 'DeviceTokenNotForTopic', 'Unregistered'].includes(result.reason)) {
-          if (registrations.get(registration.deviceId)?.revision === registration.revision) {
-            registrations.delete(registration.deviceId);
-            await save();
-          }
-        }
-        if (result.status !== 200) report('APNS_DELIVERY_REJECTED');
-      } catch {
-        if (!closed && !delivery.abort.signal.aborted) report('APNS_DELIVERY_FAILED');
-      } finally {
-        deliveries.delete(delivery);
-      }
-    }));
+    await Promise.allSettled([...registrations.values()].filter((registration) => paired(registration.deviceId))
+      .map((registration) => deliver(registration, event)));
   }
   const stopSource = source?.subscribe((event) => { void publish(event); });
   return {
+    /** The board changed while this phone was away: wake its App with a push that shows nothing (apns.mjs, `board`). Resolves with what Apple answered, or nothing. */
+    async wake(deviceId) {
+      const registration = registrations.get(deviceId);
+      if (closed || !sender || !registration || !paired(deviceId)) return undefined;
+      return deliver(registration, { kind: 'board' });
+    },
+    /** A reply or a question nobody has read: tell this phone with an alert that also wakes its App (apns.mjs, `announce`). Resolves with what Apple answered, or nothing. */
+    async notice(deviceId, { conversationId, title, body }) {
+      const registration = registrations.get(deviceId);
+      if (closed || !sender || !registration || !paired(deviceId)) return undefined;
+      return deliver(registration, { kind: 'announce', conversationId, title, body });
+    },
     async dispatch(method, params, connection) {
       if (closed || !connection?.authenticated || !paired(connection.deviceId)) fail('FORBIDDEN');
       if (!params || typeof params !== 'object' || Array.isArray(params)) fail('BAD_REQUEST');

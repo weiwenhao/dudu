@@ -35,7 +35,6 @@ struct BoardView: View {
     let onOpen: (BoardIssue, BoardOpenTrace) async -> Void
     let onOpenAssistant: (BoardOpenTrace) async -> Void
     let onDetail: (BoardIssue) -> Void
-    @Environment(\.scenePhase) private var scenePhase
     @State private var removing: BoardIssue?
     @State private var revealed: String?
     @State private var swiping: String?
@@ -47,6 +46,10 @@ struct BoardView: View {
     @State private var opening: String?
     @State private var subIssues: BoardIssue?
     @State private var subIssueSelection: SubIssueSelection?
+    @State private var rest = BoardScrollRest()
+
+    /// How far the list stands from its top edge (negative: pulled down), kept for the diagnostics only: read when the list comes to rest, so it is not state that redraws the page.
+    private final class BoardScrollRest { var overscroll: CGFloat = 0 }
 
     private struct SubIssueSelection {
         let issue: BoardIssue
@@ -60,10 +63,24 @@ struct BoardView: View {
                 .padding(.top, topInset + 8)
                 .padding(.bottom, 40)
         }
-        .refreshable { await board.refresh(using: store) }
+        .refreshable {
+            // A pull that was left on the screen is what the owner's screenshot of 2026-11-21 may show (three grey spokes above the pinned row, "stuck loading", nothing tapped):
+            // these lines say whether a pull began, whether it ended and how long it took.
+            let began = ProcessInfo.processInfo.systemUptime
+            DuduLog.record("board.pull.begin")
+            await board.refresh(using: store)
+            DuduLog.record("board.pull.end", elapsedMs: (ProcessInfo.processInfo.systemUptime - began) * 1_000, state: Task.isCancelled ? "cancelled" : "done")
+        }
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { previous, next in
             // Simultaneous horizontal recognition must not close its own newly revealed actions.
             if previous != next, swiping == nil, revealed != nil { revealed = nil }
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, next in rest.overscroll = next }
+        .onScrollPhaseChange { _, phase in
+            // A list that stops while it is still pulled down is what a pull stuck on the screen looks like.
+            if phase == .idle, rest.overscroll < -0.5 {
+                DuduLog.record("board.scroll.rest.pulled", geometry: ["contentOffset": Double(rest.overscroll)])
+            }
         }
         .background(.white)
         .accessibilityIdentifier("board.page")
@@ -105,20 +122,6 @@ struct BoardView: View {
         .onChange(of: store.activeComputer?.id) { _, _ in clearActions(); pinsExpanded = false }
         .onChange(of: board.tab) { _, _ in revealed = nil }
         .onChange(of: isActive) { _, active in if !active { clearActions() } }
-        // Keep the App badge current while another native page covers this retained homepage.
-        // Reading this list never acknowledges a session; only its actually rendered chat does.
-        .task(id: BoardLoad(connected: store.status == .connected, active: scenePhase == .active)) {
-            guard scenePhase == .active, store.status == .connected else { return }
-            while !Task.isCancelled {
-                await board.refresh(using: store)
-                do { try await Task.sleep(for: .seconds(5)) } catch { return }
-            }
-        }
-    }
-
-    private struct BoardLoad: Hashable {
-        var connected: Bool
-        var active: Bool
     }
 
     @ViewBuilder private var content: some View {
@@ -154,10 +157,8 @@ struct BoardView: View {
         case .loaded:
             let computer = store.activeComputer?.id
             let rows = board.conversations
-            if board.tab == .backlog, rows.isEmpty {
-                Text(board.scopedConversations.isEmpty
-                     ? L10n.text("暂无待规划事项")
-                     : L10n.text("没有找到事项"))
+            if board.tab == .unread, rows.isEmpty {
+                Text(L10n.text("没有找到事项"))
                     .font(.system(size: 15))
                     .foregroundStyle(DuduStyle.chatSecondary)
                     .multilineTextAlignment(.center)
@@ -223,38 +224,50 @@ struct BoardView: View {
 
     @ViewBuilder private func menu(for entry: BoardConversation) -> some View {
         Button { revealed = nil; Task { await board.setPinned(entry, using: store) } } label: {
-            Label(entry.pinned ? L10n.text("取消置顶") : L10n.text("置顶"), systemImage: entry.pinActionSystemImage)
+            DuduLabel(entry.pinned ? L10n.text("取消置顶") : L10n.text("置顶"), icon: entry.pinActionGlyph)
         }.disabled(!available(entry))
         Button { revealed = nil; Task { await board.toggleUnread(entry, using: store) } } label: {
             Label(entry.unread ? L10n.text("清除未读") : L10n.text("标为未读"), image: entry.readActionImage)
         }.disabled(!available(entry) || entry.sessionId == nil)
         if let issue = entry.issue {
             Divider()
-            Button { revealed = nil; onDetail(issue) } label: { Label(L10n.text("详情"), systemImage: "doc.text") }
+            quickAction(.status, for: issue, entry: entry)
             Button { revealed = nil; renameTitle = issue.title; renaming = issue } label: {
-                Label(L10n.text("重命名"), systemImage: "pencil")
+                DuduLabel(L10n.text("重命名"), icon: .rename)
             }.disabled(!available(entry))
             Divider()
-            ForEach(IssueQuickAction.allCases) { action in
-                Button { revealed = nil; editing = IssueActionRequest(issue: issue, action: action) } label: {
-                    Label(action.title, systemImage: action.homeMenuSystemImage)
-                }.disabled(!action.isAvailable(for: issue) || !available(entry))
+            ForEach(IssueQuickAction.shown(for: issue)) { action in
+                if action == .status {
+                    Button { revealed = nil; onDetail(issue) } label: {
+                        DuduLabel(L10n.text("详情"), icon: .issueDetails)
+                    }
+                } else {
+                    quickAction(action, for: issue, entry: entry)
+                }
             }
             Divider()
-            Button { Task { await complete(entry) } } label: { Label(L10n.text("完成"), systemImage: "checkmark") }
+            Button { Task { await complete(entry) } } label: { DuduLabel(L10n.text("完成"), icon: .check) }
                 .disabled(!available(entry) || issue.statusType == "done")
             Button(role: .destructive) { revealed = nil; removing = issue } label: {
-                Label(L10n.text("删除"), systemImage: "trash")
+                DuduLabel(L10n.text("删除"), icon: .trash)
             }.disabled(!available(entry))
         }
+    }
+
+    private func quickAction(_ action: IssueQuickAction, for issue: BoardIssue, entry: BoardConversation) -> some View {
+        Button { revealed = nil; editing = IssueActionRequest(issue: issue, action: action) } label: {
+            DuduLabel(action.title, icon: action.glyph)
+        }.disabled(!action.isAvailable(for: issue) || !available(entry))
     }
 
     private func open(_ entry: BoardConversation, trace: BoardOpenTrace) {
         if revealed != nil { trace.record("menu_closed") }
         revealed = nil
-        // Unassigned rows use the existing long-press Agent action, not a different tap destination.
+        // Unassigned rows use the existing long-press Agent action, not a different tap destination. A tap says so instead of doing nothing (owner, 2026-11-22: "请分配智能体", on the
+        // phone and on the computer): the same toast the board gives for its other results.
         if let issue = entry.issue, issue.agent == nil {
             trace.record("blocked", state: "unassigned")
+            board.report?(DuduToastMessage(text: L10n.text("请分配智能体"), kind: .information))
             return
         }
         guard opening == nil else { trace.record("blocked", state: "opening"); return }

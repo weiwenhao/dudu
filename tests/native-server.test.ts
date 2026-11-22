@@ -8,6 +8,7 @@ import { createNativeServer, probeNativeAddress } from '../host/native-server.mj
 import { createPairingStore } from '../host/pairing-devices.mjs';
 import { createNativeBridge } from '../host/native-bridge.mjs';
 import { createNativePages } from '../host/native-pages.mjs';
+import { cleanClient, understands } from '../host/native-client.mjs';
 
 const API = '/api/v1';
 
@@ -74,6 +75,29 @@ test('Android clients identify their platform without changing existing iPhone c
   assert.equal((await rpc(server, token, 'catalog.get')).result.clientName, 'Android');
   await connect(server, token);
   assert.equal((await rpc(server, token, 'catalog.get')).result.clientName, 'iPhone');
+});
+
+test('a phone may say what it is and what it understands; one that says nothing is the baseline, and nothing it says can fail the connection', async (t) => {
+  const { pairingStore, server } = await setup(t, { dispatch: async (_method, _params, connection) => ({ client: connection.client }) });
+  const token = tokenFrom(await pairingStore.issue({ address: `${server.address}` }));
+  const client = async () => (await rpc(server, token, 'catalog.get')).result.client;
+  await connect(server, token); // an app that predates the declaration: no body at all
+  assert.deepEqual(await client(), { platform: 'ios', capabilities: [] });
+  const declared = await post(server, `${API}/connect`, token, { app: { platform: 'ios', version: '0.1.1', build: 150 }, capabilities: ['settings-ui-2', 'Bad Name', 'settings-ui-2', 7] });
+  assert.equal(declared.status, 200);
+  assert.deepEqual(await client(), { platform: 'ios', version: '0.1.1', build: '150', capabilities: ['settings-ui-2'] });
+  assert.deepEqual(pairingStore.list()[0].client, { platform: 'ios', version: '0.1.1', build: '150', capabilities: ['settings-ui-2'] }, 'the device keeps what it said last');
+  const garbage = await post(server, `${API}/connect`, token, { app: 'x', capabilities: 'y' });
+  assert.equal(garbage.status, 200);
+  assert.deepEqual(await client(), { platform: 'ios', capabilities: [] });
+});
+
+test('only a phone that declared a capability is given what needs it', () => {
+  assert.equal(understands(cleanClient({ capabilities: ['settings-ui-2'] }, 'ios'), 'settings-ui-2'), true);
+  assert.equal(understands(cleanClient({}, 'ios'), 'settings-ui-2'), false, 'an app that said nothing is the baseline');
+  assert.equal(understands(undefined, 'settings-ui-2'), false);
+  assert.deepEqual(cleanClient({ app: { platform: 'beos', version: '<script>', build: 'x' }, capabilities: new Array(100).fill('a') }, 'android'), { platform: 'android', capabilities: ['a'] });
+  assert.equal(cleanClient({ capabilities: Array.from({ length: 100 }, (_, index) => `c${index}`) }).capabilities.length, 32);
 });
 
 test('native API uses authenticated HTTP only and limits the public probe to a metadata-free proof', async (t) => {

@@ -37,10 +37,11 @@ export default {
     { id: 'supabase', name: 'Supabase', group: 'dev', icon: 'supabase', line: '数据库和项目', how: 'oauth', url: 'https://mcp.supabase.com/mcp' },
     { id: 'vercel', name: 'Vercel', group: 'dev', icon: 'vercel', line: '项目和部署', how: 'oauth', url: 'https://mcp.vercel.com' },
     // ego lite (https://lite.ego.app/), the browser made for agents: what the owner imported into it is signed in (X, V2EX, Linux.do: pages that have no connector). It is named for what it
-    // is (owner, 2026-11-11: "浏览器连接器这个直接改成叫 ego 连接器"), not "a browser": another browser tool is a custom connector with a sentence of its own. The app registers the
-    // `ego-browser` command when the first run is done, so that is what is checked (it must run); where to get the app is what the row says when it is not there. Connecting it is the owner's
-    // permission to use it.
-    { id: 'ego', name: 'ego', group: 'web', icon: 'browser', line: '用你已经登录好的浏览器打开网页', how: 'cli',
+    // is, not "a browser": another browser tool is a custom connector with a sentence of its own. First called "ego" (owner, 2026-11-11: "浏览器连接器这个直接改成叫 ego 连接器"), then the
+    // full product name (owner, 2026-11-21: "浏览器不叫 ego，叫 ego lite"), moved from its own "web" group into "dev" and given its own mark (icons/ego.svg, ego lite's official black
+    // mark, the same one its macOS app icon uses) in place of a plain globe, the same day. The app registers the `ego-browser` command when the first run is done, so that is what is
+    // checked (it must run); where to get the app is what the row says when it is not there. Connecting it is the owner's permission to use it.
+    { id: 'ego', name: 'ego lite', group: 'dev', icon: 'ego', line: '浏览器操控', how: 'cli',
       command: 'ego-browser', status: ['--version'], install: 'https://lite.ego.app/',
       prompt: '用 ego-browser 技能，通过我已经登录好的浏览器打开网页。' },
   ],

@@ -57,7 +57,7 @@ struct ComputerListView: View {
         .accessibilityIdentifier("computers.list")
         .background(DuduStyle.settingsBackground.ignoresSafeArea())
         .navigationBarBackButtonHidden(onClose != nil)
-        .toolbarRole(.editor)
+        .minimalBackButton()
         .tint(DuduStyle.ink)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
@@ -96,9 +96,10 @@ struct ComputerListView: View {
         }
         .navigationDestination(isPresented: $isPairingPresented) {
             PairingView(store: store, embeddedInSettings: true, showsCancelButton: false)
+                .hidesTabBarWhenPushed()
         }
         .navigationDestination(isPresented: $showsConnectionDetails) {
-            if let detailComputerID { ComputerConnectionView(store: store, computerID: detailComputerID) }
+            if let detailComputerID { ComputerConnectionView(store: store, computerID: detailComputerID).hidesTabBarWhenPushed() }
         }
     }
 

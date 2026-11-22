@@ -137,7 +137,7 @@ struct SimulatorSheetReview: ViewModifier {
         return ConversationAccess(
             target: DraftTarget(computerID: computer, sessionID: session.id), connected: true,
             request: { method, params in try await store.request(method, params) },
-            fork: { _ in }, loadImage: { _, _, _ in nil }
+            loadImage: { _, _, _ in nil }
         )
     }
 }

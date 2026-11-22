@@ -51,6 +51,15 @@ enum ConversationHistoryItem: Identifiable, Equatable {
         if let running { items.append(running) }
         return items
     }
+
+    static func messageHistoryItems(
+        messages: [ChatMessage], transcriptRows: [TranscriptRow],
+        questions: [ConversationQuestions]
+    ) -> [ConversationHistoryItem] {
+        messages.map(ConversationHistoryItem.message) + transcriptItems(
+            transcriptRows, trailing: questions.map(ConversationHistoryItem.questions)
+        )
+    }
 }
 
 struct ConversationHistoryView<Content: View>: View {

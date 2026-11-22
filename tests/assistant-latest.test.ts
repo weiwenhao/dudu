@@ -22,6 +22,13 @@ test('the latest message is the newer of what the owner and the agent said, and 
   latest.observe('a', agent('好的，已确认', 250));
   assert.deepEqual(latest.get('a'), { who: 'agent', text: '好的，已确认', at: 250 });
   assert.equal(latest.get('b'), null);
+  // The chat list shows what the owner said last (owner, 2026-11-22): `mine` is only their words, and `observe` says which side it kept so that the board can be told.
+  assert.deepEqual(latest.mine('a'), { text: '再确认一下', at: 200 }, 'the agent speaking later does not take the owner\'s words away');
+  assert.equal(latest.observe('a', user('再补一句', 260)), 'me');
+  assert.equal(latest.observe('a', agent('', 270)), null);
+  assert.equal(latest.observe('b', user('not an issue\'s session', 280)), null);
+  assert.deepEqual(latest.mine('a'), { text: '再补一句', at: 260 });
+  assert.equal(latest.mine('b'), null);
 });
 
 test('a message that arrives late does not replace a newer one, and a long one is cut', () => {

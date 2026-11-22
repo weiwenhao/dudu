@@ -267,7 +267,13 @@ test('opening task creation does not wait for the DSH conversation catalog', asy
     controller: {}, agents: new Map(),
     dsh: {
       models: async () => ({ groups: [{ id: 'claude', models: [{ id: 'default' }] }] }),
-      list: async () => { scans++; return [{ sessionId: 'session', projections: { values: { title: { title: '项目摘要会话' } } } }]; },
+      list: async () => {
+        scans++;
+        return [{
+          sessionId: 'session', updatedAt: 1700000000000,
+          projections: { values: { title: { title: '项目摘要会话' }, modelSelection: { lastUsed: { provider: 'claude', model: 'default' } } } },
+        }];
+      },
     },
   });
   const tasks = createTasks({ file: ':memory:', deliver: host.deliver, options: host.options });
@@ -278,7 +284,10 @@ test('opening task creation does not wait for the DSH conversation catalog', asy
     assert.equal(compact.projects[0].id, 'workspace');
     assert.deepEqual(compact.sessions, []);
     assert.equal(scans, 0, 'new tasks must not scan all of the owner’s conversations');
-    assert.equal((await tasks.execute('options')).sessions[0].title, '项目摘要会话', 'the existing-session picker uses DSH’s persisted title projection');
+    const [session] = (await tasks.execute('options')).sessions;
+    assert.equal(session.title, '项目摘要会话', 'the existing-session picker uses DSH’s persisted title projection');
+    assert.deepEqual([session.agent, session.model, session.updatedAt], ['claude', 'default', 1700000000000],
+      'picking a session can set the task’s own provider/model to what the conversation is already on, instead of leaving a mismatch for validate to reject later');
     assert.equal(scans, 1, 'the assistant and existing-target picker can still request sessions');
     const tool = taskTools(definition, () => tasks).find((item) => item.name === 'tasks_options')!;
     await tool.execute({});
@@ -308,6 +317,10 @@ test('assistant tools and authenticated native task methods share one revisioned
     assert.equal((await call('tasks_update', { ...identity(task), patch: { title: 'stale' } })).code, 'conflict');
     const list = await bridge.dispatch('schedule.list', {}, {});
     assert.equal(list[0].id, `dudu:${task.id}`); assert.equal(list[0].enabled, false);
+    const resumed = await bridge.dispatch('tasks.resume', identity(paused.task), {});
+    assert.equal(resumed.task.status, 'active');
+    assert.equal(resumed.task.revision, paused.task.revision + 1);
+    assert.ok(resumed.task.nextRunAt > at);
     await assert.rejects(bridge.dispatch('tasks.proxy', { action: 'anything' }, {}), (error: any) => error.code === 'UNSUPPORTED');
     const response = await tasks.handle('create', new Request('http://test/tasks/create', { method: 'POST', body: '{bad' }));
     assert.equal(response.status, 400);

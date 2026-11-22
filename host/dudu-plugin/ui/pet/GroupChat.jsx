@@ -15,8 +15,8 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 // The plugin keeps what each line says (host/assistant/home/group.mjs); the thread only knows which line it is.
 const P = T.pet;
 const nameOf = (issue) => issue?.ref ?? (issue?.id != null ? `#${issue.id}` : '');
-/** How many lines of an answer the bubble shows before it is cut (the drawing's desktop thread had 5; six leave room for the capsule over the fade). */
-const CLAMP_LINES = 6;
+/** How many lines of an answer the bubble shows before it is cut: the fade and the capsule cover the last two or three, so the cut leaves room to read. Nine since 2026-11-22 (it was six; the owner found the phone's cut too small and asked for a few more lines: the phone went from eight to twelve). */
+const CLAMP_LINES = 9;
 
 /** What a line puts on the clipboard: the owner's own words with their @, what the agent answered, or what a task's line says (its result, or why the run failed). */
 export const lineText = (line) => (line?.kind === 'at' ? `@${nameOf(line.issue)} ${line.text ?? ''}`.trim() : line?.kind === 'task' ? taskText(line) : String(line?.text ?? ''));
@@ -60,7 +60,7 @@ function Label({ issue, at }) {
 }
 
 /**
- * The answer of an issue's agent: markdown, cut at six lines the way Lark cuts a long message (owner, 2026-11-11, from a Lark screenshot): the last lines fade into the bubble and a white capsule, 展开, sits over the
+ * The answer of an issue's agent: markdown, cut at `CLAMP_LINES` the way Lark cuts a long message (owner, 2026-11-11, from a Lark screenshot): the last lines fade into the bubble and a white capsule, 展开, sits over the
  * fade; opened, the bubble grows where it stands and a capsule, 收起, ends it, and closing it brings the bubble back into view. Only the capsule changes it, so a click that selects words opens nothing.
  */
 function Answer({ text, open, setOpen, running }) {

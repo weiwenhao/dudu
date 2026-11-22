@@ -15,7 +15,7 @@ export default defineConfig([
   },
   {
     // The MCP SDK is reached by subpaths of its `exports` map (client/auth.js, ...), which the import resolver does not read; node and esbuild do.
-    files: ['host/assistant/connectors/**/*.mjs'],
+    files: ['host/assistant/connectors/**/*.mjs', 'host/providers/mcp-stdio.mjs', 'tests/harness-questions.test.ts'],
     rules: { 'import/no-unresolved': ['error', { ignore: ['^@modelcontextprotocol/sdk/'] }] },
   },
   {

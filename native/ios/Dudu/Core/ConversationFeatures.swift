@@ -110,6 +110,7 @@ struct ConversationChangeSummary: Codable, Equatable, Sendable {
     var total: Int
     var added: Int
     var deleted: Int
+    var fileName: String? = nil
 }
 
 struct ConversationChanges: Codable, Sendable {
@@ -128,7 +129,8 @@ struct ConversationChanges: Codable, Sendable {
     var deleted: Int
 
     var summary: ConversationChangeSummary {
-        ConversationChangeSummary(total: total, added: added, deleted: deleted)
+        ConversationChangeSummary(total: total, added: added, deleted: deleted,
+            fileName: total == 1 ? files.first?.display.split(separator: "/").last.map(String.init) : nil)
     }
 }
 

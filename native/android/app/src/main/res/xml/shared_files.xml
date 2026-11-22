@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the in-app player's videos and the delivered files being previewed can be shared (`VideoPreviewStorage`, `FilePreview.kt`). -->
+<paths>
+    <cache-path name="videos" path="conversation-videos/" />
+    <cache-path name="previews" path="conversation-previews/" />
+</paths>

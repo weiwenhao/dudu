@@ -19,6 +19,11 @@
 
 ## App 和手机接口
 
+2026-11-20 问题框：主人选择 A 入口并批准 iOS / Android 实现，新增中文
+“回答问题”已随 `.local/designs/mobile-questions-2026-11-20/v4/` 的 A 方案批准。
+英文尚未审阅，String Catalog 仅登记已批准的中文，Android 同步同一来源。
+上一题、下一题、跳过、提交、输入你的答案及校验提示均复用已有键，不增加说明文案。
+
 共 726 个去重的界面键。原生目录有 606 个键；接口和内嵌页面有 158 个键，其中一部分共用译文。
 
 | 中文 / 参数模板 | English | 来源 / 状态 | 使用处 |
@@ -223,7 +228,6 @@
 | 图片 | Image | 新增，待审 | MessageMarkdown.swift、native-bridge.mjs |
 | 图片格式或大小不符合要求。 | The image format or size is not supported. | 新增，待审 | native-bridge.mjs、native-server.mjs |
 | 在{0}中添加状态 | Add status to {0} | 新增，待审 | native-settings.mjs |
-| 在新对话中分支 | Branch in a new conversation | 新增，待审 | MessageActions.swift |
 | 在浏览器里授权 | Sign in in the browser | 复用 settings.connectorsPage.custom.how.oauth | native-settings.mjs |
 | 在电脑的「设置 → 手机控制」中生成配对码 | Generate a pairing code in Settings → Mobile Control on your computer | 新增，待审 | ConnectionGuideView.swift |
 | 在终端运行 {0}，再点重试 | Run {0} in your terminal, then retry | 新增，待审 | native-settings.mjs |
@@ -804,6 +808,19 @@ String Catalog 只增加已批准的中文，不新增未经审阅的英文译�
 | 电脑未连接 | Computer not connected | BoardHomeView.swift：首页提示 |
 | 发送视频 | Send video | ComposerAttachmentSheet.swift、ChatView.swift |
 | 子事项 | Sub-issues | BoardSubIssues.swift |
+
+## 2026-11-21 设置页：长按菜单、状态页、记忆和连接器
+
+中文是主人在 `.local/designs/phone-status-settings-2026-11-21/` 和 `.local/designs/settings-delete-and-connectors-2026-11-21/` 两张设计稿里看过的字；下面的英文是新增，等待主人逐字审阅。插件下发这些字，App 里没有新增文案。
+
+| 中文 | English（新增，待审） |
+|---|---|
+| 完成度 | Progress |
+| 请在电脑上授权 | Authorize on your computer |
+| 授权页面已在电脑的浏览器里打开。在电脑上完成后，这里会自动更新。 | The authorization page is open in your computer's browser. This updates by itself once you finish there. |
+| 会删除本地记忆和相关引用。DSH 来源消息和模型历史会保留。 | Local memory and its references will be deleted. DSH source messages and model history will be kept. |
+
+“等待浏览器…”不再由插件下发。设置页底部的版本号只剩版本号和构建号（`v0.1.0 (143)`），没有文字。
 
 ## 仍由原内容决定的文字
 

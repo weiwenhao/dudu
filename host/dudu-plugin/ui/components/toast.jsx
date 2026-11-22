@@ -7,8 +7,8 @@ import { getLocale } from '../lib/locale.mjs';
 import { T } from '../strings.js';
 import { Button } from './button.jsx';
 
-const SHOWN_MS = 6000;
-const AT_MOST = 3;
+const SHOWN_MS = 1500;
+const ACTION_SHOWN_MS = 6000;
 const ToastContext = React.createContext(() => {});
 
 // While the edit-layout toolbar is on the page the toasts stay above it (the Undo of a removed or moved widget must not cover "Add widget"); otherwise they sit at the bottom.
@@ -30,33 +30,31 @@ export function useToastAbove(on) {
 export const useToast = () => React.useContext(ToastContext);
 
 export function ToastProvider({ children }) {
-  const [items, setItems] = React.useState([]);
+  const [item, setItem] = React.useState(null);
   const locale = getLocale();
   const lifted = React.useSyncExternalStore(subscribeAbove, isAbove);
-  React.useEffect(() => setItems([]), [locale]);
+  React.useEffect(() => setItem(null), [locale]);
   const counter = React.useRef(0);
-  // A toast with a `key` replaces the one before it that has the same key (an Undo that can only undo the newest change).
-  const toast = React.useCallback((item) => setItems((list) => [...list.filter((other) => item.key === undefined || other.key !== item.key).slice(1 - AT_MOST), { id: ++counter.current, ...item }]), []);
-  const remove = (id) => setItems((list) => list.filter((item) => item.id !== id));
+  // The newest notice replaces the previous one, including its timer and paused state.
+  const toast = React.useCallback((notice) => setItem({ ...notice, id: ++counter.current }), []);
+  const remove = (id) => setItem((current) => current?.id === id ? null : current);
   return (
     <ToastContext.Provider value={toast}>
       {children}
-      {/* Dispose Radix's paused timer when the last toast closes, even if its Undo button held focus. */}
-      {items.length > 0 && <ToastPrimitive.Provider duration={SHOWN_MS} swipeDirection="down" label={T.toast.region}>
-        {items.map((item) => (
-          <ToastPrimitive.Root
-            key={item.id} onOpenChange={(open) => { if (!open) remove(item.id); }}
-            className={`flex min-h-12 items-center gap-2 rounded-full border border-border/50 bg-popover py-2 pl-5 text-popover-foreground shadow-lg ${item.action ? 'pr-2' : 'pr-5'}`}
-          >
-            <ToastPrimitive.Description className="text-sm">{typeof item.message === 'function' ? item.message() : item.message}</ToastPrimitive.Description>
-            {item.action && (
-              <ToastPrimitive.Action altText={item.action.label} asChild>
-                <Button variant="ghost" size="sm" className="rounded-full font-medium" onClick={item.action.run}>{item.action.label}</Button>
-              </ToastPrimitive.Action>
-            )}
-          </ToastPrimitive.Root>
-        ))}
-        <ToastPrimitive.Viewport className={`pointer-events-none absolute ${lifted ? 'bottom-24' : 'bottom-5'} left-1/2 z-[1100] m-0 flex w-max max-w-[calc(100%-2rem)] -translate-x-1/2 list-none flex-col items-center gap-2 p-0 [&>*]:pointer-events-auto`} />
+      {/* A replacement starts fresh, even if the previous Undo button held focus. */}
+      {item && <ToastPrimitive.Provider key={item.id} duration={item.action ? ACTION_SHOWN_MS : SHOWN_MS} swipeDirection="down" label={T.toast.region}>
+        <ToastPrimitive.Root
+          onOpenChange={(open) => { if (!open) remove(item.id); }}
+          className={`flex min-h-12 items-center gap-2 rounded-full border border-border/50 bg-popover py-2 pl-5 text-popover-foreground shadow-lg ${item.action ? 'pr-2' : 'pr-5'}`}
+        >
+          <ToastPrimitive.Description className="text-sm">{typeof item.message === 'function' ? item.message() : item.message}</ToastPrimitive.Description>
+          {item.action && (
+            <ToastPrimitive.Action altText={item.action.label} asChild>
+              <Button variant="ghost" size="sm" className="rounded-full font-medium" onClick={item.action.run}>{item.action.label}</Button>
+            </ToastPrimitive.Action>
+          )}
+        </ToastPrimitive.Root>
+        <ToastPrimitive.Viewport className={`pointer-events-none absolute ${lifted ? 'bottom-24' : 'bottom-5'} left-1/2 z-[1100] m-0 flex w-max max-w-[calc(100%-2rem)] -translate-x-1/2 list-none items-center p-0 [&>*]:pointer-events-auto`} />
       </ToastPrimitive.Provider>}
     </ToastContext.Provider>
   );

@@ -13,6 +13,7 @@ import { createIssuesApi, ISSUE_ACTIONS } from '../host/assistant/issues/api.mjs
 import { createIssues } from '../host/assistant/issues/index.mjs';
 import { createIssueAttachmentApi } from '../host/assistant/issues/attachments.mjs';
 import { createAssistantSessionOperations } from '../host/assistant/home/session-operations.mjs';
+import { createNativeQuestions } from '../host/native-questions.mjs';
 import { TASK_ACTIONS } from '../host/assistant/tasks/contract.mjs';
 
 function world(t: any, options: any = {}) {
@@ -58,7 +59,7 @@ test('all product command contracts are discoverable with schemas, including set
       assert.equal(found.parameters.type, 'object', `${operation} needs an executable schema`);
     }
   }
-  for (const operation of ['home/pin', 'home/read', 'projects/create', 'providers/save', 'sessions/model', 'sessions/queue',
+  for (const operation of ['home/pin', 'home/read', 'inbox/read', 'projects/create', 'providers/save', 'sessions/model', 'sessions/queue',
     'sessions/team', 'sessions/jobs', 'sessions/job-stop', 'sessions/catalog', 'sessions/answer', 'sessions/fork',
     'assistant/conversation-settings', 'issues/attachment-upload', 'phone/revoke']) assert.ok(operations.has(operation), operation);
 
@@ -67,6 +68,18 @@ test('all product command contracts are discoverable with schemas, including set
   assert.ok(issues.statuses().statuses.some((item: any) => item.name === '排期'));
   const label = await execute('issues/label-add', { fields: { name: '发布' } });
   assert.equal((await execute('issues/label-update', { id: label.label.id, patch: { name: '发布检查' } })).outcome, 'success');
+});
+
+test('Dudu marks only the explicitly named inbox revision read through the interface handler', async (t) => {
+  const { execute, ingest, issues } = world(t);
+  const record = ingest('read-receipt');
+  const full = await execute('inbox/get', { id: record.id });
+  assert.equal(issues.inbox.get(record.id).record.unread, true, 'an agent fetching a record is not the owner reading it');
+  const answer = await execute('inbox/read', { id: record.id, revision: full.record.revision });
+  assert.equal(answer.unreadCount, 0);
+  assert.equal(issues.inbox.get(record.id).record.doneAt, null);
+  assert.equal(issues.inbox.get(record.id).record.unread, false);
+  assert.equal((await execute('inbox/read', { id: record.id, revision: full.record.revision + 1 })).code, 'invalid_request');
 });
 
 test('Dudu inbox forwarding uses the UI service, preserves provenance and handles only after accepted delivery', async (t) => {
@@ -231,4 +244,26 @@ test('session controls use the native UI request contracts and validate actual c
   const count = calls.length;
   assert.equal((await session.execute('queue', { session: 'dsh:dudu-assistant-own', action: 'remove', itemId: 'x' })).code, 'invalid_session');
   assert.equal(calls.length, count);
+});
+
+test('explicit Dudu session operations list and answer a blocking harness question even without a phone watching', async () => {
+  let invoke;
+  const questions = createNativeQuestions({ events: { on(_name, listener) { invoke = listener; return () => {}; } } });
+  const lifetime = new AbortController();
+  const pending = invoke({
+    agent: { session: { id: 'work' } }, signal: lifetime.signal, wait: { callId: 'live' },
+    questions: [{ id: 'a', question: 'Continue?', options: [{ label: 'Yes' }] }],
+  }, () => new Promise(() => {}));
+  const session = createAssistantSessionOperations({
+    rpc: { async call(_path, endpoint) { assert.equal(endpoint, 'session/projections'); return { values: {} }; } },
+    questionBridge: questions,
+  });
+  try {
+    const listed = await session.execute('questions', { session: 'dsh:work' });
+    assert.equal(listed.questions[0].callId, 'live');
+    assert.deepEqual((await session.execute('questions', { session: 'dsh:other' })).questions, []);
+    const answers = [{ id: 'a', selected: ['Yes'] }];
+    assert.equal((await session.execute('answer', { session: 'dsh:work', callId: 'live', answers })).outcome, 'success');
+    assert.deepEqual(await pending, { answers });
+  } finally { lifetime.abort(); questions.close(); }
 });

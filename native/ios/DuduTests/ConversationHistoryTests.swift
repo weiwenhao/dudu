@@ -100,4 +100,14 @@ final class ConversationHistoryTests: XCTestCase {
         XCTAssertEqual(stopped.map(\.id), Array(running.dropLast()).map(\.id))
         XCTAssertEqual(stopped.last?.id, "transcript:user:follow-up")
     }
+
+    func testQuestionsRemainVisibleInMessageModeAfterTranscriptOptOut() {
+        let question = ConversationQuestions(
+            id: "question-call", sessionId: "session", state: "open",
+            questions: [ConversationQuestion(id: "choice", question: "Continue?", multiSelect: false, options: [])]
+        )
+        let items = ConversationHistoryItem.messageHistoryItems(messages: [], transcriptRows: [], questions: [question])
+
+        XCTAssertEqual(items, [.questions(question)])
+    }
 }

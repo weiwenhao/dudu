@@ -23,6 +23,6 @@ internal fun RunningMark(size: Int = 20, color: Color = MaterialTheme.colorSchem
             infiniteRepeatable(tween(1000, easing = LinearEasing)), label = "rotation")
         rotation
     } else 0f
-    Icon(painterResource(R.drawable.ic_loader_circle), null, Modifier.size(size.dp).rotate(angle),
+    Icon(painterResource(DuduGlyphs.stateWorking), null, Modifier.size(size.dp).rotate(angle),
         tint = color)
 }

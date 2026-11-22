@@ -125,7 +125,11 @@ export function Conversations({ request, home, scope, listKey, header, controls,
   useEffect(() => () => { childRequest.current++; }, [scope]);
   const open = (entry) => {
     childRequest.current++;
-    if (entry.issue && !entry.issue.session) return;
+    if (entry.issue && !entry.issue.session) {
+      // An issue nobody was given has no conversation to show; say so in the toast every other result uses, as the phones do (owner, 2026-11-22). One that has an agent but no session yet keeps its quiet return.
+      if (!entry.issue.agent) toast({ message: T.toast.assignAgent });
+      return;
+    }
     setSelection({ scope, id: entry.id, entry, outsideIssue: null });
   };
   const selectedIssue = selectedEntry ? issueOf(selectedEntry) : outsideIssue;

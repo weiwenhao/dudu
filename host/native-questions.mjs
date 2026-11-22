@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { ConversationError, validateAnswers } from './native-conversation.mjs';
 
 export function createNativeQuestions({ events, attachWait }) {
@@ -6,9 +7,14 @@ export function createNativeQuestions({ events, attachWait }) {
   let disposed = false;
   const keyOf = (sessionId, callId) => JSON.stringify([sessionId, callId]);
   const isWatched = (sessionId) => (watching.get(sessionId)?.size ?? 0) > 0;
+  const changed = (sessionId) => {
+    for (const watcher of watching.get(sessionId) ?? []) {
+      try { watcher.onChange?.(); } catch { /* a view cannot fail the owner's tool call */ }
+    }
+  };
   const unregister = events.on('user-questions/request', async (request, next) => {
     const sessionId = request?.agent?.session?.id;
-    const callId = request?.wait?.callId;
+    const callId = request?.wait === undefined ? randomUUID() : request.wait?.callId;
     if (disposed || typeof sessionId !== 'string' || typeof callId !== 'string'
       || !Array.isArray(request.questions) || pending.size >= 100) return next();
     const key = keyOf(sessionId, callId);
@@ -26,7 +32,7 @@ export function createNativeQuestions({ events, attachWait }) {
     const mobile = new Promise((accept, refuse) => { resolve = accept; reject = refuse; });
     const onAbort = () => reject(signal.reason ?? new ConversationError('STALE_APPROVAL'));
     const row = {
-      sessionId,
+      sessionId, callId, questions: request.questions,
       answer(answers) {
         if (signal.aborted) return false;
         if (claimError) throw new ConversationError('UPSTREAM_UNAVAILABLE');
@@ -42,7 +48,7 @@ export function createNativeQuestions({ events, attachWait }) {
           claim = undefined;
           claimed = undefined;
           if (upstreamError) reject(upstreamError);
-        } else if (!claim && !claimError && request.wait.timed === true && attachWait) {
+        } else if (!claim && !claimError && request.wait?.timed === true && attachWait) {
           claim = new AbortController();
           const claimSignal = AbortSignal.any([claim.signal, signal]);
           try { claimed = attachWait(request, claimSignal); }
@@ -71,6 +77,7 @@ export function createNativeQuestions({ events, attachWait }) {
       },
     };
     pending.set(key, row);
+    changed(sessionId);
     signal.addEventListener('abort', onAbort, { once: true });
     request.signal = signal;
     try {
@@ -87,13 +94,14 @@ export function createNativeQuestions({ events, attachWait }) {
       signal.removeEventListener('abort', onAbort);
       row.close();
       request.signal = originalSignal;
+      changed(sessionId);
     }
   }, { global: true, prepend: true });
 
   return Object.freeze({
-    watch(sessionId, onFailure) {
+    watch(sessionId, onFailure, onChange) {
       if (disposed) throw new ConversationError('UPSTREAM_UNAVAILABLE');
-      const token = { onFailure };
+      const token = { onFailure, onChange };
       const watchers = watching.get(sessionId) ?? new Set();
       watchers.add(token);
       watching.set(sessionId, watchers);
@@ -108,6 +116,15 @@ export function createNativeQuestions({ events, attachWait }) {
       const row = pending.get(keyOf(sessionId, callId));
       if (!row) return false;
       return row.answer(answers);
+    },
+    /** Blocking host tools have no timed-question projection. Merge their live
+     * requests with the host's durable continued questions, once per call ID. */
+    list(sessionId, active = []) {
+      const calls = new Map(active.map((call) => [call.callId, call]));
+      for (const row of pending.values()) {
+        if (row.sessionId === sessionId) calls.set(row.callId, { callId: row.callId, questions: row.questions, state: 'open' });
+      }
+      return [...calls.values()];
     },
     close() {
       disposed = true;

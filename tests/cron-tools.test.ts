@@ -132,9 +132,10 @@ test('over a real MCP connection the three tools are listed and CronCreate makes
     describe: () => ({ project }), timeZone: () => 'UTC', now: () => day, log: { warn: () => {} },
   });
   try {
-    const { mcpServers, disallowedTools } = (await tools.forSession('s1', 'claude'))!;
-    const server = mcpServers[0];
-    assert.equal(server.type, 'http');
+    const { mcpServers, disallowedTools, env } = (await tools.forSession('s1', 'claude'))!;
+    // Claude receives the stdio helper; its private environment names the same
+    // authenticated OAR HTTP server, whose task/security contract we check here.
+    const server = JSON.parse(env[mcpServers[0].args[1]]);
     assert.match(server.url, /^http:\/\/127\.0\.0\.1:\d+\//);
     assert.deepEqual(disallowedTools, ['CronCreate', 'CronDelete', 'CronList']);
     const rpc = async (body: unknown, token = server.headers.Authorization) => fetch(server.url, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: token }, body: JSON.stringify(body) });

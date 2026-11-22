@@ -22,18 +22,28 @@ data class SavedComputer(val id: String, val name: String, val link: String, val
 data class Outgoing(
     val requestId: String, val text: String, val attachments: List<JSONObject>,
     val accepted: Boolean = false, val failed: Boolean = false,
+    /**
+     * Sent while the agent was running: it waits in the queue's panel from the moment of sending, as the iPhone places it (`AcceptedSubmission.Placement.queued`), and not as a message of the
+     * history that moves into the panel when the computer's answer arrives (owner, 2026-11-21: "排队消息会先出现在屏幕上，然后再回到排队消息，有个闪动的过程").
+     */
+    val queued: Boolean = false,
 ) {
     fun json() = json("requestId" to requestId, "text" to text,
-        "attachments" to JSONArray(attachments), "accepted" to accepted, "failed" to failed)
+        "attachments" to JSONArray(attachments), "accepted" to accepted, "failed" to failed, "queued" to queued)
     fun message() = Message(requestId, "user", text, false, requestId,
         attachments = attachments.mapIndexed { index, file ->
-            json("kind" to if (file.has("dataBase64")) "image" else "file",
-                "name" to file.optString("name"), "id" to "$requestId:$index",
+            // A staged video is a video on its way, named by its receipt: the phone kept it under that id (the iPhone's `AcceptedSubmission.attachments`).
+            val video = !file.has("dataBase64") && file.has("receiptId") &&
+                app.dudu.android.media.VideoPreviewStorage.isVideo(file.optString("name"))
+            json("kind" to if (file.has("dataBase64")) "image" else if (video) "video" else "file",
+                "name" to file.optString("name"), "id" to if (video) file.getString("receiptId") else "$requestId:$index",
                 "dataBase64" to file.nullableString("dataBase64"))
         }, pending = true)
+    /** The row the panel shows until the computer's own queue names this input: no actions, as it has no item of the computer's to act on yet. */
+    fun queuedMessage() = message().copy(id = "submission:$requestId", raw = json("editable" to false, "optimistic" to true))
     companion object {
         fun parse(o: JSONObject) = Outgoing(o.getString("requestId"), o.optString("text"),
-            o.rows("attachments"), o.optBoolean("accepted"), o.optBoolean("failed"))
+            o.rows("attachments"), o.optBoolean("accepted"), o.optBoolean("failed"), o.optBoolean("queued"))
     }
 }
 

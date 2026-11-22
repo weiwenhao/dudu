@@ -1,6 +1,24 @@
 import MarkdownUI
 import SwiftUI
 
+/// The body text of a reply, set to Codex's (owner, 2026-11-21: 「参考 Codex 调整吧」, after three screenshots were measured: `.local/designs/font-compare-2026-11-21/`): 17pt with the
+/// system body's -0.41pt tracking (16.6pt from one character to the next), 23.9pt from line to line and 40.2pt from the last line of a paragraph to the first of the next. The line spacing and the
+/// gaps are what is added to PingFang's own line height (about 20.0pt at 17pt: measured 23.3pt a line with .195 em added, 23.9pt wanted). The streaming text (`StreamingReplyText`) and the Markdown share these, so a reply does not jump when it is recorded.
+enum ChatTypography {
+    static let size: CGFloat = 17
+    static let tracking: CGFloat = -0.41
+    static let lineSpacingEm: CGFloat = 0.23
+    static var lineSpacing: CGFloat { size * lineSpacingEm }
+    /// Between a paragraph (or a code block, a quote, a table) and what follows.
+    static let blockGap: CGFloat = 19.5
+    /// Between the items of a list.
+    static let listItemGap: CGFloat = 3.5
+    /// A heading is as big as the text (Codex's "第二步：…" lines), semibold, 28pt after the paragraph before it and 12pt before what follows (48.1pt and 32.3pt from line to line).
+    static let headingEm: CGFloat = 1.0
+    static let headingTop: CGFloat = 28
+    static let headingBottom: CGFloat = 12
+}
+
 struct MessageMarkdown: View {
     let text: String
     /// Smaller, quieter text for secondary content such as a compaction summary.
@@ -34,7 +52,7 @@ struct MessageMarkdown: View {
             if let parsed = prepared.content(for: text) ?? MessageMarkdownCache.cachedContent(for: text) ??
                 (parsed?.text == text ? parsed?.content : nil) {
                 Markdown(parsed)
-                    .markdownTheme(todo ? .duduTodo : compact ? .duduCompact : .dudu)
+                    .markdownTheme(todo ? .duduTodo : compact ? .duduCompact : .duduChat)
                     .markdownImageProvider(MessageImageProvider(sequence: sourceSequence))
                     .markdownInlineImageProvider(MessageInlineImageProvider(sequence: sourceSequence, access: access))
             } else {
@@ -147,84 +165,97 @@ private extension Theme {
                 .markdownMargin(top: 8, bottom: 4)
         }
 
-    static let dudu = Theme.basic
-        .text {
-            FontSize(16)
-            ForegroundColor(DuduStyle.ink)
-        }
-        .link { ForegroundColor(DuduStyle.blue) }
-        .strong { FontWeight(.semibold) }
-        .code {
-            FontFamilyVariant(.monospaced)
-            FontSize(.em(0.88))
-            BackgroundColor(DuduStyle.sheet)
-        }
-        .paragraph { configuration in
-            configuration.label
-                .fixedSize(horizontal: false, vertical: true)
-                .relativeLineSpacing(.em(0.25))
-                .markdownMargin(top: 0, bottom: 14)
-        }
-        .heading1 { configuration in
-            configuration.label
-                .markdownTextStyle {
-                    FontSize(.em(1.4))
-                    FontWeight(.semibold)
-                }
-                .markdownMargin(top: 18, bottom: 10)
-        }
-        .heading2 { configuration in
-            configuration.label
-                .markdownTextStyle {
-                    FontSize(.em(1.25))
-                    FontWeight(.semibold)
-                }
-                .markdownMargin(top: 16, bottom: 10)
-        }
-        .heading3 { configuration in
-            configuration.label
-                .markdownTextStyle {
-                    FontSize(.em(1.1))
-                    FontWeight(.semibold)
-                }
-                .markdownMargin(top: 14, bottom: 8)
-        }
-        .codeBlock { configuration in
-            ScrollView(.horizontal, showsIndicators: false) {
+    /// The text as the quick sheets and the compact surfaces draw it (16pt, as approved); the reply text is `duduChat`.
+    static let dudu = styled(size: 16, tracking: nil, lineSpacingEm: 0.25, blockGap: 14, listItemGap: 5, heading: nil)
+
+    /// The reply text: Codex's numbers (`ChatTypography`).
+    static let duduChat = styled(size: ChatTypography.size, tracking: ChatTypography.tracking, lineSpacingEm: ChatTypography.lineSpacingEm,
+                                 blockGap: ChatTypography.blockGap, listItemGap: ChatTypography.listItemGap,
+                                 heading: (em: ChatTypography.headingEm, top: ChatTypography.headingTop, bottom: ChatTypography.headingBottom))
+
+    /// `heading`: the third level's size and the margins of every level; nil keeps the quick sheets' own (1.1 em; 18 / 16 / 14 above, 10 / 10 / 8 below).
+    static func styled(size: CGFloat, tracking: CGFloat?, lineSpacingEm: CGFloat, blockGap: CGFloat, listItemGap: CGFloat,
+                       heading: (em: CGFloat, top: CGFloat, bottom: CGFloat)?) -> Theme {
+        Theme.basic
+            .text {
+                FontSize(size)
+                ForegroundColor(DuduStyle.ink)
+                TextTracking(tracking)
+            }
+            .link { ForegroundColor(DuduStyle.blue) }
+            .strong { FontWeight(.semibold) }
+            .code {
+                FontFamilyVariant(.monospaced)
+                FontSize(.em(0.88))
+                BackgroundColor(DuduStyle.sheet)
+            }
+            .paragraph { configuration in
+                configuration.label
+                    .fixedSize(horizontal: false, vertical: true)
+                    .relativeLineSpacing(.em(lineSpacingEm))
+                    .markdownMargin(top: 0, bottom: blockGap)
+            }
+            .heading1 { configuration in
                 configuration.label
                     .markdownTextStyle {
-                        FontFamilyVariant(.monospaced)
-                        FontSize(13)
+                        FontSize(.em(1.4))
+                        FontWeight(.semibold)
                     }
-                    .fixedSize(horizontal: true, vertical: true)
-                    .padding(12)
+                    .markdownMargin(top: heading?.top ?? 18, bottom: heading?.bottom ?? 10)
             }
-            .background(DuduStyle.sheet, in: RoundedRectangle(cornerRadius: 12))
-            .markdownMargin(top: 4, bottom: 14)
-        }
-        .blockquote { configuration in
-            HStack(spacing: 12) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(DuduStyle.line)
-                    .frame(width: 3)
+            .heading2 { configuration in
                 configuration.label
-                    .markdownTextStyle { ForegroundColor(DuduStyle.muted) }
+                    .markdownTextStyle {
+                        FontSize(.em(1.25))
+                        FontWeight(.semibold)
+                    }
+                    .markdownMargin(top: heading?.top ?? 16, bottom: heading?.bottom ?? 10)
             }
-            .fixedSize(horizontal: false, vertical: true)
-            .markdownMargin(top: 4, bottom: 14)
-        }
-        .listItem { configuration in
-            configuration.label.markdownMargin(top: 5)
-        }
-        .table { configuration in
-            ScrollView(.horizontal, showsIndicators: false) {
+            .heading3 { configuration in
                 configuration.label
-                    .fixedSize(horizontal: true, vertical: false)
-                    .markdownTableBorderStyle(.init(color: DuduStyle.line))
-                    .markdownTableBackgroundStyle(.alternatingRows(.white, DuduStyle.sheet))
+                    .markdownTextStyle {
+                        FontSize(.em(heading?.em ?? 1.1))
+                        FontWeight(.semibold)
+                    }
+                    .markdownMargin(top: heading?.top ?? 14, bottom: heading?.bottom ?? 8)
             }
-            .markdownMargin(top: 4, bottom: 14)
-        }
+            .codeBlock { configuration in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    configuration.label
+                        .markdownTextStyle {
+                            FontFamilyVariant(.monospaced)
+                            FontSize(13)
+                        }
+                        .fixedSize(horizontal: true, vertical: true)
+                        .padding(12)
+                }
+                .background(DuduStyle.sheet, in: RoundedRectangle(cornerRadius: 12))
+                .markdownMargin(top: 4, bottom: blockGap)
+            }
+            .blockquote { configuration in
+                HStack(spacing: 12) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(DuduStyle.line)
+                        .frame(width: 3)
+                    configuration.label
+                        .markdownTextStyle { ForegroundColor(DuduStyle.muted) }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .markdownMargin(top: 4, bottom: blockGap)
+            }
+            .listItem { configuration in
+                configuration.label.markdownMargin(top: listItemGap)
+            }
+            .table { configuration in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    configuration.label
+                        .fixedSize(horizontal: true, vertical: false)
+                        .markdownTableBorderStyle(.init(color: DuduStyle.line))
+                        .markdownTableBackgroundStyle(.alternatingRows(.white, DuduStyle.sheet))
+                }
+                .markdownMargin(top: 4, bottom: blockGap)
+            }
+    }
 }
 
 // Both image providers use the watched conversation's authenticated attachment transport.

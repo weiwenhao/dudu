@@ -5,7 +5,6 @@ struct ConversationAccess {
     let target: DraftTarget
     let connected: Bool
     var request: @MainActor (String, [String: JSONValue]) async throws -> JSONValue
-    var fork: @MainActor (Double) async throws -> Void
     var loadImage: @MainActor (TranscriptAttachment, DraftTarget, Bool) async -> PreparedPhotoImage?
     var downloadVideo: @MainActor ([String: JSONValue]) async throws -> URL = { _ in throw DuduFailure.remote("UNSUPPORTED") }
 
@@ -274,9 +273,9 @@ struct ConversationDiffContent: View {
 
     var body: some View {
         GeometryReader { viewport in
-            ScrollView([.vertical, .horizontal]) {
+            ScrollView(.vertical) {
                 diffContent
-                    .frame(width: max(layout?.width ?? 0, viewport.size.width - 32), alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(minHeight: max(0, viewport.size.height - 32), alignment: .topLeading)
                     .padding(16)
             }
@@ -326,19 +325,21 @@ struct ConversationDiffContent: View {
                 Text(line.old.map(String.init) ?? "").frame(width: layout.lineNumberWidth, alignment: .trailing)
                 Text(line.new.map(String.init) ?? "").frame(width: layout.lineNumberWidth, alignment: .trailing)
                 Text(verbatim: row.text)
-                    .fixedSize()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("changes.diff.\(row.id)")
             }
             .foregroundStyle(row.text.hasPrefix("-") ? DuduStyle.chatError : DuduStyle.chatInk)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: layout.lineHeight + 4, alignment: .center)
+            .padding(.vertical, 2)
             .background(row.text.hasPrefix("+") ? Color.green.opacity(0.10)
                         : row.text.hasPrefix("-") ? Color.red.opacity(0.08) : Color.clear)
         } else {
             Text(verbatim: row.text)
                 .foregroundStyle(DuduStyle.chatSecondary)
-                .fixedSize()
-                .frame(height: layout.lineHeight + 20, alignment: .center)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 10)
                 .accessibilityIdentifier("changes.diff.\(row.id)")
         }
     }

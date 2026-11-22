@@ -9,14 +9,47 @@ struct BoardSnapshot: Codable, Equatable, Sendable {
     var pins: [String]
     var unreadCount: Int
     var filterStatuses: [IssueWorkflowStatus]? = nil
+    /// When it was written. It orders a board the phone wrote while it was away (`BoardWake`) against the one the App holds; two boards with the same rows are equal whatever their time.
+    var savedAt: Date? = nil
+
+    static func == (lhs: BoardSnapshot, rhs: BoardSnapshot) -> Bool {
+        lhs.version == rhs.version && lhs.computerID == rhs.computerID && lhs.conversationsByTab == rhs.conversationsByTab
+            && lhs.pins == rhs.pins && lhs.unreadCount == rhs.unreadCount && lhs.filterStatuses == rhs.filterStatuses
+    }
 
     func validate(for computerID: String) throws {
         guard version == 1 else { throw ConversationStorageError.unsupportedVersion }
         guard self.computerID == computerID else { throw ConversationStorageError.identityMismatch }
         guard unreadCount >= 0, Set(pins).count == pins.count,
               conversationsByTab.allSatisfy({ key, rows in
-                  BoardTab(rawValue: key) != nil && Set(rows.map(\.id)).count == rows.count
+                  // "backlog" is the scope 未读 replaced (2026-11-21): an older cache may still hold it, and restoring skips it.
+                  (BoardTab(rawValue: key) != nil || key == "backlog") && Set(rows.map(\.id)).count == rows.count
               }) else { throw ConversationStorageError.invalidData }
+    }
+}
+
+/// The board's filter (筛选), kept per computer so that the App opens on the board as it was left (owner, 2026-11-23: 「退出 APP 再进去就没了，应该持久化一下」). Keyed like the
+/// board cache, by the phone's own id of the computer; a few short keys, so `UserDefaults` beside the sidebar's own choices.
+struct BoardFilterStore {
+    var defaults: UserDefaults = .standard
+
+    func load(for computerID: String) -> BoardFilters {
+        guard let data = defaults.data(forKey: key(computerID)),
+              let saved = try? JSONDecoder().decode([String: [String?]].self, from: data) else { return BoardFilters() }
+        return BoardFilters(saved: saved)
+    }
+
+    func save(_ filters: BoardFilters, for computerID: String) {
+        guard !filters.isEmpty, let data = try? JSONEncoder().encode(filters.saved) else { return remove(for: computerID) }
+        defaults.set(data, forKey: key(computerID))
+    }
+
+    func remove(for computerID: String) {
+        defaults.removeObject(forKey: key(computerID))
+    }
+
+    private func key(_ computerID: String) -> String {
+        "dudu.board.filters." + SHA256.hash(data: Data(computerID.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }
 

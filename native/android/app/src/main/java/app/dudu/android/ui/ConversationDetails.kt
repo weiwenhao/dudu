@@ -1,6 +1,10 @@
 package app.dudu.android.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,20 +36,34 @@ import kotlinx.coroutines.launch
 import android.content.ClipData
 import org.json.JSONArray
 
+/**
+ * The files a turn delivered (the iPhone's `TurnDeliveredFiles`): the chat panel's grey card, 16 dp corners and a hairline, the first three files and 「全部 N 个文件」 for the rest, hairlines from 48 dp.
+ * A tap shows a file in the app (`FilePreviewPage`); a long press copies its path.
+ */
 @Composable
-fun DeliveredFilesCard(files: List<JSONObject>, sessionId: String, model: DuduViewModel) {
+fun DeliveredFilesCard(files: List<JSONObject>, sessionId: String, model: DuduViewModel, connected: Boolean = true) {
     val shown = presentedFiles(files)
-    if (shown.isNotEmpty()) InsetCard {
-        shown.take(3).forEachIndexed { index, file ->
-            if (index > 0) HorizontalDivider(Modifier.padding(start = 48.dp), thickness = .5.dp)
-            Attachment(sessionId, file, file.optLong("seq"), model)
+    val preview = remember { TurnFilePreview() }
+    if (shown.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        val shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+        Column(Modifier.fillMaxWidth().background(chatPanel(), shape).border(.5.dp, chatBorder(), shape)
+            .clip(shape)) {
+            shown.take(3).forEachIndexed { index, file ->
+                if (index > 0) HorizontalDivider(Modifier.padding(start = 48.dp), thickness = .5.dp, color = chatBorder())
+                DeliveredFileRow(file, deliveredTitle(file, shown), preview, sessionId, connected, model)
+            }
+            if (shown.size > 3) {
+                HorizontalDivider(Modifier.padding(start = 48.dp), thickness = .5.dp, color = chatBorder())
+                Row(Modifier.fillMaxWidth().clickable {
+                    model.navigate(Route("delivered-files", params = json("files" to JSONArray(shown))))
+                }.heightIn(min = 48.dp).padding(horizontal = 14.dp).testTag("files-presented-all"),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(wp("全部 %lld 个文件", shown.size), Modifier.weight(1f), fontSize = 15.sp, color = chatSecondary())
+                    Glyph(DuduGlyphs.right, size = 14, tint = chatTertiary())
+                }
+            }
         }
-        if (shown.size > 3) {
-            HorizontalDivider(Modifier.padding(start = 48.dp), thickness = .5.dp)
-            Line(wp("全部 %lld 个文件", shown.size), action = {
-                model.navigate(Route("delivered-files", params = json("files" to JSONArray(shown))))
-            })
-        }
+        TurnFilePreviewPresentation(preview)
     }
 }
 
@@ -56,13 +74,14 @@ fun DeliveredFilesScreen(route: Route, state: UiState, model: DuduViewModel) {
     val shown = files.filter { (it.optString("name") + it.optString("path")).contains(query.trim(), true) }
     val resize = LocalSheetHeight.current
     LaunchedEffect(shown.size) { resize((138 + shown.size * 56).coerceIn(176, 600)) }
+    val preview = remember { TurnFilePreview() }
     Page(wp("全部 %lld 个文件", files.size), model::backRoute) {
         Box(Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) { SearchField(query, w("搜索文件")) { query = it } }
+        Box(Modifier.padding(horizontal = 18.dp)) { TurnFilePreviewPresentation(preview) }
         LazyColumn {
             cardItems(shown, key = { it.optString("path", it.optString("id")) }) { file ->
-                val duplicatedName = files.count { it.optString("name") == file.optString("name") } > 1
-                Attachment(state.session?.id ?: return@cardItems,
-                    if (duplicatedName) file.copyJson().put("name", file.optString("path")) else file, file.optLong("seq"), model)
+                DeliveredFileRow(file, deliveredTitle(file, files), preview, state.session?.id ?: return@cardItems,
+                    state.connected && state.session?.cached == false, model)
             }
         }
     }
@@ -85,7 +104,7 @@ fun FilesScreen(route: Route, state: UiState, model: DuduViewModel) {
         background = MaterialTheme.colorScheme.surface, top = {
         if (reading) IconButton(onClick = { scope.launch {
             clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("", result?.optString("text").orEmpty()))); copied = true
-        } }, enabled = result != null) { Glyph(if (copied) R.drawable.ic_check else R.drawable.ic_copy, w("复制文件内容"), 20) }
+        } }, enabled = result != null) { Glyph(if (copied) DuduGlyphs.check else DuduGlyphs.copy, w("复制文件内容"), 20) }
     }) {
         if (id == null) Text(w("打开会话后查看项目文件"), Modifier.padding(20.dp))
         else if (reading) {
@@ -102,16 +121,16 @@ fun FilesScreen(route: Route, state: UiState, model: DuduViewModel) {
                 Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
                     Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Glyph(R.drawable.ic_folder, size = 20); Text(w("文件"), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Glyph(DuduGlyphs.folder, size = 20); Text(w("文件"), fontSize = 13.sp, fontWeight = FontWeight.Medium)
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = actions::refresh, enabled = !actions.busy) { Glyph(R.drawable.ic_refresh_cw, w("刷新文件"), 18) }
+                IconButton(onClick = actions::refresh, enabled = !actions.busy) { Glyph(DuduGlyphs.completeContext, w("刷新文件"), 18) }
             }
             Row(Modifier.fillMaxWidth().heightIn(min = 36.dp).padding(start = if (path.isEmpty()) 16.dp else 4.dp, end = 16.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 if (path.isNotEmpty()) IconButton(onClick = model::backRoute, modifier = Modifier.size(36.dp)) {
-                    Glyph(R.drawable.ic_arrow_left, w("返回上一级"), 18)
+                    Glyph(DuduGlyphs.back, w("返回上一级"), 18)
                 }
                 Text(if (path.isEmpty()) result?.optString("name") ?: w("项目") else path,
                     fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -123,10 +142,10 @@ fun FilesScreen(route: Route, state: UiState, model: DuduViewModel) {
                         json("id" to id, "file" to !entry.optBoolean("isDirectory")))) }, color = MaterialTheme.colorScheme.surface) {
                         Row(Modifier.fillMaxWidth().heightIn(min = 42.dp).padding(horizontal = 14.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                            Glyph(if (entry.optBoolean("isDirectory")) R.drawable.ic_folder else R.drawable.ic_file,
+                            Glyph(if (entry.optBoolean("isDirectory")) DuduGlyphs.folder else DuduGlyphs.file,
                                 size = 17, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(entry.getString("name"), Modifier.weight(1f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (entry.optBoolean("isDirectory")) Glyph(R.drawable.ic_chevron_right, size = 12, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (entry.optBoolean("isDirectory")) Glyph(DuduGlyphs.right, size = 12, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -209,7 +228,7 @@ fun DetailScreen(route: Route, state: UiState, model: DuduViewModel) {
                                     FileChangeCounts(file.optInt("added"), file.optInt("deleted"))
                                 }
                             }
-                            Glyph(R.drawable.ic_chevron_right, size = 15, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Glyph(DuduGlyphs.right, size = 15, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     HorizontalDivider(Modifier.padding(horizontal = 20.dp), thickness = .5.dp)
@@ -267,6 +286,15 @@ fun ActivityScreen(route: Route, state: UiState, model: DuduViewModel) {
             }
         }
     }
+    // A job that runs counts its time every second while the page is in front, as the iPhone's `TimelineView(.periodic(by: 1))`; the list itself is read every 3 s.
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val live = (jobRows + listOfNotNull(result.optJSONObject("job"))).any { it.optString("status") in listOf("running", "stopping") }
+    LaunchedEffect(live, lifecycle) {
+        if (!live) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) { now = System.currentTimeMillis(); delay(1000) }
+        }
+    }
     fun open(member: JSONObject) {
         model.openSession(member.getString("id"), member.optString("name"),
             subagent = member.optJSONObject("session")?.optJSONObject("subagent"))
@@ -282,8 +310,8 @@ fun ActivityScreen(route: Route, state: UiState, model: DuduViewModel) {
                             Text(job?.optString("title").orEmpty(), fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
                             if (job != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 ActivityMark(job.optString("status"), 15)
-                                Text("${activityStatus(job.optString("status"))} · ${jobElapsed(job)}", fontSize = 13.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${jobStatus(job.optString("status"))} · ${jobElapsed(job, now)}", fontSize = 13.sp,
+                                    color = chatSecondary(), style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"))
                             }
                         }
                         job?.optLong("startedAt")?.takeIf { it > 0 }?.let { started ->
@@ -308,7 +336,7 @@ fun ActivityScreen(route: Route, state: UiState, model: DuduViewModel) {
                             } }, enabled = !actions.busy && job?.optString("status") != "stopping", color = MaterialTheme.colorScheme.surface) {
                                 Row(Modifier.fillMaxWidth().heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
-                                    Glyph(R.drawable.ic_square, size = 14, tint = MaterialTheme.colorScheme.error)
+                                    Glyph(DuduGlyphs.jobStop, size = 14, tint = MaterialTheme.colorScheme.error)
                                     Text(w("停止"), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.error)
                                 }
                             }
@@ -319,7 +347,7 @@ fun ActivityScreen(route: Route, state: UiState, model: DuduViewModel) {
                 if (jobRows.isEmpty() && !actions.busy && actions.error == null) item {
                     Column(Modifier.fillMaxWidth().heightIn(min = 160.dp), horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically)) {
-                        Glyph(R.drawable.ic_loader_circle, size = 26, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Glyph(DuduGlyphs.stateWorking, size = 26, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(w("暂无后台任务"), fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -327,10 +355,12 @@ fun ActivityScreen(route: Route, state: UiState, model: DuduViewModel) {
                     GroupRow(job === jobRows.first(), job === jobRows.last(), inset = 0) {
                         ActivityRow(job.optString("title"), { model.navigate(Route("activity", target = "jobs",
                             params = json("jobId" to job.getString("id")))) }, leading = { ActivityMark(job.optString("status")) }) {
+                            // Only a job that did not simply finish says its state in words; the others show how long they ran (the iPhone's `trailingText`).
                             val status = job.optString("status")
-                            Text((if (status in listOf("running", "stopping", "completed")) "" else "${activityStatus(status)} · ") + jobElapsed(job),
-                                fontSize = 13.sp, color = if (status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1)
+                            val finishedWell = status in listOf("running", "stopping", "completed")
+                            Text((if (finishedWell) "" else "${jobStatus(status)} · ") + jobElapsed(job, now),
+                                fontSize = 13.sp, color = if (finishedWell || status == "killed") chatSecondary() else chatError(),
+                                maxLines = 1, style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"))
                         }
                     }
                 }
@@ -342,7 +372,7 @@ fun ActivityScreen(route: Route, state: UiState, model: DuduViewModel) {
                                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                                 val agent = member.optJSONObject("session")?.nullableString("agent")
                                     ?: session.raw.optJSONObject("session")?.nullableString("agent")
-                                if (agent != null) AgentLogo(agent, 26) else Glyph(R.drawable.ic_bot, size = 24)
+                                if (agent != null) AgentLogo(agent, 26) else Glyph(DuduGlyphs.model, size = 24)
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(agent?.let(::agentName) ?: member.optString("name"), fontSize = 16.sp, fontWeight = FontWeight.Medium,
                                         maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -370,7 +400,7 @@ fun ActivityScreen(route: Route, state: UiState, model: DuduViewModel) {
                     item { InsetCard(Modifier.padding(top = 14.dp)) {
                         ActivityRow(w("已完成"), { completedOpen = !finishedIsOpen }, leading = { ActivityMark("completed") }) {
                             Text(finished.size.toString(), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Glyph(if (finishedIsOpen) R.drawable.ic_chevron_down else R.drawable.ic_chevron_right, size = 16,
+                            Glyph(if (finishedIsOpen) DuduGlyphs.down else DuduGlyphs.right, size = 16,
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     } }
@@ -399,21 +429,35 @@ private fun ActivityRow(title: String, action: () -> Unit, enabled: Boolean = tr
     }
 }
 
-private fun jobElapsed(job: JSONObject): String {
-    val end = job.optLong("finishedAt").takeIf { it > 0 } ?: System.currentTimeMillis()
+/** How long a job ran, or has run until `now`, in the iPhone's words (`SessionBackgroundJob.elapsed`): 1小时2分, 5分13秒, 42秒. */
+@Composable
+private fun jobElapsed(job: JSONObject, now: Long): String {
+    val end = job.optLong("finishedAt").takeIf { it > 0 } ?: now
     val seconds = ((end - job.optLong("startedAt", end)) / 1000).coerceAtLeast(0)
-    return if (seconds >= 3600) "%d:%02d:%02d".format(java.util.Locale.ROOT, seconds / 3600, seconds / 60 % 60, seconds % 60)
-        else "%d:%02d".format(java.util.Locale.ROOT, seconds / 60, seconds % 60)
+    return when {
+        seconds >= 3600 -> w("{0}小时{1}分").replace("{0}", (seconds / 3600).toString()).replace("{1}", (seconds % 3600 / 60).toString())
+        seconds >= 60 -> w("{0}分{1}秒").replace("{0}", (seconds / 60).toString()).replace("{1}", (seconds % 60).toString())
+        else -> w("{0}秒").replace("{0}", seconds.toString())
+    }
+}
+
+/** A job's state in the iPhone's words (`SessionBackgroundJob.statusText`). */
+@Composable
+private fun jobStatus(value: String) = when (value) {
+    "running", "stopping" -> w("运行中")
+    "completed" -> w("已完成")
+    "killed" -> w("已停止")
+    else -> w("失败")
 }
 
 @Composable
 private fun ActivityMark(state: String, size: Int = 18) {
     when (state) {
         "working", "running", "stopping" -> RunningMark(size)
-        "completed" -> Glyph(R.drawable.ic_check, size = size, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        "failed" -> Glyph(R.drawable.ic_circle_alert, size = size, tint = MaterialTheme.colorScheme.error)
-        "blocked" -> Glyph(R.drawable.ic_octagon_pause, size = size)
-        else -> Glyph(R.drawable.ic_circle, size = size, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        "completed" -> Glyph(DuduGlyphs.check, size = size, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        "failed" -> Glyph(DuduGlyphs.stateFailed, size = size, tint = MaterialTheme.colorScheme.error)
+        "blocked" -> Glyph(DuduGlyphs.stateBlocked, size = size)
+        else -> Glyph(DuduGlyphs.stateIdle, size = size, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

@@ -47,10 +47,10 @@ class CoreTest {
         assertThrows(org.json.JSONException::class.java) {
             Home.parse(JSONObject("""{"outcome":"success","tab":"active","groups":[]}"""), Scope.Active)
         }
-        val answer = JSONObject("""{"outcome":"success","tab":"backlog","pins":["assistant"],
+        val answer = JSONObject("""{"outcome":"success","tab":"all","pins":["assistant"],
           "unreadCount":0,"conversations":[{"id":"assistant","title":"Dudu","preview":"","receivedAt":0,
           "sessionState":"idle","unread":false,"readSeq":-1,"pinned":true}]}""")
-        assertTrue(Home.parse(answer, Scope.Backlog).rows.isEmpty())
+        assertEquals(listOf("assistant"), Home.parse(answer, Scope.All).rows.map(Conversation::id))
         assertThrows(IllegalArgumentException::class.java) { Home.parse(answer, Scope.Active) }
     }
 

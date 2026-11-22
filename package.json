@@ -1,6 +1,6 @@
 {
   "name": "harness-mobile",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "index.ts",
   "dependencies": {
@@ -97,6 +97,7 @@
     "export": "expo export --platform all",
     "lint": "expo lint",
     "logs:pull": "node scripts/pull-device-logs.mjs",
+    "logs:reads": "node scripts/read-log.mjs",
     "test:e2e": "node scripts/e2e.mjs"
   },
   "engines": {

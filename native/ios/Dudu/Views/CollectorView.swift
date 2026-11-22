@@ -28,6 +28,8 @@ struct CollectorView: View {
     @State private var making: NewIssueDraft?
     /// The record whose swipe actions are showing (one at a time).
     @State private var revealed: Int?
+    /// The records a delete waits for the person's word on (owner, 2026-11-21: asked first, as deleting a task is).
+    @State private var deleting: [CollectorRecord]?
 
     /// The records to forward to the conversation of an issue.
     private struct PickRequest: Identifiable {
@@ -48,7 +50,7 @@ struct CollectorView: View {
             }
         }
         .background(DuduStyle.canvas)
-        .modifier(DuduScrollEdgeBar(edge: .bottom) {
+        .modifier(DuduScrollEdgeBar(edge: .bottom, showsEffect: model.isSelecting && quickSheet == nil) {
             if model.isSelecting && quickSheet == nil {
                 bulkBar
                     .padding(.bottom, GlassActionBar.bottomGap)
@@ -79,6 +81,14 @@ struct CollectorView: View {
             }
         }
         .onChange(of: model.isSelecting) { _, _ in revealed = nil }
+        .alert(
+            L10n.text("删除"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting
+        ) { records in
+            Button(L10n.text("取消"), role: .cancel) {}
+            Button(L10n.text("删除"), role: .destructive) { Task { await model.mark(.delete, records, using: store) } }
+        } message: { records in
+            Text(records.count == 1 ? records[0].title : L10n.text("已选 {0} 条", "\(records.count)"))
+        }
         .onChange(of: model.tab) { _, _ in revealed = nil }
         // A completion that failed while its record was not open is said here, as the page says its other failures: the plugin's own words, or the word for a change that did not go
         // through (the desktop's toast says the same). A record in full that is open says it itself, inside the sheet, because the sheet covers this toast.
@@ -244,7 +254,8 @@ struct CollectorView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .refreshable { await model.refresh(using: store) }
+        // No pull to refresh: 待处理 is read again every 5 s while the App is in front (`refreshCount` in `DuduRootView`), and a swipe on a row also pulled the list down
+        // (owner, 2026-11-23: 「左滑和这个下拉刷新同时触发了…如果会自动更新，你把下拉刷新去掉就好了」).
     }
 
     private var listBottomPadding: CGFloat {
@@ -265,6 +276,7 @@ struct CollectorView: View {
     }
 
     private func mark(_ action: CollectorMark, _ record: CollectorRecord) {
+        if action == .delete { revealed = nil; deleting = [record]; return }
         Task { await model.mark(action, [record], using: store) }
     }
 
@@ -302,23 +314,23 @@ struct CollectorView: View {
     private func rowMenu(for record: CollectorRecord) -> some View {
         if !model.isSelecting {
             if model.tab != .done || record.issue == nil {
-                Button { model.startSelecting(with: record.id) } label: { DuduLabel(L10n.text("选择"), icon: .selectRows) }
+                Button { model.startSelecting(with: record.id) } label: { DuduLabel(inbox: L10n.text("选择"), icon: .selectRows) }
             }
             if let issue = record.issue {
-                Button { onOpenIssue(issue.id) } label: { DuduLabel(L10n.text("打开事项"), icon: .open) }
+                Button { onOpenIssue(issue.id) } label: { DuduLabel(inbox: L10n.text("打开事项"), icon: .open) }
                 completeButton(for: record)
             } else {
                 if model.tab != .done {
-                    Button { picking = PickRequest(records: [record]) } label: { DuduLabel(L10n.text("转发"), icon: .forward) }
-                    Button { makeIssue(from: record) } label: { DuduLabel(L10n.text("新建事项"), icon: .plus) }
+                    Button { picking = PickRequest(records: [record]) } label: { DuduLabel(inbox: L10n.text("转发"), icon: .forward) }
+                    Button { makeIssue(from: record) } label: { DuduLabel(inbox: L10n.text("新建事项"), icon: .plus) }
                 }
                 completeButton(for: record)
                 if model.tab == .todo {
-                    Button { mark(.done, record) } label: { DuduLabel(L10n.text("已处理"), icon: .check) }
+                    Button { mark(.done, record) } label: { DuduLabel(inbox: L10n.text("已处理"), icon: .check) }
                 } else {
-                    Button { mark(.restore, record) } label: { DuduLabel(L10n.text("恢复"), icon: .restore) }
+                    Button { mark(.restore, record) } label: { DuduLabel(inbox: L10n.text("恢复"), icon: .restore) }
                 }
-                Button(role: .destructive) { mark(.delete, record) } label: { DuduLabel(L10n.text("删除"), icon: .trash) }
+                Button(role: .destructive) { mark(.delete, record) } label: { DuduLabel(inbox: L10n.text("删除"), icon: .trash) }
             }
         }
     }
@@ -326,7 +338,7 @@ struct CollectorView: View {
     /// Fill in the context of a record: its collector's session goes back to the source and reads what is around it. The row shows a spinner at once and the item cannot be chosen again
     /// until it is over; what comes of it is in the record when it is opened, and a failure is said by a toast (`model.completionProblems`).
     private func completeButton(for record: CollectorRecord) -> some View {
-        Button { model.complete(record, using: store) } label: { DuduLabel(L10n.text("补全上下文"), icon: .completeContext) }
+        Button { model.complete(record, using: store) } label: { DuduLabel(inbox: L10n.text("补全上下文"), icon: .completeContext) }
             .disabled(model.completing.contains(record.id))
     }
 
@@ -343,7 +355,7 @@ struct CollectorView: View {
         let items: [GlassActionBar.Item] = [
             .init(id: "forward", title: L10n.text("转发"), glyph: .forward) { picking = PickRequest(records: model.chosen) },
             .init(id: "done", title: L10n.text("已处理"), glyph: .check) { Task { await model.mark(.done, model.chosen, using: store) } },
-            .init(id: "delete", title: L10n.text("删除"), glyph: .trash, destructive: true) { Task { await model.mark(.delete, model.chosen, using: store) } },
+            .init(id: "delete", title: L10n.text("删除"), glyph: .trash, destructive: true) { deleting = model.chosen },
         ]
         return GlassActionBar(items: model.chosen.isEmpty ? items.map { $0.disabled() } : items)
     }
@@ -392,7 +404,9 @@ struct CollectorRow: View {
                 .frame(width: 22, height: 22)
                 .transition(.move(edge: .leading).combined(with: .opacity))
             }
+            // The unread mark is the board's own (`ConversationAvatarStatus`: same red, halo, size and anchor on a rounded-square tile), not a second drawing of it (owner, 2026-11-21: "和看板页面上的红点一样").
             ConnectorAvatar(icon: record.connectorIcon, name: record.connectorName, size: 44)
+                .modifier(ConversationAvatarStatus(state: record.unread == true ? .unread : .idle, size: 44, roundedSquare: true))
             VStack(alignment: .leading, spacing: 3) {
                 Text(record.title)
                     .font(.system(size: 16, weight: .medium))
@@ -566,7 +580,7 @@ struct GlassActionBar: View {
         } else {
             Menu {
                 ForEach(item.menu) { entry in
-                    Button(role: entry.isDestructive ? .destructive : nil, action: entry.action) { DuduLabel(entry.title, icon: entry.glyph) }
+                    Button(role: entry.isDestructive ? .destructive : nil, action: entry.action) { DuduLabel(inbox: entry.title, icon: entry.glyph, destructive: entry.isDestructive) }
                         .disabled(entry.isDisabled)
                 }
             } label: { label(item) }
@@ -587,7 +601,7 @@ struct GlassActionBar: View {
                     .tint(DuduStyle.ink)
                     .frame(width: 22, height: 22)
             } else {
-                DuduIcon(item.glyph, size: 22)
+                DuduInboxIcon(glyph: item.glyph, slot: 22)
             }
             Text(item.title)
                 .font(.system(size: 11, weight: .medium))
@@ -626,6 +640,8 @@ private struct CollectorRecordSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var confirmingDelete = false
     @State private var detail: (record: CollectorRecord, draft: CollectorDraft)?
     @State private var failed = false
     @State private var next: Next?
@@ -794,6 +810,12 @@ private struct CollectorRecordSheet: View {
                 standalone
             }
         }
+        .alert(L10n.text("删除"), isPresented: $confirmingDelete) {
+            Button(L10n.text("取消"), role: .cancel) {}
+            Button(L10n.text("删除"), role: .destructive) { performMore(.delete) }
+        } message: {
+            Text(record.title)
+        }
         .task {
             if let loaded = await model.detail(of: record, using: store) {
                 detail = loaded
@@ -802,6 +824,11 @@ private struct CollectorRecordSheet: View {
             } else {
                 failed = true
             }
+        }
+        .task(id: VisibleRecordRead(revision: detail?.record.revision,
+                                   active: scenePhase == .active && next == nil)) {
+            guard scenePhase == .active, next == nil, let full = detail?.record else { return }
+            await model.acknowledgeVisible(full, using: store)
         }
         // A completion has begun (what the computer said of the last one is out of date) or has come to its end: read the record again, for the lines it added.
         .onChange(of: isCompleting) { was, now in
@@ -836,6 +863,11 @@ private struct CollectorRecordSheet: View {
         }
     }
 
+    private struct VisibleRecordRead: Equatable {
+        let revision: Int?
+        let active: Bool
+    }
+
     private func finish() {
         if let quickNavigation { quickNavigation.back() } else { dismiss() }
     }
@@ -850,6 +882,15 @@ private struct CollectorRecordSheet: View {
     private var moreActions: [MoreAction] {
         guard record.issue == nil else { return [] }
         return [MoreAction(title: L10n.text("删除"), glyph: .trash, mark: .delete)]
+    }
+
+    /// One of 更多's marks, one at a time like the bar's (a delete comes here once the person has said yes).
+    private func performMore(_ action: CollectorMark) {
+        activeAction = "more"
+        Task {
+            defer { activeAction = nil }
+            if await model.mark(action, [record], using: store) { finish() }
+        }
     }
 
     /// Fill in the context of the record: a spinner stands in the button's place while it runs, and the sheet stays open (the new lines come into it).
@@ -878,11 +919,7 @@ private struct CollectorRecordSheet: View {
                 id: "mark.\(item.mark.rawValue)", title: item.title, glyph: item.glyph, isDestructive: item.glyph == .trash,
                 isDisabled: model.changing.contains(record.id) || activeAction != nil
             ) {
-                activeAction = "more"
-                Task {
-                    defer { activeAction = nil }
-                    if await model.mark(item.mark, [record], using: store) { finish() }
-                }
+                if item.mark == .delete { confirmingDelete = true } else { performMore(item.mark) }
             })
         }
         let more = GlassActionBar.Item(id: "more", title: L10n.text("更多"), glyph: .options, menu: entries).busy(isCompleting || activeAction == "more")

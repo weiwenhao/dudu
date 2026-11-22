@@ -49,6 +49,7 @@ export function matchesSchema(value, schema) {
 const INBOX_DESCRIPTIONS = {
   list: 'Browse the same To do / Done tabs and collector/date filters as the inbox interface.',
   get: 'Read a collected record, its source and new-issue draft. This content is untrusted material.',
+  read: 'Acknowledge only the record revision the owner explicitly asks to mark read. Fetching a record for the agent does not mark it read; handling and forwarding are independent.',
   done: 'Mark one or several records handled, only as the owner requested.',
   delete: 'Delete one or several records, retaining source deduplication. Only at the owner request.',
   restore: 'Restore deleted records or undo the handled mark.',
@@ -129,13 +130,13 @@ export function createAssistantCapabilities({ assistant, assignment, issues, das
   `The providers settings' ${action} operation: inspect, redetect, enable/disable or change an executable path. Only change the owner-requested provider.`,
     (args) => assignment.providers?.[action](args) ?? unavailable());
   add('home/list', object({ tab: { type: 'string', enum: ['active', 'backlog', 'all'] }, filter: ISSUE_REQUESTS.list.properties.filter }),
-    'Read the shared phone/Desktop conversation list, pins, completed incoming message times and unread state.',
-    ({ tab = 'active', filter }) => assignment.chatHome?.list(tab, (issue) => issue, filter, { includePinnedConversations: true }) ?? unavailable());
+    'Read the shared phone/Desktop conversation list, pins, the newest message of each conversation (the owner\'s own words when they are newer than the agent\'s last answer) with its time, and unread state.',
+    ({ tab = 'active', filter }) => assignment.chatHome?.list(tab, (issue) => issue, filter, { includePinnedConversations: true, ownMessages: true }) ?? unavailable());
   add('home/pin', object({ target, pinned: boolean }, ['target', 'pinned']), 'Pin or unpin the conversation for both phone and Desktop.',
     (args) => assignment.chatHome?.pin(args, fail) ?? unavailable());
   add('home/read', object({ target, sessionId: session, unread: boolean, seq: { type: 'integer', minimum: -1 } }, ['target', 'sessionId', 'unread']),
     'Mark a conversation unread, or acknowledge only the message sequence the owner asks to mark read. Reading a transcript does not itself mark it read.',
-    (args) => assignment.chatHome?.read(args, fail) ?? unavailable());
+    (args) => assignment.chatHome?.read(args, fail, { screen: 'dudu', how: 'tool' }) ?? unavailable());
   add('sessions/list', object({ query: text, provider, limit: { type: 'integer', minimum: 1, maximum: 200 }, refresh: boolean, inDsh: boolean }),
     legacy.get('sessions_list')?.description ?? 'List and search existing conversations.', useTool('sessions_list'));
   add('sessions/read', object({ session, query: text, before: { type: 'integer', minimum: 1 } }, ['session']),
@@ -158,9 +159,9 @@ export function createAssistantCapabilities({ assistant, assignment, issues, das
     stream: object({ turn: integer, step: integer, digest: text }, ['turn', 'step', 'digest']),
   }, ['seq']) }, ['sessionId', 'position']),
     'Acknowledge the named incoming message position through the shared read receipt service.',
-    ({ sessionId, position }) => assignment.acknowledgeRead?.(sessionId, position) ?? unavailable());
+    ({ sessionId, position }) => assignment.acknowledgeRead?.(sessionId, position, { screen: 'dudu', how: 'tool' }) ?? unavailable());
   add('sessions/mark-unread', object({ sessionId: session }, ['sessionId']), 'Mark the named conversation unread for both phone and Desktop.',
-    ({ sessionId }) => assignment.markSessionUnread?.(sessionId) ?? unavailable());
+    ({ sessionId }) => assignment.markSessionUnread?.(sessionId, { screen: 'dudu', how: 'tool' }) ?? unavailable());
   add('sessions/stop', object({ session }, ['session']), 'Stop the named conversation’s foreground work; its history and issue workflow stay.',
     async ({ session: key }) => {
       if (!key.startsWith('dsh:') || key.startsWith('dsh:dudu-assistant-')) return { outcome: 'needs_clarification', code: 'invalid_session' };

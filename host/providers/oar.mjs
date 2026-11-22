@@ -633,6 +633,7 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
           const sessionOptions = await optionsFor({ ...options, signal, retained: previous?.backgroundActive });
           // Tools the host serves to this session over MCP, and tools of the harness's own it takes away (providers/cron-tools.mjs). OAR does not remember them: every start gives them again.
           if (hostTools?.mcpServers?.length) sessionOptions.mcpServers = [...(sessionOptions.mcpServers ?? []), ...hostTools.mcpServers];
+          if (hostTools?.env) sessionOptions.env = { ...sessionOptions.env, ...hostTools.env };
           if (hostTools?.disallowedTools?.length) sessionOptions.disallowedTools = [...new Set([...(sessionOptions.disallowedTools ?? []), ...hostTools.disallowedTools])];
           if (hostTools?.launchArgs?.length) sessionOptions.launchArgs = [...(sessionOptions.launchArgs ?? []), ...hostTools.launchArgs];
           // Only the harnesses whose OAR session reads background tasks (Claude, Codex) are asked for them.

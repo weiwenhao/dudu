@@ -9,7 +9,7 @@ import { createReadReceipts, validReadPosition } from '../host/assistant/session
 import { contentDigest, hasUnread, sessionStateForActivity } from '../host/assistant/sessions/session-state.mjs';
 import { createIssues } from '../host/assistant/issues/index.mjs';
 import { SCHEMA_VERSION } from '../host/assistant/issues/schema.mjs';
-import { displayedReadPosition } from '../host/dudu-plugin/ui/lib/session-read-receipts.js';
+import { displayedReadPosition, ENGAGED_MS, mayRead } from '../host/dudu-plugin/ui/lib/session-read-receipts.js';
 import { createSessionActivity } from '../host/assistant/sessions/session-activity.mjs';
 import { migrateViews } from '../host/dudu-plugin/ui/issues/view.js';
 
@@ -332,4 +332,13 @@ test('schema migration removes only old manual overrides and preserves issues an
     assert.equal(after.issue.updatedAt, made.updatedAt);
     assert.ok(after.log.length);
   } finally { issues.close(); }
+});
+
+// Owner, 2026-11-22: a conversation that is open and in front was read at once, so two on screen were both read and a reply finished while nobody was there never lit a red dot.
+test('the person must have a part in a read: a press after the content came, or just before it; shown and untouched, or touched long ago, stays unread', () => {
+  assert.equal(mayRead({ unreadSince: 1000, touchedAt: undefined }), false, 'in front and at the bottom, but nobody touched it');
+  assert.equal(mayRead({ unreadSince: 1000, touchedAt: 1500 }), true, 'pressed, scrolled or typed after it came');
+  assert.equal(mayRead({ unreadSince: 20_000, touchedAt: 20_000 - ENGAGED_MS }), true, 'still working in it when it came');
+  assert.equal(mayRead({ unreadSince: 20_000, touchedAt: 20_000 - ENGAGED_MS - 1 }), false, 'worked in it a while ago');
+  assert.equal(mayRead({ unreadSince: null, touchedAt: 5 }), false, 'nothing unread to read');
 });

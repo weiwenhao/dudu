@@ -37,6 +37,13 @@ enum class IssueProperty { Priority, Agent, Status, Due, Labels, Project }
 data class Route(val name: String, val title: String = "", val target: String? = null,
     val params: JSONObject = json())
 
+/**
+ * A quick sheet of 嘟嘟's chat (`kind`: todo, info, task) as it was when 打开会话 / 打开事项 / 关联会话 left it, for the chat of `sessionId` on `computerId` (the iPhone's `AssistantQuickSheetState`):
+ * its tab, where its list was scrolled to, the row that was open and the record or task that was open in it.
+ */
+data class QuickSheetReturn(val kind: String, val computerId: String, val sessionId: String, val tab: String? = null,
+    val scrollIndex: Int = 0, val scrollOffset: Int = 0, val expanded: Long? = null, val detail: Route? = null)
+
 data class IssueDraft(
     val title: String = "", val description: String = "", val project: Project? = null,
     val agent: String? = null, val status: String? = null, val priority: String = "none",
@@ -56,9 +63,15 @@ data class IssueDraft(
     }
 }
 
+/** An attempt to connect that the person has to wait for. A saved computer that is only being tried again (`retrying`) is not one: the computer pages stay usable. */
+val UiState.connectionInFlight: Boolean get() = connecting && !retrying
+
 data class UiState(
     val initialized: Boolean = false, val computer: String = "", val connected: Boolean = false,
-    val connecting: Boolean = false, val scope: Scope = Scope.Active, val home: Home? = null,
+    val connecting: Boolean = false,
+    /** A saved computer that could not be reached is tried again every two seconds while the app is in front (`connectSaved`); `connecting` stays true all that time. Nothing is in flight that the person must wait for: adding, switching or editing a computer replaces that attempt. */
+    val retrying: Boolean = false,
+    val scope: Scope = Scope.Active, val home: Home? = null,
     val refreshing: Boolean = false, val problem: String? = null, val panel: Panel? = null,
     val busy: Boolean = false, val options: Options? = null, val draft: IssueDraft = IssueDraft(),
     val session: Session? = null, val conversationTitle: String? = null, val opening: Boolean = false,
@@ -68,23 +81,60 @@ data class UiState(
     val route: Route? = null, val navigation: JSONObject = json(), val catalog: JSONObject = json(),
     val attachments: List<JSONObject> = emptyList(), val outbox: List<Outgoing> = emptyList(),
     val issueId: Long? = null, val pageLoading: Boolean = false, val language: String = "",
+    /** Why the page of earlier history could not be read: shown at the top of the history with 重试 (the iPhone's `historyFailure`), not over the box. */
+    val pageFailure: String? = null,
     val readOnly: Boolean = false,
     val isAssistant: Boolean = false,
+    /** 回复 asked for outside the conversation's own rows (a todo row of the quick sheet): the conversation page takes it once the sheet has closed (the iPhone's `GroupReplyRequest`). */
+    val replyRequest: JSONObject? = null,
+    /** The message at the top of the page (`DuduToastOverlay`), the iPhone's toast. */
+    val toast: Toast? = null,
     val preferences: JSONObject = json(),
     val conversationKey: String = "",
     val boardFilters: BoardFilters = BoardFilters(),
     val computerUnavailable: Boolean = false,
-)
+    // Connection recovery must survive dismissing a panel or clearing its transient error.
+    val connectionFailure: String? = null,
+    val pairingRequired: Boolean = false,
+    val boardLoadFailed: Boolean = false,
+    val homeTab: HomeTab = HomeTab.Board,
+    val inboxWaiting: Int = 0,
+    val inboxUnread: Int = 0,
+    /** The board rows a pin, a read mark or 完成 is being saved for (the iPhone's `BoardModel.changing`): each shows its own spinner, and nothing else on the board waits for it. */
+    val changing: Set<String> = emptySet(),
+    /** The plugin on the computer predates `navigation.get` (the iPhone's `NavigationAvailability.unsupported`): the drawer says why DSH's entries are missing. */
+    val navigationUnsupported: Boolean = false,
+) {
+    /** The connection guide stands in for the board (the iPhone's `needsConnectionGuide`): no computer yet, or one the app must not try again by itself (pairing, or a plugin to update). */
+    val showsConnectionGuide: Boolean
+        get() = conversationTitle == null &&
+            (computerId.isEmpty() || !connected && (pairingRequired || !retriesConnection(connectionFailure)))
+}
 
 class DuduViewModel(application: Application) : AndroidViewModel(application) {
+    private var inboxReadRevision = 0
     private val vault = Vault(application)
     private val mutable = MutableStateFlow(UiState())
     val state = mutable.asStateFlow()
     private var api: DuduApi? = null
     private var computerId = ""
     private var generation = 0
+    /** Filling in records' context (`inbox.complete`), followed until the computer says it is over (the iPhone's `CollectorModel.completing`). */
+    val inboxCompletions = InboxCompletions(viewModelScope, { generation }, { method, params -> request(method, params) }) { problem ->
+        if (problem.isEmpty()) toast(word("更改没能保存"), ToastKind.Error) else toast(problem, ToastKind.Error, literal = true)
+    }
+    private val inboxChangesFlow = MutableStateFlow<Pair<Int, Long?>>(0 to null)
+    /** Counts the records that left the inbox other than by its own lists' marks (an issue made of one, the record's id second): the lists read again and that record in full goes back to them. */
+    val inboxChanges = inboxChangesFlow.asStateFlow()
+    /** The first page of 待处理 as last read, with the computer it came from: read again every 5 s while the app is in front (`HomeRoots`), so the inbox shows a new record by itself, as the iPhone's. */
+    private val inboxTodoFlow = MutableStateFlow<Pair<String, JSONObject>?>(null)
+    val inboxTodo = inboxTodoFlow.asStateFlow()
+    /** A quick sheet of 嘟嘟's chat that 打开会话 / 打开事项 / 关联会话 left (the iPhone's `returningQuickSheet`): it comes back as it was when 嘟嘟's chat is shown again. */
+    private var quickSheetReturn: QuickSheetReturn? = null
     val collectorNotifications = CollectorNotifications(viewModelScope, { generation }) { body ->
         request("settings.act", body)
+        // A bell turned on or off decides whether the background connection that shows the notifications runs.
+        syncBackgroundNotifications()
         Unit
     }
     private var refreshRevision = 0
@@ -120,8 +170,23 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     private val conversationBack = mutableListOf<ConversationReturn>()
     private var subagentAddress: JSONObject? = null
     private var pendingLink: String? = null
+    // The phone's default network, as last told (declared before `init`, which registers the callback).
+    private var network: android.net.Network? = null
+    private var networkKnown = false
+    private var networkChange: Job? = null
+    private val networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(next: android.net.Network) { viewModelScope.launch { networkChanged(next) } }
+        override fun onLost(lost: android.net.Network) { viewModelScope.launch { if (lost == network) networkChanged(null) } }
+    }
 
     init {
+        runCatching {
+            val info = application.packageManager.getPackageInfo(application.packageName, 0)
+            AppDeclaration.version = info.versionName.orEmpty()
+            // `longVersionCode` is API 28; the app supports 26.
+            @Suppress("DEPRECATION")
+            AppDeclaration.build = (if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()).toString()
+        }
         // The diagnostics follow what the person sees: the 电脑未连接 notice, the connection and the problem code, each as it changes.
         // The line just before says what raised it (`board.load.fail`, `events.fail`, `http.request.fail` …).
         viewModelScope.launch {
@@ -140,54 +205,178 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
+            state.map { it.initialized && it.showsConnectionGuide }.distinctUntilChanged().collect { shown ->
+                DuduLog.record(if (shown) "connection.guide.show" else "connection.guide.hide",
+                    code = if (shown) state.value.connectionFailure else null)
+            }
+        }
+        viewModelScope.launch {
             val computers = vault.read("computers")?.let {
                 runCatching { JSONArray(it).objects().map(SavedComputer::parse) }.getOrNull()
             }.orEmpty()
-            val language = vault.read("language").orEmpty()
+            // The in-app language choice is gone (owner, 2026-11-21): the app follows the system, as the iPhone does, and an old stored choice is ignored.
+            val language = ""
             val preferences = vault.read("preferences")?.let { runCatching { JSONObject(it) }.getOrNull() } ?: json()
-            mutable.update { it.copy(computers = computers, language = language, preferences = preferences,
-                scope = Scope.entries.find { s -> s.wire == preferences.optString("scope") } ?: Scope.Active) }
+            // The board always opens on 进行中, as the iPhone's does (a scope chosen earlier is not remembered).
+            mutable.update { it.copy(computers = computers, language = language, preferences = preferences, scope = Scope.Active) }
             val saved = vault.read("computer")
             if (saved != null) {
                 try {
                     val data = JSONObject(saved)
                     computerId = data.getString("id")
                     val link = data.getString("link")
-                    val endpoint = Endpoint.parse(link)
                     if (!computerId.matches(Regex("[A-Za-z0-9_-]{1,100}"))) error("Invalid identity")
+                    // Cached content belongs to the saved identity, not to a successful handshake
+                    // or a still-current pairing link. An upgrade must not hide that cache.
                     restoreHomes()
+                    val filters = savedBoardFilters(computerId)
+                    mutable.update { it.copy(computer = data.getString("name"),
+                        home = cachedHome(it.scope), computerId = computerId, boardFilters = filters) }
+                    val endpoint = try { Endpoint.parse(link) } catch (error: Exception) {
+                        DuduLog.record("connection.restore.fail", "warn", code = "INVALID_LINK",
+                            detail = DuduLog.describe(error), at = DuduLog.place(error))
+                        throw ApiFailure("INVALID_LINK")
+                    }
                     api = DuduApi(endpoint, computerId)
-                    mutable.update { it.copy(computer = data.getString("name"), initialized = true,
-                        home = cachedHome(it.scope), computerId = computerId) }
+                    mutable.update { it.copy(initialized = true) }
                     DuduLog.record("app.restore", state = "paired", counts = mapOf("rowCount" to (cachedHome(Scope.All)?.rows?.size ?: 0).toLong()))
-                    if (visible && pendingLink == null) connect(link)
+                    if (visible) connect(link)
                 } catch (error: Exception) {
-                    DuduLog.failure("app.restore.fail", error)
-                    mutable.update { it.copy(initialized = true, panel = Panel.Computers) }
+                    if (error is CancellationException) throw error
+                    DuduLog.failure("app.restore.fail", error,
+                        counts = mapOf("rowCount" to state.value.home?.rows.orEmpty().size.toLong()))
+                    val failure = (error as? ApiFailure)?.code ?: "INVALID_LINK"
+                    mutable.update { it.copy(initialized = true, problem = failure, connectionFailure = failure,
+                        pairingRequired = true) }
                 }
             } else {
                 DuduLog.record("app.restore", state = "unpaired")
-                mutable.update { it.copy(initialized = true, panel = Panel.Computers) }
+                mutable.update { it.copy(initialized = true) }
             }
-            pendingLink?.let { pendingLink = null; connect(it) }
+            pendingLink?.let { pendingLink = null; showPairing(it) }
+        }
+        // A change of network reaches the computer again at once, as the iPhone's `networkPathChanged` does.
+        runCatching { application.getSystemService(android.net.ConnectivityManager::class.java)?.registerDefaultNetworkCallback(networkCallback) }
+            .onFailure { DuduLog.failure("network.monitor.fail", it) }
+    }
+
+    override fun onCleared() {
+        runCatching { getApplication<Application>().getSystemService(android.net.ConnectivityManager::class.java)?.unregisterNetworkCallback(networkCallback) }
+        super.onCleared()
+    }
+
+    /**
+     * A `dudu://connect?url=…` link (the pairing QR code read by the phone's camera): the pairing form opens with the link filled in, as the iPhone's `handlePairingURL` does; nothing is paired
+     * until the person taps 添加并连接.
+     */
+    fun openPairingLink(value: String) {
+        val link = pairingLinkTarget(value) ?: return
+        DuduLog.record("pairing.link.prefill")
+        if (!state.value.initialized) pendingLink = link else showPairing(link)
+    }
+
+    /** The pairing form as a sheet (the guide's 粘贴配对链接, a pairing link from outside): `link` fills it in. */
+    fun showPairing(link: String? = null) {
+        navigate(Route("pair", params = json("sheet" to true, "link" to link)))
+    }
+
+    /** The computer on screen, reached again (the iPhone's `reconnect`): its 重新连接 rows, the guide's button, a change of network. What is open stays open. */
+    fun reconnect(reason: String = "manual") {
+        val saved = state.value.computers.find { it.id == computerId } ?: return
+        DuduLog.record("computer.reconnect", state = reason)
+        connect(saved.link)
+    }
+
+    /** The phone's network changed (the first answer is only what it is now): 300 ms later the computer is reached again, unless an attempt the person waits for is already on its way. */
+    private fun networkChanged(next: android.net.Network?) {
+        if (networkKnown && next == network) return
+        val first = !networkKnown
+        networkKnown = true
+        network = next
+        if (first) return
+        networkChange?.cancel()
+        networkChange = viewModelScope.launch {
+            delay(300)
+            val shown = state.value
+            if (!visible || api == null || computerId.isEmpty() || shown.connectionInFlight || shown.pairingRequired ||
+                !retriesConnection(shown.connectionFailure)) return@launch
+            DuduLog.record("network.path.changed", state = if (network == null) "lost" else "available")
+            reconnect("network")
         }
     }
 
-    fun openPairingLink(value: String) {
-        if (!state.value.initialized) pendingLink = value else connect(value)
+    /**
+     * The conversation that was open when the computer was reached again: watched again under its own watch, as the events loop does after its reconnect, so that what it shows, its draft
+     * and its queue stay. One that was still opening is opened again; one there is nothing to open again by is closed.
+     */
+    private fun resumeConversation(client: DuduApi, currentGeneration: Int) {
+        val shown = state.value
+        val active = shown.session
+        if (active == null) {
+            if (shown.issueId == null && !shown.isAssistant) {
+                mutable.update { it.copy(conversationTitle = null, opening = false) }
+                return
+            }
+            val kept = routes.toList()
+            openSession(null, shown.conversationTitle.orEmpty(), shown.issueId, shown.isAssistant, subagentAddress, rememberReturn = false)
+            routes.clear(); routes.addAll(kept)
+            mutable.update { it.copy(route = shown.route) }
+            return
+        }
+        watchJob?.cancel()
+        watchId = active.watchId
+        watchJob = viewModelScope.launch {
+            try {
+                val params = json("id" to active.id, "watchId" to active.watchId, "transcript" to true)
+                subagentAddress?.let { params.put("subagent", it) }
+                val detail = client.request("session.watch", params)
+                if (currentGeneration != generation || watchId != active.watchId) return@launch
+                receiveSession(detail, active.watchId, active.id)
+                mutable.update { it.copy(opening = false) }
+                DuduLog.record("conversation.resume", requestId = active.watchId)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                DuduLog.failure("conversation.resume.fail", error, requestId = active.watchId)
+                if (currentGeneration == generation && watchId == active.watchId)
+                    mutable.update { it.copy(opening = false, problem = code(error)) }
+            }
+        }
     }
 
     fun foreground(active: Boolean) {
         if (visible != active) DuduLog.record(if (active) "app.foreground" else "app.background",
             state = if (state.value.connected) "connected" else if (state.value.connecting) "connecting" else "disconnected")
         visible = active
+        // The background service waits while the app is in front: the computer keeps one connection for this phone and lets one request wait on it, and the app holds it then.
+        app.dudu.android.background.DuduConnectionService.appVisible = active
         if (!active) {
             eventJob?.cancel()
             mutable.update { it.copy(computerUnavailable = false) }
             return
         }
-        if (state.value.connected) startEvents()
-        else if (state.value.initialized && api != null && !state.value.connecting) {
+        // The board the background service wrote while the app was away is shown now, before the computer is reached again.
+        viewModelScope.launch { adoptWrittenBoard() }
+        if (state.value.connected) {
+            val retake = api
+            if (app.dudu.android.background.DuduConnectionService.holding && retake != null) {
+                // The service held this phone's connection while the app was away: taking it back is a request of its own, not an events poll that is refused and waits (which showed a refresh every 30 s).
+                viewModelScope.launch {
+                    try { retake.connect(); eventCursor = 0 }
+                    catch (error: Exception) { if (error is CancellationException) throw error; DuduLog.failure("connection.retake.fail", error) }
+                    if (visible) {
+                        startEvents()
+                        if (state.value.conversationTitle == null) refresh(quiet = true)
+                    }
+                }
+                return
+            }
+            startEvents()
+            // Back in front: what it shows may be a long time old, and the events it missed are gone.
+            if (state.value.conversationTitle == null) refresh(quiet = true)
+        }
+        // Back in front, the computer is tried again, a plugin that asked to be updated too (it may have been), as the iPhone's `resume` does; never a pairing that failed.
+        else if (state.value.initialized && api != null && connectionJob?.isActive != true
+            && !state.value.pairingRequired && !requiresNewPairing(state.value.connectionFailure)) {
             viewModelScope.launch {
                 vault.read("computer")?.let { connect(JSONObject(it).getString("link")) }
             }
@@ -196,8 +385,13 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
 
     fun connect(link: String, displayName: String? = null) {
         val endpoint = try { Endpoint.parse(link) } catch (_: Exception) {
-            DuduLog.record("connection.fail", "warn", code = "INVALID_LINK")
-            mutable.update { it.copy(problem = "INVALID_LINK") }; return
+            // Why the link cannot be used, in the iPhone's words: no pairing token, an unencrypted public address, or anything else.
+            val failure = pairingLinkFailure(link)
+            DuduLog.record("connection.fail", "warn", code = failure)
+            mutable.update { it.copy(problem = failure,
+                connectionFailure = if (!it.connected && !it.connecting) failure else it.connectionFailure,
+                pairingRequired = it.pairingRequired || !it.connected && !it.connecting) }
+            return
         }
         val began = System.nanoTime()
         DuduLog.record("connection.begin", state = if (visible) "foreground" else "background", counts = mapOf(
@@ -220,12 +414,19 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         }
         val candidate = DuduApi(endpoint, endpoint.computerId ?: known, savedComputer?.addressesEdited == true)
         candidate.language = state.value.language
-        mutable.update { it.copy(connecting = true, connected = false, busy = false, sending = false, refreshing = false,
-            session = null, conversationTitle = null, opening = false, problem = null, computerUnavailable = false) }
+        // The computer already on screen, connected again (重新连接, the app back in front, a change of network): what is open stays open, as the iPhone's `reconnect` keeps it.
+        // A link from the pairing form (it names the computer) and another computer start afresh.
+        val resuming = displayName == null && known != null && known == computerId && state.value.computerId == known
+        mutable.update { if (resuming) it.copy(connecting = true, retrying = false, connected = false, busy = false, sending = false,
+            refreshing = false, problem = null, computerUnavailable = false, boardLoadFailed = false, changing = emptySet())
+        else it.copy(connecting = true, retrying = false, connected = false, busy = false, sending = false, refreshing = false,
+            session = null, conversationTitle = null, opening = false, problem = null, computerUnavailable = false,
+            boardLoadFailed = false, homeTab = HomeTab.Board, inboxWaiting = 0, inboxUnread = 0, changing = emptySet(),
+            navigationUnsupported = false) }
         connectionJob = viewModelScope.launch {
             try {
                 previousApi?.let { runCatching { it.disconnect() } }
-                val computer = candidate.connect()
+                val computer = connectSaved(candidate, next, savedComputer != null || known != null)
                 if (next != generation) return@launch
                 val id = computer.getString("id")
                 val name = displayName?.trim()?.take(100)?.takeIf(String::isNotEmpty)
@@ -236,11 +437,14 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                     attachmentCache.clear()
                 }
                 computerId = id
-                routes.clear()
-                conversationBack.clear(); subagentAddress = null
+                if (!resuming) {
+                    routes.clear()
+                    conversationBack.clear(); subagentAddress = null
+                    quickSheetReturn = null
+                    watchId = null
+                }
                 api = candidate
                 eventCursor = 0
-                watchId = null
                 restoreHomes()
                 if (next != generation) return@launch
                 val savedLink = candidate.endpoint.storedLink()
@@ -250,31 +454,73 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                     SavedComputer(id, name, savedLink, candidate.preserveAddresses)
                 vault.write("computers", JSONArray(allComputers.map { it.json() }).toString())
                 if (next != generation) return@launch
-                mutable.update { it.copy(initialized = true, computer = name,
-                    connected = true, connecting = false, panel = null, home = cachedHome(it.scope),
-                    boardFilters = if (it.computerId == id) it.boardFilters else BoardFilters(),
-                    session = null, conversationTitle = null, message = "", pending = null,
-                    computers = allComputers, computerId = id, route = null, attachments = emptyList(),
-                    outbox = emptyList(), navigation = json(), catalog = json(), computerUnavailable = false,
+                val cachedNavigation = vault.read("navigation-$id-${java.util.Locale.getDefault().language}")?.let { runCatching { JSONObject(it) }.getOrNull() } ?: json()
+                val keptFilters = savedBoardFilters(id)
+                if (next != generation) return@launch
+                mutable.update {
+                    // Reconnected to the same computer, the page, the sheet and the conversation on screen stay; anything else starts on the board.
+                    val kept = if (resuming) it.copy(navigation = if (it.navigation.length() > 0) it.navigation else cachedNavigation)
+                    else it.copy(panel = null, session = null, conversationTitle = null, message = "", pending = null, route = null,
+                        attachments = emptyList(), outbox = emptyList(), navigation = cachedNavigation, catalog = json())
+                    kept.copy(initialized = true, computer = name,
+                    connected = true, connecting = false, retrying = false, home = cachedHome(it.scope),
+                    // Another computer has another board: it opens on 进行中, as the iPhone's `BoardModel.reset` does.
+                    scope = if (it.computerId == id) it.scope else Scope.Active,
+                    // …with the filter last chosen on it (nothing when none was kept).
+                    boardFilters = if (it.computerId == id) it.boardFilters else keptFilters,
+                    computers = allComputers, computerId = id, computerUnavailable = false,
+                    connectionFailure = null, pairingRequired = false,
                     quota = if (it.computerId == id) it.quota else null) }
-                DuduLog.record("connection.ready", elapsedMs = (System.nanoTime() - began) / 1_000_000)
+                DuduLog.record("connection.ready", elapsedMs = (System.nanoTime() - began) / 1_000_000,
+                    state = if (resuming) "resumed" else "fresh")
+                syncBackgroundNotifications(restart = !resuming)
+                pendingNotification?.let { target -> if (target == id) { pendingNotification = null; selectHomeTab(HomeTab.Inbox) } }
+                // A link from the pairing form names its computer (the iPhone's `pairing.success` / `pair.fail`).
+                if (displayName != null) DuduLog.record("pairing.success")
                 refresh()
                 loadCatalog()
                 if (visible) startEvents()
+                if (resuming && state.value.conversationTitle != null) resumeConversation(candidate, next)
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 DuduLog.failure("connection.fail", error, elapsedMs = (System.nanoTime() - began) / 1_000_000,
                     state = if (next == generation) "current" else "superseded")
-                if (next == generation) mutable.update { it.copy(connecting = false, problem = code(error),
+                if (displayName != null) DuduLog.failure("pair.fail", error)
+                if (next == generation) mutable.update { it.copy(connecting = false, retrying = false, problem = code(error),
+                    connectionFailure = code(error),
+                    pairingRequired = it.pairingRequired || requiresNewPairing(code(error)),
                     computerUnavailable = visible && isConnectionProblem(code(error))) }
+            } finally {
+                if (next == generation && !state.value.connected)
+                    mutable.update { it.copy(connecting = false, retrying = false) }
             }
         }
     }
 
-    suspend fun value(method: String, params: JSONObject = json()): Any {
+    /**
+     * Reuse this connection job for saved-computer retries; never retry pairing or a mutation. It waits longer after each failure, 1, 2, 4, 8, 16 s and then every 30 s, as the iPhone's
+     * `scheduleReconnect` does; a change of network or a 重新连接 starts a new attempt at once.
+     */
+    private suspend fun connectSaved(client: DuduApi, currentGeneration: Int, saved: Boolean): JSONObject {
+        var attempt = 0
+        while (true) {
+            try { return client.connect() }
+            catch (error: Exception) {
+                if (error is CancellationException || !saved || !visible || currentGeneration != generation ||
+                    !isConnectionProblem(code(error))) throw error
+                attempt++
+                DuduLog.failure("connection.retry", error, state = "foreground", counts = mapOf("attempt" to attempt.toLong()))
+                mutable.update { it.copy(connectionFailure = code(error), problem = code(error), computerUnavailable = true, retrying = true) }
+                delay(reconnectDelayMillis(attempt))
+                if (!visible || currentGeneration != generation) throw CancellationException("Connection suspended")
+            }
+        }
+    }
+
+    suspend fun value(method: String, params: JSONObject = json(), timeoutSeconds: Long? = null): Any {
         val client = api ?: throw ApiFailure("CONNECTION_FAILED")
         val current = generation
-        val result = try { client.requestValue(method, params) }
+        val result = try { client.requestValue(method, params, timeoutSeconds) }
         catch (error: Exception) {
             if (error is CancellationException) throw error
             if (current == generation && visible && isConnectionProblem(code(error)))
@@ -285,8 +531,72 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         return result
     }
 
-    suspend fun request(method: String, params: JSONObject = json()) =
-        value(method, params) as? JSONObject ?: throw ApiFailure("PROTOCOL_ERROR")
+    suspend fun request(method: String, params: JSONObject = json(), timeoutSeconds: Long? = null) =
+        value(method, params, timeoutSeconds) as? JSONObject ?: throw ApiFailure("PROTOCOL_ERROR")
+
+    /** Which connection a page was opened on: a page of DSH kept for later is no use once the computer has been reached again (`EmbeddedPagePool`). */
+    val connectionRevision: Int get() = generation
+
+    /** DSH's entries again (the iPhone's `refreshNavigation`), as the DSH 设置 list reads them when it opens: false when the computer did not answer, the last good list is kept. */
+    suspend fun refreshNavigation(): Boolean {
+        val current = generation
+        return try {
+            val result = request("navigation.get")
+            if (current != generation) return false
+            mutable.update { it.copy(navigation = result, navigationUnsupported = false) }
+            vault.write("navigation-${mutable.value.computerId}-${java.util.Locale.getDefault().language}", result.toString())
+            true
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            DuduLog.failure("navigation.load.fail", error)
+            false
+        }
+    }
+
+    /** The models and permissions again, after DSH's own settings were open (the iPhone refreshes its catalog when a settings page was changed). */
+    fun refreshCatalog() {
+        if (!state.value.connected) return
+        val current = generation
+        viewModelScope.launch {
+            runCatching { request("catalog.get") }.onSuccess { result ->
+                if (current == generation) mutable.update { it.copy(catalog = result) }
+            }.onFailure { if (it is CancellationException) throw it }
+        }
+    }
+
+    /**
+     * What this connection's plugin does about the settings pages, with the connection's generation: it answers `settings.data` (true: the computer sends values and the app lays the page out,
+     * `SettingsPages`) or it is older and answered the unknown method (false: it still lays the page out, `settings.page`). A new connection asks again, the plugin may have been updated.
+     */
+    private var settingsData: Pair<Int, Boolean>? = null
+
+    /** True while this connection's plugin lays the settings pages out itself: the page that comes back with an act is then the one to draw. */
+    fun settingsPagesFromComputer() = settingsData?.takeIf { it.first == generation }?.second == false
+
+    /**
+     * One page of 嘟嘟's settings: the values from `settings.data`, laid out here (owner, 2026-11-21: "从 api 获取的是值，而不是布局"). A plugin that does not know the method gets the old
+     * request, `settings.page`, for the rest of the connection; any other failure is the page's failure.
+     */
+    suspend fun settingsPage(section: String, target: String?, words: SettingsWords): JSONObject {
+        val params = json("section" to section).apply { target?.let { put("target", it) } }
+        val current = generation
+        if (settingsData?.takeIf { it.first == current }?.second != false) {
+            try {
+                val values = request("settings.data", params).getJSONObject("data")
+                if (settingsData?.first != current) DuduLog.record("settings.layout", state = "app")
+                settingsData = current to true
+                // Values that are not what a page is made of are the plugin's mistake, not a lost connection.
+                return withContext(Dispatchers.Default) {
+                    try { SettingsPages.page(section, target, values, words) } catch (_: org.json.JSONException) { throw ApiFailure("PROTOCOL_ERROR") }
+                }
+            } catch (error: ApiFailure) {
+                if (!isUnsupportedMethod(error.code)) throw error
+                DuduLog.record("settings.layout", state = "computer")
+                settingsData = current to false
+            }
+        }
+        return request("settings.page", params).getJSONObject("page")
+    }
 
     /**
      * Like `request`, but for a payload that never changes once the computer has answered once (an attachment's bytes): the exact
@@ -297,9 +607,16 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         val key = "$method:$params"
         attachmentCache[key]?.let { return it }
         val result = request(method, params)
+        // Pictures are small, but a delivered file read for its preview can be tens of MB: the cache holds at most 40 answers and 48 MB of data, and none over 8 MB.
+        val bytes = result.optString("dataBase64", result.optString("data")).length.toLong()
+        if (bytes > 8L * 1024 * 1024) return result
         attachmentWrites.withLock {
             attachmentCache[key] = result
-            while (attachmentCache.size > 40) attachmentCache.remove(attachmentCache.keys.first())
+            var held = attachmentCache.values.sumOf { it.optString("dataBase64", it.optString("data")).length.toLong() }
+            while (attachmentCache.size > 40 || held > 48L * 1024 * 1024) {
+                val oldest = attachmentCache.keys.first()
+                held -= attachmentCache.remove(oldest)?.let { it.optString("dataBase64", it.optString("data")).length.toLong() } ?: 0
+            }
         }
         return result
     }
@@ -331,6 +648,121 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun routesBehindCurrent(): List<Route> = routes.toList()
 
+    /** A quick sheet leaves for a conversation or an issue: kept until 嘟嘟's chat is shown again (the iPhone's `leaveQuickSheet`). */
+    fun leaveQuickSheet(sheet: QuickSheetReturn) {
+        quickSheetReturn = sheet
+        DuduLog.record("quick.sheet.leave", state = sheet.kind)
+    }
+
+    /** The kind of the quick sheet that comes back now, if one was left from this chat of this computer; it is taken by `takeQuickSheetReturn` when the sheet opens. */
+    fun returningQuickSheet(computerId: String, sessionId: String?, assistant: Boolean): String? {
+        val sheet = quickSheetReturn ?: return null
+        if (!assistant || sheet.computerId != computerId || sheet.sessionId != sessionId) return null
+        return sheet.kind
+    }
+
+    fun takeQuickSheetReturn(kind: String, computerId: String, sessionId: String?): QuickSheetReturn? {
+        val sheet = quickSheetReturn?.takeIf { it.kind == kind && it.computerId == computerId && it.sessionId == sessionId } ?: return null
+        quickSheetReturn = null
+        DuduLog.record("quick.sheet.restore", state = kind)
+        return sheet
+    }
+
+    /** The conversation of an issue, when it has one (`issue.open`, as the iPhone's `BoardModel.session(ofIssue:)`); nil otherwise, and on a failure, which is logged. */
+    suspend fun issueSession(id: Long): String? = try {
+        request("issue.open", json("id" to id)).nullableString("sessionId")
+    } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        DuduLog.failure("issue.open.fail", error)
+        null
+    }
+
+    /** An issue was made of a record (`IssueDraft.record`): the inbox's lists read again, and the record in full goes back to its list. */
+    private fun inboxChanged(record: Long) {
+        inboxChangesFlow.value = (inboxChangesFlow.value.first + 1) to record
+        viewModelScope.launch { refreshInboxCount() }
+    }
+
+    fun selectHomeTab(tab: HomeTab) {
+        quickSheetReturn = null
+        if (state.value.conversationTitle != null) {
+            conversationBack.clear()
+            leaveConversation()
+        }
+        routes.clear()
+        stopQuota()
+        mutable.update { it.copy(homeTab = tab, route = null, panel = null, problem = null) }
+        DuduLog.record("home.tab.select", state = tab.name.lowercase())
+    }
+
+    private fun receiveInboxCount(total: Int? = null, unread: Int) {
+        mutable.update { it.copy(inboxWaiting = total?.coerceAtLeast(0) ?: it.inboxWaiting,
+            inboxUnread = unread.coerceAtLeast(0)) }
+    }
+
+    suspend fun refreshInboxCount() {
+        try {
+            inboxList(json("tab" to "todo"))
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            DuduLog.failure("inbox.count.fail", error)
+        }
+    }
+
+    suspend fun inboxList(params: JSONObject): JSONObject {
+        val current = generation
+        val revision = inboxReadRevision
+        val result = request("inbox.list", params)
+        if (current == generation && revision == inboxReadRevision) {
+            val firstTodoPage = params.optString("tab", "todo") == "todo" && !params.has("connector")
+            receiveInboxCount(result.optInt("total", result.rows("items").size).takeIf { firstTodoPage }, result.optInt("unreadCount"))
+            if (firstTodoPage && !params.has("cursor")) inboxTodoFlow.value = computerId to result
+        }
+        return result
+    }
+
+    suspend fun acknowledgeInboxRecord(record: JSONObject) {
+        if (!record.optBoolean("unread") || !record.has("revision")) return
+        val current = generation
+        inboxReadRevision++
+        val result = request("inbox.read", json("id" to record.getLong("id"), "revision" to record.getLong("revision")))
+        if (current != generation) return
+        inboxReadRevision++
+        receiveInboxCount(unread = result.optInt("unreadCount"))
+    }
+
+    /**
+     * The background connection that shows the notifications (`DuduConnectionService`, as OpenClaw's app; owner, 2026-11-22) runs while a collector's bell is on and the phone lets the app
+     * notify, as the iPhone registers for Apple's push then; it stops when no bell is on. `restart`: another computer may have become the one in use.
+     */
+    fun syncBackgroundNotifications(restart: Boolean = false) {
+        val client = api ?: return
+        val context = getApplication<Application>()
+        viewModelScope.launch {
+            try {
+                val enabled = client.request("notifications.state").optBoolean("enabled")
+                if (enabled && androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled())
+                    app.dudu.android.background.DuduConnectionService.start(context, restart)
+                else if (!enabled) app.dudu.android.background.DuduConnectionService.stop(context)
+                DuduLog.record("notifications.sync", state = if (enabled) "on" else "off")
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                DuduLog.failure("notifications.sync.fail", error)
+            }
+        }
+    }
+
+    /** A collector's notification was tapped: that computer's inbox, as the iPhone's `openCollectorNotification` (another computer is connected first). */
+    private var pendingNotification: String? = null
+    fun openNotification(computer: String) {
+        DuduLog.record("notifications.open", state = if (computer == computerId) "same" else "other")
+        if (computer == computerId && state.value.connected) { selectHomeTab(HomeTab.Inbox); return }
+        // Opened from a notification with the app closed, or while it connects: the inbox opens once that computer is connected.
+        pendingNotification = computer
+        if (computer == computerId || !state.value.initialized || state.value.connecting) return
+        state.value.computers.find { it.id == computer }?.let { connect(it.link) }
+    }
+
     fun selectComputer(id: String) {
         DuduLog.record("computer.select", state = if (id == computerId) "same" else "other")
         state.value.computers.find { it.id == id }?.let { connect(it.link) }
@@ -360,6 +792,10 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
             val updated = state.value.computers.filterNot { it.id == id }
             vault.write("computers", JSONArray(updated.map { it.json() }).toString())
             mutable.update { it.copy(computers = updated) }
+            // Its videos go with it, as on the iPhone (`VideoPreviewStorage.remove(for:)`), and so does its board's filter.
+            try { app.dudu.android.media.VideoPreviewStorage.remove(getApplication(), id) }
+            catch (e: java.io.IOException) { DuduLog.failure("video.cache.remove.fail", e) }
+            vault.delete(filtersName(id))
             if (computerId == id) {
                 val previous = api
                 previous?.retire(); generation++; api = null; eventJob?.cancel(); watchJob?.cancel()
@@ -373,20 +809,20 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun language(value: String) {
-        api?.language = value
-        mutable.update { it.copy(language = value) }
-        viewModelScope.launch { vault.write("language", value) }
-        if (state.value.connected) { loadCatalog(); refresh() }
-    }
-
     private fun loadCatalog() {
         viewModelScope.launch {
             runCatching { request("catalog.get") }.onSuccess { result ->
                 mutable.update { it.copy(catalog = result) }
             }
-            runCatching { request("navigation.get") }.onSuccess { result ->
-                mutable.update { it.copy(navigation = result) }
+            runCatching { request("navigation.get") }.onFailure { error ->
+                if (error is CancellationException) throw error
+                // A plugin from before `navigation.get`: the drawer says so instead of listing nothing (the iPhone's `NavigationAvailability.unsupported`).
+                if ((error as? ApiFailure)?.code in listOf("UNSUPPORTED", "METHOD_NOT_ALLOWED")) mutable.update { it.copy(navigationUnsupported = true) }
+                DuduLog.failure("navigation.load.fail", error)
+            }.onSuccess { result ->
+                mutable.update { it.copy(navigation = result, navigationUnsupported = false) }
+                // Kept for the next start, so the settings and the drawer list the same entries before the computer answers, as the iPhone's do.
+                vault.write("navigation-${mutable.value.computerId}-${java.util.Locale.getDefault().language}", result.toString())
             }
         }
     }
@@ -394,16 +830,31 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     fun select(scope: Scope) {
         if (scope == state.value.scope) return
         mutable.update { it.copy(scope = scope, home = cachedHome(scope)) }
-        preference("scope", scope.wire)
     }
 
     fun toggleBoardFilter(field: BoardFilterField, key: String?) {
         mutable.update { it.copy(boardFilters = it.boardFilters.toggle(field, key)) }
+        keepBoardFilters()
     }
 
+    /** 重置: the filter is cleared, and so is what was kept of it. */
     fun resetBoardFilters() {
         mutable.update { it.copy(boardFilters = BoardFilters()) }
+        keepBoardFilters()
     }
+
+    /** The board's filter is kept per computer, so that the app opens on the board as it was left (owner, 2026-11-23: 「退出 APP 再进去就没了，应该持久化一下」), as the iPhone's `BoardFilterStore`. */
+    private fun keepBoardFilters() {
+        val id = computerId.takeIf(String::isNotEmpty) ?: return
+        val filters = state.value.boardFilters
+        viewModelScope.launch {
+            runCatching { if (filters.isEmpty) vault.delete(filtersName(id)) else vault.write(filtersName(id), filters.saved()) }
+                .onFailure { DuduLog.failure("board.filters.save.fail", it as? Exception ?: Exception(it)) }
+        }
+    }
+
+    private suspend fun savedBoardFilters(id: String) = vault.read(filtersName(id))?.let(BoardFilters::parse) ?: BoardFilters()
+    private fun filtersName(id: String) = "board-filters-$id"
 
     fun preference(key: String, value: Any) {
         val updated = state.value.preferences.copyJson().put(key, value)
@@ -411,14 +862,25 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { vault.write("preferences", updated.toString()) }
     }
 
-    fun refresh() {
+    /** When the board last asked the computer for its list (nanoTime): the safety net below asks only when nothing has for a while. */
+    private var boardAsked = 0L
+
+    /**
+     * Reads the board. `quiet` is a read nobody asked for with a finger (the computer said the board changed, the safety net, the app coming back): no spinner, no failure shown, and it never
+     * cancels a read that is already on its way.
+     */
+    fun refresh(quiet: Boolean = false) {
         val client = api ?: return
         if (!state.value.connected) { DuduLog.record("board.load.skip", state = "disconnected"); return }
+        if (quiet && refreshJob?.isActive == true) return
+        // While a pin, a read mark or 完成 is being saved the board is not read (it would show the row as it was): it is read once they are all done (the iPhone's `refreshPending`).
+        if (state.value.changing.isNotEmpty()) return
         refreshJob?.cancel()
         val revision = ++refreshRevision
         val currentGeneration = generation
         val began = System.nanoTime()
-        mutable.update { it.copy(refreshing = true) }
+        boardAsked = began
+        if (!quiet) mutable.update { it.copy(refreshing = true, boardLoadFailed = false) }
         refreshJob = viewModelScope.launch {
             try {
                 val (home, raw) = client.home()
@@ -427,7 +889,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 homes[Scope.All] = home
                 DuduLog.record("board.load.complete", elapsedMs = (System.nanoTime() - began) / 1_000_000,
                     counts = mapOf("rowCount" to home.rows.size.toLong(), "payloadBytes" to raw.length.toLong()))
-                mutable.update { it.copy(home = home, refreshing = false, problem = null, computerUnavailable = false) }
+                mutable.update { it.copy(home = home, refreshing = false, problem = null, computerUnavailable = false,
+                    boardLoadFailed = false) }
                 if (savedHomeJson != raw) {
                     // A canceled write may already have replaced the on-disk snapshot.
                     savedHomeJson = null
@@ -439,9 +902,14 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 // What was thrown and where: a list the app could not read is told apart from a computer it could not reach.
                 DuduLog.failure("board.load.fail", error, elapsedMs = (System.nanoTime() - began) / 1_000_000,
                     state = if (currentGeneration == generation && revision == refreshRevision) "current" else "superseded")
-                if (currentGeneration == generation && revision == refreshRevision)
-                    mutable.update { it.copy(refreshing = false, problem = code(error),
+                if (currentGeneration == generation && revision == refreshRevision) {
+                    if (quiet) mutable.update { it.copy(refreshing = false) }
+                    // A pull that fails while the board has rows says nothing, as on the iPhone: the rows stay (the 电脑未连接 notice still tells a lost connection).
+                    else if (state.value.home != null) mutable.update { it.copy(refreshing = false,
                         computerUnavailable = it.computerUnavailable || visible && isConnectionProblem(code(error))) }
+                    else mutable.update { it.copy(refreshing = false, boardLoadFailed = true, problem = code(error),
+                        computerUnavailable = it.computerUnavailable || visible && isConnectionProblem(code(error))) }
+                }
             }
         }
     }
@@ -450,7 +918,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         DuduLog.record("panel.show", state = panel.javaClass.simpleName)
         if (panel != Panel.Quota) stopQuota()
         mutable.update { it.copy(panel = panel, problem = null) }
-        if (panel == Panel.Create) loadOptions()
+        // The new-issue form reads its choices itself, without holding the page (`Panels`): the iPhone's buttons are buttons while they load.
         if (panel == Panel.Quota) loadQuota()
     }
 
@@ -508,8 +976,9 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun reloadOptions() { loadOptions() }
     fun receiveIssueOptions(options: Options) { mutable.update {
+        // The default status, else the first, as the iPhone's form starts (an issue is not made without one).
         it.copy(options = options, problem = null, draft = it.draft.copy(
-            status = it.draft.status ?: options.statuses.firstOrNull { status -> status.isDefault }?.id))
+            status = it.draft.status ?: (options.statuses.firstOrNull { status -> status.isDefault } ?: options.statuses.firstOrNull())?.id))
     } }
     suspend fun issueOptions(): Options {
         val client = api ?: throw ApiFailure("CONNECTION_FAILED")
@@ -527,6 +996,20 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         if (current != generation) throw CancellationException("Computer switched")
         return result
     }
+    /** A video of the conversation into `file` (the in-app player's copy, `VideoPreviewStorage`); the computer must be the same when it is in. */
+    suspend fun downloadVideo(params: JSONObject, file: java.io.File): String {
+        val client = api ?: throw ApiFailure("CONNECTION_FAILED")
+        val current = generation
+        try {
+            val type = client.video(params) { java.io.FileOutputStream(file) }
+            if (current != generation) throw CancellationException("Computer switched")
+            return type
+        } catch (e: Exception) {
+            withContext(Dispatchers.IO) { file.delete() }
+            throw e
+        }
+    }
+
     suspend fun video(params: JSONObject, uri: android.net.Uri): String {
         val client = api ?: throw ApiFailure("CONNECTION_FAILED")
         val current = generation
@@ -541,42 +1024,136 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun createIssue() {
+    /** The board's + : a new issue starts from an empty form every time, as the iPhone's sheet does (an abandoned draft is not kept). */
+    fun newIssue() {
+        editDraft(IssueDraft())
+        show(Panel.Create)
+    }
+
+    /** `failed` is told when the computer did not make it: the form says 事项没能创建 and keeps what was typed, as the iPhone's does. */
+    fun createIssue(failed: () -> Unit = {}) {
         val draft = state.value.draft
         if (!draft.valid || state.value.busy) return
-        operation { client ->
+        operation(onFailure = { failed() }) { client ->
             client.request("issue.create", draft.params())
             mutable.update { it.copy(panel = null, draft = IssueDraft()) }
+            draft.record?.let(::inboxChanged)
             refresh()
         }
     }
 
-    fun pin(row: Conversation) = operation { client ->
-        client.request("board.pin", json("target" to row.id, "pinned" to !row.pinned))
-        mutable.update { it.copy(panel = null) }
-        refresh()
+    /** Pin or unpin a row: the shelf changes at once, the row shows its spinner until the computer answers, and a refusal puts it back and says 更改没能保存 (the iPhone's `setPinned`). */
+    fun pin(row: Conversation) = changeHome(row, "board.pin", json("target" to row.id, "pinned" to !row.pinned)) {
+        BoardChanges.pinned(it, row.id, !row.pinned)
     }
 
-    fun read(row: Conversation) = operation { client ->
-        if (row.sessionId == null) return@operation
-        client.request("board.read", json("target" to row.id, "sessionId" to row.sessionId,
-            "unread" to !row.unread, "seq" to row.readSeq))
-        mutable.update { it.copy(panel = null) }
-        refresh()
+    /** Mark a row read or unread, at once, as `pin` does (the iPhone's `toggleUnread`). A row without a session has nothing to read. */
+    fun read(row: Conversation) {
+        val session = row.sessionId ?: return
+        changeHome(row, "board.read", json("target" to row.id, "sessionId" to session, "unread" to !row.unread, "seq" to row.readSeq)) {
+            BoardChanges.read(it, row.id, !row.unread)
+        }
     }
 
-    fun updateIssue(issue: Issue, patch: JSONObject) = operation { client ->
+    private fun changeHome(row: Conversation, method: String, params: JSONObject, apply: (Home) -> Home) {
+        val client = api ?: return
+        val current = state.value
+        if (!current.connected || row.id in current.changing) return
+        val currentGeneration = generation
+        val before = current.home
+        val beforeHomes = homes.toMap()
+        beginChange(row.id)
+        homes.replaceAll { _, home -> apply(home) }
+        mutable.update { it.copy(home = it.home?.let(apply), panel = if (it.panel is Panel.Actions) null else it.panel) }
+        viewModelScope.launch {
+            try {
+                client.request(method, params)
+                DuduLog.record("board.change.complete", method = method)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                DuduLog.failure("board.change.fail", error, method = method)
+                if (currentGeneration == generation) {
+                    // Only this row goes back: another one may have finished a change of its own meanwhile.
+                    homes.replaceAll { scope, home -> beforeHomes[scope]?.let { BoardChanges.restore(home, it, row.id) } ?: home }
+                    mutable.update { it.copy(home = it.home?.let { home -> before?.let { old -> BoardChanges.restore(home, old, row.id) } ?: home }) }
+                    toast(word("更改没能保存"), ToastKind.Error)
+                }
+            } finally {
+                if (currentGeneration == generation) finishChange(row.id)
+            }
+        }
+    }
+
+    /** A row's change begins: a read of the board already on its way would show the row as it was, so it is dropped and read again once every change is done. */
+    private fun beginChange(id: String) {
+        if (refreshJob?.isActive == true) { refreshJob?.cancel(); refreshRevision++ }
+        mutable.update { it.copy(changing = it.changing + id, refreshing = false) }
+        DuduLog.record("board.change.begin", counts = mapOf("rowCount" to state.value.changing.size.toLong()))
+    }
+
+    private fun finishChange(id: String) {
+        mutable.update { it.copy(changing = it.changing - id) }
+        if (state.value.changing.isEmpty()) refresh(quiet = true)
+    }
+
+    /** Rename from the board's menu: the dialog has closed already; a refusal says 更改没能保存 (the iPhone's `BoardView.rename`). */
+    fun rename(issue: Issue, title: String) {
+        val client = api ?: return
+        val name = title.trim()
+        if (name.isEmpty() || !state.value.connected) return
+        val currentGeneration = generation
+        mutable.update { it.copy(panel = null) }
+        viewModelScope.launch {
+            try {
+                val changed = Issue.parse(client.request("issue.update", json("id" to issue.id, "patch" to json("title" to name))).getJSONObject("issue"))
+                if (currentGeneration == generation) receiveIssue(changed)
+                refresh(quiet = true)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                DuduLog.failure("issue.rename.fail", error)
+                if (currentGeneration == generation) toast(word("更改没能保存"), ToastKind.Error)
+            }
+        }
+    }
+
+    /** A changed issue in the board's rows at once (its title, its status: a finished one leaves 进行中), before the board is read again (the iPhone's `BoardModel.change`). */
+    private fun receiveIssue(changed: Issue) {
+        fun Home.with(changed: Issue) = copy(rows = rows.map {
+            if (it.issue?.id == changed.id) it.copy(title = changed.title, issue = changed) else it
+        })
+        homes.replaceAll { _, home -> home.with(changed) }
+        mutable.update { it.copy(home = it.home?.with(changed)) }
+    }
+
+    /** A property sheet's save. It stays open while it saves; a refusal leaves it open, saying 更改没能保存 at its foot (the iPhone's `IssueActionsSheet`). */
+    fun updateIssue(issue: Issue, patch: JSONObject) = operation(onFailure = { mutable.update { it.copy(problem = "conflict") } }) { client ->
         client.request("issue.update", json("id" to issue.id, "patch" to patch))
         mutable.update { it.copy(panel = null) }
         refresh()
     }
 
-    fun complete(row: Conversation) = operation { client ->
-        val issue = row.issue ?: return@operation
-        val done = client.options().statuses.firstOrNull { it.type == "done" } ?: return@operation
-        client.request("issue.update", json("id" to issue.id, "patch" to json("status" to done.id)))
-        mutable.update { it.copy(panel = null) }
-        refresh()
+    /** 完成 from the swipe or the menu: the row shows its spinner while the computer moves the issue to its done status; a refusal says 更改没能保存 (the iPhone's `BoardModel.complete`). */
+    fun complete(row: Conversation) {
+        val client = api ?: return
+        val issue = row.issue ?: return
+        if (!state.value.connected || row.id in state.value.changing) return
+        val currentGeneration = generation
+        beginChange(row.id)
+        mutable.update { it.copy(panel = if (it.panel is Panel.Actions) null else it.panel) }
+        viewModelScope.launch {
+            try {
+                val done = client.options().statuses.firstOrNull { it.type == "done" } ?: throw ApiFailure("BAD_REQUEST")
+                val changed = Issue.parse(client.request("issue.update", json("id" to issue.id, "patch" to json("status" to done.id))).getJSONObject("issue"))
+                if (currentGeneration == generation) receiveIssue(changed)
+                DuduLog.record("board.change.complete", method = "issue.update")
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                DuduLog.failure("board.change.fail", error, method = "issue.update")
+                if (currentGeneration == generation) toast(word("更改没能保存"), ToastKind.Error)
+            } finally {
+                if (currentGeneration == generation) finishChange(row.id)
+            }
+        }
     }
 
     fun addSubIssue(issue: Issue) {
@@ -586,14 +1163,18 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
 
     fun assign(issue: Issue, project: Project, agent: String) {
         if (issue.agent != null || project.path.isNullOrBlank()) return
-        operation { client ->
+        operation(onFailure = { mutable.update { it.copy(problem = "conflict") } }) { client ->
             client.request("issue.assign", json("id" to issue.id, "project" to project.json(), "agent" to agent))
             mutable.update { it.copy(panel = null) }
             refresh()
         }
     }
 
-    fun previewDelete(issue: Issue) = operation { client ->
+    /** 删除 from the menu asks the computer first; a failure closes the menu and says 更改没能保存, the iPhone's toast. */
+    fun previewDelete(issue: Issue) = operation(onFailure = {
+        mutable.update { if (it.panel is Panel.Actions) it.copy(panel = null) else it }
+        toast(word("更改没能保存"), ToastKind.Error)
+    }) { client ->
         val result = client.request("issue.delete", json("id" to issue.id))
         require(result.getBoolean("preview") && result.getJSONObject("issue").getLong("id") == issue.id)
         mutable.update { it.copy(panel = Panel.Delete(issue, result.getString("token"))) }
@@ -601,7 +1182,10 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
 
     fun confirmDelete() {
         val panel = state.value.panel as? Panel.Delete ?: return
-        operation { client ->
+        operation(onFailure = {
+            mutable.update { if (it.panel is Panel.Delete) it.copy(panel = null) else it }
+            toast(word("更改没能保存"), ToastKind.Error)
+        }) { client ->
             val result = client.request("issue.delete", json("id" to panel.issue.id, "token" to panel.token))
             require(result.getBoolean("forgotten") && result.getLong("id") == panel.issue.id)
             mutable.update { it.copy(panel = null) }
@@ -610,7 +1194,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun open(row: Conversation) {
-        if (row.issue?.agent == null && row.id != "assistant") return
+        if (row.needsAgent) return
         openSession(row.sessionId, row.title, row.issue?.id, row.id == "assistant")
     }
 
@@ -635,7 +1219,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
             session = id?.let(cachedSessions::get)?.copy(watchId = nextWatch), conversationKey = nextWatch,
             issueId = issue, message = "", attachments = emptyList(), outbox = emptyList(),
             pending = null, sending = false, panel = null, route = null, problem = null,
-            readOnly = subagent != null, isAssistant = assistant, pageLoading = false) }
+            readOnly = subagent != null, isAssistant = assistant, pageLoading = false, pageFailure = null) }
         watchJob = viewModelScope.launch {
             try {
                 val resolved = if (assistant) client.request("assistant.open").getString("id")
@@ -666,6 +1250,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 if (!current()) return@launch
                 receiveSession(detail, nextWatch, resolved)
                 if (!current()) return@launch
+                restoreUnsent(resolved)
                 DuduLog.record("conversation.open.complete", requestId = nextWatch, elapsedMs = (System.nanoTime() - began) / 1_000_000,
                     state = if (cache == null) "fresh" else "cached",
                     counts = mapOf("messageCount" to (state.value.session?.messages?.size ?: 0).toLong(), "pendingCount" to outgoing.size.toLong()))
@@ -699,7 +1284,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(session = null, conversationTitle = null, opening = false,
             message = "", attachments = emptyList(), outbox = emptyList(), issueId = null,
             pending = null, sending = false, problem = null, readOnly = false,
-            route = returning?.route, pageLoading = false) }
+            route = returning?.route, pageLoading = false, pageFailure = null) }
         api?.let { client ->
             viewModelScope.launch {
                 if (oldWatch != null) runCatching { client.request("session.unwatch", json("watchId" to oldWatch)) }
@@ -707,6 +1292,16 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    /** Answer `issue` (its `id`, `ref`, `title`) from 嘟嘟's conversation: its @ goes into the box as a 回复 there does. */
+    private var toastCount = 0L
+    /** A message at the top of the page, as the iPhone's toast: `text` is a key of the app's words (written with `word`) unless `literal` (the plugin's own words). */
+    fun toast(text: String, kind: ToastKind = ToastKind.Information, literal: Boolean = false, args: List<String> = emptyList()) =
+        mutable.update { it.copy(toast = Toast(++toastCount, text, kind, literal, args)) }
+    fun dismissToast(id: Long) = mutable.update { if (it.toast?.id == id) it.copy(toast = null) else it }
+
+    fun reply(issue: JSONObject) = mutable.update { it.copy(replyRequest = issue) }
+    fun replied() = mutable.update { it.copy(replyRequest = null) }
 
     fun editMessage(value: String) {
         if (state.value.sending) return
@@ -743,9 +1338,22 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         val active = state.value
         val session = active.session ?: return
         if ((active.message.isBlank() && active.attachments.isEmpty()) || active.sending || active.readOnly) return
+        // In 嘟嘟's conversation a message that starts with @ goes to that issue's agent, or is not sent and the box says why; the draft stays (the iPhone's `forwardAssistant`).
+        if (active.isAssistant && active.message.trim().startsWith("@")) {
+            val address = GroupChat.address(active.message)
+            if (address == null || address.body.isEmpty()) {
+                mutable.update { it.copy(problem = "RELAY_" + if (address == null) "recipient_unavailable" else "empty_request") }
+                return
+            }
+        }
         val next = inputRequestId ?: UUID.randomUUID().toString().also { inputRequestId = it }
         submit(session, Outgoing(next, active.message, active.attachments))
     }
+
+    /** The issue last chosen from the list of 嘟嘟's box: its own session goes with a message to it, so a message never reaches a session the issue has since left (the iPhone's `assistantRecipient`). */
+    var assistantRecipient: JSONObject? = null
+    /** A message to an issue whose note was saved but not delivered: sending the same message again retries that note instead of writing another (the iPhone's `assistantRelayRetry`). */
+    private var assistantRelayRetry: Pair<String, Long>? = null
 
     /** Voice uses the same durable input journal, keeping the existing text/attachment draft. */
     fun acceptVoice(result: VoiceResult): Boolean {
@@ -762,29 +1370,48 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         return true
     }
 
-    fun retry(outgoing: Outgoing) { state.value.session?.let { session ->
-        val ownsDraft = state.value.message == outgoing.text && state.value.attachments.map { it.toString() } == outgoing.attachments.map { it.toString() }
-        submit(session, outgoing.copy(failed = false), ownsDraft)
-    } }
-
-    fun discard(outgoing: Outgoing) {
-        val session = state.value.session ?: return
-        if (!outgoing.failed || state.value.sending) return
-        val key = storageKey("outbox", computerId, session.id)
-        val updated = outboxes[session.id].orEmpty().filterNot { it.requestId == outgoing.requestId }
-        outboxes[session.id] = updated
-        mutable.update { it.copy(outbox = updated) }
-        viewModelScope.launch { writeOutbox(key, updated) }
+    /** A spoken message that did not go, for a conversation that is not open: added to its saved draft (no list of failed messages keeps it). */
+    private suspend fun restoreSpokenDraft(name: String, text: String) = draftWrites.withLock {
+        val saved = vault.read(name)?.let { raw -> withContext(Dispatchers.Default) { runCatching { JSONObject(raw) }.getOrNull() } }
+        val restored = json("text" to appendVoiceDraft(saved?.optString("text").orEmpty(), text),
+            "attachments" to (saved?.optJSONArray("attachments") ?: JSONArray()))
+        vault.write(name, restored.toString())
     }
 
-    private fun submit(session: Session, outgoing: Outgoing, ownsDraft: Boolean = true) {
+    /**
+     * What this phone never got onto the computer (the app ended while it was on its way) goes back into the box once the conversation has been read, as a failed send does: no list of failed
+     * messages keeps it (owner, 2026-11-22). The draft's own input keeps its id; another is added to the draft.
+     */
+    private suspend fun restoreUnsent(sessionId: String) {
+        val unsent = outboxes[sessionId].orEmpty().filter { it.failed && it.requestId !in sendingDrafts.values }
+        val active = state.value
+        if (unsent.isEmpty() || active.session?.id != sessionId || active.sending) return
+        val ids = unsent.mapTo(HashSet()) { it.requestId }
+        val others = unsent.filter { it.requestId != inputRequestId }
+        var text = active.message
+        var attachments = active.attachments
+        others.forEach { text = appendVoiceDraft(text, it.text); attachments = attachments + it.attachments }
+        if (others.isNotEmpty())
+            inputRequestId = if (active.message.isEmpty() && active.attachments.isEmpty() && others.size == 1) others[0].requestId else null
+        outboxes[sessionId] = outboxes[sessionId].orEmpty().filterNot { it.requestId in ids }
+        mutable.update { it.copy(outbox = outboxes[sessionId].orEmpty(), message = text, attachments = attachments) }
+        DuduLog.record("message.draft.restored", counts = mapOf("pendingCount" to unsent.size.toLong()))
+        writeOutbox(storageKey("outbox", computerId, sessionId), outboxes[sessionId].orEmpty())
+        if (others.isNotEmpty()) writeDraft(draftName(sessionId), text, attachments, inputRequestId)
+    }
+
+    private fun submit(session: Session, sent: Outgoing, ownsDraft: Boolean = true) {
         val client = api ?: return
-        val next = outgoing.requestId
+        val next = sent.requestId
         val currentGeneration = generation
         val name = draftName(session.id)
         val outgoingKey = storageKey("outbox", computerId, session.id)
         val assistant = state.value.isAssistant
         if (sendingDrafts.containsKey(name)) return
+        val mention = if (assistant && sent.text.trim().startsWith("@")) GroupChat.address(sent.text)?.takeIf { it.body.isNotEmpty() } else null
+        val forwarded = mention != null
+        // Sent while the agent runs, it waits in the queue's panel from the start, not in the history (the iPhone: `placement: selectedSession.status == "running" ? .queued : .transcript`).
+        val outgoing = sent.copy(queued = session.processing && !forwarded)
         val began = System.nanoTime()
         DuduLog.record("message.send.begin", requestId = next, state = if (outgoing.failed) "retry" else "first",
             counts = mapOf("attachmentCount" to outgoing.attachments.size.toLong()))
@@ -798,13 +1425,25 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 // The input and its stable identity are durable before any network mutation.
                 writeOutbox(outgoingKey, updated)
                 if (ownsDraft) writeDraft(name, outgoing.text, outgoing.attachments, next)
-                val mention = Regex("^@([A-Za-z]{1,3}-[1-9]\\d*|#?[1-9]\\d*)\\s+([\\s\\S]+)$").matchEntire(outgoing.text)
-                val forwarded = assistant && mention != null
-                val receipt = if (forwarded) client.request("assistant.forward", json("sessionId" to session.id,
-                    "id" to mention.groupValues[1], "text" to mention.groupValues[2], "requestId" to next,
-                    "attachments" to JSONArray(outgoing.attachments.filter { it.has("dataBase64") }),
-                    "files" to JSONArray(outgoing.attachments.filter { it.has("receiptId") })))
-                else client.request("session.send", json("id" to session.id, "text" to outgoing.text,
+                val receipt = if (forwarded) {
+                    val params = json("sessionId" to session.id, "id" to mention!!.id, "text" to mention.body,
+                        "attachments" to JSONArray(outgoing.attachments.filter { it.has("dataBase64") }),
+                        "files" to JSONArray(outgoing.attachments.filter { it.has("receiptId") }))
+                    assistantRecipient?.takeIf { (it.nullableString("ref") ?: "#${it.optLong("id")}").equals(mention.id, ignoreCase = true) }
+                        ?.nullableString("session")?.let { params.put("session", it) }
+                    val signature = "$computerId\n$params"
+                    assistantRelayRetry?.takeIf { it.first == signature }?.let { params.put("retryEntry", it.second) }
+                    params.put("requestId", next)
+                    val relayed = client.request("assistant.forward", params)
+                    // The plugin's answer says whether the agent got it; a refusal keeps the draft and says why in the plugin's approved words (`AssistantRelayResult.errorText`).
+                    if (relayed.optString("outcome") !in listOf("success", "no_op")) {
+                        val saved = relayed.optBoolean("saved")
+                        if (saved && relayed.has("entryId")) assistantRelayRetry = signature to relayed.getLong("entryId")
+                        throw ApiFailure("RELAY_" + if (saved) "delivery_failed" else relayed.optString("code").ifEmpty { "error" })
+                    }
+                    assistantRelayRetry = null
+                    relayed
+                } else client.request("session.send", json("id" to session.id, "text" to outgoing.text,
                     "requestId" to next, "attachments" to JSONArray(outgoing.attachments.map { attachment ->
                         attachment.copyJson().apply { if (has("receiptId")) remove("name") }
                     })))
@@ -829,17 +1468,40 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 // `admitted`: the answer was lost and the conversation shows the message all the same.
                 DuduLog.failure("message.send.fail", error, requestId = next, elapsedMs = (System.nanoTime() - began) / 1_000_000,
                     state = if (received()) "admitted" else "failed")
-                if (currentGeneration == generation) {
-                    changeOutgoing(session.id, next) { it.copy(failed = !received()) }
-                    // A watch may admit the input while its failed HTTP receipt is being saved.
-                    if (received()) clearSentDraft(name, next)
+                val refused = (error as? ApiFailure)?.code?.takeIf { it.startsWith("RELAY_") }
+                if (refused != null && currentGeneration == generation) {
+                    // The plugin refused the message to an issue (no agent, no project, not delivered…): it is no message waiting to be sent again. The draft and its attachments
+                    // come back and the box says why, as on the iPhone.
+                    outboxes[session.id] = outboxes[session.id].orEmpty().filterNot { it.requestId == next }
+                    writeOutbox(outgoingKey, outboxes[session.id].orEmpty())
                     if (state.value.session?.id == session.id) {
-                        val admitted = received()
+                        if (ownsDraft) inputRequestId = null
+                        mutable.update { it.copy(sending = false, outbox = outboxes[session.id].orEmpty(),
+                            message = if (ownsDraft) outgoing.text else it.message,
+                            attachments = if (ownsDraft) outgoing.attachments else it.attachments, problem = refused) }
+                    }
+                } else if (currentGeneration == generation) {
+                    val admitted = received()
+                    if (admitted) {
+                        changeOutgoing(session.id, next) { it.copy(failed = false) }
+                        // A watch may admit the input while its failed HTTP receipt is being saved.
+                        clearSentDraft(name, next)
+                    } else {
+                        // No list keeps a message that did not go (owner, 2026-11-22, as the iPhone): it comes back to the box, its input keeping its id for the next try, and a
+                        // spoken one is added to the draft.
+                        outboxes[session.id] = outboxes[session.id].orEmpty().filterNot { it.requestId == next }
+                        writeOutbox(outgoingKey, outboxes[session.id].orEmpty())
+                        if (!ownsDraft && state.value.session?.id != session.id) restoreSpokenDraft(name, outgoing.text)
+                    }
+                    if (state.value.session?.id == session.id) {
                         if (ownsDraft) inputRequestId = next.takeUnless { admitted }
-                        mutable.update { it.copy(sending = false,
-                            message = if (!ownsDraft) it.message else if (admitted) "" else outgoing.text,
+                        else if (!admitted) inputRequestId = null
+                        mutable.update { it.copy(sending = false, outbox = outboxes[session.id].orEmpty(),
+                            message = if (!ownsDraft) (if (admitted) it.message else appendVoiceDraft(it.message, outgoing.text))
+                                else if (admitted) "" else outgoing.text,
                             attachments = if (!ownsDraft) it.attachments else if (admitted) emptyList() else outgoing.attachments,
                             problem = if (admitted) null else "SEND_FAILED") }
+                        if (!ownsDraft && !admitted) persistDraft()
                     }
                 }
             } finally {
@@ -923,7 +1585,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         val session = state.value.session ?: return
         val transcript = session.transcript ?: return
         if (state.value.pageLoading || !transcript.optBoolean("hasMore")) return
-        mutable.update { it.copy(pageLoading = true) }
+        mutable.update { it.copy(pageLoading = true, pageFailure = null) }
         viewModelScope.launch {
             try {
                 val result = request("session.page", json("id" to session.id,
@@ -941,7 +1603,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 DuduLog.failure("conversation.page.fail", e)
-                mutable.update { it.copy(problem = code(e)) }
+                // Said at the top of the history with 重试, as on the iPhone (owner's audit, 2026-11-22, A25), not over the box.
+                if (state.value.session?.watchId == session.watchId) mutable.update { it.copy(pageFailure = code(e)) }
             } finally { if (state.value.session?.watchId == session.watchId) mutable.update { it.copy(pageLoading = false) } }
         }
     }
@@ -957,7 +1620,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearProblem() = mutable.update { it.copy(problem = null) }
 
-    private fun operation(block: suspend (DuduApi) -> Unit) {
+    /** `onFailure`, when given, says the failure in its own way (the iPhone's words for that place) instead of the plugin's code in `problem`. */
+    private fun operation(onFailure: (() -> Unit)? = null, block: suspend (DuduApi) -> Unit) {
         val client = api ?: return
         if (state.value.busy || !state.value.connected) return
         val currentGeneration = generation
@@ -967,8 +1631,11 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
             catch (error: Exception) {
                 if (error is CancellationException) throw error
                 DuduLog.failure("operation.fail", error)
-                if (currentGeneration == generation) mutable.update { it.copy(problem = code(error),
-                    computerUnavailable = it.computerUnavailable || visible && isConnectionProblem(code(error))) }
+                if (currentGeneration == generation) {
+                    mutable.update { it.copy(problem = if (onFailure == null) code(error) else it.problem,
+                        computerUnavailable = it.computerUnavailable || visible && isConnectionProblem(code(error))) }
+                    onFailure?.invoke()
+                }
             } finally {
                 if (currentGeneration == generation) mutable.update { it.copy(busy = false) }
             }
@@ -982,11 +1649,13 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         eventJob = viewModelScope.launch {
             DuduLog.record("events.start")
             var quiet = 0L
+            var reconnects = 0
             try { while (visible && currentGeneration == generation) {
                 try {
                     val asked = System.nanoTime()
                     val batch = client.events(eventCursor)
                     eventCursor = batch.getLong("cursor")
+                    reconnects = 0
                     var changed = false
                     val events = batch.getJSONArray("events").objects()
                     // Every poll that brought something is a line; the ones that only waited are counted, a line for every ten (about four minutes).
@@ -1012,17 +1681,23 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                             changed = true
                         } else if (topic == "session.watch.failed" && params.optString("watchId") == watchId) {
                             throw ApiFailure("UPSTREAM_UNAVAILABLE")
-                        } else if (topic.startsWith("board.") || topic.startsWith("issue.") ||
-                            topic.startsWith("sessions.")) changed = true
+                        } else if (BoardChanges.says(topic)) changed = true
                     }
-                    if (changed && state.value.conversationTitle == null) refresh()
+                    // The computer says the board changed: read it now. Otherwise this poll, which comes back at least every 25 s, is the safety net: it reads a board nothing has read for 20 s.
+                    if (state.value.conversationTitle == null && (changed || System.nanoTime() - boardAsked > 20_000_000_000L)) refresh(quiet = true)
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
                     DuduLog.failure("events.fail", error, state = if (visible) "foreground" else "background")
                     // Read-only reconnects never replay a mutation or discard the cached home.
-                    mutable.update { it.copy(problem = code(error),
+                    val failure = code(error)
+                    mutable.update { it.copy(problem = failure, connectionFailure = failure,
+                        pairingRequired = it.pairingRequired || requiresNewPairing(failure),
+                        connected = it.connected && retriesConnection(failure),
                         computerUnavailable = visible && isConnectionProblem(code(error))) }
-                    delay(2000)
+                    if (!retriesConnection(failure)) break
+                    // Waits longer after each failure, 1 s up to 30 s, as the iPhone's `scheduleReconnect` does; a poll that comes back starts again from 1 s.
+                    reconnects++
+                    delay(reconnectDelayMillis(reconnects))
                     val again = System.nanoTime()
                     try {
                         client.connect()
@@ -1033,7 +1708,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                         val computers = state.value.computers.map { if (it.id == computerId) it.copy(link = savedLink) else it }
                         vault.write("computers", JSONArray(computers.map { it.json() }).toString())
                         if (currentGeneration != generation) break
-                        mutable.update { it.copy(computers = computers, problem = null, computerUnavailable = false) }
+                        mutable.update { it.copy(computers = computers, problem = null, computerUnavailable = false,
+                            connectionFailure = null, pairingRequired = false) }
                         eventCursor = 0
                         state.value.session?.let { active ->
                             val params = json("id" to active.id, "watchId" to active.watchId, "transcript" to true)
@@ -1046,9 +1722,12 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     catch (e: Exception) {
                         if (e is CancellationException) throw e
-                        DuduLog.failure("events.reconnect.fail", e, elapsedMs = (System.nanoTime() - again) / 1_000_000)
-                        if (e is ApiFailure && e.code in listOf("AUTH_FAILED", "UNAUTHORIZED")) {
-                            mutable.update { it.copy(connected = false) }
+                        DuduLog.failure("events.reconnect.fail", e, elapsedMs = (System.nanoTime() - again) / 1_000_000,
+                            counts = mapOf("attempt" to reconnects.toLong()))
+                        if (!retriesConnection(code(e))) {
+                            mutable.update { it.copy(connected = false, problem = code(e),
+                                connectionFailure = code(e), pairingRequired = it.pairingRequired || requiresNewPairing(code(e)),
+                                computerUnavailable = false) }
                             break
                         }
                     }
@@ -1062,7 +1741,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun restoreHomes() {
         val current = generation
         // A full snapshot supersedes the per-scope caches from older app builds.
-        for (scope in listOf(Scope.All, Scope.Active, Scope.Backlog)) {
+        for (scope in listOf(Scope.All, Scope.Active)) {
             if (Scope.All in homes) return
             if (homes.containsKey(scope)) continue
             val raw = vault.read(cacheName(scope)) ?: continue
@@ -1075,9 +1754,31 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * The background service read the board while the app was away and wrote it where the app keeps its cache (`DuduConnectionService`; owner, 2026-11-22: 「安卓也做」, as the iPhone's
+     * `adoptNewerSnapshot`): on coming back it is shown at once, before the computer has answered the read that follows. A board that differs from the one this model last read or
+     * wrote can only be the service's, which writes only while the app is not in front. It is left alone while a pin, a read mark or 完成 is being saved, for another computer or a
+     * later reset, and when a read of the app's own has already put a newer board on the screen.
+     */
+    private suspend fun adoptWrittenBoard() {
+        if (computerId.isEmpty()) return
+        val current = generation
+        val held = homes[Scope.All]
+        val began = System.nanoTime()
+        val raw = vault.read(cacheName(Scope.All)) ?: return
+        if (raw == savedHomeJson) return
+        val home = withContext(Dispatchers.Default) { runCatching { Home.parse(JSONObject(raw), Scope.All) }.getOrNull() } ?: return
+        if (current != generation || state.value.changing.isNotEmpty() || homes[Scope.All] !== held) return
+        homes.clear()
+        homes[Scope.All] = home
+        savedHomeJson = raw
+        mutable.update { it.copy(home = home) }
+        DuduLog.record("board.wake.adopt", elapsedMs = (System.nanoTime() - began) / 1_000_000, counts = mapOf("rowCount" to home.rows.size.toLong()))
+    }
+
     private fun cachedHome(scope: Scope) = homes[Scope.All] ?: homes[scope]
 
-    private fun cacheName(scope: Scope) = "home-$computerId-${scope.wire}"
+    private fun cacheName(scope: Scope) = BoardChanges.cacheName(computerId, scope)
     private fun draftName(id: String) = "draft-" + java.security.MessageDigest.getInstance("SHA-256")
         .digest("$computerId:$id".toByteArray()).joinToString("") { "%02x".format(it) }
     private fun code(error: Exception) = (error as? ApiFailure)?.code ?: "CONNECTION_FAILED"

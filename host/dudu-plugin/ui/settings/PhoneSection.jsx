@@ -197,7 +197,7 @@ export function PhoneSection({ request }) {
       <Group title={S.devices}>
         {snapshot.devices.length
           ? <ul>{snapshot.devices.map((device) => (
-            <Row as="li" key={device.id} title={device.name} meta={S.paired(new Date(device.pairedAt).toLocaleDateString(intlLocale()))}>
+            <Row as="li" key={device.id} title={device.client?.version ? `${device.name} · ${device.client.version}${device.client.build ? ` (${device.client.build})` : ''}` : device.name} meta={S.paired(new Date(device.pairedAt).toLocaleDateString(intlLocale()))}>
               <ActionButton className="text-danger-foreground" disabled={busy} onClick={() => setConfirming(device)}>{S.revoke}</ActionButton>
             </Row>
           ))}</ul>

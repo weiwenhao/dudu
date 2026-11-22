@@ -11,6 +11,7 @@ import {
   sanitizeIcon,
   sanitizeSnapshot,
 } from '../host/native-navigation.mjs';
+import { withNativeLocale } from '../host/native-locale.mjs';
 
 const icon = {
   viewBox: [0, 0, 16, 16],
@@ -364,4 +365,12 @@ test('the plugin adds native primary routes and grouped settings ahead of regist
   assert.ok(settings.slice(0, own.length).every((item: any) => item.group === 'dudu'), 'ahead of DSH\'s');
   assert.ok(reported(settings).every((item: any) => item.group === undefined), 'what DSH reports has no group');
   await store.close();
+});
+
+test('the plugin\'s own settings pages have the desktop\'s names and icons, in both languages', async () => {
+  const store = await createNavigationStore({ now: () => 1 });
+  const own = (locale: string) => withNativeLocale(locale, () => store.get()).settings.filter((row: any) => row.group === 'dudu');
+  assert.deepEqual(own('zh-CN').map((row: any) => row.title), ['常规', '状态', '连接器', '收集器', '规则', '记忆', '技能', '其他设置']);
+  assert.deepEqual(own('en').map((row: any) => row.title), ['General', 'Status', 'Connectors', 'Collectors', 'Rules', 'Memory', 'Skills', 'Other settings']);
+  assert.ok(own('en').every((row: any) => row.icon?.nodes?.length > 0), 'every page has its icon');
 });

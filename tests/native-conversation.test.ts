@@ -159,6 +159,11 @@ test('conversation change counts use the retained summary without reading files 
     } }),
   });
   assert.deepEqual(reads.changeCounts('session-1', 7), expected);
+  summary = { total: 1, added: 3, deleted: 1, cwd: '/private/workspace',
+    files: [{ path: '/private/workspace/Pairing.kt', display: 'native/android/Pairing.kt' }] };
+  assert.deepEqual(reads.changeCounts('session-1', 7), { total: 1, added: 3, deleted: 1, fileName: 'Pairing.kt' });
+  summary = { total: 1, added: 3, deleted: 1, files: [{ path: 'C:\\private\\Pairing.kt' }] };
+  assert.deepEqual(reads.changeCounts('session-1', 7), { total: 1, added: 3, deleted: 1, fileName: 'Pairing.kt' });
   for (const invalid of [undefined, {}, { ...expected, total: -1 }, { ...expected, added: 1.5 },
     { ...expected, deleted: Number.MAX_SAFE_INTEGER + 1 }]) {
     summary = invalid;

@@ -72,6 +72,8 @@ struct TranscriptLive: Codable, Equatable, Sendable {
     var text: String?
     var reasoning: String?
     var calls: [TranscriptCall]?
+    /// The host says the text is written to its end, though it has not recorded the message yet (it does so late while agents run in the background). Absent from an older host.
+    var complete: Bool?
 }
 
 struct Transcript: Codable, Equatable, Sendable {
@@ -350,10 +352,16 @@ struct TurnRow: Identifiable, Equatable, Sendable {
     var changesSummary: ConversationChangeSummary? = nil
     var notices: [TurnNotice] = []
     var performanceSeq: Double? = nil
+    /// The live reply of this turn is finished text the host has not recorded yet: it is drawn as a message (Markdown), not as streaming text.
+    var liveTextComplete = false
     /// A user message can interrupt a turn. Only its last chronological fragment owns the turn footer.
     var isLastFragment = true
 
     var hasProcess: Bool { !segments.isEmpty }
+    /// What folding hides: only the thinking and tool groups. Every reply stays visible, as DSH's default 「全部回复」 (`ui-chat.foldedReplies`; owner, 2026-11-22: a
+    /// reply sent before a background job's follow-up was folded away on the phone while Desktop showed it). A turn whose process is only replies keeps its title and has no fold.
+    var hasFoldableProcess: Bool { segments.contains { if case .group = $0 { return true } else { return false } } }
+    var hasReplies: Bool { segments.contains { if case .reply = $0 { return true } else { return false } } }
 
     /// "已完成，用时 44 秒", "处理失败", "已停止" — nil when the turn has nothing to disclose.
     var summaryTitle: String? {
@@ -565,6 +573,7 @@ enum TranscriptBuilder {
                 row.answerSeq = last.seq
                 processSteps.removeLast()
             }
+            row.liveTextComplete = liveStep?.complete == true
             row.segments = segments(from: processSteps, live: liveStep, isRunningTurn: isRunningTurn && row.isLastFragment)
             if isRunningTurn && row.isLastFragment { row.live = liveStatus(steps: steps, live: liveStep) }
             rows[index] = .turn(row)

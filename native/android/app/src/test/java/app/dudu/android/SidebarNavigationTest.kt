@@ -24,7 +24,8 @@ class SidebarNavigationTest {
         val tasks = json("id" to "dudu.tasks", "open" to json("native" to "schedule"))
         assertTrue(sidebarItemSelected(board, null, false))
         assertFalse(sidebarItemSelected(board, null, true))
-        val page = pageRoute(Route("settings"), listOf(Route("collector"), Route("record", target = "17")), false)
+        // The settings' pages are pages of their own now (2026-11-22); an issue's sheet still covers the page under it.
+        val page = pageRoute(Route("issue", target = "5"), listOf(Route("collector"), Route("record", target = "17")), false)
         assertTrue(sidebarItemSelected(inbox, page, false))
         assertFalse(sidebarItemSelected(board, page, false))
         assertFalse(sidebarItemSelected(tasks, page, false))
@@ -34,9 +35,11 @@ class SidebarNavigationTest {
     @Test fun registryOpeningAndSelectionDistinguishNativeAndEmbeddedPages() {
         val tasks = json("id" to "dudu.tasks", "open" to json("native" to "schedule",
             "web" to json("page" to "schedule")))
+        // DSH's own schedule list has no page on the phone (the iPhone says 手机端暂不支持); a page the phone has stands in for it here.
         val schedules = json("id" to "schedule", "open" to json("native" to "schedule",
-            "web" to json("page" to "schedule")))
+            "web" to json("page" to "plugins")))
         val insight = json("id" to "insight", "open" to json("web" to json("page" to "insight")))
+        assertNull(navigationRoute(insight))
         val schedulePage = navigationRoute(schedules, "session")!!
         assertEquals("tasks", navigationRoute(tasks)?.name)
         assertEquals("session", schedulePage.params.getString("sessionId"))

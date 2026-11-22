@@ -72,7 +72,7 @@ struct GoalBanner: View {
                 }
                 .accessibilityIdentifier("goal.edit")
                 Button(role: .destructive, action: onClear) {
-                    Label(L10n.text("清除目标"), systemImage: "trash")
+                    DuduLabel(L10n.text("清除目标"), icon: .trash)
                 }
                 .accessibilityIdentifier("goal.clear")
             } label: {
