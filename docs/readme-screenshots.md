@@ -1,6 +1,6 @@
 # README 的六张图怎么重拍
 
-`README.md` 引用 `docs/images/` 下六张图：`hero.en.png`、`hero.zh-CN.png`（顶部大图）、`dashboard.en.png`、`dashboard.zh-CN.png`（仪表盘）、`phone.en.png`、`phone.zh-CN.png`（手机）。界面改动之后要让这几张图跟上，做法是重新跑一遍下面这套流水线，而不是手改 PNG。六张图最近一次由这套流水线生成是 2026-11-20。
+`README.md` 引用 `docs/images/` 下六张图：`hero.en.png`、`hero.zh-CN.png`（顶部大图）、`dashboard.en.png`、`dashboard.zh-CN.png`（仪表盘）、`phone.en.png`、`phone.zh-CN.png`（手机）。界面改动之后要让这几张图跟上，做法是重新跑一遍下面这套流水线，而不是手改 PNG。六张图最近一次由这套流水线生成是 2026-11-20；两张手机图又在 2026-11-22 重拍过一次（hero 和 dashboard 仍是 2026-11-20 的）。
 
 这套流水线是真实浏览器自动化加真实模拟器自动化：隔离的 `dsh web`、无头 Chrome、iOS 模拟器。按本仓库的规矩，这些都只在主人那句话里明确提出"重新截图"时才跑一次，不能自己顺手跑；也绝不对着主人自己正在用的 DSH 跑。
 
@@ -51,7 +51,7 @@ xcodebuild -project native/ios -scheme Dudu -configuration Debug \
   -derivedDataPath .local/native-sim-readme-new build
 ```
 
-产物应该在 `.local/native-sim-readme-new/Build/Products/Debug-iphonesimulator/Dudu.app`（旧工程叫 `dsbot.app`；新工程 `native/ios/project.yml` 里 `targets.Dudu.settings.base.PRODUCT_NAME: Dudu`，所以产物文件名确实是 `Dudu.app`，这点是从配置里读出来的，不是猜的）。Bundle id 没有变，还是 `com.harnessmobile.app`（同一个文件里 `PRODUCT_BUNDLE_IDENTIFIER` 确认过），这个很关键，因为 TouchRunner 的测试是按 bundle id 认 app 的，不是按产物路径。**没有核实过的是**：改名之后这整条 `xcodegen generate` + `xcodebuild ... build` 命令本身还没有被真正跑过一次（11-20 那次重拍手机图没有新的构建日志，大概率是复用了改名前就已经装好的模拟器 app），第一次跑的时候留意一下有没有报错。
+产物应该在 `.local/native-sim-readme-new/Build/Products/Debug-iphonesimulator/Dudu.app`（旧工程叫 `dsbot.app`；新工程 `native/ios/project.yml` 里 `targets.Dudu.settings.base.PRODUCT_NAME: Dudu`，所以产物文件名确实是 `Dudu.app`，这点是从配置里读出来的，不是猜的）。Bundle id 没有变，还是 `com.harnessmobile.app`（同一个文件里 `PRODUCT_BUNDLE_IDENTIFIER` 确认过），这个很关键，因为 TouchRunner 的测试是按 bundle id 认 app 的，不是按产物路径。2026-11-22 重拍手机图时这条链从头跑通了：工程路径要写 `native/ios/Dudu.xcodeproj`（文档里原来的 `-project native/ios` 不对），`xcodegen generate` 可以不跑（`project.yml` 没变时工程是现成的），构建、`simctl install`、跑场景都没有报错（`-jobs 2`，构建约 3 分钟）。
 
 装进已经启动的模拟器：
 
@@ -72,7 +72,7 @@ xcodebuild test -project .local/ui-touch/TouchRunner.xcodeproj -scheme Touch \
   ...（其余 testChatXx / testPlusXx / testTasksXx 场景同理）
 ```
 
-测试用 app 的启动参数指定假数据，app 这边认的参数名是 `-dudu-ui-review`/`-dudu-review-board` 这些（见 `native/ios/Dudu/Core/SimulatorReviewFixture.swift`）——但 `.local/ui-touch/Tests/ReadmeNewTests.swift` 这份 2026-11-17 写的测试代码本身**还没跟着改名更新**，里面硬编码的还是改名前的 `-dsbot-ui-review`/`-dsbot-review-board` 等字符串：照原样跑，app 认不出这些参数，假数据根本不会被加载，截图会是真实空数据而不是摆好的场景，而且不会报错，很容易白跑一次都没发现。跑之前先把这个文件里的 `-dsbot-` 批量替换成 `-dudu-`。JSON 素材在 `.local/designs/readme-phone-new-2026-11-17/`（`board-en.json`、`board-zh.json`、`chat-en.json`、`tasks-en.json` 等）。截图写到 `.local/ui-touch/` 或素材目录下的 `shot-<lang>-<场景>.png`，再用 `.local/designs/readme-phone-new-2026-11-17/compose_phone_new.py` 把几张拼成最终的 `phone.en.png` / `phone.zh-CN.png`，复制进 `docs/images/`。
+测试用 app 的启动参数指定假数据，app 这边认的参数名是 `-dudu-ui-review`/`-dudu-review-board` 这些（见 `native/ios/Dudu/Core/SimulatorReviewFixture.swift`）——`.local/ui-touch/Tests/ReadmeNewTests.swift` 这份 2026-11-17 写的测试代码原来硬编码的是改名前的 `-dsbot-ui-review`/`-dsbot-review-board` 等字符串，app 认不出，假数据不会被加载，截图会是真实空数据而不报错；2026-11-22 已经批量替换成 `-dudu-`（参数名是否还对得上，每次重拍前仍要对一下 app 里的 `reviewArgument`）。JSON 素材在 `.local/designs/readme-phone-new-2026-11-17/`（`board-en.json`、`board-zh.json`、`chat-en.json`、`tasks-en.json` 等）。截图写到 `.local/ui-touch/` 或素材目录下的 `shot-<lang>-<场景>.png`，再用 `.local/designs/readme-phone-new-2026-11-17/compose_phone_new.py` 把几张拼成最终的 `phone.en.png` / `phone.zh-CN.png`，复制进 `docs/images/`。
 
 ## 踩过的坑（都来自实际改过的脚本/日志，不是空泛提醒）
 
@@ -84,3 +84,4 @@ xcodebuild test -project .local/ui-touch/TouchRunner.xcodeproj -scheme Touch \
 - **数据库字段改名会让旧版流水线悄悄失效**：`ignored_at` 列改成 `deleted_at` 之后，`.local/e2e-hero/hero-owner.mjs` 里原来写死 `ignored_at` 的地方得跟着改，不然收件箱的"隐藏某条"那一步会静默失败而不是报错。
 - **打包文件名跟着 npm 包名走**：`dsh-dudu-<version>.tgz` 这个前缀是现在的 npm 包名；如果这个仓库以后又换了包名（已经换过一次，从 `dudu` 到 `dsh-dudu`），`.local/e2e-hero/harness.mjs` 这份拷贝要跟着 `tests/e2e/harness.mjs` 的改动同步，不然会装错文件。
 - **手机测试代码里的启动参数名会跟着原生工程改名掉队**：2026-11-19 app 把 `-dsbot-*` 系列启动参数全改成了 `-dudu-*`，但 `.local/ui-touch/Tests/ReadmeNewTests.swift` 这份 2026-11-17 写的 scratch 测试代码没有跟着改，照原样跑不会报错，只会让假数据静默加载失败，截图拍出来的是空数据——每次重拍前先确认测试代码里的启动参数名和 app 当前实际认的一致，不要假设旧脚本还对得上。
+- **任务那张图拍的是底栏的「任务」标签，不是推出来的页面**（2026-11-22）：任务列表现在是底栏的一个标签（侧栏里没有这一行了）。`ReadmeNewTests` 里旧的 `testTasksEn/Zh` 用 `-dudu-review-open-tasks` 把它当页面推出来，英文碰巧能出现，中文因为假电脑比那个 1.5 秒的等待晚到，页面被重置回看板，拍出来是看板，测试却显示通过。现在用 `testTasksTabEn/Zh`：启动参数带看板、导航和任务的假数据，等 8 秒，点底栏的「任务」标签再拍。拼好图之后一定要把四张都看一眼，测试通过不代表拍对了。
