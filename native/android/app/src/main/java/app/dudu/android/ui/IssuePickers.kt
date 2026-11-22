@@ -78,8 +78,12 @@ fun IssuePropertySheet(panel: Panel.EditIssue, state: UiState, model: DuduViewMo
                             })
                         }
                     }, dismiss = model::dismissPanel, nestedRoot = false,
-                    saving = state.busy, enabled = allowed && state.connected, problem = state.problem,
+                    saving = state.busy, enabled = allowed && state.connected,
                     busyChanged = { pickerBusy = it })
+                // A save that failed leaves the sheet open and says so at its foot, as the iPhone's `IssueActionsSheet`.
+                if (state.problem == "conflict" && !state.busy) Text(w("更改没能保存"), Modifier.fillMaxWidth().padding(16.dp)
+                    .testTag("panel-error"), fontSize = 13.sp, color = androidx.compose.ui.graphics.Color(0xFFEC1313),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
         }
     }
@@ -104,6 +108,7 @@ fun IssuePickerFlow(root: IssuePicker, draft: IssueDraft, options: Options?, mod
     var parents by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var parentProblem by remember { mutableStateOf<String?>(null) }
     var parentsLoading by remember { mutableStateOf(false) }
+    var parentRetry by remember { mutableIntStateOf(0) }
     val page = pages.last()
     val busy = saving || actions.busy
     val editable = enabled && !busy
@@ -124,10 +129,11 @@ fun IssuePickerFlow(root: IssuePicker, draft: IssueDraft, options: Options?, mod
             agent = if (project?.path == draft.project?.path && !project?.path.isNullOrBlank()) draft.agent else null))
     }
     BackHandler { back() }
-    LaunchedEffect(page, query) {
+    LaunchedEffect(page, query, parentRetry) {
         if (page == IssuePicker.Parent) {
             parentsLoading = true; parentProblem = null
-            try { parents = model.request("issue.parents", json("q" to query)).rows("items") }
+            if (query.isNotEmpty()) kotlinx.coroutines.delay(200)
+            try { parents = model.request("issue.parents", json("q" to query.take(300))).rows("items") }
             catch (error: Exception) {
                 if (error is CancellationException) throw error
                 parentProblem = (error as? ApiFailure)?.code ?: "CONNECTION_FAILED"
@@ -153,7 +159,7 @@ fun IssuePickerFlow(root: IssuePicker, draft: IssueDraft, options: Options?, mod
             val confirms = page in listOf(IssuePicker.Due, IssuePicker.Labels)
             if (nestedRoot || pages.size > 1) IconButton(onClick = ::back, enabled = !busy,
                 modifier = Modifier.align(Alignment.CenterStart).testTag("picker-back")) {
-                Glyph(R.drawable.ic_arrow_left, stringResource(R.string.back), 22)
+                Glyph(DuduGlyphs.back, stringResource(R.string.back), 22)
             } else if (confirms) TextButton(onClick = ::back, enabled = !busy, modifier = Modifier.align(Alignment.CenterStart)) {
                 Text(stringResource(R.string.cancel))
             }
@@ -175,7 +181,7 @@ fun IssuePickerFlow(root: IssuePicker, draft: IssueDraft, options: Options?, mod
                 }
                 !nestedRoot && pages.size == 1 -> IconButton(onClick = ::back, enabled = !busy,
                     modifier = Modifier.align(Alignment.CenterEnd).testTag("close-sheet")) {
-                    Glyph(R.drawable.ic_x, stringResource(R.string.close), 20)
+                    Glyph(DuduGlyphs.close, stringResource(R.string.close), 20)
                 }
             }
         }
@@ -184,12 +190,12 @@ fun IssuePickerFlow(root: IssuePicker, draft: IssueDraft, options: Options?, mod
                 SearchField(query, when (page) {
                     IssuePicker.Project -> w("选择项目")
                     IssuePicker.Labels -> w("修改或添加标签…")
-                    else -> w("搜索事项")
+                    else -> w("搜索事项…")
                 }) { query = it }
             }
         }
-        if (busy || parentsLoading || options == null) LinearProgressIndicator(Modifier.fillMaxWidth())
-        (problem ?: actions.error ?: parentProblem)?.let { code ->
+        if (busy || options == null && page != IssuePicker.Parent) LinearProgressIndicator(Modifier.fillMaxWidth())
+        (problem ?: actions.error)?.let { code ->
             Text(problemText(code), Modifier.padding(horizontal = 20.dp, vertical = 8.dp).testTag("panel-error"),
                 color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
         }
@@ -213,21 +219,21 @@ fun IssuePickerFlow(root: IssuePicker, draft: IssueDraft, options: Options?, mod
                     }
                     IssuePicker.Project -> {
                         IssueChoiceRow(stringResource(R.string.no_project), selected = assignmentProject == null,
-                            enabled = editable, icon = { Glyph(R.drawable.ic_folder, size = 18) }) { projectChosen(null) }
+                            enabled = editable, icon = { Glyph(DuduGlyphs.issueProject, size = 18) }) { projectChosen(null) }
                         val projects = (listOfNotNull(assignmentProject) + options?.projects.orEmpty()).distinctBy { it.path to it.name }
                         projects.filter { "${it.name} ${it.path.orEmpty()}".contains(query.trim(), ignoreCase = true) }.forEach { project ->
                             IssueChoiceRow(project.name, project.path, selected = project == assignmentProject, enabled = editable,
-                                icon = { Glyph(R.drawable.ic_folder, size = 18) }) { projectChosen(project) }
+                                icon = { Glyph(DuduGlyphs.issueProject, size = 18) }) { projectChosen(project) }
                         }
                         if (projects.isEmpty() && options != null) PickerEmpty(w("还没有项目"))
                         PickerDivider()
-                        IssueChoiceRow(w("新建项目"), enabled = editable, icon = { Glyph(R.drawable.ic_plus, size = 18) }) {
+                        IssueChoiceRow(w("新建项目"), enabled = editable, icon = { Glyph(DuduGlyphs.plus, size = 18) }) {
                             pages = pages + IssuePicker.NewProject; query = ""
                         }
                     }
                     IssuePicker.Agent -> {
                         if (root != IssuePicker.Agent || nestedRoot) IssueChoiceRow(stringResource(R.string.unassigned),
-                            selected = draft.agent == null, enabled = editable, icon = { Glyph(R.drawable.ic_user_round, size = 18) }) {
+                            selected = draft.agent == null, enabled = editable, icon = { Glyph(DuduGlyphs.stateUnassigned, size = 18) }) {
                             onSelect(draft.copy(agent = null))
                         }
                         options?.agents.orEmpty().forEach { agent ->
@@ -246,7 +252,7 @@ fun IssuePickerFlow(root: IssuePicker, draft: IssueDraft, options: Options?, mod
                         if (labels.isEmpty() && query.isBlank() && options != null) PickerEmpty(w("还没有标签"))
                         if (query.isNotBlank() && labels.none { it.name.equals(query.trim(), ignoreCase = true) }) {
                             IssueChoiceRow(w("新建标签：“{0}”").replace("{0}", query.trim()), enabled = editable,
-                                icon = { Glyph(R.drawable.ic_plus, size = 18) }) {
+                                icon = { Glyph(DuduGlyphs.plus, size = 18) }) {
                                 newLabel = query.trim(); pages = pages + IssuePicker.LabelColor
                             }
                         }
@@ -268,9 +274,8 @@ fun IssuePickerFlow(root: IssuePicker, draft: IssueDraft, options: Options?, mod
                         val friday = (DayOfWeek.FRIDAY.value - today.dayOfWeek.value + 7) % 7
                         listOf(w("明天") to today.plusDays(1), w("本周结束") to today.plusDays(friday.toLong()),
                             w("一周后") to today.plusDays(7)).forEach { (label, day) ->
-                            IssueChoiceRow(label, DateFormat.getDateInstance(DateFormat.MEDIUM, appLocale()).format(
-                                Date.from(day.atTime(12, 0).atZone(zone).toInstant())), enabled = editable,
-                                icon = { Glyph(R.drawable.ic_calendar, size = 18) }) {
+                            IssueChoiceRow(label, monthDay(day.atTime(12, 0).atZone(zone).toInstant().toEpochMilli()), enabled = editable,
+                                icon = { Glyph(DuduGlyphs.dueDate, size = 18) }) {
                                 onSelect(draft.copy(dueAt = day.atTime(12, 0).atZone(zone).toInstant().toEpochMilli()))
                             }
                         }
@@ -284,18 +289,25 @@ fun IssuePickerFlow(root: IssuePicker, draft: IssueDraft, options: Options?, mod
                         }
                         if (draft.dueAt != null) {
                             PickerDivider()
-                            IssueChoiceRow(w("移除截止日期"), enabled = editable, icon = { Glyph(R.drawable.ic_x, size = 18) }) {
+                            IssueChoiceRow(w("移除截止日期"), enabled = editable, icon = { Glyph(DuduGlyphs.remove, size = 18) }) {
                                 onSelect(draft.copy(dueAt = null))
                             }
                         }
                     }
-                    IssuePicker.Parent -> {
-                        if (draft.parent != null) IssueChoiceRow(w("移除父事项"), enabled = editable,
-                            icon = { Glyph(R.drawable.ic_x, size = 18) }) { onSelect(draft.copy(parent = null)) }
-                        parents.forEach { parent ->
-                            IssueChoiceRow(parent.getString("title"), parent.nullableString("ref"),
-                                selected = parent.getLong("id") == draft.parent, enabled = editable,
-                                icon = { Glyph(R.drawable.ic_corner_down_right, size = 18) }) {
+                    // The iPhone's `IssueParentPicker`: each issue with its status and reference; the form's chip takes a parent away (its ×).
+                    IssuePicker.Parent -> when {
+                        parentsLoading -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { RowSpinner(20) }
+                        parentProblem != null -> Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(w("事项没能加载"), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.retry), Modifier.clickable { parentRetry++ }.padding(vertical = 8.dp),
+                                fontSize = 14.sp, color = DuduStyle.blue)
+                        }
+                        parents.isEmpty() -> PickerEmpty(w("没有找到事项"))
+                        else -> parents.forEach { parent ->
+                            val status = Status(parent.optString("status"), null, parent.optString("statusType", parent.optString("status")), false)
+                            IssueChoiceRow(parent.getString("title"), parent.nullableString("ref"), enabled = editable,
+                                icon = { IssueStatusMark(status) }) {
                                 onSelect(draft.copy(parent = parent.getLong("id")))
                             }
                         }
@@ -343,7 +355,7 @@ fun IssueChoiceRow(title: String, subtitle: String? = null, selected: Boolean = 
             Text(title, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else .4f))
             subtitle?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
-        if (selected) Glyph(R.drawable.ic_check, size = 18)
+        if (selected) Glyph(DuduGlyphs.check, size = 18)
     }
 }
 

@@ -4,7 +4,20 @@
 package app.dudu.android.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -18,8 +31,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -39,6 +50,10 @@ import kotlinx.coroutines.withContext
 fun Panels(state: UiState, model: DuduViewModel) {
     var creationPicker by remember(state.panel) { mutableStateOf<IssuePicker?>(null) }
     var pickerBusy by remember(creationPicker) { mutableStateOf(false) }
+    var optionsFailed by remember(state.panel == Panel.Create) { mutableStateOf(false) }
+    var optionsRetry by remember { mutableIntStateOf(0) }
+    var createFailed by remember(state.panel == Panel.Create) { mutableStateOf(false) }
+    val createLabel = stringResource(R.string.create)
     when (val panel = state.panel) {
         null -> Unit
         Panel.Quota -> QuotaSheet(state, model::dismissPanel)
@@ -51,6 +66,17 @@ fun Panels(state: UiState, model: DuduViewModel) {
             model::dismissPanel, model::confirmDelete, error = state.problem?.let { problemText(it) },
             tag = "confirm-delete")
         else -> {
+            if (panel == Panel.Create) LaunchedEffect(state.computerId, state.connected, optionsRetry) {
+                // The form's choices (statuses, projects, labels), read without holding the form: only a failure says so, under the values (the iPhone's `loadOptions`).
+                if (!state.connected) return@LaunchedEffect
+                optionsFailed = false
+                try { model.receiveIssueOptions(model.issueOptions()) }
+                catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    DuduLog.failure("issue.options.fail", error)
+                    optionsFailed = true
+                }
+            }
             DuduSheet(model::dismissPanel, canDismiss = !state.busy && !pickerBusy,
                 containerColor = if (panel == Panel.Create) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surfaceContainer) {
                 val picker = creationPicker
@@ -64,43 +90,50 @@ fun Panels(state: UiState, model: DuduViewModel) {
                 } else {
                 Column(Modifier.fillMaxWidth().testTag("bottom-sheet")) {
                     if (panel == Panel.Create) {
+                        // The iPhone's bar: ✕ on the left, the title, and a round ✓ that turns into a spinner while the issue is made (owner, 2026-11-21: ✕ / ✓ instead of repeating 创建事项).
                         Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp),
                             verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(onClick = model::dismissPanel, enabled = !state.busy) {
-                                Text(stringResource(R.string.cancel))
+                            IconButton(onClick = model::dismissPanel, enabled = !state.busy, modifier = Modifier.testTag("close-sheet")) {
+                                Glyph(DuduGlyphs.close, stringResource(R.string.cancel), 20)
                             }
                             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                                 Text(stringResource(R.string.new_issue), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                             }
-                            TextButton(onClick = model::createIssue,
-                                enabled = state.draft.valid && state.options != null && !state.busy,
-                                modifier = Modifier.testTag("create-issue")) {
-                                Text(stringResource(R.string.create), color = if (state.draft.valid && state.options != null)
-                                    MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            val canCreate = state.draft.valid && state.draft.status != null && state.options != null && state.connected && !state.busy
+                            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                                if (state.busy) RowSpinner(18)
+                                else Box(Modifier.size(32.dp).clip(CircleShape)
+                                    .background(if (canCreate) DuduStyle.blue else MaterialTheme.colorScheme.surfaceContainerHigh)
+                                    .clickable(enabled = canCreate) { createFailed = false; model.createIssue { createFailed = true } }
+                                    .semantics { contentDescription = createLabel; role = Role.Button }.testTag("create-issue"),
+                                    contentAlignment = Alignment.Center) {
+                                    Glyph(DuduGlyphs.check, null, 16, if (canCreate) Color.White else MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         }
                     } else SheetHeader(when (panel) {
                         Panel.Computers -> stringResource(R.string.computers)
                         Panel.Quota -> stringResource(R.string.quota)
                         else -> ""
-                    }, model::dismissPanel, !state.busy && !state.connecting, action = if (panel == Panel.Computers) { {
-                        IconButton(onClick = { model.navigate(Route("pair")) }, enabled = !state.connecting) {
-                            Glyph(R.drawable.ic_plus, w("添加电脑"), 22)
+                    }, model::dismissPanel, !state.busy && !state.connectionInFlight, action = if (panel == Panel.Computers) { {
+                        IconButton(onClick = { model.navigate(Route("pair")) }, enabled = !state.connectionInFlight) {
+                            Glyph(DuduGlyphs.plus, w("添加电脑"), 22)
                         }
                     } } else null)
                     Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
                         .padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         when (panel) {
                             Panel.Computers -> ComputerList(state, model)
-                            Panel.Create -> IssueForm(state, model) { creationPicker = it }
+                            Panel.Create -> IssueForm(state, model, optionsFailed, { optionsFailed = false; optionsRetry++ }, createFailed) { creationPicker = it }
                             else -> Unit
                         }
-                        if (state.problem != null) Text(problemText(state.problem),
+                        // The new-issue form says its own failures in the iPhone's words (事项没能加载, 事项没能创建).
+                        if (state.problem != null && panel != Panel.Create) Text(problemText(state.problem),
                             color = MaterialTheme.colorScheme.error, fontSize = 14.sp,
                             modifier = Modifier.testTag("panel-error"))
                         Spacer(Modifier.height(12.dp))
                     }
-                    if (state.busy || state.connecting) LinearProgressIndicator(Modifier.fillMaxWidth(),
+                    if (panel != Panel.Create && (state.busy || state.connecting)) LinearProgressIndicator(Modifier.fillMaxWidth(),
                         color = MaterialTheme.colorScheme.secondary)
                     }
                 }
@@ -109,42 +142,59 @@ fun Panels(state: UiState, model: DuduViewModel) {
     }
 }
 
+/**
+ * The new-issue form, the iPhone's `NewIssueSheet`: the parent (when there is one) as a chip with its reference and an ×, the title (focused at once) and the description, the pictures,
+ * then the values as the composer's pills. `optionsFailed` says 事项没能加载 with 重试 (`retryOptions`) under them; `createFailed` says 事项没能创建.
+ */
 @Composable
-private fun IssueForm(state: UiState, model: DuduViewModel, choose: (IssuePicker) -> Unit) {
+private fun IssueForm(state: UiState, model: DuduViewModel, optionsFailed: Boolean, retryOptions: () -> Unit, createFailed: Boolean,
+    choose: (IssuePicker) -> Unit) {
     val draft = state.draft
     val options = state.options
     val context = LocalContext.current
     val photos = rememberActions()
     var photoComputer by remember { mutableStateOf("") }
-    var parentTitle by remember(draft.parent) { mutableStateOf<String?>(null) }
+    var parentIssue by remember(draft.parent) { mutableStateOf<Issue?>(null) }
     LaunchedEffect(draft.parent) {
         val parent = draft.parent ?: return@LaunchedEffect
         runCatching { model.request("issue.get", json("id" to parent)).getJSONObject("issue") }.getOrNull()?.let {
-            parentTitle = it.getString("title")
+            val issue = Issue.parse(it)
+            parentIssue = issue
             if (model.state.value.draft.project?.path.isNullOrBlank()) {
-                val project = Issue.parse(it).project
+                val project = issue.project
                 if (project != null) model.editDraft(model.state.value.draft.copy(project = project))
             }
         }
     }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+    // The system photo picker, as the iPhone's photo library (`photosPicker`, as many as the issue still takes).
+    val picker = rememberPhotoLibrary(PHOTO_LIMIT - draft.photos.size) { uris ->
         photos.run {
             if (model.state.value.computerId != photoComputer || model.state.value.panel != Panel.Create) return@run
             model.editDraft(model.state.value.draft.copy(preparingPhotos = true))
             try {
+            var added = 0
             for (uri in uris) {
                 val current = model.state.value
                 if (current.computerId != photoComputer || current.panel != Panel.Create) return@run
                 if (current.draft.photos.size >= 9) break
-                val file = withContext(Dispatchers.IO) {
-                    json("name" to "${java.util.UUID.randomUUID()}.jpg", "mimeType" to "image/jpeg",
-                        "dataBase64" to android.util.Base64.encodeToString(
-                            preparePhoto(context.contentResolver, uri), android.util.Base64.NO_WRAP))
+                // A picture that cannot be read is skipped; the rest are added (the iPhone's 部分照片未添加).
+                val file = try {
+                    withContext(Dispatchers.IO) {
+                        json("name" to "${java.util.UUID.randomUUID()}.jpg", "mimeType" to "image/jpeg",
+                            "dataBase64" to android.util.Base64.encodeToString(
+                                preparePhoto(context.contentResolver, uri), android.util.Base64.NO_WRAP))
+                    }
+                } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    DuduLog.failure("newissue.photo.fail", error)
+                    continue
                 }
                 val latest = model.state.value
                 if (latest.computerId != photoComputer || latest.panel != Panel.Create) return@run
                 model.editDraft(latest.draft.copy(photos = latest.draft.photos + file))
+                added++
             }
+            if (added < uris.size) model.toast(word("部分照片未添加"), ToastKind.Warning)
             } finally {
                 val latest = model.state.value
                 if (latest.computerId == photoComputer && latest.panel == Panel.Create)
@@ -152,72 +202,129 @@ private fun IssueForm(state: UiState, model: DuduViewModel, choose: (IssuePicker
             }
         }
     }
-    if (draft.parent != null) Row(verticalAlignment = Alignment.CenterVertically) {
-        TextButton(onClick = { choose(IssuePicker.Parent) }, enabled = !state.busy, modifier = Modifier.weight(1f)) {
-            Glyph(R.drawable.ic_corner_down_right, size = 16)
-            Spacer(Modifier.width(8.dp))
-            Text(parentTitle ?: w("子事项"), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        IconButton(onClick = { model.editDraft(draft.copy(parent = null)) }, enabled = !state.busy) {
-            Glyph(R.drawable.ic_x, w("移除父事项"), 16)
-        }
+    if (draft.parent != null) ParentChip(parentIssue, !state.busy, open = { choose(IssuePicker.Parent) }) {
+        model.editDraft(draft.copy(parent = null))
     }
-    DraftInput(draft.title, stringResource(R.string.issue_title), !state.busy, "issue-title") {
+    val titleFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { titleFocus.requestFocus() } }
+    NewIssueField(draft.title, stringResource(R.string.issue_title), !state.busy, title = true,
+        modifier = Modifier.focusRequester(titleFocus).testTag("issue-title")) {
         model.editDraft(draft.copy(title = it.take(300)))
     }
-    DraftInput(draft.description, stringResource(R.string.description), !state.busy, multi = true) {
+    NewIssueField(draft.description, stringResource(R.string.description), !state.busy, title = false) {
         model.editDraft(draft.copy(description = it.take(20000)))
     }
-    if (draft.photos.isNotEmpty()) AttachmentTiles(draft.photos, !state.busy) { index ->
+    if (draft.photos.isNotEmpty()) AttachmentTiles(draft.photos, !state.busy,
+        add = if (draft.photos.size < PHOTO_LIMIT) ({ photoComputer = state.computerId; picker() }) else null) { index ->
         model.editDraft(draft.copy(photos = draft.photos.filterIndexed { i, _ -> i != index }))
     }
     if (photos.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
     photos.error?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error) }
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    // The buttons are buttons while the computer's choices load (owner, 2026-11-17: "按钮不就是按钮吗"); only the ones that list them wait for them.
+    val usable = !state.busy && state.connected
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         val status = options?.statuses?.find { it.id == draft.status }
-        IssueChip(status?.let { statusTitle(it) } ?: stringResource(R.string.status), !state.busy, "status-picker",
+        IssueChip(status?.let { statusTitle(it) } ?: stringResource(R.string.status), usable && options != null, "status-picker",
             { IssueStatusMark(status ?: Status("", null, "todo", false)) }) { choose(IssuePicker.Status) }
         IssueChip(if (draft.priority == "none") stringResource(R.string.priority) else priorityTitle(draft.priority),
-            !state.busy, "priority-picker", { IssuePriorityMark(draft.priority) }) { choose(IssuePicker.Priority) }
-        IssueChip(draft.project?.name ?: stringResource(R.string.project), !state.busy, "project-picker",
-            { Glyph(R.drawable.ic_folder, size = 16) }) { choose(IssuePicker.Project) }
+            usable, "priority-picker", { IssuePriorityMark(draft.priority) }) { choose(IssuePicker.Priority) }
+        IssueChip(draft.project?.name ?: stringResource(R.string.project), usable && options != null, "project-picker",
+            { Glyph(DuduGlyphs.issueProject, size = 16, tint = LocalContentColor.current) }) { choose(IssuePicker.Project) }
         if (!draft.project?.path.isNullOrBlank()) IssueChip(draft.agent?.let(::agentName) ?: stringResource(R.string.agent),
-            !state.busy, "agent-picker", { AgentLogo(draft.agent, 16) }) { choose(IssuePicker.Agent) }
+            usable, "agent-picker", { if (draft.agent == null) Glyph(DuduGlyphs.stateUnassigned, size = 16, tint = LocalContentColor.current)
+                else AgentLogo(draft.agent, 16) }) { choose(IssuePicker.Agent) }
         IssueChip(options?.labels.orEmpty().filter { it.id in draft.labels }.joinToString { it.name }.ifEmpty { w("标签") },
-            !state.busy, "labels-picker", { Glyph(R.drawable.ic_tag, size = 16) }) { choose(IssuePicker.Labels) }
-        if (draft.dueAt != null) IssueChip(java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM, appLocale())
-            .format(java.util.Date(draft.dueAt)), !state.busy, "due-picker",
-            { Glyph(R.drawable.ic_calendar, size = 16) }) { choose(IssuePicker.Due) }
+            usable && options != null, "labels-picker", { Glyph(DuduGlyphs.issueLabel, size = 16, tint = LocalContentColor.current) }) { choose(IssuePicker.Labels) }
+        if (draft.dueAt != null) IssueChip(monthDay(draft.dueAt), usable, "due-picker",
+            { Glyph(DuduGlyphs.dueDate, size = 16, tint = LocalContentColor.current) }) { choose(IssuePicker.Due) }
         var more by remember { mutableStateOf(false) }
         Box {
-            OutlinedButton(onClick = { more = true }, enabled = !state.busy,
-                shape = RoundedCornerShape(50), border = androidx.compose.foundation.BorderStroke(.5.dp, MaterialTheme.colorScheme.outlineVariant),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
-                contentPadding = PaddingValues(8.dp), modifier = Modifier.widthIn(min = 36.dp).heightIn(min = 44.dp)) {
-                Glyph(R.drawable.ic_ellipsis, stringResource(R.string.more), 16)
-            }
+            IssueChip(stringResource(R.string.more), usable, "more-picker",
+                { Glyph(DuduGlyphs.options, stringResource(R.string.more), 16, LocalContentColor.current) }, iconOnly = true) { more = true }
             DropdownMenu(more, { more = false }) {
-                DropdownMenuItem(text = { Text(w("截止日期")) }, leadingIcon = { Glyph(R.drawable.ic_calendar, size = 18) },
+                DropdownMenuItem(text = { Text(w("截止日期")) }, leadingIcon = { MenuInkGlyph(DuduGlyphs.dueDate) },
                     onClick = { more = false; choose(IssuePicker.Due) })
-                DropdownMenuItem(text = { Text(w("设置父事项…")) }, leadingIcon = { Glyph(R.drawable.ic_corner_down_right, size = 18) },
+                DropdownMenuItem(text = { Text(w("设置父事项…")) }, leadingIcon = { MenuInkGlyph(DuduGlyphs.open) },
                     onClick = { more = false; choose(IssuePicker.Parent) })
                 if (options?.attachments == true) DropdownMenuItem(text = { Text(w("添加图片")) },
-                    leadingIcon = { Glyph(R.drawable.ic_plus, size = 18) }, enabled = draft.photos.size < 9 && !photos.busy,
-                    onClick = { more = false; photoComputer = state.computerId; picker.launch(arrayOf("image/*")) })
+                    leadingIcon = { MenuInkGlyph(DuduGlyphs.plus) }, enabled = draft.photos.size < 9 && !photos.busy,
+                    onClick = { more = false; photoComputer = state.computerId; picker() })
+            }
+        }
+    }
+    if (optionsFailed) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(w("事项没能加载"), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(stringResource(R.string.retry), Modifier.clickable(onClick = retryOptions).padding(vertical = 8.dp),
+            fontSize = 14.sp, color = DuduStyle.blue)
+    }
+    if (createFailed) Text(w("事项没能创建"), Modifier.testTag("panel-error"), fontSize = 13.sp, color = Color(0xFFEC1313))
+}
+
+/** An issue's parent at the top of the form (the iPhone's `parentChip`): the arrow, its reference in grey and its title, which open the parent picker, and an × that takes it away. */
+@Composable
+private fun ParentChip(parent: Issue?, enabled: Boolean, open: () -> Unit, remove: () -> Unit) {
+    val shape = RoundedCornerShape(12.dp)
+    CompositionLocalProvider(LocalContentColor provides chatSecondary()) {
+        Row(Modifier.clip(shape).background(chatPanel(), shape).border(.5.dp, chatBorder(), shape),
+            verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f, fill = false).heightIn(min = 44.dp).clickable(enabled = enabled, onClick = open).padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Glyph(DuduGlyphs.open, size = 16, tint = LocalContentColor.current)
+                parent?.ref?.let { Text(it, fontSize = 14.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                Text(parent?.title.orEmpty(), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Box(Modifier.size(44.dp).clickable(enabled = enabled, onClick = remove), contentAlignment = Alignment.Center) {
+                Glyph(DuduGlyphs.close, w("移除父事项"), 16, LocalContentColor.current)
             }
         }
     }
 }
 
+/** The new issue's title (17 sp semibold, up to four lines) or its description (16 sp, four to eight lines) on the sheet's grey, as the iPhone's fields. */
 @Composable
-internal fun IssueChip(title: String, enabled: Boolean, tag: String = "", icon: @Composable () -> Unit, click: () -> Unit) {
-    OutlinedButton(onClick = click, enabled = enabled, modifier = Modifier.testTag(tag),
-        shape = RoundedCornerShape(50), border = androidx.compose.foundation.BorderStroke(.5.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
-        icon()
-        Spacer(Modifier.width(6.dp))
-        Text(title, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+private fun NewIssueField(value: String, placeholder: String, enabled: Boolean, title: Boolean, modifier: Modifier = Modifier,
+    changed: (String) -> Unit) {
+    val style = MaterialTheme.typography.bodyLarge.copy(fontSize = if (title) 17.sp else 16.sp,
+        fontWeight = if (title) FontWeight.SemiBold else FontWeight.Normal)
+    BasicTextField(value, changed, modifier.fillMaxWidth(), enabled = enabled,
+        textStyle = style.copy(color = MaterialTheme.colorScheme.onSurface),
+        minLines = if (title) 1 else 4, maxLines = if (title) 4 else 8, cursorBrush = SolidColor(DuduStyle.blue),
+        decorationBox = { inner ->
+            Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(16.dp))
+                .padding(horizontal = 16.dp, vertical = if (title) 12.dp else 16.dp)) {
+                if (value.isEmpty()) Text(placeholder, style = style, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                inner()
+            }
+        })
+}
+
+/** A date as month and day, the iPhone's `.dateTime.month().day()` (the year is not shown). */
+@Composable
+internal fun monthDay(at: Long): String {
+    val locale = appLocale()
+    return java.text.SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(locale, "MMMd"), locale).format(java.util.Date(at))
+}
+
+/**
+ * A value of a form as the composer's pill, the iPhone's `ContextChipLabel`: 32 dp high (in a 44 dp place to tap), filled with the chat's panel grey under a hairline, its icon and its
+ * words (14 sp medium, at most 220 dp) in the chat's secondary grey; `iconOnly` keeps only the icon. The new-issue form and the task form use it, as the iPhone's do.
+ */
+@Composable
+internal fun IssueChip(title: String, enabled: Boolean, tag: String = "", icon: @Composable () -> Unit, iconOnly: Boolean = false,
+    click: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    Box(Modifier.heightIn(min = 44.dp).alpha(if (enabled) 1f else .45f)
+        .clickable(enabled = enabled, interactionSource = remember { MutableInteractionSource() }, indication = null, role = Role.Button, onClick = click)
+        .semantics { if (iconOnly) contentDescription = title }.testTag(tag), contentAlignment = Alignment.Center) {
+        CompositionLocalProvider(LocalContentColor provides chatSecondary()) {
+            Row(Modifier.height(32.dp).clip(shape).background(chatPanel(), shape).border(.5.dp, chatBorder(), shape)
+                .padding(horizontal = if (iconOnly) 8.dp else 11.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                icon()
+                if (!iconOnly) Text(title, Modifier.widthIn(max = 220.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
     }
 }
 
@@ -257,7 +364,7 @@ fun Choice(label: String, value: String, options: List<Pair<String, String>>, en
                 Text(value, Modifier.weight(1.2f), fontSize = 15.sp, maxLines = 1,
                     textAlign = androidx.compose.ui.text.style.TextAlign.End,
                     overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else .4f))
-                Glyph(R.drawable.ic_chevron_down, size = 14,
+                Glyph(DuduGlyphs.down, size = 14,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (enabled) 1f else .4f))
             }
         }
@@ -284,10 +391,10 @@ private fun RenameIssue(panel: Panel.Rename, state: UiState, model: DuduViewMode
         title = { Text(w("重命名"), fontSize = 17.sp, fontWeight = FontWeight.SemiBold) },
         text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             DraftInput(title, stringResource(R.string.issue_title), !state.busy) { title = it.take(300) }
-            state.problem?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
         } }, confirmButton = {
-            TextButton(onClick = { model.updateIssue(panel.issue, json("title" to title.trim())) },
-                enabled = title.isNotBlank() && !state.busy) { Text(stringResource(R.string.save)) }
+            // The dialog closes at once, as the iPhone's alert does; a refusal says 更改没能保存 in a toast (`DuduViewModel.rename`).
+            TextButton(onClick = { model.rename(panel.issue, title) },
+                enabled = title.isNotBlank() && state.connected && !state.busy) { Text(stringResource(R.string.save)) }
         }, dismissButton = {
             TextButton(onClick = model::dismissPanel, enabled = !state.busy) { Text(stringResource(R.string.cancel)) }
         })

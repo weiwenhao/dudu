@@ -7,11 +7,12 @@ import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -19,6 +20,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -27,11 +29,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.roundToIntRect
@@ -43,6 +42,9 @@ import java.text.DateFormat
 import java.util.Calendar
 import java.util.Date
 import kotlinx.coroutines.launch
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 
 @Composable
 fun DuduApp(state: UiState, model: DuduViewModel) {
@@ -54,30 +56,129 @@ fun DuduApp(state: UiState, model: DuduViewModel) {
         }
         return
     }
-    if (state.computers.isEmpty() && state.computerId.isEmpty()) {
-        if (state.route?.name == "scan") PairingScanner(model) else PairingScreen(state, model)
+    if (state.showsConnectionGuide) {
+        val route = state.route
+        if (route != null && !route.isSheet(false)) FeatureScreen(route, state, model)
+        else PairingScreen(state, model)
+        if (route?.isSheet(false) == true) FeatureSheet(route, state, model)
+        Panels(state, model)
         return
     }
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val coroutine = rememberCoroutineScope()
     BackHandler(drawer.isOpen) { coroutine.launch { drawer.close() } }
     BackHandler(state.conversationTitle != null && state.panel == null && state.route == null) { model.leaveConversation() }
+    // The drawer's search slides in over it from the right and ‹ goes back to the drawer, as on the iPhone; opening a result closes both (the conversations it was given match by title at once).
+    var searching by remember(state.computerId) { mutableStateOf<List<org.json.JSONObject>?>(null) }
+    LaunchedEffect(drawer.isOpen) { if (!drawer.isOpen) searching = null }
     ModalNavigationDrawer(
         drawerState = drawer, gesturesEnabled = state.conversationTitle == null,
-        drawerContent = { DuduSidebar(state, model, drawer.isOpen) { coroutine.launch { drawer.close() } } },
+        drawerContent = { DuduSidebar(state, model, drawer.isOpen, search = { searching = it }) { coroutine.launch { drawer.close() } } },
     ) {
         val conversationOpen = state.conversationTitle != null
         val sheetRoute = state.route?.takeIf { it.isSheet(conversationOpen) }
         val pageRoute = pageRoute(state.route, model.routesBehindCurrent(), conversationOpen)
-        if (pageRoute != null) FeatureScreen(pageRoute, state, model) { coroutine.launch { drawer.open() } }
-        else if (state.conversationTitle != null) key(state.computerId, state.conversationKey) { ConversationPage(state, model) }
-        else Scaffold(containerColor = MaterialTheme.colorScheme.surface,
+        val homeVisible = pageRoute == null && !conversationOpen
+        Box(Modifier.fillMaxSize()) {
+            key(state.computerId, state.language) {
+                RetainedHomeRoot(homeVisible) {
+                    HomeRoots(state, model, active = homeVisible && sheetRoute == null && state.panel == null && !drawer.isOpen) {
+                        coroutine.launch { drawer.open() }
+                    }
+                }
+            }
+            if (pageRoute != null) FeatureScreen(pageRoute, state, model) { coroutine.launch { drawer.open() } }
+            else if (conversationOpen) key(state.computerId, state.conversationKey) { ConversationPage(state, model) }
+        }
+        if (sheetRoute != null) FeatureSheet(sheetRoute, state, model)
+    }
+    val shown = searching
+    androidx.compose.animation.AnimatedVisibility(shown != null && drawer.isOpen,
+        enter = androidx.compose.animation.slideInHorizontally { it }, exit = androidx.compose.animation.slideOutHorizontally { it }) {
+        var kept by remember { mutableStateOf(shown.orEmpty()) }
+        if (shown != null) kept = shown
+        SessionSearchPage(kept, state, model, back = { searching = null; DuduLog.record("sidebar.search.close") },
+            opened = { searching = null; coroutine.launch { drawer.close() } })
+    }
+    Panels(state, model)
+}
+
+/**
+ * What a tap on a board row does: open its conversation; for an issue no agent has been given, say 「请分配智能体」 in the app's toast, as the iPhone's board does (owner, 2026-11-22:
+ * a tap on such a row did nothing and said nothing; the iPhone and the desktop say it too); and for an issue that has an agent but no conversation yet, show what it says (the iPhone's
+ * issue detail), instead of a conversation that cannot be found.
+ */
+@Composable
+internal fun rememberOpenRow(model: DuduViewModel): (Conversation) -> Unit = remember(model) {
+    { row ->
+        val issue = row.issue
+        when {
+            row.needsAgent -> model.toast(word("请分配智能体"), ToastKind.Information)
+            issue != null && row.sessionId == null -> {
+                DuduLog.record("board.open.detail", state = "no_session")
+                model.navigate(Route("issue", issue.title, issue.id.toString()))
+            }
+            else -> model.open(row)
+        }
+    }
+}
+
+/** Keep each root's list, content and filters without leaving invisible hit targets or back handlers. */
+@Composable
+private fun RetainedHomeRoot(active: Boolean, content: @Composable () -> Unit) {
+    androidx.compose.ui.layout.Layout(content, Modifier.fillMaxSize()) { measurables, constraints ->
+        if (active) {
+            val children = measurables.map { it.measure(constraints) }
+            layout(constraints.maxWidth, constraints.maxHeight) { children.forEach { it.placeRelative(0, 0) } }
+        } else layout(constraints.maxWidth, constraints.maxHeight) {}
+    }
+}
+
+@Composable
+private fun HomeRoots(state: UiState, model: DuduViewModel, active: Boolean, openDrawer: () -> Unit) {
+    BackHandler(active && state.homeTab != HomeTab.Board) { model.selectHomeTab(HomeTab.Board) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(state.computerId, state.connected, active, lifecycle) {
+        if (active && state.connected) lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                model.refreshInboxCount()
+                kotlinx.coroutines.delay(5_000)
+            }
+        }
+    }
+    val unread = remember(state.home, state.scope, state.boardFilters) {
+        unreadSessionCount(state.boardFilters.matching(state.home?.rows.orEmpty().filter(state.scope::includes)) +
+            state.home?.pinnedRows.orEmpty())
+    }
+    Scaffold(containerColor = MaterialTheme.colorScheme.surface, contentWindowInsets = WindowInsets(0),
+        bottomBar = { HomeTabBar(state.homeTab, unread, state.inboxUnread, model::selectHomeTab) }) { insets ->
+        Box(Modifier.fillMaxSize().padding(bottom = insets.calculateBottomPadding()).consumeWindowInsets(insets)) {
+            HomeTab.entries.forEach { tab ->
+                val selected = active && state.homeTab == tab
+                RetainedHomeRoot(state.homeTab == tab) {
+                    CompositionLocalProvider(LocalHomePage provides HomePageChrome(selected, homeTitle(tab), openDrawer)) {
+                        when (tab) {
+                            HomeTab.Board -> BoardPage(state, model, openDrawer)
+                            HomeTab.Inbox -> CollectorScreen(model, active = selected && state.connected)
+                            HomeTab.Tasks -> TasksScreen(model, active = selected && state.connected)
+                            HomeTab.Settings -> PreferencesScreen(state, model)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BoardPage(state: UiState, model: DuduViewModel, openDrawer: () -> Unit) {
+    Scaffold(containerColor = MaterialTheme.colorScheme.surface,
             topBar = {
                 CenterAlignedTopAppBar(
                     navigationIcon = {
-                        IconButton(onClick = { coroutine.launch { drawer.open() } },
+                        IconButton(onClick = { openDrawer() },
                             modifier = Modifier.testTag("open-drawer")) {
-                            Glyph(R.drawable.ic_menu, stringResource(R.string.more))
+                            Glyph(DuduGlyphs.menu, stringResource(R.string.more))
                         }
                     },
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -85,85 +186,92 @@ fun DuduApp(state: UiState, model: DuduViewModel) {
                     actions = {
                         IconButton(onClick = { model.show(Panel.Quota) }, enabled = state.connected && !state.busy,
                             modifier = Modifier.testTag("quota")) {
-                            Glyph(R.drawable.ic_gauge, stringResource(R.string.quota))
+                            Glyph(DuduGlyphs.quota, stringResource(R.string.quota))
                         }
-                        IconButton(onClick = { model.show(Panel.Create) }, enabled = state.connected && !state.busy,
+                        IconButton(onClick = model::newIssue, enabled = state.connected && !state.busy,
                             modifier = Modifier.testTag("new-issue")) {
-                            Glyph(R.drawable.ic_plus, stringResource(R.string.new_issue))
+                            Glyph(DuduGlyphs.plus, stringResource(R.string.new_issue))
                         }
                     },
                 )
             },
         ) { insets ->
             val home = state.home
+            val openRow = rememberOpenRow(model)
             val scoped = remember(home, state.scope) { home?.rows.orEmpty().filter(state.scope::includes) }
             val filters = state.boardFilters
             val rows = remember(scoped, filters) { filters.matching(scoped) }
             var showingFilters by remember(state.computerId) { mutableStateOf(false) }
+            var pinsExpanded by remember(state.computerId) { mutableStateOf(false) }
+            // One swiped row at a time, as on the iPhone: a scroll, another scope, a menu or leaving the page closes it.
+            var revealed by remember(state.computerId) { mutableStateOf<String?>(null) }
+            val pageActive = LocalHomePage.current?.active != false
+            val list = rememberLazyListState()
+            LaunchedEffect(list) {
+                snapshotFlow { list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset }.collect { revealed = null }
+            }
+            LaunchedEffect(state.scope, pageActive) { revealed = null }
+            fun busy(row: Conversation) = row.id in state.changing
+            fun available(row: Conversation) = state.connected && !busy(row)
+            fun menu(row: Conversation, anchor: IntRect) { revealed = null; model.show(Panel.Actions(row, anchor)) }
+            fun open(row: Conversation) { revealed = null; openRow(row) }
             Column(Modifier.fillMaxSize().padding(insets)) {
             if (state.computerUnavailable) {
                 BoardConnectionNotice()
             }
             PullToRefreshBox(isRefreshing = state.refreshing && home != null, onRefresh = model::refresh,
                 modifier = Modifier.fillMaxWidth().weight(1f)) {
-                LazyColumn(Modifier.fillMaxSize().testTag("home-list")) {
+                LazyColumn(Modifier.fillMaxSize().testTag("home-list"), state = list) {
                     val pinned = home?.pinnedRows.orEmpty()
                     if (pinned.isNotEmpty()) item("pins") {
-                        LazyRow(Modifier.fillMaxWidth().height(80.dp).testTag("pinned-shelf"),
-                            contentPadding = PaddingValues(horizontal = 10.dp),
-                            horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            items(pinned, key = { it.id }) { row ->
-                                var anchor by remember(row.id) { mutableStateOf(IntRect.Zero) }
-                                Column(Modifier.width(56.dp).fillMaxHeight()
-                                    .onGloballyPositioned { anchor = it.boundsInWindow().roundToIntRect() }
-                                    .combinedClickable(onClick = { model.open(row) },
-                                        onLongClick = { model.show(Panel.Actions(row, anchor)) })
-                                    .padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                    TitleAvatar(row, 40)
-                                    Spacer(Modifier.height(5.dp))
-                                    Text(if (row.id == "assistant") stringResource(R.string.dudu) else row.title,
-                                        fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
+                        Box(Modifier.testTag("pinned-shelf")) {
+                            BoardPinnedShelf(pinned, pinsExpanded, { pinsExpanded = !pinsExpanded }) { row ->
+                                PinnedCell(row, busy(row), open = { open(row) }, menu = { menu(row, it) })
                             }
                         }
                     }
                     item("filters") {
-                        BoardFilterBar(state.scope, active = !filters.isEmpty, open = { showingFilters = true },
+                        BoardFilterBar(state.scope, active = !filters.isEmpty, open = { revealed = null; showingFilters = true },
                             select = model::select)
                     }
+                    if (home == null) item("board-loading") {
+                        // Use the same position and states as iOS, below the scope row.
+                        Column(Modifier.fillMaxWidth().padding(top = 80.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            if (state.boardLoadFailed && state.connected && !state.computerUnavailable) {
+                                Text(w("事项没能加载"), fontSize = 15.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                FilledTonalButton(onClick = model::refresh,
+                                    colors = ButtonDefaults.filledTonalButtonColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        contentColor = MaterialTheme.colorScheme.onSurface),
+                                    shape = CircleShape,
+                                    contentPadding = PaddingValues(horizontal = 20.dp),
+                                    modifier = Modifier.heightIn(min = 44.dp)) {
+                                    Text(stringResource(R.string.retry), fontSize = 15.sp)
+                                }
+                            } else DeliveryLoadingMark(20)
+                        }
+                    }
+                    // Only an empty 未读 says so, as on the iPhone; the other scopes are simply empty.
+                    if (home != null && rows.isEmpty() && state.scope == Scope.Unread) item("board-empty") {
+                        Box(Modifier.fillMaxWidth().heightIn(min = 72.dp).padding(horizontal = BoardLayout.horizontalInset.dp),
+                            contentAlignment = Alignment.Center) {
+                            Text(w("没有找到事项"), fontSize = 15.sp, color = chatSecondary(),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        }
+                    }
                     items(rows, key = { it.id }) { row ->
-                        HomeSwipeRow(row, state.busy, complete = { model.complete(row) },
-                            read = { model.read(row) }, pin = { model.pin(row) }) { close ->
-                            Surface { ConversationRow(row, onClick = { if (!close()) model.open(row) },
-                                onLongClick = { model.show(Panel.Actions(row, it)) }, onChildren = {
+                        HomeSwipeRow(row, enabled = pageActive && available(row), complete = { model.complete(row) },
+                            read = { model.read(row) }, pin = { model.pin(row) }, revealed = revealed == row.id, onReveal = { open ->
+                                if (open) revealed = row.id else if (revealed == row.id) revealed = null
+                            }) { close ->
+                            Surface { ConversationRow(row, busy(row), onClick = { close(); open(row) },
+                                onLongClick = { menu(row, it) }, onChildren = {
+                                    revealed = null
                                     model.navigate(Route("subissues", target = row.issue?.id?.toString()))
                                 }) }
-                        }
-                    }
-                    if (home != null && rows.isEmpty()) item {
-                        Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-                            Text(if (filters.isEmpty) stringResource(R.string.empty) else w("没有事项"),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-                if (home == null) {
-                    if (state.refreshing || state.connecting) {
-                        CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp), strokeWidth = 2.dp)
-                    } else {
-                        TextButton(onClick = { if (state.connected) model.refresh() else model.show(Panel.Computers) },
-                            modifier = Modifier.align(Alignment.Center)) {
-                            Text(stringResource(if (state.connected) R.string.retry else R.string.computers))
-                        }
-                    }
-                }
-                if (state.problem != null && !isConnectionProblem(state.problem) && state.panel == null) {
-                    Surface(Modifier.align(Alignment.BottomCenter).padding(16.dp),
-                        shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
-                        Row(Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(problemText(state.problem), Modifier.weight(1f), fontSize = 14.sp)
-                            TextButton(onClick = { model.clearProblem(); model.refresh() }) { Text(stringResource(R.string.retry)) }
                         }
                     }
                 }
@@ -174,83 +282,114 @@ fun DuduApp(state: UiState, model: DuduViewModel) {
                     reset = model::resetBoardFilters, toggle = model::toggleBoardFilter)
             }
         }
-        if (sheetRoute != null) DuduSheet(model::backRoute, containerColor =
-            if (sheetRoute.name in setOf("preferences", "settings", "about", "computers", "computer") &&
-                !androidx.compose.foundation.isSystemInDarkTheme()) DuduStyle.settings else MaterialTheme.colorScheme.surfaceContainer) {
-            var measured by remember(sheetRoute) { mutableIntStateOf(0) }
-            val height = if (measured > 0) measured.dp else when (sheetRoute.name) {
-                "changes" -> 380.dp
-                "files", "diff", "tool" -> 760.dp
-                "activity", "session-tasks" -> 500.dp
-                "issue" -> 420.dp
-                "preferences", "settings", "about", "computers", "computer", "task", "record" -> 760.dp
-                else -> 660.dp
-            }
-            CompositionLocalProvider(LocalSheetHeight provides { measured = it }) {
-                Box(Modifier.fillMaxWidth().height(height)) { FeatureScreen(sheetRoute, state, model) }
-            }
+
+}
+
+/** The guide and homepage open the same existing computer/detail sheets. */
+@Composable
+private fun FeatureSheet(route: Route, state: UiState, model: DuduViewModel) {
+    DuduSheet(model::backRoute, containerColor =
+        if (route.name in setOf("changes", "diff", "files", "delivered-files")) MaterialTheme.colorScheme.surface
+        else if (route.name == "preferences" &&
+            !androidx.compose.foundation.isSystemInDarkTheme()) DuduStyle.settings else MaterialTheme.colorScheme.surfaceContainer) {
+        var measured by remember(route) { mutableIntStateOf(0) }
+        val height = if (measured > 0) measured.dp else when (route.name) {
+            "changes" -> 380.dp
+            "files", "diff", "tool" -> 760.dp
+            "activity", "session-tasks" -> 500.dp
+            "issue" -> 420.dp
+            "preferences", "pair", "task", "record" -> 760.dp
+            else -> 660.dp
+        }
+        CompositionLocalProvider(LocalSheetHeight provides { measured = it }) {
+            Box(Modifier.fillMaxWidth().height(height)) { FeatureScreen(route, state, model) }
         }
     }
-    Panels(state, model)
 }
 
 @Composable
 private fun BoardConnectionNotice() {
     val dark = androidx.compose.foundation.isSystemInDarkTheme()
-    Surface(Modifier.fillMaxWidth().padding(top = 16.dp).height(40.dp).testTag("computer-unavailable"),
+    // Straight under the toolbar: the 16dp that was above it, on top of the bar's own slack, left a wide empty band (owner, 2026-11-21).
+    Surface(Modifier.fillMaxWidth().height(40.dp).testTag("computer-unavailable"),
         color = if (dark) MaterialTheme.colorScheme.errorContainer else Color(0xFFFFE7E9)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Glyph(R.drawable.ic_circle_alert, size = 18, tint = MaterialTheme.colorScheme.error)
+            Glyph(DuduGlyphs.stateFailed, size = 18, tint = MaterialTheme.colorScheme.error)
             Spacer(Modifier.width(12.dp))
             Text(w("电脑未连接"), Modifier.weight(1f), fontSize = 15.sp,
                 color = if (dark) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface)
-            RunningMark(14)
+            DeliveryLoadingMark(14)
         }
     }
 }
 
+/**
+ * One row of the board, the iPhone's `BoardConversationRow`: the avatar, the title (a sub-issue's under its parent) and the time, the last message and the agent's logo, which a spinner
+ * replaces while the row's own change is saved. The sub-issue progress is a button of its own, 44 dp high, 8 dp before the logo, over the row's own tap.
+ */
 @Composable
-private fun ConversationRow(row: Conversation, onClick: () -> Unit, onLongClick: (IntRect) -> Unit, onChildren: () -> Unit) {
+private fun ConversationRow(row: Conversation, busy: Boolean, onClick: () -> Unit, onLongClick: (IntRect) -> Unit, onChildren: () -> Unit) {
     var anchor by remember(row.id) { mutableStateOf(IntRect.Zero) }
-    Row(Modifier.fillMaxWidth().height(66.dp).testTag("row-${row.id}")
-        .onGloballyPositioned { anchor = it.boundsInWindow().roundToIntRect() }
-        .combinedClickable(onClick = onClick, onLongClick = { onLongClick(anchor) })
-        .padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        TitleAvatar(row, 48)
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(buildAnnotatedString {
-                    row.issue?.parent?.let { withStyle(SpanStyle(MaterialTheme.colorScheme.onSurfaceVariant)) { append("$it#") } }
-                    append(if (row.id == "assistant") stringResource(R.string.dudu) else row.title)
-                }, Modifier.weight(1f), fontSize = 17.sp, lineHeight = 22.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.width(12.dp))
-                Text(receivedTime(row.receivedAt), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                val imageLabel = stringResource(R.string.image)
-                Text(row.preview.replace("［图片］", "［$imageLabel］"), Modifier.weight(1f),
-                    fontSize = 14.sp, lineHeight = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (row.issue != null) {
-                    if (row.issue.subTotal > 0) {
-                        Row(Modifier.clickable(onClick = onChildren).padding(horizontal = 8.dp)
-                            .testTag("subissues-${row.issue.id}"), verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(progress = { row.issue.subDone.toFloat() / row.issue.subTotal },
-                            modifier = Modifier.size(14.dp), strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            trackColor = MaterialTheme.colorScheme.outlineVariant)
-                        Spacer(Modifier.width(6.dp))
-                        Text("${row.issue.subDone}/${row.issue.subTotal}", fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+    val interaction = remember { MutableInteractionSource() }
+    val issue = row.issue
+    val progress = issue?.takeIf { it.subTotal > 0 }
+    Box(Modifier.fillMaxWidth().height(66.dp)) {
+        Row(Modifier.fillMaxSize().testTag("row-${row.id}")
+            .onGloballyPositioned { anchor = it.boundsInWindow().roundToIntRect() }
+            .combinedClickable(interactionSource = interaction, indication = null, enabled = !busy,
+                onClick = onClick, onLongClick = { onLongClick(anchor) })
+            .pressShade(interaction)
+            .padding(horizontal = BoardLayout.horizontalInset.dp), verticalAlignment = Alignment.CenterVertically) {
+            TitleAvatar(row, 48)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(BoardLayout.lineSpacing.dp)) {
+                Row(Modifier.height(BoardLayout.titleLineHeight.dp), verticalAlignment = Alignment.CenterVertically) {
+                    BoardConversationTitle(if (row.id == "assistant") stringResource(R.string.dudu) else row.title, issue?.parent,
+                        17.sp, 22.sp, Modifier.weight(1f))
+                    if (row.receivedAt > 0) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(receivedTime(row.receivedAt), fontSize = 14.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Spacer(Modifier.width(12.dp))
-                    AgentLogo(row.issue.agent, 14)
+                }
+                Row(Modifier.height(20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val imageLabel = stringResource(R.string.image)
+                    Text(row.preview.replace("［图片］", "［$imageLabel］"), Modifier.weight(1f),
+                        fontSize = 14.sp, lineHeight = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // Room for the progress button above, which draws the same label.
+                    if (progress != null) Box(Modifier.alpha(0f)) { SubIssueProgressLabel(progress.subDone, progress.subTotal) }
+                    if (busy) Box(Modifier.size(BoardLayout.agentSize.dp), contentAlignment = Alignment.Center) { RowSpinner(12) }
+                    else if (issue != null) AgentLogo(issue.agent, BoardLayout.agentSize)
                 }
             }
         }
+        if (progress != null) Box(Modifier.align(Alignment.CenterEnd)
+            .padding(end = (BoardLayout.horizontalInset + BoardLayout.agentSize).dp)
+            .offset(y = ((BoardLayout.titleLineHeight + BoardLayout.lineSpacing) / 2f).dp)
+            .height(44.dp).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onChildren)
+            .padding(horizontal = 8.dp).testTag("subissues-${progress.id}"), contentAlignment = Alignment.Center) {
+            SubIssueProgressLabel(progress.subDone, progress.subTotal)
+        }
+    }
+}
+
+/** A pinned conversation, the iPhone's `pinnedCell`: the 40 dp avatar (covered by a spinner while its change is saved) and its name under it, 54 dp wide. */
+@Composable
+private fun PinnedCell(row: Conversation, busy: Boolean, open: () -> Unit, menu: (IntRect) -> Unit) {
+    var anchor by remember(row.id) { mutableStateOf(IntRect.Zero) }
+    Column(Modifier.requiredWidth(54.dp).height(BoardLayout.pinnedRowHeight.dp)
+        .onGloballyPositioned { anchor = it.boundsInWindow().roundToIntRect() }
+        .combinedClickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = !busy,
+            onClick = open, onLongClick = { menu(anchor) }),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.size(40.dp)) {
+            TitleAvatar(row, 40)
+            if (busy) Box(Modifier.matchParentSize().background(Color.White.copy(alpha = .9f), pinnedSpinnerShape(row)),
+                contentAlignment = Alignment.Center) { RowSpinner(18) }
+        }
+        Text(if (row.id == "assistant") stringResource(R.string.dudu) else row.title,
+            fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -267,14 +406,10 @@ fun TitleTile(title: String, size: Int) {
 @Composable
 fun TitleAvatar(row: Conversation, size: Int) {
     Box(Modifier.size(size.dp)) {
-        if (row.id == "assistant") Image(painterResource(R.drawable.dudu), null, Modifier.fillMaxSize())
+        if (row.id == "assistant") Image(painterResource(R.drawable.dudu), null,
+            Modifier.size((size * .94f).dp).align(Alignment.Center))
         else TitleTile(row.title, size)
-        val badge = (size * .265f).dp
-        if (row.unread) Box(Modifier.align(Alignment.TopEnd).offset(x = badge / 2 - 1.dp, y = 2.dp - badge / 2)
-            .size(badge).background(Color(0xFFEC1313), CircleShape))
-        else if (row.sessionState == "processing") CircularProgressIndicator(
-            Modifier.align(Alignment.TopEnd).offset(x = badge / 2 - 1.dp, y = 2.dp - badge / 2).size(badge),
-            strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        AvatarStatus(row.sessionState, size, roundedSquare = row.id != "assistant")
     }
 }
 
@@ -284,23 +419,46 @@ fun AgentLogo(agent: String?, size: Int = 22) {
     val mark = agentMarks[agent]
     val dark = isDark()
     if (agent == "dudu") Image(painterResource(R.drawable.dudu), agentName(agent), Modifier.size(size.dp))
-    else if (mark == null) Glyph(R.drawable.ic_user_round, size = size, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    else if (mark == null && agent != null) Box(Modifier.size(size.dp)
+        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .15f), CircleShape), contentAlignment = Alignment.Center) {
+        Text(agentName(agent).take(1), fontSize = (size * .55f).sp, fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    else if (mark == null) Box(Modifier.size(size.dp), contentAlignment = Alignment.Center) {
+        val outline = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f)
+        Glyph(DuduGlyphs.stateUnassigned, size = (size * .75f).toInt(), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+            drawCircle(outline, radius = (this.size.minDimension - 1.dp.toPx()) / 2,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(1.dp.toPx(),
+                pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(2.dp.toPx(), 2.dp.toPx()))))
+        }
+    }
     else Image(painterResource(if (dark) mark.dark ?: mark.light else mark.light), mark.name, Modifier.size(size.dp),
-        colorFilter = if (mark.ink && dark) ColorFilter.tint(MaterialTheme.colorScheme.onSurface) else null)
+        colorFilter = if (mark.ink) ColorFilter.tint(if (dark) MaterialTheme.colorScheme.onSurface else Color(0xFF17181B)) else null)
 }
 
 @Composable
 fun AgentAvatar(agent: String?, state: String, size: Int = 20) {
     Box(Modifier.size(size.dp), contentAlignment = Alignment.Center) {
         AgentLogo(agent, (size * .9f).toInt())
-        val mark = maxOf(6f, size * 13f / 49)
-        val center = size / 2f + (size / 2f - .5f) / kotlin.math.sqrt(2f)
-        if (state in listOf("processing", "unread")) Box(Modifier.offset(x = (center - size / 2f).dp, y = (size / 2f - center).dp)
-            .size((mark + 2).dp).background(MaterialTheme.colorScheme.surface, CircleShape), contentAlignment = Alignment.Center) {
-            if (state == "unread") Box(Modifier.size(mark.dp).background(Color(0xFFEC1313), CircleShape))
-            else CircularProgressIndicator(Modifier.size(mark.dp), strokeWidth = 1.dp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, trackColor = MaterialTheme.colorScheme.outlineVariant)
+        AvatarStatus(state, size)
+    }
+}
+
+/** The same local anchor and white halo as ConversationAvatarStatus on iPhone. The inbox's rows use it too (`CollectorSummary`). */
+@Composable
+internal fun BoxScope.AvatarStatus(state: String, size: Int, roundedSquare: Boolean = false) {
+    val mark = maxOf(6f, size * 13f / 49)
+    val center = size / 2f + (size / 2f - .5f) / kotlin.math.sqrt(2f)
+    val x = if (roundedSquare) size - 2f else center
+    val y = if (roundedSquare) 2f else size - center
+    Box(Modifier.align(Alignment.TopStart).offset(x = (x - mark / 2).dp, y = (y - mark / 2).dp).size(mark.dp)) {
+        androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+            if (state in listOf("processing", "unread")) drawCircle(Color.White,
+                radius = this.size.minDimension / 2 + maxOf(1f, size * 1.6f / 49).dp.toPx())
+            if (state == "unread") drawCircle(Color(0xFFEC1313))
         }
+        if (state == "processing") WorkingMark(mark.dp)
     }
 }
 
@@ -313,7 +471,7 @@ fun Glyph(@DrawableRes resource: Int, description: String? = null, size: Int = 2
 @Composable
 fun scopeTitle(scope: Scope): String = stringResource(when (scope) {
     Scope.Active -> R.string.active
-    Scope.Backlog -> R.string.backlog
+    Scope.Unread -> R.string.unread
     Scope.All -> R.string.all
 })
 
@@ -323,6 +481,16 @@ fun agentName(agent: String?) = agentMarks[agent]?.name ?: agent ?: ""
 fun problemText(code: String): String = when (code) {
     "INVALID_LINK" -> stringResource(R.string.invalid_link)
     "AUTH_FAILED", "UNAUTHORIZED" -> stringResource(R.string.auth_failed)
+    // The connection's words of the iPhone's `DuduFailure`.
+    "AUTH_REQUIRED" -> w("请更新电脑端的 Dudu 插件")
+    "METHOD_NOT_ALLOWED" -> w("请更新电脑端的手机控制插件")
+    "INSECURE_PUBLIC" -> w("公网地址请使用 HTTPS")
+    "MISSING_CREDENTIAL" -> w("请粘贴电脑生成的完整配对链接")
+    "ROUTES_UNAVAILABLE_LAN" -> w("无法连接内网地址")
+    "ROUTES_UNAVAILABLE" -> w("内网和公网都无法连接")
+    "TIMEOUT" -> w("连接超时")
+    "DISCONNECTED" -> w("连接已断开")
+    "INVALID_ARGUMENT" -> w("请求内容无效，请检查后重试。")
     "IDENTITY_MISMATCH" -> stringResource(R.string.identity_mismatch)
     "PROTOCOL_ERROR" -> stringResource(R.string.protocol_error)
     "SEND_FAILED" -> stringResource(R.string.send_failed)
@@ -334,7 +502,14 @@ fun problemText(code: String): String = when (code) {
     "UNSUPPORTED" -> w("暂不支持此操作。")
     "FORBIDDEN" -> w("电脑拒绝了此操作。")
     "BUSY", "busy" -> w("电脑正在处理其他操作，请稍后重试。")
-    else -> w("电脑暂时无法完成请求。")
+    // A message of 嘟嘟's box to an issue that was not sent or not delivered: the desktop's approved words, as the iPhone's `AssistantRelayResult.errorText`.
+    "RELAY_empty_request" -> w("@ 后面还要写要说的话。")
+    "RELAY_choose_agent" -> w("先选择智能体。")
+    "RELAY_choose_project" -> w("先选项目，再把工作交给智能体。")
+    "RELAY_recipient_unavailable" -> w("只能 @ 当前事项的处理者。")
+    "RELAY_delivery_failed" -> w("留言已保存，请求没能送达。")
+    "RELAY_invalid_message" -> w("先写点内容。")
+    else -> if (code.startsWith("RELAY_")) w("回复没能发给会话：连接暂时不可用。") else w("电脑暂时无法完成请求。")
 }
 
 @Composable

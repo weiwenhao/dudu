@@ -31,22 +31,28 @@ internal fun issueColor(value: String?, fallback: String = "95a2b3"): Color =
 internal fun labelColor(value: String?) = issueColor(labelPalette.find { it.first == value }?.second)
 
 @Composable
-fun IssueStatusMark(status: Status, size: Int = 16) {
-    val color = issueColor(status.color, statusColors[status.type] ?: "95a2b3")
+fun IssueStatusMark(status: Status, size: Int = 16) = IssueStatusMark(status.type, status.color, status.iconProgress, size)
+
+/** The colour a status draws in: its own, else its type's (the settings' status tile tints with it too). */
+internal fun statusInk(type: String, color: String?): Color = issueColor(color, statusColors[type] ?: "95a2b3")
+
+@Composable
+fun IssueStatusMark(type: String, colorHex: String?, iconProgress: Float?, size: Int = 16) {
+    val color = statusInk(type, colorHex)
     Canvas(Modifier.size(size.dp)) {
         scale(this.size.width / 16, this.size.height / 16, pivot = Offset.Zero) {
-            if (status.type == "done" || status.type == "canceled") {
+            if (type == "done" || type == "canceled") {
                 drawCircle(color, 7f, Offset(8f, 8f))
                 val mark = Path().apply {
-                    if (status.type == "done") { moveTo(5f, 8.2f); lineTo(7f, 10.2f); lineTo(11f, 5.8f) }
+                    if (type == "done") { moveTo(5f, 8.2f); lineTo(7f, 10.2f); lineTo(11f, 5.8f) }
                     else { moveTo(5.6f, 5.6f); lineTo(10.4f, 10.4f); moveTo(10.4f, 5.6f); lineTo(5.6f, 10.4f) }
                 }
                 drawPath(mark, Color.White, style = Stroke(1.6f, cap = StrokeCap.Round, join = StrokeJoin.Round))
             } else {
                 drawCircle(color, 6f, Offset(8f, 8f), style = Stroke(1.6f, cap = StrokeCap.Round,
-                    pathEffect = if (status.type == "backlog") PathEffect.dashPathEffect(floatArrayOf(1.6f, 2.4f)) else null))
-                if (status.type in listOf("in_progress", "in_review")) {
-                    val progress = (status.iconProgress ?: if (status.type == "in_review") .75f else .5f).coerceIn(0f, 1f)
+                    pathEffect = if (type == "backlog") PathEffect.dashPathEffect(floatArrayOf(1.6f, 2.4f)) else null))
+                if (type in listOf("in_progress", "in_review")) {
+                    val progress = (iconProgress ?: if (type == "in_review") .75f else .5f).coerceIn(0f, 1f)
                     drawArc(color, -90f, progress * 360f, useCenter = true,
                         topLeft = Offset(4.2f, 4.2f), size = Size(7.6f, 7.6f))
                 }

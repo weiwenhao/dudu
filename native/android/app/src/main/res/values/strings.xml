@@ -3,8 +3,8 @@
     <string name="app_name">Dudu</string>
     <string name="dudu">Dudu</string>
     <string name="active">Active</string>
-    <string name="backlog">Backlog</string>
-    <string name="all">All issues</string>
+    <string name="unread">Unread</string>
+    <string name="all">All</string>
     <string name="cancel">Cancel</string>
     <string name="close">Close</string>
     <string name="back">Back</string>

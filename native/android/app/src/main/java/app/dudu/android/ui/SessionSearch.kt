@@ -26,6 +26,15 @@ import org.json.JSONObject
 
 @Composable
 fun SessionSearchScreen(route: Route, state: UiState, model: DuduViewModel) {
+    SessionSearchPage(route.params.rows("sessions"), state, model, back = model::backRoute)
+}
+
+/**
+ * The search of conversations, the iPhone's `ConversationSearchView`. The drawer opens it over itself and ‹ goes back to the drawer (`back`); opening a result also closes the drawer
+ * (`opened`). `sessions` are the drawer's conversations, matched by title at once while the computer searches their words.
+ */
+@Composable
+fun SessionSearchPage(sessions: List<JSONObject>, state: UiState, model: DuduViewModel, back: () -> Unit, opened: () -> Unit = {}) {
     var query by rememberSaveable { mutableStateOf("") }
     var hits by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }
@@ -33,7 +42,7 @@ fun SessionSearchScreen(route: Route, state: UiState, model: DuduViewModel) {
     var retry by remember { mutableIntStateOf(0) }
     val focus = LocalFocusManager.current
     val phrase = query.trim()
-    val local = remember(phrase, route) { route.params.rows("sessions").filter {
+    val local = remember(phrase, sessions) { sessions.filter {
         !it.optBoolean("blank") && phrase.isNotEmpty() &&
             "${it.optString("title")} ${it.optString("workspaceName")}".contains(phrase, true)
     }.map { json("session" to it, "snippet" to "") } }
@@ -56,23 +65,23 @@ fun SessionSearchScreen(route: Route, state: UiState, model: DuduViewModel) {
         .associateBy { it.getJSONObject("session").getString("id") }.values
         .sortedWith(compareByDescending<JSONObject> { it.getJSONObject("session").optLong("updatedAt") }
             .thenBy { it.getJSONObject("session").getString("id") })
-    BackHandler { focus.clearFocus(); model.backRoute() }
+    BackHandler { focus.clearFocus(); back() }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.statusBarsPadding().navigationBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                IconButton(onClick = { focus.clearFocus(); model.backRoute() }) { Glyph(R.drawable.ic_arrow_left, w("返回"), 22) }
+                IconButton(onClick = { focus.clearFocus(); back() }) { Glyph(DuduGlyphs.back, w("返回"), 22) }
                 Box(Modifier.weight(1f)) { SearchField(query, w("搜索对话内容…"), "session-search", autoFocus = true, capsule = true) { query = it } }
             }
             LazyColumn(Modifier.fillMaxSize()) {
                 problem?.let { code -> item { Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(problemText(code), Modifier.weight(1f), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    IconButton(onClick = { retry++ }) { Glyph(R.drawable.ic_refresh_cw, w("重试"), 16) }
+                    IconButton(onClick = { retry++ }) { Glyph(DuduGlyphs.completeContext, w("重试"), 16) }
                 } } }
                 items(rows, key = { it.getJSONObject("session").getString("id") }) { hit ->
                     val session = hit.getJSONObject("session")
                     Surface(onClick = {
-                        focus.clearFocus(); model.openSession(session.getString("id"), session.optString("title"))
+                        focus.clearFocus(); opened(); model.openSession(session.getString("id"), session.optString("title"))
                     }, color = MaterialTheme.colorScheme.surface) {
                         Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 24.dp, vertical = 12.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp)) {

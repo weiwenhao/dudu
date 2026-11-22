@@ -47,6 +47,26 @@ android {
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
 
+/**
+ * DSH's pages in the app get the iPhone's page bridge before their own scripts run (`Embedded.kt`; owner, 2026-11-22: a DSH page stayed white on Android). The bridge is the iPhone's own
+ * file, copied into the app's assets at build time, so that both apps run the same one.
+ */
+abstract class PageBridgeTask : DefaultTask() {
+    @get:InputFile abstract val source: RegularFileProperty
+    @get:OutputDirectory abstract val output: DirectoryProperty
+    @TaskAction fun copy() {
+        val folder = output.get().asFile
+        folder.mkdirs()
+        source.get().asFile.copyTo(folder.resolve("EmbeddedTransport.js"), overwrite = true)
+    }
+}
+val pageBridge = tasks.register<PageBridgeTask>("pageBridge") {
+    source.set(rootProject.layout.projectDirectory.file("../ios/Dudu/Resources/EmbeddedTransport.js"))
+}
+androidComponents {
+    onVariants { variant -> variant.sources.assets?.addGeneratedSourceDirectory(pageBridge, PageBridgeTask::output) }
+}
+
 kotlin {
     jvmToolchain(21)
     compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
@@ -63,6 +83,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Scripts before a page's own (document start) and an origin-scoped message channel for DSH's pages, as the iPhone's WKUserScript and script message handler.
+    implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.camera:camera-camera2:1.5.1")
     implementation("androidx.camera:camera-lifecycle:1.5.1")
     implementation("androidx.camera:camera-view:1.5.1")

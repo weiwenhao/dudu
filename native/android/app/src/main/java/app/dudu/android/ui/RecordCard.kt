@@ -43,7 +43,7 @@ internal fun RecordCard(record: JSONObject, modifier: Modifier = Modifier) {
                 .clickable(role = Role.Button) { runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, link)) } }
                 .padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(w("打开来源"), Modifier.weight(1f), fontSize = 16.sp)
-                Glyph(R.drawable.ic_external_link, size = 18, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Glyph(DuduGlyphs.openLink, size = 18, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

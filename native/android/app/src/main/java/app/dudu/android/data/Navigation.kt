@@ -5,7 +5,22 @@ import org.json.JSONObject
 
 data class SidebarNavigation(val primary: List<JSONObject>, val additional: List<JSONObject>)
 
+enum class HomeTab(val routeName: String?) {
+    Board(null), Inbox("collector"), Tasks("tasks"), Settings("preferences");
+
+    companion object {
+        fun forRoute(route: Route) = entries.firstOrNull { it.routeName == route.name }
+    }
+}
+
 /** The registry owns the destinations; the same primary/group contract as the iPhone owns their disclosure. */
+/** The destinations the bottom bar has (看板, 收件箱, 任务): the drawer leaves them out (owner, 2026-11-21: "很多按键的地方都重复了"). */
+fun isBarDestination(item: JSONObject): Boolean {
+    val open = item.optJSONObject("open")
+    return open?.optString("native") in listOf("board", "collector", "assistant") ||
+        open?.optString("native") == "schedule" && (item.optString("id") == "dudu.tasks" || open.optString("target") == "dudu-tasks")
+}
+
 fun sidebarNavigation(navigation: JSONObject): SidebarNavigation {
     val items = navigation.rows("sidebar").filterNot {
         it.optJSONObject("open")?.optString("native") == "assistant"
@@ -25,6 +40,8 @@ fun navigationRoute(item: JSONObject, sessionId: String? = null): Route? {
     val title = item.optString("title")
     fun webRoute(): Route? {
         val web = open.optJSONObject("web") ?: return null
+        // A page this app cannot show (the iPhone's `EmbeddedDSHPage` has no such case): the drawer says so instead (`DuduViewModel.navigateItem`).
+        if (web.optString("page") !in embeddedPages) return null
         return if (web.optString("page") == "dudu")
             Route("settings", title, web.nullableString("target") ?: "general")
         else Route("web", title, web.nullableString("target"),
@@ -43,10 +60,21 @@ fun navigationRoute(item: JSONObject, sessionId: String? = null): Route? {
     }
 }
 
+/**
+ * Whether a route covers its page as a sheet. The settings' own pages (嘟嘟's seven and their pages, 电脑连接, a computer, 关于) are full pages pushed over the 设置 tab with the bottom bar
+ * hidden, as on the iPhone (owner, 2026-11-22); the pairing form is a sheet when the guide or a pairing link opens it (`sheet`), a page when 电脑连接's + does.
+ */
 fun Route.isSheet(conversationOpen: Boolean): Boolean =
-    name in setOf("preferences", "settings", "about", "computers", "computer", "subissues", "task", "issue", "record") ||
+    name in setOf("preferences", "subissues", "task", "issue", "record") ||
+        name == "pair" && params.optBoolean("sheet") ||
         name == "files" && params.optBoolean("file") ||
         conversationOpen && name in setOf("activity", "session-tasks", "delivered-files", "tool", "changes", "diff")
+
+/** The pages of DSH (and of the plugin) the phone shows embedded, the iPhone's `EmbeddedDSHPage`. */
+val embeddedPages = setOf("plugins", "trace", "context", "team", "tools", "settings", "panel", "view", "dudu")
+
+/** The pages of one conversation (the iPhone's `needsSession`): they open on the conversation on screen, and need one. */
+fun embeddedPageNeedsSession(page: String) = page in setOf("trace", "context", "team", "tools", "view")
 
 /** A sheet covers its page without changing which destination the drawer selects. */
 fun pageRoute(current: Route?, history: List<Route>, conversationOpen: Boolean): Route? =

@@ -12,6 +12,7 @@ import kotlinx.coroutines.sync.withLock
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Connection
+import okhttp3.ConnectionPool
 import okhttp3.EventListener
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -33,7 +34,29 @@ import javax.crypto.spec.SecretKeySpec
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-class ApiFailure(val code: String) : IOException(code)
+/** A request the plugin refused, by its code; `words` is the plugin's own message when it sent one (a settings act, the iPhone's `answer.message`): shown as it is, never logged. */
+class ApiFailure(val code: String, val words: String? = null) : IOException(code)
+
+/** A connection taken from the pool that the computer had already closed: the request found it dead before any answer came (`IOException.end_of_stream`), so the computer most likely never saw it. */
+class StaleConnection(cause: IOException) : IOException(cause.message, cause)
+
+/**
+ * What the app says about itself when it connects: its platform, version and build, and the new shapes it understands (none yet). The plugin answers an app that says nothing as
+ * the build that was first released (API v1); an app that says what it understands can be given more later (host/native-client.mjs).
+ */
+object AppDeclaration {
+    /**
+     * The new shapes this app draws. `settings.rich`: the long-press menus of the settings rows, the 状态 page as drawn on 2026-11-21 (strips, tiles, swatches, progress icons), inline fields.
+     * `board.push`: it reads the board again when the computer says `board.changed` (a turn ended, something was read, an issue changed).
+     * `board.latest`: its chat rows are drawn as the plugin sends them, so it may be sent the owner's own last message as a row's preview and time (the newest message of either side).
+     * `notifications.events`: it shows a `notification` event as a notification (its background connection, `DuduConnectionService`), where the iPhone is pushed by Apple.
+     */
+    val capabilities = listOf("settings.rich", "board.push", "board.latest", "notifications.events")
+    @Volatile var version = ""
+    @Volatile var build = ""
+    fun json(): JSONObject = JSONObject().put("app", JSONObject().put("platform", "android").put("version", version).put("build", build))
+        .put("capabilities", org.json.JSONArray(capabilities))
+}
 
 class DuduApi(endpoint: Endpoint, private val expectedComputer: String? = endpoint.computerId,
     val preserveAddresses: Boolean = false) {
@@ -60,19 +83,42 @@ class DuduApi(endpoint: Endpoint, private val expectedComputer: String? = endpoi
     private val client = OkHttpClient.Builder()
         .followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false)
+        // The computer closes a connection that has lain idle for a few seconds (Node's keep-alive: five). One that the phone still held after that was reused by the next request and was dead
+        // at once: `session.send` after 7.6 s of idleness failed with `IOException.end_of_stream` on three first sends in a row (owner, 2026-11-21: "发消息第一次总是提示连接暂时不可用，第二次才发出去").
+        // The pool lets an idle connection go after four seconds, before the computer does; the next request then makes its own (a few milliseconds on a LAN).
+        .connectionPool(ConnectionPool(5, 4, TimeUnit.SECONDS))
         .connectTimeout(12, TimeUnit.SECONDS).readTimeout(35, TimeUnit.SECONDS)
         .eventListener(tracing)
         .build()
 
     suspend fun connect(): JSONObject = connecting.withLock {
-        if (endpoint.deviceId == null) {
-            // Legacy links can authenticate only at their original origin. Upgrade their
-            // identity before any alternative address is allowed to receive credentials.
-            val computer = connectAt(endpoint)
-            if (endpoint.deviceId == null || ConnectionAddress.parse(endpoint.origin).kind == "lan" ||
-                endpoint.addresses.none { it.kind == "lan" }) return@withLock computer
+        try {
+            if (endpoint.deviceId == null) {
+                // Legacy links can authenticate only at their original origin. Upgrade their
+                // identity before any alternative address is allowed to receive credentials.
+                val computer = connectAt(endpoint)
+                if (endpoint.deviceId == null || ConnectionAddress.parse(endpoint.origin).kind == "lan" ||
+                    endpoint.addresses.none { it.kind == "lan" }) return@withLock computer
+            }
+            establish()
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            // In the iPhone's words: an address that did not answer in time is 连接超时, and a computer with a LAN address says which kind of address could not be reached (`routeFailure`).
+            val code = when (error) {
+                is ApiFailure -> error.code
+                is java.io.InterruptedIOException -> "TIMEOUT"
+                is IOException -> "CONNECTION_FAILED"
+                else -> throw error
+            }
+            val route = routeFailure(code, endpoint.addresses.any { it.kind == "lan" }, endpoint.addresses.any { it.kind == "public" })
+            // A plain network failure keeps what was thrown, so that the diagnostics can still tell a refused connection from a reset one.
+            throw when {
+                route != code -> ApiFailure(route)
+                error is ApiFailure -> error
+                code == "TIMEOUT" -> ApiFailure("TIMEOUT")
+                else -> error
+            }
         }
-        establish()
     }
 
     private suspend fun establish(): JSONObject {
@@ -118,7 +164,7 @@ class DuduApi(endpoint: Endpoint, private val expectedComputer: String? = endpoi
     }
 
     private suspend fun connectAt(candidate: Endpoint): JSONObject {
-        val ready = postAt("/api/v1/connect", JSONObject(), origin = candidate.origin, timeoutSeconds = 12)
+        val ready = postAt("/api/v1/connect", AppDeclaration.json(), origin = candidate.origin, timeoutSeconds = 12)
         if (retired) throw CancellationException("Computer switched")
         if (ready.optString("type") != "ready" || ready.optInt("protocol") != 1)
             throw ApiFailure("PROTOCOL_ERROR")
@@ -175,30 +221,35 @@ class DuduApi(endpoint: Endpoint, private val expectedComputer: String? = endpoi
         if (!MessageDigest.isEqual(proof, Base64.getUrlDecoder().decode(signature))) throw ApiFailure("IDENTITY_MISMATCH")
     }
 
-    suspend fun requestValue(method: String, params: JSONObject = JSONObject()): Any {
+    /** `timeoutSeconds` bounds the whole request (the iPhone's `timeoutSeconds`); without it a request waits as long as the connection's own read timeout lets it. */
+    suspend fun requestValue(method: String, params: JSONObject = JSONObject(), timeoutSeconds: Long? = null): Any {
         val id = UUID.randomUUID().toString()
         val body = json("id" to id, "method" to method, "params" to params)
-        val envelope = try { post("request", body) }
+        val envelope = try { postAt("/api/v1/request", body, timeoutSeconds = timeoutSeconds) }
         catch (error: IOException) {
             // A server may close an idle pooled socket just as a read starts.
-            // Only these side-effect-free reads may reconnect; never replay a mutation.
-            if (error is ApiFailure || method !in repeatableReads) throw error
+            // Only these side-effect-free reads may reconnect; never replay a mutation. The one exception is a send that carries its own input id
+            // (the computer keeps a message by that id and ignores a second copy, as the iPhone relies on) and that found a pooled connection already closed.
+            val replay = method in replayableWrites && error is StaleConnection && params.has("requestId")
+            if (error is ApiFailure || method !in repeatableReads && !replay) throw error
             DuduLog.record("http.request.retry", method = method, requestId = id, detail = DuduLog.describe(error))
-            post("request", body)
+            postAt("/api/v1/request", body, timeoutSeconds = timeoutSeconds)
         }
         if (retired) throw CancellationException("Computer switched")
         // The plugin answered, and said no: the request itself was delivered (`http.request.complete` is its line).
-        fun refused(code: String): ApiFailure {
+        fun refused(code: String, words: String? = null): ApiFailure {
             DuduLog.record("request.refused", "warn", method = method, requestId = id, code = code)
-            return ApiFailure(code)
+            return ApiFailure(code, words)
         }
         if (envelope.optString("id") != id) throw refused("PROTOCOL_ERROR")
         if (!envelope.optBoolean("ok")) throw refused(envelope.optJSONObject("error")?.optString("code") ?: "UPSTREAM_ERROR")
         val result = envelope.opt("result") ?: throw refused("PROTOCOL_ERROR")
         if (result is JSONObject && result.has("outcome") && result.optString("outcome") !in listOf("success", "no_op"))
-            throw refused(result.optString("code", "UPSTREAM_ERROR"))
+            throw refused(result.optString("code", "UPSTREAM_ERROR"), result.nullableString("message")?.trim()?.takeIf { it.isNotEmpty() }?.take(500))
         return result
     }
+
+    private val replayableWrites = setOf("session.send")
 
     private val repeatableReads = setOf(
         "board.list", "catalog.get", "navigation.get", "plugins.list", "quota.get",
@@ -206,11 +257,11 @@ class DuduApi(endpoint: Endpoint, private val expectedComputer: String? = endpoi
         "session.team", "session.jobs", "session.job.output", "session.changes", "session.diff",
         "files.list", "files.read", "issue.get", "issue.options", "issue.parents", "issue.pick",
         "inbox.list", "inbox.get", "tasks.list", "tasks.get", "tasks.options", "tasks.history",
-        "settings.page", "assistant.todos", "assistant.reply.read",
+        "settings.page", "settings.data", "assistant.todos", "assistant.reply.read",
     )
 
-    suspend fun request(method: String, params: JSONObject = JSONObject()): JSONObject =
-        requestValue(method, params) as? JSONObject ?: throw ApiFailure("PROTOCOL_ERROR")
+    suspend fun request(method: String, params: JSONObject = JSONObject(), timeoutSeconds: Long? = null): JSONObject =
+        requestValue(method, params, timeoutSeconds) as? JSONObject ?: throw ApiFailure("PROTOCOL_ERROR")
 
     suspend fun array(method: String, params: JSONObject = JSONObject()): JSONArray =
         requestValue(method, params) as? JSONArray ?: throw ApiFailure("PROTOCOL_ERROR")
@@ -350,7 +401,9 @@ class DuduApi(endpoint: Endpoint, private val expectedComputer: String? = endpoi
             .tag(Trace::class.java, trace)
         if (authenticated) builder.header("Authorization", "Bearer ${endpoint.token}")
         builder.post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
-        val call = client.newCall(builder.build())
+        // A request allowed longer than the connection's read timeout (adding a connector: 120 s) reads for that long; the client shares the same pool.
+        val reader = if ((timeoutSeconds ?: 0) > 35) client.newBuilder().readTimeout(timeoutSeconds!!, TimeUnit.SECONDS).build() else client
+        val call = reader.newCall(builder.build())
         timeoutSeconds?.let { call.timeout().timeout(it, TimeUnit.SECONDS) }
         // The diagnostics name a request by its route and method, the address by its kind, never by the address itself.
         val route = path.substringAfterLast('/')
@@ -390,7 +443,8 @@ class DuduApi(endpoint: Endpoint, private val expectedComputer: String? = endpoi
             if (error !is CancellationException) DuduLog.record("http.request.fail", "warn", method = method, requestId = requestId,
                 elapsedMs = elapsed(), counts = measured(), state = met(), code = (error as? ApiFailure)?.code ?: "CONNECTION_FAILED",
                 detail = if (error is ApiFailure) null else DuduLog.describe(error))
-            throw error
+            // A pooled connection that died before any answer: the computer never had the request.
+            throw if (error is IOException && error !is ApiFailure && status == 0L && !trace.fresh) StaleConnection(error) else error
         }
     }
 }

@@ -57,7 +57,7 @@ fun NewSessionScreen(state: UiState, model: DuduViewModel, openDrawer: () -> Uni
     BackHandler { model.backRoute() }
     Scaffold(containerColor = MaterialTheme.colorScheme.background,
         topBar = { TopAppBar(title = {}, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-            navigationIcon = { IconButton(onClick = openDrawer) { Glyph(R.drawable.ic_menu, stringResource(R.string.more), 22) } }) },
+            navigationIcon = { IconButton(onClick = openDrawer) { Glyph(DuduGlyphs.menu, stringResource(R.string.more), 22) } }) },
         bottomBar = {
             Column(Modifier.navigationBarsPadding().padding(horizontal = 24.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (actions.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -68,10 +68,10 @@ fun NewSessionScreen(state: UiState, model: DuduViewModel, openDrawer: () -> Uni
                         modifier = Modifier.weight(1.15f).testTag("new-session-workspace")) {
                         Row(Modifier.height(38.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Glyph(R.drawable.ic_folder, size = 17, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Glyph(DuduGlyphs.folder, size = 17, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(w("选择工作区"), Modifier.weight(1f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Glyph(R.drawable.ic_chevron_down, size = 13, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Glyph(DuduGlyphs.down, size = 13, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     Surface(onClick = { picker = "provider" }, enabled = !actions.busy && models.isNotEmpty(), shape = RoundedCornerShape(50),
@@ -82,11 +82,11 @@ fun NewSessionScreen(state: UiState, model: DuduViewModel, openDrawer: () -> Uni
                             AgentLogo(agent, 18)
                             Text(provider?.nullableString("name") ?: current?.optString("sourceName") ?: w("供应商"), Modifier.weight(1f), fontSize = 14.sp,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Glyph(R.drawable.ic_chevron_down, size = 13, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Glyph(DuduGlyphs.down, size = 13, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     if (agent == "deepseek" && catalog.rows("presets").isNotEmpty()) IconButton(onClick = { picker = "preset" }, modifier = Modifier.size(38.dp)) {
-                        Glyph(R.drawable.ic_sliders_horizontal, w("模式"), 19, MaterialTheme.colorScheme.onSurfaceVariant)
+                        Glyph(DuduGlyphs.mode, w("模式"), 19, MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 Surface(onClick = { picker = "workspace" }, enabled = !actions.busy, modifier = Modifier.fillMaxWidth(),
@@ -94,7 +94,7 @@ fun NewSessionScreen(state: UiState, model: DuduViewModel, openDrawer: () -> Uni
                     border = BorderStroke(.75.dp, MaterialTheme.colorScheme.outlineVariant), shadowElevation = 2.dp) {
                     Row(Modifier.height(52.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Glyph(R.drawable.ic_plus, size = 24, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .55f))
+                        Glyph(DuduGlyphs.plus, size = 24, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .55f))
                         Text(w("选择工作区"), fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -128,7 +128,7 @@ fun NewSessionScreen(state: UiState, model: DuduViewModel, openDrawer: () -> Uni
                         }
                     }, tag = "new-session-option-$id", leading = if (kind == "provider") ({ AgentLogo(id, 21) }) else null, trailing = {
                         if (id == if (kind == "provider") agent else preset)
-                            Glyph(R.drawable.ic_check, size = 18)
+                            Glyph(DuduGlyphs.check, size = 18)
                     })
                     if (index < rows.lastIndex) HorizontalDivider(Modifier.padding(start = 16.dp), thickness = .5.dp)
                 }

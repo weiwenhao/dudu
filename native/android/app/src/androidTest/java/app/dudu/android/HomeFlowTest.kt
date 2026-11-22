@@ -64,10 +64,13 @@ class HomeFlowTest {
         screenshot("computer-addresses")
         compose.onNodeWithTag("address-lan-0").performTextReplacement("file:///not-an-address")
         compose.onNodeWithTag("save-addresses").performClick()
-        awaitTag("page-error")
+        awaitTag("computer-edit-failure")
         compose.onNodeWithTag("address-lan-0").assertTextContains("file:///not-an-address")
         compose.onNodeWithTag("address-lan-0").performTextReplacement(origin)
         compose.onNodeWithTag("save-addresses").performClick()
+        // Reaching the same computer again keeps its page open, as on the iPhone (2026-11-22): the editor closes and the page is left by hand.
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("save-addresses").fetchSemanticsNodes().isEmpty() }
+        compose.onNodeWithTag("page-back").performClick()
         awaitTag("row-issue:1")
         control("/fixture/configure?flag=fail-home", "POST")
         scenario.recreate()
@@ -131,7 +134,8 @@ class HomeFlowTest {
         control("/fixture/configure?flag=fail-send", "POST")
         compose.onNodeWithTag("message-input").performTextInput("Continue the Android fixture task")
         compose.onNodeWithTag("send").performClick()
-        awaitTag("send-error")
+        // A failure is a toast at the top now, as on the iPhone, and the draft comes back to the box.
+        awaitTag("feedback-toast")
         compose.onNodeWithTag("message-input").assertTextContains("Continue the Android fixture task")
         awaitEnabled("send")
         compose.onNodeWithTag("send").performClick()
@@ -150,7 +154,6 @@ class HomeFlowTest {
         compose.waitUntil(5000) {
             control("/fixture/state").getJSONArray("sendAttempts").length() == 3 &&
                 compose.onAllNodes(hasTestTag("message-input") and isEnabled()).fetchSemanticsNodes().isNotEmpty() &&
-                compose.onAllNodesWithTag("send-error").fetchSemanticsNodes().isEmpty() &&
                 compose.onAllNodesWithText("The reply was lost but the input was admitted").fetchSemanticsNodes().size == 1 &&
                 compose.onNodeWithTag("message-input").fetchSemanticsNode().config[
                     androidx.compose.ui.semantics.SemanticsProperties.EditableText].text.isEmpty()
@@ -158,7 +161,7 @@ class HomeFlowTest {
         screenshot("conversation")
         compose.onNodeWithTag("message-input").performTextInput("/compact")
         compose.onNodeWithTag("send").performClick()
-        awaitTag("send-error")
+        awaitTag("feedback-toast")
         compose.onNodeWithTag("message-input").assertTextContains("/compact")
     }
 
@@ -264,7 +267,8 @@ class HomeFlowTest {
         compose.onNodeWithTag("settings-text").performTextReplacement("Keep explicit projects and assignments.")
         control("/fixture/configure?flag=fail-settings", "POST")
         compose.onNodeWithText("保存").performClick()
-        awaitTag("page-error")
+        // The refusal is said under the form, in the plugin's words when it has some (the iPhone's `problem`).
+        awaitTag("settings-problem")
         compose.onNodeWithTag("settings-text").assertTextContains("Keep explicit projects and assignments.")
         awaitEnabled("settings-text")
         compose.onNodeWithText("保存").performClick()

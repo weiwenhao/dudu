@@ -51,7 +51,7 @@ fun SubIssuesScreen(route: Route, state: UiState, model: DuduViewModel) {
                             Text(child.nullableString("ref") ?: "#${child.getLong("id")}", fontSize = 12.sp, maxLines = 1,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Glyph(R.drawable.ic_chevron_right, size = 16, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Glyph(DuduGlyphs.right, size = 16, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             } } }

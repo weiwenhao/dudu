@@ -27,7 +27,8 @@ import app.dudu.android.R
 @Composable
 fun IssueContextMenu(panel: Panel.Actions, state: UiState, model: DuduViewModel) {
     val row = panel.row
-    val enabled = state.connected && !state.busy
+    // A row saving a change of its own (a pin, a read mark, 完成) waits for it, as on the iPhone; the others stay usable.
+    val enabled = state.connected && !state.busy && row.id !in state.changing
     val density = LocalDensity.current
     val title = if (row.id == "assistant") stringResource(R.string.dudu) else row.title
     val position = remember { object : PopupPositionProvider {
@@ -64,37 +65,41 @@ fun IssueContextMenu(panel: Panel.Actions, state: UiState, model: DuduViewModel)
                     shadowElevation = 12.dp) {
                     Column(Modifier.verticalScroll(rememberScrollState()).padding(vertical = 6.dp)) {
                         ContextAction(if (row.pinned) stringResource(R.string.unpin) else stringResource(R.string.pin),
-                            if (row.pinned) R.drawable.ic_pin_off else R.drawable.ic_pin,
+                            if (row.pinned) DuduGlyphs.unpin else DuduGlyphs.pin,
                             enabled, "toggle-pin") { model.pin(row) }
                         ContextAction(if (row.unread) stringResource(R.string.clear_unread) else stringResource(R.string.mark_unread),
                             if (row.unread) R.drawable.home_swipe_clear_unread else R.drawable.home_swipe_mark_unread,
                             enabled && row.sessionId != null, "toggle-unread") { model.read(row) }
                         row.issue?.let { issue ->
                             MenuDivider()
-                            ContextAction(w("详情"), R.drawable.ic_file, true, "issue-detail") {
-                                model.navigate(Route("issue", issue.title, issue.id.toString()))
+                            ContextAction(issuePropertyTitle(IssueProperty.Status), issuePropertyIcon(IssueProperty.Status), enabled, "issue-status") {
+                                model.show(Panel.EditIssue(issue, IssueProperty.Status))
                             }
-                            ContextAction(w("重命名"), R.drawable.ic_pencil, enabled, "rename-issue") {
+                            ContextAction(w("重命名"), DuduGlyphs.rename, enabled, "rename-issue") {
                                 model.show(Panel.Rename(issue))
                             }
                             MenuDivider()
                             IssueProperty.entries.forEach { property ->
-                                ContextAction(issuePropertyTitle(property), issuePropertyIcon(property),
+                                if (property == IssueProperty.Status) {
+                                    ContextAction(w("详情"), DuduGlyphs.issueDetails, true, "issue-detail") {
+                                        model.navigate(Route("issue", issue.title, issue.id.toString()))
+                                    }
+                                } else ContextAction(issuePropertyTitle(property), issuePropertyIcon(property),
                                     enabled && (issue.agent == null || property !in listOf(IssueProperty.Agent, IssueProperty.Project)),
                                     "issue-${property.name.lowercase()}") { model.show(Panel.EditIssue(issue, property)) }
                             }
-                            ContextAction(w("添加子事项"), R.drawable.ic_corner_down_right, enabled, "add-subissue") {
+                            // Sub-issues do not nest: a sub-issue has no "add sub-issue".
+                            if (issue.parent == null) ContextAction(w("添加子事项"), DuduGlyphs.open, enabled, "add-subissue") {
                                 model.addSubIssue(issue)
                             }
                             MenuDivider()
-                            ContextAction(w("完成"), R.drawable.ic_check, enabled && issue.statusType != "done",
+                            ContextAction(w("完成"), DuduGlyphs.check, enabled && issue.statusType != "done",
                                 "complete-issue") { model.complete(row) }
-                            ContextAction(stringResource(R.string.delete), R.drawable.ic_trash2, enabled,
+                            ContextAction(stringResource(R.string.delete), DuduGlyphs.trash, enabled,
                                 "delete-issue", danger = true) { model.previewDelete(issue) }
                         }
+                        // 删除 asks the computer before its confirmation; every other action closes the menu at once and says a failure in a toast, as on the iPhone.
                         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                        state.problem?.let { Text(problemText(it), Modifier.padding(16.dp).testTag("panel-error"),
-                            fontSize = 13.sp, color = MaterialTheme.colorScheme.error) }
                     }
                 }
             }
@@ -132,10 +137,10 @@ fun issuePropertyTitle(property: IssueProperty) = when (property) {
 }
 
 fun issuePropertyIcon(property: IssueProperty) = when (property) {
-    IssueProperty.Priority -> R.drawable.ic_chart_no_axes_column
-    IssueProperty.Agent -> R.drawable.ic_user_round
-    IssueProperty.Status -> R.drawable.ic_circle_dashed
-    IssueProperty.Due -> R.drawable.ic_calendar
-    IssueProperty.Labels -> R.drawable.ic_tag
-    IssueProperty.Project -> R.drawable.ic_folder
+    IssueProperty.Priority -> DuduGlyphs.issuePriority
+    IssueProperty.Agent -> DuduGlyphs.stateUnassigned
+    IssueProperty.Status -> DuduGlyphs.issueStatus
+    IssueProperty.Due -> DuduGlyphs.dueDate
+    IssueProperty.Labels -> DuduGlyphs.issueLabel
+    IssueProperty.Project -> DuduGlyphs.issueProject
 }

@@ -1,39 +1,57 @@
 package app.dudu.android.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.dudu.android.*
 import app.dudu.android.R
-import kotlinx.coroutines.launch
+import app.dudu.android.data.*
 
+/** The red of a connection's failure on the guide and a computer's page (the iPhone's 0.67, 0.29, 0.27). */
+internal val ConnectionFailureRed = Color(0xFFAB4A45)
+
+/**
+ * The connection guide, the iPhone's `ConnectionGuideView`: the logo, 连接嘟嘟, the instruction (kept in its place but hidden once a computer is saved, unless it must be paired again),
+ * and a card with the computer (it opens 电脑连接), what the connection is doing, the main button (重新连接 for a saved computer, else 扫描配对码 / 重新扫码配对) and 粘贴配对链接, which
+ * opens the pairing form; nothing is read from the clipboard (owner, 2026-11-22).
+ */
 @Composable
-fun PairingScreen(state: UiState, model: DuduViewModel, adding: Boolean = false) {
-    var manual by rememberSaveable { mutableStateOf(adding) }
-    var link by rememberSaveable { mutableStateOf("") }
-    var name by rememberSaveable { mutableStateOf("") }
-    val clipboard = LocalClipboard.current
-    val coroutine = rememberCoroutineScope()
-    val busy = state.connecting
-    if (adding) BackHandler(enabled = !busy) { model.backRoute() }
+fun PairingScreen(state: UiState, model: DuduViewModel) {
+    val busy = state.connectionInFlight
+    val savedComputer = state.computers.firstOrNull { it.id == state.computerId } ?: state.computers.firstOrNull()
+    val savedOrigin = remember(savedComputer?.link) {
+        savedComputer?.let { runCatching { Endpoint.parse(it.link).origin }.getOrNull() }
+    }
+    val needsNewPairing = state.pairingRequired || requiresNewPairing(state.connectionFailure)
+    val showsRetry = !needsNewPairing && (state.computers.isNotEmpty() || state.connectionFailure != null)
+    val failure = state.problem ?: state.connectionFailure
+    LaunchedEffect(Unit) { DuduLog.record("connection.guide.open") }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
             val minimum = maxHeight
@@ -45,79 +63,164 @@ fun PairingScreen(state: UiState, model: DuduViewModel, adding: Boolean = false)
             ) {
                 Image(painterResource(R.drawable.dudu), null, Modifier.size(76.dp))
                 Spacer(Modifier.height(20.dp))
-                Text(w("连接嘟嘟"), fontSize = 29.sp, lineHeight = 36.sp,
+                Text(w("连接嘟嘟"), fontSize = 29.sp, lineHeight = 36.sp, letterSpacing = (-0.7).sp,
                     fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(12.dp))
+                val instructed = state.computers.isEmpty() || needsNewPairing
                 Text(w("打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码"),
+                    Modifier.widthIn(max = 380.dp).alpha(if (instructed) 1f else 0f),
                     fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center)
                 Spacer(Modifier.height(28.dp))
                 Surface(Modifier.widthIn(max = 380.dp).fillMaxWidth(),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(26.dp),
+                    shape = RoundedCornerShape(26.dp),
                     color = MaterialTheme.colorScheme.surface, shadowElevation = 4.dp,
                     border = BorderStroke(.5.dp, MaterialTheme.colorScheme.outline)) {
                     Column(Modifier.fillMaxWidth().padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Spacer(Modifier.height(28.dp))
-                        Button(onClick = { model.navigate(Route("scan")) }, enabled = !busy,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("pairing-scan"),
-                            shape = CircleShape,
-                            colors = ButtonDefaults.buttonColors(containerColor = DuduStyle.blue)) {
-                            Glyph(R.drawable.ic_scan_qr_code, size = 21, tint = Color.White)
-                            Spacer(Modifier.width(10.dp))
-                            Text(w("扫描配对码"), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                        FilledTonalButton(onClick = {
-                            manual = true
-                            model.clearProblem()
-                            coroutine.launch {
-                                clipboard.getClipEntry()?.clipData?.takeIf { it.itemCount > 0 }
-                                    ?.getItemAt(0)?.text?.toString()?.let { link = it }
+                        verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                        if (savedComputer != null) {
+                            Row(Modifier.fillMaxWidth().heightIn(min = 54.dp).testTag("connection-computers")
+                                .clickable { DuduLog.record("computers.open"); model.show(Panel.Computers) },
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Glyph(DuduGlyphs.computer, size = 22)
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    Text(savedComputer.name, fontSize = 15.sp, fontWeight = FontWeight.Medium,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    savedOrigin?.let {
+                                        Text(it, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.MiddleEllipsis,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                Spacer(Modifier.width(4.dp))
+                                Glyph(DuduGlyphs.select, w("选择电脑，当前为{0}").replace("{0}", savedComputer.name), 17,
+                                    MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                        }, enabled = !busy,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("pairing-manual"),
-                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                contentColor = MaterialTheme.colorScheme.onSurface)) {
-                            Text(w("粘贴配对链接"), fontSize = 15.sp)
                         }
-                        state.problem?.let {
-                            Text(problemText(it), color = MaterialTheme.colorScheme.error, fontSize = 13.sp,
-                                modifier = Modifier.testTag("pairing-error"))
+                        Box(Modifier.fillMaxWidth().heightIn(min = 20.dp), contentAlignment = Alignment.CenterStart) {
+                            if (busy) Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(w("正在连接…"), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else if (failure != null) {
+                                // A pairing that was refused says only 配对已失效 here; the button under it says what to do.
+                                Text(if (failure == "AUTH_FAILED" || failure == "UNAUTHORIZED") w("配对已失效") else problemText(failure),
+                                    color = ConnectionFailureRed, fontSize = 14.sp, modifier = Modifier.testTag("pairing-error"))
+                            }
                         }
-                        if (busy && !manual) LinearProgressIndicator(Modifier.fillMaxWidth(), color = DuduStyle.blue)
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(onClick = {
+                                if (showsRetry) { DuduLog.record("connection.guide.retry"); model.reconnect("guide") }
+                                else { DuduLog.record("pairing.scan"); model.navigate(Route("scan")) }
+                            }, enabled = !busy,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).alpha(if (showsRetry && busy) .5f else 1f)
+                                    .testTag("pairing-scan"),
+                                shape = CircleShape,
+                                colors = ButtonDefaults.buttonColors(containerColor = DuduStyle.blue, contentColor = Color.White,
+                                    disabledContainerColor = DuduStyle.blue, disabledContentColor = Color.White)) {
+                                Glyph(if (showsRetry) DuduGlyphs.reconnect else DuduGlyphs.scan, size = 21, tint = Color.White)
+                                Spacer(Modifier.width(10.dp))
+                                Text(if (showsRetry) w("重新连接") else if (needsNewPairing) w("重新扫码配对") else w("扫描配对码"),
+                                    fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            Surface(onClick = {
+                                DuduLog.record("pairing.manual")
+                                model.clearProblem()
+                                model.showPairing()
+                            }, enabled = !busy, shape = CircleShape, color = DuduStyle.selected.copy(alpha = .65f),
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("pairing-manual")) {
+                                Box(Modifier.heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
+                                    Text(w("粘贴配对链接"), fontSize = 15.sp, fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface)
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
     }
-    if (manual) DuduSheet({ if (!busy) { if (adding) model.backRoute() else manual = false } }) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { if (adding) model.backRoute() else manual = false }, enabled = !busy) {
-                Text(stringResource(R.string.cancel))
+}
+
+/**
+ * 添加电脑, the iPhone's `PairingView` in the settings: 扫描配对码, and under it 粘贴配对链接, which opens the form (a multi-line 配对链接 field, 电脑名称 选填, 添加并连接). A sheet (the guide's
+ * 粘贴配对链接, a `dudu://connect` link, which fills the form in) has 取消 and opens on the form; the page 电脑连接's + pushes goes back with ‹.
+ */
+@Composable
+fun AddComputerScreen(route: Route, state: UiState, model: DuduViewModel) {
+    val sheet = route.params.optBoolean("sheet")
+    val initialLink = route.params.nullableString("link")
+    var manual by rememberSaveable { mutableStateOf(sheet || initialLink != null) }
+    var link by rememberSaveable { mutableStateOf(initialLink.orEmpty()) }
+    var name by rememberSaveable { mutableStateOf(initialLink?.let(::pairingLinkName).orEmpty()) }
+    // The error under the form answers what was typed here: the one a saved computer that could not be reached left behind is not (owner, 2026-11-21).
+    var attempted by rememberSaveable { mutableStateOf(false) }
+    var empty by rememberSaveable { mutableStateOf(false) }
+    val busy = state.connectionInFlight
+    LaunchedEffect(Unit) { if (!sheet) DuduLog.record("pairing.add.open") }
+    BackHandler(enabled = busy) {}
+    PreventSheetDismiss(busy)
+    fun pair() {
+        val trimmed = link.trim()
+        if (trimmed.isEmpty()) { empty = true; return }
+        empty = false
+        attempted = true
+        DuduLog.record("pairing.connect")
+        model.connect(trimmed, name.trim())
+    }
+    Page(w("添加电脑"), { if (!busy) model.backRoute() }, cancels = sheet, background = MaterialTheme.colorScheme.surfaceContainer) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding()
+            .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 30.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = { DuduLog.record("pairing.scan"); model.navigate(Route("scan")) }, enabled = !busy,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("pairing-scan"), shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(containerColor = DuduStyle.blue, contentColor = Color.White)) {
+                Glyph(DuduGlyphs.scan, size = 21, tint = Color.White)
+                Spacer(Modifier.width(10.dp))
+                Text(w("扫描配对码"), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
-            Text(w("添加电脑"), Modifier.weight(1f), fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.Center)
-            Spacer(Modifier.width(64.dp))
+            if (manual) Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface, RoundedCornerShape(20.dp)).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(15.dp)) {
+                PairingField(w("配对链接"), link, w("粘贴电脑生成的完整链接"), !busy, multiline = true, tag = "pairing-link",
+                    keyboard = KeyboardOptions(keyboardType = KeyboardType.Uri)) { link = it; empty = false }
+                PairingField(w("电脑名称"), name, w("选填"), !busy) { name = it }
+                val error = if (empty) w("请输入配对链接") else if (attempted && !busy) state.problem?.let { problemText(it) } else null
+                error?.let { Text(it, fontSize = 13.sp, color = Color(0xFFB54F4A), modifier = Modifier.testTag("pairing-error")) }
+                Button(onClick = ::pair, enabled = !busy && link.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("connect"), shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(containerColor = DuduStyle.blue, contentColor = Color.White)) {
+                    if (busy) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                        Spacer(Modifier.width(9.dp))
+                    }
+                    Text(w("添加并连接"), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                }
+            } else Box(Modifier.fillMaxWidth().heightIn(min = 44.dp).testTag("pairing-manual")
+                .clickable { manual = true; model.clearProblem(); DuduLog.record("pairing.manual") }, contentAlignment = Alignment.Center) {
+                Text(w("粘贴配对链接"), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            }
         }
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(15.dp)) {
-            Button(onClick = { model.navigate(Route("scan")) }, enabled = !busy,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = DuduStyle.blue)) {
-                Glyph(R.drawable.ic_scan_qr_code, size = 21, tint = Color.White)
-                Spacer(Modifier.width(10.dp)); Text(w("扫描配对码"))
-            }
-            Field(w("配对链接"), link, !busy, multi = true, secret = true, tag = "pairing-link") { link = it }
-            Field(w("电脑名称"), name, !busy, placeholder = w("选填")) { name = it }
-            state.problem?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
-            Button(onClick = { model.connect(link, name) }, enabled = link.isNotBlank() && !busy,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("connect"),
-                colors = ButtonDefaults.buttonColors(containerColor = DuduStyle.blue)) {
-                if (busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
-                Text(stringResource(R.string.connect))
-            }
-            Spacer(Modifier.height(12.dp))
-        }
+    }
+}
+
+/** A field of the pairing form: its name over it (13 medium), a white box with a hairline and 13 dp corners, the placeholder in grey. */
+@Composable
+private fun PairingField(label: String, value: String, placeholder: String, enabled: Boolean, multiline: Boolean = false,
+    tag: String = "", keyboard: KeyboardOptions = KeyboardOptions.Default, changed: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        val style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, lineHeight = 21.sp)
+        BasicTextField(value, changed, Modifier.fillMaxWidth().testTag(tag), enabled = enabled,
+            textStyle = style.copy(color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else .45f)),
+            keyboardOptions = keyboard, singleLine = !multiline, minLines = if (multiline) 2 else 1, maxLines = if (multiline) 4 else 1,
+            cursorBrush = SolidColor(DuduStyle.blue),
+            decorationBox = { inner ->
+                Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface, RoundedCornerShape(13.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(13.dp)).padding(13.dp)) {
+                    if (value.isEmpty()) Text(placeholder, style = style, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    inner()
+                }
+            })
     }
 }

@@ -5,11 +5,12 @@ import org.json.JSONObject
 import java.util.Locale
 
 enum class Scope(val wire: String) {
-    Active("active"), Backlog("backlog"), All("all");
+    Active("active"), Unread("unread"), All("all");
 
+    /** 未读 is about reading, not workflow: it holds every unread conversation, whatever its status. */
     fun includes(row: Conversation): Boolean = when (this) {
         Active -> row.id == "assistant" || row.issue?.statusType in activeTypes
-        Backlog -> row.issue?.statusType == "backlog"
+        Unread -> row.unread
         All -> true
     }
 
@@ -66,6 +67,9 @@ data class Conversation(
     val id: String, val title: String, val sessionId: String?, val issue: Issue?, val preview: String,
     val receivedAt: Long, val sessionState: String, val unread: Boolean, val readSeq: Long, val pinned: Boolean,
 ) {
+    /** An issue that no agent has been given has no conversation to open: a tap says so (「请分配智能体」), and the long press has the Agent action. */
+    val needsAgent: Boolean get() = issue?.agent == null && id != "assistant"
+
     companion object {
         fun parse(o: JSONObject) = Conversation(
             o.getString("id"), o.getString("title"), o.nullableString("sessionId"),
@@ -75,6 +79,10 @@ data class Conversation(
         )
     }
 }
+
+fun unreadSessionCount(rows: List<Conversation>): Int =
+    rows.filter { it.unread }.mapNotNull { it.sessionId }.toSet().size
+
 data class Home(val rows: List<Conversation>, val pins: List<String>, val unreadCount: Int,
     val statuses: List<Status> = emptyList()) {
     val pinnedRows: List<Conversation> = if (pins.isEmpty()) emptyList() else {
@@ -86,7 +94,6 @@ data class Home(val rows: List<Conversation>, val pins: List<String>, val unread
         fun parse(o: JSONObject, scope: Scope): Home {
             require(o.getString("outcome") == "success" && o.getString("tab") == scope.wire)
             val rows = o.getJSONArray("conversations").objects().map(Conversation::parse)
-                .filter { scope != Scope.Backlog || it.id != "assistant" }
             require(rows.map { it.id }.distinct().size == rows.size)
             val pins = o.getJSONArray("pins")
             return Home(rows, (0 until pins.length()).map(pins::getString), o.getInt("unreadCount"),

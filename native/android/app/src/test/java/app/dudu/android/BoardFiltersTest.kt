@@ -25,7 +25,8 @@ class BoardFiltersTest {
             Scope.All)
         val active = home.rows.filter(Scope.Active::includes)
         assertEquals(listOf("issue:1", "issue:2", "issue:3", "assistant"), active.map(Conversation::id))
-        assertEquals(listOf("issue:4"), home.rows.filter(Scope.Backlog::includes).map(Conversation::id))
+        // 未读 keeps every unread conversation whatever its workflow (the backlog one included), and nothing that is read.
+        assertEquals(listOf("issue:1", "issue:2", "issue:4"), home.rows.filter(Scope.Unread::includes).map(Conversation::id))
         assertEquals("Reviewing", home.statuses.single().name)
 
         val filters = BoardFilters().toggle(BoardFilterField.Project, "mobile")
@@ -36,6 +37,12 @@ class BoardFiltersTest {
         assertEquals(mapOf("mobile" to 1, "desktop" to 1, null to 0),
             filters.options(BoardFilterField.Project, active, home.statuses).associate { it.key to it.count })
         assertEquals(3, home.unreadCount)
+        assertEquals("The visible scope excludes unpinned backlog and completed rows", 2, unreadSessionCount(active))
+        assertEquals("A pinned copy counts once and the pinned shelf stays outside the filters",
+            3, unreadSessionCount(filters.matching(active) + home.pinnedRows))
+        val doneUnread = Conversation.parse(row(7, "done", state = "unread"))
+        assertEquals(2, unreadSessionCount((home.rows + doneUnread).filter(Scope.Active::includes)))
+        assertEquals(0, unreadSessionCount(listOf(home.rows.first().copy(sessionId = null))))
     }
 
     @Test fun dueDatesRespectTheLocalDayAndUpdatesUseTheCompletedReplyTime() {

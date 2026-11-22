@@ -26,7 +26,7 @@ import org.json.JSONObject
  */
 @Composable
 internal fun CollectorSummary(record: JSONObject, tab: String = "todo", selecting: Boolean = false,
-    selected: Boolean = false, horizontalPadding: Int = 10) {
+    selected: Boolean = false, horizontalPadding: Int = 10, completing: Boolean = record.optBoolean("completing")) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val issue = record.optJSONObject("issue")
     val first = if (tab == "done" && issue != null) issue.nullableString("ref") ?: "#${issue.optLong("id")}"
@@ -40,10 +40,14 @@ internal fun CollectorSummary(record: JSONObject, tab: String = "todo", selectin
                     .background(if (selected) DuduStyle.blue else Color.Transparent, CircleShape)
                     .border(1.5.dp, if (selected) DuduStyle.blue else Color(0xFFC4C4C4), CircleShape),
                     contentAlignment = Alignment.Center) {
-                    if (selected) Glyph(R.drawable.ic_check, size = 13, tint = Color.White)
+                    if (selected) Glyph(DuduGlyphs.check, size = 13, tint = Color.White)
                 }
             }
-            ConnectorAvatar(record.nullableString("connectorIcon"), record.optString("connectorName"), 44)
+            Box(Modifier.size(44.dp)) {
+                ConnectorAvatar(record.nullableString("connectorIcon"), record.optString("connectorName"), 44)
+                // The unread mark is the board's own (`AvatarStatus`: same red, halo, size and anchor on a rounded-square tile), as the iPhone's row (owner, 2026-11-21).
+                AvatarStatus(if (record.optBoolean("unread")) "unread" else "idle", 44, roundedSquare = true)
+            }
             // The column at the right is held to the text's two ends: the time on the first line, the number on the last.
             Box(Modifier.weight(1f)) {
                 Column(Modifier.padding(end = 46.dp, top = 10.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -54,7 +58,8 @@ internal fun CollectorSummary(record: JSONObject, tab: String = "todo", selectin
                 }
                 Row(Modifier.align(Alignment.TopEnd).padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (record.optBoolean("completing")) RunningMark(14)
+                    // Its context is being filled in (`InboxCompletions`), or a mark on it is on its way: a small spinner before the time, as on the desktop's row.
+                    if (completing) RunningMark(14)
                     first?.let { Text(it, fontSize = 12.sp, lineHeight = 21.sp, color = muted, maxLines = 1) }
                 }
                 record.nullableString("ref")?.let { ref ->

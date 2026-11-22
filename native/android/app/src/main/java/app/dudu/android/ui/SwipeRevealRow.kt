@@ -110,6 +110,14 @@ internal fun SwipeRevealRow(
     LaunchedEffect(revealed) {
         if (revealed == false && !completing && drag == null && offset.value != 0f) offset.animateTo(0f, tween(220, easing = FastOutSlowInEasing))
     }
+    // A row that can no longer be used (the computer went away, the row is saving) closes, as the iPhone's do (`onChange(of: enabled)`).
+    LaunchedEffect(enabled) {
+        if (!enabled && !completing && offset.value != 0f) {
+            drag = null
+            onReveal(false)
+            offset.animateTo(0f, tween(220, easing = FastOutSlowInEasing))
+        }
+    }
 
     Box(Modifier.fillMaxWidth()
         .then(if (completing && height > 0) Modifier.height(with(density) { (height * (1f - collapse.value)).toDp() }) else Modifier)
@@ -165,7 +173,7 @@ internal fun SwipeRevealRow(
 @Composable
 private fun RevealBlock(action: RevealAction, modifier: Modifier) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Glyph(action.icon, size = 22, tint = Color.White)
+        InboxGlyph(action.icon, 22, Color.White)
         Spacer(Modifier.height(4.dp))
         Text(action.title, fontSize = 14.sp, lineHeight = 18.sp, color = Color.White, maxLines = 1)
     }
