@@ -174,9 +174,15 @@ final class BoardModel: ObservableObject {
     }
     private var visibleReads: [String: VisibleRead] = [:]
 
-    init(storage: any DuduBoardStorage = FileBoardStorage.shared, wakeStore: any BoardWakeStore = KeychainVault()) {
+    private let filterStore: BoardFilterStore
+
+    init(
+        storage: any DuduBoardStorage = FileBoardStorage.shared, wakeStore: any BoardWakeStore = KeychainVault(),
+        filterStore: BoardFilterStore = BoardFilterStore()
+    ) {
         self.storage = storage
         self.wakeStore = wakeStore
+        self.filterStore = filterStore
     }
 
     var state: LoadState { states[tab] ?? states[.all] ?? .loading }
@@ -220,11 +226,14 @@ final class BoardModel: ObservableObject {
 
     func toggle(_ option: BoardFilterOption, in field: BoardFilterField) {
         filters.toggle(option.id, in: field)
+        if let computerID { filterStore.save(filters, for: computerID) }
         AppNotifications.shared.setUnreadCount(unreadCount)
     }
 
+    /// 重置: the filter is cleared, and so is what was kept of it.
     func resetFilters() {
         if !filters.isEmpty { filters = BoardFilters(); AppNotifications.shared.setUnreadCount(unreadCount) }
+        if let computerID { filterStore.remove(for: computerID) }
     }
 
     /// Forget what was read: another computer has another board.
@@ -241,7 +250,8 @@ final class BoardModel: ObservableObject {
         visibleReads = [:]
         conversationsByTab = [:]
         filterStatuses = []
-        resetFilters()
+        // Each computer's board opens with the filter last chosen on it (nothing when none was kept).
+        filters = computerID.map(filterStore.load) ?? BoardFilters()
         pinOrder = []
         changing = []
         AppNotifications.shared.setUnreadCount(0)

@@ -126,6 +126,9 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     private val inboxChangesFlow = MutableStateFlow<Pair<Int, Long?>>(0 to null)
     /** Counts the records that left the inbox other than by its own lists' marks (an issue made of one, the record's id second): the lists read again and that record in full goes back to them. */
     val inboxChanges = inboxChangesFlow.asStateFlow()
+    /** The first page of 待处理 as last read, with the computer it came from: read again every 5 s while the app is in front (`HomeRoots`), so the inbox shows a new record by itself, as the iPhone's. */
+    private val inboxTodoFlow = MutableStateFlow<Pair<String, JSONObject>?>(null)
+    val inboxTodo = inboxTodoFlow.asStateFlow()
     /** A quick sheet of 嘟嘟's chat that 打开会话 / 打开事项 / 关联会话 left (the iPhone's `returningQuickSheet`): it comes back as it was when 嘟嘟's chat is shown again. */
     private var quickSheetReturn: QuickSheetReturn? = null
     val collectorNotifications = CollectorNotifications(viewModelScope, { generation }) { body ->
@@ -226,8 +229,9 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                     // Cached content belongs to the saved identity, not to a successful handshake
                     // or a still-current pairing link. An upgrade must not hide that cache.
                     restoreHomes()
+                    val filters = savedBoardFilters(computerId)
                     mutable.update { it.copy(computer = data.getString("name"),
-                        home = cachedHome(it.scope), computerId = computerId) }
+                        home = cachedHome(it.scope), computerId = computerId, boardFilters = filters) }
                     val endpoint = try { Endpoint.parse(link) } catch (error: Exception) {
                         DuduLog.record("connection.restore.fail", "warn", code = "INVALID_LINK",
                             detail = DuduLog.describe(error), at = DuduLog.place(error))
@@ -451,6 +455,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 vault.write("computers", JSONArray(allComputers.map { it.json() }).toString())
                 if (next != generation) return@launch
                 val cachedNavigation = vault.read("navigation-$id-${java.util.Locale.getDefault().language}")?.let { runCatching { JSONObject(it) }.getOrNull() } ?: json()
+                val keptFilters = savedBoardFilters(id)
+                if (next != generation) return@launch
                 mutable.update {
                     // Reconnected to the same computer, the page, the sheet and the conversation on screen stay; anything else starts on the board.
                     val kept = if (resuming) it.copy(navigation = if (it.navigation.length() > 0) it.navigation else cachedNavigation)
@@ -460,7 +466,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                     connected = true, connecting = false, retrying = false, home = cachedHome(it.scope),
                     // Another computer has another board: it opens on 进行中, as the iPhone's `BoardModel.reset` does.
                     scope = if (it.computerId == id) it.scope else Scope.Active,
-                    boardFilters = if (it.computerId == id) it.boardFilters else BoardFilters(),
+                    // …with the filter last chosen on it (nothing when none was kept).
+                    boardFilters = if (it.computerId == id) it.boardFilters else keptFilters,
                     computers = allComputers, computerId = id, computerUnavailable = false,
                     connectionFailure = null, pairingRequired = false,
                     quota = if (it.computerId == id) it.quota else null) }
@@ -707,9 +714,9 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         val revision = inboxReadRevision
         val result = request("inbox.list", params)
         if (current == generation && revision == inboxReadRevision) {
-            receiveInboxCount(result.optInt("total", result.rows("items").size)
-                .takeIf { params.optString("tab", "todo") == "todo" && !params.has("connector") },
-                result.optInt("unreadCount"))
+            val firstTodoPage = params.optString("tab", "todo") == "todo" && !params.has("connector")
+            receiveInboxCount(result.optInt("total", result.rows("items").size).takeIf { firstTodoPage }, result.optInt("unreadCount"))
+            if (firstTodoPage && !params.has("cursor")) inboxTodoFlow.value = computerId to result
         }
         return result
     }
@@ -785,9 +792,10 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
             val updated = state.value.computers.filterNot { it.id == id }
             vault.write("computers", JSONArray(updated.map { it.json() }).toString())
             mutable.update { it.copy(computers = updated) }
-            // Its videos go with it, as on the iPhone (`VideoPreviewStorage.remove(for:)`).
+            // Its videos go with it, as on the iPhone (`VideoPreviewStorage.remove(for:)`), and so does its board's filter.
             try { app.dudu.android.media.VideoPreviewStorage.remove(getApplication(), id) }
             catch (e: java.io.IOException) { DuduLog.failure("video.cache.remove.fail", e) }
+            vault.delete(filtersName(id))
             if (computerId == id) {
                 val previous = api
                 previous?.retire(); generation++; api = null; eventJob?.cancel(); watchJob?.cancel()
@@ -826,11 +834,27 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleBoardFilter(field: BoardFilterField, key: String?) {
         mutable.update { it.copy(boardFilters = it.boardFilters.toggle(field, key)) }
+        keepBoardFilters()
     }
 
+    /** 重置: the filter is cleared, and so is what was kept of it. */
     fun resetBoardFilters() {
         mutable.update { it.copy(boardFilters = BoardFilters()) }
+        keepBoardFilters()
     }
+
+    /** The board's filter is kept per computer, so that the app opens on the board as it was left (owner, 2026-11-23: 「退出 APP 再进去就没了，应该持久化一下」), as the iPhone's `BoardFilterStore`. */
+    private fun keepBoardFilters() {
+        val id = computerId.takeIf(String::isNotEmpty) ?: return
+        val filters = state.value.boardFilters
+        viewModelScope.launch {
+            runCatching { if (filters.isEmpty) vault.delete(filtersName(id)) else vault.write(filtersName(id), filters.saved()) }
+                .onFailure { DuduLog.failure("board.filters.save.fail", it as? Exception ?: Exception(it)) }
+        }
+    }
+
+    private suspend fun savedBoardFilters(id: String) = vault.read(filtersName(id))?.let(BoardFilters::parse) ?: BoardFilters()
+    private fun filtersName(id: String) = "board-filters-$id"
 
     fun preference(key: String, value: Any) {
         val updated = state.value.preferences.copyJson().put(key, value)

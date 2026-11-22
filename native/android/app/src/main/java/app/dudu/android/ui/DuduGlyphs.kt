@@ -4,7 +4,7 @@ package app.dudu.android.ui
 import app.dudu.android.R
 
 internal object DuduGlyphs {
-    val menu = R.drawable.ic_menu
+    val menu = R.drawable.dudu_glyph_menu
     val panel = R.drawable.ic_panel_right
     val camera = R.drawable.ic_camera
     val image = R.drawable.ic_image

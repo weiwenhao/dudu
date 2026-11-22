@@ -180,7 +180,6 @@ fun CollectorScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
     val loads = remember(computer) { mutableStateMapOf<String, ListLoad>() }
     val refreshing = remember(computer) { mutableSetOf<String>() }
     var loadingMore by remember(computer) { mutableStateOf(false) }
-    var pulling by remember { mutableStateOf(false) }
     // The records with a mark or a forward on their way: their swipe waits, and they cannot be marked again meanwhile.
     var changing by remember(computer) { mutableStateOf<Set<Long>>(emptySet()) }
     val completing by model.inboxCompletions.completing.collectAsState()
@@ -237,6 +236,22 @@ fun CollectorScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
     LaunchedEffect(tab) { selecting = false; selected = emptySet(); revealed = null; memory?.tab = tab }
     // Read when the tab is shown and when the computer connects (a read before that would leave the list empty until it was pulled).
     LaunchedEffect(tab, refreshKey, active, computer, connected) { if (active && connected) refresh() }
+    // 待处理 as the app reads it every 5 s (`HomeRoots`, the read that keeps the badge): a new record shows by itself, as on the iPhone, so the list has no pull to refresh
+    // (owner, 2026-11-23: a swipe on a row also pulled the list down; 「如果会自动更新，你把下拉刷新去掉就好了」).
+    val latestTodo by model.inboxTodo.collectAsState()
+    var adoptedTodo by remember(computer) { mutableStateOf("") }
+    LaunchedEffect(latestTodo, computer) {
+        val (from, result) = latestTodo ?: return@LaunchedEffect
+        val rows = result.optJSONArray("items")?.toString().orEmpty()
+        if (from != computer || "todo" in refreshing || rows == adoptedTodo) return@LaunchedEffect
+        adoptedTodo = rows
+        val fresh = result.rows("items")
+        itemsByTab["todo"] = fresh
+        totals["todo"] = result.optInt("total", fresh.size)
+        cursors["todo"] = result.nullableString("nextCursor")
+        loads["todo"] = ListLoad.Loaded
+        if (tab == "todo") selected = selected.filter { id -> fresh.any { it.getLong("id") == id } }.toSet()
+    }
     // An issue made of a record: it has left the to-do tab.
     val inboxChanges by model.inboxChanges.collectAsState()
     LaunchedEffect(inboxChanges) { if (inboxChanges.first > 0 && active) refresh() }
@@ -315,8 +330,7 @@ fun CollectorScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
             GlassTabs(tab, listOf("todo" to w("待处理"), "done" to w("已处理")), top = if (sheet) 0 else 10,
                 bottom = if (sheet) 20 else 6) { tab = it }
         }
-        // The page of its own reads again when it is pulled down (the iPhone's `refreshable`); the sheet does not.
-        PullRefresh(!sheet, pulling, { scope.launch { pulling = true; refresh(); pulling = false } }, Modifier.weight(1f).fillMaxWidth()) {
+        Box(Modifier.weight(1f).fillMaxWidth()) {
         LazyColumn(Modifier.fillMaxSize().testTag("collector-list"), state = list, contentPadding = PaddingValues(bottom = 24.dp)) {
             if (items.isEmpty()) item {
                 Box(Modifier.fillParentMaxWidth().then(if (sheet) Modifier.heightIn(min = 82.dp) else Modifier.fillParentMaxHeight()),

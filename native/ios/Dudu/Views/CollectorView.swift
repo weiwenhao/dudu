@@ -254,7 +254,8 @@ struct CollectorView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .refreshable { await model.refresh(using: store) }
+        // No pull to refresh: 待处理 is read again every 5 s while the App is in front (`refreshCount` in `DuduRootView`), and a swipe on a row also pulled the list down
+        // (owner, 2026-11-23: 「左滑和这个下拉刷新同时触发了…如果会自动更新，你把下拉刷新去掉就好了」).
     }
 
     private var listBottomPadding: CGFloat {

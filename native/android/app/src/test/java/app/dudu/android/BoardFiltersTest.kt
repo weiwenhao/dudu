@@ -9,6 +9,16 @@ import java.time.Instant
 import java.time.ZoneId
 
 class BoardFiltersTest {
+    @Test fun aKeptFilterComesBackAsItWasChosen() {
+        val chosen = BoardFilters().toggle(BoardFilterField.Project, null).toggle(BoardFilterField.Project, "mobile")
+            .toggle(BoardFilterField.Label, "12").toggle(BoardFilterField.Due, "today")
+        assertEquals(chosen, BoardFilters.parse(chosen.saved()))
+        // A field this build does not know, or a date choice that is not one of the field's own, is dropped; anything unreadable is no filter.
+        val kept = BoardFilters.parse("""{"sessionState":["unread"],"mood":["happy"],"created":["year"]}""")
+        assertEquals(BoardFilters().toggle(BoardFilterField.SessionState, "unread"), kept)
+        assertTrue(BoardFilters.parse("not json").isEmpty)
+    }
+
     @Test fun scopesAndCombinedFiltersUseOneSnapshotAndKeepThePinOrder() {
         val rows = listOf(
             row(1, "in_progress", project = "mobile", label = 12, state = "unread", source = "connector"),

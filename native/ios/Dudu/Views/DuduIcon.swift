@@ -147,6 +147,8 @@ enum DuduGlyph: CaseIterable {
 
     var assetName: String? {
         switch self {
+        // The sidebar button: DeepSeek's two lines, the lower one half as long (owner, 2026-11-23: 「我们的太复杂了，DeepSeek 这个比较简洁」), drawn from their screenshot in Lucide's 24 box and line.
+        case .menu: return "Menu"
         case .goal: return "Goal"
         case .queue: return "Queue"
         case .mode: return "AgentPreset"

@@ -456,6 +456,7 @@ final class DuduStore: ObservableObject {
             await removeConversationCache(for: computer.id)
             do { try await FileBoardStorage.shared.remove(for: computer.id) }
             catch { DuduLog.networkFailure("board.cache.remove.fail", error: error) }
+            BoardFilterStore().remove(for: computer.id)
             await conversationImages.remove(for: computer.id)
             do { try await VideoPreviewStorage.shared.remove(for: computer.id) }
             catch { DuduLog.networkFailure("conversation.video.remove.fail", error: error) }

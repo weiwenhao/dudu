@@ -120,6 +120,25 @@ enum BoardFilterField: String, Hashable {
 struct BoardFilters: Equatable {
     private var values: [BoardFilterField: Set<String?>] = [:]
     var isEmpty: Bool { values.isEmpty }
+
+    init() {}
+
+    /// The choices as the phone keeps them (`BoardFilterStore`): field → keys, `nil` being the 无 choice (no project, no agent).
+    var saved: [String: [String?]] {
+        values.reduce(into: [:]) { saved, entry in saved[entry.key.rawValue] = Array(entry.value) }
+    }
+
+    /// What was kept, read back: a field this build does not know is dropped, a date field keeps only one of its own choices.
+    init(saved: [String: [String?]]) {
+        for (name, keys) in saved {
+            guard let field = BoardFilterField(rawValue: name) else { continue }
+            var selected = Set(keys.prefix(256))
+            if field.isDate {
+                selected = Set(selected.compactMap { $0 }.filter { field.fixedKeys?.contains($0) == true }.prefix(1).map(Optional.some))
+            }
+            if !selected.isEmpty { values[field] = selected }
+        }
+    }
     func contains(_ key: String?, in field: BoardFilterField) -> Bool { values[field]?.contains(key) == true }
 
     mutating func toggle(_ key: String?, in field: BoardFilterField) {
