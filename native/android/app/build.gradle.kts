@@ -14,7 +14,7 @@ android {
         targetSdk = 36
         // The release workflow (.github/workflows/release.yml) numbers each build itself, so that a newer APK installs over an older one.
         versionCode = System.getenv("DUDU_VERSION_CODE")?.toIntOrNull() ?: 1
-        versionName = "0.1.0"
+        versionName = "0.1.1"
         testInstrumentationRunner = "app.dudu.android.DuduTestRunner"
     }
     signingConfigs {

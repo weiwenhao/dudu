@@ -1,12 +1,12 @@
 # Dudu 电脑连接插件
 
-Dudu 电脑连接插件（包名 `dsh-dudu`，插件 id 是 `dudu`）`0.1.0` 为 SwiftUI iPhone 客户端提供原生会话连接和带鉴权的 HTTP 页面。
-发布包 `dudu-desktop-0.1.0.zip` 包含 `dsh-dudu-0.1.0.tgz`。
+Dudu 电脑连接插件（包名 `dsh-dudu`，插件 id 是 `dudu`）`0.1.1` 为 SwiftUI iPhone 客户端提供原生会话连接和带鉴权的 HTTP 页面。
+发布包 `dudu-desktop-0.1.1.zip` 包含 `dsh-dudu-0.1.1.tgz`。
 不声明 DSH 版本约束，升级 DSH 不会仅因版本号变化而被标记为不兼容。
 
 ## 安装与配对
 
-1. 在 DSH Desktop「插件」中安装 `dsh-dudu-0.1.0.tgz`。
+1. 在 DSH Desktop「插件」中安装 `dsh-dudu-0.1.1.tgz`。
 2. 打开 DSH Desktop「设置 → 手机控制」，填写电脑名称。
 3. 添加一个或多个手机可访问的连接地址。
 4. 在目标地址旁手动点击「生成二维码」。

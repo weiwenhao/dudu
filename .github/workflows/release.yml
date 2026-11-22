@@ -157,7 +157,22 @@ jobs:
             exit 0
           fi
           cd assets
-          args=(--repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes)
+          # How to get the apps and the plugin, at the top of every release (owner, 2026-11-23). The TestFlight link is a public link: it does not change from one version to the next.
+          # `--notes` is put in front of the notes that GitHub generates.
+          read -r -d '' notes <<'EOF' || true
+          ## Install
+
+          - **Plugin:** enter `dsh-dudu` in DSH's "Add plugin".
+          - **iPhone:** search for dudu in the App Store, or join the [TestFlight beta](https://testflight.apple.com/join/TNUPd6n7).
+          - **Android:** install the apk below.
+
+          ## 安装
+
+          - **插件：** 在 DSH 的「添加插件」里输入 dsh-dudu。
+          - **iPhone：** 通过 [TestFlight](https://testflight.apple.com/join/TNUPd6n7) 安装。
+          - **安卓：** 下载下面的 apk。
+          EOF
+          args=(--repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --notes "$notes")
           # A version with a hyphen (0.2.0-rc.1, say) is a pre-release.
           case "$VERSION" in *-*) args+=(--prerelease) ;; esac
           gh release create "$GITHUB_REF_NAME" "${args[@]}" ./*
