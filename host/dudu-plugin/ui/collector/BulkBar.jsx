@@ -1,6 +1,7 @@
 import { forwardRef, useState } from 'react';
 import { Check, CheckCheck, Forward, Trash2, X } from 'lucide-react';
 import { Button } from '../components/button.jsx';
+import { MenuIcon } from '../components/menu-icon.jsx';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/tooltip.jsx';
 import { T } from '../strings.js';
@@ -19,7 +20,7 @@ const Action = forwardRef(function Action({ level, label, icon: Icon, ...props }
   if (level === 0) return <Button ref={ref} variant="ghost" size="sm" {...props}>{label}</Button>;
   return (
     <Tooltip>
-      <TooltipTrigger asChild><Button ref={ref} variant="ghost" size="icon-sm" aria-label={label} {...props}><Icon aria-hidden="true" /></Button></TooltipTrigger>
+      <TooltipTrigger asChild><Button ref={ref} variant="ghost" size="icon-sm" aria-label={label} {...props}><MenuIcon icon={Icon} /></Button></TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
   );

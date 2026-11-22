@@ -5,6 +5,7 @@
 //   list     { tab: 'todo' | 'done', filter: { connector: [id], date: ['day' | 'week' | 'month'] }, limit, cursor }
 //            -> { items: [card], nextCursor, names: { id: name }, facets: { connector: [{ key, name, count }] } }
 //   get      { id }               -> { record, draft: { title, brief, sourceRef } }   the whole record, and what a new issue made of it starts with (and is marked with).
+//   read     { id, revision }     -> { record, unreadCount } an explicit owner read of displayed content; get/list do not acknowledge. A handled record carries no unread state (`unread` false, not in `unreadCount`), whoever handled it
 //            A conversation's text is one line per message (`11-17 19:15 name：words`): when every line is one, the record also has `messages`: [{ at: 'MM-DD HH:mm', from, text }],
 //            which the pages set as a talk (the page shows the text as it is when there are none).
 //   done { id | ids } / delete { id | ids } / restore { id | ids }     one record, or up to 200 at once -> { outcome, changed, record? }
@@ -113,6 +114,7 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
     return {
       id: row.id, ref: row.ref, connector: row.connector, connectorName: entry?.name ?? row.connector, connectorIcon: entry?.icon ?? null, title: row.title, from: row.from,
       at: row.at ?? row.collectedAt, url: row.url, state: row.state, verdict: row.verdict, done: row.doneAt !== null, byOwner: row.byOwner,
+      revision: row.revision, unread: row.unread,
       issue: row.issueId === null ? null : issueOf(summaries.get(row.issueId)),
     };
   }
@@ -135,6 +137,7 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
     const summaries = summariesOf(page.items);
     return {
       outcome: 'success', items: page.items.map((row) => card(row, known, summaries)), nextCursor: page.nextCursor,
+      unreadCount: inbox.unreadCount(),
       names: Object.fromEntries(called), // every collector's name by id, for the chips of a filter that keeps them by id
       facets: { connector: page.facets.connector.map(({ key, count }) => ({ key, name: called.get(key) ?? key, count })) },
     };
@@ -263,6 +266,14 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
 
   const CALLS = {
     list, get, share, link, complete,
+    read: ({ id, revision }) => {
+      const record = one(id, { summary: true });
+      if (!record || record.deletedAt !== null) return needs('There is no record with that number.', 'unknown_record');
+      if (!Number.isSafeInteger(revision) || revision < 1 || revision > record.revision) return { outcome: 'needs_clarification', code: 'invalid_request' };
+      const changed = inbox.read(record.id, revision);
+      return { outcome: changed ? 'success' : 'no_op', unreadCount: inbox.unreadCount(),
+        record: card(one(record.id, { summary: true }), directory(), summariesOf([record])) };
+    },
     update: ({ id, patch }) => {
       const changed = inbox.update(id, patch);
       return changed.record ? { ...get({ id }), outcome: changed.outcome } : changed;

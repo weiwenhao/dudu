@@ -2,6 +2,13 @@ import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 import { HARNESS_IDS } from './providers/catalog.mjs';
 import { createWithAttachments } from './assistant/issues/create-with-attachments.mjs';
+import { understands } from './native-client.mjs';
+
+/**
+ * The capability of a phone whose chat list may show what the owner said last (owner, 2026-11-22: "其他 APP 都会显示我发的消息"): the row's `preview` and `receivedAt` are then those of the newest message of
+ * either side, so the row also moves to the top when the owner sends. The shape of the row is the same; a phone that declares nothing (build 143) is answered as it always was.
+ */
+export const OWN_MESSAGES = 'board.latest';
 // The board and the Collector for the phone (docs/assistant.md 4.2). The owner is the one asking, here as on the desktop, and the commands are the desktop
 // interface's own: `issues/list`, `issues/add`, `inbox/*` (host/assistant/issues/api.mjs, host/assistant/inbox/api.mjs). What changes is the answer: plain,
 // small rows (no description, no activity), so that the app draws its lists itself.
@@ -28,6 +35,7 @@ import { createWithAttachments } from './assistant/issues/create-with-attachment
 //   inbox.get     { id }                                     -> { record, draft }                  `record.messages` is there when the record is a conversation (one line per message in its text):
 //                                                                                               `[{ at: 'MM-DD HH:mm', from, text }]`, for the phone to set as a talk; the text is always there too
 //   inbox.mark    { action: 'done' | 'delete' | 'restore', ids }          -> { outcome, changed }
+//   inbox.read    { id, revision }                           -> { outcome, record, unreadCount }   only a displayed detail acknowledges its exact content revision
 //   inbox.share   { ids, issue, to?: 'issue' | 'session' }   -> { outcome, changed }
 //   inbox.complete { id }                                    -> { outcome, started }              more context for one record: its collector's session reads the conversation around it, in the
 //                                                                                               background; `inbox.get` then says `completing` and, when it failed, `completeError`
@@ -36,7 +44,7 @@ import { createWithAttachments } from './assistant/issues/create-with-attachment
 // (inbox/api.mjs). An answer that is not a success keeps its `outcome`, `code` and `message`: the app says it failed in its own words.
 export const NATIVE_BOARD_METHODS = Object.freeze([
   'board.list', 'board.pin', 'board.read', 'issue.get', 'issue.delete', 'issue.update', 'issue.assign', 'issue.open', 'issue.pick', 'issue.options', 'issue.parents', 'issue.project.create', 'issue.label.create', 'issue.create',
-  'inbox.list', 'inbox.get', 'inbox.mark', 'inbox.share', 'inbox.complete',
+  'inbox.list', 'inbox.get', 'inbox.read', 'inbox.mark', 'inbox.share', 'inbox.complete',
 ]);
 
 const TABS = new Set(['active', 'backlog', 'all']);
@@ -145,8 +153,9 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, h
     if (params.q !== undefined && (typeof params.q !== 'string' || params.q.length > MAX_TITLE)) fail('BAD_REQUEST');
     const q = params.q?.trim() ?? '';
     const words = /[\p{L}\p{N}]/u.test(q);
-    const result = await askIssues(words ? 'search' : 'list', words ? { q, tab: 'all', limit: 20 } : { tab: 'all', order: 'updated', limit: 20 });
-    return succeeded(result) ? { outcome: 'success', items: (result.items ?? []).map(row) } : problem(result);
+    // Sub-issues do not nest, so only issues that are not sub-issues themselves can be a parent; ask for more than 20 so the filter leaves enough.
+    const result = await askIssues(words ? 'search' : 'list', words ? { q, tab: 'all', limit: 100 } : { tab: 'all', order: 'updated', limit: 100 });
+    return succeeded(result) ? { outcome: 'success', items: (result.items ?? []).filter((issue) => !issue.parent).slice(0, 20).map(row) } : problem(result);
   }
 
   async function createProject(params) {
@@ -165,13 +174,14 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, h
     return succeeded(result) ? { outcome: 'success', label: result.label } : problem(result);
   }
 
-  async function list(params) {
+  async function list(params, context) {
     const tab = params.tab ?? 'active';
     if (!TABS.has(tab)) fail('BAD_REQUEST');
     if (params.layout === 'chat') {
       if (!home) return unavailable();
-      if (params.filterData === true) return home.list(tab, filterRow, undefined, { includeStatuses: true });
-      return home.list(tab, row);
+      const ownMessages = understands(context?.client, OWN_MESSAGES);
+      if (params.filterData === true) return home.list(tab, filterRow, undefined, { includeStatuses: true, ownMessages });
+      return home.list(tab, row, undefined, { ownMessages });
     }
     const request = { tab, group: 'sessionState', limit: PAGE };
     if (params.groupKey !== undefined || params.cursor !== undefined) {
@@ -353,6 +363,7 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, h
     if (!succeeded(result)) return { tab, ...problem(result) };
     return {
       outcome: 'success', tab, items: result.items, nextCursor: result.nextCursor ?? null, names: result.names ?? {},
+      unreadCount: result.unreadCount,
       // What the tab holds in all, whatever is on this page: the sum of its collectors' counts.
       total: (result.facets?.connector ?? []).reduce((sum, facet) => sum + facet.count, 0),
     };
@@ -364,6 +375,13 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, h
     if (!succeeded(result)) return problem(result);
     // A conversation's record carries its `messages` when every line of its text is one (the plugin's `get`): the phone sets it as a talk, and shows the text as it is when not.
     return { outcome: 'success', record: result.record, draft: result.draft };
+  }
+
+  async function inboxRead(params) {
+    if (!positive(params.id) || !positive(params.revision)) fail('BAD_REQUEST');
+    const result = await askInbox('read', { id: params.id, revision: params.revision });
+    return ['success', 'no_op'].includes(result?.outcome)
+      ? { outcome: result.outcome, unreadCount: result.unreadCount, record: result.record } : problem(result);
   }
 
   function ids(params) {
@@ -394,16 +412,16 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, h
 
   const METHODS = {
     'board.pin': (params) => home ? home.pin(params, fail) : unavailable(),
-    'board.read': (params) => home ? home.read(params, fail) : unavailable(),
+    'board.read': (params, context) => home ? home.read(params, fail, context?.source) : unavailable(),
     'board.list': list, 'issue.get': get, 'issue.delete': remove, 'issue.update': update, 'issue.assign': assign, 'issue.open': open, 'issue.pick': pick,
     'issue.options': options, 'issue.parents': parents, 'issue.project.create': createProject, 'issue.label.create': createLabel, 'issue.create': create,
-    'inbox.list': inboxList, 'inbox.get': inboxGet, 'inbox.mark': inboxMark, 'inbox.share': inboxShare, 'inbox.complete': inboxComplete,
+    'inbox.list': inboxList, 'inbox.get': inboxGet, 'inbox.read': inboxRead, 'inbox.mark': inboxMark, 'inbox.share': inboxShare, 'inbox.complete': inboxComplete,
   };
   return {
-    async dispatch(method, params) {
+    async dispatch(method, params, context) {
       if (!Object.hasOwn(METHODS, method)) fail('UNSUPPORTED');
       if (!isRecord(params)) fail('BAD_REQUEST');
-      return METHODS[method](params);
+      return METHODS[method](params, context);
     },
   };
 }

@@ -4,7 +4,7 @@ import { shortenProjectKeys } from './references.mjs';
 import { migrateWorkflow } from './workflow.mjs';
 import { migrateLabels } from './labels.mjs';
 import { migrateLinks } from './links.mjs';
-import { migrateInbox, migrateInboxMarks, migrateInboxOwner, migrateInboxSignals } from '../inbox/store.mjs';
+import { migrateInbox, migrateInboxMarks, migrateInboxOwner, migrateInboxSignals, migrateInboxReads } from '../inbox/store.mjs';
 
 export const OPEN_SQL = "status NOT IN ('done','canceled')";
 export const FINISHED_SQL = "status IN ('done','canceled')";
@@ -167,6 +167,7 @@ const MIGRATIONS = [
   // Session status now follows shared read receipts. Discard only obsolete manual overrides.
   `ALTER TABLE issues DROP COLUMN agent_state_basis;
    ALTER TABLE issues DROP COLUMN agent_state;`,
+  migrateInboxReads,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

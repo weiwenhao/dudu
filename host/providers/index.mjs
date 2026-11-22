@@ -70,8 +70,16 @@ export async function createProviders({ host, providers, folder, log = console }
     const dispose = () => { for (const stop of disposers) { try { stop(); } catch { /* the agent is gone */ } } };
     try {
       disposers.push(registerHarnessCommands(agent, wanted));
-      for (const definition of createMirrorTools({ bridge: wanted })) disposers.push(agent.ctx.tools.register(definition));
-      mirrored.set(agent.id, { agent, route, bridge: wanted, dispose });
+      const definitions = createMirrorTools({ bridge: wanted });
+      const names = new Set(definitions.map((definition) => definition.name));
+      for (const name of host.sessionTools?.names?.(route) ?? []) {
+        const spec = wanted.driver.fallbackTool?.(name);
+        if (names.has(name) || !spec) continue;
+        definitions.push(createMirrorTool({ bridge: wanted, spec }));
+        names.add(name);
+      }
+      for (const definition of definitions) disposers.push(agent.ctx.tools.register(definition));
+      mirrored.set(agent.id, { agent, route, bridge: wanted, names, dispose });
     } catch (error) {
       dispose();
       log.warn?.(`[dudu] Could not register the ${route} tools for a session: ${error.message}`);
@@ -113,7 +121,7 @@ export async function createProviders({ host, providers, folder, log = console }
     bridge.onGoalReport = (sessionId, round, report) => reportGoal({ goals: host.goals?.(), agent: host.agents.get(sessionId), round, report, log });
     bridge.jobs = createHarnessJobs({ host, route: driver.route, log });
     // The tools the host serves to this harness's sessions (the cron tools that take the place of Claude's own).
-    bridge.toolsOf = (sessionId) => host.sessionTools?.forSession(sessionId, driver.route);
+    bridge.toolsOf = (sessionId, run) => host.sessionTools?.forSession(sessionId, driver.route, run);
     // AgentOptions keeps the host's default route after restore. Recheck the actual adapter before replaying tools.
     bridge.beforeStep = (sessionId) => {
       const agent = host.agents.get(sessionId);
@@ -122,12 +130,17 @@ export async function createProviders({ host, providers, folder, log = console }
     // A tool the catalog does not list (an MCP tool, say) gets its mirror tool when the harness first calls it.
     bridge.onUnknownTool = (sessionId, name) => {
       const agent = host.agents.get(sessionId);
+      const current = mirrored.get(agent?.id);
+      if (current?.names.has(name)) return;
       const spec = driver.fallbackTool?.(name);
       if (!agent || !spec) return;
       try {
         const dispose = agent.ctx.tools.register(createMirrorTool({ bridge, spec }));
-        const current = mirrored.get(agent.id);
-        if (current) { const before = current.dispose; current.dispose = () => { before(); try { dispose(); } catch { /* the agent is gone */ } }; }
+        if (current) {
+          current.names.add(name);
+          const before = current.dispose;
+          current.dispose = () => { before(); try { dispose(); } catch { /* the agent is gone */ } };
+        }
       } catch (error) {
         log.warn?.(`[dudu] Could not register the ${name} tool: ${error.message}`);
       }
@@ -172,6 +185,13 @@ export async function createProviders({ host, providers, folder, log = console }
     host.on('session/event', (session, event) => {
       if (event?.type === 'agent/inbox/spliced' && event.data?.target === 'next-step') {
         for (const { bridge } of registered.values()) bridge.yieldForInput(session.id);
+      }
+      // A new session can take its initial provider directly in AgentOptions,
+      // after agent/created, without a model/selection event. Resolve that route
+      // before DSH prepares and freezes the step's executable tool table.
+      if (event?.type === 'turn/start' || event?.type === 'step/start') {
+        const agent = host.agents.get(session.id);
+        if (agent) syncMirrorTools(agent, routeOf(agent));
       }
       if (event?.type !== 'model/selection') return;
       const agent = host.agents.get(session.id);

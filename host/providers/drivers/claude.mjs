@@ -20,7 +20,8 @@ export const ENTRYPOINT = 'dudu';
 /** Tools that run commands or change files: what a read-only session may not use. */
 export const WRITING_TOOLS = ['Bash', 'BashOutput', 'KillShell', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit'];
 
-/** OAR has no way to answer a question the harness asks its host, so the model is not offered one to ask. */
+/** Native control requests have no OAR reply channel. The host's MCP
+ * ask_user_question supplies the DSH question UI and returns the actual answer. */
 const UNANSWERABLE_TOOLS = ['AskUserQuestion'];
 
 export class ClaudeNormalizer extends OarNormalizer {

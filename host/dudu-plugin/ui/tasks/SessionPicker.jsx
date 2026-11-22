@@ -13,6 +13,7 @@ import { canRunIn } from './format.js';
 
 const W = T.widgets.sessions;
 const PAGE = 50;
+const NEAR_END = 120; // px from the end of the list at which the next page is asked for: by scrolling, not by a button (owner, 2026-11-21), as the 会话 window's list does
 // The list asks for every conversation there is (the server's cap), so that what is typed can be answered from it at once, as the 会话 window does (sessions/Sessions.jsx).
 const ALL = 500;
 // Room the popup wants under (or over) its row before it opens there, in px: the search box and about five rows.
@@ -99,7 +100,8 @@ function Choices({ value, options, onPick }) {
     </div>
       : status === 'loading' && !sessions.length ? <p role="status" className="flex items-center justify-center gap-2 px-5 py-8 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" aria-hidden="true" />{T.shell.loading}</p>
       : sessions.length === 0 ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">{W.empty}</p>
-      : <ul role="listbox" aria-label={T.tasks.linked} aria-busy={searching} className="dudu-session-list flex flex-col gap-0.5 overflow-auto overscroll-contain">
+      : <ul role="listbox" aria-label={T.tasks.linked} aria-busy={searching} className="dudu-session-list flex flex-col gap-0.5 overflow-auto overscroll-contain"
+        onScroll={(event) => { const element = event.currentTarget; if (list.length > sessions.length && element.scrollHeight - element.scrollTop - element.clientHeight < NEAR_END) setPages({ asked, count: (pages.asked === asked ? pages.count : 1) + 1 }); }}>
         {sessions.map((session, index) => <li key={session.key} role="none">
           <Row session={session} selected={session.key === current?.key} checked={session.dshSessionId === value} disabled={!canRunIn(session, options)} terms={terms} now={now}
             optionRef={(element) => { if (element) rows.current.set(session.key, element); else rows.current.delete(session.key); }}
@@ -109,7 +111,6 @@ function Choices({ value, options, onPick }) {
               if (next !== undefined) { event.preventDefault(); choose(next); }
             }} />
         </li>)}
-        {list.length > sessions.length && <li role="none" className="pt-1"><Button variant="ghost" size="sm" className="w-full" onClick={() => setPages({ asked, count: (pages.asked === asked ? pages.count : 1) + 1 })}>{W.more}</Button></li>}
       </ul>}
   </>;
 }

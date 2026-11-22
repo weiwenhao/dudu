@@ -38,7 +38,18 @@ test('a line is what the command takes from the waiting ones, kept under the com
   assert.equal((await command.handler({ commandId: 'cmd-2', rawInput: `at ${id}` })).kind, 'error'); // taken once
   assert.equal((await command.handler({ commandId: 'cmd-3', rawInput: `reply ${group.pend(record)}` })).kind, 'error'); // the kind is the line's own
   assert.deepEqual(group.many(['cmd-1', 'nope']), { 'cmd-1': record });
+  assert.deepEqual(group.ownLine(), { text: '@DUD-9 结论了吗', at: 5 }, 'the owner\'s last @ line, as the chat list shows it (their words to 嘟嘟)');
   assert.equal(sayText({ kind: 'reply', issue: record.issue, text: '好的' }), 'DUD-9: 好的');
+});
+
+test('the @ line keeps the complete references of its pictures, and only those; a line without pictures has no such key', async () => {
+  const { group, said } = setup();
+  const ref = { attachmentId: 'sha256:aa', mediaType: 'image/jpeg', bytes: 10, width: 3, height: 4, name: 'photo.jpg', originalDimensions: { width: 6, height: 8 } };
+  await group.sent(group.expect(KEY), { issue, text: '看图', files: 3, pictures: [ref, { attachmentId: 'sha256:bb', mediaType: 'image/png' }, null] });
+  assert.deepEqual(said[0][1].pictures, [{ attachmentId: 'sha256:aa', mediaType: 'image/jpeg', bytes: 10, width: 3, height: 4, name: 'photo.jpg' }]);
+  assert.equal(said[0][1].files, 3);
+  await group.sent(group.expect(KEY), { issue, text: '没图' });
+  assert.equal('pictures' in said[1][1], false);
 });
 
 test('the answer comes after the line: the last message of the turn the line started', async () => {

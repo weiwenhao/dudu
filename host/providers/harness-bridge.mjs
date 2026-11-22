@@ -209,7 +209,9 @@ export class HarnessBridge {
     this.onForeground = onForeground;
     // Set by the owner of the agents: registers a mirror tool for a tool name the harness's catalog does not list.
     this.onUnknownTool = undefined;
-    // Set by the owner of the agents: `(sessionId) -> { mcpServers, disallowedTools, launchArgs } | null`, what the host adds to the options of the harness's session for this conversation (tools it serves, tools of the harness it takes away, a flag that allows them).
+    // Set by the owner: `(sessionId, { agent, signal }) -> { mcpServers, env,
+    // disallowedTools, launchArgs } | null`. Tools keep the current run's exact
+    // owner and cancellation; launch settings stay stable for retained processes.
     this.toolsOf = undefined;
   }
 
@@ -271,7 +273,7 @@ export class HarnessBridge {
       await delivery.prepare();
       const input = await this.inputOf(prompts, { signal });
       // Tools the host serves must never keep a conversation from starting.
-      const hostTools = await Promise.resolve(this.toolsOf?.(sessionId)).catch(() => null);
+      const hostTools = await Promise.resolve(this.toolsOf?.(sessionId, { agent, signal })).catch(() => null);
       handle = await this.driver.start({
         sessionId, agent, ...input, resume: link?.nativeSessionId, cwd: agent?.session?.header?.cwd,
         model, effort, permission: this.permissionOf(agent), signal,

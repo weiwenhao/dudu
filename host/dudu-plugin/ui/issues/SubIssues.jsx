@@ -21,7 +21,7 @@ export function ParentChoices({ request, except, onSelect }) {
     }, query ? 200 : 0);
     return () => { active = false; clearTimeout(timer); };
   }, [request, query]);
-  const shown = items.filter((issue) => issue.id !== except);
+  const shown = items.filter((issue) => issue.id !== except && !issue.parent); // sub-issues do not nest: a sub-issue is never a parent
   return <Command shouldFilter={false}>
     <CommandInput value={query} onValueChange={setQuery} placeholder={T.subIssues.searchParent} aria-label={T.subIssues.searchParent} />
     <CommandList>
@@ -52,6 +52,8 @@ export function SubIssues({ request, issue, onOpen, reload }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState(false);
   const children = issue.children ?? [];
+  const canAdd = !issue.parent; // sub-issues do not nest: a sub-issue has no line to add more
+  if (!canAdd && !children.length) return null;
   const add = async () => {
     const text = title.trim();
     if (!text || busy) return;
@@ -79,7 +81,7 @@ export function SubIssues({ request, issue, onOpen, reload }) {
         </button>
       </li>)}
     </ul>
-    {adding
+    {!canAdd ? null : adding
       ? <div className="mt-1 flex flex-col gap-1">
         <input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder={T.subIssues.placeholder} aria-label={T.subIssues.placeholder}
           onKeyDown={(event) => {

@@ -67,11 +67,14 @@ function world(t: any, file = ':memory:') {
     sessionReceivedAt: (key: string) => activity.statusOf(key).attention?.messageAt ?? 0,
     issuePinned: (id: number) => home?.isPinned(`issue:${id}`) === true });
   const api = createIssuesApi({ issues });
+  const said = new Map<string, { text: string; at: number }>();
+  let line: { text: string; at: number } | null = null;
   const options = {
     file, issues: (action: string, body: any) => api.execute(action, body),
     assistant: () => ({ sessionId: 'assistant-session' }),
     activity: (id: string) => activity.statusOf(`dsh:${id}`), warm: activity.warm,
     markUnread: activity.markUnread, acknowledge: activity.acknowledge, now: () => 2_000,
+    mine: (id: string) => said.get(id) ?? null, assistantLine: () => line,
   };
   home = createChatHome(options);
   const bridge = createNativeBoard({ issues: options.issues, home: {
@@ -89,7 +92,9 @@ function world(t: any, file = ':memory:') {
       projected.set(id, projection.apply(projected.get(id) ?? projection.init(), event));
       if (event.type === 'turn/start' || event.type === 'turn/end') live.set(id, { status: event.type === 'turn/start' ? 'running' : 'idle' });
     },
-    call: (method: string, params: any = {}) => bridge.dispatch(method, params),
+    own(id: string, text: string, at: number) { said.set(id, { text, at }); },
+    ownLine(text: string, at: number) { line = { text, at }; },
+    call: (method: string, params: any = {}, context?: any) => bridge.dispatch(method, params, context),
     desktop: (action: string, body: any = {}) => createChatHomeApi(home, options.issues)(action, new Request('https://dsh.invalid/api/dudu/home/' + action, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
     })),
@@ -125,6 +130,56 @@ test('chat home pages every issue, scopes only workflow, and sorts by the last i
   assert.equal(planned.unreadCount, 4, 'scope changes do not drop unread messages from the App badge');
   assert.equal((await list('all')).conversations[0].issue.id, done.id);
   assert.equal((await list('all')).conversations.filter((entry: any) => entry.id === 'assistant').length, 1);
+});
+
+test('an issue with no message yet is placed by when it was made, at the top, and shows no date of its own', async (t) => {
+  const { issues, say, setTime, call } = world(t);
+  const old = issues.add({ title: 'Old', project, agent: 'claude', session: 'dsh:old' }).issue;
+  say('old', 1, 3_000, 'An answer');
+  setTime(9_000);
+  const fresh = issues.add({ title: 'Fresh', project }).issue;
+  const rows = ((await call('board.list', { layout: 'chat', tab: 'all' })) as any).conversations;
+  assert.deepEqual(rows.slice(0, 2).map((entry: any) => entry.issue.id), [fresh.id, old.id]);
+  assert.equal(rows[0].receivedAt, 0);
+});
+
+test('the Desktop and a phone that declares board.latest see what the owner said last, when it is newer than the answer, as the row; the red dot and the build-143 phone stay as they were', async (t) => {
+  const { issues, say, own, ownLine, call, desktop } = world(t);
+  const a = issues.add({ title: 'A', project, agent: 'claude', session: 'dsh:a' }).issue;
+  const b = issues.add({ title: 'B', project, agent: 'claude', session: 'dsh:b' }).issue;
+  say('a', 1, 3_000, 'Answer of A');
+  say('b', 3, 4_000, 'Answer of B');
+  own('a', 'my  question\n\nto A', 5_000); // newer than A's answer
+  own('b', 'older words of mine', 3_500); // older than B's answer
+  ownLine('@DUD-1 hello', 6_000); // 嘟嘟's row: the owner's last @ line
+  const rows = async (context?: any) => ((await call('board.list', { layout: 'chat', tab: 'all' }, context)) as any).conversations;
+  const shown = (list: any[]) => list.map((entry: any) => [entry.id, entry.preview, entry.receivedAt]);
+
+  assert.deepEqual(shown(await rows()), [['issue:' + b.id, 'Answer of B', 4_000], ['issue:' + a.id, 'Answer of A', 3_000], ['assistant', '', 0]], 'an app that declares nothing is answered as before');
+  assert.deepEqual(shown(await rows({ client: { platform: 'ios', capabilities: ['board.push'] } })), shown(await rows()), 'a capability of another kind changes nothing');
+
+  const modern = await rows({ client: { platform: 'ios', capabilities: ['board.latest'] } });
+  assert.deepEqual(shown(modern), [['assistant', '@DUD-1 hello', 6_000], ['issue:' + a.id, 'my question to A', 5_000], ['issue:' + b.id, 'Answer of B', 4_000]],
+    'the newest message of either side is the row, on one line, and the row goes where its time puts it; an older word of the owner is not shown');
+
+  const fromDesktop = (await (await desktop('list', { tab: 'all' })).json()).conversations;
+  assert.deepEqual(shown(fromDesktop), shown(modern), 'the Desktop list is the same');
+  const unread = Object.fromEntries(modern.filter((entry: any) => entry.issue).map((entry: any) => [entry.id, entry.unread]));
+  assert.deepEqual(unread, { ['issue:' + a.id]: true, ['issue:' + b.id]: true }, 'the red dot is the answer\'s: the owner\'s own message neither lights it nor puts it out');
+});
+
+test('the 未读 scope keeps every unread conversation whatever its workflow, and a read one leaves it', async (t) => {
+  const { issues, say, activity, desktop } = world(t);
+  issues.add({ title: 'Planned', project, status: 'backlog', agent: 'claude', session: 'dsh:planned' });
+  const done = issues.add({ title: 'Done', project, status: 'done', agent: 'claude', session: 'dsh:done' }).issue;
+  const read = issues.add({ title: 'Read', project, agent: 'claude', session: 'dsh:read' }).issue;
+  say('planned', 1, 3_000, 'a'); say('done', 1, 4_000, 'b'); say('read', 1, 5_000, 'c');
+  await activity.acknowledge('read', { seq: 1 });
+  const ids = async () => (await (await desktop('list', { tab: 'unread' })).json()).conversations.map((entry: any) => entry.issue?.id ?? entry.id);
+  const unread = await ids();
+  assert.equal(unread.includes(done.id), true, 'a completed issue is still unread');
+  assert.equal(unread.includes(read.id), false);
+  assert.equal(unread.length, 2);
 });
 
 test('homepage pins survive restart and unpinning Dudu, without taking pinned conversations out of the main list', async (t) => {

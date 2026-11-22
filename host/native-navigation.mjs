@@ -270,7 +270,7 @@ const DUDU_SIDEBAR = Object.freeze([
 
 /** The app draws 嘟嘟's settings itself. The web fallback is only for phones predating the native route. */
 const DUDU_SECTIONS = Object.freeze([
-  ['general', '通用'], ['statuses', '状态'], ['connectors', '连接器'], ['collectors', '收集器'], ['rules', '规则'], ['memory', '记忆'], ['skills', '技能'],
+  ['general', '常规'], ['statuses', '状态'], ['connectors', '连接器'], ['collectors', '收集器'], ['rules', '规则'], ['memory', '记忆'], ['skills', '技能'],
 ]);
 const DUDU_SETTINGS = Object.freeze([
   ...DUDU_SECTIONS.map(([section, title], index) => Object.freeze({

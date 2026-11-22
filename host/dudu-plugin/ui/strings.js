@@ -42,7 +42,7 @@ const en = {
   },
   brand: 'Dudu',
   issues: 'Issues',
-  tabs: { active: 'Active', backlog: 'Backlog', all: 'All' },
+  tabs: { active: 'Active', unread: 'Unread', backlog: 'Backlog', all: 'All' }, // unread replaced backlog as a built-in tab (owner, 2026-11-21); backlog stays only to name a saved view's base
   status: { backlog: 'Backlog', todo: 'Todo', in_progress: 'In Progress', in_review: 'In Review', done: 'Done', canceled: 'Canceled' },
   priority: { none: 'No priority', urgent: 'Urgent', high: 'High', medium: 'Medium', low: 'Low' },
   priorityOf: (name) => `Priority: ${name}`,
@@ -136,6 +136,7 @@ const en = {
     dueSet: 'Due date set', dueRemoved: 'Due date removed', assigned: (name) => `Assigned to ${name}`, unassigned: 'Agent removed',
     updated: (count) => (count === 1 ? 'Updated 1 issue' : `Updated ${count} issues`), copied: (text) => `Copied ${text}`,
     snoozed: 'Snoozed', snoozeCleared: 'Snooze cleared', failed: 'Could not save the change',
+    assignAgent: 'Please assign an agent', // NEW (2026-11-22): the owner's 「请分配智能体」 for a tap on an issue with no agent; the English is the phones' (pending review)
     region: 'Notifications',
   },
   // NEW: the Dates row of the filter menu: three fields with ready-made ranges.
@@ -421,7 +422,7 @@ const zh = {
     copy: '复制', copied: '已复制', noOutput: '（无输出）', confirmDelete: '再次点击确认删除',
   },
   brand: '嘟嘟', issues: '看板',
-  tabs: { active: '进行中', backlog: '待规划', all: '全部' },
+  tabs: { active: '进行中', unread: '未读', backlog: '待规划', all: '全部' },
   status: { backlog: '待规划', todo: '待办', in_progress: '处理中', in_review: '待审核', done: '已完成', canceled: '已取消' },
   priority: { none: '无优先级', urgent: '紧急', high: '高', medium: '中', low: '低' },
   priorityOf: (name) => `优先级：${name}`,
@@ -484,6 +485,7 @@ const zh = {
     dueSet: '已设置截止日期', dueRemoved: '已移除截止日期', assigned: (name) => `已交给 ${name}`, unassigned: '已移除智能体',
     updated: (n) => `已更新 ${n} 条事项`, copied: (text) => `已复制 ${text}`, snoozed: '已设为稍后提醒', snoozeCleared: '已取消稍后提醒',
     failed: '更改没能保存', region: '通知',
+    assignAgent: '请分配智能体', // 主人的原话（2026-11-22）：点开没有分配智能体的事项时的提示
   },
   dates: { name: '日期', due: '截止日期', created: '创建时间', updated: '更新时间', overdue: '已逾期', today: '今天', next7: '未来 7 天', next30: '未来 30 天', day: '过去一天', week: '过去一周', month: '过去一个月' },
   search: { label: '搜索事项', placeholder: '搜索事项…' }, total: (n) => `${n.toLocaleString('zh-CN')} 条事项`,

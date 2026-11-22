@@ -10,6 +10,10 @@
 // with every start (OAR does not remember it) and stays the same between starts, so that a process that is still alive sees the same options.
 import { cronProblem, nextCron } from '../assistant/schedule/cron.mjs';
 import { serveMcpTools } from './oar-runtimes.mjs';
+import { randomBytes } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { HARNESS_IDS } from './catalog.mjs';
+import { createQuestionTool } from './question-tools.mjs';
 
 /** The name of the server: Claude sees `mcp__dudu__CronCreate`. */
 export const SERVER = 'dudu';
@@ -70,14 +74,39 @@ export function scheduleOf({ cron, recurring = true }, { timeZone, now = Date.no
 
 const whenOf = (schedule) => (schedule.kind === 'once' ? `once ${schedule.date} ${schedule.time}` : schedule.expression);
 
+// ACP guarantees stdio MCP, not HTTP. In particular Antigravity persists MCP
+// headers/env, so credentials must instead travel in the native launch environment.
+// Claude's HTTP transport also aborts a silent response after 60 seconds. Its
+// stdio transport and our SDK client can keep a human question pending instead.
+const STDIO_ROUTES = new Set(['claude', 'grok', 'kimi', 'opencode', 'antigravity', 'codebuddy', 'devin']);
+export function sessionToolTransport(server, route) {
+  if (!STDIO_ROUTES.has(route)) return { mcpServers: [server] };
+  const key = `DUDU_MCP_${randomBytes(12).toString('hex').toUpperCase()}_TOKEN`;
+  return {
+    mcpServers: [{
+      name: server.name,
+      command: process.execPath,
+      args: [fileURLToPath(new URL('./mcp-stdio.mjs', import.meta.url)), key],
+    }],
+    env: {
+      [key]: JSON.stringify({ url: server.url, headers: server.headers }),
+      // Desktop's Node is Electron in Node mode. Keep that mode in the inherited
+      // process environment, without adding env to the persisted MCP entry.
+      ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+    },
+  };
+}
+
 /**
  * `tasks()` is the task service (it starts after the providers, so it is asked for when a call comes); `describe(sessionId)` -> `{ project }` (the workspace DSH keeps the conversation in) or null; `serve` is OAR's
- * `serveMcpTools`. `routes` are the harnesses that get the tools: only Claude has tools of its own to replace.
+ * `serveMcpTools`. Claude gets its cron replacements. Every supported harness
+ * also gets DSH's question tool when `question` supplies its schema and service.
  */
-export function createSessionTools({ tasks, describe, serve = serveMcpTools, timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone, now = Date.now, routes = ['claude'], log = console }) {
-  const served = new Map(); // DSH session id -> a promise of what `serve` gave
+export function createSessionTools({ tasks, describe, question, serve = serveMcpTools, timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone, now = Date.now, routes = question ? HARNESS_IDS : ['claude'], log = console }) {
+  const served = new Map(); // DSH session id -> route, exact owner/run and served tools
+  let closed = false;
 
-  function toolsFor(sessionId, route) {
+  function cronToolsFor(sessionId, route) {
     const service = () => tasks() ?? null;
     const mine = (task) => task?.target?.mode === 'existing' && task.target.sessionId === sessionId;
     return [
@@ -135,24 +164,64 @@ export function createSessionTools({ tasks, describe, serve = serveMcpTools, tim
   }
 
   return {
+    // DSH freezes the executable tool set before streaming a model step. Host
+    // tools are known at registration time, so their mirrors must be ready
+    // before the first native call, rather than added during that stream.
+    names(route) {
+      if (!routes.includes(route)) return [];
+      return [...(route === 'claude' ? NATIVE : []), ...(question ? ['ask_user_question'] : [])]
+        .map((name) => `mcp__${SERVER}__${name}`);
+    },
     /**
      * What a start of this conversation's session is given: the server of the tools (`mcpServers`), the tools of Claude's it replaces (`disallowedTools`) and Claude's flag that allows the new ones (`launchArgs`: a
-     * session whose permission is not wide open would refuse them, "it requires approval, and this session has no approval surface": the owner gives the tools every permission there is); null when this harness has none
-     * to replace, or when the tools cannot be served (the session then runs as it always did, with Claude's own).
+     * session whose permission is not wide open would otherwise refuse them).
+     * Tool calls retain the exact owner's cancellation, even across process reuse.
      */
-    async forSession(sessionId, route) {
-      if (!routes.includes(route) || typeof sessionId !== 'string' || !sessionId || sessionId.startsWith('dudu-assistant-')) return null;
+    async forSession(sessionId, route, run) {
+      if (closed || !routes.includes(route) || typeof sessionId !== 'string' || !sessionId || sessionId.startsWith('dudu-assistant-')) return null;
       let entry = served.get(sessionId);
+      if (entry && (entry.route !== route || entry.run?.agent !== run?.agent)) {
+        await this.forget(sessionId);
+        entry = undefined;
+      }
       if (!entry) {
-        entry = Promise.resolve().then(() => serve({ name: SERVER, tools: toolsFor(sessionId, route) }));
+        entry = { route, run, lifetime: new AbortController() };
+        const current = entry;
+        entry.ready = Promise.resolve().then(async () => {
+          const tools = route === 'claude' ? cronToolsFor(sessionId, route) : [];
+          const ask = question && createQuestionTool({
+            schema: question.schema(run?.agent), ask: (request) => question.ask(request),
+            owner: () => current.run, lifetime: current.lifetime.signal,
+          });
+          if (ask) tools.push(ask);
+          if (!tools.length) return null;
+          const set = await serve({ name: SERVER, tools });
+          const options = sessionToolTransport(set.server, route);
+          if (route === 'claude') {
+            options.disallowedTools = [...NATIVE];
+            options.launchArgs = ['--allowedTools', tools.map(({ name }) => `mcp__${SERVER}__${name}`).join(',')];
+          } else if (route === 'codex' && ask) {
+            // Codex's default MCP tool deadline is 60 seconds. Its native
+            // per-server setting merges with OAR's thread-level MCP config;
+            // app-server validates this table before opening a thread, so give
+            // it the real endpoint but leave it disabled until OAR supplies the
+            // authenticated, enabled entry in thread/start or thread/resume.
+            // No credential goes in argv or the user's config file.
+            options.launchArgs = ['-c', `mcp_servers.${SERVER}={url=${JSON.stringify(set.server.url)},enabled=false,tool_timeout_sec=2147483}`];
+          }
+          return { ...set, options };
+        });
         served.set(sessionId, entry);
       }
+      entry.run = run;
       try {
-        const { server } = await entry;
-        return { mcpServers: [server], disallowedTools: [...NATIVE], launchArgs: ['--allowedTools', NATIVE.map((name) => `mcp__${SERVER}__${name}`).join(',')] };
+        const set = await entry.ready;
+        if (entry.lifetime.signal.aborted || closed) return null;
+        return set?.options ?? null;
       } catch (error) {
-        served.delete(sessionId);
-        log.warn?.(`[dudu] Could not serve the cron tools to a Claude session: ${error?.message ?? error}`);
+        if (served.get(sessionId) === entry) served.delete(sessionId);
+        entry.lifetime.abort();
+        log.warn?.(`[dudu] Could not serve the session tools to ${route}: ${error?.message ?? error}`);
         return null;
       }
     },
@@ -160,9 +229,10 @@ export function createSessionTools({ tasks, describe, serve = serveMcpTools, tim
     async forget(sessionId) {
       const entry = served.get(sessionId);
       served.delete(sessionId);
-      const set = await entry?.catch(() => null);
+      entry?.lifetime.abort();
+      const set = await entry?.ready.catch(() => null);
       await set?.close().catch(() => {});
     },
-    async close() { await Promise.all([...served.keys()].map((sessionId) => this.forget(sessionId))); },
+    async close() { closed = true; await Promise.all([...served.keys()].map((sessionId) => this.forget(sessionId))); },
   };
 }

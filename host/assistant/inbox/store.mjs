@@ -115,6 +115,24 @@ export function migrateInboxSignals(db) {
   if (!columns('collect_runs').has('me')) db.exec('ALTER TABLE collect_runs ADD COLUMN me TEXT');
 }
 
+/** What is unread (owner, 2026-11-21: "已处理的消息直接清除未读状态"): content nobody has read, on a record that is neither deleted nor handled (handled = it has an issue, or the owner's mark).
+ * One condition for the badge, the partial index and the row's own flag (`view`), so that they cannot disagree. */
+const UNREAD = 'deleted_at IS NULL AND done_at IS NULL AND issue_id IS NULL AND read_revision < revision';
+
+/** Read receipts. Earlier versions kept no reading history: initialize one content baseline without backfilling historical badges.
+ * This is applied once to all existing rows. A handled record carries no unread state (the index, the count and the flag leave it out),
+ * so one that was handled before anybody read it stops counting with no data written. */
+export function migrateInboxReads(db) {
+  const columns = new Set(db.prepare('PRAGMA table_info(inbox_records)').all().map((column) => column.name));
+  if (!columns.has('revision')) db.exec('ALTER TABLE inbox_records ADD COLUMN revision INTEGER NOT NULL DEFAULT 1');
+  if (!columns.has('read_revision')) {
+    db.exec('ALTER TABLE inbox_records ADD COLUMN read_revision INTEGER NOT NULL DEFAULT 0');
+    db.exec('UPDATE inbox_records SET read_revision = revision');
+  }
+  db.exec('DROP INDEX IF EXISTS inbox_unread'); // the first version of the index, which also held the handled rows
+  db.exec(`CREATE INDEX IF NOT EXISTS inbox_unread_open ON inbox_records(id) WHERE ${UNREAD}`);
+}
+
 // What the widget's tabs hold. A row with an issue is handled, whoever decided it, and so is one the owner marked handled; one without is waiting.
 // A row the owner deleted is in none of them.
 const OPEN = 'done_at IS NULL AND deleted_at IS NULL'; // the owner has not put a mark on it
@@ -124,8 +142,8 @@ const TABS = Object.freeze({
 });
 const SHOWN_AT = 'COALESCE(at, collected_at)'; // the time the row shows: its own, else when it was collected
 
-const COLUMNS = 'id, connector, source_id, version, kind, title, author, url, thread, at, text, context, more, truncated, collected_at, state, verdict, issue_id, reason, judged_at, tries, cleared, done_at, deleted_at, by_owner, to_me, handled';
-const LIGHT = 'id, connector, source_id, version, kind, title, author, url, thread, at, truncated, collected_at, state, verdict, issue_id, reason, judged_at, cleared, done_at, deleted_at, by_owner, to_me, handled';
+const COLUMNS = 'id, connector, source_id, version, kind, title, author, url, thread, at, text, context, more, truncated, collected_at, state, verdict, issue_id, reason, judged_at, tries, cleared, done_at, deleted_at, by_owner, to_me, handled, revision, read_revision';
+const LIGHT = 'id, connector, source_id, version, kind, title, author, url, thread, at, truncated, collected_at, state, verdict, issue_id, reason, judged_at, cleared, done_at, deleted_at, by_owner, to_me, handled, revision, read_revision';
 
 const json = (text) => {
   try {
@@ -142,6 +160,7 @@ const view = (row) => row ? ({
   issueId: row.issue_id, reason: row.reason, judgedAt: row.judged_at, truncated: Boolean(row.truncated), cleared: Boolean(row.cleared),
   doneAt: row.done_at ?? null, deletedAt: row.deleted_at ?? null, byOwner: Boolean(row.by_owner),
   toMe: row.to_me == null ? null : Boolean(row.to_me), handled: row.handled == null ? null : Boolean(row.handled),
+  revision: row.revision, unread: row.read_revision < row.revision && row.deleted_at == null && row.done_at == null && row.issue_id == null, // the same condition as UNREAD
   ...('text' in row ? { text: row.text, context: json(row.context), more: row.more } : {}),
 }) : null;
 
@@ -195,6 +214,7 @@ export function createInbox(db, { now = Date.now } = {}) {
       put('context', changes.context ? JSON.stringify(changes.context) : undefined, row.context);
     }
     if (!set.length) return 'same';
+    if (titled || worded) set.push('revision = revision + 1');
     sql(`UPDATE inbox_records SET ${set.join(', ')} WHERE id = ?`).run(...values, row.id);
     if (titled || named || worded) {
       const kept = sql('SELECT title, text, author FROM inbox_records WHERE id = ?').get(row.id);
@@ -235,7 +255,7 @@ export function createInbox(db, { now = Date.now } = {}) {
           }
           const names = [...new Set([...open.author.split('、'), ...(record.author ?? '').split('、')].filter(Boolean))].join('、').slice(0, 200);
           const toMe = open.to_me === 1 || record.toMe === true ? 1 : open.to_me === 0 || record.toMe === false ? 0 : null;
-          sql('UPDATE inbox_records SET version = ?, title = ?, author = ?, url = ?, at = ?, text = ?, more = ?, truncated = ?, collected_at = ?, run_id = ?, to_me = ?, handled = ? WHERE id = ?')
+          sql('UPDATE inbox_records SET version = ?, title = ?, author = ?, url = ?, at = ?, text = ?, more = ?, truncated = ?, collected_at = ?, run_id = ?, to_me = ?, handled = ?, revision = revision + 1 WHERE id = ?')
             .run(record.version, record.title, names, record.url, record.at, more.text, record.more ?? '', open.truncated || more.cut || record.truncated ? 1 : 0, at, runId, toMe, signal(record.handled), open.id);
           sql('DELETE FROM inbox_fts WHERE rowid = ?').run(open.id);
           sql('INSERT INTO inbox_fts (rowid, title, text, author) VALUES (?,?,?,?)').run(open.id, ...indexed({ ...record, author: names, text: more.text }));
@@ -415,6 +435,14 @@ export function createInbox(db, { now = Date.now } = {}) {
 
   const forIssue = (issueId) => sql(`SELECT ${COLUMNS} FROM inbox_records WHERE issue_id = ? ORDER BY id`).all(issueId).map(view);
 
+  // A stale detail can acknowledge only the revision it actually displayed.
+  // Listing, forwarding and completing context never call this. Handling does not either: a handled record carries no unread state
+  // (`UNREAD`), and `done` / `link` also bring `read_revision` up to date so that a restored record stays read.
+  const read = (id, revision) => sql(`UPDATE inbox_records SET read_revision = ?
+    WHERE id = ? AND deleted_at IS NULL AND read_revision < ? AND revision >= ?`)
+    .run(revision, id, revision, revision).changes === 1;
+  const unreadCount = () => sql(`SELECT COUNT(*) AS n FROM inbox_records WHERE ${UNREAD}`).get().n;
+
   function prune() {
     const at = now();
     return transaction(() => {
@@ -456,8 +484,8 @@ export function createInbox(db, { now = Date.now } = {}) {
     return { items: rows.slice(0, size).map(view), nextCursor: rows.length > size ? `${rows[size - 1].shown_at}:${rows[size - 1].id}` : null, facets: { connector: facets } };
   }
 
-  /** The owner dealt with it themselves and needs no issue for it: it is handled. Only a row that has no issue; true when it changed. */
-  const done = (id) => sql('UPDATE inbox_records SET done_at = ? WHERE id = ? AND issue_id IS NULL AND done_at IS NULL AND deleted_at IS NULL').run(now(), id).changes === 1;
+  /** The owner dealt with it themselves and needs no issue for it: it is handled, and handled is read. Only a row that has no issue; true when it changed. */
+  const done = (id) => sql('UPDATE inbox_records SET done_at = ?, read_revision = revision WHERE id = ? AND issue_id IS NULL AND done_at IS NULL AND deleted_at IS NULL').run(now(), id).changes === 1;
   /** The row was wrong. It leaves every list but stays in the table, so that the same message is not collected into a new row. */
   const remove = (id) => sql('UPDATE inbox_records SET deleted_at = ? WHERE id = ? AND issue_id IS NULL AND deleted_at IS NULL').run(now(), id).changes === 1;
   /**
@@ -468,8 +496,8 @@ export function createInbox(db, { now = Date.now } = {}) {
     return sql('UPDATE inbox_records SET done_at = NULL WHERE id = ? AND issue_id IS NULL AND done_at IS NOT NULL').run(id).changes === 1;
   });
 
-  /** The owner made an issue of the row (verdict 'issue') or shared it to one (verdict 'note'): it is handled, and it is theirs. */
-  const link = (id, { issueId, verdict }) => sql("UPDATE inbox_records SET state = 'done', verdict = ?, issue_id = ?, reason = '', judged_at = COALESCE(judged_at, ?), by_owner = 1 WHERE id = ?")
+  /** The owner made an issue of the row (verdict 'issue') or shared it to one (verdict 'note'): it is handled (and so read), and it is theirs. */
+  const link = (id, { issueId, verdict }) => sql("UPDATE inbox_records SET state = 'done', verdict = ?, issue_id = ?, reason = '', judged_at = COALESCE(judged_at, ?), by_owner = 1, read_revision = revision WHERE id = ?")
     .run(verdict, issueId, now(), id).changes === 1;
 
   const startRun = (connector, at = now()) => Number(sql('INSERT INTO collect_runs (connector, started_at) VALUES (?, ?)').run(connector, at).lastInsertRowid);
@@ -492,5 +520,5 @@ export function createInbox(db, { now = Date.now } = {}) {
   const lastMe = (connector) => meOf(sql("SELECT me FROM collect_runs WHERE connector = ? AND me IS NOT NULL ORDER BY id DESC LIMIT 1").get(connector)?.me);
   const lastStarted = (connector) => sql('SELECT MAX(started_at) AS at FROM collect_runs WHERE connector = ?').get(connector)?.at ?? null;
 
-  return { ingest, addContext, repairTitles, update, pending, waiting, judge, fail, issueFor, list, search, get, forIssue, prune, dropUntouched, browse, done, remove, restore, link, startRun, finishRun, lastRun, lastFinished, lastGood, lastStarted, lastMe };
+  return { ingest, addContext, repairTitles, update, pending, waiting, judge, fail, issueFor, list, search, get, forIssue, read, unreadCount, prune, dropUntouched, browse, done, remove, restore, link, startRun, finishRun, lastRun, lastFinished, lastGood, lastStarted, lastMe };
 }

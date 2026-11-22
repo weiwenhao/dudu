@@ -14,6 +14,10 @@ const P = T.settings.connectorsPage;
 const C = T.settings.connectors;
 const ORDER = ['here', 'work', 'projects', 'dev', 'web']; // the catalog's groups, in the order they are drawn
 const VIEWS = ['available', 'connected'];
+// Connected means it works. One that waits for an authorization, needs a login or a command, or failed has never got there: it is not listed as connected (owner, 2026-11-21:
+// 「都没连接好，从来都没连接过，放在已连接里面干什么」). It stays with the available ones, in a group of its own on top, with what its connection says and the one thing to do about it.
+const NOT_CONNECTED = new Set(['needs-auth', 'waiting', 'needs-login', 'missing', 'error']);
+const isConnected = (connector) => !connector.busy && !NOT_CONNECTED.has(connector.state?.status);
 
 const succeeded = (answer) => ['success', 'no_op'].includes(answer?.outcome);
 const matches = (needle, ...fields) => fields.some((field) => String(field ?? '').toLowerCase().includes(needle));
@@ -118,7 +122,9 @@ export function ConnectorsPage({ request }) {
 
   const needle = query.trim().toLowerCase();
   const held = new Set(trying.flatMap((entry) => [entry.id, entry.connectorId]));
-  const connected = list.filter((connector) => !trying.some((entry) => entry.connectorId === connector.id));
+  const tried = (connector) => trying.some((entry) => entry.connectorId === connector.id);
+  const connected = list.filter((connector) => !tried(connector) && isConnected(connector));
+  const unconnected = list.filter((connector) => !tried(connector) && !isConnected(connector));
 
   // the catalog's groups; an item being connected is put back where it was, so that its row changes where it stands and does not jump
   const byGroup = new Map((value?.groups ?? []).map((group) => [group.id, (group.items ?? []).filter((item) => !held.has(item.id))]));
@@ -131,10 +137,19 @@ export function ConnectorsPage({ request }) {
     id,
     rows: byGroup.get(id).map((item, index) => ({ item, index, groupId: id })).filter(({ item }) => !needle || matches(needle, item.name, item.line)),
   })).filter((group) => group.rows.length > 0);
-  const connectedRows = connected
+  const rowsOf = (connectors) => connectors
     // an entry from before (a server of DSH) has nothing to retry: it is opened to be disconnected
     .map((connector) => ({ connector, shown: connector.legacy ? { ...describeState(connector.state, aboutLine(connector.about)), verb: null } : describeState(connector.state, aboutLine(connector.about)) }))
     .filter(({ connector, shown }) => !needle || matches(needle, connector.name, shown.line));
+  const connectedRows = rowsOf(connected);
+  const unconnectedRows = rowsOf(unconnected);
+  const connectorRow = ({ connector, shown }) => (
+    <ConnectorRow
+      key={connector.id} icon={connector.icon} name={connector.name}
+      line={shown.line} bad={shown.bad} state={stateOf(shown)} verb={verbOf(shown, connector.id)} busy={busy.has(connector.id)}
+      onOpen={() => begin(() => setOpenId(connector.id))}
+    />
+  );
 
   const search = (
     <div className="relative">
@@ -155,7 +170,9 @@ export function ConnectorsPage({ request }) {
           <Problem>{problem}</Problem>
           <Views value={view} count={connected.length} onChange={setView} />
           {view === 'available' ? (
-            groups.length === 0 ? <Group><Empty>{C.empty}</Empty></Group> : groups.map((group) => (
+            groups.length === 0 && unconnectedRows.length === 0 ? <Group><Empty>{C.empty}</Empty></Group> : [unconnectedRows.length > 0 && (
+              <Group key="unconnected"><ul>{unconnectedRows.map(connectorRow)}</ul></Group>
+            ), ...groups.map((group) => (
               <Group key={group.id} title={P.groups[group.id] ?? group.id}>
                 <ul>
                   {group.rows.map(({ item, index, groupId }) => {
@@ -171,18 +188,10 @@ export function ConnectorsPage({ request }) {
                   })}
                 </ul>
               </Group>
-            ))
+            ))]
           ) : connectedRows.length === 0 ? <Group><Empty>{C.empty}</Empty></Group> : (
             <Group label={P.views.connected}>
-              <ul>
-                {connectedRows.map(({ connector, shown }) => (
-                  <ConnectorRow
-                    key={connector.id} icon={connector.icon} name={connector.name}
-                    line={shown.line} bad={shown.bad} state={stateOf(shown)} verb={verbOf(shown, connector.id)} busy={busy.has(connector.id)}
-                    onOpen={() => begin(() => setOpenId(connector.id))}
-                  />
-                ))}
-              </ul>
+              <ul>{connectedRows.map(connectorRow)}</ul>
             </Group>
           )}
         </>

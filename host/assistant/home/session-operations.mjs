@@ -5,7 +5,7 @@ import { validateAnswers } from '../../native-conversation.mjs';
 const fail = (code) => { throw Object.assign(new Error(code), { code }); };
 
 /** The same bounded host operations used by native session controls. No caller-selected RPC or raw command line. */
-export function createAssistantSessionOperations({ rpc, dsh, controller }) {
+export function createAssistantSessionOperations({ rpc, dsh, controller, questionBridge }) {
   const remote = {
     async call(endpoint, ...args) {
       const answer = await rpc.call('/api', endpoint, ...args);
@@ -61,12 +61,19 @@ export function createAssistantSessionOperations({ rpc, dsh, controller }) {
         }
         case 'questions': {
           const value = await remote.call('session/projections', { sessionId: id });
-          return { outcome: 'success', questions: value?.values?.userQuestions?.active ?? [] };
+          const active = value?.values?.userQuestions?.active ?? [];
+          return { outcome: 'success', questions: questionBridge?.list(id, active) ?? active };
         }
         case 'answer': {
           const value = await remote.call('session/projections', { sessionId: id });
-          const call = value?.values?.userQuestions?.active?.find((call) => call.callId === args.callId);
+          const active = value?.values?.userQuestions?.active ?? [];
+          const call = (questionBridge?.list(id, active) ?? active).find((call) => call.callId === args.callId);
           const answer = validateAnswers(call, args.answers);
+          // An explicit owner operation may answer without a phone watching.
+          const release = questionBridge?.watch(id);
+          try {
+            if (questionBridge?.answer(id, args.callId, answer.answers)) return { outcome: 'success' };
+          } finally { release?.(); }
           const accepted = await remote.call('userQuestions/answer', id, args.callId, answer);
           return { outcome: accepted === true ? 'success' : 'error', ...(accepted === true ? {} : { code: 'stale_question' }) };
         }

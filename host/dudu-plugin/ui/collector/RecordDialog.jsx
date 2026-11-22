@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChevronDown, ExternalLink, LoaderCircle, RefreshCw, RotateCcw, Trash2, X } from 'lucide-react';
 import { Button } from '../components/button.jsx';
+import { MenuIcon } from '../components/menu-icon.jsx';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '../components/dialog.jsx';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
 import { when } from '../issues/activity.js';
@@ -51,7 +52,7 @@ function Transcript({ messages }) {
  * `card` is the row that was clicked; the rest is read when the dialog opens, and again when a completion of its context has ended (`finished` counts them; `completing` says one runs:
  * the button is busy and the window stays open). A completion that was running when the window opened is waited for too (`actions.follow`).
  */
-export function RecordDialog({ card, tab, request, actions, marking, completing, finished, onClose }) {
+export function RecordDialog({ card, tab, request, actions, marking, completing, finished, onClose, onRead }) {
   const [detail, setDetail] = useState(null);
   const [failed, setFailed] = useState(false);
   const [pickingSession, setPickingSession] = useState(false);
@@ -67,6 +68,22 @@ export function RecordDialog({ card, tab, request, actions, marking, completing,
     }).catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
   }, [request, card.id, finished, follow]);
+  useEffect(() => {
+    const record = detail?.record;
+    if (!record?.unread || !Number.isSafeInteger(record.revision)) return;
+    let live = true;
+    let sent = false;
+    const acknowledge = () => {
+      if (sent || document.visibilityState === 'hidden') return;
+      sent = true;
+      request('inbox/read', { id: record.id, revision: record.revision }).then((result) => {
+        if (live && ['success', 'no_op'].includes(result?.outcome)) onRead?.();
+      }).catch(() => {}); // Reading stays unacknowledged on failure; no handling mark or retry.
+    };
+    acknowledge();
+    document.addEventListener('visibilitychange', acknowledge);
+    return () => { live = false; document.removeEventListener('visibilitychange', acknowledge); };
+  }, [request, detail?.record, onRead]);
   const record = detail?.record ?? card;
   const meta = [record.ref, record.from, record.connectorName, record.at ? when(record.at) : ''].filter(Boolean).join(' · ');
   const verdict = verdictLine(record);
@@ -81,7 +98,7 @@ export function RecordDialog({ card, tab, request, actions, marking, completing,
       <DialogDescription className="sr-only">{meta}</DialogDescription>
       <div className="flex shrink-0 items-center gap-2 pr-3.5 pl-5 text-[13px]/5 text-muted-foreground">
         <span className="min-w-0 flex-1 truncate">{meta}</span>
-        {record.url && <Button variant="ghost" size="sm" className="h-7 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground" onClick={() => actions.openSource(record)}><ExternalLink className="size-3.5" />{T.detail.openSource}</Button>}
+        {record.url && <Button variant="ghost" size="sm" className="h-7 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground" onClick={() => actions.openSource(record)}><MenuIcon icon={ExternalLink} slot={14} />{T.detail.openSource}</Button>}
       </div>
       {verdict && <div className="shrink-0 px-5 pt-3 text-[13px]/5">{verdict}</div>}
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-4 pb-4">
@@ -98,9 +115,9 @@ export function RecordDialog({ card, tab, request, actions, marking, completing,
       </div>
       {/* The buttons on the left carry the icons of the same actions in the row's menu (owner, 2026-11-18): delete with its icon and the destructive colour, fill in the context with its icon (a spinner while it runs), restore with its icon. */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-t px-5 py-3">
-        {!record.issue && <Button variant="ghost" className="text-destructive hover:text-destructive" disabled={marking} onClick={markThen(actions.remove)}><Trash2 />{T.collector.remove}</Button>}
-        {tab === 'done' && !record.issue && <Button variant="ghost" disabled={marking} onClick={markThen(actions.restore)}><RotateCcw />{T.collector.restore}</Button>}
-        <Button variant="ghost" disabled={completing} aria-busy={completing || undefined} onClick={() => { void actions.complete(record); }}>{completing ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}{T.collector.complete}</Button>
+        {!record.issue && <Button variant="ghost" className="text-destructive hover:text-destructive" disabled={marking} onClick={markThen(actions.remove)}><MenuIcon icon={Trash2} />{T.collector.remove}</Button>}
+        {tab === 'done' && !record.issue && <Button variant="ghost" disabled={marking} onClick={markThen(actions.restore)}><MenuIcon icon={RotateCcw} />{T.collector.restore}</Button>}
+        <Button variant="ghost" disabled={completing} aria-busy={completing || undefined} onClick={() => { void actions.complete(record); }}>{completing ? <LoaderCircle className="animate-spin" /> : <MenuIcon icon={RefreshCw} />}{T.collector.complete}</Button>
         <span className="flex-1" />
         {tab !== 'done' && <>
           <Button variant="outline" disabled={marking} onClick={markThen(actions.done)}>{T.collector.markDone}</Button>

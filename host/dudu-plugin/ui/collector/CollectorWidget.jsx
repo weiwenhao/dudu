@@ -11,11 +11,13 @@ import { when } from '../issues/activity.js';
 import { appliedFilters, removeFilter, toggleFilter } from '../issues/filter-state.js';
 import { FilterBar } from '../issues/FilterBar.jsx';
 import { FilterMenu } from '../issues/FilterMenu.jsx';
+import { ConversationMark } from '../issues/ConversationAvatar.jsx';
 import { StatusIcon } from '../issues/icons.jsx';
 import { keepVisible, selectRow } from '../issues/selection.js';
 import { NewIssueDialog } from '../issues/NewIssueDialog.jsx';
 import { T } from '../strings.js';
 import { BulkBar } from './BulkBar.jsx';
+import { MenuIcon } from '../components/menu-icon.jsx';
 import { ConnectorAvatar } from './ConnectorAvatar.jsx';
 import { COLLECTOR_FIELDS, COLLECTOR_KEYS, COLLECTOR_SCHEMA, SINGLE } from './filters.jsx';
 import { issueRef } from './ConversationPicker.jsx';
@@ -40,6 +42,8 @@ const BAR_STEPS = [700, 256];
  * that are one click: handled and delete (restore, in the place of handled, for a row that was handled). A row that is handled has nothing to do in bulk. The button that filled in the context
  * is gone from the row (the owner, 2026-11-18: "这个按钮也可以去掉了"): the context menu and the record's window have it.
  * While the record's context is being filled in (`completing`) a small spinner stands before the time, as the connectors' rows have theirs.
+ * A record nobody has read (`unread`) has the board's red mark at the upper-right corner of its picture, as on the phone (the owner, 2026-11-21: "逻辑和手机端一致"); the plugin never
+ * says that of a handled record, and the mark has no words.
  */
 const Row = forwardRef(function Row({ record, tab, selected, selecting, marking, completing, onSelect, onOpen, onDone, onRemove, onRestore, className, ...props }, ref) {
   const by = [record.ref, record.from, record.connectorName].filter(Boolean).join(' · ');
@@ -57,7 +61,10 @@ const Row = forwardRef(function Row({ record, tab, selected, selecting, marking,
           />
         </span>
       )}
-      <ConnectorAvatar icon={record.connectorIcon} name={record.connectorName} />
+      <span className="relative flex size-7 shrink-0" aria-hidden="true">
+        <ConnectorAvatar icon={record.connectorIcon} name={record.connectorName} size={28} />
+        {record.unread && <ConversationMark state="unread" size={28} />}
+      </span>
       <button type="button" onClick={(event) => { if (selecting) onSelect(record.id, event.shiftKey); else onOpen(); }} className="flex h-full min-w-0 flex-1 flex-col justify-center rounded text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
         <span className="flex items-center gap-3">
           <span className="min-w-0 flex-1 truncate font-medium">{record.title}</span>
@@ -71,7 +78,7 @@ const Row = forwardRef(function Row({ record, tab, selected, selecting, marking,
       {quick.length > 0 && (
         <span className={cn('absolute top-1/2 right-2.5 flex -translate-y-1/2 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100', selecting && 'hidden')}>
           {quick.map(([label, Icon, run, waiting]) => (
-            <Button key={label} variant="ghost" size="icon-xs" disabled={marking || waiting} aria-label={label} aria-busy={waiting || undefined} title={label} onClick={() => run(record)}><Icon aria-hidden="true" /></Button>
+            <Button key={label} variant="ghost" size="icon-xs" disabled={marking || waiting} aria-label={label} aria-busy={waiting || undefined} title={label} onClick={() => run(record)}><MenuIcon icon={Icon} slot={12} /></Button>
           ))}
         </span>
       )}
@@ -259,6 +266,7 @@ export function CollectorWidget({ request, openIssue }) {
       />
       {opened && (
         <RecordDialog
+          onRead={records.refresh}
           key={opened.id} card={opened} tab={tab} request={request} actions={actions} marking={marking.has(opened.id)}
           completing={completion.running.has(opened.id)} onClose={() => { setOpened(null); refresh(); }}
         />

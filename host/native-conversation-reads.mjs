@@ -20,7 +20,12 @@ export function createConversationReads({ connection, peer, workspaceChanges, at
       const summary = workspaceChanges?.()?.summary?.(sessionId, seq);
       if (!summary || !['total', 'added', 'deleted'].every((key) =>
         Number.isSafeInteger(summary[key]) && summary[key] >= 0)) return undefined;
-      return { total: summary.total, added: summary.added, deleted: summary.deleted };
+      const file = summary.total === 1 && summary.files?.length === 1 ? summary.files[0] : undefined;
+      const label = typeof file?.display === 'string' ? file.display : file?.path;
+      // The card needs only its basename, never a host path or a new comparison read.
+      const fileName = typeof label === 'string' ? label.replaceAll('\\', '/').split('/').at(-1) : undefined;
+      return { total: summary.total, added: summary.added, deleted: summary.deleted,
+        ...(fileName && fileName.length <= 1024 && !fileName.includes('\0') ? { fileName } : {}) };
     },
     async read(kind, coordinates, signal) {
       if (kind === 'video') {

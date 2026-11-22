@@ -117,6 +117,7 @@ export async function createPairingStore({
   };
   const publicDevice = (device) => ({
     id: device.id, name: device.name, pairedAt: device.pairedAt, lastSeenAt: device.lastSeenAt,
+    ...(device.client ? { client: device.client } : {}),
   });
   return {
     id: data.id,
@@ -140,6 +141,15 @@ export async function createPairingStore({
         deviceProof: createHmac('sha256', Buffer.from(device.tokenHash, 'hex'))
           .update(`dudu-route:v1:${nonce}:${data.id}:${device.id}`).digest('base64url'),
       };
+    },
+    /** What the app on a device said about itself when it connected (platform, version, build, what it understands): kept to tell which builds are still in use. */
+    recordClient(deviceId, client) {
+      const device = data.devices.find((item) => item.id === deviceId && item.pairedAt);
+      if (!device || !client || typeof client !== 'object') return;
+      const next = { platform: client.platform ?? null, ...(client.version ? { version: client.version } : {}), ...(client.build ? { build: client.build } : {}), capabilities: client.capabilities ?? [] };
+      if (JSON.stringify(device.client) === JSON.stringify(next)) return;
+      device.client = next;
+      deferSave();
     },
     list() {
       return data.devices.filter((device) => device.pairedAt)

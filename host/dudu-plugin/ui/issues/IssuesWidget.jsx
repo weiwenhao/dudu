@@ -32,7 +32,7 @@ import { ViewNameDialog } from './ViewDialogs.jsx';
 import { usePolled } from '../widgets/use-polled.js';
 import { useSessionReturnState } from '../lib/session-return.jsx';
 
-const TABS = ['active', 'backlog', 'all'];
+const TABS = ['active', 'unread', 'all'];
 const SEARCH_DELAY_MS = 250;
 const allItems = (groups) => groups.flatMap((group) => group.groups ? allItems(group.groups) : group.items ?? []);
 
@@ -210,7 +210,7 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
     return () => window.removeEventListener('keydown', onKey);
   }, [chat, openFilter]);
   const filtered = appliedFilters(view.filter, FILTER_KEYS).length > 0;
-  const facets = useFacets(request, menu.open, query.tab, query.filter);
+  const facets = useFacets(request, menu.open, query.tab === 'unread' ? 'all' : query.tab, query.filter);
   const addTo = useCallback((entry) => startCreating({ preset: presetOf(entry.field, entry.groupKey) }), [startCreating]);
   const selectView = (id) => {
     // The built-in scopes stay in the conversation layout when selected here.

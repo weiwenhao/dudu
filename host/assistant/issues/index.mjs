@@ -483,16 +483,15 @@ export function createIssues({ file, now = Date.now, lifecycleState = () => null
     const { total, done } = stmt("SELECT COUNT(*) AS total, COALESCE(SUM(status = 'done'), 0) AS done FROM issues WHERE parent_id = ?").get(id);
     return total ? { subIssues: { total, done } } : {};
   };
-  // A parent must be another issue, and never one of its own sub-issues (a loop).
+  // Sub-issues do not nest (owner, 2026-11-22): a parent is another issue that is not a sub-issue itself, and an issue that has
+  // sub-issues cannot become one. That also rules out a loop. Issues already nested deeper are left as they are, and keep their parent.
   const checkParent = (id, parent) => {
     if (parent == null) return;
     if (parent === id) throw new Invalid('parent cannot be the issue itself.');
-    if (!stmt('SELECT 1 FROM issues WHERE id = ?').get(parent)) throw new Invalid(`parent: there is no issue ${parent}.`);
-    let walk = parent;
-    for (let step = 0; walk != null && step < 200; step++) {
-      if (walk === id) throw new Invalid('parent cannot be one of the issue\'s own sub-issues.');
-      walk = stmt('SELECT parent_id FROM issues WHERE id = ?').get(walk)?.parent_id ?? null;
-    }
+    const row = stmt('SELECT parent_id FROM issues WHERE id = ?').get(parent);
+    if (!row) throw new Invalid(`parent: there is no issue ${parent}.`);
+    if (row.parent_id != null) throw new Invalid('parent cannot be a sub-issue: sub-issues do not have sub-issues of their own.');
+    if (id != null && stmt('SELECT 1 FROM issues WHERE parent_id = ?').get(id)) throw new Invalid('an issue that has sub-issues cannot become a sub-issue.');
   };
 
   const toIssue = (row) => {
@@ -651,7 +650,7 @@ export function createIssues({ file, now = Date.now, lifecycleState = () => null
   function applyChange(id, fields, action, ctx) {
     const row = loadRow(id);
     const current = fieldsOf(row);
-    if ('parent' in fields) checkParent(id, fields.parent);
+    if ('parent' in fields && (fields.parent ?? null) !== (row.parent_id ?? null)) checkParent(id, fields.parent);
     const next = settle(current, fields, ctx);
     const { before, after } = diff(current, next);
     if (!Object.keys(after).length) return noOp('Nothing changed.', { issue: toIssue(row) });

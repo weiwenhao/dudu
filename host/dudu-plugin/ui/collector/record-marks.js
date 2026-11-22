@@ -7,7 +7,8 @@ const newest = (a, b) => b.at - a.at || b.id - a.id;
 function marked(record, action) {
   if (record.issue) return record;
   switch (action) {
-    case 'inbox/done': return { ...record, done: true };
+    // Handled is read: the plugin says so too, so a card that has the flag does not show its red mark on the handled tab before the next read.
+    case 'inbox/done': return { ...record, done: true, ...('unread' in record ? { unread: false } : {}) };
     case 'inbox/delete': return { ...record, deleted: true };
     case 'inbox/restore': {
       if (!record.deleted) return { ...record, done: false };

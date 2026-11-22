@@ -181,6 +181,29 @@ test('an agent gets mirror tools while its route is the harness, from creation o
   assert.equal(born.tools.size, 2, 'unrelated events change nothing');
 });
 
+test('host-served MCP tools are executable before the first step and follow the selected route', async t => {
+  const { host, providers, provider } = await setup(t);
+  const name = 'mcp__dudu__ask_user_question';
+  host.sessionTools = { names: () => [name], close: async () => {} };
+  const driver = provider.created[0];
+  driver.fallbackTool = (name: string) => ({ name });
+  driver.knowsTool = () => false;
+  const agent = host.addAgent('question-session', 'fake');
+  host.emit('agent/created', { agent });
+  assert.ok(agent.tools.has(name), 'the tool exists before the model starts streaming');
+  const first = agent.tools.get(name);
+  // Route refresh keeps the same tool closure; changing away removes it.
+  await providers.refresh();
+  assert.equal(agent.tools.get(name), first);
+  const late = host.addAgent('initial-provider-session', 'deepseek-official');
+  host.emit('agent/created', { agent: late });
+  late.options.provider = 'fake';
+  host.emit('session/event', { id: late.id }, { type: 'step/start', data: { turn: 1, step: 1 } });
+  assert.ok(late.tools.has(name), 'an initial provider applied after agent creation needs no model/selection event');
+  host.emit('session/event', { id: agent.id }, { type: 'model/selection', data: { provider: 'deepseek-official' } });
+  assert.equal(agent.tools.has(name), false);
+});
+
 test('only a harness agent shadows compact, and changing its provider removes the scoped command', async (t) => {
   const { host, providers } = await setup(t);
   const agent = host.addAgent('compact-session', 'fake');

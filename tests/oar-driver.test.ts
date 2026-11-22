@@ -141,15 +141,17 @@ test('the tools the host serves are given to the harness session with every star
   const cwd = await workDirectory(t);
   const { runtime, asked } = scripted(() => {});
   const driver = createClaudeProvider({ runtime }).create({ installation: BUNDLED });
-  const hostTools = { mcpServers: [{ name: 'dudu', type: 'http', url: 'http://127.0.0.1:1/mcp', headers: { Authorization: 'Bearer t' } }], disallowedTools: ['CronCreate', 'AskUserQuestion'], launchArgs: ['--allowedTools', 'mcp__dudu__CronCreate'] };
+  const hostTools = { mcpServers: [{ name: 'dudu', type: 'http', url: 'http://127.0.0.1:1/mcp', headers: { Authorization: 'Bearer t' } }], env: { DUDU_MCP_TEST_TOKEN: 'private' }, disallowedTools: ['CronCreate', 'AskUserQuestion'], launchArgs: ['--allowedTools', 'mcp__dudu__CronCreate'] };
   await collect(await driver.start({ prompt: 'x', cwd, permission: 'danger-full-access', hostTools }));
   assert.deepEqual(asked[0].mcpServers, hostTools.mcpServers);
   assert.deepEqual(asked[0].disallowedTools, ['AskUserQuestion', 'CronCreate'], 'a tool that is denied twice is denied once');
   assert.deepEqual(asked[0].launchArgs, ['--allowedTools', 'mcp__dudu__CronCreate']);
+  assert.equal(asked[0].env.DUDU_MCP_TEST_TOKEN, 'private', 'stdio tool credentials travel through the launch environment');
   await collect(await driver.start({ prompt: 'again', cwd, resume: 'native-1', permission: 'danger-full-access', hostTools }));
   assert.deepEqual(asked[1].mcpServers, hostTools.mcpServers, 'OAR does not remember the server: every start gives it again');
   await collect(await driver.start({ prompt: 'none', cwd, permission: 'danger-full-access' }));
   assert.equal(asked[2].mcpServers, undefined);
+  assert.equal(asked[2].env.DUDU_MCP_TEST_TOKEN, undefined, 'another launch does not inherit this session\'s tool credentials');
   assert.deepEqual(asked[2].disallowedTools, ['AskUserQuestion']);
 });
 

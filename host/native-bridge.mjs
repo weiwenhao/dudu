@@ -974,7 +974,8 @@ function liveStep(state) {
   if (!live) return undefined;
   const blocks = [...live.blocks.values()];
   const reasoning = blocks.filter((block) => block.type === 'reasoning').map((block) => block.text).join('');
-  const body = blocks.filter((block) => block.type === 'text').map((block) => block.text).join('');
+  const texts = blocks.filter((block) => block.type === 'text');
+  const body = texts.map((block) => block.text).join('');
   const calls = blocks.filter((block) => block.type === 'tool-call' && block.id && block.name).map((block) => ({
     id: block.id,
     name: block.name,
@@ -986,6 +987,8 @@ function liveStep(state) {
   return {
     id: `live:${live.attemptId}`,
     ...(body ? { text: text(body, MAX_STREAM_CHARS) } : {}),
+    // Optional: every block of that text has ended, so the text is final. An app draws it as the finished message it is going to be (Markdown); one that does not know the field draws it as streaming.
+    ...(body && texts.every((block) => block.complete === true) ? { complete: true } : {}),
     ...(reasoning ? { reasoning: text(reasoning, MAX_STREAM_CHARS) } : {}),
     ...(calls.length ? { calls } : {}),
   };
@@ -995,6 +998,22 @@ function liveStep(state) {
 // and the lines the owner hid (by the sequence number of their event) are left out of the thread of that conversation.
 let cardOf = () => null;
 let groupOf = () => null;
+
+/**
+ * The pictures of the owner's @ line go to the phone as the attachments it already draws (`kind`, `name`, `id`, `seq`), not as DSH's references: the id names the line and the picture
+ * (`group:<commandId>:<index>`) and the seq is the line's own event, which is what grants the read (`groupPicture`). A line without pictures is sent as it was.
+ */
+function groupForPhone(line, entry) {
+  if (!Array.isArray(line.pictures)) return line;
+  const { pictures, ...rest } = line;
+  if (!pictures.length || !Number.isSafeInteger(entry.seq)) return rest;
+  return {
+    ...rest,
+    pictures: pictures.map((picture, index) => ({
+      kind: 'image', name: text(picture?.name, 160) || nativeText('图片'), id: `group:${entry.commandId}:${index}`, seq: entry.seq,
+    })),
+  };
+}
 let hiddenOf = () => null;
 let assistantId = () => null;
 
@@ -1005,7 +1024,7 @@ function transcriptFrom(state, changeCounts) {
     // A line of the group chat (the owner's @ message to an issue, its answer) is its command's pair of events too, with what it said that moment.
     if (entry.type === 'command' && entry.name === SAY_COMMAND && entry.outcome === 'success') {
       const group = groupOf(entry.commandId);
-      return group ? { ...entry, group } : entry;
+      return group ? { ...entry, group: groupForPhone(group, entry) } : entry;
     }
     // A quick button's card is its command's pair of events, with what it listed that moment; a card that is no longer known stays the plain command.
     if (entry.type === 'command' && entry.name === CARD_COMMAND && entry.outcome === 'success') {
@@ -1090,8 +1109,11 @@ function readPositionOf(state) {
     ? { stream: { turn: live.turn, step: live.step, digest } } : {}) };
 }
 
-function detailFrom(state, { transcript = false, changeCounts, sessionActivity } = {}) {
-  const values = state.values;
+function detailFrom(state, { transcript = false, changeCounts, sessionActivity, questionBridge } = {}) {
+  const values = questionBridge?.list ? {
+    ...state.values,
+    userQuestions: { ...state.values.userQuestions, active: questionBridge.list(state.summary.id, state.values.userQuestions?.active ?? []) },
+  } : state.values;
   const summary = summaryFrom({ ...state.summary, ...(sessionActivity ? { agentActivity: sessionActivity(state.summary.id) } : {}), projections: { values } });
   const model = values.modelSelection?.next ?? values.modelSelection?.lastUsed;
   const permission = values.permissions?.currentValue;
@@ -1227,6 +1249,8 @@ function applyCompactChunk(state, chunkRecord) {
   }
   if (type === 'block-end' && isRecord(chunk.block)) {
     block.type = text(chunk.block.type, 80) || block.type;
+    // The stream says when a block is written to its end, long before the host records the message (it waits for the step to end, which a reply does late while agents run in the background).
+    block.complete = true;
     if (typeof chunk.block.text === 'string') replaceStreamText(state, block, chunk.block.text);
     traceToolBlock(state, {
       ...chunk.block,
@@ -1587,6 +1611,13 @@ export function mapPresets(result) {
     }));
 }
 
+/** Which phone asked, for the read log (read-log.mjs): its platform, the first characters of its device id, and how it read: a session it shows (`visible`) or a row's own action (`row`). */
+const phoneSource = (connection, how) => ({
+  screen: connection?.clientName === 'Android' ? 'android' : 'iphone',
+  device: String(connection?.deviceId ?? '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 8) || undefined,
+  how,
+});
+
 export function createNativeBridge({ rpc, pages, navigation, conversationReads, fileTransfers, questionBridge, sessionActivity, acknowledgeRead, sessionSearch, assistantConversation, assistant, board, duduPages, notifications }) {
   const remote = createRemote(rpc);
   cardOf = typeof assistant?.cardOf === 'function' ? (commandId) => assistant.cardOf(commandId) : () => null;
@@ -1853,7 +1884,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
       installSnapshot(state, snapshot, sessionId);
       invalidateListForState(sessionId, state);
       if (options.replyImage) return await readAttachment({ sessionId, address, state }, options.replyImage);
-      const detail = detailFrom(state, { ...options, changeCounts: conversationReads?.changeCounts, sessionActivity });
+      const detail = detailFrom(state, { ...options, changeCounts: conversationReads?.changeCounts, sessionActivity, questionBridge });
       if (options.replyOnly) {
         return {
           session: detail.session,
@@ -1926,7 +1957,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
       connection.nativeAttachmentState = { sessionId, address, state, watchGeneration };
       releaseQuestionWatch = questionBridge?.watch(sessionId, (error) => {
         queueMicrotask(() => { void failWatch(error, 'questions'); });
-      });
+      }, () => schedulePublish());
     } catch (error) {
       await cancel();
       throw error instanceof NativeBridgeError ? error : safeCallError();
@@ -1947,7 +1978,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
         if (isActive()) {
           try {
             invalidateListForState(sessionId, state);
-            const detail = detailFrom(state, { ...options, sessionActivity });
+            const detail = detailFrom(state, { ...options, sessionActivity, questionBridge });
             connection.sendEvent('session.snapshot', watchId ? { ...detail, watchId } : detail);
           } catch (error) {
             void failWatch(error, 'snapshot');
@@ -1988,7 +2019,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
         await failWatch(error, 'follow');
       }
     })();
-    return detailFrom(state, { ...options, sessionActivity });
+    return detailFrom(state, { ...options, sessionActivity, questionBridge });
   }
 
   async function readSessionImage(sessionId, attachmentId, address) {
@@ -2054,6 +2085,20 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
     return event;
   }
 
+  // A picture of the owner's @ line (`group:<commandId>:<index>`, groupForPhone): the event at `seq` of the watched conversation must be that line's command, and the line the plugin
+  // kept names the picture by its complete reference, which DSH's store gives back (`session/attachment`, below).
+  async function groupPicture(watched, seq, attachmentId) {
+    const rest = attachmentId.slice('group:'.length);
+    const cut = rest.lastIndexOf(':');
+    if (cut < 1 || !/^\d{1,3}$/u.test(rest.slice(cut + 1))) return null;
+    const commandId = rest.slice(0, cut);
+    const event = await eventAt(watched, seq);
+    if (event.type !== 'command/run' || event.data?.name !== SAY_COMMAND || event.data.commandId !== commandId) return null;
+    const line = groupOf(commandId);
+    const ref = line?.kind === 'at' && Array.isArray(line.pictures) ? line.pictures[Number(rest.slice(cut + 1))] : undefined;
+    return ref ? { attachment: ref, mediaType: ref.mediaType } : null;
+  }
+
   // Both the active conversation and the issue-scoped reply sheet use the same fenced image reader.
   // A sheet owns only this short-lived source; it never installs or replaces the connection's watch.
   async function readAttachment(watched, params, assertCurrent = () => {}) {
@@ -2085,6 +2130,8 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
           if (`queue:${message.id}:${index}` === attachmentId) image = imageFromBlock(block);
         }
       }
+    } else if (!image && attachmentId.startsWith('group:')) {
+      image = await groupPicture(watched, params.seq, attachmentId);
     } else if (!image && params.seq !== undefined) {
       const event = await eventAt(watched, params.seq);
       const content = event.type === 'user/message' && event.data?.source?.kind === 'user'
@@ -2208,8 +2255,8 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
       if (NATIVE_PAGE_METHODS.includes(method)) {
         return pageBridge.dispatch(method, params, connection);
       }
-      if (NATIVE_BOARD_METHODS.includes(method)) return boardBridge.dispatch(method, params);
-      if (NATIVE_SETTINGS_METHODS.includes(method)) return settingsBridge.dispatch(method, params ?? {});
+      if (NATIVE_BOARD_METHODS.includes(method)) return boardBridge.dispatch(method, params, { client: connection?.client, source: phoneSource(connection, 'row') });
+      if (NATIVE_SETTINGS_METHODS.includes(method)) return settingsBridge.dispatch(method, params ?? {}, { client: connection?.client });
       if (NATIVE_NOTIFICATION_METHODS.includes(method)) {
         if (!notifications) fail('UNSUPPORTED');
         return notifications.dispatch(method, params, connection);
@@ -2435,7 +2482,8 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
         case 'question.answer': {
           const watched = watchedSession(connection, params.id);
           const projection = await remote.call('session/projections', { sessionId: params.id });
-          const active = projection?.values?.userQuestions?.active ?? [];
+          const projected = projection?.values?.userQuestions?.active ?? [];
+          const active = questionBridge?.list?.(params.id, projected) ?? projected;
           const pending = active.find((call) => call.callId === params.callId);
           const answer = validateAnswers(pending, params.answers);
           stillWatched(connection, watched);
@@ -2448,7 +2496,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
           watchedSession(connection, params.id);
           if (params.watchId !== connection.nativeWatchID || !validReadPosition(params.position)) fail('BAD_REQUEST');
           if (!acknowledgeRead) fail('UNSUPPORTED');
-          try { return await acknowledgeRead(params.id, params.position); }
+          try { return await acknowledgeRead(params.id, params.position, phoneSource(connection, 'visible')); }
           catch { fail('BAD_REQUEST'); }
           break;
         }
