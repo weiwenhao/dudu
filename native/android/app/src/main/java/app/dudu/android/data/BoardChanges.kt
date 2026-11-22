@@ -28,4 +28,14 @@ object BoardChanges {
         if (index >= 0) pins.add(minOf(index, pins.size), id)
         return home.copy(rows = rows, pins = pins)
     }
+
+    /** Whether an event from the computer says that what the board shows changed: the app's events loop and the background service ask the same. */
+    fun says(topic: String) = topic.startsWith("board.") || topic.startsWith("issue.") || topic.startsWith("sessions.")
+
+    /**
+     * Where the board of one computer is kept on the phone. The app writes it after every read and shows it at start; the background service writes it while the app is away
+     * (owner, 2026-11-22: 「安卓也做」, as the iPhone's board is written while it is away), and the app takes a newer one when it comes back. Older builds wrote this name, so it
+     * never changes: a different one would drop the board people already have.
+     */
+    fun cacheName(computerId: String, scope: Scope = Scope.All) = "home-$computerId-${scope.wire}"
 }

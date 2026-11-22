@@ -350,6 +350,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
             mutable.update { it.copy(computerUnavailable = false) }
             return
         }
+        // The board the background service wrote while the app was away is shown now, before the computer is reached again.
+        viewModelScope.launch { adoptWrittenBoard() }
         if (state.value.connected) {
             val retake = api
             if (app.dudu.android.background.DuduConnectionService.holding && retake != null) {
@@ -1655,8 +1657,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                             changed = true
                         } else if (topic == "session.watch.failed" && params.optString("watchId") == watchId) {
                             throw ApiFailure("UPSTREAM_UNAVAILABLE")
-                        } else if (topic.startsWith("board.") || topic.startsWith("issue.") ||
-                            topic.startsWith("sessions.")) changed = true
+                        } else if (BoardChanges.says(topic)) changed = true
                     }
                     // The computer says the board changed: read it now. Otherwise this poll, which comes back at least every 25 s, is the safety net: it reads a board nothing has read for 20 s.
                     if (state.value.conversationTitle == null && (changed || System.nanoTime() - boardAsked > 20_000_000_000L)) refresh(quiet = true)
@@ -1729,9 +1730,31 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * The background service read the board while the app was away and wrote it where the app keeps its cache (`DuduConnectionService`; owner, 2026-11-22: 「安卓也做」, as the iPhone's
+     * `adoptNewerSnapshot`): on coming back it is shown at once, before the computer has answered the read that follows. A board that differs from the one this model last read or
+     * wrote can only be the service's, which writes only while the app is not in front. It is left alone while a pin, a read mark or 完成 is being saved, for another computer or a
+     * later reset, and when a read of the app's own has already put a newer board on the screen.
+     */
+    private suspend fun adoptWrittenBoard() {
+        if (computerId.isEmpty()) return
+        val current = generation
+        val held = homes[Scope.All]
+        val began = System.nanoTime()
+        val raw = vault.read(cacheName(Scope.All)) ?: return
+        if (raw == savedHomeJson) return
+        val home = withContext(Dispatchers.Default) { runCatching { Home.parse(JSONObject(raw), Scope.All) }.getOrNull() } ?: return
+        if (current != generation || state.value.changing.isNotEmpty() || homes[Scope.All] !== held) return
+        homes.clear()
+        homes[Scope.All] = home
+        savedHomeJson = raw
+        mutable.update { it.copy(home = home) }
+        DuduLog.record("board.wake.adopt", elapsedMs = (System.nanoTime() - began) / 1_000_000, counts = mapOf("rowCount" to home.rows.size.toLong()))
+    }
+
     private fun cachedHome(scope: Scope) = homes[Scope.All] ?: homes[scope]
 
-    private fun cacheName(scope: Scope) = "home-$computerId-${scope.wire}"
+    private fun cacheName(scope: Scope) = BoardChanges.cacheName(computerId, scope)
     private fun draftName(id: String) = "draft-" + java.security.MessageDigest.getInstance("SHA-256")
         .digest("$computerId:$id".toByteArray()).joinToString("") { "%02x".format(it) }
     private fun code(error: Exception) = (error as? ApiFailure)?.code ?: "CONNECTION_FAILED"

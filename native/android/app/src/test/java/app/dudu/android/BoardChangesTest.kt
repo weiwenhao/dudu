@@ -2,9 +2,22 @@ package app.dudu.android
 
 import app.dudu.android.data.*
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BoardChangesTest {
+    @Test fun onlyBoardIssueAndSessionsTopicsSayTheBoardChanged() {
+        listOf("board.changed", "issue.updated", "sessions.changed").forEach { assertTrue(it, BoardChanges.says(it)) }
+        listOf("notification", "session.snapshot", "boardwalk").forEach { assertFalse(it, BoardChanges.says(it)) }
+    }
+
+    @Test fun theBoardOfAComputerKeepsTheNameOlderBuildsWroteItUnder() {
+        // The app and the background service share this name; changing it would drop the board that people already have on their phone.
+        assertEquals("home-mac-all", BoardChanges.cacheName("mac"))
+        assertEquals("home-mac-active", BoardChanges.cacheName("mac", Scope.Active))
+    }
+
     private fun row(id: String, unread: Boolean = false, pinned: Boolean = false, state: String = "idle") =
         Conversation(id, id, "session-$id", null, "", 0, state, unread, 0, pinned)
 

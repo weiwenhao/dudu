@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -27,6 +28,7 @@ import org.json.JSONObject
  * The computer keeps ONE connection for each phone, and lets one request wait for events on it at a time (`TOO_MANY_REQUESTS` for a second one), so while the app is in front the app holds the
  * connection and the service waits (`appVisible`); the service takes it 0.2 s after the app goes away, and the app takes it back by connecting when `holding` is set. A tap opens the app on that computer's inbox (`MainActivity`). The ongoing notification says 嘟嘟正在接收通知 (the owner's words).
  * It follows the computer the app last used; it stops by itself when no bell is on any more (`notifications.state`), and the app stops it when the last bell is turned off.
+ * The same connection also hears when the board changed (`board.push`); the service then reads the board and keeps it in the app's cache (`keepBoard`), so that opening the app shows it at once.
  */
 class DuduConnectionService : Service() {
     companion object {
@@ -43,6 +45,7 @@ class DuduConnectionService : Service() {
         private const val WANTED = "notifications"
 
         private const val RESTART = "dudu.background.restart"
+        private const val MIN_BOARD_GAP_MS = 2_000L
 
         /** Start (or keep) the connection; remembered so that it comes back after the phone restarts. Notifications must be allowed. `restart`: connect again (another computer may be in use). */
         fun start(context: Context, restart: Boolean = false) {
@@ -122,14 +125,17 @@ class DuduConnectionService : Service() {
                     return
                 }
                 holding = true
+                keptRaw = null
                 DuduLog.record("notifications.listen.ready")
                 wait = 1_000L
                 var cursor = 0L
                 while (currentCoroutineContext().isActive && !appVisible) {
                     val batch = client.events(cursor)
                     cursor = batch.getLong("cursor")
-                    batch.getJSONArray("events").objects().filter { it.optString("topic") == "notification" }
-                        .forEach { show(it.getJSONObject("params"), computer) }
+                    val events = batch.getJSONArray("events").objects()
+                    events.filter { it.optString("topic") == "notification" }.forEach { show(it.getJSONObject("params"), computer) }
+                    // What the board shows changed: it is read and kept where the app finds it, so that opening the app shows it at once.
+                    if (events.any { BoardChanges.says(it.optString("topic")) }) keepBoard(client, vault, computer)
                 }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
@@ -141,6 +147,39 @@ class DuduConnectionService : Service() {
                 client?.retire()
             }
         }
+    }
+
+    /** When the board was last read for the app (uptime), so that a board that keeps changing is read once in a while and not at every change. */
+    private var boardKept = 0L
+    /** The board last written on this connection: one that has not changed is not written again. The app may write its own while it is in front, so each connection starts without one. */
+    private var keptRaw: String? = null
+
+    /**
+     * The phone away, the board kept fresh (owner, 2026-11-22: 「安卓也做」; the iPhone is woken by a push and writes the board, here the connection this service already holds does the same):
+     * the board is read once and written to the cache that the app shows when it starts and takes when it comes back (`DuduViewModel.adoptWrittenBoard`). Never closer than
+     * `MIN_BOARD_GAP_MS`: what changes meanwhile is read with the next. Only a board that parses is written, and nothing is written once the app is in front (it is the one reading then). A read
+     * that fails changes nothing: the poll finds out whether the connection is gone.
+     */
+    private suspend fun keepBoard(client: DuduApi, vault: Vault, computer: String) {
+        val gap = boardKept + MIN_BOARD_GAP_MS - SystemClock.elapsedRealtime()
+        if (gap > 0) delay(gap)
+        if (appVisible) return
+        val began = SystemClock.elapsedRealtime()
+        try {
+            val (home, raw) = client.home()
+            if (appVisible) return
+            val changed = raw != keptRaw
+            if (changed) {
+                vault.write(BoardChanges.cacheName(computer), raw)
+                keptRaw = raw
+            }
+            DuduLog.record("board.service.done", elapsedMs = SystemClock.elapsedRealtime() - began, state = if (changed) "written" else "same",
+                counts = mapOf("rowCount" to home.rows.size.toLong(), "payloadBytes" to raw.length.toLong()))
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            DuduLog.failure("board.service.fail", error, elapsedMs = SystemClock.elapsedRealtime() - began)
+        }
+        boardKept = SystemClock.elapsedRealtime()
     }
 
     /** As the iPhone's push: the collector's name over what it collected; the next one of the same collector takes its place. */
