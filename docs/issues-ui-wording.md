@@ -250,7 +250,7 @@
 | 位置 | English | 中文 |
 |---|---|---|
 | 会话搜索清空 | `Clear search` | `清空搜索` |
-| 会话翻页 | `More sessions` | `更多会话` |
+| 会话翻页（不再显示：列表滚到底自动加载下一页，主人 2026-11-21 “下拉自动加载更多，不用我手动点”） | `More sessions` | `更多会话` |
 | 打开失败 | `Could not open this session.` | `会话没能打开。` |
 | 接管按钮提示 | `Let dudu manage this task` | `交给嘟嘟管理` |
 | 接管失败 | `Could not take over this session.` | `会话没能接管。` |
@@ -931,3 +931,11 @@ Lucide `ListTodo`。复用原有导航图标的尺寸、颜色、线宽和圆角
 | 位置 | 中文 | English | 来源 |
 | --- | --- | --- | --- |
 | 重试按钮的名字和悬停提示（后面接现成的“重试” / Retry） | **没能读取 · 重试** | **Could not load · Retry** | 新字 `tasks.optionsFailed`（“没能读取” / Could not load）。不想加新字：用手机上已审的“任务没能加载”（`tasks.loadFailed` 桌面还没有这个 key）。原来借的“信息没能加载”是收件箱的字，用错了地方；历史页签和空列表里还借着收件箱的字（“信息没能加载”“没有信息”），这次没动，设计稿里有换法。 |
+
+## 点没有分配智能体的会话（2026-11-22，主人的话）
+
+主人：“现在会话没有分配智能体我点击的时候是毫无响应毫无提示的，可以增加一个提示，请分配智能体。”点开一个没有智能体的事项时，用各端本来就有的短提示（iPhone 的吐司、安卓的系统 Toast、电脑底部的那一条）说：
+
+| 位置 | 中文 | English | 来源 |
+| --- | --- | --- | --- |
+| 点没有智能体的事项后出现的短提示（三端同一句） | **请分配智能体** | **Please assign an agent** | 中文是主人的原话，不用再审；英文是我写的，待审（`Localizable.xcstrings`，安卓 `Wording.kt` 由它生成，电脑 `strings.js` 的 `toast.assignAgent`）。 |
