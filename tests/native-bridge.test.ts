@@ -64,6 +64,7 @@ function makeHarness({
   assistantConversation,
   assistant,
   fileTransfers,
+  foreground,
   streams = {},
 } = {}) {
   const calls = [];
@@ -109,7 +110,7 @@ function makeHarness({
       throw new Error(`unexpected stream endpoint: ${endpoint}`);
     },
   };
-  return { bridge: createNativeBridge({ rpc, conversationReads, fileTransfers, questionBridge, sessionActivity, acknowledgeRead, sessionSearch, assistantConversation, assistant }), calls };
+  return { bridge: createNativeBridge({ rpc, conversationReads, fileTransfers, questionBridge, sessionActivity, acknowledgeRead, sessionSearch, assistantConversation, assistant, foreground }), calls };
 }
 
 test('opening the assistant reuses its scoped session and ignores caller-supplied identities', async () => {
@@ -507,6 +508,29 @@ test('a live reply says when its text is finished, which the stream knows before
   assert.deepEqual(await live([...written, ended]), { id: 'live:attempt-A', text: 'Done **now**', complete: true });
   const next = [{ type: 'block-start', index: 1, blockType: 'text' }, { type: 'text-delta', index: 1, text: ' more' }];
   assert.equal((await live([...written, ended, ...next])).complete, undefined, 'a block that follows is not finished yet');
+});
+
+test('a harness turn open only for its background work is told to the phone, and its reply is final (owner, 2026-11-23)', async () => {
+  const open = async (backgroundOnly: boolean) => {
+    const { bridge } = makeHarness({
+      foreground: { backgroundOnly: (id: string) => backgroundOnly && id === 'session-1' },
+      snapshot: {
+        type: 'snapshot', records: [], projections: { values: {} },
+        assistantStream: { revision: 0, activeAttempt: { attemptId: 'attempt-A', nextIndex: 2, stream: [
+          { index: 0, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
+          { index: 1, chunk: { type: 'text-delta', index: 0, text: 'Done **now**' } },
+        ] } },
+      },
+    });
+    return bridge.dispatch('session.open', { id: 'session-1', transcript: true }, {});
+  };
+  const waiting = await open(true);
+  assert.equal(waiting.session.status, 'running', 'an app that does not know the field keeps drawing it as before');
+  assert.equal(waiting.session.backgroundOnly, true);
+  assert.equal(waiting.transcript.live.complete, true);
+  const answering = await open(false);
+  assert.equal(answering.session.backgroundOnly, undefined);
+  assert.equal(answering.transcript.live.complete, undefined);
 });
 
 test('chat follows human source and append-origin messages without showing injected context or model replacements', async () => {

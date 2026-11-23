@@ -988,7 +988,9 @@ function liveStep(state) {
     id: `live:${live.attemptId}`,
     ...(body ? { text: text(body, MAX_STREAM_CHARS) } : {}),
     // Optional: every block of that text has ended, so the text is final. An app draws it as the finished message it is going to be (Markdown); one that does not know the field draws it as streaming.
-    ...(body && texts.every((block) => block.complete === true) ? { complete: true } : {}),
+    // A harness whose model has answered and whose turn waits only for its background work does not end the block until the work does (owner, 2026-11-23: raw `**` for an hour
+    // and more): its text is final as well.
+    ...(body && (texts.every((block) => block.complete === true) || backgroundOnlyOf(state.summary?.id)) ? { complete: true } : {}),
     ...(reasoning ? { reasoning: text(reasoning, MAX_STREAM_CHARS) } : {}),
     ...(calls.length ? { calls } : {}),
   };
@@ -1016,6 +1018,9 @@ function groupForPhone(line, entry) {
 }
 let hiddenOf = () => null;
 let assistantId = () => null;
+// Whether a harness's turn is still open only for its native background work (a Claude or Codex task that runs on after the model has answered): the desktop draws that
+// conversation as idle (`ui/lib/harness-foreground.js`), and the phone is told the same (`backgroundOnly`, set when the bridge is made from the providers' foreground watch).
+let backgroundOnlyOf = () => false;
 
 function transcriptFrom(state, changeCounts) {
   const hidden = state.summary?.id && state.summary.id === assistantId() ? hiddenOf() : null;
@@ -1118,6 +1123,7 @@ function detailFrom(state, { transcript = false, changeCounts, sessionActivity, 
   const model = values.modelSelection?.next ?? values.modelSelection?.lastUsed;
   const permission = values.permissions?.currentValue;
   const team = sessionChildren(values);
+  const backgroundOnly = summary.status === 'running' && backgroundOnlyOf(state.summary.id) === true;
   const messages = [...state.messages];
   const live = state.live;
   if (live) {
@@ -1130,12 +1136,14 @@ function detailFrom(state, { transcript = false, changeCounts, sessionActivity, 
         role: 'assistant',
         text: text(liveText, MAX_STREAM_CHARS),
         ...(reasoning ? { reasoning: text(reasoning, MAX_STREAM_CHARS) } : {}),
-        status: live.status ?? 'streaming',
+        status: live.status ?? (backgroundOnly ? 'complete' : 'streaming'),
       });
     }
   }
   return {
-    session: summary,
+    // Optional, only while it is true: the turn is open for background work alone. A phone that knows it draws the conversation as the desktop does, without the running line
+    // and with the send button; one that does not keeps drawing it as running, as before.
+    session: backgroundOnly ? { ...summary, backgroundOnly: true } : summary,
     readPosition: readPositionOf(state),
     messages: transcript ? [] : publicMessages(messages, state),
     ...(transcript ? { transcript: transcriptFrom(state, changeCounts) } : {}),
@@ -1618,8 +1626,9 @@ const phoneSource = (connection, how) => ({
   how,
 });
 
-export function createNativeBridge({ rpc, pages, navigation, conversationReads, fileTransfers, questionBridge, sessionActivity, acknowledgeRead, sessionSearch, assistantConversation, assistant, board, duduPages, notifications }) {
+export function createNativeBridge({ rpc, pages, navigation, conversationReads, fileTransfers, questionBridge, sessionActivity, acknowledgeRead, sessionSearch, assistantConversation, assistant, board, duduPages, notifications, foreground }) {
   const remote = createRemote(rpc);
+  backgroundOnlyOf = typeof foreground?.backgroundOnly === 'function' ? (id) => typeof id === 'string' && foreground.backgroundOnly(id) === true : () => false;
   cardOf = typeof assistant?.cardOf === 'function' ? (commandId) => assistant.cardOf(commandId) : () => null;
   groupOf = typeof assistant?.groupOf === 'function' ? (commandId) => assistant.groupOf(commandId) : () => null;
   hiddenOf = typeof assistant?.hidden === 'function' ? () => assistant.hidden() : () => null;
@@ -1933,6 +1942,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
     let controlStream;
     let releaseQuestionWatch;
     let releaseGroupWatch;
+    let releaseForegroundWatch;
     let cancelled = false;
     let cancellation;
     const isActive = () => !cancelled && !connection.closed && watchGeneration === connection.watchGeneration;
@@ -1941,6 +1951,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
       cancelled = true;
       releaseQuestionWatch?.();
       releaseGroupWatch?.();
+      releaseForegroundWatch?.();
       if (connection.nativeAttachmentState?.state === state) connection.nativeAttachmentState = undefined;
       clearTimeout(publishTimer);
       abort.abort();
@@ -1988,6 +1999,8 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
       publishTimer.unref?.();
     };
     if (assistantBridge.isSession(sessionId)) releaseGroupWatch = assistant?.onGroupChange?.(schedulePublish);
+    // The model answered and only background work keeps the turn open, or that work ended: the phone draws the turn again (`backgroundOnly`).
+    releaseForegroundWatch = foreground?.onChange?.((id) => { if (id === sessionId) schedulePublish(); });
     void (async () => {
       try {
         const control = streamHandle(await remote.open('session/control', abort.signal));

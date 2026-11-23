@@ -218,7 +218,7 @@ private struct TurnRowView: View {
                 case let .reply(id, text):
                     let isLive = id.hasPrefix("live:")
                     if isLive && !row.liveTextComplete {
-                        StreamingReplyText(text: text, id: id)
+                        StreamingReplyText(text: text, id: id, sourceSequence: row.messageSequences[id])
                             .messageActions(text: text, seq: row.messageSequences[id])
                     } else {
                         // Text the host says is finished is a message already, though it has not recorded it yet (that can be minutes late): Markdown, not the plain streaming text.

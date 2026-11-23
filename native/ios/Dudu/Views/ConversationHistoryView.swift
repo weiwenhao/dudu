@@ -32,7 +32,7 @@ enum ConversationHistoryItem: Identifiable, Equatable {
 
     static func transcriptItems(
         _ rows: [TranscriptRow], timeSeparators: [String: Double] = [:],
-        trailing: [ConversationHistoryItem] = []
+        trailing: [ConversationHistoryItem] = [], showsRunning: Bool = true
     ) -> [ConversationHistoryItem] {
         var items: [ConversationHistoryItem] = []
         var running: ConversationHistoryItem?
@@ -47,17 +47,17 @@ enum ConversationHistoryItem: Identifiable, Equatable {
             }
         }
         items += trailing
-        // DSH's ChatFlow puts its single running indicator after messages and pending input.
-        if let running { items.append(running) }
+        // DSH's ChatFlow puts its single running indicator after messages and pending input. A turn open only for background work has none (`SessionSummary.backgroundOnly`).
+        if showsRunning, let running { items.append(running) }
         return items
     }
 
     static func messageHistoryItems(
         messages: [ChatMessage], transcriptRows: [TranscriptRow],
-        questions: [ConversationQuestions]
+        questions: [ConversationQuestions], showsRunning: Bool = true
     ) -> [ConversationHistoryItem] {
         messages.map(ConversationHistoryItem.message) + transcriptItems(
-            transcriptRows, trailing: questions.map(ConversationHistoryItem.questions)
+            transcriptRows, trailing: questions.map(ConversationHistoryItem.questions), showsRunning: showsRunning
         )
     }
 }

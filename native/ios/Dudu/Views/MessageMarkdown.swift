@@ -27,6 +27,9 @@ struct MessageMarkdown: View {
     var todo = false
     var allowsTextSelection = true
     var sourceSequence: Double?
+    /// Already parsed (a reply still being written, `StreamingReplyText`, which parses its parts together off the main thread and without the shared cache, so that a new
+    /// character neither waits for its own parse nor pushes the history's texts out of the cache's 48).
+    var content: MarkdownContent?
     @Environment(\.conversationMarkdown) private var prepared
     @Environment(\.conversationAccess) private var access
     @State private var parsed: (text: String, content: MarkdownContent)?
@@ -40,7 +43,7 @@ struct MessageMarkdown: View {
             }
         }
         .task(id: text) {
-            guard prepared.content(for: text) == nil else { return }
+            guard self.content == nil, prepared.content(for: text) == nil else { return }
             let content = await MessageMarkdownCache.shared.content(for: text)
             guard !Task.isCancelled else { return }
             parsed = (text, content)
@@ -49,7 +52,7 @@ struct MessageMarkdown: View {
 
     private var renderedContent: some View {
         Group {
-            if let parsed = prepared.content(for: text) ?? MessageMarkdownCache.cachedContent(for: text) ??
+            if let parsed = content ?? prepared.content(for: text) ?? MessageMarkdownCache.cachedContent(for: text) ??
                 (parsed?.text == text ? parsed?.content : nil) {
                 Markdown(parsed)
                     .markdownTheme(todo ? .duduTodo : compact ? .duduCompact : .duduChat)

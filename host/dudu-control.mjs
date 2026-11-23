@@ -34,6 +34,8 @@ export async function createDuduControl({
   assistant,
   board,
   duduPages,
+  // The providers' foreground watch (`backgroundOnly`, `onChange`): a harness turn open only for its background work.
+  foreground,
   collectorNotifications,
   collectorNotificationsEnabled,
   runRequest,
@@ -127,7 +129,7 @@ export async function createDuduControl({
     notifications = await createNativeNotifications({
       folder, devices, source: collectorNotifications, enabled: collectorNotificationsEnabled,
     });
-    bridge = injectedDispatch ? undefined : createNativeBridge({ rpc, pages, navigation, conversationReads, fileTransfers, questionBridge, sessionActivity, acknowledgeRead, sessionSearch, assistantConversation, assistant, board, duduPages, notifications });
+    bridge = injectedDispatch ? undefined : createNativeBridge({ rpc, pages, navigation, conversationReads, fileTransfers, questionBridge, sessionActivity, acknowledgeRead, sessionSearch, assistantConversation, assistant, board, duduPages, notifications, foreground });
     dispatch = injectedDispatch ?? bridge.dispatch;
     httpPages = typeof pages?.openHttp === 'function'
       ? createWebPageHttp({ pages, pairingStore: devices, duduPages }) : undefined;

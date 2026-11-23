@@ -77,9 +77,14 @@ const Row = forwardRef(function Row({ record, tab, selected, selecting, marking,
       </button>
       {quick.length > 0 && (
         <span className={cn('absolute top-1/2 right-2.5 flex -translate-y-1/2 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100', selecting && 'hidden')}>
-          {quick.map(([label, Icon, run, waiting]) => (
-            <Button key={label} variant="ghost" size="icon-xs" disabled={marking || waiting} aria-label={label} aria-busy={waiting || undefined} title={label} onClick={() => run(record)}><MenuIcon icon={Icon} slot={12} /></Button>
-          ))}
+          {quick.map(([label, Icon, run, waiting]) => {
+            // Delete is red, as in the row's menu, and its can as wide in ink as the check beside it: at the set's one visual size it looked the smaller of the two in a 12px slot
+            // (owner, 2026-11-23: 「两个图标大小不一，删除图标小了…应该用红色吧」).
+            const remove = Icon === Trash2;
+            return (
+              <Button key={label} variant="ghost" size="icon-xs" className={remove ? 'text-destructive hover:text-destructive' : undefined} disabled={marking || waiting} aria-label={label} aria-busy={waiting || undefined} title={label} onClick={() => run(record)}><MenuIcon icon={Icon} slot={12} visual={remove ? 17 : undefined} /></Button>
+            );
+          })}
         </span>
       )}
     </div>

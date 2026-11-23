@@ -180,7 +180,14 @@ async function main() {
         return match ? [{ pid: Number(match[1]), parent: Number(match[2]), startedAt: match[3], command: match[4] }] : [];
       });
     };
-    const desktopProcesses = async () => (await processes()).filter((entry) => entry.command === executable);
+    // DSH itself: the app (started by launchd) and what it starts on its own binary (the host). Not the plugin's MCP bridges (`providers/mcp-stdio.mjs`) and the like, which the
+    // harnesses start on the same binary and which come and go with the sessions: one that ended while the plugin was packaged failed a forced update (2026-11-23, 03:52).
+    // A DSH that was not started by launchd keeps the whole list, as before.
+    const desktopProcesses = async () => {
+      const all = (await processes()).filter((entry) => entry.command === executable);
+      const apps = all.filter((entry) => entry.parent === 1);
+      return apps.length ? all.filter((entry) => entry.parent === 1 || apps.some((app) => app.pid === entry.parent)) : all;
+    };
     const mainPids = async () => {
       const candidates = await desktopProcesses();
       return candidates.filter((entry) => !candidates.some((other) => other.pid === entry.parent));

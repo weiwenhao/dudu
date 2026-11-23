@@ -519,10 +519,11 @@ struct ChatView: View {
     private var historyItems: [ConversationHistoryItem] {
         guard hasConversationContent else { return [] }
         let items: [ConversationHistoryItem]
+        let showsRunning = store.selectedSession?.backgroundOnly != true
         if store.transcript == nil {
             items = ConversationHistoryItem.messageHistoryItems(
                 messages: store.messages, transcriptRows: store.displayedTranscriptRows,
-                questions: draftTarget == nil ? [] : store.questions
+                questions: draftTarget == nil ? [] : store.questions, showsRunning: showsRunning
             )
         } else {
             var built: [ConversationHistoryItem] = []
@@ -538,7 +539,8 @@ struct ChatView: View {
                 trailing += store.questions.map(ConversationHistoryItem.questions)
             }
             built += ConversationHistoryItem.transcriptItems(
-                store.displayedTranscriptRows, timeSeparators: store.transcriptTimeSeparators, trailing: trailing
+                store.displayedTranscriptRows, timeSeparators: store.transcriptTimeSeparators, trailing: trailing,
+                showsRunning: showsRunning
             )
             items = built
         }
@@ -1314,7 +1316,7 @@ struct ChatView: View {
     }
 
     private var isProcessingMessage: Bool {
-        store.selectedSession?.status == "running" || store.isSending || isCompacting
+        store.selectedSession?.isAnswering == true || store.isSending || isCompacting
     }
 
     private var showsInputModeToggle: Bool {

@@ -47,10 +47,13 @@ export async function createProviders({ host, providers, folder, log = console }
   let settings = await readSettings(settingsFile);
   const status = new Map();         // provider id -> what the settings page shows
   const registered = new Map();     // route -> { bridge, driver, path, dispose }
-  const foreground = createForegroundWatch((id) => [...registered.values()].some(({ bridge }) => {
+  // A run whose model has answered while its native background work goes on: the desktop's composer and the phone draw it as idle.
+  const backgroundOnly = (id) => [...registered.values()].some(({ bridge }) => {
     const run = bridge.runOf(id);
     return run && !run.finished && run.foregroundActive === false;
-  }));
+  });
+  const foreground = createForegroundWatch(backgroundOnly);
+  const foregroundListeners = new Set();
   const mirrored = new Map();       // agent id -> { agent, route, bridge, dispose }
   const closing = new Set();
   let refreshing = Promise.resolve();
@@ -111,6 +114,9 @@ export async function createProviders({ host, providers, folder, log = console }
       eventsOf: host.eventsOf, flushSession: host.flushSession, inputJournal,
       onForeground: (id) => {
         foreground.changed(id);
+        for (const listener of [...foregroundListeners]) {
+          try { listener(id); } catch { /* one watcher does not stop the others */ }
+        }
         bridge.yieldForInput(id);
       },
       inputOf: createHarnessInput({ attachments: () => host.attachments?.(), folder: join(folder, 'input-images') }),
@@ -217,6 +223,12 @@ export async function createProviders({ host, providers, folder, log = console }
     })),
     refresh: async () => { await refresh(); return view(); },
     hasActiveWork: (sessionId) => [...registered.values()].some(({ bridge }) => bridge.hasActiveWork(sessionId)),
+    /** Whether the session's turn is open only for native background work; `onForeground` is told the session's id whenever that may have changed. */
+    backgroundOnly: (sessionId) => backgroundOnly(sessionId),
+    onForeground(listener) {
+      foregroundListeners.add(listener);
+      return () => foregroundListeners.delete(listener);
+    },
     /** Lets go of what the harnesses hold for a DSH session whose turn has ended (deep sleep); -> whether any of them held a run. */
     async release(sessionId) {
       const results = await Promise.all([...registered.values()].map(({ bridge }) => bridge.release(sessionId).catch(() => false)));

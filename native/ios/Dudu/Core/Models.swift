@@ -28,6 +28,14 @@ struct SessionSummary: Codable, Identifiable, Sendable, Equatable {
     var deepSleep: Bool?
     /// A child history must retain DSH's parent address, including across cache restoration.
     var subagent: SubagentHistoryAddress? = nil
+    /// The turn is still open, but only for a harness's background work: the model has answered (owner, 2026-11-23: 「电脑早就结束了，只有一个后台任务在跑」). Drawn as the desktop draws
+    /// it, without the running line and with the send button; sending and the queue still go by `status`.
+    var backgroundOnly: Bool? = nil
+}
+
+extension SessionSummary {
+    /// The model is at work: what the running line and the stop button show.
+    var isAnswering: Bool { status == "running" && backgroundOnly != true }
 }
 
 struct SubagentHistoryAddress: Codable, Sendable, Equatable {

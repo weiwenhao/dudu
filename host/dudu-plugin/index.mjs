@@ -1100,6 +1100,7 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
         hide: (seqs) => assignment.group?.hide(seqs) ?? { outcome: 'error', code: 'unavailable' },
       },
       duduPages,
+      foreground: { backgroundOnly: (id) => assignment.providers?.backgroundOnly?.(id) === true, onChange: (listener) => assignment.providers?.onForeground?.(listener) },
       collectorNotifications: assignment.collectorNotifications,
       collectorNotificationsEnabled: () => assignment.assistant?.collectors?.dudu.list().collectors?.some((entry) => entry.notify === true) === true,
       // The phone's board and Collector: the same commands the desktop interface sends, run for the owner (the issues are opened later than this: asked for when used).
