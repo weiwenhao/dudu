@@ -5730,6 +5730,23 @@
         }
       }
     },
+    "上传失败": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上传失败"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Upload failed"
+          }
+        }
+      }
+    },
     "文件过大，无法显示改动": {
       "extractionState": "manual",
       "localizations": {

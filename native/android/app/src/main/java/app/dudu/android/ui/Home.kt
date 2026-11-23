@@ -506,6 +506,7 @@ fun problemText(code: String): String = when (code) {
     "RELAY_empty_request" -> w("@ 后面还要写要说的话。")
     "RELAY_choose_agent" -> w("先选择智能体。")
     "RELAY_choose_project" -> w("先选项目，再把工作交给智能体。")
+    "LIMIT_EXCEEDED" -> w("上传失败")
     "RELAY_recipient_unavailable" -> w("只能 @ 当前事项的处理者。")
     "RELAY_delivery_failed" -> w("留言已保存，请求没能送达。")
     "RELAY_invalid_message" -> w("先写点内容。")

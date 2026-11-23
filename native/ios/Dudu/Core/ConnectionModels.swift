@@ -213,6 +213,7 @@ enum DuduFailure: Error, LocalizedError, Sendable, Equatable {
         case "INVALID_ARGUMENT", "BAD_REQUEST": return L10n.text("请求内容无效，请检查后重试。")
         case "FORBIDDEN": return L10n.text("电脑拒绝了此操作。")
         case "BUSY": return L10n.text("电脑正在处理其他操作，请稍后重试。")
+        case "LIMIT_EXCEEDED": return L10n.text("上传失败")
         default: return L10n.text("电脑暂时无法完成请求。")
         }
     }

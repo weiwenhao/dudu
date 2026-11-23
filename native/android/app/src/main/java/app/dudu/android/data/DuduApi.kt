@@ -325,6 +325,8 @@ class DuduApi(endpoint: Endpoint, private val expectedComputer: String? = endpoi
         response.use {
             DuduLog.record("file.upload.answer", requestId = requestId, elapsedMs = (System.nanoTime() - started) / 1_000_000,
                 counts = mapOf("httpStatus" to it.code.toLong()))
+            // A forwarding server in front of the computer (nginx and the like) refuses a body over its limit with an HTML page, not our JSON.
+            if (it.code == 413) throw ApiFailure("LIMIT_EXCEEDED")
             val text = it.body?.source()?.let { source ->
                 val buffer = okio.Buffer()
                 while (true) { val count = source.read(buffer, 8192); if (count < 0) break; if (buffer.size > 65536) throw ApiFailure("PROTOCOL_ERROR") }
