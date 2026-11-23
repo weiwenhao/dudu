@@ -355,6 +355,23 @@ struct ConversationHistoryView<Content: View>: View {
             historyId: metrics.diagnosticID,
             elapsedMs: (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000, geometry: metrics.geometry
         )
+        settleLatest()
+    }
+
+    /// A jump whose animation has ended short of the end (`chat.latest.unsettled`: the lazy stack's estimate of the rows below was too small) used to wait for the next layout to be finished:
+    /// `positionHistory` needs an idle scroll view, the last command of the jump lands while it still moves, and nothing asks again until something changes, so the list stood still half way
+    /// for seconds (the owner's log of 2026-11-23, 23:16:53 to 23:16:56: no command for 2.7 s, 3,400 pt short of the end). Ask again every 150 ms, at most ten times, for as long as the
+    /// request for the latest row is open: a drag takes it away (`interrupt`), and a list that has left has no layout callback to call.
+    private func settleLatest() {
+        guard case .some(.latest) = metrics.positioning.request else { return }
+        let metrics = metrics
+        Task { @MainActor in
+            for _ in 0..<10 {
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled, metrics.jumpStartedAt == nil, case .some(.latest) = metrics.positioning.request else { return }
+                metrics.requestLayout()
+            }
+        }
     }
 
     private func positionHistory(_ proxy: ScrollViewProxy, reason: String) {
