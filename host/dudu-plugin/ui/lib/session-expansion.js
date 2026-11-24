@@ -21,9 +21,18 @@ export function createSessionExpansion({ layout, panelId }) {
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     getSnapshot: () => expanded,
     capturePage(state) { pageState = state; if (restoring === state) restoring = null; },
-    takePage: () => restoring ?? new Map(),
-    begin(sessionId) { restoring = null; publish({ sessionId, pageState }); },
-    visit(sessionId) { if (expanded && expanded.sessionId !== sessionId) clear(); },
+    // Coming back by Dudu's own icon shows the page as it was left, the conversation that was open in it included (owner, 2026-11-23: 「顶部的嘟嘟图标点击回到之前的会话中」);
+    // it used to start a fresh page.
+    takePage: () => restoring ?? pageState,
+    /**
+     * A conversation is shown from Dudu's page: the return button and Escape take it back. `claim`: opened by the host's own controls in Dudu's header (the subagent and team
+     * lists), whose session id is the host's to choose: the first conversation shown after it is the one (owner, 2026-11-23: a subagent opened from there had no way back).
+     */
+    begin(sessionId, { claim = false } = {}) { restoring = null; publish({ sessionId, pageState, claim }); },
+    visit(sessionId) {
+      if (expanded?.claim) { if (expanded.sessionId !== sessionId) publish({ ...expanded, sessionId, claim: false }); else publish({ ...expanded, claim: false }); return; }
+      if (expanded && expanded.sessionId !== sessionId) clear();
+    },
     clear,
     restore(sessionId) {
       if (expanded?.sessionId !== sessionId || layout.panelInfo.getSnapshot().activePanelId !== null) return false;

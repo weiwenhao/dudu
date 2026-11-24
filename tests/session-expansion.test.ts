@@ -40,10 +40,28 @@ test('returning from the expanded native conversation restores only its originat
   assert.equal(h.expansion.takePage(), state);
   assert.equal(h.expansion.takePage(), state, 'a speculative React render must not consume the return state');
   h.expansion.capturePage(state);
-  assert.notEqual(h.expansion.takePage(), state, 'a later ordinary visit does not restore an old expansion');
+  assert.equal(h.expansion.takePage(), state, 'Dudu\'s own icon comes back to the page as it was left, its conversation included (owner, 2026-11-23)');
   assert.equal(h.expansion.restore('native-12'), false);
   h.expansion.dispose();
   assert.equal(h.listeners.size, 0);
+});
+
+test('a conversation the host\'s own controls open from Dudu\'s page (a subagent) takes the first shown session as its return address', () => {
+  const h = host();
+  const state = new Map<string, unknown>([['page/board/conversation.selection', { id: 'issue:1' }]]);
+  h.expansion.capturePage(state);
+  h.expansion.begin(null, { claim: true });
+  h.layout.selectPanel(null);
+  h.expansion.visit('dudu-native-child-1');
+  assert.equal(h.expansion.restore('dudu-native-child-1'), true, 'the subagent page has the way back');
+  assert.equal(h.layout.panelInfo.getSnapshot().activePanelId, 'dudu');
+  assert.equal(h.expansion.takePage(), state);
+  h.expansion.begin('child-2', { claim: true });
+  h.layout.selectPanel(null);
+  h.expansion.visit('child-2');
+  h.expansion.visit('another');
+  assert.equal(h.expansion.restore('another'), false, 'only the first shown conversation is claimed; moving on discards it');
+  h.expansion.dispose();
 });
 
 test('changing the native conversation or selecting a different main panel discards the return address', () => {

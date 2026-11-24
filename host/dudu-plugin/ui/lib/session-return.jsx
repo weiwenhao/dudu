@@ -3,7 +3,7 @@ import { Minimize2 } from 'lucide-react';
 
 const ReturnContext = createContext(null);
 
-/** Keep only this expansion's UI state in memory; ordinary visits still start a fresh page. */
+/** Keep the page's UI state in memory: an expansion's return and Dudu's own icon both come back to the page as it was left (`createSessionExpansion.takePage`). */
 export function SessionReturnProvider({ expansion, children }) {
   const [values] = useState(() => expansion?.takePage() ?? new Map());
   useLayoutEffect(() => { expansion?.capturePage(values); }, [expansion, values]);
