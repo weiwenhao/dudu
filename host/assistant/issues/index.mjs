@@ -89,6 +89,11 @@ const TAB_STATUSES = { active: ['todo', 'in_progress', 'in_review'], backlog: ['
 // Automatic presentation status; there are no issue-level overrides.
 const SESSION_STATE_SQL = 'dudu_session_activity(session)';
 
+// The Office is given every assigned Active issue, up to this many (a bound on what one poll carries). Who has a place is the widget's to say: it has 8 desks for those who work,
+// 10 places in the activity area and 8 beds for those in deep sleep, and sends the rest outside. A cut by priority (it was 24) hid a working agent behind the sleepers (owner,
+// 2026-11-25: the running NEW-1, with no priority, was the 31st of 36).
+const OFFICE_MAX = 200;
+
 const GROUPS = {
   status: { sql: 'status', order: ['in_progress', 'in_review', 'todo', 'backlog', 'done', 'canceled'] },
   priority: { sql: 'priority', order: ['urgent', 'high', 'medium', 'low', 'none'] },
@@ -1006,7 +1011,7 @@ export function createIssues({ file, now = Date.now, lifecycleState = () => null
       board[row.assigned ? ['todo', 'in_progress', 'in_review'].indexOf(row.status) + 1 : 0] += row.n;
       if (row.assigned) { counts.total += row.n; counts[row.state] += row.n; }
     }
-    const rows = stmt(`SELECT * FROM issues WHERE ${active} AND agent IS NOT NULL ORDER BY ${ORDERS.priority.keys.join(', ')} LIMIT 24`).all();
+    const rows = stmt(`SELECT * FROM issues WHERE ${active} AND agent IS NOT NULL ORDER BY ${ORDERS.priority.keys.join(', ')} LIMIT ${OFFICE_MAX}`).all();
     return success({ items: rows.map(toIssue), counts, board });
   }
 

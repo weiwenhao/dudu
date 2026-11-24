@@ -311,6 +311,22 @@ test('grouping, filters and counts use automatic session status, with no workflo
   } finally { issues.close(); }
 });
 
+// The widget has the places (8 desks, 10 in the activity area, 8 beds) and sends whoever has none outside; what it is given decides who can be there at all. A cut by
+// priority hid a working agent behind the sleepers (owner, 2026-11-25: NEW-1 was running and was the 31st of 36 assigned issues, with no priority).
+test('the office is given every assigned active issue, so a working one is not cut by its priority', () => {
+  const working = 'dsh:working';
+  const issues = createIssues({ file: ':memory:', sessionState: (key: string) => (key === working ? 'processing' : 'idle') });
+  try {
+    const project = { name: 'Work', path: '/work' };
+    for (let n = 0; n < 30; n += 1) issues.add({ title: `Urgent ${n}`, priority: 'high', status: 'in_progress', agent: 'claude', project, session: `dsh:asleep-${n}` });
+    const last = issues.add({ title: 'Working, no priority', status: 'todo', agent: 'claude', project, session: working }).issue;
+    const { items } = issues.office();
+    assert.equal(items.length, 31, 'all of them go to the office');
+    assert.equal(items.find((item: any) => item.id === last.id)?.sessionState, 'processing', 'the working one is there, as working');
+    assert.equal(items.at(-1).id, last.id, 'in the order of urgency, as before');
+  } finally { issues.close(); }
+});
+
 test('schema migration removes only old manual overrides and preserves issues and activity', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'dudu-state-migration-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
