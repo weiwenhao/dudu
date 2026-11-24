@@ -119,6 +119,7 @@ struct IssueProjectCreatePage: View {
                 Divider()
                 Toggle(L10n.text("文件夹不存在时创建"), isOn: $createDirectory)
                     .font(.system(size: 15))
+                    .controlSize(.small)
                 if failed {
                     Text(L10n.text("项目文件夹没能打开，请检查路径，或勾选创建文件夹。"))
                         .font(.system(size: 13))

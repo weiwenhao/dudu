@@ -185,10 +185,10 @@ svg:not(:where(.dudu-host-conversation *)) { display: block; }
 *:not(:where(.dudu-host-conversation, .dudu-host-conversation *)) { scrollbar-width: thin; scrollbar-color: transparent transparent; }
 [data-scrolling]:not(:where(.dudu-host-conversation *)) { scrollbar-color: var(--scrollbar-thumb) transparent; }
 
-/* The settings design uses the larger switch, with the same Radix keyboard and focus behavior. */
-.dudu-settings [data-slot="switch"] { width: 40px; height: 24px; padding: 2px; border: 0; }
-.dudu-settings [data-slot="switch-thumb"] { width: 20px; height: 20px; translate: 0; transform: none; background: var(--background); }
-.dudu-settings [data-slot="switch"][data-state="checked"] [data-slot="switch-thumb"] { translate: 16px 0; }
+/* The settings design uses its own switch size (owner, 2026-11-24: the 40x24 size read too big, one size down), with the same Radix keyboard and focus behavior. */
+.dudu-settings [data-slot="switch"] { width: 32px; height: 20px; padding: 2px; border: 0; }
+.dudu-settings [data-slot="switch-thumb"] { width: 16px; height: 16px; translate: 0; transform: none; background: var(--background); }
+.dudu-settings [data-slot="switch"][data-state="checked"] [data-slot="switch-thumb"] { translate: 12px 0; }
 
 /* The description editor (issues/RichText.jsx): Tiptap's document in the page's own type, 15px on 24px, with the headings, lists, quote and code of the Markdown it keeps. */
 .dudu-rich { outline: none; min-width: 0; max-width: 100%; min-height: 24px; font-size: 15px; line-height: 24px; overflow-wrap: anywhere; }
