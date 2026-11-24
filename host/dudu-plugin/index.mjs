@@ -174,6 +174,7 @@ async function startProviders(ctx, folder, assignment) {
       jobs: () => ctx.jobs,
       attachments: () => ctx.attachments,
       on: (event, handler) => ctx.on(event, handler),
+      emit: (event, ...args) => ctx.emit(event, ...args),
       permissionOf: (agent) => permissionOf(ctx.sessionProjections, agent),
       providerOf: (agent) => {
         let selection;

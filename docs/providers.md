@@ -392,6 +392,24 @@ writer 真正退出才继续。最后仍执行原来的 `openElsewhere`，不移
 正常保存，未压缩聊天记录或截断实时输出。该预算不是宿主总内存上限，最新一帧及保留文本仍可能
 超出预算；现有堆栈没有证明这条路径是此次 OOM 的唯一来源。
 
+## 模型列表不让菜单等（2026-11-24）
+
+所有者的手机上 `catalog.get` 有时要 24 秒。原因：DSH 的模型目录（`session/modelCatalog`）同时问每个供应商、等最慢的那个；
+Antigravity 没配代理时连不上 Google，列模型要等约 23 秒才失败（DSH 进程里没有代理变量，要在设置 > 供应商里给它配）；
+以前插件的列表缓存过期后，第一个来问的人要等重新读完，读失败的只缓存 30 秒，所以每隔 30 秒再来问又等一次。
+用 DSH 的做法重做（`createOarProvider().create()` 里的 `load`，`host/providers/oar.mjs`）：读到的列表（`MODEL_TTL` 5 分钟）过期后**立即照旧返回**，
+同时在后台重读，同一时间只读一次；只有从没读到过时第一次问才等，最多 `FIRST_WAIT_MS`（3 秒），之后用插件自己的备用列表，
+这期间再问不再等；读不出来的保留上次读到的（没有就备用的），`RETRY_MS`（1 分钟）后才再读；保存设置（`refreshModels`）后旧的读取结果作废。
+插件启动登记一个 harness 时和保存它的设置后，马上在后台读一次（`warmModels`），第一个菜单不用等。
+实测（真的 Antigravity，不带代理）：第一次问 3.0 秒，之后每次 0 到 1 毫秒；原来每次要 24 到 33 秒。`tests/oar-model-listing.test.ts` 四条（假时钟，几毫秒）。
+
+**漏了一步（2026-11-24 晚，所有者：“agy 为什么选择不了模型了”）：** DSH 的前端拿到第一份模型目录就一直用，直到重连，或收到 `llm/models-updated`
+（`llm/adapters-updated` 同理；DSH 自己的 DeepSeek 列表读完变了就发这个事件）。agy 1.5.16（今天 16:07 更新）列一次模型要约 11 秒，超过 `FIRST_WAIT_MS`，
+第一次回答的就是备用列表，真列表读完后没人通知：菜单停在 “Default”，会话原来的模型成了“请选择模型”，发消息报 `session/model-unavailable`。
+现在读完的列表和上一次给 DSH 的（`listModels` 返回的）不一样，就发一次 `llm/models-updated`（`create({ modelsChanged })`，登记 harness 时接到 `ctx.emit`）；
+一样的不发，还没给过 DSH 的也不发。上一次给过什么，在返回的那一刻就记下（`load({ toDsh })`），不在返回之后：否则紧接着读完的结果会和旧的比。
+`tests/oar-model-listing.test.ts` 加两条。真 DSH（0.2.2-rc.5）里验证过：插件发这个事件，页面收到并重新请求 `session/modelCatalog`；不发就不请求。
+
 ## harness 进程、后台任务和深度睡眠（2026-11-05）
 
 通常 DSH 每开始一轮，`HarnessBridge.begin` 起一个 OAR 会话，按上一轮记下的原生会话 id `resume`，

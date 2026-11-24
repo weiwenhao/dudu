@@ -108,7 +108,8 @@ export async function createProviders({ host, providers, folder, log = console }
   }
 
   function register(provider, detection) {
-    const driver = provider.create({ installation: detection.installation });
+    // A list read after DSH was given the first one: DSH keeps what it got until it is told, as it is by its own DeepSeek listing.
+    const driver = provider.create({ installation: detection.installation, modelsChanged: () => host.emit?.('llm/models-updated', provider.route) });
     const bridge = new HarnessBridge({
       driver, agentOf: (id) => host.agents.get(id), permissionOf: (agent) => host.permissionOf?.(agent), onLink: host.onLink,
       eventsOf: host.eventsOf, flushSession: host.flushSession, inputJournal,
@@ -174,9 +175,14 @@ export async function createProviders({ host, providers, folder, log = console }
       const wanted = enabled && detection.state === 'ready';
       if (entry && (!wanted || entry.path !== detection.path)) await unregister(provider);
       if (closed) return;
-      if (wanted && !registered.has(provider.route)) register(provider, detection);
-      // A refresh is how a new model or a changed login shows up.
-      else if (wanted) registered.get(provider.route).driver.refreshModels?.();
+      if (wanted && !registered.has(provider.route)) {
+        register(provider, detection);
+        // Read what the harness offers now, in the background: the first menu that asks should not wait for it.
+        registered.get(provider.route)?.driver.warmModels?.();
+      } else if (wanted) {
+        // A refresh is how a new model or a changed login shows up.
+        registered.get(provider.route).driver.refreshModels?.();
+      }
     }
     for (const agent of host.agents.list?.() ?? []) syncMirrorTools(agent, routeOf(agent));
   }
