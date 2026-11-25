@@ -28,6 +28,9 @@
 //       -> { ok: true } | { ok: false, reason: 'timeout' | 'cancelled' | 'denied' | 'failed', message }   never throws.
 //       `message` is for logs, in English; the words the user reads belong to the caller. onUrl(url) is called when the browser
 //       could not be opened, so that the interface can show the link. A new authorize for an id replaces a running one.
+//       `elsewhere: true`: the sign-in page is opened somewhere else (the phone, 2026-11-23): the browser here is not opened, onUrl(url) gets the link, and the redirect
+//       comes back through deliver() instead of the browser's request to the listener (it may still come that way too).
+//   oauth.deliver(id, url) -> true when it was the redirect the sign-in of `id` waits for
 //   oauth.cancel(id) -> true when a sign-in was waiting
 //   await oauth.forget(id) -> { ok: true } | { ok: false, message }   removes everything kept, and stops a sign-in that is waiting
 //   await oauth.status(id) -> 'none' | 'waiting' | 'signed-in'   one store read, no network
@@ -116,7 +119,7 @@ export function createOAuth({
     }
   }
 
-  async function authorize(id, serverUrl, { signal, onUrl, displayName, ...options } = {}) {
+  async function authorize(id, serverUrl, { signal, onUrl, displayName, elsewhere = false, ...options } = {}) {
     const problem = inputProblem(id, serverUrl);
     if (problem) return { ok: false, reason: 'failed', message: problem };
     const name = displayName || id;
@@ -130,6 +133,7 @@ export function createOAuth({
     try {
       const state = randomBytes(32).toString('base64url');
       listener = await startCallback({ ports, state });
+      flow.listener = listener;
       const fetchFn = ctx.timed(flow.controller.signal);
       const challenge = await probe(serverUrl, fetchFn, flow.controller.signal);
       const saved = ctx.distrust.has(id) ? undefined : await ctx.store.read(id, serverUrl);
@@ -140,7 +144,7 @@ export function createOAuth({
 
       // A browser that cannot be opened is not a failed sign-in: the interface gets the link.
       const url = sign.staged.url.href;
-      if (!(openUrl && await within(openTimeoutMs, Promise.resolve().then(() => openUrl(url))) !== false)) {
+      if (elsewhere || !(openUrl && await within(openTimeoutMs, Promise.resolve().then(() => openUrl(url))) !== false)) {
         try { Promise.resolve(onUrl?.(url)).catch(() => {}); } catch { /* the caller's callback is not ours to fail on */ }
       }
       const got = await listener.wait({ timeoutMs, signal: flow.controller.signal });
@@ -186,6 +190,7 @@ export function createOAuth({
   return {
     providerFor: (id, serverUrl, options) => backgroundProvider(ctx, id, serverUrl, options),
     authorize,
+    deliver: (id, url) => Boolean(flows.get(id)?.listener?.deliver(url)),
     cancel: (id) => end(id, { quiet: false }),
     async forget(id) {
       end(id, { quiet: true }); // or it would write the record again when it ends

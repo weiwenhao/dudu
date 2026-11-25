@@ -24,7 +24,8 @@ test('every harness that shares the universal driver is a route and an agent wit
   assert.equal(universalProviders.length, UNIVERSAL_HARNESSES.length);
   for (const provider of universalProviders as any[]) {
     assert.equal(provider.route, provider.id);
-    assert.equal(provider.defaultEnabled, false, 'off until switched on in Settings > Providers');
+    assert.notEqual(provider.defaultEnabled, false, 'on as soon as it is found (owner, 2026-11-24)');
+    assert.equal(provider.folds, true, 'and folded away while it is not on this computer');
   }
 });
 

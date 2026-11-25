@@ -4,6 +4,8 @@
 //   const state = createState({ file, now })
 //   state.get(id) / state.all()      -> { status, message?, command?, login?, install?, code?, tools?, at } | null   `code`: what the owner enters in the browser (device.mjs) while 'waiting'
 //   state.set(id, record)            status: 'connected' | 'needs-auth' | 'waiting' | 'error' | 'needs-login' | 'missing'; the file is replaced whole, never half written
+//                                    `fresh: true` marks a connector's first connection: it stays on every later record until one is 'connected' (connections.mjs lets go of a
+//                                    fresh one that fails). `url`: where the owner enters the code of a device sign-in, with `code`.
 //   state.delete(id)
 // 'waiting' (for the owner in the browser) belongs to the run of the plugin that wrote it: a record of another run is read as 'needs-auth', so that a restart
 // does not leave a row waiting for something that is no longer there.
@@ -41,8 +43,9 @@ export function createState({ file, now = Date.now } = {}) {
     set(id, record) {
       if (!STATUSES.has(record?.status)) throw new Error(`Unknown connection status: ${record?.status}`);
       const clean = {};
-      for (const key of ['status', 'message', 'command', 'login', 'install', 'code']) if (typeof record[key] === 'string' && record[key]) clean[key] = record[key].slice(0, 500);
+      for (const key of ['status', 'message', 'command', 'login', 'install', 'code', 'url']) if (typeof record[key] === 'string' && record[key]) clean[key] = record[key].slice(0, 500);
       if (Number.isSafeInteger(record.tools) && record.tools >= 0) clean.tools = record.tools;
+      if (record.status !== 'connected' && (record.fresh === true || (record.fresh === undefined && data[id]?.fresh === true))) clean.fresh = true;
       data[id] = { ...clean, at: now(), run };
       save();
     },

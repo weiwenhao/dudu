@@ -15,10 +15,48 @@ import { reportGoal } from './goal.mjs';
 // mirror tools that show the harness's tool calls live in that session's agent only, for as long as the
 // session's selected route is that harness.
 
-// `disabled` and `enabled` hold only a choice that differs from what a harness is by default: Claude, Codex and Pi are on until switched
-// off; the harnesses of drivers/universal.mjs are off until switched on (`defaultEnabled: false`), so that a tool a person happens to have
-// installed does not turn up in every list of agents by itself.
-const NO_SETTINGS = { disabled: [], enabled: [], paths: {} };
+// `disabled` and `enabled` hold only a choice that differs from what a harness is by default. Every harness that is found is on until switched
+// off (owner, 2026-11-24: 「安装嘟嘟插件启动后检测到的全都自动启用」; from 2026-11-19 those of drivers/universal.mjs were off until switched on). A provider may
+// still say `defaultEnabled: false`; none does now.
+// `env` holds each harness's own environment variables (owner, 2026-11-23: 「叫配置环境变量，每个 agent 可以配置自己的环境变量」, a proxy for one, say):
+// given to its processes when they start, and so to the next process after a change (oar.mjs replaces an idle one). The file is the owner's only (0600).
+const NO_SETTINGS = { disabled: [], enabled: [], paths: {}, env: {} };
+export const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const ENV_MAX = 100;
+const ENV_VALUE_MAX = 32 * 1024;
+
+/**
+ * The text box of Settings > Providers: one `NAME=value` a line, as a `.env` file or a shell has them. Blank lines and `#` lines are left out, a leading
+ * `export ` and one pair of quotes round a value are taken off, and a name given twice keeps its last value. A line of anything else is refused.
+ */
+export function parseEnvText(text) {
+  const env = {};
+  String(text).split(/\r?\n/).forEach((raw, index) => {
+    const line = raw.trim().replace(/^export\s+/, '');
+    if (!line || line.startsWith('#')) return;
+    const at = line.indexOf('=');
+    const name = at > 0 ? line.slice(0, at).trim() : '';
+    if (!ENV_NAME.test(name)) throw new Error(`Line ${index + 1} is not NAME=value.`);
+    const value = line.slice(at + 1).trim();
+    env[name] = /^(["']).*\1$/s.test(value) && value.length >= 2 ? value.slice(1, -1) : value;
+  });
+  return env;
+}
+
+/** One harness's variables as saved: names that a shell would take, string values, in the order given. Anything else is refused (`strict`) or left out. */
+export function cleanEnv(value, { strict = false } = {}) {
+  const refuse = (message) => { if (strict) throw new Error(message); };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) { refuse('Environment variables must be an object of names and values.'); return {}; }
+  const entries = Object.entries(value);
+  if (entries.length > ENV_MAX) refuse(`At most ${ENV_MAX} environment variables.`);
+  const clean = {};
+  for (const [name, text] of entries.slice(0, ENV_MAX)) {
+    if (!ENV_NAME.test(name)) { refuse(`${JSON.stringify(name.slice(0, 80))} is not an environment variable name.`); continue; }
+    if (typeof text !== 'string' || text.length > ENV_VALUE_MAX || text.includes('\0')) { refuse(`The value of ${name} is not a text of at most ${ENV_VALUE_MAX} characters.`); continue; }
+    clean[name] = text;
+  }
+  return clean;
+}
 
 async function readSettings(file) {
   let raw;
@@ -29,13 +67,16 @@ async function readSettings(file) {
     disabled: Array.isArray(raw.disabled) ? raw.disabled.filter((id) => typeof id === 'string') : [],
     enabled: Array.isArray(raw.enabled) ? raw.enabled.filter((id) => typeof id === 'string') : [],
     paths: raw.paths && typeof raw.paths === 'object' ? Object.fromEntries(Object.entries(raw.paths).filter(([, value]) => typeof value === 'string' && value)) : {},
+    env: raw.env && typeof raw.env === 'object' && !Array.isArray(raw.env)
+      ? Object.fromEntries(Object.entries(raw.env).map(([id, value]) => [id, cleanEnv(value)]).filter(([, value]) => Object.keys(value).length)) : {},
   };
 }
 
 async function writeSettings(file, settings) {
   const temporary = `${file}.${process.pid}.tmp`;
-  const { enabled, ...rest } = settings;
-  await writeFile(temporary, JSON.stringify(enabled?.length ? { ...rest, enabled } : rest, null, 2) + '\n', { mode: 0o600 });
+  const { enabled, env, ...rest } = settings;
+  const written = { ...rest, ...(enabled?.length ? { enabled } : {}), ...(env && Object.keys(env).length ? { env } : {}) };
+  await writeFile(temporary, JSON.stringify(written, null, 2) + '\n', { mode: 0o600 });
   await chmod(temporary, 0o600);
   await rename(temporary, file);
 }
@@ -107,9 +148,12 @@ export async function createProviders({ host, providers, folder, log = console }
     return stopped;
   }
 
+  /** The variables the owner gave this harness (read when a process starts, so a change reaches the next one). */
+  const envOf = (provider) => settings.env[provider.id] ?? {};
+
   function register(provider, detection) {
     // A list read after DSH was given the first one: DSH keeps what it got until it is told, as it is by its own DeepSeek listing.
-    const driver = provider.create({ installation: detection.installation, modelsChanged: () => host.emit?.('llm/models-updated', provider.route) });
+    const driver = provider.create({ installation: detection.installation, env: () => envOf(provider), modelsChanged: () => host.emit?.('llm/models-updated', provider.route) });
     const bridge = new HarnessBridge({
       driver, agentOf: (id) => host.agents.get(id), permissionOf: (agent) => host.permissionOf?.(agent), onLink: host.onLink,
       eventsOf: host.eventsOf, flushSession: host.flushSession, inputJournal,
@@ -153,22 +197,27 @@ export async function createProviders({ host, providers, folder, log = console }
       }
     };
     const dispose = host.llm.registerAdapter([driver.route], createHarnessAdapter(bridge));
-    registered.set(driver.route, { bridge, teams, driver, path: detection.path, version: detection.version, environment: provider.environment, dispose });
+    // What reads the harness's own sessions and quota runs it with the same variables as its conversations.
+    const environment = () => ({ ...provider.environment?.(), ...envOf(provider) });
+    registered.set(driver.route, { bridge, teams, driver, path: detection.path, version: detection.version, environment, dispose });
   }
 
   /** Whether a harness is switched on: the person's choice either way, and without one what the harness is by default. */
   const enabledOf = (provider) => (settings.disabled.includes(provider.id) ? false : settings.enabled.includes(provider.id) ? true : provider.defaultEnabled !== false);
 
-  async function refreshNow() {
+  /** Looks at the harnesses again: all of them, or (`only`, a provider id) the one whose settings were just changed, so that saving one does not wait for the other dozen. */
+  async function refreshNow(only) {
     if (closed) return;
     for (const provider of providers) {
+      if (only && provider.id !== only) continue;
       const detection = await provider.probe({ override: settings.paths[provider.id] });
       const enabled = enabledOf(provider);
       status.set(provider.id, {
-        id: provider.id, name: provider.name, route: provider.route, enabled, configuredPath: settings.paths[provider.id] ?? '',
+        id: provider.id, name: provider.name, route: provider.route, enabled, configuredPath: settings.paths[provider.id] ?? '', env: envOf(provider),
         state: detection.state, version: detection.version, path: detection.path, reason: detection.reason,
         // Said only of a harness that is off until switched on: the settings page folds such a one away while it is not found.
         ...(provider.defaultEnabled === false ? { defaultEnabled: false } : {}),
+        ...(provider.folds ? { folds: true } : {}),
       });
       if (closed) return;
       const entry = registered.get(provider.route);
@@ -181,13 +230,16 @@ export async function createProviders({ host, providers, folder, log = console }
         registered.get(provider.route)?.driver.warmModels?.();
       } else if (wanted) {
         // A refresh is how a new model or a changed login shows up.
-        registered.get(provider.route).driver.refreshModels?.();
+        const { driver } = registered.get(provider.route);
+        driver.refreshModels?.();
+        // Saved for this one just now (a proxy, a path): read what it offers at once, not on the next ask.
+        if (only) driver.warmModels?.();
       }
     }
     for (const agent of host.agents.list?.() ?? []) syncMirrorTools(agent, routeOf(agent));
   }
-  const refresh = () => {
-    const next = refreshing.then(refreshNow);
+  const refresh = (only) => {
+    const next = refreshing.then(() => refreshNow(only));
     refreshing = next.catch(() => {});
     return next;
   };
@@ -240,10 +292,10 @@ export async function createProviders({ host, providers, folder, log = console }
       const results = await Promise.all([...registered.values()].map(({ bridge }) => bridge.release(sessionId).catch(() => false)));
       return results.some(Boolean);
     },
-    async save({ id, enabled, path }) {
+    async save({ id, enabled, path, env }) {
       const provider = providers.find((candidate) => candidate.id === id);
       if (!provider) throw new Error('Unknown provider.');
-      const next = { disabled: [...settings.disabled], enabled: [...settings.enabled], paths: { ...settings.paths } };
+      const next = { disabled: [...settings.disabled], enabled: [...settings.enabled], paths: { ...settings.paths }, env: { ...settings.env } };
       if (typeof enabled === 'boolean') {
         next.disabled = next.disabled.filter((item) => item !== id);
         next.enabled = next.enabled.filter((item) => item !== id);
@@ -254,9 +306,15 @@ export async function createProviders({ host, providers, folder, log = console }
         if (path.trim()) next.paths[id] = path.trim();
         else delete next.paths[id];
       }
+      // The whole set at once: what is not in it is gone. A process that is working keeps its variables until it is free (oar.mjs).
+      if (env !== undefined) {
+        const clean = cleanEnv(typeof env === 'string' ? parseEnvText(env) : env, { strict: true });
+        if (Object.keys(clean).length) next.env[id] = clean;
+        else delete next.env[id];
+      }
       await writeSettings(settingsFile, next);
       settings = next;
-      await refresh();
+      await refresh(id);
       return view();
     },
     async handle(action, request) {

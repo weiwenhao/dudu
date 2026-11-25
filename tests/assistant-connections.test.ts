@@ -36,6 +36,7 @@ function world(t: any, extra: any = {}) {
     providerFor: (id: string) => ({ id }),
     authorize: extra.authorize ?? (async (id: string, url: string, options: any) => { calls.authorized.push([id, url, options.displayName]); signedIn = true; return { ok: true }; }),
     cancel: (id: string) => { calls.cancelled.push(id); },
+    deliver: (id: string, url: string) => (extra.deliver ? extra.deliver(id, url) : false),
     forget: async (id: string) => { calls.forgotten.push(id); },
   };
   const connectors = createConnectors({ file, inUse: extra.inUse });
@@ -79,22 +80,81 @@ test('connecting a hosted server that signs in: it is at once a connector that w
   assert.deepEqual([row.line, row.text, row.busy], ['页面、数据库和评论', undefined, false], 'one made from the catalog has its line, and no box to edit');
 });
 
-test('a sign-in that is cancelled, times out or is refused leaves the connector asking for it again, and cancel stops one that waits', async (t) => {
+// A first connection that does not work leaves nothing behind (owner, 2026-11-23, after GitLab and Sentry had stayed red for days): the item is to connect again, and what
+// came of it is told to the page that tried it. One that was connected before keeps asking.
+test('a first connection that is cancelled, times out or is refused leaves nothing behind and says once what came of it; one connected before keeps asking', async (t) => {
   const refused = world(t, { authorize: async () => ({ ok: false, reason: 'cancelled' }) });
   await refused.connections.connect('notion');
   await refused.connections.idle();
-  assert.equal(refused.state.get('notion')?.status, 'needs-auth');
+  assert.deepEqual([refused.state.get('notion'), refused.connections.list().connectors.length], [null, 0]);
+  assert.doesNotMatch(refused.read(), /notion/);
+  assert.deepEqual(refused.connections.list().attempts.map((attempt: any) => [attempt.id, attempt.from, attempt.status]), [['notion', 'notion', 'needs-auth']]);
+  assert.ok((await refused.connections.catalogView()).groups.some((group: any) => group.items.some((item: any) => item.id === 'notion')), 'the item is to connect again');
   const late = world(t, { authorize: async () => ({ ok: false, reason: 'timeout', message: 'x' }) });
   await late.connections.connect('linear');
   await late.connections.idle();
-  assert.deepEqual([late.state.get('linear')?.status, late.state.get('linear')?.message], ['error', 'timeout']);
+  assert.deepEqual(late.connections.list().attempts.map((attempt: any) => [attempt.status, attempt.message]), [['error', 'timeout']]);
   const waiting = world(t, { authorize: (_id: string, _url: string, { signal }: any) => new Promise((resolve) => signal.addEventListener('abort', () => resolve({ ok: false, reason: 'cancelled' }))) });
   await waiting.connections.connect('sentry');
   assert.equal(waiting.state.get('sentry')?.status, 'waiting');
-  waiting.connections.cancel('sentry');
+  assert.deepEqual((await waiting.connections.catalogView()).trying?.map((item: any) => [item.id, item.group, item.connector]), [['sentry', 'dev', 'sentry']], 'a page finds the item being tried where it is');
+  await waiting.connections.cancel('sentry');
   await waiting.connections.idle();
-  assert.deepEqual([waiting.state.get('sentry')?.status, waiting.calls.cancelled], ['needs-auth', ['sentry']]);
+  assert.deepEqual([waiting.state.get('sentry'), waiting.calls.cancelled], [null, ['sentry']]);
   assert.equal((await waiting.connections.retry('nothing')).outcome, 'needs_clarification');
+  let refuse = false;
+  const kept: any = world(t, { authorize: async () => { if (refuse) return { ok: false, reason: 'cancelled' }; kept.signIn(true); return { ok: true }; } });
+  await kept.connections.connect('notion');
+  await kept.connections.idle();
+  assert.equal(kept.state.get('notion')?.status, 'connected');
+  refuse = true;
+  kept.signIn(false);
+  await kept.connections.retry('notion');
+  await kept.connections.idle();
+  assert.equal(kept.state.get('notion')?.status, 'needs-auth', 'a connector that was connected before is not let go of');
+});
+
+test('one made before (2026-11-23) whose sign-in failed and that holds no sign-in at all is let go of when the plugin starts; one that holds one stays', async (t) => {
+  const first: any = world(t, { authorize: async () => ({ ok: false, reason: 'timeout', message: 'x' }) });
+  // as the plugin of before left them: an entry from the catalog, in error, with no mark of a first connection
+  first.connectors.owner.add({ id: 'gitlab', name: 'GitLab', kind: 'mcp', spec: { url: 'https://gitlab.com/api/v4/mcp' }, via: 'gitlab' });
+  first.connectors.owner.add({ id: 'sentry', name: 'Sentry', kind: 'mcp', spec: { url: 'https://mcp.sentry.dev/mcp' }, via: 'sentry' });
+  first.state.set('gitlab', { status: 'error', message: 'timeout' });
+  first.state.set('sentry', { status: 'error', message: 'down' });
+  const again = createConnections({ connectors: first.connectors, state: first.state, secrets: { read: async () => undefined, modify: async () => {}, remove: async () => {} },
+    oauth: { providerFor: () => ({}), authorize: async () => ({ ok: true }), cancel: () => {}, forget: async () => {}, status: async (id: string) => (id === 'sentry' ? 'signed-in' : 'none') },
+    here: async () => [], warn: () => {} });
+  t.after(() => again.close());
+  await again.idle();
+  assert.deepEqual(again.list().connectors.map((entry: any) => entry.id), ['sentry']);
+});
+
+// The phone signs in on the phone (owner, 2026-11-23: 「在手机上点，就在手机上连接吧」): it is given the page, its browser view stops at the redirect, and the address comes back.
+test('a sign-in on the phone: the page goes to the phone and not to this computer\'s browser, the address it stopped at connects it; one it gives up leaves nothing', async (t) => {
+  const box: any = {};
+  const w: any = world(t, {
+    deliver: (_id: string, url: string) => box.deliver?.(url) ?? false,
+    authorize: (id: string, _url: string, options: any) => {
+      w.calls.authorized.push([id, options.elsewhere]);
+      return new Promise((resolve) => {
+        box.deliver = (url: string) => { if (!url.includes('state=ok')) return false; w.signIn(true); resolve({ ok: true }); return true; };
+        options.signal.addEventListener('abort', () => resolve({ ok: false, reason: 'cancelled' }));
+        options.onUrl('https://linear.example/authorize?state=ok');
+      });
+    },
+  });
+  assert.deepEqual(await w.connections.signIn('linear'), { outcome: 'success', id: 'linear', url: 'https://linear.example/authorize?state=ok' });
+  assert.deepEqual(w.calls.authorized, [['linear', true]]);
+  assert.equal((await w.connections.finishSignIn('linear', 'http://127.0.0.1:3171/oauth/callback?code=c&state=forged')).outcome, 'needs_clarification');
+  const done = await w.connections.finishSignIn('linear', 'http://127.0.0.1:3171/oauth/callback?code=c&state=ok');
+  assert.deepEqual([done.outcome, done.status, done.tools], ['success', 'connected', 2]);
+  assert.equal(w.connections.list().connectors[0].fresh, undefined, 'connected: a connector like any other');
+
+  const given: any = world(t, { authorize: (_id: string, _url: string, options: any) => new Promise((resolve) => { options.signal.addEventListener('abort', () => resolve({ ok: false, reason: 'cancelled' })); options.onUrl('https://sentry.example/authorize'); }) });
+  assert.equal((await given.connections.signIn('sentry')).url, 'https://sentry.example/authorize');
+  await given.connections.cancel('sentry');
+  await given.connections.idle();
+  assert.deepEqual([given.connections.list().connectors.length, given.state.get('sentry')], [0, null]);
 });
 
 test('disconnecting removes the entry, the secrets, the sign-in and the state; one that collectors read through stays', async (t) => {
@@ -146,7 +206,7 @@ test('a connection that does not work is not given: the one that needs a sign-in
   const w = world(t, { publisher, authorize: async () => ({ ok: false, reason: 'cancelled', message: 'cancelled' }) });
   await w.connections.connect('notion');
   await w.connections.idle();
-  assert.equal(w.state.get('notion').status, 'needs-auth');
+  assert.equal(w.state.get('notion'), null, 'a first connection that was not signed in to is let go of');
   assert.deepEqual(publisher.calls.publish, [], 'nothing was given');
   assert.deepEqual(publisher.calls.withdraw, ['notion'].slice(0, 0), 'a sign-in that was cancelled leaves what was given as it is');
 
@@ -154,8 +214,8 @@ test('a connection that does not work is not given: the one that needs a sign-in
   const e = world(t, { publisher: failing, open: async () => { throw Object.assign(new Error('boom'), { code: 'ECONNREFUSED' }); } });
   await e.connections.connect('notion');
   await e.connections.idle();
-  assert.equal(e.state.get('notion').status, 'error');
-  assert.deepEqual(failing.calls.withdraw, [], 'a server that could not be reached for a moment stays in DSH, which reconnects by itself');
+  assert.equal(e.connections.list().attempts[0]?.status, 'error');
+  assert.deepEqual(failing.calls.withdraw, [], 'a server that could not be reached is not taken back from DSH: it was not given');
 
   const prompt = fakePublisher();
   const m = world(t, { publisher: prompt });
@@ -190,7 +250,7 @@ test('a server signed in to by a device code: the code is on the row while it wa
   for (let n = 0; n < 20 && !seen.waited; n++) await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual([seen.asked[0].clientId, seen.asked[0].scope, seen.opened], ['client-1', 'repo', ['https://login.example/device']]);
   assert.deepEqual([w.state.get('github')?.status, w.state.get('github')?.code], ['waiting', 'ABCD-1234']);
-  assert.deepEqual(w.connections.list().connectors[0].state, { status: 'waiting', code: 'ABCD-1234' }, 'the row carries the code the owner types in the browser');
+  assert.deepEqual(w.connections.list().connectors[0].state, { status: 'waiting', code: 'ABCD-1234', url: 'https://login.example/device', fresh: true }, 'the row carries the code the owner types in the browser, and where');
   release({ ok: true, token: 'gho_secret', scope: 'repo' });
   await w.connections.idle();
   assert.equal(w.state.get('github')?.status, 'connected');
@@ -212,19 +272,21 @@ test('a device sign-in that is not approved asks again; a code that ran out or a
     await w.connections.idle();
     return w;
   };
+  // A first connection: what came of it is told once, and nothing is kept (above).
+  const attempt = (w: any) => { const found = w.connections.list().attempts[0]; return [found?.status, found?.message]; };
   const denied = await outcome({ requestCode: code, waitForToken: async () => ({ ok: false, reason: 'denied', message: 'x' }) });
-  assert.equal(denied.state.get('github')?.status, 'needs-auth');
+  assert.deepEqual(attempt(denied), ['needs-auth', undefined]);
   assert.equal(denied.store.get('github'), undefined);
   const expired = await outcome({ requestCode: code, waitForToken: async () => ({ ok: false, reason: 'expired', message: 'x' }) });
-  assert.deepEqual([expired.state.get('github')?.status, expired.state.get('github')?.message], ['error', 'timeout']);
+  assert.deepEqual(attempt(expired), ['error', 'timeout']);
   const down = await outcome({ requestCode: async () => ({ ok: false, reason: 'failed', message: 'device_flow_disabled' }), waitForToken: async () => { throw new Error('not reached'); } });
-  assert.deepEqual([down.state.get('github')?.status, down.state.get('github')?.message], ['error', 'device_flow_disabled']);
+  assert.deepEqual(attempt(down), ['error', 'device_flow_disabled']);
   const waiting = world(t, { catalog, device: { requestCode: code, waitForToken: ({ signal }: any) => new Promise((resolve) => signal.addEventListener('abort', () => resolve({ ok: false, reason: 'cancelled', message: 'x' }))) } });
   await waiting.connections.connect('github');
   for (let n = 0; n < 20 && waiting.state.get('github')?.code === undefined; n++) await new Promise((resolve) => setImmediate(resolve));
-  waiting.connections.cancel('github');
+  await waiting.connections.cancel('github');
   await waiting.connections.idle();
-  assert.equal(waiting.state.get('github')?.status, 'needs-auth');
+  assert.equal(waiting.state.get('github'), null);
   // A kept token that the server no longer takes is not shown as an error to read: a new code is asked for.
   const stale = world(t, { catalog, device: { requestCode: code, waitForToken: async () => ({ ok: true, token: 'fresh', scope: '' }) },
     open: async (spec: any) => {

@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { agentLogo } from '../host/dudu-plugin/ui/issues/agent-logos.js';
@@ -35,10 +35,14 @@ export async function syncAgentAssets() {
     const name = `Agent-${agent}`;
     const folder = join(root, 'native', 'ios', 'Dudu', 'Assets.xcassets', `${name}.imageset`);
     await mkdir(folder, { recursive: true });
-    await writeFile(join(folder, `${name}.svg`), picture ? markPicture(mark, PHONE_INK)
+    // A mark that is a picture of its own (`picture` in harness-marks.js: Antigravity's "A" from its app icon) is the very file the desktop draws.
+    const file = mark.picture ? `${name}.png` : `${name}.svg`;
+    await rm(join(folder, mark.picture ? `${name}.svg` : `${name}.png`), { force: true });
+    if (mark.picture) await copyFile(join(root, 'host', 'dudu-plugin', 'ui', 'issues', 'logos', `${mark.picture}.png`), join(folder, file));
+    else await writeFile(join(folder, file), picture ? markPicture(mark, PHONE_INK)
       : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="${mark.path}" fill="#000000"${mark.transform ? ` transform="${mark.transform}"` : ''}/></svg>\n`);
     await writeFile(join(folder, 'Contents.json'), JSON.stringify({
-      images: [{ filename: `${name}.svg`, idiom: 'universal' }],
+      images: [{ filename: file, idiom: 'universal' }],
       info: { author: 'xcode', version: 1 },
       properties: { 'preserves-vector-representation': true, 'template-rendering-intent': picture ? 'original' : 'template' },
     }, null, 2) + '\n');

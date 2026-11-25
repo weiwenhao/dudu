@@ -1,3 +1,6 @@
+native/ios/Dudu/Views/OpenClaw/ (ChatReadingPosition, ChatScrollCommand, ChatOlderHistoryPaging, ChatScrollInstrumentation, ChatBehaviorProbe) and
+native/ios/DuduTests/ChatReadingPositionTests.swift, ChatReaderScrollStateTests.swift are copied from OpenClaw, apps/shared/OpenClawKit
+(commit d595ba38e95b272c2f5f62bbcdd617c3b8fc602a), with the changes each file's header names.
 host/assistant/connectors/oauth/callback.mjs is hardened after OpenClaw, src/infra/oauth-loopback-callback.ts (commit 9d9bda2f1cee1ca5e63a889af1742514b89ea85a).
 https://github.com/openclaw/openclaw
 

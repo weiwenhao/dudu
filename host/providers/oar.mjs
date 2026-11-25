@@ -307,27 +307,48 @@ export async function compactOarSession({ runtime, installation, sessionOptions,
   }
 }
 
-/** One DSH turn on an OAR session, retaining native processes that still own background work. */
+/** One DSH turn on an OAR session. The conversation's native process is kept between turns (`OarResident`) and taken up again by the next. */
 export async function startOarRun({ runtime, installation, sessionOptions, prompt, images, normalizer, name, signal, queuesSteer = false, steering = true, followUpMs = FOLLOW_UP_MS, onRecord, observeSubagents, observedSubagents = [], onInput, onTasks, previous }) {
   if (signal?.aborted) throw signal.reason ?? harnessError('The request was aborted.', 'ABORTED');
   let session;
   let resident = previous?.resident;
-  if (resident && (!resident.available || resident.closing)) resident = undefined;
-  const reused = Boolean(resident);
+  if (resident && !resident.alive) resident = undefined;
+  let reused = Boolean(resident);
   try {
     if (resident) {
       session = resident.session;
       resident.resumeTurn();
-      // No process replacement while it owns background commands. Apply the next turn's native settings in place.
-      const settings = ({ resume: _resume, openSignal: _signal, observedSubagents: _children, ...value }) => value;
-      if (JSON.stringify(settings(resident.options)) !== JSON.stringify(settings(sessionOptions))) {
-        if (!session.configure) throw harnessError('busy', 'HARNESS_BUSY');
-        const configured = await session.configure(sessionOptions);
-        if (configured.kind === 'rejected') throw harnessError(configured.reason, 'HARNESS_REJECTED');
-        resident.options = sessionOptions;
+      // The next turn's native settings (a model, a permission) are applied in place. A process that cannot take them (no `configure`, or refused)
+      // is replaced when it has no background work of its own: closed, and the conversation resumed in a new one. One that has keeps running, and the turn is refused.
+      // Environment variables are read only when a process starts (owner's per-agent variables, 2026-11-23): changed ones replace a process that has no
+      // work of its own; one that has keeps its old ones, and takes the turn, until it is free.
+      const settings = ({ resume: _resume, openSignal: _signal, observedSubagents: _children, env: _env, ...value }) => value;
+      const freshEnv = JSON.stringify(resident.options.env ?? null) !== JSON.stringify(sessionOptions.env ?? null);
+      if (freshEnv && !resident.working && !resident.hasChildren) {
+        await resident.close();
+        resident = undefined;
+        reused = false;
+        session = await runtime.session(installation, sessionOptions);
+      } else if (JSON.stringify(settings(resident.options)) !== JSON.stringify(settings(sessionOptions))) {
+        // OAR's Claude throws ("busy") rather than answers for what only a new process can take (its folder, permission mode, tool exclusions): that is a
+        // refusal as well. Since processes are kept between turns (2026-11-23) a changed access mode always comes this way; before, it failed the turn.
+        const configured = session.configure
+          ? await session.configure(sessionOptions).catch((error) => ({ kind: 'rejected', reason: error instanceof Error ? error.message : String(error) }))
+          : { kind: 'unsupported' };
+        if (configured.kind === 'rejected' || configured.kind === 'unsupported') {
+          if (resident.working || resident.hasChildren) {
+            throw configured.kind === 'unsupported' ? harnessError('busy', 'HARNESS_BUSY') : harnessError(configured.reason, 'HARNESS_REJECTED');
+          }
+          await resident.close();
+          resident = undefined;
+          reused = false;
+          session = await runtime.session(installation, sessionOptions);
+        } else resident.options = { ...sessionOptions, env: resident.options.env };
       }
-      normalizer = resident.normalizer;
-      normalizer.reopen();
+      if (resident) {
+        normalizer = resident.normalizer;
+        normalizer.reopen();
+      }
     } else session = await runtime.session(installation, sessionOptions);
   }
   catch (error) {
@@ -354,7 +375,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   let disposal;
   const dispose = () => (disposal ??= resident.close());
   if (signal?.aborted) {
-    if (reused && resident.retained) resident.finishTurn();
+    if (reused && resident.alive) resident.finishTurn();
     else await dispose();
     throw abortReason(signal);
   }
@@ -377,7 +398,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     signal?.removeEventListener('abort', onAbort);
     unsubscribe();
     events.close();
-    if (preserveBackground && resident.retained) resident.finishTurn();
+    if (preserveBackground && resident.alive) resident.finishTurn();
     else await dispose();
   }
   function interrupt() {
@@ -523,7 +544,9 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   return {
     resident,
     team: resident.team,
-    get backgroundActive() { return resident.retained; },
+    // Background work of its own (what keeps an issue awake); `alive`: the process is there for the next turn.
+    get backgroundActive() { return resident.working; },
+    get alive() { return resident.alive; },
     nativeSessionId: session.id,
     events: drain(events),
     yieldForInput,
@@ -555,7 +578,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
  * A harness provider on an OAR runtime. `session` returns what is specific to the harness in the options of one OAR
  * session (environment, tool limits, launch arguments) from the DSH access mode.
  */
-export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, steering = true, quota, childUsage, backgroundTasks = true, defaultEnabled = true }) {
+export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, steering = true, quota, childUsage, backgroundTasks = true, defaultEnabled = true, folds = false }) {
   const known = new Set(tools.map((tool) => tool.name));
   const environment = (extra) => ({ ...scrubbedEnvironment(scrub.patterns, scrub), ...extra });
 
@@ -563,6 +586,8 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
     id, name, route: id,
     /** Whether the harness is used once it is found, without anyone switching it on in Settings > Providers (providers/index.mjs). */
     defaultEnabled,
+    /** Folded away in Settings > Providers while it is not on this computer (the harnesses few people have). */
+    folds,
     /** The environment the harness runs in (an OAR overlay: `null` removes a name). */
     environment: () => environment(),
 
@@ -578,9 +603,11 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
       return { state: 'missing', reason: override ? `${override} is not an executable file.` : `${name} was not found.` };
     },
 
-    create({ installation, modelsChanged }) {
+    create({ installation, env: own = () => ({}), modelsChanged }) {
       // A harness whose runtime depends on what was found (Pi: the command OAR launches) builds it from the detection.
       const active = runtimeFor ? runtimeFor(installation) : runtime;
+      // The owner's variables for this harness (Settings > Providers), read anew for every process; what dudu itself sets for a session comes after them.
+      const environmentOf = (extra) => environment({ ...own(), ...extra });
       // `loaded` is the last answer: the harness's own list (`read`) or, until it gave one, the list the plugin knows (`fallbackModels`).
       let loaded;
       let loading;
@@ -593,7 +620,7 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
         const run = (async () => {
           let models;
           try {
-            const listed = await active.listModels(installation, { env: environment(), cwd: homedir(), timeoutMs: 30_000 });
+            const listed = await active.listModels(installation, { env: environmentOf(), cwd: homedir(), timeoutMs: 30_000 });
             if (listed.kind === 'ok') models = listed.models.filter((model) => !model.disabled);
           } catch { /* the fallback below */ }
           // Settings changed while it was being read (a proxy, a path): this answer belongs to the old ones.
@@ -636,7 +663,7 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
           ...(effort ? { effort } : {}),
           ...(resume ? { resume } : {}),
           ...specific,
-          env: environment(specific.env),
+          env: environmentOf(specific.env),
         };
       };
       return {
@@ -644,7 +671,7 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
         normalizer: () => normalizer({ name, login }),
         childUsage,
         configuration: typeof active.configuration === 'function'
-          ? (options = {}) => active.configuration(installation, { ...options, env: environment() })
+          ? (options = {}) => active.configuration(installation, { ...options, env: environmentOf() })
           : undefined,
         knowsTool: (toolName) => known.has(toolName),
         fallbackTool,
@@ -678,7 +705,7 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
           };
         },
         async start({ prompt, images, signal, onRecord, observeSubagents, observedSubagents, onInput, onTasks, previous, hostTools, ...options }) {
-          const sessionOptions = await optionsFor({ ...options, signal, retained: previous?.backgroundActive });
+          const sessionOptions = await optionsFor({ ...options, signal, retained: previous?.alive });
           // Tools the host serves to this session over MCP, and tools of the harness's own it takes away (providers/cron-tools.mjs). OAR does not remember them: every start gives them again.
           if (hostTools?.mcpServers?.length) sessionOptions.mcpServers = [...(sessionOptions.mcpServers ?? []), ...hostTools.mcpServers];
           if (hostTools?.env) sessionOptions.env = { ...sessionOptions.env, ...hostTools.env };

@@ -29,6 +29,8 @@ const menuGlyphs = {
   runDelivered: 'CircleCheck', runFailed: 'CircleAlert', runDelivering: 'Clock', runUnknown: 'CircleQuestionMark',
   goalPause: 'CirclePause', goalResume: 'CirclePlay', goalEdit: 'SquarePen',
   photoDownload: 'ArrowDownToLine', photoSaved: 'Check',
+  // The connector card's points (2026-11-23): where it signs in or runs.
+  connectorSignIn: 'LogIn', connectorLocal: 'SquareTerminal',
 };
 // 'Pin' and 'PanelsTopLeft' are drawn by name in the drawer (`R.drawable.ic_pin`, `ic_panels_top_left`), not through a glyph: without them here this script deleted them (2026-11-21).
 const iconNames = new Set(['Bell', 'BellOff', 'Star', 'ArrowDown', 'KeyRound', 'GitFork', 'Pin', 'PanelsTopLeft',
@@ -124,7 +126,9 @@ const agentDrawing = { codex: { ink: true } };
 for (const agent of Object.keys(HARNESS_MARKS)) {
   const logo = agentLogo(agent);
   const own = hasOwnColors(logo);
-  await agentPicture(`agent_${agent}`, markPicture(logo, '#17181B'));
+  // A mark that is a picture of its own (`picture`: Antigravity's "A" from its app icon) is the desktop's file, 192 px like the others.
+  if (logo.picture) await copyFile(path.join(root, `host/dudu-plugin/ui/issues/logos/${logo.picture}.png`), path.join(resources, 'drawable-nodpi', `agent_${agent}.png`));
+  else await agentPicture(`agent_${agent}`, markPicture(logo, '#17181B'));
   if (own && logo.ink) await agentPicture(`agent_${agent}_dark`, markPicture(logo, '#FFFFFF'));
   agentDrawing[agent] = { ink: !own, dark: own && logo.ink };
 }

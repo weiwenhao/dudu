@@ -221,6 +221,15 @@ async function startProviders(ctx, folder, assignment) {
   assignment.sources = providers.sources;
   assignment.release = (sessionId) => providers.release(sessionId); // deep sleep lets go of what the harnesses hold for a session whose turn has ended
   assignment.hasActiveWork = providers.hasActiveWork;
+  // 重启会话 (owner, 2026-11-23, pick A of .local/designs/session-restart-2026-11-23): the conversation's agent process is closed now, and the next
+  // message starts a new one that resumes it (with the agent's current environment variables). One that works is left alone. The menu of the
+  // conversation list and Dudu's `sessions/restart` are this one handler.
+  assignment.restartSession = async ({ session } = {}) => {
+    const id = /^dsh:(.+)$/su.exec(typeof session === 'string' ? session : '')?.[1];
+    if (!id || id.startsWith('dudu-assistant-')) return { outcome: 'needs_clarification', code: 'invalid_session' };
+    if (providers.hasActiveWork(id)) return { outcome: 'no_op', code: 'working' };
+    return { outcome: 'success', restarted: await providers.release(id) };
+  };
   assignment.links = links;
   const overview = createOverview({ sources: providers.sources, links, titleOf: native.titleOf });
   assignment.overview = overview;
@@ -258,6 +267,14 @@ async function startProviders(ctx, folder, assignment) {
       path: `/api/dudu/projects/${action}`, methods: ['POST'], requestBody: 'buffered',
       fetch: (request) => projects.handle(action, request),
     })),
+    registerRoute(ctx, {
+      path: '/api/dudu/sessions/restart', methods: ['POST'], requestBody: 'buffered',
+      fetch: async (request) => {
+        const body = await request.json().catch(() => null);
+        const result = await assignment.restartSession(body ?? {});
+        return Response.json(result, { status: result.outcome === 'needs_clarification' ? 400 : 200, headers: { 'cache-control': 'no-store' } });
+      },
+    }),
     registerRoute(ctx, { path: '/api/dudu/overview/running', methods: ['POST'], requestBody: 'buffered', fetch: (request) => overview.handle('running', request) }),
     registerRoute(ctx, { path: '/api/dudu/quota/get', methods: ['POST'], requestBody: 'buffered', fetch: (request) => handleQuota(quota, request) }),
   ];
@@ -275,6 +292,7 @@ async function startProviders(ctx, folder, assignment) {
       delete assignment.historyFacts;
       delete assignment.sources;
       delete assignment.release;
+      delete assignment.restartSession;
       delete assignment.hasActiveWork;
       delete assignment.links;
       delete assignment.quota;
@@ -422,6 +440,7 @@ async function startAssignment(ctx, folder, assignment) {
     },
     agentSessions,
     snapshotOf: (key) => assignment.snapshots?.snapshotOf(key),
+    release: (key) => assignment.release?.(key.slice('dsh:'.length)), // an issue that is Done or Canceled closes its agent's process with its session
     // What ASSIGN.md allows for this kind of issue; full access when it says nothing (3.3, owner 2026-11-09), and for Claude Code its own default.
     accessOf: (issue) => sessionOptions(assignment.assistant?.memory?.rules?.()?.rules?.['ASSIGN.md'], issue, { home: homedir(), defaultAccess: issue.agent === 'claude' ? null : 'danger-full-access' }),
   });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowDownFromLine, ArrowUpToLine, Box, CircleDot, Copy, CopyPlus, CornerDownRight, ListTodo, LoaderCircle, Pencil, Signal, SquareArrowOutUpRight, Tag, Trash2, User } from 'lucide-react';
+import { ArrowDownFromLine, ArrowUpToLine, Box, CircleDot, Copy, CopyPlus, CornerDownRight, ListTodo, LoaderCircle, Pencil, RotateCw, Signal, SquareArrowOutUpRight, Tag, Trash2, User } from 'lucide-react';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from '../components/context-menu.jsx';
 import { Command, CommandInput, CommandItem, CommandList, CommandSeparator } from '../components/command.jsx';
 import { Popover, PopoverAnchor, PopoverContent } from '../components/popover.jsx';
@@ -39,7 +39,7 @@ function AssignmentChoices({ issue, request, onSelect }) {
 }
 
 /** Cards and list rows share the same single-issue actions and property pickers. */
-export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpenIssue, onAddSub, onDuplicate, onPin, pinning = false, selected = false, onSelectIssue, children }) {
+export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpenIssue, onAddSub, onDuplicate, onRestart, onPin, pinning = false, selected = false, onSelectIssue, children }) {
   const [open, setOpen] = useState(false);
   const [shortcut, setShortcut] = useState(null);
   const [customDue, setCustomDue] = useState(false);
@@ -127,6 +127,10 @@ export function IssueMenu({ issue, request, onChange, onAssign, onDelete, onOpen
           </ContextMenuSub>
           {onDuplicate && <ContextMenuItem onSelect={() => onDuplicate(issue)}><CopyPlus aria-hidden="true" />{T.copy.duplicate}</ContextMenuItem>}
           {onOpenIssue && <ContextMenuItem onSelect={() => onOpenIssue(issue)}><SquareArrowOutUpRight aria-hidden="true" />{T.detail.menuDetails}</ContextMenuItem>}
+          {/* 重启会话 (owner, 2026-11-23, pick A): only an agent with a process of its own (not DeepSeek, which is DSH's own loop, nor 嘟嘟); grey while it works. */}
+          {onRestart && issue.session && issue.agent && !['deepseek', 'dudu'].includes(issue.agent) && <ContextMenuItem disabled={issue.sessionState === 'processing'} onSelect={() => onRestart(issue)}>
+            <RotateCw aria-hidden="true" />{T.detail.menuRestart}
+          </ContextMenuItem>}
           <ContextMenuSeparator />
           <ContextMenuItem shortcut={/Mac/.test(navigator.platform) ? '⌘ ⌫' : 'Ctrl ⌫'} onSelect={() => onDelete(issue)}><Trash2 aria-hidden="true" />{T.settings.skills.delete}</ContextMenuItem>
         </ContextMenuContent>

@@ -126,8 +126,8 @@ export function createAssistantCapabilities({ assistant, assignment, issues, das
     action === 'rename' ? 'Rename the registered DSH project the owner named.' : 'Remove a DSH project registration only when requested. Its directory and conversation history remain on disk.',
     (args) => assignment.sessionOperations?.execute(`project-${action}`, args) ?? unavailable());
   for (const action of ['state', 'refresh', 'save']) add(`providers/${action}`, action === 'save'
-    ? object({ id: text, enabled: boolean, path: text }, ['id']) : object(),
-  `The providers settings' ${action} operation: inspect, redetect, enable/disable or change an executable path. Only change the owner-requested provider.`,
+    ? object({ id: text, enabled: boolean, path: text, env: { type: 'object', additionalProperties: { type: 'string' }, description: "The provider's whole set of environment variables (NAME: value); names left out are removed, {} removes all." } }, ['id']) : object(),
+  `The providers settings' ${action} operation: inspect, redetect, enable/disable, change an executable path or a provider's own environment variables. Only change the owner-requested provider.`,
     (args) => assignment.providers?.[action](args) ?? unavailable());
   add('home/list', object({ tab: { type: 'string', enum: ['active', 'backlog', 'all'] }, filter: ISSUE_REQUESTS.list.properties.filter }),
     'Read the shared phone/Desktop conversation list, pins, the newest message of each conversation (the owner\'s own words when they are newer than the agent\'s last answer) with its time, and unread state.',
@@ -193,6 +193,9 @@ export function createAssistantCapabilities({ assistant, assignment, issues, das
     } }, ['session', 'callId', 'answers']),
   })) add(`sessions/${action}`, parameters, `The conversation interface's ${action} operation. Use the actual session, model, queue item or job id; never infer completion from acceptance.`,
     (args, exec) => assignment.sessionOperations?.execute(action, args, exec) ?? unavailable());
+  add('sessions/restart', object({ session }, ['session']),
+    'Restart the agent process of the conversation the owner named (重启会话): it is closed now and the next message starts a new one that resumes the same conversation. A working agent is left alone (no_op).',
+    (args) => assignment.restartSession?.(args) ?? unavailable());
   add('sessions/access', legacy.get('sessions_set_access')?.parameters ?? object(), legacy.get('sessions_set_access')?.description ?? 'Change session access.', useTool('sessions_set_access'));
   for (const action of ['close', 'resume', 'send', 'forward']) {
     const tool = legacy.get(`sessions_${action}`);

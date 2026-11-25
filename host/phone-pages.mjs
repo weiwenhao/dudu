@@ -17,6 +17,9 @@ const ACTIONS = Object.freeze([
   /^dispatch\/state$/u,
   /^issues\/(?:statuses|status-add|status-update|status-remove|status-order)$/u,
   /^(?:connectors|collectors|rules|memory|skills)\/[a-z][a-z-]{0,39}$/u,
+  // The phone's 供应商 page (apps after 0.1.1; owner, 2026-11-24): the harnesses found here, switching one on or off, its path and its own environment variables.
+  // Not `providers/foreground`, a wait that is the conversation's own.
+  /^providers\/(?:state|refresh|save)$/u,
 ]);
 
 export const allowedAction = (action) => typeof action === 'string' && action.length <= 80 && ACTIONS.some((pattern) => pattern.test(action));

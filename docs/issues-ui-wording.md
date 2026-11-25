@@ -939,3 +939,49 @@ Lucide `ListTodo`。复用原有导航图标的尺寸、颜色、线宽和圆角
 | 位置 | 中文 | English | 来源 |
 | --- | --- | --- | --- |
 | 点没有智能体的事项后出现的短提示（三端同一句） | **请分配智能体** | **Please assign an agent** | 中文是主人的原话，不用再审；英文是我写的，待审（`Localizable.xcstrings`，安卓 `Wording.kt` 由它生成，电脑 `strings.js` 的 `toast.assignAgent`）。 |
+
+## 供应商的环境变量（2026-11-23，主人选了方案 A）
+
+主人：“叫配置环境变量，每个 agent 可以配置自己的环境变量”，看了 `.local/designs/providers-env-2026-11-23/boards/1-env.png` 后选了方案 A（一个文本框，一行一个 `NAME=value`）。设置 > 供应商里，点一行的铅笔，原有的“可执行文件路径”框上面加了它的名字作标签，下面是新的文本框。行里原先显示的变量个数（“环境变量 3”）同一天拿掉了，主人：“这个提示环境变量数量毫无意义”。
+
+| 位置 | 中文 | English | 来源 |
+| --- | --- | --- | --- |
+| 铅笔下文本框的标签，也是它的读屏名（“环境变量: Claude”） | **环境变量** | **Environment variables** | 中文在主人选的稿子上；英文是我写的，待审（`strings.js` 的 `shell.env`）。 |
+| 保存时有一行不是 `NAME=value`，页面顶上的问题条（宿主写的原句，只有英文，和“Claude was not found.”一样原样显示） | Line 2 is not NAME=value. | 同左 | 新句，待审（`host/providers/index.mjs` 的 `parseEnvText`）。 |
+
+文本框里的示例（`HTTPS_PROXY=http://127.0.0.1:7890` 两行）是示例内容，不是文案。“可执行文件路径”“取消”“保存”是原有的字。
+
+## 右键菜单的「重启会话」（2026-11-23，主人选了方案 A）
+
+主人：“设计一个重启会话吧”，看了 `.local/designs/session-restart-2026-11-23/boards/1-restart.png` 后选了 A：对话列表右键菜单里，排在“详情”后面，图标是顺时针箭头（lucide `RotateCw`）。只有有自己进程的智能体（Claude、ChatGPT、Pi 等）的会话有这一项，智能体正在工作时是灰的。点了以后没有提示（成功时不弹字），请求失败时用已有的“更改没能保存”。
+
+| 位置 | 中文 | English | 来源 |
+| --- | --- | --- | --- |
+| 对话列表右键菜单 | **重启会话** | **Restart session** | 中文是主人的原话，不用再审；英文是我写的，待审（`strings.js` 的 `detail.menuRestart`）。 |
+
+## 连接器按 Muse 重做（2026-11-23，主人审过中文）
+
+主人：“这是 muse 的连接器设计，你参考一下，重新重构吧”，看了 `.local/designs/connectors-muse-2026-11-23/boards/` 的四张流程图，文案按要求改成书面、按钮不超过 5 个字后说「审核通过，开始实现吧」；「这台电脑」那一组改叫「发现」（主人的字）。中文都是审过的；英文是我写的，待审（电脑 `strings.js` 的 `settings.connectorsPage.sheet`，手机 `Localizable.xcstrings`，安卓由它生成）。
+
+| 位置 | 中文 | English |
+| --- | --- | --- |
+| 按钮 | 连接 · 查看 · 取消 · 重试 · 重新登录 · 复制并打开 · 重新检查 · 复制 · 断开 · 添加 · 保存 | Connect · View · Cancel · Retry · Sign in again · Copy and open · Check again · Copy · Disconnect · Add · Save |
+| 分组 | 已连接 · 发现 · 办公 · 项目 · 开发 | Connected · Discovered · Work · Projects · Development |
+| 说明卡要点 | 登录 {名} / 在手机上（电脑上：在浏览器中）打开 {名} 登录页，授权后自动返回 · 在这台电脑上运行 / 嘟嘟将在电脑上启动 {名} 并读取其工具 · 嘟嘟和智能体可用 / 连接后，嘟嘟、收集器和会话中的智能体均可使用 {名} 的工具 · 可随时断开 / 在连接器中打开 {名} 即可断开 | Sign in to {name} / Opens the {name} sign-in page on your phone (in your browser) and returns after you authorize · Runs on this computer / Dudu starts {name} on the computer and reads its tools · Available to Dudu and agents / Once connected, Dudu, collectors and the agents in sessions can use the tools of {name} · Disconnect anytime / Open {name} in Connectors to disconnect it |
+| 等待 | 请在 GitHub 输入此验证码 · 请在浏览器中完成 {名} 登录（电脑） | Enter this code on GitHub · Finish signing in to {name} in your browser |
+| 命令行 | 未找到 {命令} / 请在电脑终端中运行以下命令安装（电脑：请在终端中…） · {命令} 未登录 / 请在电脑终端中运行以下命令登录 | {command} not found / Run this command in the computer's terminal to install it · {command} is not signed in / … to sign in |
+| 结果 | 连接失败：授权未完成 · 连接失败：{原因}（本机命令启动失败时，原因是宿主的英文原句） · 已连接 {名} · 登录已过期 | Could not connect: authorization not completed · Could not connect: {reason} · Connected to {name} · Sign-in expired |
+| 详情页 | 地址 · 工具 · 收集器 · {n} 个 · 未使用 · 自定义连接器 · 名称 · 说明 · 断开 {名} 后，嘟嘟和智能体将无法使用它。 | Address · Tools · Collectors · {n} · Not used · Custom connector · Name · Description · After {name} is disconnected, Dudu and agents can no longer use it. |
+| 添加页 | 添加连接器 · 地址、命令或描述 · 粘贴 MCP 地址或命令，或描述使用方式 | Add connector · Address, command or description · Paste an MCP address or command, or describe how to use it |
+
+手机上登录前 iPhone 系统不再弹「“嘟嘟”想要使用…登录」：登录页开在 App 自己的浏览器视图里（插件登记的回跳地址是电脑本机的，系统登录框接不住它），点“连接”直接进登录页。
+
+## 供应商页重做（2026-11-24，主人审过设计稿）
+
+主人：“整体设计的都很差，重新设计 UI 吧”，审过 `.local/designs/providers-redesign-2026-11-24/boards/` 后说“你刚刚的 UI 也通过”。列表只放启用开关，分“已启用”“未启用”两组，没找到的折成一行（手机上是一行“未找到 N”，点进去是它们的列表）；点一行进这个智能体的页面：启用、可执行文件路径（下面是找到的位置）、环境变量，改了才出现“取消 / 保存”，保存时转圈。行里不再有路径、铅笔和“环境变量 N”。手机新加这一页，在“技能”下面（图标和 Desktop 一样）。
+
+| 位置 | 中文 | English | 来源 |
+| --- | --- | --- | --- |
+| 两个组名 | **已启用** · **未启用** | **Enabled** · **Not enabled** | 中文在主人审过的稿子上；英文是我写的，待审（`strings.js` 的 `shell.groupOn/groupOff`，手机 `Localizable.xcstrings`，插件 `native-strings.mjs`）。 |
+
+其余都是原有的字：供应商、重新检测、启用、可执行文件路径、留空则自动查找、环境变量、取消、保存、可用、未找到、版本不受支持、无法运行。

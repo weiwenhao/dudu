@@ -150,7 +150,7 @@ test('background agent observation ends at native task or process termination, n
   }
 });
 
-test('foreground, unclassified and ambient agents do not become retained background work', async t => {
+test('foreground, unclassified and ambient agents do not become background work; the idle process stays for the next turn', async t => {
   for (const task of [{ ...child, background: false }, { ...child, background: undefined }, { ...child, ambient: true }]) {
     const native = nativeSession();
     const resident = new OarResident(native.session, {});
@@ -159,6 +159,11 @@ test('foreground, unclassified and ambient agents do not become retained backgro
     assert.equal(resident.backgroundActive, false);
     resident.finishTurn();
     await flush();
+    // The process is kept between turns and closed only by deep sleep or a close (owner, 2026-11-23); it does not keep the issue awake.
+    assert.equal(native.disposed, 0);
+    assert.equal(resident.alive, true);
+    assert.equal(resident.working, false);
+    await resident.close();
     assert.equal(native.disposed, 1);
   }
 });
@@ -242,7 +247,7 @@ test('native exit and explicit stop still end a DSH turn held for a background s
   }
 });
 
-test('a background task with no native continuation releases after the idle grace and the final output read', async t => {
+test('a background task with no native continuation ends the turn after the idle grace; the process stays until it is closed', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   const finalOutput = Promise.withResolvers<void>();
   const native = nativeSession();
@@ -260,6 +265,9 @@ test('a background task with no native continuation releases after the idle grac
   assert.equal(native.disposed, 0, 'the last output read still owns the native process');
   finalOutput.resolve();
   await flush();
+  assert.equal(native.disposed, 0, 'kept for the next turn (owner, 2026-11-23): only deep sleep or a close lets it go');
+  assert.equal(handle.backgroundActive, false, 'no work of its own keeps the issue awake');
+  await handle.close();
   assert.equal(native.disposed, 1);
 });
 
@@ -450,4 +458,74 @@ test('foreground observation wakes only its session and releases waits on abort,
   const closing = watch.wait('two', { after: true });
   watch.close();
   assert.deepEqual(await closing, { backgroundOnly: false });
+});
+
+test('changed environment variables start a new process for a free conversation; a working one keeps its own until it is free (owner, 2026-11-23)', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const natives = [nativeSession(), nativeSession(), nativeSession()];
+  const launched: unknown[] = [];
+  const runtime = { session: async (_installation: unknown, options: any) => { launched.push(options.env); return natives[launched.length - 1].session; } };
+  const team = { record: () => {}, end: async () => {} };
+  const go = (env: Record<string, string>, previous?: any) => startOarRun({
+    runtime, installation: { kind: 'available', via: 'bundled' }, sessionOptions: { env }, prompt: 'Go.', name: 'Claude',
+    normalizer: new ClaudeNormalizer({ name: 'Claude', login: '' }), queuesSteer: true, previous, observeSubagents: () => team,
+  });
+  const turn = async (handle: any, native: ReturnType<typeof nativeSession>, events: any[]) => {
+    const seen = observe(handle);
+    native.emit(events);
+    await seen.done;
+    await handle.close({ preserveBackground: true });
+  };
+
+  const first = await go({ HTTPS_PROXY: 'http://a' });
+  await turn(first, natives[0], [say('One.'), end]);
+  const same = await go({ HTTPS_PROXY: 'http://a' }, first);
+  assert.strictEqual(same.resident, first.resident, 'the same variables: the same process');
+  await turn(same, natives[0], [say('Two.'), end]);
+
+  const changed = await go({ HTTPS_PROXY: 'http://b' }, same);
+  assert.equal(natives[0].disposed, 1, 'a free process with the old variables is closed');
+  assert.deepEqual(launched, [{ HTTPS_PROXY: 'http://a' }, { HTTPS_PROXY: 'http://b' }]);
+  const run = new HarnessRun({ sessionId: 'dsh-env', handle: changed, prompts: [], team });
+  t.after(() => run.close());
+  natives[1].emit([child, say('Research started.'), end]);
+  await flush();
+  await run.interrupt();
+  await run.pump;
+  assert.equal(changed.backgroundActive, true);
+
+  const busy = await go({ HTTPS_PROXY: 'http://c' }, changed);
+  assert.strictEqual(busy.resident, changed.resident, 'a process with work of its own keeps its variables and takes the turn');
+  assert.equal(launched.length, 2);
+  await turn(busy, natives[1], [{ kind: 'task_ended', taskId: child.taskId, status: 'completed' }, say('Done.'), end]);
+  assert.equal(busy.backgroundActive, false);
+
+  const free = await go({ HTTPS_PROXY: 'http://c' }, busy);
+  t.after(() => free.close());
+  assert.equal(natives[1].disposed, 1, 'once it is free, the next turn starts a process with the new variables');
+  assert.deepEqual(launched.at(-1), { HTTPS_PROXY: 'http://c' });
+});
+
+// 2026-11-23: with processes kept between turns, switching a Claude conversation to full access failed every later turn with "Could not start Claude: busy"
+// (OAR's Claude throws for a new permission mode instead of answering).
+test('a changed access mode that the process cannot take starts a new process that resumes the conversation', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const natives = [nativeSession(), nativeSession()];
+  for (const native of natives) (native.session as any).configure = async () => { throw new Error('busy'); };
+  const launched: any[] = [];
+  const runtime = { session: async (_installation: unknown, options: any) => { launched.push(options); return natives[launched.length - 1].session; } };
+  const go = (permissionMode: string, previous?: any) => startOarRun({
+    runtime, installation: { kind: 'available', via: 'bundled' }, sessionOptions: { permissionMode }, prompt: 'Go.', name: 'Claude',
+    normalizer: new ClaudeNormalizer({ name: 'Claude', login: '' }), queuesSteer: true, previous,
+  });
+  const first = await go('default');
+  const seen = observe(first);
+  natives[0].emit([say('One.'), end]);
+  await seen.done;
+  await first.close({ preserveBackground: true });
+
+  const full = await go('bypassPermissions', first);
+  t.after(() => full.close());
+  assert.equal(natives[0].disposed, 1, 'the old process is closed');
+  assert.deepEqual(launched.map((options) => options.permissionMode), ['default', 'bypassPermissions'], 'and the turn goes to a new one with the new access (the provider gives it the native id to resume)');
 });

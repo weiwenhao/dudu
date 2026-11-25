@@ -4,11 +4,17 @@
 // server is opened by mcp.mjs; all of them come in as options, so that each can be replaced in a test.
 //
 //   const connections = createConnections({ connectors, catalog, state, secrets, oauth, open, probe, run, which, here, now })
-//   connections.catalogView()          -> { outcome, groups: [{ id: 'here' | group, items: [{ id, name, line, icon, how }] }] }   what is left to connect
+//   connections.catalogView()          -> { outcome, groups: [{ id: 'here' | group, items: [{ id, name, line, icon, how }] }], trying? }   what is left to connect;
+//                                      `trying`: the items whose first connection goes on, each with its `group` and the `connector` being made
 //   connections.list()                 -> { outcome, connectors: [{ id, name, icon, kind, custom, about, line?, address?, text?, tools?, state, legacy, busy }], diagnostics }
 //                                      `line` is the catalog's one line (of a connector made from it), `text` what a custom connector is as its page's box holds it,
 //                                      `busy` that a connection is being made now (a check that has no state to show yet)
 //   connections.connect(id)            a catalog id, or an id of `catalogView`, or (as retry) a connector that exists          -> { outcome, connector? }, at once
+//                                      A connector made by connect() is `fresh` until it is connected the first time; a fresh one whose connection fails, is cancelled or is
+//                                      not signed in to is let go of again (owner, 2026-11-23, after GitLab and Sentry stayed red for days): what came of it is in `list().attempts`.
+//   connections.signIn(id)             the phone's sign-in (2026-11-23): connect(id) with the sign-in page opened on the phone, not in this computer's browser
+//                                      -> { outcome, id, url } (the page to open; with `code` for a device sign-in) | { outcome, id, status, message? } when no page was needed
+//   connections.finishSignIn(id, url)  the redirect the phone's browser view stopped at -> { outcome, id, status, message? } once the connection was tried (or still 'waiting')
 //   connections.retry(id) / authorize(id) / cancel(id) / remove(id) / update({ id, name?, text?, token? }) / recognize(text) / add({ text, name?, token?, env? })
 //   connections.session(id)            a live connection for one collection: { tools: [{ name, description, inputSchema, annotations }], call(name, args), close() }
 //   connections.publishAll()           gives every connected MCP connector to DSH (at the start; see publish.mjs): `list` says which are there as `inSessions`
@@ -49,6 +55,11 @@ export function createConnections({
   openUrl = null, device = { requestCode, waitForToken },
 }) {
   const jobs = new Map(); // id -> { controller, done }
+  const handoffs = new Map(); // connector id -> { onUrl({ url, code? }) } of a sign-in whose page opens on the phone
+  const replacing = new Set(); // connector ids whose job is being ended to start another (a fresh one is not let go of then)
+  const attempts = new Map(); // connector id -> { id, from, status, message?, at }: a first connection that did not work, for the page that tried it
+  const origins = new Map(); // connector id -> the id it was connected from (a catalog item or a server found here), for a fresh one
+  const ATTEMPT_KEPT_MS = 10 * 60_000;
   const owner = () => connectors.owner;
   const entries = () => (owner().list().connectors ?? []);
   const entryOf = (id) => entries().find((entry) => entry.id === id);
@@ -103,7 +114,14 @@ export function createConnections({
       const items = catalog.items.filter((item) => item.group === id && !connected.has(item.id)).map(view);
       if (items.length) groups.push({ id, items });
     }
-    return { outcome: 'success', groups };
+    // The items whose first connection is going on: a page that draws them where they are (and not as connectors yet) finds them here, with the connector being made.
+    const trying = [];
+    for (const entry of entries().filter((candidate) => state.get(candidate.id)?.fresh)) {
+      const item = catalog.byId(entry.via);
+      if (item) trying.push({ ...view(item), group: item.group, connector: entry.id });
+      else if (origins.has(entry.id)) trying.push({ id: origins.get(entry.id), name: entry.name, line: entry.spec?.url ? new URL(entry.spec.url).host : basename(entry.spec?.command ?? ''), icon: brandOf(entry.name) ?? (entry.spec?.url ? 'plug' : 'terminal'), how: 'local', group: 'here', connector: entry.id });
+    }
+    return { outcome: 'success', groups, ...(trying.length ? { trying } : {}) };
   }
 
   /** A command as one line that can be written back into the box: an argument with a space is in double quotes. */
@@ -138,8 +156,11 @@ export function createConnections({
           ...(entry.spec?.url ? { address: new URL(entry.spec.url).host } : {}),
           legacy: entry.legacy, source: entry.source, busy: jobs.has(entry.id), inSessions: publisher?.has(entry.id) ?? false,
           state: known && status !== 'connected' ? { status, ...hints } : null,
+          // the item it was connected from, and whether it has never been connected yet: a page draws such a one where its item is, not among the connected
+          ...(entry.via || origins.has(entry.id) ? { from: entry.via ?? origins.get(entry.id) } : {}), ...(known?.fresh ? { fresh: true } : {}),
         };
       }),
+      attempts: [...attempts.values()].filter((attempt) => now() - attempt.at < ATTEMPT_KEPT_MS),
     };
   }
 
@@ -190,8 +211,10 @@ export function createConnections({
         const spec = await specFor(entry).catch(() => null);
         if (spec?.headers?.Authorization) { state.set(entry.id, { status: 'error', message: 'The server did not accept the token.' }); return; }
         if (!oauth || attempt === 1) { state.set(entry.id, { status: 'needs-auth' }); await publisher?.withdraw(entry.id); return; }
+        if (signal?.aborted) return; // cancelled while the server was asked: no sign-in is started
         state.set(entry.id, { status: 'waiting' });
-        const result = await oauth.authorize(entry.id, spec.url, { signal, displayName: entry.name });
+        const handoff = handoffs.get(entry.id);
+        const result = await oauth.authorize(entry.id, spec.url, { signal, displayName: entry.name, ...(handoff ? { elsewhere: true, onUrl: (url) => handoff.onUrl({ url }) } : {}) });
         if (!result.ok) {
           state.set(entry.id, result.reason === 'cancelled' ? { status: 'needs-auth' } : { status: 'error', message: result.reason === 'timeout' ? 'timeout' : result.message ?? 'The sign-in did not finish.' });
           return;
@@ -238,9 +261,11 @@ export function createConnections({
     const asked = await device.requestCode({ clientId: item.clientId, scope: item.scope, deviceUrl: item.deviceUrl, signal });
     if (signal?.aborted) return;
     if (!asked.ok) { state.set(entry.id, { status: 'error', message: asked.message }); return; }
-    state.set(entry.id, { status: 'waiting', code: asked.userCode });
-    // If the browser cannot be opened the code is still on the row, and the owner knows the address.
-    try { await openUrl?.(asked.verificationUri); } catch (error) { warn(`[dudu] The browser could not be opened for ${entry.name}: ${error?.message ?? error}`); }
+    state.set(entry.id, { status: 'waiting', code: asked.userCode, url: asked.verificationUri });
+    // On the phone the code and the address go to the App, which opens the page; here the browser is opened. If it cannot be, the code is still on the row.
+    const handoff = handoffs.get(entry.id);
+    if (handoff) handoff.onUrl({ url: asked.verificationUri, code: asked.userCode });
+    else try { await openUrl?.(asked.verificationUri); } catch (error) { warn(`[dudu] The browser could not be opened for ${entry.name}: ${error?.message ?? error}`); }
     const got = await device.waitForToken({ clientId: item.clientId, tokenUrl: item.tokenUrl, deviceCode: asked.deviceCode, interval: asked.interval, expiresIn: asked.expiresIn, signal });
     if (signal?.aborted) return;
     if (!got.ok) {
@@ -267,16 +292,33 @@ export function createConnections({
     const controller = new AbortController();
     const done = flow(entry, controller.signal)
       .catch((error) => { if (!controller.signal.aborted) state.set(entry.id, { status: 'error', message: messageOf(error) }); })
-      .finally(() => { jobs.delete(entry.id); });
+      .finally(() => { jobs.delete(entry.id); handoffs.delete(entry.id); })
+      .then(() => (replacing.has(entry.id) ? undefined : letGoIfFailed(entry.id)));
     jobs.set(entry.id, { controller, done });
     return done;
+  }
+
+  /** A first connection that failed, or that the owner did not sign in to, leaves nothing behind: the item is to connect again, and what came of it is kept a while. */
+  async function letGoIfFailed(id) {
+    const now_ = state.get(id);
+    if (!now_?.fresh || !['error', 'needs-auth'].includes(now_.status)) return;
+    attempts.set(id, { id, ...(origins.has(id) || entryOf(id)?.via ? { from: origins.get(id) ?? entryOf(id)?.via } : {}), status: now_.status, ...(now_.message ? { message: now_.message } : {}), at: now() });
+    await remove(id, { given: false });
   }
 
   // ---------------------------------------------------------------- what a click does
 
   async function connect(id) {
+    const made = await make(id);
+    if (made.outcome !== 'success') return made;
+    start(made.entry);
+    return { outcome: 'success', id: made.entry.id };
+  }
+
+  /** The connector to connect for an id: one that exists, or a fresh one made from a catalog item or from a server found here. */
+  async function make(id) {
     const existing = entryOf(id);
-    if (existing) { start(existing); return { outcome: 'success', id: existing.id }; }
+    if (existing) return { outcome: 'success', entry: existing };
     const item = catalog.byId(id);
     let made;
     if (item?.how === 'oauth' || item?.how === 'open' || item?.how === 'device') made = owner().add({ id: item.id, name: item.name, kind: 'mcp', spec: { url: item.url }, via: item.id });
@@ -287,28 +329,75 @@ export function createConnections({
       made = owner().add({ id: unique(server.name), name: server.name, kind: 'mcp', spec: server.spec });
     }
     if (made.outcome !== 'success') return made;
-    if (item?.how === 'oauth' || item?.how === 'device') state.set(made.connector.id, { status: 'waiting' });
-    start(made.connector);
-    return { outcome: 'success', id: made.connector.id };
+    attempts.delete(made.connector.id);
+    if (made.connector.id !== id) origins.set(made.connector.id, id);
+    state.set(made.connector.id, { status: 'waiting', fresh: true });
+    return { outcome: 'success', entry: made.connector };
+  }
+
+  /** Ends the job of a connector without letting go of a fresh one, so that another can start. */
+  async function stop(id) {
+    const job = jobs.get(id);
+    if (!job) return;
+    replacing.add(id);
+    job.controller.abort();
+    oauth?.cancel(id);
+    try { await job.done; } finally { replacing.delete(id); }
+  }
+
+  async function signIn(id, { waitMs = 20_000 } = {}) {
+    const made = await make(id);
+    if (made.outcome !== 'success') return made;
+    const { entry } = made;
+    await stop(entry.id);
+    let reached;
+    const page = new Promise((resolve) => { reached = resolve; });
+    handoffs.set(entry.id, { onUrl: (value) => reached(value) });
+    const done = start(entry);
+    let timer;
+    const got = await Promise.race([page, done.then(() => null), new Promise((resolve) => { timer = setTimeout(() => resolve('late'), waitMs); })]);
+    clearTimeout(timer);
+    if (got === 'late') { await cancel(entry.id); return { outcome: 'error', id: entry.id, message: 'The sign-in page could not be made.' }; }
+    if (got?.url) return { outcome: 'success', id: entry.id, url: got.url, ...(got.code ? { code: got.code } : {}) };
+    return { outcome: 'success', id: entry.id, ...outcomeOf(entry.id) };
+  }
+
+  /** Where a connection stands: its state, or what came of a first one that was let go of. */
+  function outcomeOf(id) {
+    const known = state.get(id) ?? attempts.get(id);
+    return { status: known?.status ?? 'connected', ...(known?.message ? { message: known.message } : {}), ...(Number.isSafeInteger(known?.tools) ? { tools: known.tools } : {}) };
+  }
+
+  async function finishSignIn(id, url, { waitMs = 25_000 } = {}) {
+    if (!oauth?.deliver?.(id, url)) return wrong('This sign-in is not waiting any more.');
+    const job = jobs.get(id);
+    let timer;
+    if (job) await Promise.race([job.done, new Promise((resolve) => { timer = setTimeout(resolve, waitMs); })]);
+    clearTimeout(timer);
+    return { outcome: 'success', id, ...outcomeOf(id) };
   }
 
   const retry = (id) => { const entry = entryOf(id); if (!entry) return wrong('This connector no longer exists.'); start(entry); return { outcome: 'success' }; };
 
-  function cancel(id) {
-    jobs.get(id)?.controller.abort();
+  async function cancel(id) {
+    const job = jobs.get(id);
+    job?.controller.abort();
     oauth?.cancel(id);
     if (state.get(id)?.status === 'waiting') state.set(id, { status: 'needs-auth' });
+    // A first connection that waits for the owner (a command to install or to sign in with) is given up as well; one with a job ends by itself (start).
+    if (!job && state.get(id)?.fresh) await remove(id);
     return { outcome: 'success' };
   }
 
-  async function remove(id) {
+  async function remove(id, { given = true } = {}) {
     const result = owner().remove(id);
     if (result.outcome === 'success') {
       jobs.get(id)?.controller.abort();
-      await publisher?.withdraw(id);
+      if (given) await publisher?.withdraw(id);
       await secrets.remove(id).catch(() => {});
       await oauth?.forget(id);
       state.delete(id);
+      origins.delete(id);
     }
     return result;
   }
@@ -408,10 +497,26 @@ export function createConnections({
     }
   }
 
+  // A first connection that a restart cut off is given up: nothing waits for it any more. Only the ones there when this starts (one connected from now on is not cut off).
+  const leftovers = entries().filter((entry) => state.get(entry.id)?.fresh).map((entry) => entry.id);
+  // Made before first connections were let go of (2026-11-23): a catalog connector that signs in, whose sign-in failed and that holds no sign-in or token at all, was never
+  // connected (GitLab and Sentry had stayed red for days). One that was connected and lost its sign-in says needs-auth, or still holds its sign-in, and stays.
+  const neverConnected = async (entry) => {
+    const item = catalog.byId(entry.via);
+    if (!['oauth', 'device'].includes(item?.how) || state.get(entry.id)?.status !== 'error' || jobs.has(entry.id)) return false;
+    if ((await secrets.read(entry.id).catch(() => null))?.token) return false;
+    return typeof oauth?.status === 'function' && (await oauth.status(entry.id).catch(() => 'unknown')) === 'none';
+  };
+  const tidied = Promise.resolve().then(async () => {
+    for (const id of leftovers) if (!jobs.has(id) && state.get(id)?.fresh) await remove(id).catch(() => {});
+    for (const entry of entries()) if (!leftovers.includes(entry.id) && await neverConnected(entry)) await remove(entry.id, { given: false }).catch(() => {});
+  });
+
   return {
-    catalogView, list, connect, retry, authorize: retry, cancel, remove, recognize, add, update, session, publishAll,
-    idle: async () => { await Promise.all([...jobs.values()].map((job) => job.done)); },
+    catalogView, list, connect, signIn, finishSignIn, retry, authorize: retry, cancel, remove, recognize, add, update, session, publishAll,
+    idle: async () => { await tidied; await Promise.all([...jobs.values()].map((job) => job.done)); },
     async close() {
+      await tidied;
       for (const job of jobs.values()) job.controller.abort();
       await Promise.allSettled([...jobs.values()].map((job) => job.done));
       await publisher?.close();

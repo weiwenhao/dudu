@@ -309,6 +309,29 @@ test('a wrong state is refused and the real callback still works; a forged error
   assert.equal(w.auth.codeExchanges.length, 1, 'only the real code was ever sent to the server');
 });
 
+// The phone's sign-in (2026-11-23): the page is given to the phone and not opened here; the phone's browser view stops at the redirect and the App hands the address over.
+test('a sign-in on the phone: the browser here is not opened, a forged address is refused, the real one signs in', async (t) => {
+  const w = await world(t);
+  let page = '';
+  const flow = w.oauth.authorize('notion', w.mcpUrl, { displayName: 'Notion', elsewhere: true, onUrl: (url: string) => { page = url; } });
+  for (let n = 0; n < 200 && !page; n++) await sleep(10);
+  assert.ok(page, 'the phone was given the page');
+  assert.equal(w.opens(), 0, 'nothing was opened on this computer');
+  const answer = await fetch(page, { redirect: 'manual' });
+  const callback = new URL(answer.headers.get('location')!);
+  const forged = new URL(callback);
+  forged.searchParams.set('state', 'not-the-state');
+  assert.equal(w.oauth.deliver('notion', forged.href), false);
+  const elsewhere = new URL(callback);
+  elsewhere.host = 'evil.example';
+  assert.equal(w.oauth.deliver('notion', elsewhere.href), false, 'only this sign-in\'s own address');
+  assert.equal(w.oauth.deliver('linear', callback.href), false, 'only to the sign-in it belongs to');
+  assert.equal(w.oauth.deliver('notion', callback.href), true);
+  assert.deepEqual(await flow, { ok: true });
+  assert.equal(await w.oauth.status('notion'), 'signed-in');
+  assert.equal(w.oauth.deliver('notion', callback.href), false, 'and once only');
+});
+
 test('RFC 9207: the iss of the answer must be the authorization server, when it is there and when the server promises it', async (t) => {
   const w = await world(t);
   const metadataIssuer = new URL(w.asUrl).href; // what the server's metadata calls itself: with the trailing slash

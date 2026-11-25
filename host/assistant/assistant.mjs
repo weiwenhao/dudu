@@ -177,6 +177,8 @@ export function openAssistant({ dshHome, stateFolder, env = process.env, llm = n
     'connectors/authorize': ({ id }) => need(connections) ?? connections.authorize(id),
     'connectors/retry': ({ id }) => need(connections) ?? connections.retry(id),
     'connectors/cancel': ({ id }) => need(connections) ?? connections.cancel(id),
+    'connectors/signin': ({ id }) => need(connections) ?? connections.signIn(id),
+    'connectors/signin-finish': ({ id, url }) => need(connections) ?? connections.finishSignIn(id, url),
     'connectors/recognize': ({ text }) => need(connections) ?? connections.recognize(text),
     'connectors/add': ({ text, name, token, env: values }) => need(connections) ?? connections.add({ text, name, token, env: values }),
     'connectors/update': ({ id, name, text, token }) => need(connections) ?? connections.update({ id, name, text, token }),
