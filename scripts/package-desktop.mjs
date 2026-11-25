@@ -7,12 +7,10 @@ import { build } from 'esbuild';
 import { writeClient, writePhonePages } from './build-client.mjs';
 import { collectNotices } from './licenses.mjs';
 import { prepareOar } from '../packages/oar-adapter/build.mjs';
-import { prepareComputerUse } from '../packages/dsh-computer-use/build.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Recheck the official source and every patch before bundling, even after a source edit or --ignore-scripts install.
 await prepareOar();
-await prepareComputerUse();
 const plugin = join(root, 'host', 'dudu-plugin');
 const { version } = JSON.parse(await readFile(join(plugin, 'package.json'), 'utf8'));
 const output = join(root, '.local', 'release');
@@ -23,7 +21,7 @@ await mkdir(runtime);
 const copied = new Set();
 // Bundle runtime dependencies that Desktop cannot resolve from the source repository's node_modules.
 // The licenses of everything inside the bundles travel with the plugin.
-const bundled = new Set(['providers/oar-runtimes.mjs', 'providers/oar-pi.mjs', 'providers/mcp-stdio.mjs', 'providers/stats.mjs', 'assistant/dashboard/engine.mjs', 'assistant/connectors/mcp.mjs', 'assistant/inbox/submission.mjs', 'assistant/sessions/activity-projection.mjs', 'native-markdown-images.mjs', 'assistant/schedule/cron.mjs', 'providers/quota/system-proxy.mjs', 'computer-use/engine.mjs']);
+const bundled = new Set(['providers/oar-runtimes.mjs', 'providers/oar-pi.mjs', 'providers/mcp-stdio.mjs', 'providers/stats.mjs', 'assistant/dashboard/engine.mjs', 'assistant/connectors/mcp.mjs', 'assistant/inbox/submission.mjs', 'assistant/sessions/activity-projection.mjs', 'native-markdown-images.mjs', 'assistant/schedule/cron.mjs', 'providers/quota/system-proxy.mjs']);
 const noticeBlocks = [];
 async function bundleRuntime(file) {
   const target = join(runtime, file);
@@ -56,7 +54,6 @@ const entrypoint = await readFile(join(plugin, 'index.mjs'), 'utf8');
 const roots = [...entrypoint.matchAll(/from\s*['"]\.\/dist\/([^'"]+\.mjs)['"]/g)].map((match) => match[1]);
 if (!roots.length) throw new Error('The desktop plugin has no runtime entrypoints.');
 for (const file of roots) await copyRuntime(file);
-await copyRuntime('computer-use/provider.mjs');
 await copyRuntime('providers/mcp-stdio.mjs');
 // The interface (React, Radix, Tailwind output) is built into dist/client.js, around the hand-written client.js.
 noticeBlocks.push(...(await writeClient(join(runtime, 'client.js'))).notices);
@@ -72,7 +69,6 @@ for (const [title, file] of [['Cline - the sign-in of hosted MCP servers', 'clin
   noticeBlocks.push(`${title}\n\n${await readFile(join(root, 'licenses', file), 'utf8')}`);
 }
 noticeBlocks.push(`Hermes Agent - the paste-anything MCP parser of the connectors page\n\n${await readFile(join(root, 'licenses', 'hermes-agent.txt'), 'utf8')}`);
-noticeBlocks.push(`DeepSeek Harness - the pinned PTC engine used by the built-in Computer Use adapter\n\n${await readFile(join(root, 'packages', 'dsh-computer-use', 'LICENSE'), 'utf8')}`);
 if (noticeBlocks.length) {
   await writeFile(join(runtime, 'THIRD_PARTY_NOTICES.txt'), `This plugin bundles the following packages.\n\n${[...new Set(noticeBlocks)].join('\n----------------------------------------\n\n')}`);
 }
@@ -94,7 +90,7 @@ try {
     '--prefer-offline', join(folder, packed[0].filename),
   ], { cwd: check, timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] });
   execFileSync(process.execPath, ['--input-type=module', '--eval',
-    'const plugin = await import(process.argv[1]); if (plugin.name !== "dudu" || typeof plugin.apply !== "function") throw new Error("Invalid desktop plugin entry."); const cua = await import("dsh-dudu/computer-use"); if (typeof cua.apply !== "function") throw new Error("Invalid Computer Use compatibility entry."); const mcp = await import(new URL("./dist/providers/mcp-stdio.mjs", process.argv[1])); if (typeof mcp.connectStdioHostTools !== "function") throw new Error("Invalid session tools entry.");',
+    'const plugin = await import(process.argv[1]); if (plugin.name !== "dudu" || typeof plugin.apply !== "function") throw new Error("Invalid desktop plugin entry."); const mcp = await import(new URL("./dist/providers/mcp-stdio.mjs", process.argv[1])); if (typeof mcp.connectStdioHostTools !== "function") throw new Error("Invalid session tools entry.");',
     pathToFileURL(join(check, 'node_modules', 'dsh-dudu', 'index.mjs')).href,
   ], { cwd: check, env: { ...process.env, NODE_PATH: '' }, timeout: 20_000, stdio: ['ignore', 'pipe', 'pipe'] });
   // The guide 嘟嘟 reads to write a widget (WIDGETS.md, in the package root) must be in the package.
@@ -106,8 +102,6 @@ try {
   await rm(archive, { force: true });
   execFileSync('zip', ['-q', '-r', archive, 'dudu-desktop'], { cwd: staging });
   await copyFile(join(folder, packed[0].filename), join(output, packed[0].filename));
-  // Computer Use is part of this bundle; there is no second package to install.
-  await rm(join(output, `dsh-dudu-computer-use-${version}.tgz`), { force: true });
   console.log(archive);
 } finally {
   await rm(staging, { recursive: true, force: true });

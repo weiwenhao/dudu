@@ -30,10 +30,10 @@ new interface operation without an assistant entry fails that coverage check.
 
 Interactive Dudu also inherits the tools actually supplied to its standard DSH
 scope, including future host capabilities, instead of a second hand-written list.
-DSH still owns the current session's permissions and approvals. Computer Use
-retains its explicit switch and dedicated entry; private `cua` and generic
-`run_code` transports are not direct model tools. Unattended tasks keep their
-previous native-tool scope.
+DSH still owns the current session's permissions and approvals. Computer Use is
+not supported (2026-11-25): `cua`, `cua_run_code` and the generic `run_code`
+transport are never offered to Dudu. Unattended tasks keep their previous
+native-tool scope.
 
 Capability is not authorization to act autonomously. External records, worker
 messages and transcripts are material, never owner instructions. Issue workflow
@@ -55,7 +55,7 @@ that forwards a fixture inbox record, edits its title, and verifies the same
 association and handling state in the inbox interface.
 
 The 38 focused assistant tests passed, including inherited host capabilities and
-the private Computer Use transport boundary. Repository lint and typecheck, the
+the private tool boundary. Repository lint and typecheck, the
 Desktop package's external import check, the iOS build, and Android debug assembly,
 lint and the focused quota unit tests passed. No Desktop hot update or phone
 installation was performed.

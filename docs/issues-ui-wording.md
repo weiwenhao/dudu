@@ -4,25 +4,6 @@
 
 所有界面上的固定字在 `host/dudu-plugin/ui/strings.js`（带 `NEW` 注释的是设计稿里没有的）。
 
-## 2026-11-19 Computer Use 内置适配（待审，尚未启用）
-
-没有新增页面、按钮或权限弹窗。电脑控制、应用授权与系统权限页沿用已安装的 DSH 原生界面。
-适配随嘟嘟主包安装，不再提供单独的兼容包。包装器名称和新增的失败诊断可能出现在 DSH 的插件与错误信息里，以下原样用词须在安装前由主人审阅：
-
-| 位置 | 原样用词 |
-| --- | --- |
-| 包装器名称 | `dudu-computer-use-compat` |
-| 找不到原生 provider | `The Computer Use compatibility bundle requires DSH’s built-in macOS provider.` |
-| 不支持的工具注册 | `Unsupported Computer Use provider registration.` |
-| 不支持的指导注册 | `Unsupported Computer Use provider prompt.` |
-| 原生工具注册缺失 | `The installed Computer Use provider has no supported raw registration.` |
-| 原生初始化指导缺失 | `The installed Computer Use provider has no supported facade initialization.` |
-| 运行时不兼容 | `The Computer Use compatibility adapter requires DSH’s TypeScript PTC runtime.` |
-| 能力卸载时取消程序的原因 | `Computer Use program scope disposed` |
-
-工具名 `cua_run_code` 沿用上游独立入口；工具参数的 `description` 仍由模型按实际动作生成。
-没有新增面向主人的说明文案、重试入口或成功提示。实现与验证边界见 `packages/dsh-computer-use/README.md`。
-
 ## 2026-11-17 当前会话查找
 
 主人审核 `.local/designs/conversation-find-2026-11-17/` 后答“就这样，你做吧”，按该稿实现。
