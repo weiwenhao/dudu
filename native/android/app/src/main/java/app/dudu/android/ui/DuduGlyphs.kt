@@ -111,4 +111,5 @@ internal object DuduGlyphs {
     val settingsRules = R.drawable.ic_split
     val settingsMemory = R.drawable.ic_brain
     val settingsSkills = R.drawable.ic_sparkles
+    val settingsProviders = R.drawable.ic_bot
 }

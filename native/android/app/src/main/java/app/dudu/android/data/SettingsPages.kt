@@ -35,6 +35,7 @@ object SettingsPages {
             "rules" -> layout.rules(target)
             "memory" -> layout.memory(target)
             "skills" -> layout.skills(target)
+            "providers" -> layout.providers(target)
             else -> throw ApiFailure("UPSTREAM_ERROR")
         }
     }
@@ -150,8 +151,12 @@ internal class SettingsLayout(private val words: SettingsWords, private val data
 
     private fun ruleTitle(file: String) = if (file == "TRIAGE.md") w("影响、工作量和截止") else w("任务分配")
 
+    /** What a row's `sheet` button offers to connect (`ui/ConnectorSheet.kt`); laid out here, never sent. */
+    private fun offer(id: Any?, name: String, icon: Any?, line: String, how: String, reconnect: Boolean) =
+        obj("id" to id, "name" to name, "icon" to icon, "line" to line, "how" to how, "reconnect" to reconnect)
+
     private fun groupName(id: String) = when (id) {
-        "here" -> w("这台电脑")
+        "here" -> w("发现")
         "work" -> w("办公")
         "projects" -> w("项目")
         "dev" -> w("开发")
@@ -357,9 +362,9 @@ internal class SettingsLayout(private val words: SettingsWords, private val data
             "sentence" -> w("就是这句话")
             else -> null
         }
-        return obj("title" to w("添加自定义连接器"), "save" to obj("title" to w("保存"), "act" to act("add")),
+        return obj("title" to w("添加连接器"), "save" to obj("title" to w("添加"), "act" to act("add")),
             "preview" to obj("key" to "text", "act" to act("recognize")), "sections" to arr(listOf(obj("rows" to arr(listOfNotNull(
-                field("text", w("粘贴地址或命令，或者写一句话说怎么读"), "", "placeholder" to w("粘贴地址或命令，或者写一句话说怎么读"), "multiline" to true, "mono" to true),
+                field("text", w("地址、命令或描述"), "", "placeholder" to w("粘贴 MCP 地址或命令，或描述使用方式"), "multiline" to true, "mono" to true),
                 if (kind.isNullOrEmpty()) null else row("id" to "recognized",
                     "title" to when (kind) { "remote" -> w("远程"); "local" -> w("本地"); "sentence" -> w("命令行"); else -> null },
                     "detail" to if (several) w("{0} 个连接器", count, count = count) else how),
@@ -379,55 +384,127 @@ internal class SettingsLayout(private val words: SettingsWords, private val data
         if (kind == "connector") {
             val connector = connected.firstOrNull { it.str("id") == subject } ?: return obj("title" to w("连接器"), "sections" to arr(emptyList()))
             val status = connector.optJSONObject("state")?.str("status")
-            val shown = describeState(connector.optJSONObject("state"), aboutLine(connector.optJSONObject("about")))
+            val about = connector.optJSONObject("about")
+            val shown = describeState(connector.optJSONObject("state"), aboutLine(about))
             val custom = connector.flag("custom")
             val name = connector.str("name").orEmpty()
-            // What the person can do is one card each: the connector, then 取消 / 授权 / 重试 when there is one, then 断开. A waiting one says where the page is.
+            val place = about?.str("host")?.takeIf { it.isNotEmpty() } ?: about?.str("command")?.takeIf { it.isNotEmpty() }
+            val expired = status == "needs-auth"
+            val footer = if (status == "waiting") w("授权页面已在电脑的浏览器里打开。在电脑上完成后，这里会自动更新。") else null
+            val users = connector.rows("usedBy").mapNotNull { it.str("name")?.takeIf { name -> name.isNotEmpty() } }
+            // The owner's approved page (2026-11-23): its card, then 地址 / 工具 / 收集器 (or the 名称 and 说明 of one the owner wrote), the one thing to do about its state
+            // (重新登录 opens the sign-in here, on the phone), and 断开, asked first.
             return obj("title" to name,
                 "save" to if (custom) obj("title" to w("保存"), "act" to act("update", obj("id" to connector.raw("id")))) else null,
                 "poll" to if (status == "waiting" || connector.flag("busy")) CONNECTOR_POLL_SECONDS else null,
                 "sections" to arr(listOfNotNull(
-                    obj("footer" to if (status == "waiting") w("授权页面已在电脑的浏览器里打开。在电脑上完成后，这里会自动更新。") else null, "rows" to arr(listOfNotNull(
-                        row("id" to "about", "title" to name, "icon" to connector.raw("icon"), "subtitle" to shown.line.takeIf { it.isNotEmpty() },
-                            "detail" to shown.words?.takeIf { it.isNotEmpty() }, "tone" to if (shown.words.isNullOrEmpty()) null else shown.tone),
+                    obj("footer" to footer, "rows" to arr(listOfNotNull(
+                        row("id" to "about", "title" to name, "icon" to connector.raw("icon"),
+                            "subtitle" to if (custom) w("自定义连接器") else (place ?: shown.line.takeIf { it.isNotEmpty() }),
+                            "detail" to if (expired) w("登录已过期") else shown.words?.takeIf { it.isNotEmpty() },
+                            "tone" to if (expired) "bad" else if (shown.words.isNullOrEmpty()) null else shown.tone),
                         if (custom) field("name", w("名称"), name, "placeholder" to w("名称")) else null,
-                        if (custom) field("text", w("粘贴地址或命令，或者写一句话说怎么读"), connector.str("text") ?: connector.optJSONObject("about")?.str("text") ?: "",
-                            "placeholder" to w("粘贴地址或命令，或者写一句话说怎么读"), "multiline" to true, "mono" to true) else null))),
-                    shown.verb?.let { verb -> obj("rows" to arr(listOf(row("id" to "verb", "kind" to "action", "title" to verbWord(verb),
+                        if (custom) field("text", w("说明"), connector.str("text") ?: about?.str("text") ?: "",
+                            "placeholder" to w("粘贴 MCP 地址或命令，或描述使用方式"), "multiline" to true, "mono" to true) else null))),
+                    if (custom) null else obj("rows" to arr(listOfNotNull(
+                        place?.let { row("id" to "address", "title" to w("地址"), "detail" to it) },
+                        (about?.raw("tools") as? Number)?.toInt()?.let { row("id" to "tools", "title" to w("工具"), "detail" to w("{0} 个", it, count = it)) },
+                        row("id" to "collectors", "title" to w("收集器"), "detail" to if (users.isEmpty()) w("未使用") else users.joinToString("、")),
+                    ))),
+                    if (expired) obj("rows" to arr(listOf(row("id" to "relogin", "kind" to "action", "title" to w("重新登录"),
+                        "button" to obj("title" to w("重新登录"), "act" to act("sheet")), "connect" to offer(connector.raw("id"), name, connector.raw("icon"), shown.line, "oauth", true)))))
+                    else shown.verb?.let { verb -> obj("rows" to arr(listOf(row("id" to "verb", "kind" to "action", "title" to verbWord(verb),
                         "button" to obj("title" to verbWord(verb), "act" to act("verb", obj("id" to connector.raw("id"), "verb" to verb))))))) },
                     obj("rows" to arr(listOf(row("id" to "disconnect", "kind" to "action", "title" to w("断开"), "tone" to "bad",
                         "button" to obj("title" to w("断开"), "role" to "destructive", "act" to act("disconnect", obj("id" to connector.raw("id"))),
-                            "confirm" to confirm(w("将要删除"), name, w("删除"))))))),
+                            "confirm" to confirm(w("断开 {0} 后，嘟嘟和智能体将无法使用它。", name), null, w("断开"))))))),
                 )))
         }
-        val waiting = connected.any { it.optJSONObject("state")?.str("status") == "waiting" || it.flag("busy") }
+        // After Muse's connectors (owner, 2026-11-23; the iPhone's NativeSettingsLayouts): one list. 已连接 first, each with 查看 (its page); one whose sign-in ran out stays
+        // there with 重新登录. Below, the catalog by group (发现: servers found in the owner's other tools), each with 连接, which opens `ConnectorSheet`. A first connection that
+        // goes on (`fresh`) is not a connector yet: its item keeps its place with a spinner; one that fails leaves nothing.
+        val waiting = connected.any { it.optJSONObject("state")?.str("status") == "waiting" || it.flag("busy") || it.flag("fresh") }
         val sections = mutableListOf(obj("rows" to arr(listOf(link(w("添加自定义连接器"), go("connectors", "add"), "id" to "add", "tone" to "muted")))))
         fun connectorRow(connector: JSONObject): JSONObject {
-            val shown = describeState(connector.optJSONObject("state"), aboutLine(connector.optJSONObject("about")))
+            val line = aboutLine(connector.optJSONObject("about"))
+            val shown = describeState(connector.optJSONObject("state"), line)
             val name = connector.str("name").orEmpty()
             val id = connector.raw("id")
-            return link(name, go("connectors", "connector:${connector.str("id")}"), "id" to id, "icon" to connector.raw("icon"), "subtitle" to shown.line.takeIf { it.isNotEmpty() },
-                "detail" to shown.words?.takeIf { it.isNotEmpty() }, "tone" to if (shown.words.isNullOrEmpty()) null else shown.tone,
-                *menu(
-                    shown.verb?.let { verb -> item(verbWord(verb), verbGlyph(verb), act("verb", obj("id" to id, "verb" to verb))) },
-                    item(w("断开"), "unplug", act("disconnect", obj("id" to id)), role = "destructive", confirm = confirm(w("将要删除"), name, w("删除"))),
-                ))
+            val menu = menu(
+                shown.verb?.takeIf { it != "authorize" }?.let { verb -> item(verbWord(verb), verbGlyph(verb), act("verb", obj("id" to id, "verb" to verb))) },
+                item(w("断开"), "unplug", act("disconnect", obj("id" to id)), role = "destructive", confirm = confirm(w("断开 {0} 后，嘟嘟和智能体将无法使用它。", name), null, w("断开"))),
+            )
+            val to = go("connectors", "connector:${connector.str("id")}")
+            if (connector.optJSONObject("state")?.str("status") == "needs-auth") return link(name, to, "id" to id, "icon" to connector.raw("icon"), "subtitle" to w("登录已过期"),
+                "style" to "alert", "button" to obj("title" to w("重新登录"), "act" to act("sheet"), "style" to "link"),
+                "connect" to offer(id, name, connector.raw("icon"), line, "oauth", true), *menu)
+            if (shown.words.isNullOrEmpty()) return link(name, to, "id" to id, "icon" to connector.raw("icon"), "subtitle" to shown.line.takeIf { it.isNotEmpty() },
+                "detail" to w("查看"), "tone" to "link", *menu)
+            return link(name, to, "id" to id, "icon" to connector.raw("icon"), "subtitle" to shown.line.takeIf { it.isNotEmpty() },
+                "detail" to shown.words, "tone" to shown.tone, *menu)
         }
-        // 已连接 is what works; the others are listed as available, with what their connection says and the one thing to do about it.
-        val (working, unconnected) = connected.partition(SettingsPages::isConnected)
+        val working = connected.filter { !it.flag("fresh") }
         if (working.isNotEmpty()) sections += obj("header" to w("已连接"), "rows" to arr(working.map(::connectorRow)))
-        if (unconnected.isNotEmpty()) sections += obj("header" to w("可用"), "rows" to arr(unconnected.map(::connectorRow)))
-        val groups = catalog.rows("groups").associateBy { it.str("id").orEmpty() }
+        val groups = LinkedHashMap<String, MutableList<JSONObject>>()
+        for (group in catalog.rows("groups")) groups.getOrPut(group.str("id").orEmpty()) { mutableListOf() } += group.rows("items")
+        for (item in catalog.rows("trying")) groups.getOrPut(item.str("group").orEmpty()) { mutableListOf() } += item
         for (id in GROUP_ORDER + groups.keys.filter { it !in GROUP_ORDER }) {
-            val group = groups[id] ?: continue
-            val items = group.rows("items")
+            val items = groups[id] ?: continue
             if (items.isEmpty()) continue
             sections += obj("header" to groupName(id), "rows" to arr(items.map { entry ->
+                val trying = entry.str("connector") != null
                 row("id" to entry.raw("id"), "title" to entry.str("name"), "icon" to entry.raw("icon"), "subtitle" to entry.str("line")?.takeIf { it.isNotEmpty() },
-                    "button" to obj("title" to w("连接"), "act" to act("connect", obj("id" to entry.raw("id")))))
+                    "button" to obj("title" to w("连接"), "act" to act("sheet"), "style" to if (trying) "busy" else "link"),
+                    "connect" to offer(entry.raw("id"), entry.str("name").orEmpty(), entry.raw("icon"), entry.str("line").orEmpty(), entry.str("how") ?: "oauth", false))
             }))
         }
         return obj("title" to w("连接器"), "poll" to if (waiting) CONNECTOR_POLL_SECONDS else null, "sections" to arr(sections))
+    }
+
+    // --- 供应商 --------------------------------------------------------------------------------------------------------------------------------
+
+    private fun stateLine(provider: JSONObject): String {
+        val word = when (provider.str("state")) { "ready" -> w("可用"); "missing" -> w("未找到"); "unsupported" -> w("版本不受支持"); else -> w("无法运行") }
+        return listOfNotNull(word, provider.str("version")?.takeIf { it.isNotEmpty() }).joinToString(" ")
+    }
+
+    /**
+     * The harnesses found on the computer (owner, 2026-11-24; the iPhone's NativeSettingsLayouts `providers`): 已启用 and 未启用, each with its switch, the row opening its page; the
+     * ones few people have that are not there behind one row, 未找到. A harness's page: who it is, 启用, its path (blank: found by itself) and its own environment variables;
+     * 保存 shows once something differs.
+     */
+    fun providers(target: String?): JSONObject {
+        val list = answer("providers/state").rows("providers")
+        val kind = target.orEmpty().substringBefore(':')
+        val subject = if (target.orEmpty().contains(':')) target.orEmpty().substringAfter(':') else ""
+        fun folded(provider: JSONObject) = (provider.flag("folds") || provider.has("defaultEnabled") && !provider.flag("defaultEnabled")) && provider.str("state") == "missing"
+        fun providerRow(provider: JSONObject, toggle: Boolean = true) = link(provider.str("name").orEmpty(), go("providers", "provider:${provider.str("id")}"),
+            "id" to provider.raw("id"), "subtitle" to stateLine(provider), "agent" to provider.raw("id"), "on" to provider.flag("enabled"),
+            "toggle" to if (toggle) act("enable", obj("id" to provider.raw("id"))) else null)
+        if (kind == "provider") {
+            val provider = list.firstOrNull { it.str("id") == subject } ?: return obj("title" to w("供应商"), "sections" to arr(emptyList()))
+            val env = provider.optJSONObject("env")?.let { values -> values.keys().asSequence().map { "$it=${values.optString(it)}" }.joinToString("\n") }.orEmpty()
+            val state = provider.str("state")
+            val reason = if (state == "unsupported" || state == "broken") provider.str("reason")?.takeIf { it.isNotEmpty() } else null
+            return obj("title" to provider.str("name"), "saveWhenChanged" to true,
+                "save" to obj("title" to w("保存"), "act" to act("save", obj("id" to provider.raw("id")))),
+                "sections" to arr(listOf(
+                    obj("rows" to arr(listOf(row("id" to "about", "title" to provider.str("name"), "subtitle" to stateLine(provider), "detail" to reason, "agent" to provider.raw("id")),
+                        obj("id" to "enabled", "kind" to "switch", "title" to w("启用"), "on" to provider.flag("enabled"), "act" to act("enable", obj("id" to provider.raw("id"))))))),
+                    obj("header" to w("可执行文件路径"), "footer" to provider.str("path")?.takeIf { it.isNotEmpty() }, "rows" to arr(listOf(
+                        field("path", w("可执行文件路径"), provider.str("configuredPath").orEmpty(), "placeholder" to w("留空则自动查找"), "mono" to true)))),
+                    obj("header" to w("环境变量"), "rows" to arr(listOf(
+                        field("env", w("环境变量"), env, "placeholder" to "HTTPS_PROXY=http://127.0.0.1:7890", "multiline" to true, "mono" to true)))),
+                )))
+        }
+        if (kind == "missing") return obj("title" to w("未找到"), "sections" to arr(listOf(obj("rows" to arr(list.filter(::folded).map { providerRow(it, false) })))))
+        val shown = list.filter { !folded(it) }
+        val missing = list.filter(::folded)
+        return obj("title" to w("供应商"), "sections" to arr(listOfNotNull(
+            shown.filter { it.flag("enabled") }.takeIf { it.isNotEmpty() }?.let { obj("header" to w("已启用"), "rows" to arr(it.map { p -> providerRow(p) })) },
+            shown.filter { !it.flag("enabled") }.takeIf { it.isNotEmpty() }?.let { obj("header" to w("未启用"), "rows" to arr(it.map { p -> providerRow(p) })) },
+            if (missing.isEmpty()) null else obj("rows" to arr(listOf(link(w("未找到"), go("providers", "missing"), "id" to "missing", "detail" to missing.size.toString(), "tone" to "muted")))),
+        )))
     }
 
     // --- 收集器 ---------------------------------------------------------------------------------------------------------------------------------

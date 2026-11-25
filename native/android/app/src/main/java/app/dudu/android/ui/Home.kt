@@ -219,7 +219,11 @@ private fun BoardPage(state: UiState, model: DuduViewModel, openDrawer: () -> Un
             if (state.computerUnavailable) {
                 BoardConnectionNotice()
             }
-            PullToRefreshBox(isRefreshing = state.refreshing && home != null, onRefresh = model::refresh,
+            // The spinner of a pull shows only for the read the owner pulled for (owner, 2026-11-23: 「除非我主动下拉刷新，否则任何时候都不应该出现这个刷新 loading」): the board also reads
+            // itself on connecting, after a pin, a read mark or 完成 and when the computer says it changed, and those reads were showing it.
+            var pulled by remember { mutableStateOf(false) }
+            LaunchedEffect(pulled, state.refreshing) { if (pulled && !state.refreshing) pulled = false }
+            PullToRefreshBox(isRefreshing = pulled && state.refreshing && home != null, onRefresh = { pulled = true; model.refresh() },
                 modifier = Modifier.fillMaxWidth().weight(1f)) {
                 LazyColumn(Modifier.fillMaxSize().testTag("home-list"), state = list) {
                     val pinned = home?.pinnedRows.orEmpty()
@@ -502,11 +506,11 @@ fun problemText(code: String): String = when (code) {
     "UNSUPPORTED" -> w("暂不支持此操作。")
     "FORBIDDEN" -> w("电脑拒绝了此操作。")
     "BUSY", "busy" -> w("电脑正在处理其他操作，请稍后重试。")
+    "LIMIT_EXCEEDED" -> w("上传失败")
     // A message of 嘟嘟's box to an issue that was not sent or not delivered: the desktop's approved words, as the iPhone's `AssistantRelayResult.errorText`.
     "RELAY_empty_request" -> w("@ 后面还要写要说的话。")
     "RELAY_choose_agent" -> w("先选择智能体。")
     "RELAY_choose_project" -> w("先选项目，再把工作交给智能体。")
-    "LIMIT_EXCEEDED" -> w("上传失败")
     "RELAY_recipient_unavailable" -> w("只能 @ 当前事项的处理者。")
     "RELAY_delivery_failed" -> w("留言已保存，请求没能送达。")
     "RELAY_invalid_message" -> w("先写点内容。")

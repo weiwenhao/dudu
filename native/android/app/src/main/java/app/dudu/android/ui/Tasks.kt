@@ -317,7 +317,8 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
     var agent by rememberSaveable { mutableStateOf("dudu") }
     var selectedModel by rememberSaveable { mutableStateOf("") }
     var projectId by rememberSaveable { mutableStateOf("") }
-    var mode by rememberSaveable { mutableStateOf("reuse") }
+    // A new task starts as 嘟嘟's does (the iPhone's `TaskDraft(options: nil)`), until what the computer offers is read.
+    var mode by rememberSaveable { mutableStateOf(if (isNew) "new" else "reuse") }
     var sessionId by rememberSaveable { mutableStateOf("") }
     var kind by rememberSaveable { mutableStateOf("daily") }
     var time by rememberSaveable { mutableStateOf("09:00") }
@@ -342,6 +343,9 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
     // The bar's action on its way (pause, resume, run, delete): its item shows a spinner and the others wait.
     var activeAction by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+    // The computer's choices (`tasks.options`) are being read: the editor itself is the app's and is already there (owner, 2026-11-24).
+    var loadingOptions by remember { mutableStateOf(false) }
+    var sessionsFailed by remember { mutableStateOf(false) }
     // A save that did not go: 更改没能保存 in the editor, and the plugin's code under it when it gave one (the iPhone's editor).
     var saveFailure by remember { mutableStateOf<String?>(null) }
     val titleFocus = remember { FocusRequester() }
@@ -352,7 +356,23 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
     }
     fun draftValues() = listOf(title, prompt, agent, selectedModel, projectId, mode, sessionId,
         kind, time, zone, date, interval, day, cron, weekdays.sorted().joinToString(","))
-    fun choose(p: TaskPicker) { focus.clearFocus(); picker = p }
+    /** The conversations a task can go into are read when they are wanted (a task that goes into one; 关联会话 opened), never for an ordinary editor (the iPhone's `loadSessions`). */
+    suspend fun loadSessions() {
+        if (options.has("sessions")) return
+        sessionsFailed = false
+        try {
+            val fresh = model.request("tasks.options", json("includeSessions" to true))
+            options = JSONObject(options.toString()).put("sessions", fresh.optJSONArray("sessions") ?: JSONArray())
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            DuduLog.failure("tasks.options.fail", error)
+            sessionsFailed = true
+        }
+    }
+    fun choose(p: TaskPicker) {
+        focus.clearFocus(); picker = p
+        if (p == TaskPicker.Session) scope.launch { loadSessions() }
+    }
     fun seed(t: JSONObject) {
         editRevision = t.getInt("revision")
         title = t.optString("title"); prompt = t.optString("prompt"); agent = t.optString("agent")
@@ -366,19 +386,22 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
         original = draftValues()
     }
     LaunchedEffect(actions.revision) { actions.run {
-        options = model.request("tasks.options", json("includeSessions" to true))
+        loadingOptions = true
+        try { options = model.request("tasks.options", json("includeSessions" to false)) } finally { loadingOptions = false }
         if (!seeded && isNew) {
-            zone = options.optString("timezone", zone)
+            // What the computer offers replaces the start the editor had; what was typed and the rule as it was set stay, and a time zone nobody chose (this phone's) becomes the computer's.
+            if (zone == TimeZone.getDefault().id) zone = options.optString("timezone", zone)
             agent = options.rows("providers").firstOrNull { it.optBoolean("available") }?.optString("id") ?: "deepseek"
             mode = if (agent == "dudu") "new" else "reuse"
             projectId = if (agent == "dudu") "" else options.rows("projects").firstOrNull()?.optString("path").orEmpty()
-            original = draftValues()
+            original = listOf("", "", agent, selectedModel, projectId, mode, sessionId, "daily", "09:00", zone, LocalDate.now().toString(), "60", "1", "0 9 * * *", "1")
             seeded = true
         }
         if (!isNew) {
             val result = model.request("tasks.get", json("id" to route.target)).getJSONObject("task")
             task = result
             if (!seeded) { seed(result); seeded = true }
+            if (result.optJSONObject("target")?.optString("mode") == "existing") loadSessions()
             try {
                 val history = model.request("tasks.history", json("id" to route.target))
                 runs = history.rows("runs"); cursor = if (history.isNull("nextCursor")) null else history.getLong("nextCursor")
@@ -471,7 +494,8 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
     if (page != null && editing) {
         val projects = options.rows("projects")
         if (page == TaskPicker.Session) {
-            TaskSessionPage(options.rows("sessions"), projects, sessionId, w("没有可用的会话"), back = { picker = null }) { session ->
+            TaskSessionPage(options.rows("sessions"), projects, sessionId,
+                if (!options.has("sessions")) (if (sessionsFailed) w("任务没能加载") else "") else w("没有可用的会话"), back = { picker = null }) { session ->
                 sessionId = session.getString("id")
                 projects.find { it.nullableString("workspaceId") == session.nullableString("workspaceId") }
                     ?.let { projectId = it.getString("path") }
@@ -536,8 +560,8 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
         }
     }) {
         if (editing) Form {
-            DraftInput(title, w("自动化任务名称"), seeded && !saving, tag = "task-title", modifier = Modifier.focusRequester(titleFocus)) { title = it }
-            DraftInput(prompt, w("自动化任务内容"), seeded && !saving, multi = true, tag = "task-prompt") { prompt = it }
+            DraftInput(title, w("自动化任务名称"), (seeded || isNew) && !saving, tag = "task-title", modifier = Modifier.focusRequester(titleFocus)) { title = it }
+            DraftInput(prompt, w("自动化任务内容"), (seeded || isNew) && !saving, multi = true, tag = "task-prompt") { prompt = it }
             val providers = options.rows("providers")
             val ready = !actions.busy && !saving && state.connected
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -559,7 +583,8 @@ fun TaskScreen(route: Route, state: UiState, model: DuduViewModel,
             // The rule in one card, the iPhone's order: the kind, the time (not for an interval or an expression), the date, the day of the month, the days of the week, the minutes, the expression,
             // and the time zone.
             InsetCard {
-            val free = !actions.busy && !saving
+            // The rule is the app's own values: it can be set while the computer's choices are still being read (a new task).
+            val free = !saving && (!actions.busy || isNew && loadingOptions)
             Choice(w("规则"), scheduleKind(kind), listOf("daily", "workdays", "weekly", "monthly", "interval", "once", "cron")
                 .map { it to scheduleKind(it) }, free, prominentLabel = true) { kind = it }
             if (kind !in listOf("interval", "cron")) { TaskRuleDivider(); TaskRuleButton(w("运行时间"), time, "task-time", free) { choosingTime = true } }
