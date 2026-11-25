@@ -44,14 +44,11 @@ test('the assistant keeps legacy global-tool support and one explicit native fil
     assert.equal(isConversationTool(name), true, name);
   }
   for (const name of ['new_host_capability', 'schedule', 'subagent', 'plugin_install']) assert.equal(isConversationTool(name), true, name);
-  for (const name of ['run_code', 'cua']) assert.equal(isConversationTool(name), false, name);
+  for (const name of ['run_code', 'cua', 'cua_run_code']) assert.equal(isConversationTool(name), false, name);
   assert.deepEqual(conversationToolNames({ view: () => ({ restrictableNames: new Set() }), schemas: () => [{ name: 'bash' }] }, {}), [],
     'an empty inherited scope must not fall back to another scope');
-  assert.equal(isConversationTool('cua_run_code'), false, 'scheduled tasks keep their existing capability scope');
-  assert.equal(isConversationTool('cua_run_code', { computerUse: true }), true);
-  assert.equal(isConversationTool('cua', { computerUse: true }), false, 'the raw CUA binding stays private');
   assert.deepEqual(conversationToolNames({
     view: () => ({ restrictableNames: ['cua_run_code', 'cua', 'bash', 'run_code', 'plugin_install'] }),
-  }, {}, { computerUse: true }), ['bash', 'cua_run_code', 'plugin_install'], 'private PTC bindings stay private while ordinary capabilities remain inherited');
+  }, {}), ['bash', 'plugin_install'], 'Computer Use is not supported: its tools and the PTC bindings stay private while ordinary capabilities remain inherited');
   for (const name of ['schedule', 'schedule_create', 'cron_create', 'tasks_create']) assert.equal(isConversationTool(name, { scheduled: true }), false, 'a task run cannot create more tasks');
 });

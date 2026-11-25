@@ -1,11 +1,10 @@
 {
   "name": "dsh-dudu",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "main": "./index.mjs",
   "exports": {
     ".": "./index.mjs",
-    "./computer-use": "./dist/computer-use/provider.mjs",
     "./client": "./dist/client.js",
     "./widget": {
       "types": "./widget.d.ts",

@@ -2,7 +2,7 @@
   "expo": {
     "name": "dudu",
     "slug": "harness-mobile",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "scheme": "harness-mobile",
     "orientation": "default",
     "icon": "./assets/icon.png",

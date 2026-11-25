@@ -137,9 +137,8 @@ export function createConversation({ ctx, assistant, issues, assignment, dashboa
     }, { global: true }),
   ];
 
-  const computerUseEnabled = () => Boolean(ctx.get?.('computerUse')?.providerName);
   const nativeSchemas = (agent = handle?.agent, toolSet = invocation.getStore()?.toolSet) => (ctx.tools?.schemas?.(agent, toolSet) ?? []).filter((tool) =>
-    isConversationTool(tool.name, { computerUse: computerUseEnabled() }));
+    isConversationTool(tool.name));
   const dshConnectors = {
     tools: () => nativeSchemas().map((tool) => ({
       name: tool.name, description: tool.description, inputSchema: tool.parameters,
@@ -218,9 +217,7 @@ export function createConversation({ ctx, assistant, issues, assignment, dashboa
     // Modern DSH mounts local skill discovery and its deterministic /gesture loader in the Agent's preset.
     // Our direct agents.create/resume path must join that composition before restricting its tools.
     if (ctx.agentPresets?.mount) {
-      // Daily work stays standard even when Computer Use is enabled. A host may
-      // expose its standalone cua_run_code capability; never switch this session
-      // to the PTC preset merely to make the old, preset-only cua tool visible.
+      // Daily work stays on the standard preset (Computer Use is not supported: owner, 2026-11-25).
       const preset = await ctx.agentPresets.mount(agentCtx, 'standard');
       if (record.agentPreset !== preset.id) { record = { ...record, agentPreset: preset.id }; save(); }
       if (ctx.sessionProjections?.stateOf(agent.session, 'agentPreset') !== preset.id) agent.session.append('agent-preset/selected', { agentPreset: preset.id });
@@ -232,7 +229,7 @@ export function createConversation({ ctx, assistant, issues, assignment, dashboa
     let lift = null;
     let allowed = null;
     const limit = () => {
-      const names = conversationToolNames(ctx.tools, agent, { computerUse: computerUseEnabled() });
+      const names = conversationToolNames(ctx.tools, agent);
       const key = names.join('\n');
       if (key === allowed) return;
       const before = allowed;
@@ -277,22 +274,8 @@ export function createConversation({ ctx, assistant, issues, assignment, dashboa
       agentCtx.tools.register({ ...tool, execute: (args, exec) => invocation.run(exec, () => execute(args, exec)) });
     }
     const owned = new Set(base.map((tool) => tool.name));
-    // The host's standalone Computer Use tool owns its private PTC binding. Its
-    // nested cua calls are admitted only for the lifetime of that exact dispatch,
-    // never as a model-direct capability or as a general run_code transport.
-    const computerUseCalls = new Map();
-    agentCtx.on('tools/execute', async (exec, next) => {
-      if (exec.name !== 'cua_run_code' || !nativeSchemas(exec.agent, exec.toolSet).some((tool) => tool.name === exec.name)) return next();
-      computerUseCalls.set(exec.token, exec);
-      try { return await next(); } finally { computerUseCalls.delete(exec.token); }
-    });
-    agentCtx.tools.guard((exec) => {
-      const parent = exec.name === 'cua' ? computerUseCalls.get(exec.parent) : null;
-      if (parent && parent.agent === exec.agent && parent.rootCallId === exec.rootCallId &&
-        nativeSchemas(parent.agent, parent.toolSet).some((tool) => tool.name === 'cua_run_code')) return undefined;
-      return owned.has(exec.name) || nativeSchemas(exec.agent, exec.toolSet).some((tool) => tool.name === exec.name)
-        ? undefined : 'That tool is not available to dudu. Delegate project work through an issue.';
-    });
+    agentCtx.tools.guard((exec) => (owned.has(exec.name) || nativeSchemas(exec.agent, exec.toolSet).some((tool) => tool.name === exec.name)
+      ? undefined : 'That tool is not available to dudu. Delegate project work through an issue.'));
     agentCtx.systemPrompt.suppressRuntimeContext();
     agentCtx.systemPrompt.variable('cwd', () => assistant.folder ?? '');
     agentCtx.on('system-prompt/assemble', async (_assembly, context, next) => {
@@ -305,14 +288,7 @@ export function createConversation({ ctx, assistant, issues, assignment, dashboa
       const assembly = await next();
       return {
         ...assembly,
-        sections: [
-          { name: 'dudu:context', text, interpolate: false },
-          // Keep only the official CUA guidance when its standalone entry is
-          // actually visible. PTC-only/general SDK instructions would change
-          // how the model calls every ordinary tool.
-          ...assembly.sections.filter((section) => section.name === 'computer-use:dsh-cua' &&
-            nativeSchemas(agent).some((tool) => tool.name === 'cua_run_code')),
-        ],
+        sections: [{ name: 'dudu:context', text, interpolate: false }],
         contexts: [],
       };
     }, { prepend: true });
