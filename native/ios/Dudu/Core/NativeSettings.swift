@@ -23,6 +23,8 @@ struct SettingsButton: Codable, Equatable, Sendable {
     var act: SettingsAct
     var role: String?
     var confirm: SettingsConfirm?
+    /// Laid out by the app only: `link` is a word in the accent colour (Muse's 连接 / 查看), `busy` a spinner in its place.
+    var style: String?
 }
 
 struct SettingsNotification: Codable, Equatable, Sendable {
@@ -110,6 +112,11 @@ struct SettingsItem: Codable, Equatable, Sendable, Identifiable {
     var inline: Bool?
     var colorKey: String?
     var progressKey: String?
+    /// Laid out by the app only (never sent): what the row's `sheet` button offers to connect (`ConnectorSheet`).
+    var connect: ConnectorOffer? = nil
+    /// Laid out by the app only: the harness whose logo the row wears, and the act of the switch at its right (the 供应商 list: a switch, and the row opens its page).
+    var agent: String? = nil
+    var toggle: SettingsAct? = nil
 
     var id: String { rawID ?? "\(kind):\(title)" }
 
@@ -144,6 +151,8 @@ struct SettingsPage: Codable, Equatable, Sendable {
     var preview: Preview?
     /// Read again every this many seconds while the page is on screen (a connector waits for the browser).
     var poll: Double?
+    /// Laid out by the app only: 保存 shows only once a field differs from what the page was opened with (a harness's page, 2026-11-24).
+    var saveWhenChanged: Bool?
 
     var isForm: Bool { save != nil }
 
@@ -241,6 +250,14 @@ final class SettingsPageModel: ObservableObject, Identifiable, Hashable {
     /// Where the page on screen came from: values the app laid out (`settings.data`), or the page an older plugin describes (`settings.page`).
     private enum Source { case data, descriptor }
     private var source: Source?
+
+    /// Whether a field of the page differs from the value it was laid out with.
+    var isChanged: Bool {
+        (page?.sections ?? []).flatMap(\.rows).contains { row in
+            guard row.kind == "field", let key = row.key else { return false }
+            return (values[key] ?? "") != (row.value ?? "")
+        }
+    }
 
     var canSave: Bool {
         guard page?.save != nil, !busy, !isPreviewing else { return false }

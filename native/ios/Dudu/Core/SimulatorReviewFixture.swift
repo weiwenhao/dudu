@@ -186,6 +186,11 @@ private actor ReviewTransport: DuduTransport {
     private var compactionCount = 0
     private var compactionRunning = false
     private var wasStopped = false
+    /// Set by `-dudu-review-finish-after`: the running turn of `review-chat` has ended.
+    private var finishedForReview = false
+    /// 0: nothing sent, 1: the message is a pending input, 2: it is recorded in the turn.
+    private var steerStage = 0
+    private var steerText = ""
     private var awaitingFirstOutputAt: Double?
     private var queueUpdateCount = 0
     private var wantsTranscript = false
@@ -232,6 +237,22 @@ private actor ReviewTransport: DuduTransport {
         return arguments[index + 1]
     }
     private static let tasksFile = reviewArgument("-dudu-review-tasks")
+    /// `-dudu-review-slow-task-options <seconds>`: the computer takes this long to answer `tasks.options`, to look at the task editor while the choices are on their way.
+    private static let slowTaskOptions = reviewArgument("-dudu-review-slow-task-options").flatMap(Double.init)
+    /// `-dudu-review-tall-first`: the conversation's first message is a whole pasted chat, several screens tall (2026-11-24: the forwarded 「SEO 支持」 log, the list jumped to its top while it was read).
+    private static let tallFirst = ProcessInfo.processInfo.arguments.contains("-dudu-review-tall-first")
+    /// `-dudu-review-finish-after <seconds>`: this long after the streaming of `review-chat` starts, its turn ends as a real one does (the live text goes, its answer becomes a row, the running line is gone).
+    private static let finishAfter = reviewArgument("-dudu-review-finish-after").flatMap(Double.init)
+    /// `-dudu-review-stream-ticks <n>`: the live text grows only this many times (the app is then quiet, so that a scripted finger can start at once).
+    private static let streamTicks = reviewArgument("-dudu-review-stream-ticks").flatMap(Int.init)
+    /// `-dudu-review-steer-split`: a message sent while `review-chat` runs is a pending input for 1.5 s, then the host records it in the middle of the turn (the turn splits around it, as DSH's does), under the same id (`TranscriptBuilder.rows` hides a pending input whose id is recorded).
+    private static let steerSplit = ProcessInfo.processInfo.arguments.contains("-dudu-review-steer-split")
+    /// `-dudu-review-finish-on-notify`: the turn ends when the host posts the Darwin notification `dudu.review.finish` (`xcrun simctl spawn booted notifyutil -p dudu.review.finish`).
+    private static let finishOnNotify = ProcessInfo.processInfo.arguments.contains("-dudu-review-finish-on-notify")
+    private static let tallFirstText = (1...40).map { index in
+        "11-19 \(14 + index / 60):\(String(format: "%02d", index % 60)) Yilong Jiang - 江奕龙: @Xuezhi Xia - 夏学智 第 \(index) 条：大方向没有意见的话我就继续做，现在是每次先渲染到 Mongo，然后爬虫来了之后直接从 Mongo 里取出来返回响应。"
+    }.joined(separator: "\n")
+    private static let finalReviewAnswer = "这一轮结束了。\n\n1. 测试已经跑完，没有失败的用例。\n2. 传输层的 JSON 重试已经加上。\n3. 剩下的是文档，我下一轮补上。\n\n如果还要继续，直接告诉我。"
     /// The answer of `board.list`, as the plugin's own board would give it (a JSON file): what the board shows in the simulator, offline (made-up issues for pictures).
     private static let boardFile = reviewArgument("-dudu-review-board")
     private static let navigationFile = reviewArgument("-dudu-review-navigation")
@@ -314,8 +335,20 @@ private actor ReviewTransport: DuduTransport {
         let fast = ProcessInfo.processInfo.arguments.contains("-dudu-review-streaming-fast")
         guard fast || ProcessInfo.processInfo.arguments.contains("-dudu-review-streaming"), id == "review-chat" else { return }
         let expectedWatchID = watchID
+        if Self.finishOnNotify {
+            ReviewFinishSignal.shared.arm { [weak self] in
+                Task { await self?.finishForReview(id, expectedWatchID: expectedWatchID) }
+            }
+        }
+        if let seconds = Self.finishAfter {
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                guard let self else { return }
+                await self.finishForReview(id, expectedWatchID: expectedWatchID)
+            }
+        }
         streamingTask = Task { [weak self] in
-            for _ in 0..<(fast ? 900 : 120) {
+            for _ in 0..<(Self.streamTicks ?? (fast ? 900 : 120)) {
                 do {
                     try await Task.sleep(nanoseconds: fast ? 100_000_000 : 800_000_000)
                 } catch {
@@ -326,8 +359,20 @@ private actor ReviewTransport: DuduTransport {
         }
     }
 
+    private func recordSteer(_ id: String) async {
+        steerStage = 2
+        await publishSnapshot(id)
+    }
+
+    private func finishForReview(_ id: String, expectedWatchID: String) async {
+        guard selectedID == id, watchID == expectedWatchID, !wasStopped, !finishedForReview else { return }
+        finishedForReview = true
+        await MainActor.run { ChatBehaviorProbe.mark("review-finish") }
+        await publishSnapshot(id)
+    }
+
     private func advanceStream(_ id: String, expectedWatchID: String) async -> Bool {
-        guard selectedID == id, watchID == expectedWatchID, !wasStopped else { return false }
+        guard selectedID == id, watchID == expectedWatchID, !wasStopped, !finishedForReview else { return false }
         streamedParagraphs += 1
         await publishSnapshot(id)
         return true
@@ -436,7 +481,10 @@ private actor ReviewTransport: DuduTransport {
         if method.hasPrefix("web.") && ProcessInfo.processInfo.arguments.contains("-dudu-review-real-pages") {
             return try await realPages.request(method, params: params)
         }
-        if method.hasPrefix("tasks."), Self.tasksFile != nil { return try reviewTasksRequest(method, params) }
+        if method.hasPrefix("tasks."), Self.tasksFile != nil {
+            if method == "tasks.options", let seconds = Self.slowTaskOptions { try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
+            return try reviewTasksRequest(method, params)
+        }
         if method == "board.list", let file = Self.boardFile, let data = try? Data(contentsOf: URL(fileURLWithPath: file)), let answer = try? JSONDecoder().decode(JSONValue.self, from: data) { return answer }
         switch method {
         case "assistant.hide":
@@ -628,6 +676,15 @@ private actor ReviewTransport: DuduTransport {
                     return .object(["mediaType": .string("image/png"), "data": .string(bytes.base64EncodedString())])
                 }
             }
+            if let id = params["attachmentId"]?.stringValue, id.hasPrefix("paged-img-"), let index = Int(id.dropFirst("paged-img-".count)) {
+                try await Task.sleep(for: .milliseconds(400))
+                let size = Self.pagedImageSize(index)
+                let picture = UIGraphicsImageRenderer(size: CGSize(width: size.width / 4, height: size.height / 4)).image { context in
+                    UIColor(hue: CGFloat(index % 17) / 17, saturation: 0.25, brightness: 0.95, alpha: 1).setFill()
+                    context.fill(CGRect(origin: .zero, size: CGSize(width: size.width / 4, height: size.height / 4)))
+                }
+                return .object(["mediaType": .string("image/png"), "data": .string(picture.pngData()!.base64EncodedString())])
+            }
             let renderer = UIGraphicsImageRenderer(size: CGSize(width: 240, height: 360))
             let image = renderer.image { context in
                 UIColor(red: 0.77, green: 0.85, blue: 0.89, alpha: 1).setFill()
@@ -654,6 +711,16 @@ private actor ReviewTransport: DuduTransport {
             let text = params["text"]?.stringValue ?? ""
             if ProcessInfo.processInfo.arguments.contains("-dudu-review-slow-send") {
                 try await Task.sleep(nanoseconds: 4_000_000_000)
+            }
+            if Self.steerSplit, id == "review-chat", ProcessInfo.processInfo.arguments.contains("-dudu-review-running"), !wasStopped, !finishedForReview {
+                steerText = text
+                steerStage = 1
+                await publishSnapshot(id)
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    await self?.recordSteer(id)
+                }
+                return .bool(true)
             }
             if ProcessInfo.processInfo.arguments.contains("-dudu-review-queue"), !wasStopped {
                 queues[id, default: []].append(QueuedMessage(id: "queued-phone", text: text, editable: true))
@@ -835,7 +902,7 @@ private actor ReviewTransport: DuduTransport {
 
     private var sessions: [SessionSummary] {
         let isRunning = (ProcessInfo.processInfo.arguments.contains("-dudu-review-running")
-            || awaitingFirstOutputAt != nil) && !wasStopped
+            || awaitingFirstOutputAt != nil) && !wasStopped && !finishedForReview
         var values = [
             SessionSummary(id: "review-chat", title: "优化手机上的对话体验", workspaceId: "mobile", workspaceName: "dudu", updatedAt: now, status: isRunning ? "running" : "idle"),
             SessionSummary(id: "review-second", title: "检查连接与配对", workspaceId: "mobile", workspaceName: "dudu", updatedAt: now - 18 * 60_000, status: "idle"),
@@ -934,7 +1001,8 @@ private actor ReviewTransport: DuduTransport {
             ]
         } else if id == "review-heavy" {
             // Rows of wildly different heights, as a real conversation with command output and tables has.
-            let count = ProcessInfo.processInfo.arguments.contains("-dudu-review-heavy-cache-prefix") ? 10 : 80
+            let count = ProcessInfo.processInfo.arguments.contains("-dudu-review-heavy-cache-prefix") ? 10
+                : ProcessInfo.processInfo.arguments.contains("-dudu-review-paged-more") ? 900 : 80
             messages = (0..<count).map { index in
                 let isUser = index.isMultiple(of: 2)
                 return ChatMessage(
@@ -1009,7 +1077,13 @@ private actor ReviewTransport: DuduTransport {
 
     /// `-dudu-review-paged-history`: 150 turns of very different heights served five at a time from the end (the latest page when `before` is nil),
     /// so that reading upward loads older pages again and again, as the log of the owner's phone showed (2026-11-16).
-    private static let pagedTurnCount = 150
+    /// `-dudu-review-paged-more` makes it 600 turns, and `-dudu-review-paged-images` puts a picture on every fourth question, one whose shape is known only when it has been fetched (a wide screenshot, a
+    /// tall one, a square one: `pagedImageSize`), as the owner's 远程桌面 conversation has (2026-11-23): a row's height changes when its picture arrives, so the lazy list's estimate of the rows below is wrong.
+    private static let pagedTurnCount = ProcessInfo.processInfo.arguments.contains("-dudu-review-paged-more") ? 600 : 150
+    private static let pagedImages = ProcessInfo.processInfo.arguments.contains("-dudu-review-paged-images")
+    private static func pagedImageSize(_ index: Int) -> CGSize {
+        [CGSize(width: 1600, height: 900), CGSize(width: 900, height: 1600), CGSize(width: 1200, height: 1200), CGSize(width: 2000, height: 900), CGSize(width: 1000, height: 1300)][index % 5]
+    }
     private static func pagedTranscript(before: Double?) -> Transcript {
         let last = before.map { Int($0 / 2) - 1 } ?? pagedTurnCount
         let first = max(1, last - (before == nil ? 3 : 4))
@@ -1019,7 +1093,10 @@ private actor ReviewTransport: DuduTransport {
         for index in first...max(first, last) where index <= last {
             let sequence = Double(index * 2)
             let start = day - Double(pagedTurnCount - index) * 120_000
-            entries.append(TranscriptEntry(type: "user", id: "paged-user-\(index)", seq: sequence, time: start, text: "第 \(index) 个问题"))
+            entries.append(TranscriptEntry(
+                type: "user", id: "paged-user-\(index)", seq: sequence, time: start, text: "第 \(index) 个问题",
+                attachments: pagedImages && index % 4 == 0 ? [TranscriptAttachment(kind: "image", name: "截图", id: "paged-img-\(index)")] : nil
+            ))
             entries.append(TranscriptEntry(type: "assistant", id: "paged-answer-\(index)", seq: sequence + 1, time: start + 20_000, text: heavyAnswer(index), turn: index, step: 1))
             turns.append(TranscriptTurn(turn: index, start: start, end: start + 20_000, outcome: "done", lastSeq: sequence + 1))
         }
@@ -1139,7 +1216,9 @@ private actor ReviewTransport: DuduTransport {
                     type: "user", id: message.id, seq: nextSeq(),
                     time: message.id == "review-question" ? clockBase : now, text: message.text,
                     attachments: arguments.contains("-dudu-review-chat-image") && message.id == "review-question"
-                        ? [TranscriptAttachment(kind: "image", name: "测试图片", id: "review-image")] : nil
+                        ? [TranscriptAttachment(kind: "image", name: "测试图片", id: "review-image")]
+                        : (Self.pagedImages && message.id.hasPrefix("review-heavy-") && (Int(message.id.dropFirst("review-heavy-".count)) ?? 1) % 8 == 0
+                            ? [TranscriptAttachment(kind: "image", name: "截图", id: "paged-img-\(message.id.dropFirst("review-heavy-".count))")] : nil)
                 ))
             } else {
                 turn += 1
@@ -1268,19 +1347,35 @@ private actor ReviewTransport: DuduTransport {
             if liveTurn != 2, let index = entries.firstIndex(where: { $0.id == "rich-a5" }) {
                 entries[index].turn = liveTurn
             }
-            turns.append(TranscriptTurn(turn: liveTurn, start: now - 313_000, end: nil, outcome: nil))
-            live = TranscriptLive(
-                id: "live:rich",
-                text: arguments.contains("-dudu-review-streaming-fast")
-                    ? String(Self.fastStreamText.prefix(streamedParagraphs * 6))
-                    : streamedParagraphs == 0 ? nil : (1...streamedParagraphs).map {
-                        "流式输出第 \($0) 段：持续补充回答，检查滚动位置。"
-                    }.joined(separator: "\n\n"),
-                reasoning: "Check results.\n\nThe suite is still running.",
-                calls: [call("c9", "bash", "Update transport test for JSON retry and run full", status: "running")]
-            )
+            if steerStage >= 2 {
+                entries.append(TranscriptEntry(type: "user", id: "steered-1", seq: 9.5, time: now - 1_000, text: steerText))
+                entries.append(TranscriptEntry(type: "assistant", id: "rich-a5b", seq: 10, time: now, text: "收到，我接着按这个来。", turn: liveTurn, step: 2))
+            }
+            if finishedForReview {
+                // The turn has ended: the live text is gone, its answer is a row of its own (a delete and an insert), and the running line is not drawn.
+                entries.append(TranscriptEntry(
+                    type: "assistant", id: "rich-a6", seq: 10, time: now,
+                    text: Self.finalReviewAnswer, turn: liveTurn, step: 2, usage: 1_300_000
+                ))
+                turns.append(TranscriptTurn(turn: liveTurn, start: now - 313_000, end: now, outcome: "done"))
+            } else {
+                turns.append(TranscriptTurn(turn: liveTurn, start: now - 313_000, end: nil, outcome: nil))
+                live = TranscriptLive(
+                    id: "live:rich",
+                    text: arguments.contains("-dudu-review-streaming-fast")
+                        ? String(Self.fastStreamText.prefix(streamedParagraphs * 6))
+                        : streamedParagraphs == 0 ? nil : (1...streamedParagraphs).map {
+                            "流式输出第 \($0) 段：持续补充回答，检查滚动位置。"
+                        }.joined(separator: "\n\n"),
+                    reasoning: "Check results.\n\nThe suite is still running.",
+                    calls: [call("c9", "bash", "Update transport test for JSON retry and run full", status: "running")]
+                )
+            }
         }
-        return Transcript(entries: entries + compactionEntries(), turns: turns, live: live)
+        if Self.tallFirst, let first = entries.firstIndex(where: { $0.type == "user" }) { entries[first].text = Self.tallFirstText }
+        var transcript = Transcript(entries: entries + compactionEntries(), turns: turns, live: live)
+        if steerStage == 1 { transcript.pendingInputs = [QueuedMessage(id: "steered-1", text: steerText, editable: false)] }
+        return transcript
     }
 
     /// What the plugin does for `tasks.*`, on the tasks of the file: a list, the options, a new task, a change of one (its revision must be the one the phone has), a pause or a resume, a run now, a copy, a delete and the deliveries.
@@ -1297,6 +1392,8 @@ private actor ReviewTransport: DuduTransport {
         case "tasks.list":
             return ok(["tasks": try encode(items)])
         case "tasks.options":
+            // `-dudu-review-task-options-fail`: the computer cannot read what a task is made of (the editor says so and offers 重试).
+            if ProcessInfo.processInfo.arguments.contains("-dudu-review-task-options-fail") { return failed("unavailable") }
             guard case var .object(options) = file.options else { return failed("unavailable") }
             if params["includeSessions"]?.boolValue == true { options["sessions"] = file.sessions }
             return .object(options)
@@ -1353,6 +1450,27 @@ private actor ReviewTransport: DuduTransport {
 
     private func encode<T: Encodable>(_ value: T) throws -> JSONValue {
         try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
+    }
+}
+
+/// The host's way of ending the fixture's running turn at a chosen moment (`-dudu-review-finish-on-notify`): a Darwin notification, which `xcrun simctl spawn <device> notifyutil -p dudu.review.finish` posts.
+final class ReviewFinishSignal: @unchecked Sendable {
+    static let shared = ReviewFinishSignal()
+    private var handler: (@Sendable () -> Void)?
+    private var registered = false
+
+    func arm(_ handler: @escaping @Sendable () -> Void) {
+        self.handler = handler
+        guard !registered else { return }
+        registered = true
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(), Unmanaged.passUnretained(self).toOpaque(),
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                Unmanaged<ReviewFinishSignal>.fromOpaque(observer).takeUnretainedValue().handler?()
+            },
+            "dudu.review.finish" as CFString, nil, .deliverImmediately
+        )
     }
 }
 #endif

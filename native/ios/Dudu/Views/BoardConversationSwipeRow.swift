@@ -168,6 +168,7 @@ struct SwipeRowPanGesture: UIGestureRecognizerRepresentable {
         switch pan.state {
         case .began:
             context.coordinator.tracking = true
+            context.coordinator.holdList(around: pan.view)
             DuduLog.record(event, state: "begin")
             onBegan()
             onChanged(pan.translation(in: nil).x)
@@ -175,6 +176,7 @@ struct SwipeRowPanGesture: UIGestureRecognizerRepresentable {
         case .ended, .cancelled, .failed:
             guard context.coordinator.tracking else { return }
             context.coordinator.tracking = false
+            context.coordinator.releaseList()
             DuduLog.record(event, geometry: ["dragX": pan.translation(in: nil).x],
                             state: pan.state == .ended ? "ended" : "cancelled")
             if pan.state == .ended { onChanged(pan.translation(in: nil).x) }
@@ -185,7 +187,32 @@ struct SwipeRowPanGesture: UIGestureRecognizerRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var tracking = false
         var allowsCompletion: Bool
+        /// The list the row is in: the nearest scroll view around the row.
+        private weak var list: UIScrollView?
+        /// Where the list stood when the swipe began.
+        private var heldOffset: CGPoint?
         init(allowsCompletion: Bool) { self.allowsCompletion = allowsCompletion }
+
+        /// Once a row is being swiped the list stays still until the finger lifts, as Mail and WeChat do (owner, 2026-11-23: the inbox list was pulled down while a row was
+        /// swiped, its top bounce showing a gap above the rows: 「为什么这里有个向下的滚动？」). Whatever the list had moved in the few points before the swipe was recognised is undone.
+        func holdList(around view: UIView?) {
+            guard heldOffset == nil else { return }
+            var ancestor = view?.superview
+            while let current = ancestor, !(current is UIScrollView) { ancestor = current.superview }
+            guard let list = ancestor as? UIScrollView else { return }
+            self.list = list
+            let offset = list.contentOffset
+            let top = -list.adjustedContentInset.top
+            heldOffset = CGPoint(x: offset.x, y: max(top, offset.y))
+            list.isScrollEnabled = false
+            if let heldOffset, heldOffset != offset { list.setContentOffset(heldOffset, animated: true) }
+        }
+
+        func releaseList() {
+            guard heldOffset != nil else { return }
+            heldOffset = nil
+            list?.isScrollEnabled = true
+        }
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
             guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
             let velocity = pan.velocity(in: nil)

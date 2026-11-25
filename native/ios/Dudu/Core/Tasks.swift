@@ -295,9 +295,10 @@ struct TaskDraft: Equatable {
     var schedule: TaskSchedule
 
     /// A new task starts as the desktop's does: the first available provider (嘟嘟 when the plugin offers it: no workspace, a new conversation for each run), else the first workspace and one conversation
-    /// that is reused, every day at 09:00 in this computer's time zone.
+    /// that is reused, every day at 09:00 in this computer's time zone. The editor is drawn before the computer has said what it offers (`options` is nil then; owner, 2026-11-24: the choices are the
+    /// computer's values, the editor itself is the app's), so a task starts as it will most often end up, 嘟嘟 doing it; what is read then confirms that or replaces it.
     init(options: TaskOptions?) {
-        agent = options?.providers.first(where: \.available)?.id ?? "deepseek"
+        agent = options.map { $0.providers.first(where: \.available)?.id ?? "deepseek" } ?? TaskAgent.duduID
         if agent == TaskAgent.duduID {
             target = TaskTarget(mode: "new")
         } else {
@@ -317,6 +318,18 @@ struct TaskDraft: Equatable {
     }
 
     var isDudu: Bool { agent == TaskAgent.duduID }
+
+    /// The editor of a new task is drawn before the computer has said what it offers, with the start `init(options: nil)` gave it (`placeholder`); once the choices are read they replace that start. What was typed
+    /// and the rule as it was set stay, and a time zone nobody chose (this phone's, there until the computer's was known) becomes the computer's.
+    func started(with options: TaskOptions, placeholder: TaskDraft) -> TaskDraft {
+        let blank = TaskDraft(options: options)
+        var start = blank
+        start.title = title
+        start.prompt = prompt
+        start.schedule = schedule
+        if schedule.timezone == placeholder.schedule.timezone { start.schedule.timezone = blank.schedule.timezone }
+        return start
+    }
 
     /// Choosing who does the task in the editor. A change between 嘟嘟 and an agent starts the new one's own way: 嘟嘟 has no workspace and makes a new conversation for each run; an agent works in a workspace (the first
     /// one, as a blank task takes it) and reuses one conversation. So a choice the new one cannot have (a workspace for 嘟嘟, a conversation that is named) never stays. A change between agents leaves the

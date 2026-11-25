@@ -32,6 +32,8 @@ enum DuduGlyph: CaseIterable {
     case moveUp, moveDown, unplug, keyRound
     /// The seven pages of 嘟嘟's settings (the desktop settings window's own icons: Cog, CircleDashed, Plug, Rss, Split, Brain, Sparkles), fixed in the app (owner, 2026-11-21).
     case settingsGeneral, settingsStatuses, settingsConnectors, settingsCollectors, settingsRules, settingsMemory, settingsSkills
+    /// 供应商 (2026-11-24): the desktop settings window's own icon for it, Bot.
+    case settingsProviders
 
     var lucide: LucideIconName {
         switch self {
@@ -142,6 +144,7 @@ enum DuduGlyph: CaseIterable {
         case .settingsRules: return .split
         case .settingsMemory: return .brain
         case .settingsSkills: return .sparkles
+        case .settingsProviders: return .bot
         }
     }
 

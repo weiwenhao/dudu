@@ -33,7 +33,7 @@ struct NativeSettingsToolbarActions: View {
     var body: some View {
         if let model = displayedModel ?? navigator.current, model.hasToolbarActions {
             HStack(spacing: 8) {
-                if let save = model.page?.save {
+                if let save = model.page?.save, model.page?.saveWhenChanged != true || model.isChanged || model.busy {
                     if usesGlass {
                         saveButton(save, model: model).buttonStyle(DuduGlassCapsuleButtonStyle())
                     } else {
@@ -130,6 +130,8 @@ private struct SettingsPageView: View {
     @State private var revealed: String?
     @State private var confirming: PendingConfirm?
     @State private var switches: [String: Bool] = [:]
+    /// The connector whose card is open (`ConnectorSheet`, from a row's `sheet` button).
+    @State private var offer: ConnectorOffer?
 
     private let amber = Color(red: 245.0 / 255, green: 158.0 / 255, blue: 11.0 / 255)
 
@@ -140,6 +142,11 @@ private struct SettingsPageView: View {
                 Button(L10n.text("取消"), role: .cancel) {}
             } message: { pending in
                 if let message = pending.confirm.message { Text(message) }
+            }
+            .sheet(item: $offer) { offer in
+                ConnectorSheet(offer: offer, store: store, report: report) {
+                    Task { await model.load(using: store) }
+                }
             }
     }
 
@@ -365,6 +372,7 @@ private struct SettingsPageView: View {
         switch tone {
         case "bad": return SwipeAction.red
         case "warn": return amber
+        case "link": return DuduStyle.blue
         default: return DuduStyle.muted
         }
     }
@@ -478,7 +486,9 @@ private struct SettingsPageView: View {
 
     private func plainRowLabel(_ row: SettingsItem) -> some View {
         HStack(alignment: .center, spacing: 12) {
-            if let icon = row.icon {
+            if let agent = row.agent.flatMap(SessionAgent.init(rawValue:)) {
+                AgentLogo(agent: agent, size: 24).frame(width: 28, height: 28)
+            } else if let icon = row.icon {
                 ConnectorAvatar(icon: icon, name: row.title, size: 28)
             }
             if let color = row.color.flatMap(Color.init(settingsHex:)) {
@@ -492,7 +502,7 @@ private struct SettingsPageView: View {
                 if let subtitle = row.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.system(size: 13))
-                        .foregroundStyle(DuduStyle.muted)
+                        .foregroundStyle(row.style == "alert" ? SwipeAction.red : DuduStyle.muted)
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
                 }
@@ -500,15 +510,28 @@ private struct SettingsPageView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             if let detail = row.detail {
                 Text(detail)
-                    .font(.system(size: 13))
+                    .font(row.tone == "link" ? .system(size: 16, weight: .medium) : .system(size: 13))
                     .foregroundStyle(toneColor(row.tone))
                     .lineLimit(2)
                     .multilineTextAlignment(.trailing)
             }
             if let button = row.button {
-                capsule(button)
+                capsule(button, row: row)
             }
-            if row.to != nil && row.notification == nil {
+            if let toggle = row.toggle {
+                Toggle("", isOn: Binding(
+                    get: { switches[row.id] ?? row.on ?? false },
+                    set: { next in
+                        switches[row.id] = next
+                        perform(toggle, value: next ? "true" : "false")
+                    }
+                ))
+                .labelsHidden()
+                .scaleEffect(0.8)
+                .disabled(model.busy)
+                .accessibilityLabel(row.title)
+            }
+            if row.to != nil && row.notification == nil && row.tone != "link" && row.button?.style == nil {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(DuduStyle.muted.opacity(0.7))
@@ -520,7 +543,7 @@ private struct SettingsPageView: View {
         .frame(minHeight: 48)
         .background(Color.white)
         .contentShape(Rectangle())
-        .accessibilityElement(children: row.button == nil ? .combine : .contain)
+        .accessibilityElement(children: row.button == nil && row.toggle == nil ? .combine : .contain)
         .accessibilityIdentifier("settings.row.\(row.id)")
     }
 
@@ -545,7 +568,8 @@ private struct SettingsPageView: View {
 
     private func actionRow(_ row: SettingsItem) -> some View {
         Button {
-            if let button = row.button { run(button.act, confirm: button.confirm) }
+            if let button = row.button, button.act.name == "sheet" { offer = row.connect }
+            else if let button = row.button { run(button.act, confirm: button.confirm) }
         } label: {
             Text(row.title)
                 .font(.system(size: 15))
@@ -558,7 +582,30 @@ private struct SettingsPageView: View {
         .accessibilityIdentifier("settings.row.\(row.id)")
     }
 
-    private func capsule(_ button: SettingsButton) -> some View {
+    @ViewBuilder
+    private func capsule(_ button: SettingsButton, row: SettingsItem) -> some View {
+        if button.style == "busy" {
+            ProgressView().tint(DuduStyle.muted).frame(minWidth: 32, minHeight: 32)
+        } else if button.style == "link" {
+            // Muse's word on the right of a connectors row: 连接 / 重新登录, in the accent colour.
+            Button {
+                if button.act.name == "sheet" { offer = row.connect } else { run(button.act, confirm: button.confirm) }
+            } label: {
+                Text(button.title)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(DuduStyle.blue)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(model.busy)
+            .accessibilityIdentifier("settings.row.\(row.id).button")
+        } else {
+            plainCapsule(button)
+        }
+    }
+
+    private func plainCapsule(_ button: SettingsButton) -> some View {
         Button {
             run(button.act, confirm: button.confirm)
         } label: {
@@ -575,14 +622,18 @@ private struct SettingsPageView: View {
     }
 
     private func switchRow(_ row: SettingsItem) -> some View {
-        Toggle(isOn: Binding(
-            get: { switches[row.id] ?? row.on ?? false },
-            set: { next in
-                switches[row.id] = next
-                if let act = row.act { perform(act, value: next ? "true" : "false") }
-            }
-        )) {
+        HStack {
             Text(row.title).font(.system(size: 15)).foregroundStyle(DuduStyle.ink)
+            Spacer()
+            Toggle("", isOn: Binding(
+                get: { switches[row.id] ?? row.on ?? false },
+                set: { next in
+                    switches[row.id] = next
+                    if let act = row.act { perform(act, value: next ? "true" : "false") }
+                }
+            ))
+            .labelsHidden()
+            .scaleEffect(0.8)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)

@@ -25,11 +25,18 @@ final class DuduStore: ObservableObject {
         }
     }
     @Published var sessions: [SessionSummary] = []
+    /// Who set the open session last (`select`: a row of a list, `detail`: what the computer answered, `cache`: what the app kept). The chat draws a turn as running or done by the status the session carries, so
+    /// every change of it is written down with its source (owner, 2026-11-24: the phone said 已完成 while the desktop still ran the turn).
+    private var sessionSource = "other"
     @Published var selectedSession: SessionSummary? {
         didSet {
             if oldValue?.id != selectedSession?.id {
                 loadedConversationTarget = nil
                 refreshSubmissionPresentation()
+            }
+            if oldValue?.id != selectedSession?.id || oldValue?.status != selectedSession?.status {
+                let status = (selectedSession?.status ?? "none").filter { $0.isLetter || $0.isNumber }
+                DuduLog.record("session.status", state: "\(sessionSource).\(status.prefix(16))")
             }
         }
     }
@@ -693,6 +700,7 @@ final class DuduStore: ObservableObject {
                 isLoadingSession = false
             }
         }
+        sessionSource = "select"
         selectedSession = session
         unavailableSessionID = nil
         isStoppingSession = false
@@ -2194,7 +2202,10 @@ final class DuduStore: ObservableObject {
             if revision == transcriptRevision { break }
         }
         let commitStartedAt = ProcessInfo.processInfo.systemUptime
-        if selectedSession != detail.session { selectedSession = detail.session }
+        if selectedSession != detail.session {
+            sessionSource = "detail"
+            selectedSession = detail.session
+        }
         if loadedConversationTarget != selectedDraftTarget { loadedConversationTarget = selectedDraftTarget }
         if messages != detail.messages {
             messages = detail.messages
@@ -2373,7 +2384,10 @@ final class DuduStore: ObservableObject {
             detail.questions = []
             await apply(detail)
         } else {
-            if !snapshot.isChoosingWorkspace { selectedSession = snapshot.selection }
+            if !snapshot.isChoosingWorkspace {
+                sessionSource = "cache"
+                selectedSession = snapshot.selection
+            }
             selectedPresetId = snapshot.selectedPresetID
         }
         DuduLog.record(

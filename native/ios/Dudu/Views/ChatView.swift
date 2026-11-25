@@ -460,6 +460,8 @@ struct ChatView: View {
         .modifier(DuduScrollEdgeBar(edge: .bottom, underlapsBar: true, showsEffect: false) {
             if store.selectedSession?.subagent == nil {
                 bottomChrome()
+                    // OpenClaw's behaviour probe (DEBUG, `--openclaw-behavior-probe` only): the composer's top tells whether the end of the history is in view.
+                    .chatBehaviorProbe(.composer)
             } else {
                 // Child histories retain DSH's parent address and are read-only on the phone.
                 Color.clear.frame(height: 24)
@@ -615,10 +617,8 @@ struct ChatView: View {
         Task { @MainActor in
             defer { if historyRequestID == requestID { historyRequestID = nil } }
             do {
-                try await store.loadEarlierHistory(
-                    target: target, beforeApply: { await scrollGate.waitUntilIdle() },
-                    willApply: { scrollGate.keepsReader = true }
-                )
+                // OpenClaw's reading position keeps the rows on screen still while the page lands, also during the reader's fling: no wait for the scroll to stop.
+                try await store.loadEarlierHistory(target: target, willApply: { scrollGate.olderPageWillPrepend() })
             } catch {
                 if draftTarget == target { historyFailure = error.localizedDescription }
             }
