@@ -32,6 +32,9 @@ export const ASSISTANT_REQUESTS = Object.freeze({
   'connectors/catalog': object(),
   'connectors/list': object(),
   ...Object.fromEntries(['connect', 'authorize', 'retry', 'cancel', 'remove'].map((action) => [`connectors/${action}`, id])),
+  // The phone's sign-in (2026-11-23): the page opens on the phone, and the address its browser view stopped at comes back here.
+  'connectors/signin': id,
+  'connectors/signin-finish': object({ id: text, url: { type: 'string', minLength: 1, maxLength: 8192 } }, ['id', 'url']),
   'connectors/recognize': object({ text }, ['text']),
   'connectors/add': object(customConnector, ['text']),
   'connectors/update': object({ id: text, text, name: text, token: text }, ['id']),

@@ -30,6 +30,15 @@ struct SimulatorSheetReview: ViewModifier {
                     .tint(DuduStyle.ink)
                     .environment(\.conversationAccess, access)
             }
+            .task(id: store.status) {
+                // The task editor needs no conversation: it is presented as soon as the fixture computer is connected (`-dudu-review-sheet task-new`, or `task-edit` for the first task of the file).
+                guard let name, ["task-new", "task-edit"].contains(name), !prepared, store.status == .connected else { return }
+                prepared = true
+                tasks.report = { toast = $0 }
+                if name == "task-edit" { await tasks.refresh(using: store) }
+                guard !Task.isCancelled else { return }
+                presented = true
+            }
             .task(id: store.selectedSession?.id) {
                 guard let name, !prepared, store.status == .connected,
                       store.selectedSession?.isAssistant == true,
@@ -83,6 +92,12 @@ struct SimulatorSheetReview: ViewModifier {
         case "task-standalone":
             if let task = tasks.items.first {
                 TaskSheet(initial: task, model: tasks, store: store, onOpenSession: { _ in })
+            }
+        case "task-new":
+            TaskEditorSheet(model: tasks, store: store, task: nil)
+        case "task-edit":
+            if let task = tasks.items.first {
+                TaskEditorSheet(model: tasks, store: store, task: task)
             }
         case "info-standalone":
             if let record = collector.items.first {

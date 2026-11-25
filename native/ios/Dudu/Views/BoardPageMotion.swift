@@ -8,6 +8,27 @@ final class BoardPageMotion {
     private(set) var isInteracting = false
     private(set) var isAnimating = false
     @ObservationIgnored private var revision = 0
+    /// The revision whose end was already handled: the animation's notice and the watchdog can both come, only the first counts.
+    @ObservationIgnored private var settled = -1
+    @ObservationIgnored private var watchdog: Task<Void, Never>?
+    private let watchdogDelay: Duration
+    private let perform: Perform
+
+    /// Runs a page's animation: `body` moves the page, `done` is called when it has arrived. SwiftUI's own is the default.
+    typealias Perform = @MainActor (Animation, () -> Void, @escaping () -> Void) -> Void
+
+    static let swiftUIAnimation: Perform = { animation, body, done in
+        withAnimation(animation, completionCriteria: .logicallyComplete) { body() } completion: { done() }
+    }
+
+    /// A transition takes 0.15 to 0.7 s. One that still holds the input after this long has lost the animation's notice: on
+    /// 2026-11-24 a conversation opened at 03:56 and the board ignored every touch for 171 s (owner: cannot scroll, cannot go back).
+    static let defaultWatchdogDelay: Duration = .seconds(2)
+
+    init(watchdogDelay: Duration? = nil, perform: Perform? = nil) {
+        self.watchdogDelay = watchdogDelay ?? Self.defaultWatchdogDelay
+        self.perform = perform ?? Self.swiftUIAnimation
+    }
 
     var isMoving: Bool { isInteracting || isAnimating }
 
@@ -28,25 +49,46 @@ final class BoardPageMotion {
         revision &+= 1
         let current = revision
         let started = ProcessInfo.processInfo.systemUptime
-        DuduLog.record("board.input.lock", state: showingConversation ? "enter" : "return")
+        let direction = showingConversation ? "enter" : "return"
+        DuduLog.record("board.input.lock", state: direction)
         // Keep the history covered when the finger hands the page over to its spring.
         isAnimating = true
         isInteracting = false
-        // Unlock when the page reaches its destination, not after the spring's invisible tail.
-        withAnimation(animation, completionCriteria: .logicallyComplete) {
-            progress = showingConversation ? 1 : 0
-            updates()
-        } completion: {
-            guard self.revision == current else { return }
+        // The end of this transition: the animation says so when the page reaches its destination (not after the spring's
+        // invisible tail), or the watchdog does when that notice never comes. Only the first counts.
+        let arrive = { [weak self] (lost: Bool) in
+            guard let self, self.revision == current, self.settled != current else { return }
+            self.settled = current
+            self.watchdog?.cancel()
+            self.watchdog = nil
+            if lost {
+                // Put the page where the animation was going, with no animation of its own.
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { self.progress = showingConversation ? 1 : 0 }
+            }
             DuduLog.record("board.input.unlock", elapsedMs: (ProcessInfo.processInfo.systemUptime - started) * 1_000,
-                            state: showingConversation ? "enter" : "return")
+                           state: lost ? "watchdog.\(direction)" : direction)
             completion()
             if self.revision == current { self.isAnimating = false }
         }
+        watchdog?.cancel()
+        let delay = watchdogDelay
+        watchdog = Task {
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            arrive(true)
+        }
+        perform(animation, {
+            progress = showingConversation ? 1 : 0
+            updates()
+        }, { arrive(false) })
     }
 
     func reset(showingConversation: Bool) {
         if isAnimating { DuduLog.record("board.input.unlock", state: "reset") }
+        watchdog?.cancel()
+        watchdog = nil
         revision &+= 1
         var transaction = Transaction()
         transaction.disablesAnimations = true

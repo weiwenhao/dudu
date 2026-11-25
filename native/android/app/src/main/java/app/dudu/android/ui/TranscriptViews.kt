@@ -21,6 +21,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -107,21 +110,82 @@ internal fun TranscriptTurn(
 
 /**
  * The line at the end of a running conversation, as the iPhone's `RunningStatusView` draws it (owner, 2026-11-21: "和 iOS 完全不一样"; the first version had only its words): a hairline, then
- * Dudu's logo, 18 dp, whose opacity moves once a second (`0.7 + 0.3 × (0.5 + 0.5 sin 2.4 t)`), beside "深度求索中，用时 5分13秒 ···" in 14 sp blue; "深度求索中 ···" until the turn's start is known.
+ * DSH's whale tail, 16 dp, which moves, beside "深度求索中，用时 5分13秒 ···" in 14 sp blue with a highlight that sweeps over the words (owner, 2026-11-23: 「鲸鱼尾巴会晃动，并且有一个光效。
+ * 手机端也按照这个实现吧，图标也换成和 dsh 一样的鲸鱼尾巴」); "深度求索中 ···" until the turn's start is known.
  * It is the history's last row, after the messages on their way, the questions and the approvals, and it is there before the turn has begun (owner's audit, 2026-11-22, A3).
  */
 @Composable
 internal fun RunningStatus(startedAt: Long?) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
-    val breath = (0.7 + 0.3 * (0.5 + 0.5 * kotlin.math.sin(now / 1000.0 * 2.4))).toFloat()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         HorizontalDivider(thickness = .5.dp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .1f))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Image(painterResource(R.drawable.dudu), null, Modifier.size(18.dp).alpha(breath))
-            Text(if (startedAt == null) w("深度求索中 ···")
+            WhaleTailMark(chatRunning())
+            ShimmerText(if (startedAt == null) w("深度求索中 ···")
                 else w("深度求索中，用时 {0} ···").replace("{0}", transcriptDuration(maxOf(1000L, now - startedAt))),
-                fontSize = 14.sp, color = chatRunning())
+                chatRunning(), chatRunningHighlight())
+        }
+    }
+}
+
+/**
+ * DSH's whale tail in the colour of the words: 60 pictures in one strip (`whale_tail_strip`, as high as one picture is wide, made four times as large from the 28 × 28 of the animation DSH uses, which DSH shows as a mask
+ * over the text colour, so only its transparency counts), 20 a second, 3 seconds for the round; it stands still on the first picture when motion is off (`motionOn()`).
+ */
+@Composable
+private fun WhaleTailMark(color: Color) {
+    val strip = ImageBitmap.imageResource(R.drawable.whale_tail_strip)
+    val side = strip.height
+    val frames = strip.width / side
+    val moving = motionOn()
+    var frame by remember { mutableIntStateOf(0) }
+    LaunchedEffect(moving) {
+        if (!moving) { frame = 0; return@LaunchedEffect }
+        while (true) { frame = ((System.currentTimeMillis() / 50) % frames).toInt(); delay(50) }
+    }
+    androidx.compose.foundation.Canvas(Modifier.size(16.dp).clearAndSetSemantics { }) {
+        drawImage(strip, srcOffset = androidx.compose.ui.unit.IntOffset(frame * side, 0), srcSize = androidx.compose.ui.unit.IntSize(side, side),
+            dstSize = androidx.compose.ui.unit.IntSize(size.width.toInt(), size.height.toInt()),
+            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(color, androidx.compose.ui.graphics.BlendMode.SrcIn),
+            filterQuality = androidx.compose.ui.graphics.FilterQuality.High)
+    }
+}
+
+/**
+ * The words with DSH's highlight (its `TextShimmer`): a copy of the words in the highlight colour whose colour fades in and out across a soft band (CSS `linear-gradient(105deg, transparent 0%,
+ * black 40% 60%, transparent 100%)` over a box as wide as the words) that crosses them from left to right in 1 s, rests for 0.5 s and starts again, in 48 steps; the first sweep begins 0.3 s after
+ * the line appears. Still when motion is off.
+ */
+@Composable
+private fun ShimmerText(text: String, color: Color, highlight: Color) {
+    var box by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    var progress by remember { mutableFloatStateOf(0f) }
+    val moving = motionOn()
+    LaunchedEffect(moving) {
+        if (!moving) { progress = 0f; return@LaunchedEffect }
+        val began = androidx.compose.runtime.withFrameNanos { it }
+        while (true) {
+            val elapsed = (androidx.compose.runtime.withFrameNanos { it } - began) / 1e9 - 0.3
+            progress = if (elapsed < 0) 0f else (kotlin.math.floor(minOf(1.0, (elapsed % 1.5) / 1.0) * 48) / 48).toFloat()
+        }
+    }
+    Box {
+        // DSH sets the words in tabular figures, so the clock does not shift the line every second.
+        Text(text, Modifier.onSizeChanged { box = it }, fontSize = 14.sp, color = color, style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"))
+        if (moving && box.width > 0) {
+            val width = box.width.toFloat()
+            val height = box.height.toFloat()
+            val angle = Math.toRadians(105.0)
+            val dx = kotlin.math.sin(angle).toFloat()
+            val dy = -kotlin.math.cos(angle).toFloat()
+            val length = kotlin.math.abs(width * dx) + kotlin.math.abs(height * dy)
+            val shift = (progress * 2 - 1) * width
+            val band = androidx.compose.ui.graphics.Brush.linearGradient(
+                0f to Color.Transparent, .4f to highlight, .6f to highlight, 1f to Color.Transparent,
+                start = androidx.compose.ui.geometry.Offset(width / 2 - dx * length / 2 + shift, height / 2 - dy * length / 2),
+                end = androidx.compose.ui.geometry.Offset(width / 2 + dx * length / 2 + shift, height / 2 + dy * length / 2))
+            Text(text, Modifier.clearAndSetSemantics { }, fontSize = 14.sp, style = LocalTextStyle.current.copy(brush = band, fontFeatureSettings = "tnum"))
         }
     }
 }
@@ -515,9 +579,13 @@ internal fun chatTertiary() = if (androidx.compose.foundation.isSystemInDarkThem
 internal fun chatSecondary() = if (androidx.compose.foundation.isSystemInDarkTheme())
     MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF61666B)
 
-/** The iPhone's `DuduStyle.chatRunning`: the blue of the running line. */
+/** The blue of the running line: DSH's `--dsw-alias-label-deep-diving` (light `#4176e6` 70% with `#172554`; dark `#5686fe` 55% with `#adb2b8`), the iPhone's `DuduStyle.chatRunning` (owner, 2026-11-23: exactly as DSH draws it). */
 @Composable
-internal fun chatRunning() = if (androidx.compose.foundation.isSystemInDarkTheme()) DuduStyle.blue else Color(0xFF3A62D6)
+internal fun chatRunning() = if (androidx.compose.foundation.isSystemInDarkTheme()) Color(0xFF7D9ADF) else Color(0xFF345EBA)
+
+/** DSH's `--dsw-alias-label-deep-diving-shimmer`: the colour of the highlight that crosses the running line (light `#4176e6` 30% with `#172554`; dark `#93c5fd` 65% with `#7aaaff`). */
+@Composable
+internal fun chatRunningHighlight() = if (androidx.compose.foundation.isSystemInDarkTheme()) Color(0xFF8ABCFE) else Color(0xFF243D80)
 
 @Composable
 internal fun chatPanel() = if (androidx.compose.foundation.isSystemInDarkTheme())

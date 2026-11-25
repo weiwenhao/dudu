@@ -63,6 +63,18 @@ export async function sampleResponses(root) {
       'assistant/conversation-settings': { groups: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'v4', name: 'DeepSeek V4', reasoning: { efforts: [{ id: 'high', name: 'High' }], defaultEffort: 'high' } }] }],
         model: { provider: 'deepseek', model: 'v4', reasoningEffort: 'high' }, permissions: [{ value: 'full', name: 'Full access' }], settings: { permission: 'full' } },
       'assistant/settings': { settings: { deepSleep: true } },
+      // The connectors page (added 2026-11-23, before the page's redesign): one of each kind and state an app draws.
+      'connectors/catalog': { outcome: 'success', groups: [
+        { id: 'here', items: [{ id: 'found-pencil', name: 'pencil', line: 'mcp-server-darwin-arm64', icon: 'pencil', how: 'local' }] },
+        { id: 'dev', items: [{ id: 'gitlab', name: 'GitLab', line: '仓库、议题和合并请求', icon: 'gitlab', how: 'oauth' }] },
+      ] },
+      'connectors/list': { outcome: 'success', connectors: [
+        { id: 'notion', name: 'Notion', icon: 'notion', kind: 'mcp', custom: false, busy: false, tools: 77, state: null, about: { kind: 'remote', host: 'mcp.notion.com', tools: 77 } },
+        { id: 'github', name: 'GitHub', icon: 'github', kind: 'mcp', custom: false, busy: true, state: { status: 'waiting', code: 'ABCD-1234' }, about: { kind: 'remote', host: 'api.githubcopilot.com' } },
+        { id: 'lark', name: '飞书', icon: 'lark', kind: 'prompt', custom: false, busy: false, state: { status: 'needs-login', command: 'lark-cli', login: 'lark-cli auth login', install: 'npm install -g @larksuite/cli' }, about: { kind: 'cli', command: 'lark-cli' } },
+        { id: 'sentry', name: 'Sentry', icon: 'sentry', kind: 'mcp', custom: false, busy: false, state: { status: 'error', message: 'timeout' }, about: { kind: 'remote', host: 'mcp.sentry.dev' } },
+        { id: 'qq', name: 'QQ 邮箱', icon: null, kind: 'prompt', custom: true, busy: false, text: '用 himalaya 命令行读邮件', state: null, about: { kind: 'sentence', text: '用 himalaya 命令行读邮件' } },
+      ] },
     };
     const settings = createNativeSettings({ call: async (action) => ({ status: 200, body: data[action] ?? { outcome: 'success' } }) });
     const page = async (section, target) => (await settings.dispatch('settings.page', { section, ...(target ? { target } : {}) })).page;
@@ -78,6 +90,10 @@ export async function sampleResponses(root) {
       'settings.page (status form)': await page('statuses', 'edit:todo'),
       'settings.page (memory)': await page('memory'),
       'settings.page (rules)': await page('rules'),
+      'settings.page (connectors)': await page('connectors'),
+      'settings.page (connector)': await page('connectors', 'connector:notion'),
+      'settings.data (connectors)': await settings.dispatch('settings.data', { section: 'connectors' }).catch(() => null),
+      'settings.data (connector)': await settings.dispatch('settings.data', { section: 'connectors', target: 'connector:notion' }).catch(() => null),
     };
   } finally { issues.close(); }
 }

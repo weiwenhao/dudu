@@ -262,7 +262,8 @@ export class HarnessBridge {
     signal = AbortSignal.any([this.#lifetime.signal, ...(signal ? [signal] : [])]);
     signal.throwIfAborted();
     const previous = this.#runs.get(sessionId);
-    const retained = previous?.finished && previous.handle.backgroundActive ? previous.handle : undefined;
+    // The conversation's process is kept from turn to turn; only deep sleep (`release`) or a close lets it go.
+    const retained = previous?.finished && previous.handle.alive ? previous.handle : undefined;
     await previous?.close({ preserveBackground: Boolean(retained) });
     const observedSubagents = await previous?.team?.checkpoint() ?? link?.nativeSubagents;
     const agent = this.agentOf(sessionId);

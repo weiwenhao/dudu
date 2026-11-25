@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { sessionActivityProjection as projection } from '../host/assistant/sessions/activity-projection.mjs';
+import { activityReaderOf, sessionActivityProjection as projection } from '../host/assistant/sessions/activity-projection.mjs';
 import { createReadReceipts, validReadPosition } from '../host/assistant/sessions/read-receipts.mjs';
 import { contentDigest, hasUnread, sessionStateForActivity } from '../host/assistant/sessions/session-state.mjs';
 import { createIssues } from '../host/assistant/issues/index.mjs';
@@ -19,6 +19,22 @@ const message = (seq: number, value = 'Answer', step = 1) => ({
 });
 const complete = (state: any, event: ReturnType<typeof message>) => projection.apply(projection.apply(state, event), {
   type: 'turn/end', seq: event.seq + 1, time: event.time, data: { turn: event.data.turn, reason: { kind: 'completed' } },
+});
+
+test('the activity reader takes what DSH 0.2.2 and DSH 0.2.1 give back from register(); with nothing to read with it is undefined', () => {
+  const session = { id: 'one' };
+  const asked: unknown[][] = [];
+  const registry = { stateOf: (...args: unknown[]) => { asked.push(args); return { seq: 7 }; } };
+  // DSH 0.2.2: a handle that reads by itself, and the registry is not asked
+  const handle = { stateOf: () => ({ seq: 3 }), dispose() {} };
+  assert.equal(activityReaderOf(handle, registry), handle);
+  assert.deepEqual(asked, []);
+  // DSH 0.2.1: only the function that unregisters (the page failed with "activityProjection?.stateOf is not a function"); the registry reads by key
+  const unregister = () => {};
+  assert.deepEqual(activityReaderOf(unregister, registry)?.stateOf(session), { seq: 7 });
+  assert.deepEqual(asked, [[session, projection.key]]);
+  assert.equal(activityReaderOf(undefined, registry), undefined);
+  assert.equal(activityReaderOf(unregister, undefined), undefined);
 });
 
 test('only completed visible answers, questions and errors advance unread; reading never answers a question', () => {
@@ -308,6 +324,22 @@ test('grouping, filters and counts use automatic session status, with no workflo
     assert.equal(issues.add({ title: 'No conversation' }).issue.sessionState, 'unassigned');
     issues.add({ title: 'Assigned without conversation', agent: 'claude', project: { name: 'Work', path: '/work' } });
     assert.equal(issues.office().counts.unassigned, 1, 'an assigned issue without a conversation has an exact association count');
+  } finally { issues.close(); }
+});
+
+// The widget has the places (8 desks, 10 in the activity area, 8 beds) and sends whoever has none outside; what it is given decides who can be there at all. A cut by
+// priority hid a working agent behind the sleepers (owner, 2026-11-25: NEW-1 was running and was the 31st of 36 assigned issues, with no priority).
+test('the office is given every assigned active issue, so a working one is not cut by its priority', () => {
+  const working = 'dsh:working';
+  const issues = createIssues({ file: ':memory:', sessionState: (key: string) => (key === working ? 'processing' : 'idle') });
+  try {
+    const project = { name: 'Work', path: '/work' };
+    for (let n = 0; n < 30; n += 1) issues.add({ title: `Urgent ${n}`, priority: 'high', status: 'in_progress', agent: 'claude', project, session: `dsh:asleep-${n}` });
+    const last = issues.add({ title: 'Working, no priority', status: 'todo', agent: 'claude', project, session: working }).issue;
+    const { items } = issues.office();
+    assert.equal(items.length, 31, 'all of them go to the office');
+    assert.equal(items.find((item: any) => item.id === last.id)?.sessionState, 'processing', 'the working one is there, as working');
+    assert.equal(items.at(-1).id, last.id, 'in the order of urgency, as before');
   } finally { issues.close(); }
 });
 

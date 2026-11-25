@@ -13,7 +13,7 @@ const quiet = { warn() {}, info() {}, error() {} };
 const tick = () => new Promise((done) => setTimeout(done, 5));
 const folder = '/work/docs';
 
-function world(options: { catalog?: unknown; turns?: Map<string, unknown>; accessOf?: (issue: unknown) => unknown; material?: (issue: unknown) => unknown; read?: (key: string) => Promise<any>; llm?: (messages: any[]) => Promise<string>; snapshotOf?: (key: string) => any } = {}) {
+function world(options: { catalog?: unknown; turns?: Map<string, unknown>; accessOf?: (issue: unknown) => unknown; material?: (issue: unknown) => unknown; read?: (key: string) => Promise<any>; llm?: (messages: any[]) => Promise<string>; snapshotOf?: (key: string) => any; release?: (key: string) => Promise<boolean> } = {}) {
   const fake = baseDsh({ catalog: (options.catalog ?? CATALOG) as any, turns: (options.turns ?? new Map()) as any });
   const agentSessions = createAgentSessions({ dsh: fake.dsh, log: quiet });
   let assignment: any;
@@ -23,6 +23,7 @@ function world(options: { catalog?: unknown; turns?: Map<string, unknown>; acces
     // Legacy summary dependencies must remain unused, even when an older caller supplies them.
     ...(options.read || options.llm ? { read: options.read, llm: options.llm, reviewMs: 0 } : {}),
     ...(options.snapshotOf ? { snapshotOf: options.snapshotOf } : {}),
+    ...(options.release ? { release: options.release } : {}),
     ...(options.accessOf ? { accessOf: options.accessOf as any } : {}),
     ...(options.material ? { material: options.material as any } : {}),
   });
@@ -156,7 +157,8 @@ test('a reply to stopped work resumes the agent and preserves the owner-selected
 });
 
 test('stopping the session preserves Backlog; Done is the owner\'s word and is never undone', async () => {
-  const w = world();
+  const released: string[] = [];
+  const w = world({ release: async (key) => { released.push(key); return true; } });
   const issue = w.add({ status: 'backlog' });
   await w.give(issue.id, 'deepseek');
   w.say.status('s1', true);
@@ -167,8 +169,11 @@ test('stopping the session preserves Backlog; Done is the owner\'s word and is n
 
   w.say.status('s1', true);
   w.issues.complete(issue.id, { outcome: '已回复供应商' });
+  await tick();
+  assert.deepEqual(released, [], 'a session that still works keeps its process');
   w.say.answer('s1', '做完了。'); // the session ends its turn after the owner has said Done
   await tick();
+  assert.deepEqual(released, ['dsh:s1'], 'its process is closed when the session is put away (owner, 2026-11-23)');
   assert.equal(w.get(issue.id).status, 'done', 'the issue is as the owner left it');
   assert.equal(w.get(issue.id).ask, '');
   assert.deepEqual(w.ofKind('archive').map((call) => call.slice(1)), [['s1', { stop: false }]], 'and a session that has stopped is put away');

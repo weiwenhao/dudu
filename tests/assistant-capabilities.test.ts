@@ -60,7 +60,7 @@ test('all product command contracts are discoverable with schemas, including set
     }
   }
   for (const operation of ['home/pin', 'home/read', 'inbox/read', 'projects/create', 'providers/save', 'sessions/model', 'sessions/queue',
-    'sessions/team', 'sessions/jobs', 'sessions/job-stop', 'sessions/catalog', 'sessions/answer', 'sessions/fork',
+    'sessions/team', 'sessions/jobs', 'sessions/job-stop', 'sessions/restart', 'sessions/catalog', 'sessions/answer', 'sessions/fork',
     'assistant/conversation-settings', 'issues/attachment-upload', 'phone/revoke']) assert.ok(operations.has(operation), operation);
 
   const status = await execute('issues/status-add', { fields: { name: '排期', category: 'unstarted' } });

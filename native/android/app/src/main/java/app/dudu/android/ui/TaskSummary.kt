@@ -8,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -67,6 +68,6 @@ internal fun TaskSummary(task: JSONObject, conversationScoped: Boolean = false, 
         }
         if (onToggle != null) Switch(checked = pendingToggle ?: on, onCheckedChange = onToggle,
             enabled = toggleEnabled && !busy,
-            modifier = Modifier.semantics { contentDescription = task.optString("title") })
+            modifier = Modifier.scale(0.8f).semantics { contentDescription = task.optString("title") })
     }
 }

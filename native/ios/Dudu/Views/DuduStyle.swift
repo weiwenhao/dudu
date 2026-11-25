@@ -94,7 +94,10 @@ enum DuduStyle {
     static let chatPanel = Color(red: 0xf9 / 255, green: 0xfa / 255, blue: 0xfb / 255)
     static let chatBorder = Color.black.opacity(0.04)
     static let chatDivider = Color.black.opacity(0.10)
-    static let chatRunning = Color(red: 0x3a / 255, green: 0x62 / 255, blue: 0xd6 / 255)
+    /// The blue of the running line: DSH's `--dsw-alias-label-deep-diving` in the light theme (`#4176e6` 70% with `#172554`; it was `#3A62D6` until 2026-11-23, when the owner asked for the line exactly as DSH draws it).
+    static let chatRunning = Color(red: 0x34 / 255, green: 0x5e / 255, blue: 0xba / 255)
+    /// The highlight that crosses the running line: DSH's `--dsw-alias-label-deep-diving-shimmer` in the light theme (`#4176e6` 30% with `#172554`).
+    static let chatRunningHighlight = Color(red: 0x24 / 255, green: 0x3d / 255, blue: 0x80 / 255)
     static let chatWarning = Color(red: 0xf5 / 255, green: 0x9e / 255, blue: 0x0b / 255)
     static let chatError = Color(red: 0xec / 255, green: 0x13 / 255, blue: 0x13 / 255)
     static let connectionNotice = Color(red: 0xff / 255, green: 0xe7 / 255, blue: 0xe9 / 255)

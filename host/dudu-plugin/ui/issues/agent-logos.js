@@ -39,5 +39,7 @@ export function agentLogo(agent, badge = false) {
     // The Pi mark spans 165-635 of 800: scaled to 18 of the 24 units and centred. The OAR marks on another grid bring their own placement.
     transform: key === 'codex' ? "translate(0.77852 1.40483) scale(0.8728835 0.8930789)" : key === 'pi' ? "translate(-3.32 -3.32) scale(0.0383)" : harness?.placement,
     ...(key === 'pi' ? { parts: PI_PARTS } : harness?.parts ? { parts: harness.parts } : {}),
+    // A mark that is a picture (`ui/issues/logos/<name>.png`), drawn as it is.
+    ...(harness?.picture ? { picture: harness.picture } : {}),
   };
 }

@@ -110,9 +110,9 @@ export function createUniversalProvider({ id, name, runtime, binaryEnv, login })
     session: universalSession({ name }),
     steering: false,
     backgroundTasks: false,
-    // Off until switched on in Settings > Providers (owner, 2026-11-19: "默认关闭"): few people use any one of these, and one that happens
-    // to be installed must not appear among the agents by itself.
-    defaultEnabled: false,
+    // On as soon as it is found, like every harness (owner, 2026-11-24: 「安装嘟嘟插件启动后检测到的全都自动启用」; it was off until switched on from 2026-11-19).
+    // One that is not on this computer is still folded away in Settings > Providers (owner's pick C of 2026-11-19).
+    folds: true,
   });
 }
 

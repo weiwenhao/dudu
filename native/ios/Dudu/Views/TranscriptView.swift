@@ -218,7 +218,7 @@ private struct TurnRowView: View {
                 case let .reply(id, text):
                     let isLive = id.hasPrefix("live:")
                     if isLive && !row.liveTextComplete {
-                        StreamingReplyText(text: text, id: id)
+                        StreamingReplyText(text: text, id: id, sourceSequence: row.messageSequences[id])
                             .messageActions(text: text, seq: row.messageSequences[id])
                     } else {
                         // Text the host says is finished is a message already, though it has not recorded it yet (that can be minutes late): Markdown, not the plain streaming text.
@@ -592,7 +592,8 @@ private struct TriggerRowView: View {
 
 // MARK: - Running status
 
-/// "深度求索中，用时 5分13秒 ···" with Dudu's logo, ticking once a second.
+/// "深度求索中，用时 5分13秒 ···" as DSH draws it (owner, 2026-11-23: 「鲸鱼尾巴会晃动，并且有一个光效。手机端也按照这个实现吧，图标也换成和 dsh 一样的鲸鱼尾巴」): DSH's whale tail,
+/// which moves, and a highlight that sweeps over the words; the clock ticks once a second.
 struct RunningStatusView: View {
     let startedAt: Double?
 
@@ -600,13 +601,9 @@ struct RunningStatusView: View {
         VStack(alignment: .leading, spacing: 8) {
             Rectangle().fill(DuduStyle.chatDivider).frame(height: 0.5)
             TimelineView(.periodic(from: .now, by: 1)) { timeline in
-                let phase = timeline.date.timeIntervalSinceReferenceDate
                 HStack(spacing: 6) {
-                    DuduLogo(size: 18)
-                        .opacity(0.7 + 0.3 * (0.5 + 0.5 * sin(phase * 2.4)))
-                    Text(label(at: timeline.date))
-                        .font(.system(size: 14))
-                        .foregroundStyle(DuduStyle.chatRunning)
+                    WhaleTailMark(color: DuduStyle.chatRunning)
+                    ShimmerText(text: label(at: timeline.date), color: DuduStyle.chatRunning, highlight: DuduStyle.chatRunningHighlight)
                 }
             }
         }
@@ -619,5 +616,150 @@ struct RunningStatusView: View {
         guard let startedAt else { return L10n.text("深度求索中 ···") }
         let elapsed = max(1_000, date.timeIntervalSince1970 * 1_000 - startedAt)
         return L10n.text("深度求索中，用时 {0} ···", "\(TranscriptTitles.duration(milliseconds: elapsed))")
+    }
+}
+
+/// The frames of DSH's whale tail: 60 pictures in one strip (`WhaleTailStrip`, as high as one picture is wide), cut out of the animation DSH uses (28 × 28, 20 a second, 3 seconds for the round).
+/// DSH shows it as a mask over the text colour, so only its transparency counts. The strip holds the pictures made four times as large (Lanczos, then the edge of the stroke made firm
+/// again), because on a 3x screen the 28-pixel pictures were stretched by half again and looked soft (owner, 2026-11-23: 「有一些模糊」).
+private enum WhaleTailFrames {
+    static let secondsPerFrame = 0.05
+    static let all: [CGImage] = {
+        guard let strip = UIImage(named: "WhaleTailStrip")?.cgImage, strip.height > 0 else { return [] }
+        let side = strip.height
+        return (0..<strip.width / side).compactMap { strip.cropping(to: CGRect(x: $0 * side, y: 0, width: side, height: side)) }
+    }()
+}
+
+/// DSH's whale tail in the colour of the words, 16 pt for the 14 pt words (DSH: 14 for 12). The frames run in a `UIImageView` (Core Animation turns them), not in a `TimelineView`: a view that
+/// SwiftUI is asked to draw again 20 times a second sits in the last row of the scrolling history, and it was suspected of making the history jump when the owner dragged it to the bottom
+/// (2026-11-23, build 155; the logs did not confirm it: the same jumps are in the logs from before). It stands still on the first frame when motion is reduced and while the conversation is covered.
+private struct WhaleTailMark: View {
+    let color: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.conversationIsCovered) private var isCovered
+
+    var body: some View {
+        WhaleTailImage(color: UIColor(color), moving: !reduceMotion && !isCovered)
+            .frame(width: 16, height: 16)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct WhaleTailImage: UIViewRepresentable {
+    let color: UIColor
+    let moving: Bool
+    @Environment(\.displayScale) private var displayScale
+
+    /// The pictures are drawn once, 16 pt at the screen's scale and in the colour of the words: a `UIImageView` does not tint the pictures of an animation (they came out black, the colour of
+    /// the strip), and a picture that is stretched on the screen is soft.
+    private static var made: [String: [UIImage]] = [:]
+
+    private static func pictures(color: UIColor, scale: CGFloat) -> [UIImage] {
+        let key = "\(scale)-\(color.description)"
+        if let kept = made[key] { return kept }
+        let size = CGSize(width: 16, height: 16)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.opaque = false
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let rect = CGRect(origin: .zero, size: size)
+        let pictures = WhaleTailFrames.all.map { frame in
+            renderer.image { context in
+                let canvas = context.cgContext
+                canvas.interpolationQuality = .high
+                UIImage(cgImage: frame, scale: 1, orientation: .up).draw(in: rect)
+                canvas.setBlendMode(.sourceIn)
+                color.setFill()
+                canvas.fill(rect)
+            }
+        }
+        made[key] = pictures
+        return pictures
+    }
+
+    final class Coordinator { var key = "" }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UIImageView {
+        let view = UIImageView()
+        view.contentMode = .center
+        view.isAccessibilityElement = false
+        view.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return view
+    }
+
+    func updateUIView(_ view: UIImageView, context: Context) {
+        let key = "\(displayScale)-\(color.description)"
+        if context.coordinator.key != key {
+            context.coordinator.key = key
+            let pictures = Self.pictures(color: color, scale: displayScale)
+            view.stopAnimating()
+            view.animationImages = pictures
+            view.animationDuration = Double(pictures.count) * WhaleTailFrames.secondsPerFrame
+            view.image = pictures.first
+        }
+        if moving, view.animationImages?.isEmpty == false {
+            if !view.isAnimating { view.startAnimating() }
+        } else if view.isAnimating {
+            view.stopAnimating()
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIImageView, context: Context) -> CGSize? {
+        CGSize(width: 16, height: 16)
+    }
+}
+
+/// The words with DSH's highlight (its `TextShimmer`): a copy of the words in the highlight colour, seen through a soft band that crosses them from left to right in 1 s, rests for 0.5 s and
+/// starts again; the first sweep begins 0.3 s after the line appears. The band moves by one repeating animation of its offset (one width to the left of the words to two widths to the right
+/// in 1.5 s, the last third of it off the words), so that SwiftUI is not asked to draw the line again for every frame (see `WhaleTailMark`). Still when motion is reduced and while the
+/// conversation is covered.
+private struct ShimmerText: View {
+    let text: String
+    let color: Color
+    let highlight: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.conversationIsCovered) private var isCovered
+    @State private var phase = 0.0
+
+    var body: some View {
+        label(color)
+            .overlay {
+                if !reduceMotion && !isCovered {
+                    label(highlight)
+                        .mask { band }
+                        .accessibilityHidden(true)
+                        .task {
+                            phase = 0
+                            try? await Task.sleep(for: .milliseconds(300))
+                            guard !Task.isCancelled else { return }
+                            withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) { phase = 1 }
+                        }
+                }
+            }
+    }
+
+    private func label(_ color: Color) -> some View {
+        // DSH sets the words in tabular figures, so the clock does not shift the line every second.
+        Text(text).font(.system(size: 14).monospacedDigit()).foregroundStyle(color)
+    }
+
+    /// CSS `linear-gradient(105deg, transparent 0%, black 40% 60%, transparent 100%)` over a box as wide as the words.
+    private var band: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width, height = proxy.size.height
+            let angle = 105.0 * Double.pi / 180
+            let dx = sin(angle), dy = -cos(angle)
+            let length = abs(width * dx) + abs(height * dy)
+            LinearGradient(
+                stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.4), .init(color: .black, location: 0.6), .init(color: .clear, location: 1)],
+                startPoint: UnitPoint(x: (width / 2 - dx * length / 2) / width, y: (height / 2 - dy * length / 2) / height),
+                endPoint: UnitPoint(x: (width / 2 + dx * length / 2) / width, y: (height / 2 + dy * length / 2) / height)
+            )
+            .frame(width: width, height: height)
+            .offset(x: -width + phase * 3 * width)
+        }
     }
 }

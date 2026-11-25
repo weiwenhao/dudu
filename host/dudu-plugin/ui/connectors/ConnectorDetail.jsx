@@ -87,6 +87,8 @@ export function ConnectorDetail({ connector, request, onBack, onSaved, onDisconn
         </Row>
         {address && <Row title={P.address}><span className="block max-w-[360px] truncate text-sm text-muted-foreground" title={address}>{address}</span></Row>}
         {typeof about.tools === 'number' && <Row title={P.tools}><span className="text-sm text-muted-foreground">{P.toolsValue(about.tools)}</span></Row>}
+        {/* the collectors that read through it (owner's approved detail, 2026-11-23) */}
+        <Row title={P.sheet.collectors}><span className="block max-w-[360px] truncate text-sm text-muted-foreground">{connector.usedBy?.length ? connector.usedBy.map((user) => user.name).join('、') : P.sheet.unused}</span></Row>
         {connector.custom && (
           <Row block>
             <form

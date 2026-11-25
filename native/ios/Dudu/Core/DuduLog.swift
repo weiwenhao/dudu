@@ -43,12 +43,16 @@ enum DuduLog {
         "lanAddressCount", "publicAddressCount",
         // Where the single running indicator landed, when it is not the history's own last item (2026-11-20).
         "runningIndex", "itemCount",
+        // How many points two rows of the history are drawn over each other (`chat.layout.overlap`, 2026-11-24): a number, never which rows.
+        "overlapPoints",
         // How many of the App's Keychain items there are and how many of them can be read after the first unlock (2026-11-22): numbers only.
         "keychainItems", "keychainAfterFirstUnlock"
     ]
     private static let allowedGeometryKeys: Set<String> = [
         "bottomY", "viewportHeight", "lastRowHeight", "contentHeight", "contentOffset", "topInset", "bottomInset",
         "latestTopY", "latestBottomY", "latestRowHeight",
+        // Where the history's offset was and where it landed when SwiftUI's List threw it to the top (`chat.scroll.teleport`, 2026-11-24).
+        "offsetFrom", "offsetTo",
         "longestFrameMs",
         // Touch geometry only, never content or conversation identity. Drags record one release, not every frame.
         "tapX", "tapY", "screenWidth", "screenHeight",

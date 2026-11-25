@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -196,6 +197,7 @@ internal fun settingsHex(text: String?): Color? {
 private fun toneColor(tone: String?): Color = when (tone) {
     "bad" -> SwipeColors.delete
     "warn" -> Color(0xFFF59E0B)
+    "link" -> DuduStyle.blue
     else -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
@@ -210,7 +212,7 @@ internal fun SettingsRowChevron() = Glyph(DuduGlyphs.right, size = 16, tint = Ma
  */
 @Composable
 internal fun SettingsRowLabel(row: JSONObject, enabled: Boolean, bell: (@Composable () -> Unit)? = null, onLongClick: (() -> Unit)? = null,
-    action: (() -> Unit)? = null, capsule: (() -> Unit)? = null) {
+    action: (() -> Unit)? = null, capsule: (() -> Unit)? = null, toggle: Pair<Boolean, (Boolean) -> Unit>? = null) {
     val title = row.optString("title")
     val mono = row.optBoolean("mono")
     val tone = row.nullableString("tone")
@@ -222,23 +224,34 @@ internal fun SettingsRowLabel(row: JSONObject, enabled: Boolean, bell: (@Composa
         verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).padding(vertical = 12.dp).then(if (bell != null) Modifier.padding(end = 4.dp) else Modifier),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            row.nullableString("icon")?.let { ConnectorAvatar(it, title, 28) }
+            // A harness wears its own logo (the 供应商 page, 2026-11-24); a connector its avatar.
+            row.nullableString("agent")?.let { Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) { AgentLogo(it, 24) } }
+                ?: row.nullableString("icon")?.let { ConnectorAvatar(it, title, 28) }
             settingsHex(row.nullableString("color"))?.let { Box(Modifier.size(12.dp).background(it, CircleShape)) }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(title, fontSize = if (mono) 14.sp else 15.sp, lineHeight = 20.sp, fontFamily = if (mono) FontFamily.Monospace else null,
                     color = when (tone) { "bad" -> SwipeColors.delete; "muted" -> MaterialTheme.colorScheme.onSurfaceVariant; else -> MaterialTheme.colorScheme.onSurface })
                 row.nullableString("subtitle")?.takeIf { it.isNotBlank() }?.let {
                     Text(it, fontSize = 13.sp, lineHeight = 18.sp, maxLines = 3, overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        color = if (row.optString("style") == "alert") SwipeColors.delete else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             row.nullableString("detail")?.let {
-                Text(it, Modifier.widthIn(max = 160.dp), fontSize = 13.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                Text(it, Modifier.widthIn(max = 160.dp), fontSize = if (tone == "link") 16.sp else 13.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    fontWeight = if (tone == "link") FontWeight.Medium else null,
                     textAlign = androidx.compose.ui.text.style.TextAlign.End, color = toneColor(tone))
             }
             val button = row.optJSONObject("button")
-            if (button != null && capsule != null) RowCapsule(button.optString("title"), button.optString("role") == "destructive", enabled, capsule)
-            if (row.has("to") && bell == null) SettingsRowChevron()
+            val style = button?.nullableString("style")
+            // Muse's word on the right of a connectors row (连接 / 重新登录) in the accent colour, or a spinner while a first connection goes on (2026-11-23).
+            if (button != null && style == "busy") androidx.compose.material3.CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else if (button != null && style == "link" && capsule != null) Text(button.optString("title"),
+                Modifier.heightIn(min = 44.dp).clickable(enabled = enabled, role = Role.Button, onClick = capsule).padding(start = 8.dp).wrapContentHeight(),
+                fontSize = 16.sp, fontWeight = FontWeight.Medium, color = DuduStyle.blue)
+            else if (button != null && capsule != null) RowCapsule(button.optString("title"), button.optString("role") == "destructive", enabled, capsule)
+            toggle?.let { (on, set) -> Switch(checked = on, onCheckedChange = set, enabled = enabled, modifier = Modifier.scale(0.8f)) }
+            if (row.has("to") && bell == null && tone != "link" && style == null) SettingsRowChevron()
         }
         if (bell != null) {
             bell()
@@ -288,7 +301,7 @@ internal fun SettingsSwitchRow(title: String, on: Boolean, enabled: Boolean, tag
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag(tag).padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Text(title, Modifier.weight(1f), fontSize = 15.sp)
-        Switch(on, change, enabled = enabled)
+        Switch(on, change, modifier = Modifier.scale(0.8f), enabled = enabled)
     }
 }
 

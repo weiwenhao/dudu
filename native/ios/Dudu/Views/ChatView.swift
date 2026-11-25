@@ -460,6 +460,8 @@ struct ChatView: View {
         .modifier(DuduScrollEdgeBar(edge: .bottom, underlapsBar: true, showsEffect: false) {
             if store.selectedSession?.subagent == nil {
                 bottomChrome()
+                    // OpenClaw's behaviour probe (DEBUG, `--openclaw-behavior-probe` only): the composer's top tells whether the end of the history is in view.
+                    .chatBehaviorProbe(.composer)
             } else {
                 // Child histories retain DSH's parent address and are read-only on the phone.
                 Color.clear.frame(height: 24)
@@ -519,10 +521,11 @@ struct ChatView: View {
     private var historyItems: [ConversationHistoryItem] {
         guard hasConversationContent else { return [] }
         let items: [ConversationHistoryItem]
+        let showsRunning = store.selectedSession?.backgroundOnly != true
         if store.transcript == nil {
             items = ConversationHistoryItem.messageHistoryItems(
                 messages: store.messages, transcriptRows: store.displayedTranscriptRows,
-                questions: draftTarget == nil ? [] : store.questions
+                questions: draftTarget == nil ? [] : store.questions, showsRunning: showsRunning
             )
         } else {
             var built: [ConversationHistoryItem] = []
@@ -538,7 +541,8 @@ struct ChatView: View {
                 trailing += store.questions.map(ConversationHistoryItem.questions)
             }
             built += ConversationHistoryItem.transcriptItems(
-                store.displayedTranscriptRows, timeSeparators: store.transcriptTimeSeparators, trailing: trailing
+                store.displayedTranscriptRows, timeSeparators: store.transcriptTimeSeparators, trailing: trailing,
+                showsRunning: showsRunning
             )
             items = built
         }
@@ -613,10 +617,8 @@ struct ChatView: View {
         Task { @MainActor in
             defer { if historyRequestID == requestID { historyRequestID = nil } }
             do {
-                try await store.loadEarlierHistory(
-                    target: target, beforeApply: { await scrollGate.waitUntilIdle() },
-                    willApply: { scrollGate.keepsReader = true }
-                )
+                // OpenClaw's reading position keeps the rows on screen still while the page lands, also during the reader's fling: no wait for the scroll to stop.
+                try await store.loadEarlierHistory(target: target, willApply: { scrollGate.olderPageWillPrepend() })
             } catch {
                 if draftTarget == target { historyFailure = error.localizedDescription }
             }
@@ -1314,7 +1316,7 @@ struct ChatView: View {
     }
 
     private var isProcessingMessage: Bool {
-        store.selectedSession?.status == "running" || store.isSending || isCompacting
+        store.selectedSession?.isAnswering == true || store.isSending || isCompacting
     }
 
     private var showsInputModeToggle: Bool {

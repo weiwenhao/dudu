@@ -70,6 +70,7 @@ struct TaskSummaryRow: View {
                 ))
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .scaleEffect(0.8)
                 .disabled(!toggleEnabled || isBusy || pendingToggle != nil)
             }
         }

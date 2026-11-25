@@ -13,4 +13,6 @@ internal object MenuGlyphs {
     val goalEdit = R.drawable.ic_square_pen
     val photoDownload = R.drawable.ic_arrow_down_to_line
     val photoSaved = R.drawable.ic_check
+    val connectorSignIn = R.drawable.ic_log_in
+    val connectorLocal = R.drawable.ic_square_terminal
 }

@@ -5,7 +5,11 @@ const monitor = (task) => /monitor/i.test(task.nativeType ?? '');
 const background = (task) => active(task) && (!task.ambient || monitor(task))
   && (task.taskType === 'agent' ? task.background === true : task.background !== false || monitor(task));
 
-/** The native process may own background work after a DSH turn's stream has ended. */
+/**
+ * The native process of one conversation. It is kept between turns, and is closed only by deep sleep (`HarnessBridge.release`), the plugin's own
+ * close or its own exit (owner, 2026-11-23: 「在进行中的会话应该是一直保持的才对，只有进入深度睡眠的会话才会关闭会话进程」); it used to close as soon as a turn ended with no
+ * background work. It may own background work after a DSH turn's stream has ended.
+ */
 export class OarResident {
   constructor(session, { normalizer, observedSubagents = [], onRecord, onTasks, options, team, followUpMs = 5000 }) {
     this.session = session;
@@ -62,11 +66,10 @@ export class OarResident {
       }
       // A fast yield may precede the first poll. Check once at the tool boundary before stopping discovery.
       if (commandEnded) void this.refresh();
-      if (this.backgroundActive || exited) {
-        clearTimeout(this.releaseTimer);
-        this.releaseTimer = undefined;
-      }
-      if (this.idle && !this.backgroundActive) this.release({ delay: backgroundBefore && !exited ? followUpMs : 0 });
+      // Background work that just ended may get its native follow-up (the harness reads the result and answers on its own) a few seconds
+      // later: until then the process still counts as working, so that no deep sleep or replacement cuts that answer off.
+      if (this.backgroundActive || exited) this.endFollowUp();
+      else if (backgroundBefore && this.idle) this.beginFollowUp(followUpMs);
     });
   }
 
@@ -78,9 +81,24 @@ export class OarResident {
     return this.available && [...this.state.tasks.values()].some(background);
   }
 
-  get retained() {
-    return this.available && (this.backgroundActive || this.idle
-      && (Boolean(this.releaseTimer) || this.session.status?.().value.kind === 'running'));
+  /** The process is there to take the next turn. */
+  get alive() {
+    return this.available && !this.closing;
+  }
+
+  /** The process still works on its own: background work, its follow-up window, or a native turn that runs on after DSH's turn ended. It keeps an idle issue awake (deep sleep waits for it). */
+  get working() {
+    return this.available && (this.backgroundActive || Boolean(this.followUp) || this.idle && this.session.status?.().value.kind === 'running');
+  }
+
+  beginFollowUp(delay) {
+    if (this.followUp || !(delay > 0)) return;
+    this.followUp = setTimeout(() => { this.followUp = undefined; }, delay);
+  }
+
+  endFollowUp() {
+    clearTimeout(this.followUp);
+    this.followUp = undefined;
   }
 
   report(record) {
@@ -95,44 +113,24 @@ export class OarResident {
       try { await this.session.backgroundTasks?.(); } catch { /* a later native report remains authoritative */ }
       this.report();
       await this.reporting;
-      if (this.idle && !this.backgroundActive) this.release();
     })().finally(() => { this.refreshing = undefined; });
     return this.refreshing;
   }
 
+  /** DSH's turn ended: the process stays, idle, for the next one. */
   finishTurn() {
     this.idle = true;
-    if (!this.backgroundActive) this.release();
   }
 
   resumeTurn() {
     this.idle = false;
-    // Keep an already scheduled native follow-up window if configuring/admitting this turn is refused.
-    // Its callback checks idle again, so it cannot close a newly admitted foreground turn.
-  }
-
-  release({ delay = 0 } = {}) {
-    if (this.releaseTimer) return;
-    if (delay > 0) {
-      this.releaseTimer = setTimeout(() => {
-        this.releaseTimer = undefined;
-        this.release();
-      }, delay);
-      return;
-    }
-    void (async () => {
-      // Read final task output before closing the native process that serves it.
-      await this.reporting;
-      if (this.idle && !this.backgroundActive && this.session.status?.().value.kind !== 'running') await this.close();
-    })();
   }
 
   close() {
     return this.closing ??= (async () => {
       clearInterval(this.timer);
       this.timer = undefined;
-      clearTimeout(this.releaseTimer);
-      this.releaseTimer = undefined;
+      this.endFollowUp();
       this.available = false;
       // Keep the observer until the actual exit; OAR settles unfinished native tasks as stopped/failed there.
       await this.session.dispose().catch(() => {});

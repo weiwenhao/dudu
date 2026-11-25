@@ -14,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -319,7 +320,7 @@ fun IssuePickerFlow(root: IssuePicker, draft: IssueDraft, options: Options?, mod
                         HorizontalDivider(thickness = .5.dp)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(w("文件夹不存在时创建"), Modifier.weight(1f), fontSize = 15.sp)
-                            Switch(createDirectory, { createDirectory = it }, enabled = editable)
+                            Switch(createDirectory, { createDirectory = it }, modifier = Modifier.scale(0.8f), enabled = editable)
                         }
                     }
                 }

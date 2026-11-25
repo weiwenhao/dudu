@@ -330,6 +330,11 @@ struct DuduRootView: View {
             tasks.report = { toast in pageToast = toast }
             board.report = { toast in pageToast = toast }
         }
+        // The result of an action is told once, on the page where it was done. The toast layer is hidden while a conversation shows and its timer stops with it, so the
+        // message stayed and came up again, with a new timer, on the way back (owner, 2026-11-23: 转发 之后「提示好像重复弹出了，而且持续的时间很久」).
+        .onChange(of: destination.showsChat) { _, shows in
+            if shows { pageToast = nil }
+        }
         .onReceive(store.visibleSessionReads) { receipt in
             board.receiveVisibleRead(receipt, using: store)
         }

@@ -85,6 +85,7 @@ const en = {
   // NEW: the Activity of an issue and its page (the doc fixes the sections; the words are mine).
   detail: {
     menuDetails: 'Open issue', // Existing English copy; the owner supplied the Chinese menu label on 2026-11-10.
+    menuRestart: 'Restart session', // NEW (2026-11-23): the English of the owner's 重启会话 awaits review (docs/issues-ui-wording.md).
     duduMention: 'Dudu', // Name supplied by the owner.
     mention: 'Mention',
     messageErrors: {
@@ -288,8 +289,21 @@ const en = {
     connectorsPage: {
       addCustom: 'Add custom connector', addLabel: 'Connector', search: 'Search', back: 'Back',
       views: { available: 'Available', connected: 'Connected' },
-      groups: { here: 'This computer', work: 'Work', projects: 'Projects', dev: 'Development', web: 'Web' }, // NEW: Projects and Web (the owner's list of 2026-11-06)
+      groups: { here: 'Discovered', work: 'Work', projects: 'Projects', dev: 'Development', web: 'Web' }, // NEW: Projects and Web (the owner's list of 2026-11-06); Discovered (2026-11-23)
       connect: 'Connect', authorize: 'Authorize', disconnect: 'Disconnect',
+      // NEW (2026-11-23): the connectors page after Muse's (.local/designs/connectors-muse-2026-11-23); the Chinese is the owner's approved wording, the English awaits review.
+      sheet: {
+        add: 'Add', view: 'View', relogin: 'Sign in again', expired: 'Sign-in expired', retry: 'Retry', recheck: 'Check again', copy: 'Copy',
+        signIn: (name) => `Sign in to ${name}`, signInText: (name) => `Opens the ${name} sign-in page in your browser and returns after you authorize`,
+        usable: 'Available to Dudu and agents', usableText: (name) => `Once connected, Dudu, collectors and the agents in sessions can use the tools of ${name}`,
+        anytime: 'Disconnect anytime', anytimeText: (name) => `Open ${name} in Connectors to disconnect it`,
+        local: 'Runs on this computer', localText: (name) => `Dudu starts ${name} on this computer and reads its tools`,
+        waiting: (name) => `Finish signing in to ${name} in your browser`, code: (service) => `Enter this code on ${service}`,
+        notFound: (command) => `${command} not found`, notSignedIn: (command) => `${command} is not signed in`,
+        runInstall: 'Run this command in a terminal to install it', runLogin: 'Run this command in a terminal to sign in',
+        failed: 'Could not connect: authorization not completed', failedWith: (reason) => `Could not connect: ${reason}`,
+        connected: (name) => `Connected to ${name}`, collectors: 'Collectors', unused: 'Not used',
+      },
       address: 'Address', tools: 'Tools', toolsValue: (n) => String(n),
       // the grey line under a connected connector's name
       about: { tools: (n) => (n === 1 ? '1 tool' : `${n} tools`), commandLine: (command) => `Command line · ${command}`, thisComputer: (command) => `This computer · ${command}` },
@@ -398,6 +412,11 @@ const en = {
     providers: 'Providers', state: 'Status', enable: 'Enable', executable: 'Executable path', autoFind: 'Leave blank to find automatically',
     detect: 'Check again', providerStates: { ready: 'Ready', missing: 'Not found', unsupported: 'Unsupported version', broken: 'Cannot run' },
     providerChip: (name) => `Provider: ${name}`,
+    // NEW (2026-11-23): a harness's own environment variables, under its pencil in Settings > Providers (owner's pick A; the Chinese word was in the design they
+    // picked, the English awaits review: docs/issues-ui-wording.md). The count in the row was taken off the same day (「这个提示环境变量数量毫无意义」).
+    env: 'Environment variables',
+    // NEW (2026-11-24): the two groups of the providers page (the owner approved the design; the Chinese is the design's, the English awaits review).
+    groupOn: 'Enabled', groupOff: 'Not enabled',
   },
 };
 
@@ -447,6 +466,7 @@ const zh = {
   collapse: (name) => `折叠${name}`, expand: (name) => `展开${name}`,
   detail: {
     menuDetails: '详情', // Owner wording, 2026-11-10.
+    menuRestart: '重启会话', // Owner wording, 2026-11-23.
     duduMention: 'Dudu',
     mention: '提及',
     messageErrors: {
@@ -606,8 +626,21 @@ const zh = {
     connectorsPage: {
       addCustom: '添加自定义连接器', addLabel: '连接器', search: '搜索', back: '返回',
       views: { available: '可用', connected: '已连接' },
-      groups: { here: '这台电脑', work: '办公', projects: '项目', dev: '开发', web: '网页' }, // NEW: 项目、网页（主人 2026-11-06 点头的那份清单里的组名）
+      groups: { here: '发现', work: '办公', projects: '项目', dev: '开发', web: '网页' }, // NEW: 项目、网页（主人 2026-11-06 点头的那份清单里的组名）；发现（主人 2026-11-23）
       connect: '连接', authorize: '授权', disconnect: '断开',
+      // 主人 2026-11-23 审过的连接器新流程的字（见英文那边的说明）
+      sheet: {
+        add: '添加', view: '查看', relogin: '重新登录', expired: '登录已过期', retry: '重试', recheck: '重新检查', copy: '复制',
+        signIn: (name) => `登录 ${name}`, signInText: (name) => `在浏览器中打开 ${name} 登录页，授权后自动返回`,
+        usable: '嘟嘟和智能体可用', usableText: (name) => `连接后，嘟嘟、收集器和会话中的智能体均可使用 ${name} 的工具`,
+        anytime: '可随时断开', anytimeText: (name) => `在连接器中打开 ${name} 即可断开`,
+        local: '在这台电脑上运行', localText: (name) => `嘟嘟将在电脑上启动 ${name} 并读取其工具`,
+        waiting: (name) => `请在浏览器中完成 ${name} 登录`, code: (service) => `请在 ${service} 输入此验证码`,
+        notFound: (command) => `未找到 ${command}`, notSignedIn: (command) => `${command} 未登录`,
+        runInstall: '请在终端中运行以下命令安装', runLogin: '请在终端中运行以下命令登录',
+        failed: '连接失败：授权未完成', failedWith: (reason) => `连接失败：${reason}`,
+        connected: (name) => `已连接 ${name}`, collectors: '收集器', unused: '未使用',
+      },
       address: '地址', tools: '工具', toolsValue: (n) => `${n} 个`,
       about: { tools: (n) => `${n} 个工具`, commandLine: (command) => `命令行 · ${command}`, thisComputer: (command) => `本机 · ${command}` },
       state: {
@@ -681,6 +714,8 @@ const zh = {
     copyFailed: '复制失败，请扫码连接', expiry: '二维码 10 分钟内有效', pair: '配对手机', revokeQuestion: (name) => `撤销 ${name} 的连接？`, cancel: '取消', revokePairing: '撤销配对',
     providers: '供应商', state: '状态', enable: '启用', executable: '可执行文件路径', autoFind: '留空则自动查找', detect: '重新检测',
     providerStates: { ready: '可用', missing: '未找到', unsupported: '版本不受支持', broken: '无法运行' }, providerChip: (name) => `供应商：${name}`,
+    env: '环境变量', // NEW (2026-11-23), see the English
+    groupOn: '已启用', groupOff: '未启用',
   },
 };
 

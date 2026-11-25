@@ -1138,7 +1138,7 @@ final class CoreStoreTests: XCTestCase {
         withExtendedLifetime((feedback, observation)) {}
     }
 
-    func testAutomaticRetriesStaySilentAndManualReconnectStillReportsFailure() async throws {
+    func testAutomaticRetriesAndAManualReconnectTellAFailedConnectionByTheStripNotByAnError() async throws {
         let transport = StoreTransportFixture()
         let store = DuduStore(repository: StoreComputerFixture(), client: transport)
         await store.start()
@@ -1169,8 +1169,12 @@ final class CoreStoreTests: XCTestCase {
         await transport.finishConnection()
         await transport.stopHoldingConnections()
         await store.reconnect()
-        XCTAssertEqual(store.error, DuduFailure.connectionFailed.localizedDescription)
-        XCTAssertEqual(failures, [DuduFailure.connectionFailed.localizedDescription])
+        // A failed manual reconnect is told as the automatic ones are, by the connection strip (`isComputerUnavailable`), not by an error: it is a failure that goes on being retried.
+        // (`reportsFailure ||` was taken out of `start` on 2026-11-18, with the strip of 2026-11-17; this test still asked for the old error until 2026-11-24.)
+        XCTAssertNil(store.error)
+        XCTAssertEqual(store.connectionFailure, .connectionFailed)
+        XCTAssertTrue(store.isComputerUnavailable)
+        XCTAssertTrue(failures.isEmpty)
         store.suspend()
         withExtendedLifetime(feedback) {}
     }

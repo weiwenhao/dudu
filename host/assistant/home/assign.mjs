@@ -3,16 +3,17 @@
 // What the owner answers on the issue's page reaches the session. It never imports DSH: the sessions are
 // ./agent-sessions.mjs's, the issues are host/assistant/issues/'s.
 //
-//   const assignment = createAssignment({ issues, agentSessions, accessOf?, waitMs = 8000, log });
+//   const assignment = createAssignment({ issues, agentSessions, accessOf?, release?, waitMs = 8000, log });
 //
 //   accessOf(issue)   -> { access?, model?, problem? }   what ASSIGN.md says; with nothing said the session is read-only (3.3)
+//   release(key)      async -> whether the agent's process of that session was closed (host/providers: only one whose turn has ended and that does no work)
 //
 //   sessionState(key)        execution lifecycle for createIssues({ lifecycleState }); sessionHandledAt and sessionTurnActive for sleep safety
 //   onAssign(issue)          for createIssuesApi({ onAssign }): starts the session of an issue that was just given an agent
 //   onReply(issue, text)     for createIssuesApi({ onReply }): hands the owner's answer to the issue's session
 //   onResume(issue)          for createIssuesApi({ onResume }): puts a closed session back in DSH's sidebar
 //   start(issue, { access?, model? })   the same as onAssign; requires the issue's project path
-//   closeFor(issue)          closes the session of an issue that is Done or Canceled (once it does not work any more)
+//   closeFor(issue)          closes the session of an issue that is Done or Canceled (once it does not work any more), and its agent's process with it
 //   restore()                after a restart: follows the sessions of the issues that are open (their state is read from DSH); -> how many
 //   dispose()
 //
@@ -41,7 +42,7 @@ export const WORDS = Object.freeze({
 const EARLY_KEPT = 100;
 const finished = (issue) => ['done', 'canceled'].includes(issue.statusType ?? issue.status);
 
-export function createAssignment({ issues, agentSessions, snapshotOf = () => null, repairDefaults, attachmentsOf, accessOf = () => ({}), waitMs = 8000, log = console } = {}) {
+export function createAssignment({ issues, agentSessions, snapshotOf = () => null, repairDefaults, attachmentsOf, accessOf = () => ({}), release = async () => false, waitMs = 8000, log = console } = {}) {
   if (!issues || !agentSessions) throw new TypeError('createAssignment needs the issues and the sessions.');
   const bySession = new Map();   // session key -> issue id
   const suspended = new Set();  // issue ids whose linked sessions are being removed
@@ -236,6 +237,11 @@ export function createAssignment({ issues, agentSessions, snapshotOf = () => nul
     if (!key || !agentSessions.has(key)) return { outcome: 'no_op', message: 'The issue has no session to close.' };
     const result = await agentSessions.close(key);
     if (result.outcome === 'success') note(issue.id, WORDS.closed, { key });
+    // Its process goes at the same moment, without waiting for deep sleep (owner, 2026-11-23). One still working was not put away, and is not let go of;
+    // a next message starts it again and resumes the same conversation.
+    if (result.outcome === 'success' || result.outcome === 'no_op') {
+      await Promise.resolve().then(() => release(key)).catch((error) => { log.warn?.(`[dudu] The agent of a finished issue could not be let go of: ${error.message}`); });
+    }
     return result;
   }
 

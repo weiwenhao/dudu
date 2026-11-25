@@ -12,7 +12,7 @@ enum SettingsLayouts {
     typealias Values = [String: JSONValue]
 
     /// The sections this file lays out; any other section is the plugin's to describe.
-    private static let laidOut: Set<String> = ["general", "statuses", "connectors", "collectors", "rules", "memory", "skills"]
+    private static let laidOut: Set<String> = ["general", "statuses", "connectors", "collectors", "rules", "memory", "skills", "providers"]
 
     static func handles(_ section: String) -> Bool { laidOut.contains(section) }
 
@@ -26,6 +26,7 @@ enum SettingsLayouts {
         case "general": return try general(values)
         case "statuses": return try statuses(location.target, values)
         case "connectors": return try connectors(location.target, values)
+        case "providers": return try providers(location.target, values)
         case "collectors": return try collectors(location.target, values)
         case "rules": return try rules(location.target, values)
         case "memory": return try memory(location.target, values)
@@ -417,7 +418,7 @@ enum SettingsLayouts {
 
     private static func groupName(_ id: String) -> String {
         switch id {
-        case "here": return L10n.text("这台电脑")
+        case "here": return L10n.text("发现")
         case "work": return L10n.text("办公")
         case "projects": return L10n.text("项目")
         case "dev": return L10n.text("开发")
@@ -426,7 +427,12 @@ enum SettingsLayouts {
         }
     }
 
-    private static func connectorText() -> String { L10n.text("粘贴地址或命令，或者写一句话说怎么读") }
+    private static func connectorText() -> String { L10n.text("粘贴 MCP 地址或命令，或描述使用方式") }
+
+    /// What is asked before a connector goes (the owner's approved words, 2026-11-23).
+    private static func confirmDisconnect(_ name: String) -> SettingsConfirm {
+        SettingsConfirm(title: L10n.text("断开 {0} 后，嘟嘟和智能体将无法使用它。", name), message: nil, button: L10n.text("断开"))
+    }
 
     /// The form that adds a connector of one's own; `recognized` is what the plugin made of the text so far (`connectors/recognize`).
     static func customConnector(recognized: JSONValue? = nil) -> SettingsPage {
@@ -447,7 +453,7 @@ enum SettingsLayouts {
         } else if kind == "sentence" {
             how = L10n.text("就是这句话")
         }
-        var rows = [SettingsItem(rawID: "text", kind: "field", title: connectorText(), mono: true, key: "text", value: "",
+        var rows = [SettingsItem(rawID: "text", kind: "field", title: L10n.text("地址、命令或描述"), mono: true, key: "text", value: "",
                                  placeholder: connectorText(), multiline: true)]
         if let kind, !kind.isEmpty {
             let title: String
@@ -468,8 +474,8 @@ enum SettingsLayouts {
         if kind == "local", !several {
             rows.append(SettingsItem(rawID: "env", kind: "environment", title: L10n.text("添加环境变量")))
         }
-        return SettingsPage(title: L10n.text("添加自定义连接器"), sections: [SettingsSection(rows: rows)],
-                            save: SettingsButton(title: L10n.text("保存"), act: act("add")),
+        return SettingsPage(title: L10n.text("添加连接器"), sections: [SettingsSection(rows: rows)],
+                            save: SettingsButton(title: L10n.text("添加"), act: act("add")),
                             preview: SettingsPage.Preview(key: "text", act: act("recognize")))
     }
 
@@ -487,72 +493,181 @@ enum SettingsLayouts {
             }
             return connectorPage(connector)
         }
-        let waiting = connected.contains { $0["state"]?["status"]?.stringValue == "waiting" || $0["busy"]?.boolValue == true }
+        // After Muse's connectors (owner, 2026-11-23; .local/designs/connectors-muse-2026-11-23): one list. 已连接 first, each with 查看 (its page); one whose sign-in ran out
+        // stays there with 重新登录. Below, the catalog by group (发现: the servers found in the owner's other tools), each with 连接, which opens `ConnectorSheet`. A first
+        // connection that goes on (`fresh`, from a plugin of 2026-11-23 on) is not a connector yet: its item keeps its place, with a spinner; one that fails leaves nothing.
+        let waiting = connected.contains { $0["state"]?["status"]?.stringValue == "waiting" || $0["busy"]?.boolValue == true || $0["fresh"]?.boolValue == true }
         var sections = [SettingsSection(rows: [
             SettingsItem(rawID: "add", kind: "text", title: L10n.text("添加自定义连接器"), tone: "muted", to: SettingsLocation(section: "connectors", target: "add")),
         ])]
         func row(_ connector: JSONValue) -> SettingsItem {
             let id = connector["id"]?.stringValue ?? ""
             let name = connector["name"]?.stringValue ?? ""
-            let shown = describeState(connector["state"], line: aboutLine(connector["about"]))
+            let line = aboutLine(connector["about"])
+            let shown = describeState(connector["state"], line: line)
+            let detail = SettingsLocation(section: "connectors", target: "connector:\(id)")
             var menu: [SettingsMenuItem] = []
-            if let verb = shown.verb {
+            if let verb = shown.verb, verb != "authorize" {
                 menu.append(SettingsMenuItem(title: verbName(verb), glyph: verbGlyph(verb), act: act("verb", ["id": .string(id), "verb": .string(verb)])))
             }
-            menu.append(SettingsMenuItem(title: L10n.text("断开"), glyph: "unplug", act: act("disconnect", ["id": .string(id)]), role: "destructive", confirm: confirmDelete(name)))
-            return SettingsItem(rawID: id, kind: "text", title: name, subtitle: present(shown.line), detail: present(shown.words), tone: present(shown.words) == nil ? nil : shown.tone,
-                                icon: connector["icon"]?.stringValue, to: SettingsLocation(section: "connectors", target: "connector:\(id)"), menu: menu)
+            menu.append(SettingsMenuItem(title: L10n.text("断开"), glyph: "unplug", act: act("disconnect", ["id": .string(id)]), role: "destructive", confirm: confirmDisconnect(name)))
+            if connector["state"]?["status"]?.stringValue == "needs-auth" {
+                // Signed in once, and that has run out: it says so in red and signs in again here, on the phone.
+                return SettingsItem(rawID: id, kind: "text", title: name, subtitle: L10n.text("登录已过期"), icon: connector["icon"]?.stringValue,
+                                    button: SettingsButton(title: L10n.text("重新登录"), act: act("sheet"), style: "link"), to: detail, menu: menu, style: "alert",
+                                    connect: ConnectorOffer(id: id, name: name, icon: connector["icon"]?.stringValue, line: line, how: "oauth", reconnect: true))
+            }
+            if present(shown.words) == nil {
+                return SettingsItem(rawID: id, kind: "text", title: name, subtitle: present(shown.line), detail: L10n.text("查看"), tone: "link",
+                                    icon: connector["icon"]?.stringValue, to: detail, menu: menu)
+            }
+            return SettingsItem(rawID: id, kind: "text", title: name, subtitle: present(shown.line), detail: present(shown.words), tone: shown.tone,
+                                icon: connector["icon"]?.stringValue, to: detail, menu: menu)
         }
-        // 已连接 is what works; the others are among the available ones, with the words of their state and the one thing to do about it.
-        let working = connected.filter(isConnected)
-        let unconnected = connected.filter { !isConnected($0) }
+        let working = connected.filter { $0["fresh"]?.boolValue != true }
         if !working.isEmpty { sections.append(SettingsSection(header: L10n.text("已连接"), rows: working.map(row))) }
-        if !unconnected.isEmpty { sections.append(SettingsSection(header: L10n.text("可用"), rows: unconnected.map(row))) }
         var groups: [(id: String, items: [JSONValue])] = []
         for group in catalog["groups"]?.arrayValue ?? [] {
             guard let id = group["id"]?.stringValue, !groups.contains(where: { $0.id == id }) else { continue }
             groups.append((id, group["items"]?.arrayValue ?? []))
+        }
+        for item in catalog["trying"]?.arrayValue ?? [] {
+            guard let id = item["group"]?.stringValue else { continue }
+            if let index = groups.firstIndex(where: { $0.id == id }) { groups[index].items.append(item) } else { groups.append((id, [item])) }
         }
         let order = ["here", "work", "projects", "dev", "web"]
         for id in order + groups.map(\.id).filter({ !order.contains($0) }) {
             guard let group = groups.first(where: { $0.id == id }), !group.items.isEmpty else { continue }
             let items = group.items.map { item -> SettingsItem in
                 let itemID = item["id"]?.stringValue ?? ""
-                return SettingsItem(rawID: itemID, kind: "text", title: item["name"]?.stringValue ?? "", subtitle: present(item["line"]?.stringValue),
-                                    icon: item["icon"]?.stringValue,
-                                    button: SettingsButton(title: L10n.text("连接"), act: act("connect", ["id": .string(itemID)])))
+                let name = item["name"]?.stringValue ?? ""
+                let trying = item["connector"]?.stringValue != nil
+                let offer = ConnectorOffer(id: itemID, name: name, icon: item["icon"]?.stringValue, line: item["line"]?.stringValue ?? "",
+                                           how: item["how"]?.stringValue ?? "oauth")
+                return SettingsItem(rawID: itemID, kind: "text", title: name, subtitle: present(item["line"]?.stringValue), icon: item["icon"]?.stringValue,
+                                    button: SettingsButton(title: L10n.text("连接"), act: act("sheet"), style: trying ? "busy" : "link"), connect: offer)
             }
             sections.append(SettingsSection(header: groupName(id), rows: items))
         }
         return SettingsPage(title: L10n.text("连接器"), sections: sections, poll: waiting ? 1.5 : nil)
     }
 
-    /// One connector: a card for it, a card for the one thing to do about its state (取消 / 授权 / 重试), a card for 断开 (the owner's drawing, 2026-11-21); one that waits says where the page is.
+    /// One connector (the owner's approved page, 2026-11-23): its card (logo, name, where it is or 自定义连接器), then 地址 / 工具 / 收集器 for one of the catalog or the
+    /// owner's tools, or its 名称 and 说明 for one the owner wrote; the one thing to do about its state (重新登录 opens the sign-in here); and 断开, asked first.
     private static func connectorPage(_ connector: JSONValue) -> SettingsPage {
         let id = connector["id"]?.stringValue ?? ""
         let name = connector["name"]?.stringValue ?? ""
+        let icon = connector["icon"]?.stringValue
         let custom = connector["custom"]?.boolValue == true
-        let shown = describeState(connector["state"], line: aboutLine(connector["about"]))
-        let waiting = connector["state"]?["status"]?.stringValue == "waiting"
-        var about = [SettingsItem(rawID: "about", kind: "text", title: name, subtitle: present(shown.line), detail: present(shown.words),
-                                  tone: present(shown.words) == nil ? nil : shown.tone, icon: connector["icon"]?.stringValue)]
+        let about = connector["about"]
+        let status = connector["state"]?["status"]?.stringValue
+        let shown = describeState(connector["state"], line: aboutLine(about))
+        let waiting = status == "waiting"
+        let place = present(about?["host"]?.stringValue) ?? present(about?["command"]?.stringValue)
+        var head = [SettingsItem(rawID: "about", kind: "text", title: name, subtitle: custom ? L10n.text("自定义连接器") : present(place ?? shown.line),
+                                 detail: status == "needs-auth" ? L10n.text("登录已过期") : present(shown.words),
+                                 tone: status == "needs-auth" ? "bad" : present(shown.words) == nil ? nil : shown.tone, icon: icon)]
+        var sections: [SettingsSection] = []
         if custom {
-            let text = connector["text"]?.stringValue ?? connector["about"]?["text"]?.stringValue ?? ""
-            about.append(SettingsItem(rawID: "name", kind: "field", title: L10n.text("名称"), key: "name", value: name, placeholder: L10n.text("名称")))
-            about.append(SettingsItem(rawID: "text", kind: "field", title: connectorText(), mono: true, key: "text", value: text,
-                                      placeholder: connectorText(), multiline: true))
+            let text = connector["text"]?.stringValue ?? about?["text"]?.stringValue ?? ""
+            head.append(SettingsItem(rawID: "name", kind: "field", title: L10n.text("名称"), key: "name", value: name, placeholder: L10n.text("名称")))
+            head.append(SettingsItem(rawID: "text", kind: "field", title: L10n.text("说明"), mono: true, key: "text", value: text,
+                                     placeholder: connectorText(), multiline: true))
+            sections.append(SettingsSection(footer: waiting ? L10n.text("授权页面已在电脑的浏览器里打开。在电脑上完成后，这里会自动更新。") : nil, rows: head))
+        } else {
+            sections.append(SettingsSection(footer: waiting ? L10n.text("授权页面已在电脑的浏览器里打开。在电脑上完成后，这里会自动更新。") : nil, rows: head))
+            var facts: [SettingsItem] = []
+            if let place { facts.append(SettingsItem(rawID: "address", kind: "text", title: L10n.text("地址"), detail: place)) }
+            if let tools = about?["tools"]?.numberValue { facts.append(SettingsItem(rawID: "tools", kind: "text", title: L10n.text("工具"), detail: L10n.plural("\(Int(tools)) 个"))) }
+            let users = (connector["usedBy"]?.arrayValue ?? []).compactMap { present($0["name"]?.stringValue) }
+            facts.append(SettingsItem(rawID: "collectors", kind: "text", title: L10n.text("收集器"), detail: users.isEmpty ? L10n.text("未使用") : users.joined(separator: "、")))
+            sections.append(SettingsSection(rows: facts))
         }
-        var sections = [SettingsSection(footer: waiting ? L10n.text("授权页面已在电脑的浏览器里打开。在电脑上完成后，这里会自动更新。") : nil, rows: about)]
-        if let verb = shown.verb, verbs.contains(verb) {
+        if status == "needs-auth" {
+            let offer = ConnectorOffer(id: id, name: name, icon: icon, line: shown.line, how: "oauth", reconnect: true)
+            var again = actionRow("relogin", title: L10n.text("重新登录"), button: SettingsButton(title: L10n.text("重新登录"), act: act("sheet")))
+            again.connect = offer
+            sections.append(SettingsSection(rows: [again]))
+        } else if let verb = shown.verb, verbs.contains(verb) {
             let title = verbName(verb)
             sections.append(SettingsSection(rows: [actionRow("verb", title: title, button: SettingsButton(title: title, act: act("verb", ["id": .string(id), "verb": .string(verb)])))]))
         }
-        let disconnect = destructive(title: L10n.text("断开"), act: act("disconnect", ["id": .string(id)]), confirm: confirmDelete(name))
+        let disconnect = destructive(title: L10n.text("断开"), act: act("disconnect", ["id": .string(id)]), confirm: confirmDisconnect(name))
         sections.append(SettingsSection(rows: [actionRow("disconnect", title: L10n.text("断开"), tone: "bad", button: disconnect)]))
         let busy = connector["busy"]?.boolValue == true
         return SettingsPage(title: name, sections: sections,
                             save: custom ? SettingsButton(title: L10n.text("保存"), act: act("update", ["id": .string(id)])) : nil,
                             poll: waiting || busy ? 1.5 : nil)
+    }
+
+    // MARK: 供应商
+
+    /// A harness's state and version: 可用 1.5.14, 未找到, 版本不受支持 …
+    private static func stateLine(_ provider: JSONValue) -> String {
+        let word: String
+        switch provider["state"]?.stringValue {
+        case "ready": word = L10n.text("可用")
+        case "missing": word = L10n.text("未找到")
+        case "unsupported": word = L10n.text("版本不受支持")
+        default: word = L10n.text("无法运行")
+        }
+        return [word, present(provider["version"]?.stringValue)].compactMap { $0 }.joined(separator: " ")
+    }
+
+    /// The harnesses found on the computer (owner, 2026-11-24; .local/designs/providers-redesign-2026-11-24): 已启用 and 未启用, each with its switch, the row opening its page; the
+    /// ones few people have that are not there are behind one row, 未找到. A harness's page: who it is, 启用, its path (blank: found by itself, the place found under it) and its own
+    /// environment variables, one `NAME=value` a line; 保存 shows once something differs.
+    private static func providers(_ target: String?, _ values: Values) throws -> SettingsPage {
+        let list = try body(values, "providers/state")["providers"]?.arrayValue ?? []
+        let (kind, subject) = parts(target)
+        let folded: (JSONValue) -> Bool = { provider in
+            (provider["folds"]?.boolValue == true || provider["defaultEnabled"]?.boolValue == false) && provider["state"]?.stringValue == "missing"
+        }
+        func row(_ provider: JSONValue, toggle: Bool = true) -> SettingsItem {
+            let id = provider["id"]?.stringValue ?? ""
+            return SettingsItem(rawID: id, kind: "text", title: provider["name"]?.stringValue ?? id, subtitle: stateLine(provider),
+                                on: provider["enabled"]?.boolValue == true, to: SettingsLocation(section: "providers", target: "provider:\(id)"),
+                                agent: id, toggle: toggle ? act("enable", ["id": .string(id)]) : nil)
+        }
+        if kind == "provider" {
+            guard let provider = list.first(where: { $0["id"]?.stringValue == subject }) else { return SettingsPage(title: L10n.text("供应商"), sections: []) }
+            let id = provider["id"]?.stringValue ?? ""
+            let name = provider["name"]?.stringValue ?? id
+            let env = (provider["env"]?.objectValue ?? [:]).map { "\($0.key)=\($0.value.stringValue ?? "")" }
+            let state = provider["state"]?.stringValue
+            let reason = state == "unsupported" || state == "broken" ? present(provider["reason"]?.stringValue) : nil
+            var about = SettingsItem(rawID: "about", kind: "text", title: name, subtitle: stateLine(provider), detail: reason)
+            about.agent = id
+            let enabled = SettingsItem(rawID: "enabled", kind: "switch", title: L10n.text("启用"), on: provider["enabled"]?.boolValue == true, act: act("enable", ["id": .string(id)]))
+            var page = SettingsPage(title: name, sections: [
+                SettingsSection(rows: [about, enabled]),
+                SettingsSection(header: L10n.text("可执行文件路径"), footer: present(provider["path"]?.stringValue), rows: [
+                    SettingsItem(rawID: "path", kind: "field", title: L10n.text("可执行文件路径"), mono: true, key: "path", value: provider["configuredPath"]?.stringValue ?? "",
+                                 placeholder: L10n.text("留空则自动查找")),
+                ]),
+                SettingsSection(header: L10n.text("环境变量"), rows: [
+                    SettingsItem(rawID: "env", kind: "field", title: L10n.text("环境变量"), mono: true, key: "env", value: env.joined(separator: "\n"),
+                                 placeholder: "HTTPS_PROXY=http://127.0.0.1:7890", multiline: true),
+                ]),
+            ], save: SettingsButton(title: L10n.text("保存"), act: act("save", ["id": .string(id)])))
+            page.saveWhenChanged = true
+            return page
+        }
+        if kind == "missing" {
+            return SettingsPage(title: L10n.text("未找到"), sections: [SettingsSection(rows: list.filter(folded).map { row($0, toggle: false) })])
+        }
+        let shown = list.filter { !folded($0) }
+        let on = shown.filter { $0["enabled"]?.boolValue == true }
+        let off = shown.filter { $0["enabled"]?.boolValue != true }
+        let missing = list.filter(folded)
+        var sections: [SettingsSection] = []
+        if !on.isEmpty { sections.append(SettingsSection(header: L10n.text("已启用"), rows: on.map { row($0) })) }
+        if !off.isEmpty { sections.append(SettingsSection(header: L10n.text("未启用"), rows: off.map { row($0) })) }
+        if !missing.isEmpty {
+            sections.append(SettingsSection(rows: [SettingsItem(rawID: "missing", kind: "text", title: L10n.text("未找到"), detail: "\(missing.count)", tone: "muted",
+                                                                to: SettingsLocation(section: "providers", target: "missing"))]))
+        }
+        return SettingsPage(title: L10n.text("供应商"), sections: sections)
     }
 
     // MARK: 收集器

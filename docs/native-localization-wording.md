@@ -418,6 +418,7 @@
 | 无法读取配对码。 | Cannot read the pairing code. | 新增，待审 | QRScannerView.swift |
 | 无法连接内网地址 | Cannot connect to the local address | 新增，待审 | Models.swift |
 | 无法连接，请检查电脑和网络 | Cannot connect. Check your computer and network. | 新增，待审 | Models.swift |
+| 上传失败 | Upload failed | 中文为主人 2026-11-23 指定；英文新增，待审 | ConnectionModels.swift；Home.kt（上传被转发服务器以 413 拒绝时，原先显示「无法连接，请检查电脑和网络」） |
 | 无项目 | No project | 复用 noProject | IssueCreationPickers.swift |
 | 时区 | Time zone | 复用 tasks.timezone | TaskSheets.swift |
 | 明天 | Tomorrow | 复用 snooze.tomorrow | IssueCreationPickers.swift |

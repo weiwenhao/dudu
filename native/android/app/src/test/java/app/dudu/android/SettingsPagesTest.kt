@@ -22,34 +22,34 @@ class SettingsPagesTest {
     private fun connector(id: String, state: JSONObject? = null, busy: Boolean? = null) =
         json("id" to id, "name" to id, "state" to state, "busy" to busy)
 
-    @Test fun onlyAConnectorThatWorksIsConnectedAndTheOthersAreAvailableKeepingTheirWordsAndOneVerb() {
+    // After Muse's connectors (owner, 2026-11-23): one list; a first connection that goes on keeps its item's place with a spinner, not a row among the connected.
+    @Test fun connectorsAreOneListWithTheirWordsAndTheCardTheyOffer() {
         val connectors = list(
-            connector("plain"), connector("fine", json("status" to "connected")), connector("busy", json("status" to "connected"), busy = true),
+            connector("plain"), connector("fine", json("status" to "connected")),
             connector("slow", json("status" to "error", "message" to "timeout")), connector("auth", json("status" to "needs-auth")),
-            connector("wait", json("status" to "waiting", "code" to "AB-12")), connector("login", json("status" to "needs-login", "login" to "gh auth login")),
-            connector("gone", json("status" to "missing", "command" to "glab")), connector("odd", json("status" to "something-new")))
-        val page = SettingsPages.page("connectors", null, json("connectors/catalog" to json("groups" to JSONArray()),
-            "connectors/list" to json("connectors" to connectors)), Plain)
+            connector("wait", json("status" to "waiting", "code" to "AB-12")), connector("sentry", json("status" to "waiting", "fresh" to true)).put("fresh", true))
+        val catalog = json("groups" to JSONArray(listOf(json("id" to "dev", "items" to JSONArray(listOf(json("id" to "gitlab", "name" to "GitLab", "line" to "x", "how" to "oauth")))))),
+            "trying" to JSONArray(listOf(json("id" to "sentry", "name" to "Sentry", "group" to "dev", "how" to "oauth", "connector" to "sentry"))))
+        val page = SettingsPages.page("connectors", null, json("connectors/catalog" to catalog, "connectors/list" to json("connectors" to connectors)), Plain)
         val sections = page.rows("sections")
-        // The add row, then 已连接, then 可用 right after it; and the page polls while one waits.
-        assertEquals(listOf(null, "已连接", "可用"), sections.map { it.nullableString("header") })
-        assertEquals(listOf("plain", "fine"), rowIds(sections[1]))
-        assertEquals(listOf("busy", "slow", "auth", "wait", "login", "gone", "odd"), rowIds(sections[2]))
+        assertEquals(listOf(null, "已连接", "开发"), sections.map { it.nullableString("header") })
+        assertEquals(listOf("plain", "fine", "slow", "auth", "wait"), rowIds(sections[1]))
         assertEquals(1.5, page.getDouble("poll"), 0.0)
-        // An error that timed out is not connected: it is in 可用 with its red words and its one verb (the first item of the long press).
-        val slow = sections[2].rows("rows")[1]
+        // One that works says 查看; one whose sign-in ran out says so in red and signs in again from its card; one that failed keeps its words and its one verb.
+        val fine = sections[1].rows("rows")[1]
+        assertEquals(listOf("查看", "link"), listOf(fine.getString("detail"), fine.getString("tone")))
+        val auth = sections[1].rows("rows")[3]
+        assertEquals(listOf("登录已过期", "alert", "重新登录", "sheet"), listOf(auth.getString("subtitle"), auth.getString("style"),
+            auth.getJSONObject("button").getString("title"), auth.getJSONObject("button").getJSONObject("act").getString("name")))
+        assertEquals(true, auth.getJSONObject("connect").getBoolean("reconnect"))
+        val slow = sections[1].rows("rows")[2]
         assertEquals("连接超时", slow.getString("detail"))
-        assertEquals("bad", slow.getString("tone"))
-        val verb = slow.rows("menu")[0].getJSONObject("act")
-        assertEquals("verb", verb.getString("name"))
-        assertEquals("retry", verb.getJSONObject("args").getString("verb"))
         assertEquals(listOf("重试", "断开"), slow.rows("menu").map { it.getString("title") })
-        // The one that waits is amber, says where to authorize, and can be cancelled; one that only works has no verb at all.
-        val waiting = sections[2].rows("rows")[3]
-        assertEquals("请在电脑上授权", waiting.getString("detail"))
-        assertEquals("warn", waiting.getString("tone"))
-        assertEquals(listOf("取消", "断开"), waiting.rows("menu").map { it.getString("title") })
-        assertEquals(listOf("断开"), sections[1].rows("rows")[0].rows("menu").map { it.getString("title") })
+        // The catalog: 连接 opens the card; the item being tried has a spinner in its place.
+        val dev = sections[2].rows("rows")
+        assertEquals(listOf("gitlab", "sentry"), dev.map { it.getString("id") })
+        assertEquals(listOf("link", "busy"), dev.map { it.getJSONObject("button").getString("style") })
+        assertEquals("oauth", dev[0].getJSONObject("connect").getString("how"))
     }
 
     @Test fun theStatusesPageIsOneCardAndTheMenuOfAStatusFollowsTheRules() {
@@ -86,6 +86,6 @@ class SettingsPagesTest {
     @Test fun anAnswerThatDidNotComeIsAPageThatCouldNotBeRead() {
         assertEquals("PROTOCOL_ERROR", assertThrows(ApiFailure::class.java) { SettingsPages.page("rules", null, json(), Plain) }.code)
         // A page that needs no answer (the add-connector one) does not mind.
-        assertEquals("添加自定义连接器", SettingsPages.page("connectors", "add", json(), Plain).getString("title"))
+        assertEquals("添加连接器", SettingsPages.page("connectors", "add", json(), Plain).getString("title"))
     }
 }

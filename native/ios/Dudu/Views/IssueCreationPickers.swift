@@ -117,8 +117,11 @@ struct IssueProjectCreatePage: View {
                 Divider()
                 field(L10n.text("项目文件夹"), value: $path)
                 Divider()
-                Toggle(L10n.text("文件夹不存在时创建"), isOn: $createDirectory)
-                    .font(.system(size: 15))
+                HStack {
+                    Text(L10n.text("文件夹不存在时创建")).font(.system(size: 15))
+                    Spacer()
+                    Toggle("", isOn: $createDirectory).labelsHidden().scaleEffect(0.8)
+                }
                 if failed {
                     Text(L10n.text("项目文件夹没能打开，请检查路径，或勾选创建文件夹。"))
                         .font(.system(size: 13))

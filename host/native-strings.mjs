@@ -3,6 +3,11 @@ export const NATIVE_ENGLISH = Object.freeze({
   " · 默认": " · Default",
   "[图片]": "[Image]",
   "{0}\n会删除本地记忆和相关引用。DSH 来源消息和模型历史会保留。": "{0}\nLocal memory and its references will be deleted. DSH source messages and model history will be kept.",
+  // A connector's page (the apps after 0.1.1, 2026-11-23): how many tools it has, the number alone in English.
+  "{0} 个": "{0}",
+  // The 供应商 page (apps after 0.1.1, 2026-11-24): its two groups; the rest are the desktop's words.
+  "已启用": "Enabled",
+  "未启用": "Not enabled",
   "{0} 个工具": {
     "one": "{0} tool",
     "other": "{0} tools"

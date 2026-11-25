@@ -256,7 +256,8 @@ test('settings.data hands an app the values of every page: the same page comes o
     assert.deepEqual(await replayed.dispatch('settings.page', params, rich), whole, JSON.stringify(params));
   }
   const leaked = JSON.stringify(all);
-  for (const never of ['secret-token', '.dsh/dudu/state', 'OTHER.md', 'usedBy', 'connectorName', 'embedding']) assert.equal(leaked.includes(never), false, never);
+  // `usedBy` (the collectors that read through a connector) is read by a connector's page since 2026-11-23 (its 收集器 row): no longer on this list.
+  for (const never of ['secret-token', '.dsh/dudu/state', 'OTHER.md', 'connectorName', 'embedding']) assert.equal(leaked.includes(never), false, never);
 
   // The collectors' run state is a bonus: without it the list is the same page, and `{}` is what the app reads.
   const noRuns = createNativeSettings({ call: async (action: string) => (action === 'dispatch/state' ? { status: 500, body: {} } : { status: 200, body: full[action] ?? { outcome: 'success' } }) });

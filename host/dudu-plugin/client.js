@@ -1002,14 +1002,28 @@ window.__ModuleLoader__.load({
           const service = ctx.uiWorkspace;
           const original = service.openSession;
           const hadOwn = Object.hasOwn(service, 'openSession');
+          // A hot update runs this again in the window that is already open, and when the new run wraps before this one is cleaned up, the check at the end does not take this
+          // wrapper out. It then stays in the chain over a context that is gone, and reading `ctx.layout` throws "inactive context" at every `uiWorkspace.openSession`, the expand
+          // button's included (owner, 2026-11-24). A run that has ended only passes the call on.
+          let live = true;
           const open = function openSession(target, ...args) {
+            if (!live) return original.call(this, target, ...args);
             if (target && typeof target === 'object' && target.childSessionId?.startsWith('dudu-native-child-')) {
               target = { ...target, mode: 'one-shot' };
             }
-            return original.call(this, target, ...args);
+            // Opened from Dudu's page (the subagent and team lists of its conversation header): the conversation gets the return button, as the expand button's does
+            // (owner, 2026-11-23: 「点击了，就回不到嘟嘟这个界面了」). Dudu's own `selectSession` settles it again after this.
+            const fromDudu = ctx.layout.panelInfo?.getSnapshot().activePanelId === PANEL_ID;
+            const result = original.call(this, target, ...args);
+            if (fromDudu) {
+              const shown = typeof target === 'string' ? target : target?.childSessionId ?? target?.sessionId;
+              sessionExpansion?.begin(typeof shown === 'string' ? shown : null, { claim: true });
+            }
+            return result;
           };
           service.openSession = open;
           return () => {
+            live = false;
             if (service.openSession !== open) return;
             if (hadOwn) service.openSession = original;
             else delete service.openSession;

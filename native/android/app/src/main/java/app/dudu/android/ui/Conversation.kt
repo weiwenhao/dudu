@@ -173,7 +173,7 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
     }
     val canSend = state.message.isNotBlank() || state.attachments.isNotEmpty()
     // The iPhone's `isProcessingMessage` / `showsInputModeToggle`: while the agent runs, a message is on its way or the history is being compacted, the box has voice beside stop or send.
-    val processing = session?.processing == true || state.sending || compacting
+    val processing = session?.answering == true || state.sending || compacting
     val showsModeToggle = processing || isVoiceMode || !canSend
     val history = session?.displayRows.orEmpty()
     // The history, then what the computer has taken for the agent's next step, then what this phone is still sending.
@@ -197,7 +197,7 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
     // A page of earlier history that could not be read is said at the top of the history, with 重试 (the iPhone's `ConversationHistoryItem.controls`).
     val controlsRow = if (session != null && state.pageFailure != null && hasContent) 1 else 0
     // The running line is the history's last row, after what was sent, the questions and the approvals, and it is there before the turn has begun (the iPhone's `ConversationHistoryItem.running`).
-    val showsRunning = session != null && session.transcript != null && session.processing && hasContent
+    val showsRunning = session != null && session.transcript != null && session.answering && hasContent
     val runningStart = if (showsRunning) history.lastOrNull { it is TranscriptRow.Turn && it.running }?.let { (it as TranscriptRow.Turn).startedAt } else null
     val separators = remember(history) { timeSeparators(history) }
     val lastIndex = controlsRow + all.size + prompts + (if (showsRunning) 1 else 0) - 1

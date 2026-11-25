@@ -342,6 +342,7 @@ internal val english = mapOf(
     "暂不支持此操作。" to "This action is not supported yet.",
     "电脑拒绝了此操作。" to "The computer denied this action.",
     "电脑正在处理其他操作，请稍后重试。" to "The computer is busy. Try again later.",
+    "上传失败" to "Upload failed",
     "@ 后面还要写要说的话。" to "Add a message after the mention.",
     "先选择智能体。" to "Choose an agent first.",
     "先选项目，再把工作交给智能体。" to "Choose a project before sending work to an agent.",

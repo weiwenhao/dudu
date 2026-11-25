@@ -493,6 +493,8 @@ actor DuduHTTPClient: DuduTransport {
             guard let response = response as? HTTPURLResponse else { throw DuduFailure.protocolError }
             guard response.statusCode == 200 else {
                 if response.statusCode == 404 { throw DuduFailure.remote("UNSUPPORTED") }
+                // A forwarding server in front of the computer (nginx and the like) refuses a body over its limit with an HTML page, not our JSON.
+                if response.statusCode == 413 { throw DuduFailure.remote("LIMIT_EXCEEDED") }
                 throw remoteFailure(data: data, status: response.statusCode)
             }
             guard let envelope = try? decoder.decode(HTTPRPCResponse.self, from: data), envelope.id == id else { throw DuduFailure.protocolError }

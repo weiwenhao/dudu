@@ -10,7 +10,7 @@ const failed = (answer) => !answer || ['error', 'needs_clarification'].includes(
  * (`connectors/list`). While any connector waits for the browser or is being checked they are read again every 1.5 s, and when none does that stops.
  * Returns `{ status, value: { groups, connectors } | null, reload }`; `reload()` reads them now and gives back what it read (null if it could not).
  */
-export function useConnectors(request) {
+export function useConnectors(request, { keepReading = false } = {}) {
   const [state, setState] = useState({ status: 'loading', value: null });
   const alive = useRef(true);
   const started = useRef(0); // the number of the latest read that was started
@@ -22,7 +22,7 @@ export function useConnectors(request) {
     try {
       const [catalog, list] = await Promise.all([request('connectors/catalog', {}), request('connectors/list', {})]);
       if (failed(catalog) || failed(list)) return null;
-      return { groups: catalog.groups ?? [], connectors: list.connectors ?? [] };
+      return { groups: catalog.groups ?? [], trying: catalog.trying ?? [], connectors: list.connectors ?? [], attempts: list.attempts ?? [] };
     } catch { return null; }
   }, [request]);
   const show = useCallback((number, value) => {
@@ -46,7 +46,7 @@ export function useConnectors(request) {
   }, [read, show]);
 
   // Read again while a connector waits for the browser, and while the host is still checking one (a command-line tool, a server that needs no sign-in): its state is not there yet.
-  const waiting = state.value?.connectors.some((connector) => connector.state?.status === 'waiting' || connector.busy === true) ?? false;
+  const waiting = (state.value?.connectors.some((connector) => connector.state?.status === 'waiting' || connector.busy === true || connector.fresh === true) ?? false) || keepReading;
   useEffect(() => {
     if (!waiting) return undefined;
     let stopped = false;

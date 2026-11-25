@@ -21,10 +21,14 @@ const issueOf = entry => entry.issue ? {
   ...entry.issue, pinned: entry.pinned, sessionState: entry.sessionState, receivedAt: entry.receivedAt,
 } : { id: 'assistant', title: T.brand, agent: 'dudu', session: 'assistant', pinned: entry.pinned };
 
+/**
+ * A sub-issue's title under its parent's, the phones' rule (`BoardConversationTitle`; owner, 2026-11-23: 「父事项这里太长了，缩短一点，我都看不到标题了」): its own
+ * title comes first, and the parent gives way down to about 48px, at most 128px when there is room.
+ */
 function ConversationTitle({ issue }) {
   return <span className="dudu-conversation-row-title-text">
-    {issue.parent && <><span className="max-w-32 min-w-0 shrink truncate text-[#96989d]">{issue.parent.title}</span><span className="shrink-0 text-[#96989d]">#</span></>}
-    <span className="min-w-0 truncate">{issue.title}</span>
+    {issue.parent && <><span className="max-w-32 min-w-0 shrink-[1000] truncate text-[#96989d]">{issue.parent.title}</span><span className="shrink-0 text-[#96989d]">#</span></>}
+    <span className={issue.parent ? 'min-w-0 max-w-[calc(100%_-_3.5rem)] truncate' : 'min-w-0 truncate'}>{issue.title}</span>
   </span>;
 }
 
@@ -89,7 +93,7 @@ function ConversationSidebar({ request, entries, pins, home, selected, listKey, 
   </div>;
 }
 
-export function Conversations({ request, home, scope, listKey, header, controls, deletedIssue, onOpen, onChange, onAssign, onDelete, onAddSub, onDuplicate, onPin, pinning }) {
+export function Conversations({ request, home, scope, listKey, header, controls, deletedIssue, onOpen, onChange, onAssign, onDelete, onAddSub, onDuplicate, onRestart, onPin, pinning }) {
   const { conversation: services } = useServices();
   const toast = useToast();
   const [selection, setSelection] = useSessionReturnState('conversation.selection', () => ({ scope, id: null, entry: null, outsideIssue: null }));
@@ -153,7 +157,7 @@ export function Conversations({ request, home, scope, listKey, header, controls,
       </ContextMenuItem></ContextMenuContent>
     </ContextMenu>;
     return <IssueMenu key={entry.id} issue={issue} request={request} onChange={onChange} onAssign={onAssign} onDelete={onDelete}
-      onOpenIssue={() => onOpen(issue.id)} onAddSub={onAddSub} onDuplicate={onDuplicate} onPin={onPin} pinning={pinning.has(entry.id)}>
+      onOpenIssue={() => onOpen(issue.id)} onAddSub={onAddSub} onDuplicate={onDuplicate} onRestart={onRestart} onPin={onPin} pinning={pinning.has(entry.id)}>
       {() => child}
     </IssueMenu>;
   };

@@ -148,9 +148,11 @@ const FIELDS = {
     groups: { id: true, name: true, models: { id: true, name: true, reasoning: { efforts: { id: true, name: true }, defaultEffort: true } } },
   },
   'issues/statuses': { counts: true, statuses: { id: true, name: true, description: true, color: true, category: true, type: true, isDefault: true, archived: true, iconProgress: true } },
-  'connectors/catalog': { groups: { id: true, items: { id: true, name: true, icon: true, line: true } } },
-  'connectors/list': { connectors: { id: true, name: true, icon: true, kind: true, custom: true, text: true, busy: true,
-    state: { status: true, code: true, command: true, install: true, login: true, message: true }, about: { kind: true, host: true, tools: true, command: true, text: true } } },
+  // `how`, `trying`, `from`, `fresh`, `state.url` and `attempts` (2026-11-23) are for the connectors page of the apps after 0.1.1; an older app reads none of them.
+  'connectors/catalog': { groups: { id: true, items: { id: true, name: true, icon: true, line: true, how: true } }, trying: { id: true, name: true, icon: true, line: true, how: true, group: true, connector: true } },
+  'connectors/list': { connectors: { id: true, name: true, icon: true, kind: true, custom: true, text: true, busy: true, from: true, fresh: true, usedBy: { id: true, name: true },
+    state: { status: true, code: true, url: true, command: true, install: true, login: true, message: true }, about: { kind: true, host: true, tools: true, command: true, text: true } },
+  attempts: { id: true, from: true, status: true, message: true, at: true } },
   'connectors/recognize': { kind: true, count: true, auth: true, name: true },
   'collectors/list': { collectors: { id: true, name: true, connector: true, frequency: true, prompt: true, notify: true } },
   'dispatch/state': { collectors: { id: true, lastRead: { at: true, ok: true, items: true } } },
@@ -158,6 +160,7 @@ const FIELDS = {
   'memory/records': { records: { id: true, text: true, file: true, since: true, status: true } },
   'memory/reviews': { reviews: { id: true, at: true, summary: { refine: true, supersede: true, corroborate: true, new: true, skill: true } } },
   'skills/list': { skills: { name: true, description: true } },
+  'providers/state': { providers: { id: true, name: true, enabled: true, state: true, version: true, path: true, configuredPath: true, env: true, reason: true, folds: true, defaultEnabled: true } },
   'skills/read': { text: true, skill: { text: true } },
 };
 
@@ -178,6 +181,7 @@ const READS = {
   general: () => [['assistant/state'], ['assistant/conversation-settings'], ['assistant/settings']],
   statuses: () => [['issues/statuses']],
   connectors: (target) => (target === 'add' ? [] : String(target ?? '').startsWith('connector:') ? [['connectors/list']] : [['connectors/catalog'], ['connectors/list']]),
+  providers: () => [['providers/state']],
   collectors: (target) => [['collectors/list'], ['connectors/list'], ...(/^(?:edit:|add$)/u.test(target ?? '') ? [] : [['dispatch/state', {}, true]])],
   rules: () => [['rules/get']],
   memory: () => [['memory/records'], ['memory/reviews', { limit: 10 }]],
@@ -435,6 +439,12 @@ export function createNativeSettings({ call }) {
     const id = text(args?.id, 200);
     if (!id) return false;
     if (name === 'connect') return ok(await ask('connectors/connect', { id }));
+    // The phone's sign-in (apps after 0.1.1): the page to open, then the address the App's browser view stopped at; the answer says where the connection stands.
+    if (name === 'signin' || name === 'signin-finish') {
+      const answer = await ask(`connectors/${name}`, { id, ...(name === 'signin-finish' ? { url: text(args.url, 8192) } : {}) });
+      const signin = shape(answer ?? {}, { id: true, url: true, code: true, status: true, message: true, tools: true });
+      return ok(answer) ? { outcome: 'success', signin, back: true } : { outcome: 'error', message: nativeText(FAILED), signin };
+    }
     if (name === 'verb') return VERB_WORDS[args.verb] ? ok(await ask(`connectors/${args.verb}`, { id })) : false;
     if (name === 'update') {
       const list = await ask('connectors/list');
@@ -610,6 +620,49 @@ export function createNativeSettings({ call }) {
     return ok(await ask('skills/remove', { name: text(args?.name, 200) })) ? { outcome: 'success', back: String(target ?? '').startsWith('skill:') } : false;
   }
 
+  // --- 供应商 (the apps after 0.1.1; owner, 2026-11-24, .local/designs/providers-redesign-2026-11-24): the harnesses found on this computer in two groups, each opening its page
+  // (its switch, its path, its own environment variables, saved together). An app lays the page out itself from `settings.data`; this is the same page, as the plugin describes it.
+  const PROVIDER_STATES = { ready: '可用', missing: '未找到', unsupported: '版本不受支持', broken: '无法运行' };
+  const stateLine = (provider) => [nativeText(PROVIDER_STATES[provider.state] ?? '无法运行'), provider.version].filter(Boolean).join(' ');
+  const envText = (env) => Object.entries(env ?? {}).map(([name, value]) => `${name}=${value}`).join('\n');
+  async function providers(target) {
+    const list = (await ask('providers/state')).providers ?? [];
+    const [kind, ...rest] = String(target ?? '').split(':');
+    if (kind === 'provider') {
+      const provider = list.find((entry) => entry.id === rest.join(':'));
+      if (!provider) return { title: nativeText('供应商'), sections: [] };
+      return { title: provider.name, save: { title: nativeText('保存'), act: { name: 'save', args: { id: provider.id } } }, sections: [
+        { rows: [row({ id: 'about', title: provider.name, subtitle: stateLine(provider), ...(provider.reason && provider.state !== 'ready' && provider.state !== 'missing' ? { detail: provider.reason } : {}) }),
+          { id: 'enabled', kind: 'switch', title: nativeText('启用'), on: provider.enabled === true, act: { name: 'enable', args: { id: provider.id } } }] },
+        { header: nativeText('可执行文件路径'), footer: provider.path || undefined, rows: [{ id: 'path', kind: 'field', title: nativeText('可执行文件路径'), key: 'path', value: provider.configuredPath ?? '', placeholder: nativeText('留空则自动查找'), mono: true }] },
+        { header: nativeText('环境变量'), rows: [{ id: 'env', kind: 'field', title: nativeText('环境变量'), key: 'env', value: envText(provider.env), placeholder: 'HTTPS_PROXY=http://127.0.0.1:7890', multiline: true, mono: true }] },
+      ] };
+    }
+    const folded = (provider) => (provider.folds || provider.defaultEnabled === false) && provider.state === 'missing';
+    const rowOf = (provider) => link(provider.name, { section: 'providers', target: `provider:${provider.id}` }, { id: provider.id, subtitle: stateLine(provider) });
+    const on = list.filter((provider) => !folded(provider) && provider.enabled);
+    const off = list.filter((provider) => !folded(provider) && !provider.enabled);
+    const missing = list.filter(folded);
+    return { title: nativeText('供应商'), sections: [
+      ...(on.length ? [{ header: nativeText('已启用'), rows: on.map(rowOf) }] : []),
+      ...(off.length ? [{ header: nativeText('未启用'), rows: off.map(rowOf) }] : []),
+      ...(missing.length ? [{ header: nativeText('未找到'), rows: missing.map(rowOf) }] : []),
+    ] };
+  }
+
+  async function providersAct({ name, args, value, values }) {
+    const done = (answer) => Array.isArray(answer?.providers);
+    if (name === 'refresh') return done(await ask('providers/refresh')) ? { outcome: 'success' } : false;
+    const id = text(args?.id, 80);
+    if (!id) return false;
+    if (name === 'enable') return done(await ask('providers/save', { id, enabled: value === 'true' })) ? { outcome: 'success' } : false;
+    if (name === 'save') {
+      const patch = { id, ...(typeof values?.path === 'string' ? { path: values.path } : {}), ...(typeof values?.env === 'string' ? { env: values.env } : {}) };
+      return done(await ask('providers/save', patch)) ? { outcome: 'success' } : false;
+    }
+    return false;
+  }
+
   const SECTIONS = {
     general: { page: general, act: generalAct },
     statuses: { page: statuses, act: statusesAct },
@@ -618,9 +671,11 @@ export function createNativeSettings({ call }) {
     rules: { page: rules, act: rulesAct },
     memory: { page: memory, act: memoryAct },
     skills: { page: skills, act: skillsAct },
+    providers: { page: providers, act: providersAct },
   };
 
-  const sectionOf = (params) => (typeof params?.section === 'string' && DUDU_PAGE_SECTIONS.includes(params.section) ? SECTIONS[params.section] : null);
+  // The phone's web pages are the seven of DUDU_PAGE_SECTIONS; the apps that draw their own pages also have 供应商 (2026-11-24).
+  const sectionOf = (params) => (typeof params?.section === 'string' && (DUDU_PAGE_SECTIONS.includes(params.section) || params.section === 'providers') ? SECTIONS[params.section] : null);
   const targetOf = (params) => (typeof params?.target === 'string' ? params.target.slice(0, 300) : undefined);
 
   /** The values a page is made of (`settings.data`): the answers of the actions it reads, each cut down to what a page reads of it (`FIELDS`). */

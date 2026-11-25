@@ -37,6 +37,8 @@ struct SettingsView: View {
         DuduSettingsEntry(section: "rules", title: "规则", glyph: .settingsRules),
         DuduSettingsEntry(section: "memory", title: "记忆", glyph: .settingsMemory),
         DuduSettingsEntry(section: "skills", title: "技能", glyph: .settingsSkills),
+        // The harnesses found on the computer (owner, 2026-11-24, .local/designs/providers-redesign-2026-11-24); a plugin from before answers nothing for it.
+        DuduSettingsEntry(section: "providers", title: "供应商", glyph: .settingsProviders),
     ]
 
     /// DSH's own settings sections, from the plugin. A host that cannot list them yet falls back to the

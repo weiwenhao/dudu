@@ -71,6 +71,25 @@ export async function startCallback({ ports = [], path = CALLBACK_PATH, state })
   const outcome = new Promise((resolve, reject) => { settle = { resolve, reject }; });
   outcome.catch(() => {}); // nobody may be waiting yet when a timeout or cancel comes
 
+  // Only the redirect that carries this sign-in's state may end it: a stray request (or a forged ?error=) must not.
+  const accept = (query) => {
+    if (accepted || closed) return false;
+    if (query.getAll('state').length !== 1 || query.get('state') !== state) return false;
+    const codes = query.getAll('code');
+    const error = query.get('error') ?? undefined;
+    if (!error && (codes.length !== 1 || !codes[0])) return false;
+    const iss = query.getAll('iss');
+    accepted = true;
+    clearTimeout(timer);
+    settle.resolve({
+      code: error ? undefined : codes[0],
+      iss: iss.length === 0 ? undefined : iss.length === 1 ? iss[0] : null, // null: sent twice, which is never right
+      error,
+      errorDescription: query.get('error_description') ?? undefined,
+    });
+    return true;
+  };
+
   const handle = (req, res) => {
     res.setHeader('Connection', 'close');
     res.setHeader('Cache-Control', 'no-store');
@@ -86,23 +105,9 @@ export async function startCallback({ ports = [], path = CALLBACK_PATH, state })
       if (req.method !== 'GET') { res.setHeader('Allow', 'GET'); return reply(405); }
       const url = new URL(req.url ?? '/', `http://${HOST}:${port}`);
       if (url.pathname !== path) return reply(404);
-      const query = url.searchParams;
-      // Only the redirect that carries this sign-in's state may end it: a stray request (or a forged ?error=) must not.
-      if (query.getAll('state').length !== 1 || query.get('state') !== state) return reply(400);
-      const codes = query.getAll('code');
-      const error = query.get('error') ?? undefined;
-      if (!error && (codes.length !== 1 || !codes[0])) return reply(400);
-      const iss = query.getAll('iss');
-      accepted = true;
-      clearTimeout(timer);
+      if (!accept(url.searchParams)) return reply(400);
       held = res;
       res.on('close', () => { if (held === res) held = undefined; });
-      settle.resolve({
-        code: error ? undefined : codes[0],
-        iss: iss.length === 0 ? undefined : iss.length === 1 ? iss[0] : null, // null: sent twice, which is never right
-        error,
-        errorDescription: query.get('error_description') ?? undefined,
-      });
     } catch {
       if (!res.headersSent) reply(400);
     }
@@ -133,6 +138,16 @@ export async function startCallback({ ports = [], path = CALLBACK_PATH, state })
   return {
     redirectUrl: `http://${HOST}:${port}${path}`,
     port,
+    /**
+     * The redirect, brought by the phone (2026-11-23): its sign-in page ran in the phone's own browser view, which stopped at this address instead of loading it, and
+     * the App hands over the whole address. The same checks as a browser's request; there is no page to answer, so finish() only closes. -> whether it was taken.
+     */
+    deliver(address) {
+      let url;
+      try { url = new URL(String(address)); } catch { return false; }
+      if (`${url.protocol}//${url.host}${url.pathname}` !== `http://${HOST}:${port}${path}`) return false;
+      return accept(url.searchParams);
+    },
     wait({ timeoutMs, signal } = {}) {
       if (!accepted && !closed) {
         if (timeoutMs) timer = setTimeout(() => stop('timeout', 'Timed out waiting for the browser.'), timeoutMs);

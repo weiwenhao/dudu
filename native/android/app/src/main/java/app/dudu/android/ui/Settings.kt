@@ -75,6 +75,8 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
     val values = remember { mutableStateMapOf<String, String>() }
     val switches = remember { mutableStateMapOf<String, Boolean>() }
     var confirmation by remember { mutableStateOf<JSONObject?>(null) }
+    /** The connector whose card is open (a row's `connect`, laid out by `SettingsPages`). */
+    var offer by remember { mutableStateOf<JSONObject?>(null) }
     var addMenu by remember { mutableStateOf(false) }
     var suggestedName by remember { mutableStateOf<String?>(null) }
     var previewedValue by remember { mutableStateOf<String?>(null) }
@@ -148,8 +150,10 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
             } finally { busy = false; switches.clear() }
         }
     }
-    fun activate(button: JSONObject, form: Boolean = false) {
+    fun activate(button: JSONObject, form: Boolean = false, row: JSONObject? = null) {
         revealedRow = null
+        // A connectors row's 连接 / 重新登录 opens its card (ConnectorSheet); nothing is sent until the card asks.
+        if (button.optJSONObject("act")?.optString("name") == "sheet") { offer = row?.optJSONObject("connect"); return }
         if (button.optJSONObject("confirm") != null) confirmation = button
         else button.optJSONObject("act")?.let { perform(it, form = form) }
     }
@@ -210,7 +214,11 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
         if (to != null) goTo(to, title) else activate(item)
     }
     val enabled = !busy && ui.connected
-    val save = page?.optJSONObject("save")
+    // A harness's page shows 保存 only once one of its fields differs from what it was opened with (`saveWhenChanged`, the iPhone's too).
+    val changed = page?.rows("sections").orEmpty().flatMap { it.rows("rows") }.any { row ->
+        row.optString("kind") == "field" && row.has("key") && (values[row.optString("key")] ?: row.optString("value")) != row.optString("value")
+    }
+    val save = page?.optJSONObject("save")?.takeIf { page?.optBoolean("saveWhenChanged") != true || changed || busy }
     val canSave = save != null && !busy && !previewing && ui.connected &&
         (preview == null || !previewValue.isNullOrEmpty() && previewedValue == previewValue)
     // Leaving while a change is being saved would lose what it answers (the iPhone hides the back button then).
@@ -335,7 +343,7 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
                                 }
                                 else act?.let { perform(it, value) }
                             }
-                            "action" -> SettingsActionRow(row, enabled) { row.optJSONObject("button")?.let { if (!closeSwipe()) activate(it) } }
+                            "action" -> SettingsActionRow(row, enabled) { row.optJSONObject("button")?.let { if (!closeSwipe()) activate(it, row = row) } }
                             else -> {
                                 val notification = row.optJSONObject("notification")
                                 // The bell changes at once and saves on its own: it neither waits for the page nor locks it (owner, 2026-11-19).
@@ -352,10 +360,12 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
                                         }
                                     }
                                 })
+                                val toggle = row.optJSONObject("toggle")
                                 SettingsRowLabel(row, enabled, bell = bell,
+                                    toggle = toggle?.let { act -> (switches[swipeKey] ?: row.optBoolean("on")) to { next: Boolean -> switches[swipeKey] = next; perform(act, next.toString()) } },
                                     onLongClick = if (menu.isEmpty()) null else ({ if (!closeSwipe()) menuRow = swipeKey }),
                                     action = if (row.has("to")) ({ if (!closeSwipe()) go(row) }) else null,
-                                    capsule = row.optJSONObject("button")?.let { button -> { if (!closeSwipe()) activate(button) } })
+                                    capsule = row.optJSONObject("button")?.let { button -> { if (!closeSwipe()) activate(button, row = row) } })
                             }
                         }
                     }
@@ -371,6 +381,9 @@ fun SettingsScreen(route: Route, model: DuduViewModel) {
             } }
         }
         }
+    }
+    offer?.let { connect ->
+        ConnectorSheet(connect, model, onChanged = { scope.launch { if (!busy) load() } }) { offer = null }
     }
     confirmation?.let { button ->
         val dialog = button.getJSONObject("confirm")
@@ -414,6 +427,8 @@ private val DuduSettingsPages = listOf(
     DuduSettingsPage("rules", "规则", DuduGlyphs.settingsRules),
     DuduSettingsPage("memory", "记忆", DuduGlyphs.settingsMemory),
     DuduSettingsPage("skills", "技能", DuduGlyphs.settingsSkills),
+    // The harnesses found on the computer (owner, 2026-11-24; the iPhone's 供应商): a plugin from before answers nothing for it.
+    DuduSettingsPage("providers", "供应商", DuduGlyphs.settingsProviders),
 )
 
 /** The hairline between the rows of a settings card, from the words on (56 dp), as the iPhone's `rowDivider`. */

@@ -16,8 +16,9 @@ const VISUAL = new Map([
  * of the slot (12px in 16), with the line a Lucide icon has in that slot whatever the box (1.33px in 16). The room it takes stays the slot's (the box's difference is taken up by the margin), so
  * nothing around it moves; `has-[>svg]` on a button still sees its icon. The size is set inline because the row's and the button's `[&_svg]:size-*` would win over a class. Any other icon is left as it is.
  */
-export function MenuIcon({ icon: Icon, slot = 16, style, ...props }) {
-  const visual = VISUAL.get(Icon);
+export function MenuIcon({ icon: Icon, slot = 16, visual: own, style, ...props }) {
+  // A place may give an icon its own visual size (the inbox row's trash can, `CollectorWidget`).
+  const visual = own ?? VISUAL.get(Icon);
   if (!visual) return <Icon aria-hidden="true" style={style} {...props} />;
   const box = (slot * 18) / visual; // 24 * (3/4 * slot) / visual
   return <Icon aria-hidden="true" size={box} absoluteStrokeWidth strokeWidth={slot / 12} style={{ width: box, height: box, margin: (slot - box) / 2, ...style }} {...props} />;

@@ -45,3 +45,17 @@ export const sessionActivityProjection = {
   },
   wire: { viewSchema: schema, view: (state) => state },
 };
+
+/**
+ * What `ctx.sessionProjections.register(sessionActivityProjection)` gave back, as something that reads one session's state.
+ * DSH 0.2.2 hands out a handle with `stateOf(session)`. DSH 0.2.1 hands out only the function that unregisters it, and the state
+ * is read by key through the registry (DSH 0.2.2 keeps that call too, as a deprecated one, which is why it is not used there).
+ * Nothing to read it with: undefined, as when there is no registry at all.
+ */
+export function activityReaderOf(registered, projections) {
+  if (typeof registered?.stateOf === 'function') return registered;
+  if (registered && typeof projections?.stateOf === 'function') {
+    return { stateOf: (session) => projections.stateOf(session, sessionActivityProjection.key) };
+  }
+  return undefined;
+}

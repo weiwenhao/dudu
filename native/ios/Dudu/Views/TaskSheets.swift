@@ -525,10 +525,10 @@ struct TaskEditorSheet: View {
                         .padding(16)
                         .background(DuduStyle.sheet, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .accessibilityIdentifier("taskeditor.prompt")
-                    if options != nil {
-                        properties
-                        timing
-                    } else if optionsFailed {
+                    // The editor is the app's own and is drawn at once: the pills and the rule are fixed here, and only what they offer to choose from (the providers, their models, the workspaces, the
+                    // conversations) is the computer's, read in the background (`tasks.options`, values only; owner, 2026-11-24). Until it is there the pills show what the task starts with and wait.
+                    properties
+                    if optionsFailed {
                         HStack(spacing: 12) {
                             Text(L10n.text("任务没能加载")).foregroundStyle(DuduStyle.muted)
                             Button(L10n.text("重试")) {
@@ -537,9 +537,8 @@ struct TaskEditorSheet: View {
                             }
                         }
                         .font(.system(size: 14))
-                    } else {
-                        ProgressView().tint(DuduStyle.muted).frame(height: 44)
                     }
+                    timing
                     if let failure {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(L10n.text("更改没能保存"))
@@ -631,6 +630,11 @@ struct TaskEditorSheet: View {
                     DuduIcon(.queue, size: 16, scalesStroke: true)
                 }
             }
+            // The choices are being read: the pills below cannot be opened yet.
+            if options == nil, !optionsFailed, store.status == .connected {
+                ProgressView().tint(DuduStyle.muted).frame(width: 32, height: 44)
+                    .accessibilityIdentifier("taskeditor.loading")
+            }
         }
         .disabled(store.status != .connected || !sameComputer)
     }
@@ -640,6 +644,7 @@ struct TaskEditorSheet: View {
         return sessions?.first { $0.id == id }?.title ?? store.sessions.first { $0.id == id }?.title
     }
 
+    /// A pill that opens the list of what it can be. All but 执行位置 choose among what the computer offers, so they wait for it (the new-issue sheet's pills do the same).
     private func chip<Icon: View>(_ title: String, identifier: String, picker: TaskPicker, @ViewBuilder icon: @escaping () -> Icon) -> some View {
         Button { choose(picker) } label: {
             ContextChipLabel(title: title, maxTextWidth: 220, icon: icon)
@@ -647,6 +652,7 @@ struct TaskEditorSheet: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(DuduQuietPressStyle())
+        .disabled(picker != .target && options == nil)
         .accessibilityLabel(title)
         .accessibilityIdentifier("taskeditor.\(identifier)")
     }
@@ -981,13 +987,9 @@ struct TaskEditorSheet: View {
         // A new task starts as the desktop's does, once its choices are known (嘟嘟 first when the plugin offers it, else the first agent and workspace); what has been typed or chosen meanwhile stays.
         if task == nil {
             if draft == original || firstRead {
-                // Until the choices were there only the name and the text could be typed (the pills and the rule appear with them), so the rest starts as a blank task's does.
-                let blank = TaskDraft(options: fresh)
-                var start = blank
-                start.title = draft.title
-                start.prompt = draft.prompt
-                draft = start
-                original = blank
+                // The editor was drawn before the choices were there, with a start of its own (嘟嘟 does it, this phone's time zone): they replace that start, keeping what was typed and the rule as set.
+                draft = draft.started(with: fresh, placeholder: original)
+                original = TaskDraft(options: fresh)
             } else {
                 // Read again while it is being edited (the computer reconnected): what was chosen stays. A provider that is gone is replaced by the first there is, with its own start; only an agent needs a workspace.
                 if fresh.providers.first(where: { $0.id == draft.agent })?.available != true, let first = fresh.providers.first(where: \.available) {

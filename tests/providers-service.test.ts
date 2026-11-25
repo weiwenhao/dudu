@@ -52,9 +52,9 @@ function fakeProvider(id = 'fake', children = false) {
     // What the provider's probe is asked, and what it answers, is set by each test.
     probes: [] as any[], detection: undefined as any,
     probe(this: any, request: any) { this.probes.push(request); return Promise.resolve(this.detection ?? ready()); },
-    create({ installation }: { installation: { command: string } }) {
+    create({ installation, env }: { installation: { command: string }; env?: () => Record<string, string> }) {
       const driver = {
-        id, name: `Fake ${id}`, route: id, path: installation.command, refreshed: 0, tools: [{ name: 'Bash' }, { name: 'Read' }],
+        id, name: `Fake ${id}`, route: id, path: installation.command, env, refreshed: 0, tools: [{ name: 'Bash' }, { name: 'Read' }],
         refreshModels() { this.refreshed++; },
         listModels: async () => [], resolveModel: async (model: string) => ({ id: model, name: model }), start: async () => { throw new Error('not needed'); },
         ...(children ? { normalizer: () => ({ feed: () => [] }) } : {}),
@@ -80,7 +80,7 @@ test('a ready harness becomes a model route; a missing one does not, and says wh
   const missing = await setup(t, { state: 'missing', reason: 'fake-cli was not found.' });
   assert.equal(missing.host.adapters.size, 0);
   assert.deepEqual(missing.providers.state().providers[0], {
-    id: 'fake', name: 'Fake fake', route: 'fake', enabled: true, configuredPath: '', state: 'missing', version: undefined, path: undefined, reason: 'fake-cli was not found.',
+    id: 'fake', name: 'Fake fake', route: 'fake', enabled: true, configuredPath: '', env: {}, state: 'missing', version: undefined, path: undefined, reason: 'fake-cli was not found.',
   });
 
   const found = await setup(t);
@@ -138,6 +138,26 @@ test('a configured path is what detection looks at, and a different path replace
   await providers.save({ id: 'fake', path: '' });
   assert.equal(provider.probes.at(-1).override, undefined);
   await assert.rejects(providers.save({ id: 'nope', enabled: true }), /Unknown provider/);
+});
+
+test('a provider\'s own environment variables are saved privately, outlive a restart and are what its next process is given', async (t) => {
+  const { provider, providers, folder } = await setup(t);
+  const file = join(folder, 'providers.json');
+  const expected = { HTTPS_PROXY: 'http://127.0.0.1:7890', NO_PROXY: 'localhost,127.0.0.1' };
+  await providers.save({ id: 'fake', env: 'HTTPS_PROXY=http://127.0.0.1:7890\n\n# the proxy\nexport NO_PROXY="localhost,127.0.0.1"' });
+  assert.deepEqual(providers.state().providers[0].env, expected);
+  assert.deepEqual(provider.created.at(-1).env(), expected, 'read when a process starts');
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).env, { fake: expected });
+  assert.equal((await stat(file)).mode & 0o777, 0o600);
+  await assert.rejects(providers.save({ id: 'fake', env: 'HTTPS_PROXY=http://other\nnot a variable' }), /Line 2 is not NAME=value/);
+  assert.deepEqual(providers.state().providers[0].env, expected, 'a refused set changes nothing');
+
+  const again = await createProviders({ host: fakeHost(), providers: [provider], folder, log: { warn() {} } });
+  t.after(() => again.close());
+  assert.deepEqual(again.state().providers[0].env, expected, 'kept across a restart');
+  await again.save({ id: 'fake', env: {} });
+  assert.deepEqual(provider.created.at(-1).env(), {});
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).env, undefined, 'none left: nothing written');
 });
 
 test('replacing a native provider drains its child route before registering another observation adapter', async t => {

@@ -120,6 +120,12 @@ data class Session(
     val transcript get() = raw.optJSONObject("transcript")
     val processing get() = state in listOf("running", "processing") ||
         raw.optJSONObject("session")?.optString("status") == "running"
+    /**
+     * The turn is still open, but only for a harness's background work: the model has answered (owner, 2026-11-23: 「电脑早就结束了，只有一个后台任务在跑」). The running line and the stop
+     * button go by `answering`, as the desktop draws it; sending and the queue still go by `processing`. The iPhone's `SessionSummary.backgroundOnly`.
+     */
+    val backgroundOnly get() = raw.optJSONObject("session")?.optBoolean("backgroundOnly") == true
+    val answering get() = processing && !backgroundOnly
     private val known: Set<String> by lazy {
         (messages + queue + pendingInputs).flatMapTo(mutableSetOf()) { listOfNotNull(it.id, it.requestId) }
     }

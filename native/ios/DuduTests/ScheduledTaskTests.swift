@@ -54,6 +54,33 @@ final class ScheduledTaskTests: XCTestCase {
         XCTAssertEqual(older.project, projects[0])
     }
 
+    // The editor of a new task is drawn before the computer has said what it offers (2026-11-24): it starts as 嘟嘟 doing it, and the choices that are read then replace that start without taking back what was typed.
+    func testTheEditorStartsBeforeTheChoicesAreThereAndKeepsWhatWasTypedAndSetWhenTheyArrive() throws {
+        let placeholder = TaskDraft(options: nil)
+        XCTAssertEqual([placeholder.agent, placeholder.target.mode], ["dudu", "new"])
+        XCTAssertNil(placeholder.project)
+
+        var typed = placeholder
+        typed.title = "每日热点新闻"
+        typed.prompt = "找今天的热点新闻。"
+        typed.schedule = TaskSchedule(kind: "weekly", time: "08:30", timezone: placeholder.schedule.timezone, weekdays: [1, 3])
+        // 嘟嘟 is offered: the start stays 嘟嘟's; the time zone nobody chose is the computer's, the rule is as it was set.
+        let withDudu = typed.started(with: options(["dudu", "claude"]), placeholder: placeholder)
+        XCTAssertEqual([withDudu.title, withDudu.prompt, withDudu.agent, withDudu.schedule.kind, withDudu.schedule.time], ["每日热点新闻", "找今天的热点新闻。", "dudu", "weekly", "08:30"])
+        XCTAssertEqual(withDudu.schedule.weekdays, [1, 3])
+        XCTAssertEqual(withDudu.schedule.timezone, "Asia/Shanghai")
+
+        // 嘟嘟 is not offered: the first agent and its workspace replace the start; what was typed stays.
+        let without = typed.started(with: options(["claude", "codex"]), placeholder: placeholder)
+        XCTAssertEqual([without.agent, without.target.mode, without.title], ["claude", "reuse", "每日热点新闻"])
+        XCTAssertEqual(without.project, projects[0])
+
+        // A time zone that was chosen before the choices came stays the person's.
+        var chosen = typed
+        chosen.schedule.timezone = "America/Toronto"
+        XCTAssertEqual(chosen.started(with: options(["dudu"]), placeholder: placeholder).schedule.timezone, "America/Toronto")
+    }
+
     func testTheLineOfATaskComesWithoutAnIssueAndIsNotAnswerable() throws {
         func slot(_ json: String) throws -> GroupLine? { try JSONDecoder().decode(GroupLineSlot.self, from: Data(json.utf8)).line }
         let done = try XCTUnwrap(slot(#"{"v":1,"kind":"task","task":{"id":"t1","title":"每日热点新闻"},"text":"今日热点","at":1760000000000,"ok":true}"#))

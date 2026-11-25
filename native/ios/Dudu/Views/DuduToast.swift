@@ -19,7 +19,7 @@ struct DuduToastMessage: Identifiable, Equatable {
 
         var duration: Duration {
             switch self {
-            case .success: return .seconds(3)
+            case .success: return .seconds(1) // owner, 2026-11-23: 「不需要 3 秒，1 秒就行了」
             case .information, .warning: return .seconds(5)
             case .error: return .seconds(7)
             }

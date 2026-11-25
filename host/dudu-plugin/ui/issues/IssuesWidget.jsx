@@ -74,6 +74,13 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   }, [chat, invalidateHome]);
   const pinRequests = useRef(new Set());
   const [pinning, setPinning] = useState(() => new Set());
+  // 重启会话: the agent's process of the conversation is closed; the next message starts a new one that resumes it (host: sessions/restart).
+  const restart = useCallback(async (issue) => {
+    try {
+      const result = await request('sessions/restart', { session: issue.session });
+      if (!['success', 'no_op'].includes(result?.outcome)) throw new Error();
+    } catch { toast({ message: T.toast.failed }); }
+  }, [request, toast]);
   const pin = useCallback(async (issue) => {
     const target = issue.id === 'assistant' ? 'assistant' : `issue:${issue.id}`;
     if (pinRequests.current.has(target)) return;
@@ -320,7 +327,7 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
           request={request} home={home} scope={savedView ? tab : JSON.stringify({ tab: base })} listKey={JSON.stringify(homeQuery)}
           header={conversationHeader} controls={conversationControls} deletedIssue={deletedIssue} onOpen={onOpen}
           onChange={changeProperty} onAssign={assignCard} onDelete={(issue) => setDeleting([issue.id])}
-          onAddSub={addSub} onDuplicate={duplicate} onPin={pin} pinning={pinning}
+          onAddSub={addSub} onDuplicate={duplicate} onRestart={restart} onPin={pin} pinning={pinning}
         /> : list.status === 'error' ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
             <span>{T.loadFailed}</span>

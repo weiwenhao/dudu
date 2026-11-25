@@ -9,8 +9,9 @@
 //  - `color`: the mark's own colour, for the places that draw it in one colour (the avatar badge, the phone's PNGs); an ink mark's is near black.
 //  - `placement`: an SVG transform onto the 24-unit box: for a source on another grid (Qwen 141 x 140, Factory 508) it lands at the optical size of the
 //    ChatGPT knot (21 to 22 of the 24 units); Kimi and CodeBuddy are only centred (their sources sit in a corner of the box); the others keep theirs.
-// Two marks are not drawn exactly as they ship: Antigravity is the shape OAR cuts its blurred colour field with, flat in that field's blue (the field
-// needs an SVG mask and Gaussian blurs, which the phone's asset catalog cannot draw); Factory is its glyph without the dark square tile, in ink.
+// Two marks are not drawn as they ship: Antigravity is a picture, the "A" of the Antigravity app's own icon with its colours (owner, 2026-11-23: 「这个才是正确的图标」;
+// `picture` names `ui/issues/logos/antigravity.png`, cut from the app's white tile, which the desktop, the iPhone and Android all draw; `d` stays its outline for a place that
+// draws one colour); Factory is its glyph without the dark square tile, in ink.
 export const HARNESS_MARKS = {
   grok: {
     ink: true,
@@ -30,6 +31,7 @@ export const HARNESS_MARKS = {
     d: 'M16 6H8v12h8V6zm4 16H4V2h16v20z',
   },
   antigravity: {
+    picture: 'antigravity',
     color: '#3186FF',
     d: 'M21.751 22.607c1.34 1.005 3.35.335 1.508-1.508C17.73 15.74 18.904 1 12.037 1 5.17 1 6.342 15.74.815 21.1c-2.01 2.009.167 2.511 1.507 1.506 5.192-3.517 4.857-9.714 9.715-9.714 4.857 0 4.522 6.197 9.714 9.715z',
   },
