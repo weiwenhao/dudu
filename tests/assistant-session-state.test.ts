@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { sessionActivityProjection as projection } from '../host/assistant/sessions/activity-projection.mjs';
+import { activityReaderOf, sessionActivityProjection as projection } from '../host/assistant/sessions/activity-projection.mjs';
 import { createReadReceipts, validReadPosition } from '../host/assistant/sessions/read-receipts.mjs';
 import { contentDigest, hasUnread, sessionStateForActivity } from '../host/assistant/sessions/session-state.mjs';
 import { createIssues } from '../host/assistant/issues/index.mjs';
@@ -19,6 +19,22 @@ const message = (seq: number, value = 'Answer', step = 1) => ({
 });
 const complete = (state: any, event: ReturnType<typeof message>) => projection.apply(projection.apply(state, event), {
   type: 'turn/end', seq: event.seq + 1, time: event.time, data: { turn: event.data.turn, reason: { kind: 'completed' } },
+});
+
+test('the activity reader takes what DSH 0.2.2 and DSH 0.2.1 give back from register(); with nothing to read with it is undefined', () => {
+  const session = { id: 'one' };
+  const asked: unknown[][] = [];
+  const registry = { stateOf: (...args: unknown[]) => { asked.push(args); return { seq: 7 }; } };
+  // DSH 0.2.2: a handle that reads by itself, and the registry is not asked
+  const handle = { stateOf: () => ({ seq: 3 }), dispose() {} };
+  assert.equal(activityReaderOf(handle, registry), handle);
+  assert.deepEqual(asked, []);
+  // DSH 0.2.1: only the function that unregisters (the page failed with "activityProjection?.stateOf is not a function"); the registry reads by key
+  const unregister = () => {};
+  assert.deepEqual(activityReaderOf(unregister, registry)?.stateOf(session), { seq: 7 });
+  assert.deepEqual(asked, [[session, projection.key]]);
+  assert.equal(activityReaderOf(undefined, registry), undefined);
+  assert.equal(activityReaderOf(unregister, undefined), undefined);
 });
 
 test('only completed visible answers, questions and errors advance unread; reading never answers a question', () => {

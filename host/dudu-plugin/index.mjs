@@ -73,7 +73,7 @@ import { sessionInfo } from './dist/providers/native/session-info.mjs';
 import { createSourceCollector } from './dist/assistant/home/source-collector.mjs';
 import { createOAuth } from './dist/assistant/connectors/mcp.mjs';
 import { createSessionCleanup } from './dist/assistant/home/session-cleanup.mjs';
-import { sessionActivityProjection } from './dist/assistant/sessions/activity-projection.mjs';
+import { activityReaderOf, sessionActivityProjection } from './dist/assistant/sessions/activity-projection.mjs';
 import { createReadReceipts, validReadPosition } from './dist/assistant/sessions/read-receipts.mjs';
 import { createSessionActivity } from './dist/assistant/sessions/session-activity.mjs';
 import { harnessTimingProjection } from './dist/providers/stats.mjs';
@@ -390,7 +390,7 @@ async function startIssues(ctx, folder, assignment = {}) {
 async function startAssignment(ctx, folder, assignment) {
   if (!assignment.issues) throw new Error('there are no issues');
   let closing = false;
-  const activityProjection = await step('assignment.projection.activity', () => ctx.sessionProjections?.register(sessionActivityProjection));
+  const activityProjection = activityReaderOf(await step('assignment.projection.activity', () => ctx.sessionProjections?.register(sessionActivityProjection)), ctx.sessionProjections);
   const readReceipts = createReadReceipts({ file: join(folder, 'assistant', 'session-reads.db') });
   await step('assignment.projection.timing', () => ctx.sessionProjections?.register(harnessTimingProjection));
   const dsh = createDshSessions(ctx, {
