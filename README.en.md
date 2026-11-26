@@ -98,7 +98,7 @@ npm run test:e2e     # end-to-end tests, slower
 
 ### Developing widgets
 
-Widgets can be written by Dudu itself. It creates an `.mjs` file under `widgets/` in its home directory, and the widget then appears under "Add widget" in "Edit layout". There is no plugin to install and no code to clone. See [WIDGETS.md](host/dudu-plugin/WIDGETS.md) for the format.
+Widgets can be written by Dudu itself. It creates an `.mjs` file under `widgets/` in its home directory, and the widget then appears under "Add widget" in "Edit layout". See [WIDGETS.md](host/dudu-plugin/WIDGETS.md) for the format.
 
 To distribute a widget to other users, package it as a DSH plugin; see the [widget template](examples/dudu-widget/README.md).
 
