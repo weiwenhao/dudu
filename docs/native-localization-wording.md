@@ -823,6 +823,19 @@ String Catalog 只增加已批准的中文，不新增未经审阅的英文译�
 
 “等待浏览器…”不再由插件下发。设置页底部的版本号只剩版本号和构建号（`v0.1.0 (143)`），没有文字。
 
+## 2026-11-27 首次打开的连接页
+
+主人确认 `.local/designs/phone-first-run-2026-11-27/` 的方案 1（「实现吧」）：标题下面那句说明换成电脑上要做的三步。中文是主人确认的原文；英文是我写的，等主人逐字审阅
+（第 3 步里的「设置」「手机控制」「生成二维码」用电脑端英文界面里的叫法：Settings、Phone control、Generate QR code）。
+
+| 中文 | English（新增，待审） | 使用处 |
+|---|---|---|
+| 在电脑上安装 DSH | Install DSH on your computer | ConnectionGuideSteps.swift、ConnectionSteps.kt：第 1 步（下面的 deepseek.com/harness 是网址，不翻译） |
+| 在 DSH 的「添加插件」里输入 | In DSH's “Add plugin”, enter | 第 2 步（后面接 dsh-dudu 和「复制」） |
+| 打开嘟嘟，点右上角的设置，进入「手机控制」，点「生成二维码」 | Open Dudu, tap Settings at the top right, go to “Phone control”, and tap “Generate QR code” | 第 3 步 |
+
+「复制」沿用原有的词（复制后图标换成对勾，没有新增「已复制」）。原来的「打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码」不再使用，已从 String Catalog 删除。
+
 ## 仍由原内容决定的文字
 
 2026-11-17 连接状态设计确认新增首页提示“电脑未连接”（`BoardConnectionNotice`）。

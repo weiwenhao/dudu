@@ -95,6 +95,11 @@ App 默认打开主页，使用已保存的配对记录恢复连接。回到前�
 仅更新 `ConnectionGuideView`，不改添加电脑的独立配对表单；尚未进行运行中界面或真机验证。
 `npm run native:build` 的 Release 构建已通过，未安装到手机。
 
+2026-11-27 主人确认方案 1（`.local/designs/phone-first-run-2026-11-27/`，「实现吧」）：首次打开（手机里没有电脑）和配对要重做时，标题下面不再是一句说明，而是一张三步卡片：
+在电脑上安装 DSH（带 deepseek.com/harness 链接）、在 DSH 的「添加插件」里输入 dsh-dudu（带「复制」）、打开嘟嘟，点右上角的设置，进入「手机控制」，点「生成二维码」；
+卡片下面是「扫描配对码」和「粘贴配对链接」，直接放在页面上，没有外框。已经有电脑的手机仍是原来的卡片（电脑、连接状态、按钮）。Logo 64pt；
+iPhone（`ConnectionGuideView.swift`、`ConnectionGuideSteps.swift`）和安卓（`Pairing.kt`、`ConnectionSteps.kt`）同一布局。「设置」只有一个齿轮图标，在嘟嘟页面右上角那一排图标的最右边，所以第 3 步写明右上角。
+
 聊天中可以直接输入 DSH 技能命令，例如 `/code-review 检查当前改动`，再手动发送。
 
 输入框左侧的「+」面板集中了 DSH 的原生功能：照片、文件（先传到电脑，再作为附件随下一条
