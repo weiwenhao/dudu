@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { belongsTo, headerCount, sessionTasks } from '../host/dudu-plugin/ui/tasks/session-tasks.js';
+import { belongsTo, headerCount, inTasksWindow, sessionTasks } from '../host/dudu-plugin/ui/tasks/session-tasks.js';
 
-// Which scheduled tasks a conversation's header lists (owner, 2026-11-17, "那没问题"): every task whose prompts go into it, whoever made it.
+// Which scheduled tasks a conversation's header lists (owner, 2026-11-17, "那没问题"): every task whose prompts go into it, whoever made it. The tasks window leaves out the ones a conversation made with its cron tools
+// (owner, 2026-11-26).
 
 const task = (id: string, target: object, extra: object = {}) => ({ id, status: 'active', target, sessionId: null, nextRunAt: 100, createdAt: 1, updatedAt: 1, ...extra });
 
@@ -33,4 +34,11 @@ test('the conversation\'s tasks come by status, the newest made first as the tas
   assert.equal(headerCount({ ...mine, active: [] }), 2, 'nothing on: the paused ones are counted');
   assert.equal(headerCount({ active: [], paused: [], ended: mine.ended }), 0);
   assert.deepEqual(sessionTasks(undefined, 's1'), { active: [], paused: [], ended: [] });
+});
+
+test('a task a conversation made with its cron tools is in that conversation\'s list but not in the tasks window; every other task, and one made before origins were recorded, is in the window', () => {
+  const target = { mode: 'existing', sessionId: 's1' };
+  const tasks = [task('made-by-it', target, { origin: 'session' }), task('made-in-window', target, { origin: 'app' }), task('made-by-dudu', target, { origin: 'assistant' }), task('before', target)];
+  assert.deepEqual(tasks.filter(inTasksWindow).map((item) => item.id), ['made-in-window', 'made-by-dudu', 'before']);
+  assert.deepEqual(sessionTasks(tasks, 's1').active.map((item) => item.id).sort(), ['before', 'made-by-dudu', 'made-by-it', 'made-in-window']);
 });

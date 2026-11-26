@@ -10,6 +10,7 @@ import { cn } from '../lib/cn.js';
 import { useServices } from '../services.jsx';
 import { T } from '../strings.js';
 import { SessionPicker } from './SessionPicker.jsx';
+import { inTasksWindow } from './session-tasks.js';
 import { TaskSelect } from './TaskSelect.jsx';
 import { DUDU, chooseProvider, followSession, providerDefaults, scheduleLabel, stamp, targetModes, taskAgentName, timezoneLabel, weekday } from './format.js';
 
@@ -183,13 +184,14 @@ export function TasksDialog({ open, initialTaskId, onOpenChange, onConversation 
       const result = await readRequest(request, 'tasks/list', {}, signal);
       if (result.outcome !== 'success') throw Object.assign(new Error(), { code: result.code });
       if (signal?.aborted || generation !== reading.current) return;
-      setTasks(result.tasks);
+      const listed = result.tasks.filter(inTasksWindow);
+      setTasks(listed);
       const { selected: previous, draft: edited } = state.current;
       if (previous && same(edited, fields(previous))) {
-        const next = result.tasks.find((item) => item.id === previous.id);
+        const next = listed.find((item) => item.id === previous.id);
         setSelected(next ?? null); setDraft(next ? fields(next) : null);
       }
-      return result.tasks;
+      return listed;
     } finally {
       if (generation === reading.current) refreshing.current = false;
     }

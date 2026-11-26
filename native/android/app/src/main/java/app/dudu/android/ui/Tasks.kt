@@ -141,7 +141,7 @@ fun TasksScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
         }
     }
     LaunchedEffect(filter) { revealed = null; memory?.tab = filter }
-    val mine = tasks.filter { task -> sessionId == null || taskBelongsToSession(task, sessionId) }
+    val mine = tasks.filter { task -> if (sessionId == null) taskIsListed(task) else taskBelongsToSession(task, sessionId) }
     val current = mine.filter { it.optString("status") == "active" } + mine.filter { it.optString("status") == "paused" }
     val finished = mine.filter { it.optString("status") == "ended" }
     val finishedIsOpen = finishedOpen ?: current.isEmpty()

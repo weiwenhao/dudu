@@ -125,6 +125,50 @@ test('once-only jobs end after one claim, failed and ambiguous delivery are sepa
   } finally { await rejected.close(); }
 });
 
+test('a task records who made it from who calls, and only the ones a conversation made with its cron tools are dropped, once they have ended and their delivery is over', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-task-origin-'));
+  const file = join(folder, 'tasks.db');
+  let now = at;
+  const open = (deliver: any = async () => {}) => createTasks({ file, now: () => now, log: quiet, deliver });
+  const once = { kind: 'once', date: '2026-11-10', time: '09:00', timezone: 'Asia/Shanghai' };
+  let tasks = open();
+  try {
+    const make = async (context?: any, fields: any = {}) => (await tasks.execute('create', { fields: { ...base(), schedule: once, ...fields } }, context)).task;
+    const session = await make({ origin: 'session' });
+    const assistant = await make({ origin: 'assistant' });
+    const owner = await make();
+    const claimed = await make({ origin: 'owner' });
+    assert.deepEqual([session.origin, assistant.origin, owner.origin, claimed.origin], ['session', 'assistant', 'app', 'app'], 'a call that says nothing, or something else, is the interface');
+    assert.equal((await tasks.execute('create', { fields: { ...base(), origin: 'app' } }, { origin: 'session' })).code, 'invalid_task', 'a client cannot name its own origin');
+    const recurring = await make({ origin: 'session' }, { schedule: base().schedule });
+    now += 3600_000;
+    await tasks.tick(); await tasks.idle();
+    assert.equal((await tasks.execute('get', { id: session.id })).code, 'not_found', 'what a conversation made is gone once it has fired');
+    assert.equal((await tasks.execute('history', { id: session.id })).code, 'not_found');
+    for (const kept of [assistant, owner, claimed]) assert.equal((await tasks.execute('get', { id: kept.id })).task.status, 'ended', 'nobody else\'s ended task is dropped');
+    assert.equal((await tasks.execute('get', { id: recurring.id })).task.status, 'active', 'a recurring job has not ended');
+    await tasks.close();
+    const db = new DatabaseSync(file);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM task_runs WHERE task_id=?').get(session.id)!.n, 0, 'its runs went with it');
+    // What a process that stopped before it could drop the task left behind.
+    const left = (id: string, origin: string) => JSON.stringify({ ...base(), origin, id, revision: 1, status: 'ended', nextRunAt: null, sessionId: null, createdAt: at, updatedAt: at, schedule: once });
+    for (const [id, origin] of [['left-by-session', 'session'], ['left-by-owner', 'app']]) db.prepare('INSERT INTO tasks(id,body) VALUES(?,?)').run(id, left(id, origin));
+    db.close();
+    tasks = open();
+    assert.equal((await tasks.execute('get', { id: 'left-by-session' })).code, 'not_found', 'dropped when the plugin starts');
+    assert.equal((await tasks.execute('get', { id: 'left-by-owner' })).task.status, 'ended');
+  } finally { await tasks.close(); await rm(folder, { recursive: true, force: true }); }
+  // A delivery that did not go does not keep it either: nobody sees a hidden task, and the log has the reason.
+  const refusing = createTasks({ file: ':memory:', now: () => now, log: quiet, deliver: async () => { throw Object.assign(new Error('not sent'), { code: 'invalid_session', beforeSend: true }); } });
+  try {
+    now = at;
+    const task = (await refusing.execute('create', { fields: { ...base(), schedule: once } }, { origin: 'session' })).task;
+    now += 3600_000;
+    await refusing.tick(); await refusing.idle();
+    assert.equal((await refusing.execute('get', { id: task.id })).code, 'not_found');
+  } finally { await refusing.close(); }
+});
+
 test('schedule edits reanchor intervals and history pagination and deletion preserve their own bounds', async () => {
   let now = at;
   const tasks = createTasks({ file: ':memory:', now: () => now, deliver: async () => {} });

@@ -21,12 +21,13 @@ test('a recurring job is a cron schedule in the computer\'s zone and a one-shot 
 
 function build(overrides: any = {}) {
   const created: any[] = [];
+  const origins: any[] = [];
   const listed: any[] = [];
   const served: any[] = [];
   let closed = 0;
   const service = {
-    execute: async (action: string, body: any) => {
-      if (action === 'create') { created.push(body.fields); return { outcome: 'success', task: { id: 'task-1', revision: 1, nextRunAt: Date.UTC(2026, 10, 18, 1, 0), ...body.fields } }; }
+    execute: async (action: string, body: any, context?: any) => {
+      if (action === 'create') { created.push(body.fields); origins.push(context?.origin); return { outcome: 'success', task: { id: 'task-1', revision: 1, nextRunAt: Date.UTC(2026, 10, 18, 1, 0), ...body.fields } }; }
       if (action === 'list') return { outcome: 'success', tasks: listed };
       if (action === 'get') { const task = listed.find((item) => item.id === body.id); return task ? { outcome: 'success', task } : { outcome: 'error', code: 'not_found' }; }
       if (action === 'delete') { const at = listed.findIndex((item) => item.id === body.id); if (listed[at].revision !== body.revision) return { outcome: 'error', code: 'conflict' }; listed.splice(at, 1); return { outcome: 'success', id: body.id }; }
@@ -38,14 +39,15 @@ function build(overrides: any = {}) {
     serve: async (options: any) => { served.push(options); return { server: { name: options.name, type: 'http', url: 'http://127.0.0.1:1/mcp', headers: { Authorization: 'Bearer t' } }, close: async () => { closed += 1; } }; },
     log: { warn: () => {} }, ...overrides,
   });
-  return { tools, created, listed, served, closed: () => closed, handlers: async (id = 's1') => { await tools.forSession(id, 'claude'); return Object.fromEntries(served.at(-1).tools.map((tool: any) => [tool.name, tool.handler])); } };
+  return { tools, created, origins, listed, served, closed: () => closed, handlers: async (id = 's1') => { await tools.forSession(id, 'claude'); return Object.fromEntries(served.at(-1).tools.map((tool: any) => [tool.name, tool.handler])); } };
 }
 const say = (result: any) => result.content.map((part: any) => part.text).join('\n');
 
 test('CronCreate makes a task that sends its prompt into this conversation, on whatever model the conversation has, and says its id and its real next run', async () => {
-  const { handlers, created } = await Promise.resolve(build()).then(async (made) => ({ ...made, handlers: await made.handlers() }));
+  const { handlers, created, origins } = await Promise.resolve(build()).then(async (made) => ({ ...made, handlers: await made.handlers() }));
   const result = await handlers.CronCreate({ cron: '7 * * * *', prompt: 'Check the deploy.\nTell me what changed.', durable: true });
   assert.equal(result.isError, undefined);
+  assert.deepEqual(origins, ['session'], 'the task says it was made by a conversation\'s tools (the owner\'s list leaves such tasks out)');
   assert.deepEqual(created[0], {
     title: 'Check the deploy.', prompt: 'Check the deploy.\nTell me what changed.', agent: 'claude', model: null, project,
     target: { mode: 'existing', sessionId: 's1' }, schedule: { kind: 'cron', timezone: 'Asia/Shanghai', expression: '7 * * * *' },
@@ -79,6 +81,9 @@ test('CronList and CronDelete see only the jobs of their own conversation, and a
     { id: 'done', revision: 1, status: 'ended', createdAt: 3, prompt: 'Over', schedule, target: { mode: 'existing', sessionId: 's1' } },
     { id: 'theirs', revision: 1, status: 'active', createdAt: 4, nextRunAt: 1, prompt: 'Not mine', schedule, target: { mode: 'existing', sessionId: 's2' } },
     { id: 'plain', revision: 1, status: 'active', createdAt: 5, nextRunAt: 1, prompt: 'A task of the window', schedule, target: { mode: 'new' } },
+    // Made for this same conversation, but by the owner in the window or by 嘟嘟: theirs, not the conversation's.
+    { id: 'owner-made', origin: 'app', revision: 1, status: 'active', createdAt: 6, nextRunAt: 1, prompt: 'Made in the window', schedule, target: { mode: 'existing', sessionId: 's1' } },
+    { id: 'dudu-made', origin: 'assistant', revision: 1, status: 'active', createdAt: 7, nextRunAt: 1, prompt: 'Made by 嘟嘟', schedule, target: { mode: 'existing', sessionId: 's1' } },
   );
   const handlers = await made.handlers();
   const lines = say(await handlers.CronList({})).split('\n');
@@ -87,9 +92,11 @@ test('CronList and CronDelete see only the jobs of their own conversation, and a
   assert.match(lines[1], /^paused \| once 2026-12-01 08:30 \(one-shot, paused\) \| next run: — \| Later$/);
   assert.equal((await handlers.CronDelete({ id: 'theirs' })).isError, true, 'another conversation\'s job cannot be cancelled');
   assert.equal((await handlers.CronDelete({ id: 'plain' })).isError, true);
+  assert.equal((await handlers.CronDelete({ id: 'owner-made' })).isError, true, 'a task the owner made for this conversation is not cancelled from inside it');
+  assert.equal((await handlers.CronDelete({ id: 'dudu-made' })).isError, true);
   assert.equal((await handlers.CronDelete({ id: 'nope' })).isError, true);
   assert.equal((await handlers.CronDelete({ id: 'mine' })).isError, undefined);
-  assert.deepEqual(made.listed.map((task) => task.id), ['paused', 'done', 'theirs', 'plain']);
+  assert.deepEqual(made.listed.map((task) => task.id), ['paused', 'done', 'theirs', 'plain', 'owner-made', 'dudu-made']);
   const empty = build();
   assert.equal(say(await (await empty.handlers()).CronList({})), 'No scheduled jobs.');
 });

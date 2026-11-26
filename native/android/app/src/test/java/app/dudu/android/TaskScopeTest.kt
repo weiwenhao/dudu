@@ -12,4 +12,13 @@ class TaskScopeTest {
         assertFalse(taskBelongsToSession(json("target" to json("mode" to "new"), "sessionId" to "here"), "here"))
         assertFalse(taskBelongsToSession(json("target" to json("mode" to "reuse")), "here"))
     }
+
+    @Test fun theTasksListLeavesOutWhatAConversationMadeForItself() {
+        assertFalse(taskIsListed(json("origin" to "session")))
+        assertTrue(taskIsListed(json("origin" to "app")))
+        assertTrue(taskIsListed(json("origin" to "assistant")))
+        assertTrue(taskIsListed(json("id" to "made before origins were recorded")))
+        // That conversation's own list still has it.
+        assertTrue(taskBelongsToSession(json("origin" to "session", "target" to json("mode" to "existing", "sessionId" to "here")), "here"))
+    }
 }
