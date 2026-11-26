@@ -15,7 +15,7 @@ const LINKS = [
 ];
 
 /**
- * A button after the store name that copies it (owner, 2026-11-27: a screenshot of the guide with a red box after the name, 「增加一个复制到」). It is the copy button of a conversation's
+ * A button after the store name, inside its quotes, that copies it (owner, 2026-11-27: a screenshot of the guide with a red box after the name, 「增加一个复制到」, then 「放在「」里面会不会更好一点」). It is the copy button of a conversation's
  * resume command (`CopyResume`) at the size of the text line: a ghost button whose glyph is a check for two seconds, with 复制 and then 已复制 as its tooltip, and it does not make the line taller.
  */
 function CopyName({ text }) {
@@ -31,7 +31,7 @@ function CopyName({ text }) {
     } catch { /* the page may not be allowed to write the clipboard: the glyph stays a copy */ }
   };
   return (
-    <Button variant="ghost" size="icon-xs" className="relative -top-px ml-0.5 -my-0.5 size-[18px] align-middle text-muted-foreground" aria-label={S.copy} title={copied ? S.copied : S.copy} onClick={copy}>
+    <Button variant="ghost" size="icon-xs" className="relative -top-px -my-0.5 size-[18px] align-middle text-muted-foreground" aria-label={S.copy} title={copied ? S.copied : S.copy} onClick={copy}>
       {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
       <span role="status" className="sr-only">{copied ? S.copied : ''}</span>
     </Button>
@@ -68,7 +68,7 @@ export function ConnectionGuide({ paired }) {
                   <div className="text-sm font-medium [overflow-wrap:anywhere]">{step}</div>
                   {index === 0 && (
                     <>
-                      <p className="text-xs/[18px] text-muted-foreground">{S.guideInstallSearch(S.guideAppName)}<CopyName text={S.guideAppName} />{S.guideInstallRest}</p>
+                      <p className="text-xs/[18px] text-muted-foreground">{S.guideInstallBefore}<span className="whitespace-nowrap">{S.guideAppName}<CopyName text={S.guideAppName} /></span>{S.guideInstallAfter}</p>
                       <div className="flex flex-wrap gap-x-4 gap-y-1">
                         {LINKS.map((link) => (
                           <a
