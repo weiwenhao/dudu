@@ -16,7 +16,7 @@ Dudu 是基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harnes
     <img src="docs/images/hero.zh-CN.png" width="900" alt="Dudu 在 DSH Desktop 里：左边是各个事项的对话和打开的一段对话，右上是收件箱，右下是办公室">
 </div>
 
-Dudu 支持手机端管理，iOS 通过 [TestFlight](https://testflight.apple.com/join/TNUPd6n7) 安装，安卓通过 [GitHub Release](https://github.com/weiwenhao/dudu/releases) 中的 apk 进行安装。
+Dudu 支持手机端管理，iOS 在 [App Store](https://apps.apple.com/cn/app/dudu-%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93%E5%8D%8F%E4%BD%9C%E5%8A%A9%E6%89%8B/id6833981505) 搜索「Dudu-多智能体协作助手」安装，也可以通过 [TestFlight](https://testflight.apple.com/join/TNUPd6n7) 安装最新版，安卓通过 [GitHub Release](https://github.com/weiwenhao/dudu/releases) 中的 apk 进行安装。
 
 <div align="center">
   <img src="docs/images/phone.zh-CN.png" alt="手机 App，从左到右：会话列表；对话；收件箱；任务" width="900">

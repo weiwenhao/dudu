@@ -140,6 +140,22 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The text of the page is made by scripts/release-body.mjs from release-notes/<version>.md; the history gives it the link to the full list of changes.
+      - name: Check out the release text
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          sparse-checkout: |
+            scripts/release-body.mjs
+            release-notes/
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
       - name: Get the packages
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -156,25 +172,15 @@ jobs:
             echo "The release $GITHUB_REF_NAME exists already. Nothing to make."
             exit 0
           fi
-          cd assets
-          # How to get the apps and the plugin, at the top of every release (owner, 2026-11-23). The TestFlight link is a public link: it does not change from one version to the next.
-          # `--notes` is put in front of the notes that GitHub generates.
-          read -r -d '' notes <<'EOF' || true
-          ## Install
-
-          - **Plugin:** enter `dsh-dudu` in DSH's "Add plugin".
-          - **iPhone:** search for dudu in the App Store, or join the [TestFlight beta](https://testflight.apple.com/join/TNUPd6n7).
-          - **Android:** install the apk below.
-
-          ## 安装
-
-          - **插件：** 在 DSH 的「添加插件」里输入 dsh-dudu。
-          - **iPhone：** 通过 [TestFlight](https://testflight.apple.com/join/TNUPd6n7) 安装。
-          - **安卓：** 下载下面的 apk。
-          EOF
-          args=(--repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --notes "$notes")
+          # The install lines at the top of every release (owner, 2026-11-23; the App Store and the latest TestFlight version, 2026-11-26), then what changed:
+          # release-notes/<version>.md, both languages, written and reviewed before the tag (scripts/release-body.mjs).
+          notes=$(node scripts/release-body.mjs "$VERSION" "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY")
+          args=(--repo "$GITHUB_REPOSITORY" --verify-tag --notes "$notes")
+          # Without that file, the list that GitHub generates follows the install lines.
+          [ -f "release-notes/${VERSION}.md" ] || args+=(--generate-notes)
           # A version with a hyphen (0.2.0-rc.1, say) is a pre-release.
           case "$VERSION" in *-*) args+=(--prerelease) ;; esac
+          cd assets
           gh release create "$GITHUB_REF_NAME" "${args[@]}" ./*
 
   npm:

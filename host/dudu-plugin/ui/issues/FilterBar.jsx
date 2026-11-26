@@ -15,8 +15,8 @@ export function FilterBar({ filter, onRemove, onClear, onAdd, fields = FILTER_FI
         const field = fields[key];
         return (
           <span key={key} className="inline-flex h-7 max-w-[320px] items-center gap-1.5 rounded-full border bg-background pr-1.5 pl-3 text-xs shadow-xs">
-            <span className="font-medium">{field.name}</span>
-            <span className="text-muted-foreground">{values.length > 1 ? T.isAnyOf : T.is}</span>
+            <span className="shrink-0 font-medium whitespace-nowrap">{field.name}</span>
+            <span className="shrink-0 whitespace-nowrap text-muted-foreground">{values.length > 1 ? T.isAnyOf : T.is}</span>
             <span className="truncate font-medium">{(field.order ? [...values].sort((a, b) => field.order.indexOf(a) - field.order.indexOf(b)) : values).map((value) => labelOf?.(key, value) ?? field.label(value)).join(', ')}</span>
             <Button variant="ghost" size="icon-xs" className="size-5 rounded-full" aria-label={`${T.removeFilter}: ${field.name}`} onClick={() => onRemove(key)}><X /></Button>
           </span>

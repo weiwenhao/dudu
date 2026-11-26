@@ -3,12 +3,15 @@ import { useCallback, useState } from 'react';
 // Saved views (owner, 2026-11-05, after Linear's views): a name for a way of looking at the issues. A saved view is a tab of its own: it has a base (Active, Backlog or
 // All issues: which issues it draws from) and keeps its own filter and display options the way every tab does (view.js), under the key `view:<id>`. Like those
 // options, the list of them is remembered in this browser.
+//
+// The page has two sets of tabs (owner, 2026-11-25): the conversation layout's, fixed to 进行中, 未读 and 全部 with no saved views (「那会话模式就不需要这个东西了」), and the one the list and
+// the board share (进行中, 待规划, 全部), which has them. Each set keeps its own filters. A view saved on 未读 while the conversation layout still had them keeps working in the list and the board.
 
 const STORAGE_KEY = 'dudu.issues.saved-views.v1';
 export const MAX_NAME = 60;
-export const BASES = ['active', 'unread', 'all'];
-// A view saved on 待规划 before 未读 replaced it keeps working: its base is still one the stores understand, it is only no longer offered as a built-in tab.
-const SAVED_BASES = [...BASES, 'backlog'];
+export const CHAT_TABS = ['active', 'unread', 'all'];
+export const CLASSIC_TABS = ['active', 'backlog', 'all'];
+const SAVED_BASES = [...CHAT_TABS, 'backlog'];
 
 /** The tab key of a saved view. */
 export const viewKey = (id) => `view:${id}`;

@@ -225,7 +225,7 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
         if (!ok) throw new Error(`${action}: HTTP ${context ? response.status() : response.status}: ${(await response.text()).slice(0, 600)}`);
         return response.json();
       },
-      /** A new page, on the 嘟嘟 panel. `views` is what the page remembers of its display options (per tab), set before it loads. */
+      /** A new page, on the 嘟嘟 panel. `views` is what the page remembers of its display options (per tab), set before it loads; the page's layout is the one the Active tab names. */
       async openPanel({ views, viewport: size, selectPanel = true } = {}) {
         if (!context) throw new Error('Use the authorized external browser for this review.');
         const page = await context.newPage();
@@ -237,6 +237,7 @@ export async function startDudu({ colorScheme = 'light', viewport = { width: 144
             if (sessionStorage.getItem('dudu-e2e-views')) return;
             sessionStorage.setItem('dudu-e2e-views', '1');
             localStorage.setItem('dudu.issues.views.v1', value);
+            localStorage.removeItem('dudu.issues.layout.v1'); // the layout is the page's: it is read from the Active tab's view again
           } catch { /* not remembered */ }
         }, JSON.stringify(views ?? {}));
         pages.add(page);

@@ -11,7 +11,7 @@ import { createIssues } from '../host/assistant/issues/index.mjs';
 import { SCHEMA_VERSION } from '../host/assistant/issues/schema.mjs';
 import { displayedReadPosition, ENGAGED_MS, mayRead } from '../host/dudu-plugin/ui/lib/session-read-receipts.js';
 import { createSessionActivity } from '../host/assistant/sessions/session-activity.mjs';
-import { migrateViews } from '../host/dudu-plugin/ui/issues/view.js';
+import { migrateViews, readLayout } from '../host/dudu-plugin/ui/issues/view.js';
 
 const message = (seq: number, value = 'Answer', step = 1) => ({
   type: 'assistant/message', surfaceOp: 'append', seq, time: 1000 + seq,
@@ -302,6 +302,13 @@ test('saved status views migrate without restoring removed overrides or losing e
   assert.equal(migrated.explicitSession.group, 'sessionState');
   assert.equal(migrated.missing.group, 'status');
   assert.deepEqual(migrateViews(migrated), migrated, 'migration is stable when the view is read or changed again');
+});
+
+test('the layout is the page\'s, not a tab\'s: a remembered one wins, and an older page keeps what its Active tab showed', () => {
+  assert.equal(readLayout('board', { active: { layout: 'list' } }), 'board');
+  assert.equal(readLayout(null, { active: { layout: 'list' }, all: { layout: 'chat' } }), 'list', 'the page opens as it did before the layout left the tabs');
+  assert.equal(readLayout(null, { all: { layout: 'list' } }), 'chat');
+  assert.equal(readLayout('nonsense', undefined), 'chat');
 });
 
 test('grouping, filters and counts use automatic session status, with no workflow writes or manual overrides', () => {
