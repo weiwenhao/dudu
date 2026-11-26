@@ -966,3 +966,19 @@ Lucide `ListTodo`。复用原有导航图标的尺寸、颜色、线宽和圆角
 | 两个组名 | **已启用** · **未启用** | **Enabled** · **Not enabled** | 中文在主人审过的稿子上；英文是我写的，待审（`strings.js` 的 `shell.groupOn/groupOff`，手机 `Localizable.xcstrings`，插件 `native-strings.mjs`）。 |
 
 其余都是原有的字：供应商、重新检测、启用、可执行文件路径、留空则自动查找、环境变量、取消、保存、可用、未找到、版本不受支持、无法运行。
+
+## 手机控制的连接指南（2026-11-27，主人审过设计稿）
+
+主人：“用户安装了 dsh-dudu 点开了手机控制，但是完全不知道怎样才能用手机使用，没有任何的引导、提示、链接等。 设计一下 UI 吧”；看过 `.local/designs/phone-guide-2026-11-26/boards/` 的方案 A 后说“在手机上使用应该改成连接指南，样式上，你再设计一下。形式上可以，样式上不行”，看过三种样式后说“没问题，你实现吧”。做了推荐的样式 2（竖排时间线）：页面里一组「连接指南」，没有配对设备时展开，配对后收成一行；二维码弹窗上方多两行。这是主人明说要加的说明，不受“默认不加说明文字”的限制（`docs/secondary-copy-review.md`）。
+
+| 位置 | 中文 | English | 来源 |
+| --- | --- | --- | --- |
+| 组名 | **连接指南** | **Connection guide** | 中文是主人定的；英文是我写的，待审（`strings.js` 的 `shell.guide`）。 |
+| 第 1 步 | **安装嘟嘟手机 App** / iOS 在 App Store 搜索「Dudu-多智能体协作助手」，也可以通过 TestFlight 安装最新版；安卓从 GitHub Release 安装 apk。 | **Install the Dudu phone app** / On iOS, search the App Store for “Dudu - Multi-Agent Assistant”, or install the latest version through TestFlight. On Android, install the apk from GitHub Release. | 说明改自 README 里主人审过的那一句；英文待审。 |
+| 链接 | App Store · TestFlight · Android | App Store · TestFlight · Android | 产品名，不翻译。 |
+| 第 2 步 | **打开嘟嘟，点「扫描配对码」** | **Open Dudu and tap “Scan pairing code”** | 「扫描配对码」是手机上已有的按钮名（英文 Scan pairing code，手机已有）。 |
+| 第 3 步 | **点右上角的「生成二维码」，用嘟嘟扫描** | **Tap “Generate QR code” at the top right and scan it with Dudu** | 「生成二维码」是页头已有的按钮；英文待审。 |
+| 说明 | 手机和电脑在同一个网络时，用内网地址配对；不在同一个网络，请先在「连接地址」里添加公网地址。 | When the phone and the computer are on the same network, pair over the LAN address; otherwise add a public address under “Connection addresses” first. | 英文待审。 |
+| 二维码弹窗 | **打开嘟嘟扫码** / 点「扫描配对码」，对准下面的二维码 | **Open Dudu to scan** / Tap “Scan pairing code” and point it at the QR code below | 「打开嘟嘟扫码」是 `shell.scan`，一直在、没用上；第二行英文待审。弹窗原来只有读屏用的标题「配对手机」，现在标题可见。 |
+
+三个链接：App Store 用不带国家的地址 `https://apps.apple.com/app/id6833981505`（在人所在的地区打开），TestFlight 是公开链接 `https://testflight.apple.com/join/TNUPd6n7`，安卓是最新发行页 `https://github.com/weiwenhao/dudu/releases/latest`。

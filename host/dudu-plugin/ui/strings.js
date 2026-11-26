@@ -417,6 +417,13 @@ const en = {
     env: 'Environment variables',
     // NEW (2026-11-24): the two groups of the providers page (the owner approved the design; the Chinese is the design's, the English awaits review).
     groupOn: 'Enabled', groupOff: 'Not enabled',
+    // NEW (2026-11-27): the connection guide of Phone control and the two lines over the QR code (the owner approved the design, `.local/designs/phone-guide-2026-11-26/`, style 2; the Chinese is the design's, the
+    // English awaits review: docs/issues-ui-wording.md). `scan` above was there and unused until now.
+    guide: 'Connection guide', guideInstall: 'Install the Dudu phone app',
+    guideInstallDetail: 'On iOS, search the App Store for “Dudu - Multi-Agent Assistant”, or install the latest version through TestFlight. On Android, install the apk from GitHub Release.',
+    guideOpen: 'Open Dudu and tap “Scan pairing code”', guideScan: 'Tap “Generate QR code” at the top right and scan it with Dudu',
+    guideNetwork: 'When the phone and the computer are on the same network, pair over the LAN address; otherwise add a public address under “Connection addresses” first.',
+    scanHint: 'Tap “Scan pairing code” and point it at the QR code below',
   },
 };
 
@@ -716,6 +723,12 @@ const zh = {
     providerStates: { ready: '可用', missing: '未找到', unsupported: '版本不受支持', broken: '无法运行' }, providerChip: (name) => `供应商：${name}`,
     env: '环境变量', // NEW (2026-11-23), see the English
     groupOn: '已启用', groupOff: '未启用',
+    // NEW (2026-11-27), see the English
+    guide: '连接指南', guideInstall: '安装嘟嘟手机 App',
+    guideInstallDetail: 'iOS 在 App Store 搜索「Dudu-多智能体协作助手」，也可以通过 TestFlight 安装最新版；安卓从 GitHub Release 安装 apk。',
+    guideOpen: '打开嘟嘟，点「扫描配对码」', guideScan: '点右上角的「生成二维码」，用嘟嘟扫描',
+    guideNetwork: '手机和电脑在同一个网络时，用内网地址配对；不在同一个网络，请先在「连接地址」里添加公网地址。',
+    scanHint: '点「扫描配对码」，对准下面的二维码',
   },
 };
 

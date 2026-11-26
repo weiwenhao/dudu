@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../compon
 import { intlLocale } from '../lib/locale.mjs';
 import { diagnostic, T } from '../strings.js';
 import { ActionButton, DangerButton, Failed, Field, Group, IconAction, Page, PrimaryButton, Problem, QuietButton, Reading, Row } from './kit.jsx';
+import { ConnectionGuide } from './ConnectionGuide.jsx';
 import { PairingDialog } from './PairingDialog.jsx';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/popover.jsx';
 
@@ -145,6 +146,7 @@ export function PhoneSection({ request }) {
       </>}
     >
       <Problem>{error}</Problem>
+      <ConnectionGuide paired={snapshot.devices.length > 0} />
       <Group label={S.computerName}>
         <Row title={S.computerName}>
           <Field aria-label={S.computerName} maxLength={80} value={draft.name} disabled={busy} className="w-[280px]" onChange={(event) => edit(() => ({ name: event.target.value }))} />

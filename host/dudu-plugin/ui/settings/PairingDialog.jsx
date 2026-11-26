@@ -14,7 +14,10 @@ function PairingContent({ code, copyState, onCopy, onClose, returnFocus }) {
           if (returnFocus?.isConnected) { event.preventDefault(); returnFocus.focus(); }
         }}
       >
-        <DialogTitle className="sr-only">{T.shell.pair}</DialogTitle>
+        <div className="flex flex-col items-center gap-0.5 text-center">
+          <DialogTitle className="text-sm font-medium">{T.shell.scan}</DialogTitle>
+          <p className="text-xs text-muted-foreground">{T.shell.scanHint}</p>
+        </div>
         <div data-pairing-qr="" className="rounded-lg bg-white p-3">
           <img alt={T.shell.pair} className="block h-auto w-full" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(code.svg)}`} />
         </div>
