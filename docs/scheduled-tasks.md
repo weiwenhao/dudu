@@ -91,7 +91,8 @@ Claude Code 自带的 `CronCreate`、`CronDelete`、`CronList` 把任务放在 C
 - **来源**：任务记录多一个 `origin`：`session`（会话用 `mcp__dudu__CronCreate` 建的）、`assistant`（嘟嘟的 `tasks_*` 工具）、`app`（桌面的任务窗口、iPhone、安卓；没有说明来历的调用都算它）；取值是 `tasks/contract.mjs` 的 `TASK_ORIGINS`。由插件按调用方写（`execute(action, body, { origin })` 的第三个参数），客户端传不了：`fields` 仍只收那七个键，带 `origin` 会被拒（`invalid_task`），`update` 也改不了它。以前建的任务没有这个字段，一律当作可列出。
 - **不进任务窗口**：`tasks.list` 照旧返回它们（带 `origin`），各端的任务列表自己不列 `origin` 是 `session` 的：桌面 `inTasksWindow`（`ui/tasks/session-tasks.js`，`TasksDialog.jsx` 用）、iPhone `ScheduledTask.isListed`（`TasksModel.items` 和侧栏的数字）、安卓 `taskIsListed`（`data/TaskScope.kt`）。**对话自己的定时任务控件和手机的 `SessionTasksSheet` 照旧列它们**：上一节那页读的是同一份列表，主人 2026-11-17 认可的就是它，这次只说了任务列表。嘟嘟的 `tasks_list` 也不列。
 - **结束后清掉**（`tasks/index.mjs`）：一次性的任务在被领走那一刻就记为 `ended`，所以等它的投递结束再删，连运行记录一起（外键级联）；投递没发出去或不确定也一样删（日志里有原因，隐藏的任务没有人会去看）。启动时再把留着 `ended` 的清一遍，对应进程在领走和删除之间停了的情况。只清 `origin` 是 `session` 的，主人和嘟嘟的任务不动。
-- **没做**：常驻的（`recurring`）不会自己结束，只有会话里的 `CronDelete` 删得掉；它的会话如果被删了，它会一直试着发、一直失败，而主人看不到也删不掉，要处理得另定规则（比如连续几次找不到会话就删）。以前建的任务没有来源，不会被清；老版本 App 不认识 `origin`，还会列没触发的那些。
+- **常驻的任务**（`recurring`）不会自己结束，会话里的 `CronDelete` 删得掉；它的会话如果被删了，每次到点都被拒（`invalid_session`：那个对话不在 DSH 的列表里）并多一条失败的运行记录，而主人看不到也删不掉（`task_runs` 不裁剪）。主人问“它们会话被删后会一直失败？这是什么意思？”，回复“如果不行，就按你说的来”：**连续三次**到点都因 `invalid_session` 被拒，就把它连同运行记录删掉（`tasks/index.mjs` 的 `unreachable`，看最近三条运行，中间有一次投递成功就重新数；不是一次，因为插件刚启动时 DSH 的会话列表可能还没读完）。没有用事件：DSH 没有把会话被删告诉插件，`agent/disposed` 在会话只是休眠时也会来。`invalid_project`（工作区没了或文件夹暂时读不到）不算，免得拔掉一块盘就删了任务。
+- **没做**：以前建的任务没有来源，不会被清；老版本 App 不认识 `origin`，还会列没触发的那些。
 
 ## 桌面、对话、App
 
@@ -136,4 +137,4 @@ Claude Code 自带的 `CronCreate`、`CronDelete`、`CronList` 把任务放在 C
 
 **手机**：`native:build`（Release）通过，没有新的警告；iOS 27 模拟器（iPhone Air，420pt，中文，离线的评审数据）里用真实触摸走过：「…」菜单有三项、点第三项打开面板（菜单是系统控件，不在无障碍树里，按屏幕位置点的）、只列这个对话的 4 个任务（另外 3 个：别的对话的、每次新建对话的、复用别的对话的，都没出现）、红色“投递失败”、已结束折叠一行点开、点一行进已有的任务页；滑动出来的三个块、没有任务时的“暂无定时任务”用调试入口看了（`-dudu-review-session-tasks-swipe 0`、换一份没有匹配的数据）；读屏读到的整行是“查一下 gateway 的变化、已开启、每天 09:00 · 下次运行 11月17日 09:00 · 投递失败”。**没有验证**：手指真的滑动（脚本滑不出那三个块，该部件和任务页是同一个）、英文和深色、很长的标题、真机上的样子（已装 build 125，没有看它的屏幕）、暂停 / 立即执行 / 删除在手机上的完整往返（用的是任务页那套 `TasksModel`）。
 
-2026-11-26（会话工具建的任务）：`tests/assistant-tasks.test.ts` 新增一项（来源由调用方定、客户端冒充不了；会话建的一次性任务触发后连记录一起删，没发出去也删；别人的任务和常驻的不删；启动时清掉留下的），`tests/cron-tools.test.ts` 加了来源和「别人给这个对话建的任务它不列不删」，`tests/session-tasks.test.ts` 加了窗口和对话列表的分界，安卓 `TaskScopeTest` 加一项；都是毫秒级，时钟和投递由测试注入。`native:build`（iPhone Release）、`android:test`（含 Kotlin 编译）、`client:build`、typecheck 和老 App 的契约测试通过；手机装了 build 164（读回版本号）。**没有验证**：真实 DSH 里 Claude 调 `CronCreate`、到点、清掉的完整往返；两部手机和桌面窗口的界面（没看屏幕）。
+2026-11-26（会话工具建的任务）：`tests/assistant-tasks.test.ts` 新增两项（来源由调用方定、客户端冒充不了；会话建的一次性任务触发后连记录一起删，没发出去也删；别人的任务和常驻的不删；启动时清掉留下的 / 常驻的会话任务连续三次找不到对话才删，中间投递成功就重新数，主人的任务被拒再多次也不删），`tests/cron-tools.test.ts` 加了来源和「别人给这个对话建的任务它不列不删」，`tests/session-tasks.test.ts` 加了窗口和对话列表的分界，安卓 `TaskScopeTest` 加一项；都是毫秒级，时钟和投递由测试注入。`native:build`（iPhone Release）、`android:test`（含 Kotlin 编译）、`client:build`、typecheck 和老 App 的契约测试通过；手机装了 build 164（读回版本号）。**没有验证**：真实 DSH 里 Claude 调 `CronCreate`、到点、清掉的完整往返；两部手机和桌面窗口的界面（没看屏幕）。

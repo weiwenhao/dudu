@@ -169,6 +169,27 @@ test('a task records who made it from who calls, and only the ones a conversatio
   } finally { await refusing.close(); }
 });
 
+test('a recurring task a conversation made is dropped when its conversation was gone for its last three firings, and no other task is', async () => {
+  let now = at;
+  let gone = true;
+  const tasks = createTasks({ file: ':memory:', now: () => now, log: quiet, deliver: async () => { if (gone) throw Object.assign(new Error('not in the list'), { code: 'invalid_session', beforeSend: true }); } });
+  try {
+    const fields = { ...base(), target: { mode: 'existing', sessionId: 's1' } };
+    const session = (await tasks.execute('create', { fields }, { origin: 'session' })).task;
+    const owner = (await tasks.execute('create', { fields })).task;
+    const fire = async () => { now += 3600_000; await tasks.tick(); await tasks.idle(); };
+    const still = async (id: string) => (await tasks.execute('get', { id })).task?.status;
+    await fire(); await fire();
+    assert.equal(await still(session.id), 'active', 'two refusals are not enough: a firing right after a start may find DSH\'s list unread');
+    gone = false; await fire();
+    gone = true; await fire(); await fire();
+    assert.equal(await still(session.id), 'active', 'a delivery in between starts the count again');
+    await fire();
+    assert.equal(await still(session.id), undefined, 'the third refusal in a row drops it');
+    assert.equal(await still(owner.id), 'active', 'the same refusals never drop a task the owner made');
+  } finally { await tasks.close(); }
+});
+
 test('schedule edits reanchor intervals and history pagination and deletion preserve their own bounds', async () => {
   let now = at;
   const tasks = createTasks({ file: ':memory:', now: () => now, deliver: async () => {} });

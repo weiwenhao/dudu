@@ -1,7 +1,7 @@
 // Durable user tasks, independent of DSH's scheduler and of collectors. A run records delivery, never agent completion.
 // A task records where it was made from (`origin`, contract.mjs), set here from who calls and never taken from a client. One a conversation made with its own cron tools (origin 'session') is not the owner's to keep
 // (owner, 2026-11-26: "MCP dudu 调用创建的，我不希望出现在这个定时任务列表里，结束之后，我也希望能直接清理掉，不要占用列表数据"): the tasks window leaves it out (the clients do), and once it has ended and its delivery is
-// over it goes, with its runs.
+// over it goes, with its runs. So does a recurring one whose conversation is gone: nobody can see it to delete it, and every firing would add a failed run for ever (the owner asked what happens then and, on the rule below, said 「如果不行，就按你说的来」, 2026-11-26).
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
@@ -75,6 +75,13 @@ export function createTasks({ file, deliver, options = async () => ({}), validat
   // A task a conversation made for itself goes once it has ended (the top of the file): an ended one has had its delivery. Its runs go with it (their rows cascade).
   const spent = (task) => task?.origin === 'session' && task.status === 'ended';
   const drop = (id) => db.prepare('DELETE FROM tasks WHERE id=?').run(id);
+  // Its conversation is gone when its last three firings were all refused with `invalid_session` (tasks/host.mjs: the conversation is not in DSH's list). Not one: a firing right after the plugin starts could find
+  // DSH's list not yet read. DSH tells the plugin of no deletion, and `agent/disposed` also comes for a conversation that merely sleeps, so the refusals are the signal.
+  const GONE_AFTER = 3;
+  const unreachable = (id) => {
+    const runs = db.prepare('SELECT body FROM task_runs WHERE task_id=? ORDER BY seq DESC LIMIT ?').all(id, GONE_AFTER).map((row) => JSON.parse(row.body));
+    return runs.length === GONE_AFTER && runs.every((run) => run.status === 'failed' && run.code === 'invalid_session');
+  };
   // A prior process could have stopped on either side of the send. Never blindly send its prompt again.
   transaction(() => {
     for (const row of db.prepare("SELECT body FROM task_runs WHERE json_extract(body,'$.status')='delivering'").all()) {
@@ -134,8 +141,8 @@ export function createTasks({ file, deliver, options = async () => ({}), validat
         const latest = read(task.id);
         if (!latest) return;
         latest.lastRun = { id: run.id, at: run.at, status: run.status };
-        // The delivery is over: a task a conversation made for itself, which this run ended, goes now.
-        if (spent(latest)) drop(latest.id); else write(latest);
+        // The delivery is over: a task a conversation made for itself goes now if this run ended it, or if its conversation is gone.
+        if (spent(latest) || (latest.origin === 'session' && unreachable(latest.id))) drop(latest.id); else write(latest);
       });
       return success({ run, task: read(task.id) });
     })().finally(() => running.delete(task.id));
