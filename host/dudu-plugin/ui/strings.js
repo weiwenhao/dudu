@@ -406,7 +406,7 @@ const en = {
     lanCode: 'Generate a QR code for the LAN address', generate: 'Generate QR code', address: (n) => `Connection address ${n}`,
     removeAddress: (n) => `Delete connection address ${n}`, remove: 'Delete', addAddress: 'Add address', save: 'Save', saved: 'Saved',
     devices: 'Paired devices', paired: (date) => `Paired on ${date}`, revoke: 'Revoke', noDevices: 'No paired devices',
-    scan: 'Open Dudu to scan', close: 'Close', copied: 'Copied', copyPairing: 'Copy pairing link',
+    scan: 'Open Dudu to scan', close: 'Close', copy: 'Copy', copied: 'Copied', copyPairing: 'Copy pairing link',
     copyFailed: 'Could not copy. Scan the QR code to connect.', expiry: 'QR code expires in 10 minutes', pair: 'Pair phone',
     revokeQuestion: (name) => `Revoke the connection to ${name}?`, cancel: 'Cancel', revokePairing: 'Revoke pairing',
     providers: 'Providers', state: 'Status', enable: 'Enable', executable: 'Executable path', autoFind: 'Leave blank to find automatically',
@@ -420,7 +420,8 @@ const en = {
     // NEW (2026-11-27): the connection guide of Phone control and the two lines over the QR code (the owner approved the design, `.local/designs/phone-guide-2026-11-26/`, style 2; the Chinese is the design's, the
     // English awaits review: docs/issues-ui-wording.md). `scan` above was there and unused until now.
     guide: 'Connection guide', guideInstall: 'Install the Dudu phone app',
-    guideInstallDetail: 'On iOS, search the App Store for “Dudu - Multi-Agent Assistant”, or install the latest version through TestFlight. On Android, install the apk from GitHub Release.',
+    guideAppName: 'Dudu - Multi-Agent Assistant', guideInstallSearch: (name) => `On iOS, search the App Store for “${name}”`,
+    guideInstallRest: ', or install the latest version through TestFlight. On Android, install the apk from GitHub Release.',
     guideOpen: 'Open Dudu and tap “Scan pairing code”', guideScan: 'Tap “Generate QR code” at the top right and scan it with Dudu',
     guideNetwork: 'When the phone and the computer are on the same network, pair over the LAN address; otherwise add a public address under “Connection addresses” first.',
     scanHint: 'Tap “Scan pairing code” and point it at the QR code below',
@@ -717,7 +718,7 @@ const zh = {
     computerName: '电脑名称', addresses: '连接地址', lan: '内网地址', lanCode: '为内网地址生成二维码', generate: '生成二维码', address: (n) => `连接地址 ${n}`,
     publicAddress: '公网地址', lanLabel: '内网', publicLabel: '公网', editPublicAddress: '编辑公网地址', edit: '编辑', removeRoute: '移除地址', // 2026-11-04 已审核连接设计
     removeAddress: (n) => `删除连接地址 ${n}`, remove: '删除', addAddress: '添加地址', save: '保存', saved: '已保存', devices: '已配对设备',
-    paired: (date) => `配对于 ${date}`, revoke: '撤销', noDevices: '暂无配对设备', scan: '打开嘟嘟扫码', close: '关闭', copied: '已复制', copyPairing: '复制配对链接',
+    paired: (date) => `配对于 ${date}`, revoke: '撤销', noDevices: '暂无配对设备', scan: '打开嘟嘟扫码', close: '关闭', copy: '复制', copied: '已复制', copyPairing: '复制配对链接',
     copyFailed: '复制失败，请扫码连接', expiry: '二维码 10 分钟内有效', pair: '配对手机', revokeQuestion: (name) => `撤销 ${name} 的连接？`, cancel: '取消', revokePairing: '撤销配对',
     providers: '供应商', state: '状态', enable: '启用', executable: '可执行文件路径', autoFind: '留空则自动查找', detect: '重新检测',
     providerStates: { ready: '可用', missing: '未找到', unsupported: '版本不受支持', broken: '无法运行' }, providerChip: (name) => `供应商：${name}`,
@@ -725,7 +726,8 @@ const zh = {
     groupOn: '已启用', groupOff: '未启用',
     // NEW (2026-11-27), see the English
     guide: '连接指南', guideInstall: '安装嘟嘟手机 App',
-    guideInstallDetail: 'iOS 在 App Store 搜索「Dudu-多智能体协作助手」，也可以通过 TestFlight 安装最新版；安卓从 GitHub Release 安装 apk。',
+    guideAppName: 'Dudu-多智能体协作助手', guideInstallSearch: (name) => `iOS 在 App Store 搜索「${name}」`,
+    guideInstallRest: '，也可以通过 TestFlight 安装最新版；安卓从 GitHub Release 安装 apk。',
     guideOpen: '打开嘟嘟，点「扫描配对码」', guideScan: '点右上角的「生成二维码」，用嘟嘟扫描',
     guideNetwork: '手机和电脑在同一个网络时，用内网地址配对；不在同一个网络，请先在「连接地址」里添加公网地址。',
     scanHint: '点「扫描配对码」，对准下面的二维码',

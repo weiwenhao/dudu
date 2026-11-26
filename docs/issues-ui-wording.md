@@ -975,6 +975,7 @@ Lucide `ListTodo`。复用原有导航图标的尺寸、颜色、线宽和圆角
 | --- | --- | --- | --- |
 | 组名 | **连接指南** | **Connection guide** | 中文是主人定的；英文是我写的，待审（`strings.js` 的 `shell.guide`）。 |
 | 第 1 步 | **安装嘟嘟手机 App** / iOS 在 App Store 搜索「Dudu-多智能体协作助手」，也可以通过 TestFlight 安装最新版；安卓从 GitHub Release 安装 apk。 | **Install the Dudu phone app** / On iOS, search the App Store for “Dudu - Multi-Agent Assistant”, or install the latest version through TestFlight. On Android, install the apk from GitHub Release. | 说明改自 README 里主人审过的那一句；英文待审。 |
+| 名字后的按钮 | 图标按钮，提示「复制」，点后图标变对勾、提示「已复制」两秒 | 图标按钮，提示 “Copy”，点后变对勾、提示 “Copied” 两秒 | 主人（2026-11-27）发来连接指南的截图，在这个名字后面画了红框，说「增加一个复制到」（后半句没发出来，按「复制到剪贴板」做）。按钮复制的是名字本身（中文界面 Dudu-多智能体协作助手，英文界面 Dudu - Multi-Agent Assistant）。「复制」「已复制」是面板里原有的字（`shell.copy` 是新加的键，字不是新的）；这一句因此拆成三段（`guideInstallSearch`、名字 `guideAppName`、`guideInstallRest`），拼起来和上一行的字一样。 |
 | 链接 | App Store · TestFlight · Android | App Store · TestFlight · Android | 产品名，不翻译。 |
 | 第 2 步 | **打开嘟嘟，点「扫描配对码」** | **Open Dudu and tap “Scan pairing code”** | 「扫描配对码」是手机上已有的按钮名（英文 Scan pairing code，手机已有）。 |
 | 第 3 步 | **点右上角的「生成二维码」，用嘟嘟扫描** | **Tap “Generate QR code” at the top right and scan it with Dudu** | 「生成二维码」是页头已有的按钮；英文待审。 |

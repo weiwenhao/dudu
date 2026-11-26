@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { ArrowUpRight, ChevronDown } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowUpRight, Check, ChevronDown, Copy } from 'lucide-react';
+import { Button } from '../components/button.jsx';
 import { cn } from '../lib/cn.js';
 import { T } from '../strings.js';
 import { Group } from './kit.jsx';
@@ -12,6 +13,30 @@ const LINKS = [
   { label: 'TestFlight', href: 'https://testflight.apple.com/join/TNUPd6n7' },
   { label: 'Android', href: 'https://github.com/weiwenhao/dudu/releases/latest' },
 ];
+
+/**
+ * A button after the store name that copies it (owner, 2026-11-27: a screenshot of the guide with a red box after the name, 「增加一个复制到」). It is the copy button of a conversation's
+ * resume command (`CopyResume`) at the size of the text line: a ghost button whose glyph is a check for two seconds, with 复制 and then 已复制 as its tooltip, and it does not make the line taller.
+ */
+function CopyName({ text }) {
+  const [copied, setCopied] = useState(false);
+  const reset = useRef(null);
+  useEffect(() => () => clearTimeout(reset.current), []);
+  const copy = async () => {
+    clearTimeout(reset.current);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      reset.current = setTimeout(() => setCopied(false), 2000);
+    } catch { /* the page may not be allowed to write the clipboard: the glyph stays a copy */ }
+  };
+  return (
+    <Button variant="ghost" size="icon-xs" className="relative -top-px ml-0.5 -my-0.5 size-[18px] align-middle text-muted-foreground" aria-label={S.copy} title={copied ? S.copied : S.copy} onClick={copy}>
+      {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+      <span role="status" className="sr-only">{copied ? S.copied : ''}</span>
+    </Button>
+  );
+}
 
 /**
  * What a person who has just installed the plugin needs to use the phone: install the app, open it and tap 扫描配对码, then scan the QR code of this page. Style 2 of
@@ -43,7 +68,7 @@ export function ConnectionGuide({ paired }) {
                   <div className="text-sm font-medium [overflow-wrap:anywhere]">{step}</div>
                   {index === 0 && (
                     <>
-                      <p className="text-xs/[18px] text-muted-foreground">{S.guideInstallDetail}</p>
+                      <p className="text-xs/[18px] text-muted-foreground">{S.guideInstallSearch(S.guideAppName)}<CopyName text={S.guideAppName} />{S.guideInstallRest}</p>
                       <div className="flex flex-wrap gap-x-4 gap-y-1">
                         {LINKS.map((link) => (
                           <a
