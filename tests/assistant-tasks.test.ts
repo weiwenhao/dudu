@@ -169,25 +169,32 @@ test('a task records who made it from who calls, and only the ones a conversatio
   } finally { await refusing.close(); }
 });
 
-test('a recurring task a conversation made is dropped when its conversation was gone for its last three firings, and no other task is', async () => {
+test('a task a conversation made is dropped when it falls due and its conversation is gone, with no run made; the owner\'s task is not, and DSH\'s list says what is gone', async () => {
   let now = at;
-  let gone = true;
-  const tasks = createTasks({ file: ':memory:', now: () => now, log: quiet, deliver: async () => { if (gone) throw Object.assign(new Error('not in the list'), { code: 'invalid_session', beforeSend: true }); } });
+  const gone = new Set(['deleted']);
+  const sent: string[] = [];
+  const tasks = createTasks({ file: ':memory:', now: () => now, log: quiet, gone: (task: any) => gone.has(task.target.sessionId), deliver: async (task: any) => { sent.push(task.target.sessionId); } });
   try {
-    const fields = { ...base(), target: { mode: 'existing', sessionId: 's1' } };
-    const session = (await tasks.execute('create', { fields }, { origin: 'session' })).task;
-    const owner = (await tasks.execute('create', { fields })).task;
-    const fire = async () => { now += 3600_000; await tasks.tick(); await tasks.idle(); };
-    const still = async (id: string) => (await tasks.execute('get', { id })).task?.status;
-    await fire(); await fire();
-    assert.equal(await still(session.id), 'active', 'two refusals are not enough: a firing right after a start may find DSH\'s list unread');
-    gone = false; await fire();
-    gone = true; await fire(); await fire();
-    assert.equal(await still(session.id), 'active', 'a delivery in between starts the count again');
-    await fire();
-    assert.equal(await still(session.id), undefined, 'the third refusal in a row drops it');
-    assert.equal(await still(owner.id), 'active', 'the same refusals never drop a task the owner made');
+    const into = (sessionId: string) => ({ ...base(), target: { mode: 'existing', sessionId } });
+    const lost = (await tasks.execute('create', { fields: into('deleted') }, { origin: 'session' })).task;
+    const there = (await tasks.execute('create', { fields: into('here') }, { origin: 'session' })).task;
+    const owners = (await tasks.execute('create', { fields: into('deleted') })).task;
+    now += 3600_000; await tasks.tick(); await tasks.idle();
+    assert.equal((await tasks.execute('get', { id: lost.id })).code, 'not_found', 'dropped before its firing');
+    assert.deepEqual(sent.sort(), ['deleted', 'here'], 'nothing was sent for it: only the owner\'s task and the one whose conversation is there');
+    assert.equal((await tasks.execute('get', { id: there.id })).task.status, 'active');
+    assert.equal((await tasks.execute('history', { id: owners.id })).runs.length, 1, 'the owner\'s task is never asked about: it fires and says what happens');
+    assert.equal((await tasks.execute('get', { id: owners.id })).task.status, 'active');
   } finally { await tasks.close(); }
+  // What is gone: no workspace of DSH's registry lists the conversation (a live or an archived one is listed); a failing registry says nothing.
+  const listed = (list: () => any[]) => createTaskHost({ registry: { list }, controller: {}, agents: { get: () => undefined }, dsh: {} as any }).gone;
+  const into = (target: any) => ({ target });
+  const registry = () => [{ id: 'w', title: 'dudu', path: '/work/dudu', sessionIds: ['here'] }, { id: 'x', title: 'other', path: '/work/other', sessionIds: ['elsewhere'] }];
+  assert.equal(listed(registry)(into({ mode: 'existing', sessionId: 'here' })), false);
+  assert.equal(listed(registry)(into({ mode: 'existing', sessionId: 'elsewhere' })), false, 'in another workspace is still there');
+  assert.equal(listed(registry)(into({ mode: 'existing', sessionId: 'deleted' })), true);
+  assert.equal(listed(registry)(into({ mode: 'reuse' })), false, 'a task that names no conversation has none to lose');
+  assert.equal(listed(() => { throw new Error('not active'); })(into({ mode: 'existing', sessionId: 'here' })), false);
 });
 
 test('schedule edits reanchor intervals and history pagination and deletion preserve their own bounds', async () => {

@@ -48,6 +48,14 @@ export function createTaskHost({ dsh, registry, controller, agents, access = () 
     return { project, model };
   }
   return {
+    /**
+     * Whether the conversation a task names is certainly not there any more: no workspace of DSH's registry lists it. The registry is built from DSH's stored sessions before it starts, `list()` reads memory, a live
+     * conversation is in it and an archived one keeps its place, so a conversation that is not listed has been deleted (a failing registry says nothing: not gone). Asked before a firing, never a reason for a run.
+     */
+    gone(task) {
+      if (task?.target?.mode !== 'existing') return false;
+      try { return !registry.list().some((entry) => entry.sessionIds.includes(task.target.sessionId)); } catch { return false; }
+    },
     async options({ includeSessions = true } = {}) {
       // Opening the editor needs no conversation scan. Load those only for an explicit existing target.
       const [catalog, listed] = await Promise.all([read(dsh.models()), includeSessions ? read(dsh.list()) : []]);

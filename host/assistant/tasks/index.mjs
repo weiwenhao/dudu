@@ -1,7 +1,8 @@
 // Durable user tasks, independent of DSH's scheduler and of collectors. A run records delivery, never agent completion.
 // A task records where it was made from (`origin`, contract.mjs), set here from who calls and never taken from a client. One a conversation made with its own cron tools (origin 'session') is not the owner's to keep
 // (owner, 2026-11-26: "MCP dudu 调用创建的，我不希望出现在这个定时任务列表里，结束之后，我也希望能直接清理掉，不要占用列表数据"): the tasks window leaves it out (the clients do), and once it has ended and its delivery is
-// over it goes, with its runs. So does a recurring one whose conversation is gone: nobody can see it to delete it, and every firing would add a failed run for ever (the owner asked what happens then and, on the rule below, said 「如果不行，就按你说的来」, 2026-11-26).
+// over it goes, with its runs. So does one whose conversation is gone: it is dropped when it falls due, before any run is made, since nobody can see it to delete it and every firing would add a failed run for ever (owner, 2026-11-26: 「那不需要连续三次吧……
+// 执行之前就能发现会话在不在了对吧？对话不在直接跳过就行了对吧？」).
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
@@ -41,8 +42,11 @@ function fields(input) {
   };
 }
 
-/** `deliver(task, run, checkpoint)` persists the resolved session before the adapter attempts to send. */
-export function createTasks({ file, deliver, options = async () => ({}), validate = async () => {}, now = Date.now, log = console }) {
+/**
+ * `deliver(task, run, checkpoint)` persists the resolved session before the adapter attempts to send. `gone(task)` says whether the conversation a task names is certainly not there any more (tasks/host.mjs);
+ * it is asked, before a firing, only of the tasks a conversation made for itself.
+ */
+export function createTasks({ file, deliver, options = async () => ({}), validate = async () => {}, gone = () => false, now = Date.now, log = console }) {
   if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(file);
   db.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;');
@@ -75,13 +79,6 @@ export function createTasks({ file, deliver, options = async () => ({}), validat
   // A task a conversation made for itself goes once it has ended (the top of the file): an ended one has had its delivery. Its runs go with it (their rows cascade).
   const spent = (task) => task?.origin === 'session' && task.status === 'ended';
   const drop = (id) => db.prepare('DELETE FROM tasks WHERE id=?').run(id);
-  // Its conversation is gone when its last three firings were all refused with `invalid_session` (tasks/host.mjs: the conversation is not in DSH's list). Not one: a firing right after the plugin starts could find
-  // DSH's list not yet read. DSH tells the plugin of no deletion, and `agent/disposed` also comes for a conversation that merely sleeps, so the refusals are the signal.
-  const GONE_AFTER = 3;
-  const unreachable = (id) => {
-    const runs = db.prepare('SELECT body FROM task_runs WHERE task_id=? ORDER BY seq DESC LIMIT ?').all(id, GONE_AFTER).map((row) => JSON.parse(row.body));
-    return runs.length === GONE_AFTER && runs.every((run) => run.status === 'failed' && run.code === 'invalid_session');
-  };
   // A prior process could have stopped on either side of the send. Never blindly send its prompt again.
   transaction(() => {
     for (const row of db.prepare("SELECT body FROM task_runs WHERE json_extract(body,'$.status')='delivering'").all()) {
@@ -141,8 +138,8 @@ export function createTasks({ file, deliver, options = async () => ({}), validat
         const latest = read(task.id);
         if (!latest) return;
         latest.lastRun = { id: run.id, at: run.at, status: run.status };
-        // The delivery is over: a task a conversation made for itself goes now if this run ended it, or if its conversation is gone.
-        if (spent(latest) || (latest.origin === 'session' && unreachable(latest.id))) drop(latest.id); else write(latest);
+        // The delivery is over: a task a conversation made for itself, which this run ended, goes now.
+        if (spent(latest)) drop(latest.id); else write(latest);
       });
       return success({ run, task: read(task.id) });
     })().finally(() => running.delete(task.id));
@@ -229,7 +226,10 @@ export function createTasks({ file, deliver, options = async () => ({}), validat
     const due = db.prepare("SELECT body FROM tasks WHERE json_extract(body,'$.status')='active' AND json_extract(body,'$.nextRunAt')<=?").all(now());
     for (const row of due) {
       const task = JSON.parse(row.body);
-      if (!running.has(task.id)) await reserve(task, false);
+      if (running.has(task.id)) continue;
+      // Asked before the firing, so that no run is made for it: a task a conversation made for itself, whose conversation is not there any more, has nowhere to go and nobody can see it to delete it.
+      if (task.origin === 'session' && gone(task)) { drop(task.id); continue; }
+      await reserve(task, false);
     }
   });
   return {
