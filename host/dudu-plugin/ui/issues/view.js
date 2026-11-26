@@ -61,6 +61,36 @@ export function listRequest(tab, view, now = Date.now(), search = '') {
 }
 
 const STORAGE_KEY = 'dudu.issues.views.v1';
+const LAYOUT_KEY = 'dudu.issues.layout.v1';
+export const LAYOUTS = ['chat', 'list', 'board'];
+
+/**
+ * The layout (列表, 看板 or 会话) belongs to the whole page, not to a tab: picking a tab, a saved view or a filter never changes it (owner, 2026-11-25: 「点击也不能切换模式」).
+ * `stored` is what the page remembered of it; a page that remembered none yet (the layout used to be kept per tab) takes the one its Active tab was left in.
+ */
+export function readLayout(stored, views) {
+  if (LAYOUTS.includes(stored)) return stored;
+  const before = views?.active?.layout;
+  return LAYOUTS.includes(before) ? before : DEFAULT_VIEW.layout;
+}
+
+/** The layout of the page, remembered in this browser: `[layout, change]`. */
+export function useLayout() {
+  const [layout, setLayout] = useState(() => {
+    try {
+      const stored = localStorage.getItem(LAYOUT_KEY);
+      const layout = readLayout(stored, JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'));
+      if (stored !== layout) localStorage.setItem(LAYOUT_KEY, layout); // the tabs' own layouts are no longer read after this
+      return layout;
+    } catch { return DEFAULT_VIEW.layout; }
+  });
+  const change = useCallback((next) => {
+    if (!LAYOUTS.includes(next)) return;
+    setLayout(next);
+    try { localStorage.setItem(LAYOUT_KEY, next); } catch { /* private window or blocked storage: it just is not remembered */ }
+  }, []);
+  return [layout, change];
+}
 
 function load() {
   try {
