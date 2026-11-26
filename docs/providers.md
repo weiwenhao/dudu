@@ -431,6 +431,14 @@ Antigravity 没配代理时连不上 Google，列模型要等约 23 秒才失败
 `assignment.restartSession` 也是嘟嘟的操作；工作中的不动，`no_op`）、关闭插件或退出 DSH、原生进程自己退出。
 有实际运行的原生子智能体或后台任务时，根智能体的第一段回答不结束 DSH 这一轮；`oar-resident.mjs`
 在同一个进程里继续接收原生完成通知和后续回答。
+被撑开的这一轮里，答完的那一步（末尾不带工具调用的 `step-end`，`oar.mjs` 的 `heldStep`）先扣着，等后台任务做完或有续答
+再一并放出。**这一轮被打断时，先放出这一步再结束**（`releaseHeldStep`：被停止或插件更新打断的 `close()`、原生进程退出、续答的
+一轮没有完成；正常结束本来就放出），因为 DSH 不显示失败尝试里的内容：只靠直播显示的回复，在这一轮被打断后会从界面上消失，
+只留在会话日志的失败记录里。例外：输入被拒收（`input_dropped`）那一轮仍以失败结束，让人看到“没收下这条消息”。2026-11-27 一次强制更新就这样藏掉了主人已经读过的一条回复（事项会话里有个跑两小时的预览服务，
+这一轮被撑开了十分钟）；找回的办法是读会话日志（`~/.dsh/sessions/<工作区>/session-<id>/session.v4.jsonl.zstd`，`zstd -dc`）里那条
+`assistant/attempt` 的 `block-end` 文字。回归测试：`tests/oar-background.test.ts` 里的“native exit and explicit stop…”（停止和退出两种
+结束都要先有 `step-end`），`tests/harness-bridge.test.ts` 里的“an answer that was complete when its turn was cut…”（DSH 看到的是
+`finish: stop`，不是失败）。
 后台等待期间的新输入通过 OAR 的 `deliver()` 投递，由它处理原生根智能体空闲与继续工作的竞态，
 保留原来的输入 ID、图片和投递回执，不重新启动后台命令。显式停止后仍有后台任务的保留会话，
 也继续通过 `deliver()` 接收下一轮。
