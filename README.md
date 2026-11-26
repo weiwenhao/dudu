@@ -16,7 +16,7 @@ Dudu is a multi-agent collaboration workspace built on [DeepSeek Harness](https:
     <img src="docs/images/hero.en.png" width="900" alt="Dudu inside DSH Desktop: the conversations of the issues on the left with one of them open, the Inbox on the top right and the Office below it">
 </div>
 
-Dudu can be managed from your phone too: on iOS, search for dudu in the App Store or join the [TestFlight beta](https://testflight.apple.com/join/TNUPd6n7); on Android, install the apk from [GitHub Release](https://github.com/weiwenhao/dudu/releases).
+Dudu can be managed from your phone too: on iOS, search for "Dudu - Multi-Agent Assistant" in the [App Store](https://apps.apple.com/us/app/dudu-multi-agent-assistant/id6833981505), or join the [TestFlight beta](https://testflight.apple.com/join/TNUPd6n7) for the latest version; on Android, install the apk from [GitHub Release](https://github.com/weiwenhao/dudu/releases).
 
 <div align="center">
   <img src="docs/images/phone.en.png" alt="The mobile app, from left to right: the conversation list; the chat; the inbox; tasks" width="900">
