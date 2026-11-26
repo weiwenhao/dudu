@@ -98,9 +98,9 @@ npm run test:e2e     # end-to-end tests, slower
 
 ### Developing widgets
 
-Just ask Dudu to write one. It writes an `.mjs` file under `widgets/` in its home directory, and a few seconds later the widget shows up under "Add widget" in "Edit layout": no plugin to install, no code to clone. See [WIDGETS.md](host/dudu-plugin/WIDGETS.md) for how to write one.
+Widgets can be written by Dudu itself. It creates an `.mjs` file under `widgets/` in its home directory, and the widget then appears under "Add widget" in "Edit layout". See [WIDGETS.md](host/dudu-plugin/WIDGETS.md) for the format.
 
-To publish a widget for others to use, make it a DSH plugin: see the [widget template](examples/dudu-widget/README.md).
+To distribute a widget to other users, package it as a DSH plugin; see the [widget template](examples/dudu-widget/README.md).
 
 ## Recommended communities
 

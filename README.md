@@ -98,9 +98,9 @@ npm run test:e2e     # 端到端测试，较慢
 
 ### 开发小组件
 
-直接让嘟嘟写。它会在家目录的 `widgets/` 下写一个 `.mjs` 文件，几秒后就能在「编辑版面」的「添加小组件」里看到，不用装插件，也不用克隆代码。写法见 [WIDGETS.md](host/dudu-plugin/WIDGETS.md)。
+小组件可由嘟嘟编写：嘟嘟会在家目录的 `widgets/` 下生成一个 `.mjs` 文件，随后小组件会出现在「编辑版面」的「添加小组件」中。编写方法参见 [WIDGETS.md](host/dudu-plugin/WIDGETS.md)。
 
-要发布给别人用的话，做成 DSH 插件，见[小组件模板](examples/dudu-widget/README.md)（英文）。
+如需发布给其他用户，可将小组件制作成 DSH 插件，参见[小组件模板](examples/dudu-widget/README.md)（英文）。
 
 ## 社区推荐
 
