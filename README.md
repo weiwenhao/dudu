@@ -2,73 +2,73 @@
 
 <img src="docs/images/logo-wide.png" width="300" alt="Dudu">
 
-### An efficient multi-agent collaboration assistant built on DSH
+### 基于 DSH 的多智能体高效协作助手
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE) ![version](https://img.shields.io/badge/version-0.2.1-orange?style=flat-square) ![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2024-339933?style=flat-square&logo=node.js&logoColor=white) ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-%E2%89%A5%200.2.1--alpha.3-4D6BFE?style=flat-square)
 
-[Features](#features) • [Design philosophy](#design-philosophy) • [Development guide](#development-guide) • **English** · [简体中文](README.zh-CN.md)
+[功能介绍](#功能介绍) • [设计理念](#设计理念) • [开发指南](#开发指南) • **简体中文** · [English](README.en.md)
 
 </div>
 
-Dudu is a multi-agent collaboration workspace built on [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). To install it, enter dsh-dudu in DSH's "Add plugin".
+Dudu 是基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 开发的多智能体协作工作台，可以在 DSH 的「添加插件」中输入 dsh-dudu 快速安装。
 
 <div align="center">
-    <img src="docs/images/hero.en.png" width="900" alt="Dudu inside DSH Desktop: the conversations of the issues on the left with one of them open, the Inbox on the top right and the Office below it">
+    <img src="docs/images/hero.zh-CN.png" width="900" alt="Dudu 在 DSH Desktop 里：左边是各个事项的对话和打开的一段对话，右上是收件箱，右下是办公室">
 </div>
 
-Dudu can be managed from your phone too: on iOS, search for "Dudu - Multi-Agent Assistant" in the [App Store](https://apps.apple.com/us/app/dudu-multi-agent-assistant/id6833981505), or join the [TestFlight beta](https://testflight.apple.com/join/TNUPd6n7) for the latest version; on Android, install the apk from [GitHub Release](https://github.com/weiwenhao/dudu/releases).
+Dudu 支持手机端管理，iOS 在 [App Store](https://apps.apple.com/cn/app/dudu-%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93%E5%8D%8F%E4%BD%9C%E5%8A%A9%E6%89%8B/id6833981505) 搜索「Dudu-多智能体协作助手」安装，也可以通过 [TestFlight](https://testflight.apple.com/join/TNUPd6n7) 安装最新版，安卓通过 [GitHub Release](https://github.com/weiwenhao/dudu/releases) 中的 apk 进行安装。
 
 <div align="center">
-  <img src="docs/images/phone.en.png" alt="The mobile app, from left to right: the conversation list; the chat; the inbox; tasks" width="900">
+  <img src="docs/images/phone.zh-CN.png" alt="手机 App，从左到右：会话列表；对话；收件箱；任务" width="900">
 </div>
 
-The workspace's home page is a dashboard: you can arrange its layout freely and develop widgets of your own.
+工作台主页面采用了仪表盘的形式，可以自由组合布局，并且可以开发自己的小组件。
 
 <div align="center">
-  <img src="docs/images/dashboard.en.png" alt="The dashboard in edit mode: the Issues widget on the left uses the board layout, the widget on the right is being resized, and the blue frame and 6×4 show its new size" width="900">
+  <img src="docs/images/dashboard.zh-CN.png" alt="仪表盘的编辑状态：左边的看板用了看板布局，右边的小组件正在调整大小，蓝框和「6×4」是它的新尺寸" width="900">
 </div>
 
-## Features
+## 功能介绍
 
-- Built as a plugin on the DSH foundation, it makes use of everything DSH offers and extends DSH to multiple agents, deeply integrated into the GUI.
-- Supports the Claude, Codex, Antigravity, Pi, Grok, Kimi, OpenCode, CodeBuddy, Devin, Factory, Qwen and Qoder TUI agents, and you can resume a session in its TUI at any time.
-- Easily import the DSH, Claude and Codex sessions you already have.
-- Manage every feature by talking to Dudu, the personal assistant.
-- Inactive agents automatically **go into deep sleep, so they do not take up memory**.
-- Collaboration and session management are built around the Issue board.
-- Manage session status like a chat app: simple, efficient and intuitive.
-- The phone app was built for Dudu, but at heart it is simply the mobile client of DSH.
-- Collectors gather all your information into the inbox, where you manage and distribute it in one place.
-- With scheduled tasks you can send any agent (Pi, DSH, Claude Code, Dudu and so on) to do anything, such as managing email or daily inspections.
-- Check your Claude, Codex and DeepSeek quota at a glance, at the top right of the dashboard.
-- Every widget on the dashboard can be dragged and resized, and you can ask Dudu to write widgets of your own.
-- There is also a cute office: when you are bored, see what your agents are up to.
+- 基于 DSH 底座开发插件，可以利用 DSH 提供的所有功能和便捷性，并将 DSH 扩展至多 Agent 支持且深度集成在 GUI 中。
+- 支持 Claude、Codex、Antigravity、Pi、Grok、Kimi、OpenCode、CodeBuddy、Devin、Factory、Qwen、Qoder TUI Agent，可以随时在 TUI resume 会话。
+- 可以方便地导入已有的 DSH、Claude、Codex 会话。
+- 通过个人助理嘟嘟，用对话的方式管理所有功能。
+- 不活跃的智能体会自动**进入深度休眠，避免占用内存**。
+- 以 Issue 看板为核心，进行协作和会话管理。
+- 像聊天软件一样管理会话状态，简单高效且直观。
+- 手机 APP 虽然是为嘟嘟开发的，但本质就是 DSH 的手机客户端。
+- 收集器把你所有的信息收集到收件箱中，统一管理和分发。
+- 通过定时任务，可以派任意 Agent(Pi、DSH、CC、嘟嘟等)去做任何事情，比如邮件管理、日常巡检。
+- 可以在仪表盘右上角快速查看 Claude、Codex、DeepSeek 的额度。
+- 仪表盘上的每个小组件都可以拖动、调整大小，也可以让嘟嘟写自己的小组件。
+- 还有一个可爱的办公室，无聊的时候可以看看你的 Agent 都在干什么。
 
-## Design philosophy
+## 设计理念
 
-Built on [OAR](https://github.com/botiverse/oar), Dudu brings many kinds of agents (TUIs) together in one GUI, which solves the problem of managing multiple agents. **It manages task status efficiently with a board, and agent status efficiently with sessions.**
+Dudu 基于 [OAR](https://github.com/botiverse/oar) 将多种智能体(TUI)聚合在一个 GUI 界面中，解决多智能体管理问题。并**基于看板高效的管理任务状态，基于会话高效的管理智能体状态。**
 
-The first picture is the workspace I use every day. I usually keep more than 30 agent sessions open, including Claude, Codex and DeepSeek, for personal projects as well as company projects. Dudu solves the problem of working efficiently in exactly this kind of multi-agent, multi-task setting. It has replaced Herdr/Orca, which I had always used before, since the very first version.
+图一就是我日常使用的工作台，我一般常驻打开的智能体会话有 30 多个，包括 Claude、Codex、DeepSeek 等，有个人项目，也有公司项目。Dudu 解决的就是这种多智能体、多任务场景下的工作效率问题。从研发出来的第一个版本开始就已经替代了我过去一直使用的 Herdr/Orca。
 
-Dudu is not a Grok Bot type of product. In a Bot type of product, a person only needs to chat with a few Bots to get a large number of tasks done, but I believe that in real work, talking directly to the agent doing the task is more accurate than having a Bot relay it. Of course, my own use of AI has always been one version behind, so Dudu may gradually add a Bot mode in later versions.
+Dudu 不是 Grok Bot 类型的产品，在 Bot 类型产品中人类只需要和少量的 Bot 聊天就能完成大量的任务，但我认为在实际工作中能够直接和任务智能体对话比通过 Bot 转达更加准确。当然我对 AI 的使用一直都是落后一个版本的，Dudu 在后续版本中可能会逐步加入 Bot 模式。
 
-Personal agents such as OpenClaw, Hermes and Muse have long been very popular, and the DSH foundation makes it very easy to create one, so I also created the personal agent **Dudu**. It is a personal agent similar to Muse, with a memory management system of its own. Dudu can operate every feature: the session board, writing widgets, connectors, collectors, scheduled tasks and so on. In the future it will take on more work to lighten my workload.
+个人智能体比如 OpenClaw、Hermes、Muse 一直非常流行，而基于 DSH 底座能够非常方便的创建个人智能体，所以我同时创建了个人智能体**嘟嘟**，这是一个和 Muse 类似的个人智能体，有着自己的记忆管理系统。嘟嘟可以操作会话看板、编写小组件、连接器、收集器、定时任务等所有功能，在未来嘟嘟将会承担更多的工作来减轻我的工作负担。
 
-## Data directories
+## 数据目录
 
-| Directory | Contents |
+| 目录 | 内容 |
 | :-- | :-- |
-| `~/.dsh` | DSH's data directory, i.e. `DSH_HOME` |
-| `~/.dsh/dudu/home` | The assistant's home directory, also the working directory of its sessions: its Markdown files (`AGENTS.md`, `SOUL.md`, `USER.md`, `MEMORY.md` and so on) and the widgets it writes (`widgets/`). The location can be changed in Settings |
-| `~/.dsh/dudu/assistant/` | The assistant's settings and databases (`settings.json`, `issues.db` and so on) |
+| `~/.dsh` | DSH 的数据目录，即 `DSH_HOME` |
+| `~/.dsh/dudu/home` | 嘟嘟的家目录，也是嘟嘟会话的工作目录，放它的 Markdown 文件（`AGENTS.md`、`SOUL.md`、`USER.md`、`MEMORY.md` 等）和它写的小组件（`widgets/`），可以在设置里改位置 |
+| `~/.dsh/dudu/assistant/` | 嘟嘟的设置和数据库（`settings.json`、`issues.db` 等） |
 
-## Development guide
+## 开发指南
 
-Bug reports and suggestions are welcome in [GitHub Issues](https://github.com/weiwenhao/dudu/issues), and so are pull requests. For a larger change, please open an Issue first to talk about your idea.
+欢迎在 [GitHub Issues](https://github.com/weiwenhao/dudu/issues) 反馈 Bug 和建议，也欢迎提交 Pull Request。改动较大时，建议先开一个 Issue 说说你的想法。
 
-### Development environment
+### 开发环境
 
-You need Node.js 24 or later, Git and [DSH](https://deepseek.com/harness). Building the iOS app also needs Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen); building the Android app also needs Android Studio.
+需要 Node.js 24 或更新版本、Git 和 [DSH](https://deepseek.com/harness)。构建 iOS App 还需要 Xcode 和 [XcodeGen](https://github.com/yonaskolb/XcodeGen)，构建安卓 App 还需要 Android Studio。
 
 ```sh
 git clone https://github.com/weiwenhao/dudu.git
@@ -76,41 +76,41 @@ cd dudu
 npm install
 ```
 
-### Run
+### 运行
 
 ```sh
-npm run desktop:update     # package and install into the DSH Desktop on this computer; macOS only for now
-npm run native:install     # build the iOS app and install it on an iPhone
-npm run android:install    # build the Android app and install it on an emulator
+npm run desktop:update     # 打包并装进本机的 DSH Desktop，目前只支持 macOS
+npm run native:install     # 构建 iOS App 并装到 iPhone
+npm run android:install    # 构建安卓 App 并装进模拟器
 ```
 
-Before building the iOS app, replace the developer team and the bundle ID in `native/ios/project.yml` with your own.
+构建 iOS App 前，把 `native/ios/project.yml` 里的开发者团队和 Bundle ID 换成你自己的。
 
-Without `desktop:update`, run `npm run package:desktop`, then install `dsh-dudu-<version>.tgz` from `.local/release/` in DSH's "Add plugin".
+不用 `desktop:update` 时，运行 `npm run package:desktop`，再在 DSH 的「添加插件」里安装 `.local/release/` 下的 `dsh-dudu-<版本>.tgz`。
 
-### Test
+### 测试
 
 ```sh
 npm run typecheck
-npm test             # unit tests
-npm run test:e2e     # end-to-end tests, slower
+npm test             # 单元测试
+npm run test:e2e     # 端到端测试，较慢
 ```
 
-### Developing widgets
+### 开发小组件
 
-Just ask Dudu to write one. It writes an `.mjs` file under `widgets/` in its home directory, and a few seconds later the widget shows up under "Add widget" in "Edit layout": no plugin to install, no code to clone. See [WIDGETS.md](host/dudu-plugin/WIDGETS.md) for how to write one.
+直接让嘟嘟写。它会在家目录的 `widgets/` 下写一个 `.mjs` 文件，几秒后就能在「编辑版面」的「添加小组件」里看到，不用装插件，也不用克隆代码。写法见 [WIDGETS.md](host/dudu-plugin/WIDGETS.md)。
 
-To publish a widget for others to use, make it a DSH plugin: see the [widget template](examples/dudu-widget/README.md).
+要发布给别人用的话，做成 DSH 插件，见[小组件模板](examples/dudu-widget/README.md)（英文）。
 
-## Recommended communities
+## 社区推荐
 
 <table>
 <tr>
 <td width="200" align="center"><a href="https://linux.do/"><img src="docs/images/friend-linuxdo.png" height="56" alt="LINUX DO"></a></td>
-<td><b><a href="https://linux.do/">LINUX DO</a></b>: "Where possible begins." Its culture is sincerity, friendliness, unity and professionalism.</td>
+<td><b><a href="https://linux.do/">LINUX DO</a></b>：「新的理想型社区」，社区文化是真诚、友善、团结、专业。</td>
 </tr>
 <tr>
 <td width="200" align="center"><a href="https://www.v2ex.com/"><img src="docs/images/friend-v2ex.png" height="56" alt="V2EX"></a></td>
-<td><b><a href="https://www.v2ex.com/">V2EX</a></b>: a community of creative workers, talking about programming, design, hardware, games and more.</td>
+<td><b><a href="https://www.v2ex.com/">V2EX</a></b>：创意工作者的社区，讨论编程、设计、硬件、游戏等话题。</td>
 </tr>
 </table>
