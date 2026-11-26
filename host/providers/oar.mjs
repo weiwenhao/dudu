@@ -383,13 +383,6 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   let stopping;
   let heldStep;
   let yieldedStep = false;
-  // The answered step that native background work holds back. When the turn is cut (stopped, interrupted by a plugin update, the harness gone, its next turn failed) it ends first:
-  // DSH shows nothing of a failed attempt, so an answer that was only streamed would vanish from the screen (2026-11-27: a forced update hid a reply the owner had already
-  // read, in a session held open by a dev server).
-  const releaseHeldStep = () => {
-    if (heldStep) events.push(heldStep);
-    heldStep = undefined;
-  };
   const yieldForInput = () => {
     if (finished || !held || foreground || yieldedStep) return;
     // DSH claims next-step input only after the current adapter stream returns. Release this step, while
@@ -399,10 +392,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     yieldedStep = true;
   };
   async function close({ preserveBackground = false } = {}) {
-    if (!finished) {
-      releaseHeldStep();
-      events.push({ type: 'turn-end', ok: false, error: harnessError('The turn was interrupted.', 'ABORTED') });
-    }
+    if (!finished) events.push({ type: 'turn-end', ok: false, error: harnessError('The turn was interrupted.', 'ABORTED') });
     finished = true;
     clearTimeout(holdTimer);
     signal?.removeEventListener('abort', onAbort);
@@ -423,8 +413,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     finished = true;
     clearTimeout(holdTimer);
     signal?.removeEventListener('abort', onAbort);
-    // A turn that ends in failure shows that failure, and a message the harness dropped is told that way (`input_dropped`): only an end that comes with the answer keeps its step.
-    if (event.ok) releaseHeldStep();
+    if (event.ok && heldStep) events.push(heldStep);
     heldStep = undefined;
     events.push(event);
     events.close();
@@ -455,18 +444,14 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     // The harness taking up a message that waited is the turn the held end was waiting for: whatever ended before that was another turn's.
     let taken = false;
     for (const event of seen) if (event.kind === 'user_message' && event.inputId && waiting.delete(event.inputId)) taken = true;
-    const resumed = taken || seen.some((event) => ACTIVITY.has(event.kind));
-    const ending = seen.some((event) => event.kind === 'turn_ended' && event.outcome?.kind !== 'completed')
-      || (record.kind === 'response' && record.body?.kind === 'exited');
-    if (held && (resumed || ending)) {
+    if (held && (taken || seen.some((event) => ACTIVITY.has(event.kind) || (event.kind === 'turn_ended' && event.outcome?.kind !== 'completed'))
+      || (record.kind === 'response' && record.body?.kind === 'exited'))) {
       clearTimeout(holdTimer);
       holdTimer = undefined;
       held = undefined;
       normalizer.reopen();
       setForeground(true);
-      // A follow-up answer goes on in the same step. Where the harness is gone or its next turn failed there is nothing to join: the answered step ends before the failure.
-      if (heldStep && !ending) events.push({ type: 'text-delta', text: '\n\n' });
-      else releaseHeldStep();
+      if (heldStep) events.push({ type: 'text-delta', text: '\n\n' });
       heldStep = undefined;
     }
     for (const event of normalizer.feed(record)) {

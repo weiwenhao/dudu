@@ -84,20 +84,6 @@ test('model switching keeps the full DSH transcript outside native harness conte
   assert.equal(finishOf(await pending).replayState.nativeSessionId, 'native-old');
 });
 
-test('an answer that was complete when its turn was cut is a finished answer for DSH, not a failed attempt', async () => {
-  // 2026-11-27: a forced update hid a reply the owner had already read. DSH records nothing of a failed attempt, so what the adapter gives it before the cut decides what stays on the screen.
-  const { driver, adapter } = setup();
-  const pending = collect(adapter.stream({ sessionId: 's1', messages: [context('c'), user('u1', 'go')] }));
-  await new Promise((resolve) => setImmediate(resolve));
-  const handle = driver.handles[0];
-  handle.push({ type: 'text-delta', text: 'All done.' });
-  handle.push({ type: 'step-end', reason: 'stop' });
-  handle.push({ type: 'turn-end', ok: false, error: harnessError('The turn was interrupted.', 'ABORTED') });
-  const chunks = await pending;
-  assert.deepEqual(chunks.find((chunk) => chunk.type === 'block-end')!.block, { type: 'text', text: 'All done.' });
-  assert.deepEqual(finishOf(chunks).reason, { kind: 'stop' });
-});
-
 test('a request is the opener of a turn, one more step of it, or steering that arrived on the way', () => {
   const fresh = analyzeRequest([user('u1', 'first'), assistant([], { nativeSessionId: 'n1' }), context('c'), user('u2', 'second')], 'fake');
   assert.equal(fresh.continuing, false);

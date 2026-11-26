@@ -244,10 +244,6 @@ test('native exit and explicit stop still end a DSH turn held for a background s
     assert.equal(seen.events.at(-1).ok, false);
     assert.equal(seen.events.at(-1).error.code, stopped ? 'ABORTED' : 'HARNESS_EXITED');
     assert.equal(seen.events.filter(event => event.type === 'turn-end').length, 1);
-    // The answer was complete when the turn was cut (2026-11-27: a forced update hid a reply the owner had read, because DSH shows nothing of a failed attempt): its step ends before the turn does.
-    const kinds = seen.events.map(event => event.type);
-    assert.ok(kinds.includes('step-end') && kinds.indexOf('step-end') < kinds.indexOf('turn-end'), `the answered step ends before the turn is cut (${stopped ? 'stop' : 'exit'}): ${kinds.join()}`);
-    assert.equal(seen.events.filter(event => event.type === 'text-delta').map(event => event.text).join('').startsWith('Polling.'), true);
   }
 });
 
