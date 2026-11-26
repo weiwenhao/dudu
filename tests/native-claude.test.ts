@@ -179,6 +179,24 @@ test('a conversation is turns of steps: an assistant message is one step however
   assert.equal(second.prompt, 'thanks');
 });
 
+test('a message typed while Claude works is the input of the step that follows it, not a turn of its own', async (t) => {
+  // Claude Code hands what was typed meanwhile over with its next request: it is written as an attachment, not as a user record.
+  const queued = (uuid: string, parentUuid: string, prompt: unknown) => ({ parentUuid, isSidechain: false, type: 'attachment', uuid, timestamp: stamp(), attachment: { type: 'queued_command', commandMode: 'prompt', prompt } });
+  const source = await transcript(t, [
+    user('u1', null, 'start the build'),
+    assistant('a1', 'u1', 'm1', { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'make' } }),
+    queued('q1', 'a1', [{ type: 'text', text: 'and run the tests too' }]),
+    user('r1', 'q1', [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'done' }], { toolUseResult: { stdout: 'done' } }),
+    assistant('a2', 'r1', 'm2', { type: 'text', text: 'Built, and the tests pass.' }),
+    queued('q2', 'a2', 'one more thing'),
+  ]);
+  const history = await readClaudeHistory(source);
+  assert.equal(history.turns.length, 1, 'what was typed meanwhile is not a turn of its own');
+  assert.deepEqual(history.turns[0].steps.map((step: { input?: { prompt: string } }) => step.input?.prompt), [undefined, 'and run the tests too', 'one more thing']);
+  assert.deepEqual(history.turns[0].steps[1].blocks, [{ type: 'text', text: 'Built, and the tests pass.' }]);
+  assert.equal(history.turns[0].steps[2].blocks.length, 0, 'a message nothing followed is a step that holds only the message');
+});
+
 test('what Claude Code wrote itself, sidechains and a branch the person rewound from are not in the conversation', async (t) => {
   const source = await transcript(t, [
     user('u1', null, 'first question'),

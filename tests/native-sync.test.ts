@@ -152,6 +152,67 @@ test('a TUI rewind or an older native store does not overwrite or replay a newer
   assert.deepEqual(nativeUpdates({ events, history: history([turn('first', 'different'), turn('another branch', 'three')]), route: 'claude', sessionId: 'dsh-1' }), []);
 });
 
+// 2026-11-27: a session that DSH's own loop had been running lost the last answer of a turn (it was cut before DSH wrote it) and the synchronization, which should have
+// brought it back from the harness's store, did nothing for the session: DSH's newest user message had no counterpart in the store. Three things made it so, and each is here.
+const dshTurn = (events: any[], number: number, steps: any[]) => {
+  const push = (type: string, data: any, extra: any = {}) => events.push({ seq: events.at(-1).seq + 1, time: 5000 + events.length, type, data, ...extra });
+  const typed = (id: string, content: any[]) => push('user/message', { id, role: 'user', source: { kind: 'user' }, content }, { surfaceOp: 'append' });
+  push('turn/start', { turn: number });
+  steps.forEach((step, index) => {
+    push('step/start', { turn: number, step: index + 1 });
+    for (const input of step.inputs ?? []) typed(input.id, input.content);
+    if (step.context) push('user/message', { id: `ctx-${number}-${index}`, role: 'user', source: { kind: step.context }, content: [{ type: 'text', text: 'Time sampled while preparing the step.' }] }, { surfaceOp: 'append' });
+    if (step.blocks) push('assistant/message', { turn: number, step: index + 1, message: { role: 'assistant', content: step.blocks, source: { kind: 'model', provider: 'claude', model: 'test', replayState: { harness: 'claude', nativeSessionId: 'native-1' } } } }, { surfaceOp: 'append' });
+    push('step/end', { turn: number, step: index + 1 });
+  });
+};
+const words = (events: any[]) => events.filter((event: any) => event.type === 'assistant/message').flatMap((event: any) => event.data.message.content.filter((block: any) => block.type === 'text').map((block: any) => block.text));
+
+test('a message with pictures, DSH\'s own time note and a message typed while the harness worked do not blind the synchronization to an answer that DSH lost', () => {
+  const earlier = turn('earlier question', 'earlier answer');
+  const events = initial([earlier]);
+  // The turn as DSH's loop wrote it: the picture before the words (as DSH's composer writes it), its own time note, a message typed in the middle, and no record of the last answer.
+  dshTurn(events, 2, [
+    { inputs: [{ id: 'u2', content: [{ type: 'image', attachment: 'pic-1' }, { type: 'text', text: 'look at this' }] }], context: 'time-context',
+      blocks: [{ type: 'text', text: 'Looking.' }, { type: 'tool-call', id: 'read-1', name: 'Read', arguments: '{}' }] },
+    { inputs: [{ id: 'u3', content: [{ type: 'text', text: 'and the other one too' }] }], blocks: [{ type: 'tool-call', id: 'read-2', name: 'Read', arguments: '{}' }] },
+    {},
+  ]);
+  events.push({ seq: events.at(-1).seq + 1, time: 9000, type: 'turn/end', data: { turn: 2, reason: { kind: 'error', error: { message: 'The turn was interrupted.', code: 'ABORTED' } } } });
+  // The harness's store: the picture after the words, the message typed meanwhile as the input of the step that took it up (one step later than where DSH put it), and the answer DSH never recorded.
+  const lost = { ...turn('look at this', ''), id: 'two', parts: [{ type: 'text', text: 'look at this' }, { type: 'image', skipped: true }], complete: true,
+    steps: [
+      { blocks: [{ type: 'text', text: 'Looking.' }, { type: 'tool-call', id: 'read-1', name: 'Read', arguments: '{}' }], calls: [{ id: 'read-1' }] },
+      { blocks: [{ type: 'tool-call', id: 'read-2', name: 'Read', arguments: '{}' }], calls: [{ id: 'read-2' }] },
+      { input: { id: 'q1', prompt: 'and the other one too' }, blocks: [{ type: 'text', text: 'Both look fine.' }], calls: [] },
+    ], results: new Map([['read-1', { output: 'file' }], ['read-2', { output: 'file' }]]) };
+  const update = history([earlier, lost]);
+  const added = nativeUpdates({ events, history: update, route: 'claude', sessionId: 'dsh-1' });
+  assert.deepEqual(words(added), ['Both look fine.'], 'the answer DSH lost is the only thing added');
+  assert.equal(added.some((event: any) => event.type === 'user/message'), false, 'nothing the person said is said twice');
+  assert.deepEqual(nativeUpdates({ events: [...events, ...added], history: update, route: 'claude', sessionId: 'dsh-1' }), [], 'and once added there is nothing more');
+});
+
+test('a message DSH has that the harness never saw still keeps the synchronization from appending anything', () => {
+  const earlier = turn('earlier question', 'earlier answer');
+  const events = initial([earlier]);
+  dshTurn(events, 2, [{ inputs: [{ id: 'u2', content: [{ type: 'text', text: 'typed in DSH, never delivered' }] }], context: 'time-context' }]);
+  assert.deepEqual(nativeUpdates({ events, history: history([earlier, turn('something else', 'native-only answer')]), route: 'claude', sessionId: 'dsh-1' }), []);
+});
+
+test('a message typed while the harness worked, which an older reading of the store did not know, does not stop what comes after it', () => {
+  const base = { ...turn('go', 'Started.'), id: 'one' };
+  // DSH imported the turn without the message typed in the middle: it has the answer of that step but not the message.
+  const events = initial([{ ...base, steps: [base.steps[0], { blocks: [{ type: 'text', text: 'Done.' }], calls: [] }] }]);
+  const update = history([{ ...base, steps: [
+    base.steps[0],
+    { input: { id: 'q', prompt: 'and this too' }, blocks: [{ type: 'text', text: 'Done.' }], calls: [] },
+    { blocks: [{ type: 'text', text: 'Extra.' }], calls: [] },
+  ] }]);
+  const added = nativeUpdates({ events, history: update, route: 'claude', sessionId: 'dsh-1' });
+  assert.deepEqual(words(added), ['Extra.']);
+});
+
 for (const api of ['legacy', 'query']) test(`live synchronization publishes through Session.append during idle maintenance and never takes a second writer (${api})`, async () => {
   const events = initial([turn('question', 'answer')]);
   let maintenance = 0;

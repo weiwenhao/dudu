@@ -680,6 +680,18 @@ and cannot be renewed”）使上一轮失败，主人重新登录后发“继�
 
 - **原生会话同步的代价**（2026-11-07，主人在手机上发消息转了约 4 秒：“为什么会一直转转转发不出去？”）：面板的客户端每 5 秒为打开的会话、每 15 秒为所有会话请求 `sessions/sync`，`loadOnce` 过去的做法是先把整份 Claude 记录读一遍（这个对话的记录 659 MB、上千张图，单独读一遍实测 5.07 秒），再为图片读第二遍（没有缓存），读完才由 `sync.mjs` 发现会话的智能体正在工作而推迟；推迟时 `checked` 不记，所以下一次请求又全部重来。结果是 DSH 宿主的主线程几乎一直满载（`ps` 看是约 96% CPU，`sample` 看全在 `fs` 回调里的 JS），手机的请求排在后面。现在：智能体正在 DSH 里工作的会话**一个字节都不读**（`sync.mjs` 的 `busy`，两处共用一条规则）；为图片读的那一遍和历史一样按记录的状态（大小加修改时间）缓存 2 分钟；被推迟的同步，同一状态的记录 60 秒内不再试（`fresh` 或记录变大除外）。测试 `tests/native-sessions.test.ts` 的 “the synchronization does not read the transcript…”（监视 `fs.createReadStream`，数假智能体被问了几次；三条各去掉一条都会失败）。代价仍随记录大小线性增长：只看末尾就能判断“有没有新东西”的做法没做。**尚未装进主人的 Desktop**（`desktop:update`）。
 
+- **原生同步怎样把两边对上账**（2026-11-27，`host/providers/native/sync.mjs` 的 `nativeUpdates`，纯函数）：同步只追加“两边共同的最后一条用户消息”之后的原生内容，DSH 已有的记录从不改写；
+  DSH 里最新的一条“人说的话”在原生记录里找不到时，认为 DSH 超前或原生被回退过，整个会话什么都不补，而且不提示。这条保守规则本身没有错，但对账的几处曾把不是人说的话、或只是写法不同的话
+  当成“对不上”，让同步对整个会话变瞎：NAT-1（嘟嘟里跑的 Claude 会话）因此在一次强制更新把最后一条回复藏起来之后补不回来（那条回复只留在 DSH 日志里失败的尝试中，见 `docs/` 之外的复盘：
+  记忆笔记 `forced-update-hides-held-answers-2026-11-27`）。现在的规则：①DSH 自己为它的模型写的 `user/message`（`time-context`、`runtime-context`、`agent-instructions`、`skill-catalog`、
+  `model-selection`、`user-approval`、`repeat-tool-reminder`）不算人说的话（`DSH_CONTEXT`）；②两边的同一条消息按文字对：图片的位置和个数不比（DSH 把图片写在文字前，Claude Code 写在文字后；
+  丢掉的图片在文字里是 `[image]` 标记），只有纯图片的消息才比个数；③Claude 记录里，回合中间发的消息（Claude Code 把它作为下一次请求的附件 `queued_command` 交给模型，不是 `user` 记录；
+  `queue-operation` 里写着 `absorbed_mid_turn`）读成下一步的 `input`，和 Codex 的读法一致（`claude-history.mjs` 的 `turnsOf`）；④回合中间发的消息，DSH 写在它到达时开始的那一步，原生写在
+  吸收它的那次请求，可以差好几步：核对内容时不比它的位置，DSH 已有的（`known`）不再说第二遍。仍然保守的情形：DSH 最新的人说的话原生没有（比如发出后几秒就被停止、harness 没来得及记）时不补，
+  要等之后有一条两边都有的消息才恢复对账，而那时只补“最后一个对上的回合”，更早丢的回复补不回来：所以修复要在断点之后的第一次同步（打开、启动或 15 秒内）完成。
+  验证：用 NAT-1 的真实数据离线、只读地重放，断点后的状态补回丢掉的 279 字回复（`turn/start`、`step/start`、`assistant/message`、`step/end`、`turn/end` 共 5 条，作为紧接在失败回合后的新回合），
+  55 个关联 Claude 会话重放，新旧代码都补 0 条、都没有报错；单元测试 `tests/native-sync.test.ts` 三条（含按这次事故的形状做的）和 `tests/native-claude.test.ts` 一条，旧代码下前两条红。没有在真实 DSH 里试过。
+
 团队入口使用 DSH 自己的 Agent Team 扩展；测试启用宿主随附的 `experimental-agent-team` 及其客户端模块，
 不从 npm 安装另一个版本，不复制其 UI。当前 Desktop 已配置该扩展的 profile。
 

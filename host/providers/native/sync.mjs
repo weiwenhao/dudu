@@ -2,23 +2,34 @@ import { buildSessionEvents } from './session-events.mjs';
 import { canReadSessionHistory, readSessionHistory } from '../../dsh-session-history.mjs';
 import { userContent } from './images.mjs';
 
-const promptOf = (content) => (typeof content === 'string' ? content : (content ?? []).map((block) => block.type === 'text' ? block.text : block.type === 'image' ? '[image]' : '').join('\n')).replace(/\s+/g, ' ').trim();
+// What DSH writes as a user message for its own models, not for the harness: the person did not type it and the harness's store does not have it. Anything else (what was typed,
+// a skill's expansion, a prompt the plugin sent for them) is a message both sides must agree on.
+const DSH_CONTEXT = new Set(['time-context', 'runtime-context', 'agent-instructions', 'skill-catalog', 'model-selection', 'user-approval', 'repeat-tool-reminder']);
+const typed = (event) => event.type === 'user/message' && event.surfaceOp === 'append' && !DSH_CONTEXT.has(event.data?.source?.kind);
+
+// A message as the two sides can agree on it: its words, whitespace aside. Pictures stand where each side puts them (DSH writes them before the words, Claude Code after; a kept one is an
+// image block, one that was lost is a marker in the text), so they count only for a message that is nothing but pictures.
+const promptOf = (content) => {
+  const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : (content ?? []);
+  const text = blocks.map((block) => (block.type === 'text' ? block.text : '')).join('\n');
+  const words = text.replaceAll('[image]', '').replace(/\s+/g, ' ').trim();
+  const pictures = blocks.filter((block) => block.type === 'image').length + (text.match(/\[image\]/g)?.length ?? 0);
+  return words || (pictures ? `[${pictures} pictures]` : '');
+};
 const supported = (block) => ['text', 'reasoning', 'tool-call'].includes(block.type);
 
 // The TUI can finish the answer that was already imported. Consume its existing blocks, including a partial text block,
 // before adding the rest. A different branch or a source behind DSH is left alone.
-function remainingSteps(turn, events) {
+function remainingSteps(turn, events, known) {
   const seen = events.flatMap((event) => event.type === 'assistant/message'
     ? event.data.message.content.filter(supported).map((block) => ({ ...block }))
-    : event.type === 'user/message' && event.surfaceOp === 'append' ? [{ type: 'input', text: promptOf(event.data.content) }] : []);
+    : []);
   const steps = [];
   for (const step of turn.steps) {
     let input = step.input;
-    if (input && seen.length) {
-      if (seen[0].type !== 'input' || seen[0].text !== promptOf(userContent(input))) return null;
-      seen.shift();
-      input = undefined;
-    }
+    // DSH writes a message typed in the middle where it arrived, at the step that began then; Claude Code at the request that took it up, which can be several steps later. A message DSH has
+    // (`known`: `nativeUpdates` paired it) is not said again wherever the store puts it, and where DSH already has this step's words the message is behind them; any other is new.
+    if (input && (seen.length || known?.has(input))) input = undefined;
     const blocks = [];
     for (const original of step.blocks) {
       let block = { ...original };
@@ -65,7 +76,7 @@ const openTurn = (events) => {
 /** Append only native history after the last shared user turn. Existing DSH events are never rewritten. */
 export function nativeUpdates({ events, history, route, sessionId }) {
   history = { ...history, turns: history.turns.map(available) };
-  const users = events.filter((event) => event.type === 'user/message' && event.surfaceOp === 'append');
+  const users = events.filter(typed);
   if (!history.turns.length) return [];
   // A history that is only the end of the conversation (`partial`: a long one is read from its end) is matched against the end of what DSH has. From the start, its first
   // prompt would match an earlier, identical one ("go on") and the update would be missed.
@@ -74,6 +85,7 @@ export function nativeUpdates({ events, history, route, sessionId }) {
   let matched = -1;
   let last;
   let first;
+  const known = new Set();
   for (let index = 0; index < history.turns.length; index++) {
     const prompt = promptOf(userContent(history.turns[index]));
     const found = users.findIndex((event, i) => i >= cursor && promptOf(event.data.content) === prompt);
@@ -87,13 +99,14 @@ export function nativeUpdates({ events, history, route, sessionId }) {
       if (next < 0) break;
       cursor = next + 1;
       last = users[next];
+      known.add(input);
     }
   }
   // DSH has an input not yet visible in the TUI store, or the TUI was rewound onto another branch.
   if (users.length && (!last || last !== users.at(-1))) return [];
   const opened = openTurn(events);
   if (opened && (!first || opened.seq < first.seq && events.findLast((event) => event.type === 'request/header')?.seq > first.seq)) return [];
-  const steps = first ? remainingSteps(history.turns[matched], events.filter((event) => event.seq > first.seq)) : [];
+  const steps = first ? remainingSteps(history.turns[matched], events.filter((event) => event.seq > first.seq), known) : [];
   if (!steps) return [];
   const previousEnd = events.findLast((event) => event.type === 'turn/end');
   const previousReply = events.findLast((event) => event.type === 'assistant/message')?.data.message.source.replayState;
