@@ -11,15 +11,15 @@ import { OarResident } from './oar-resident.mjs';
 // replays, and the choices OAR leaves to its host (which tools a mode may use, which sandbox a mode gets).
 
 // A harness's models are read from the harness itself: a process of its own, and for most of them a trip to the vendor's servers.
-// What was read is served as it is, however old, and ASKING for it never starts a reading (owner, 2026-11-27: with Claude selected, a menu must not wake Codex or Antigravity). DSH's
-// catalog asks every harness at once, whoever asks (its first load, the phone, 嘟嘟's own lookups), and for Antigravity a reading is a conversation left in its own store (about two
-// hundred a day, 745 in four days). A harness is read when nothing is known of it yet (and again, after RETRY_MS and twice as long each time, while it cannot say), when someone made the
-// list stale on purpose (`refreshModels`: Settings > Providers, a changed setting), and when a session starts on it and the list is older than MODEL_TTL (`freshen`).
-// Only the very first ask waits, and then at most FIRST_WAIT_MS: DSH's model catalog waits for every harness at once, and one that cannot reach its servers takes about 24 s to give up
-// (owner, 2026-11-24: the phone's catalog.get).
-const MODEL_TTL = 5 * 60_000;
+// What was read is kept for good (on disk, `modelCache`, so that a restart finds it) and served as it is, however old; ASKING for it never starts a reading, and neither does a session that
+// starts on the harness (owner, 2026-11-27: with Claude selected, a menu must not wake Codex or Antigravity; read anew only when a person asks). DSH's catalog asks every harness at once, whoever
+// asks (its first load, the phone, 嘟嘟's own lookups), and for Antigravity a reading is a conversation left in its own store (about two hundred a day, 745 in four days). A harness is read
+// when nothing is known of it yet (and again, after RETRY_MS and twice as long each time, while it cannot say), when it was updated (another version or path than the one that was read), and when
+// someone made the list stale on purpose (`refreshModels`: Settings > Providers > Detect, a changed setting).
+// Only the very first ask of a harness that has nothing kept waits, and then at most FIRST_WAIT_MS: DSH's model catalog waits for every harness at once, and one that cannot reach its servers takes
+// about 24 s to give up (owner, 2026-11-24: the phone's catalog.get).
 const RETRY_MS = 60_000;
-// A harness that cannot say is asked again after RETRY_MS, and after twice as long each time it fails again, never after more than this (nor than its own `modelsTtl`, when that is shorter).
+// A harness that cannot say is asked again after RETRY_MS, and after twice as long each time it fails again, never after more than this.
 const MAX_RETRY_MS = 60 * 60_000;
 const FIRST_WAIT_MS = 3_000;
 // DSH's client keeps the first model catalog it gets until it hears `llm/models-updated` (or reconnects), so a list that is read after the
@@ -584,7 +584,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
  * A harness provider on an OAR runtime. `session` returns what is specific to the harness in the options of one OAR
  * session (environment, tool limits, launch arguments) from the DSH access mode.
  */
-export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, steering = true, quota, childUsage, backgroundTasks = true, defaultEnabled = true, folds = false, modelsTtl = MODEL_TTL, listingInFolder = false, listingCleanup, modelsMark }) {
+export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, steering = true, quota, childUsage, backgroundTasks = true, defaultEnabled = true, folds = false, listingInFolder = false, listingCleanup, modelsMark }) {
   const known = new Set(tools.map((tool) => tool.name));
   const environment = (extra) => ({ ...scrubbedEnvironment(scrub.patterns, scrub), ...extra });
 
@@ -619,6 +619,8 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
       let loading;
       let generation = 0;
       let failures = 0; // readings in a row that could not say
+      const version = text(installation?.version);
+      const command = text(installation?.command);
       // The list DSH was last given (`listModels`): a reading that ends with another one says so (`modelsChanged`).
       let handedOut;
       const readModels = () => {
@@ -631,9 +633,8 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
           // (and the harness is the same version), those are still its models and no session is started for them.
           let mark = null;
           try { mark = (await modelsMark?.({ installation, env: environmentOf() })) ?? null; } catch { /* read in full */ }
-          const version = text(installation?.version);
           const kept = mark && modelCache ? await modelCache.get(id).catch(() => undefined) : undefined;
-          if (mark && kept && kept.mark === mark && kept.version === version) models = kept.models.filter((model) => !model.disabled);
+          if (mark && kept && kept.mark === mark && kept.version === version && kept.command === command) models = kept.models.filter((model) => !model.disabled);
           else {
             // A folder of its own, so that what a harness leaves behind of a reading (Antigravity: an empty conversation) belongs to no one's work, and is told from it.
             let cwd = homedir();
@@ -644,15 +645,15 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
               if (listed.kind === 'ok') models = listed.models.filter((model) => !model.disabled);
             } catch { /* the fallback below */ }
             if (cwd === own) { try { await listingCleanup?.({ env: environmentOf(), folder: cwd, since: began }); } catch { /* what is left stays for the next reading to clear */ } }
-            if (models?.length && mark && modelCache) void modelCache.set(id, { mark, version, models });
+            if (models?.length && modelCache) void modelCache.set(id, { mark: mark ?? '', version, command, models });
           }
           // Settings changed while it was being read (a proxy, a path): this answer belongs to the old ones.
           if (mine !== generation) return;
-          if (models?.length) { failures = 0; loaded = { until: Date.now() + modelsTtl, models, read: true }; }
+          if (models?.length) { failures = 0; loaded = { until: 0, models, read: true }; }
           // A harness that cannot say keeps what it said before.
           else {
             failures += 1;
-            loaded = { until: Date.now() + Math.min(modelsTtl, MAX_RETRY_MS, RETRY_MS * 2 ** (failures - 1)), models: loaded?.read ? loaded.models : fallbackModels, read: loaded?.read === true };
+            loaded = { until: Date.now() + Math.min(MAX_RETRY_MS, RETRY_MS * 2 ** (failures - 1)), models: loaded?.read ? loaded.models : fallbackModels, read: loaded?.read === true };
           }
           if (handedOut && modelsSignature(handedOut) !== modelsSignature(loaded.models)) {
             handedOut = loaded.models;
@@ -665,6 +666,11 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
       // `toDsh`: the answer goes to DSH, which keeps it (noted at the moment it is given, before a reading that ends right after can be compared with it).
       const load = async ({ toDsh = false } = {}) => {
         const give = (models) => { if (toDsh) handedOut = models; return models; };
+        // A restart finds what was read before, if the harness is the one that was read (the same version, at the same path): it is not read again.
+        if (!loaded && modelCache) {
+          const kept = await modelCache.get(id).catch(() => undefined);
+          if (!loaded && kept && kept.version === version && kept.command === command) loaded = { until: 0, models: kept.models.filter((model) => !model.disabled), read: true };
+        }
         // What the harness said stands, however old, until someone makes it stale on purpose; a harness that has said nothing yet is asked again when its wait is over.
         if (loaded && !loaded.stale && (loaded.read || Date.now() < loaded.until)) return give(loaded.models);
         const reading = readModels();
@@ -678,11 +684,8 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
         loaded ??= { until: 0, models: fallbackModels, read: false };
         return give(loaded.models);
       };
-      // A session starts on this harness: a list that is older than `modelsTtl` is read anew in the background, so that the next menu has what the harness offers now.
-      const freshen = () => { if (loaded?.read && !loaded.stale && !loading && Date.now() >= loaded.until) readModels().catch(() => {}); };
       const optionsFor = async ({ resume, cwd, model, effort, permission, signal, retained }) => {
         if (signal?.aborted) throw abortReason(signal);
-        freshen();
         await assertDirectory(cwd);
         if (!retained) await before?.({ resume });
         const specific = sessionFor({ permission, signal });

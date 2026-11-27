@@ -17,9 +17,9 @@ test('what a harness said of its models is kept across restarts, with what it wa
   const file = await folder(t);
   const first = createModelCache(file);
   assert.equal(await first.get('antigravity'), undefined, 'nothing is known at first');
-  await first.set('antigravity', { mark: 'abc', version: '1.5.18', models: MODELS });
+  await first.set('antigravity', { mark: 'abc', version: '1.5.18', command: '/home/me/.local/bin/agy', models: MODELS });
   const second = createModelCache(file);
-  assert.deepEqual(await second.get('antigravity'), { mark: 'abc', version: '1.5.18', models: MODELS });
+  assert.deepEqual(await second.get('antigravity'), { mark: 'abc', version: '1.5.18', command: '/home/me/.local/bin/agy', models: MODELS });
   assert.equal(await second.get('grok'), undefined);
   await second.set('grok', { mark: 'x', version: '1', models: [{ id: 'grok-4' }] });
   assert.deepEqual(Object.keys(JSON.parse(await readFile(file, 'utf8'))).sort(), ['antigravity', 'grok'], 'one harness does not replace another');

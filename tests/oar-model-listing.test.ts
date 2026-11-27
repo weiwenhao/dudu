@@ -67,22 +67,18 @@ test('a list that was read is served as it is, however old: asking for it never 
   assert.equal(asked(), 2, 'and the next ask starts nothing');
 });
 
-test('a session that starts reads a list that is older than its lifetime, in the background, and not before', async (t) => {
+test('a session that starts on the harness reads nothing either: what was read is kept for good', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const { driver, asked } = harness([() => Promise.resolve(ok(OLD)), () => Promise.resolve(ok(NEW))]);
   assert.deepEqual(await ids(driver), ['opus']);
-  t.mock.timers.tick(5 * 60_000 - 1);
+  t.mock.timers.tick(30 * DAYS);
   await startSession(driver);
   await settle();
-  assert.equal(asked(), 1, 'a session that starts within the five minutes leaves it as it is');
-  t.mock.timers.tick(2);
-  await startSession(driver);
-  await settle();
-  assert.equal(asked(), 2, 'one that starts after them reads it anew');
-  assert.deepEqual(await ids(driver), ['opus', 'sonnet']);
+  assert.equal(asked(), 1, 'a month later, a session starts on it: the harness is not asked');
+  assert.deepEqual(await ids(driver), ['opus']);
 });
 
-test('a harness that fails to read again keeps what it said before', async (t) => {
+test('a harness that fails to read again keeps what it said before, and is read again when someone asks again', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const { driver, asked } = harness([() => Promise.resolve(ok(OLD)), fail, () => Promise.resolve(ok(NEW))]);
   await ids(driver);
@@ -92,10 +88,13 @@ test('a harness that fails to read again keeps what it said before', async (t) =
   assert.equal(asked(), 2);
   t.mock.timers.tick(HOURS);
   assert.deepEqual(await ids(driver), ['opus']);
-  assert.equal(asked(), 2, 'asking does not try again');
   await startSession(driver);
   await settle();
-  assert.equal(asked(), 3, 'a session that starts once its wait is over does');
+  assert.equal(asked(), 2, 'neither asking nor a session that starts tries again');
+  driver.refreshModels();
+  await ids(driver);
+  await settle();
+  assert.equal(asked(), 3, 'a person asking again does');
   assert.deepEqual(await ids(driver), ['opus', 'sonnet']);
 });
 
@@ -170,15 +169,9 @@ async function waits(t: any, driver: any, asked: () => number, minutes: number[]
 
 test('a harness that has said nothing yet is asked after a minute, two, four... at most an hour', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
-  const { driver, asked } = harness(Array.from({ length: 10 }, () => fail), undefined, { modelsTtl: 6 * HOURS });
+  const { driver, asked } = harness(Array.from({ length: 10 }, () => fail));
   await waits(t, driver, asked, [1, 2, 4, 8, 16, 32, 60, 60]);
   assert.deepEqual(await ids(driver), ['default'], 'what the plugin knows until the harness says');
-});
-
-test('a harness with the usual five minutes is never made to wait longer than that after a failure', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
-  const { driver, asked } = harness(Array.from({ length: 8 }, () => fail));
-  await waits(t, driver, asked, [1, 2, 4, 5, 5]);
 });
 
 test('a harness that asks for it is read in a folder of its own, which is cleared after every reading', async () => {
@@ -238,8 +231,8 @@ test('a harness whose models can be checked cheaply is read in full only when wh
   await ids(driver);
   await started[2].promise;
   await settle();
-  assert.equal(asked(), 3, 'the harness cannot say: read in full, and nothing is kept for it');
-  assert.equal(kept.get('fake').mark, 'two');
+  assert.equal(asked(), 3, 'the harness cannot say: read in full');
+  assert.equal(kept.get('fake').mark, '', 'and kept without a mark, which no later mark will equal: the next check reads in full too');
 });
 
 test('a new version of the harness is read in full, the same version is not', async () => {
@@ -256,4 +249,41 @@ test('a new version of the harness is read in full, the same version is not', as
   const updated = harness([() => Promise.resolve(ok(NEW))], undefined, extra, { modelCache, installation: installation('1.5.19') });
   assert.deepEqual(await ids(updated.driver), ['opus', 'sonnet']);
   assert.equal(updated.asked(), 1);
+});
+
+// 2026-11-27 (owner): the models are kept for good, and read anew only when a person asks, the harness was updated, or there is nothing yet.
+test('what was read is found again after a restart, and the harness is not asked', async () => {
+  const kept = new Map<string, any>();
+  const modelCache = { get: async (id: string) => kept.get(id), set: async (id: string, entry: any) => { kept.set(id, entry); } };
+  const installation = (version: string, command = '/bin/fake') => ({ kind: 'available', via: 'executable', command, version });
+  const first = harness([() => Promise.resolve(ok(OLD))], undefined, {}, { modelCache, installation: installation('2.1.0') });
+  assert.deepEqual(await ids(first.driver), ['opus']);
+  await settle();
+  assert.deepEqual([kept.get('fake').version, kept.get('fake').command, kept.get('fake').mark], ['2.1.0', '/bin/fake', ''], 'kept with what it was read for');
+  const restarted = harness([], undefined, {}, { modelCache, installation: installation('2.1.0') });
+  restarted.driver.warmModels();
+  assert.deepEqual(await ids(restarted.driver), ['opus'], 'at once, with no waiting for the harness');
+  await settle();
+  assert.equal(restarted.asked(), 0, 'and nothing was started for it');
+  restarted.driver.refreshModels();
+  await ids(restarted.driver).catch(() => {});
+});
+
+test('a harness that was updated or moved is read again, and one that someone asked to read again is too', async () => {
+  const kept = new Map<string, any>();
+  const modelCache = { get: async (id: string) => kept.get(id), set: async (id: string, entry: any) => { kept.set(id, entry); } };
+  kept.set('fake', { mark: '', version: '2.1.0', command: '/bin/fake', models: OLD });
+  const installation = (version: string, command = '/bin/fake') => ({ kind: 'available', via: 'executable', command, version });
+  const updated = harness([() => Promise.resolve(ok(NEW))], undefined, {}, { modelCache, installation: installation('2.2.0') });
+  assert.deepEqual(await ids(updated.driver), ['opus', 'sonnet'], 'another version');
+  const moved = harness([() => Promise.resolve(ok(NEW))], undefined, {}, { modelCache, installation: installation('2.1.0', '/opt/fake') });
+  assert.deepEqual(await ids(moved.driver), ['opus', 'sonnet'], 'another path');
+  kept.set('fake', { mark: '', version: '2.1.0', command: '/bin/fake', models: OLD });
+  const asked = harness([() => Promise.resolve(ok(NEW))], undefined, {}, { modelCache, installation: installation('2.1.0') });
+  assert.deepEqual(await ids(asked.driver), ['opus']);
+  asked.driver.refreshModels();
+  await ids(asked.driver);
+  await settle();
+  assert.equal(asked.asked(), 1, 'asked to read again: read, whatever is kept');
+  assert.deepEqual(await ids(asked.driver), ['opus', 'sonnet']);
 });

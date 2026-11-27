@@ -172,9 +172,9 @@ test('a turn through the universal driver draws the harness\'s tool by what it d
   await handle.close();
 });
 
-// 2026-11-27: Antigravity gives its models only in the answer to `session/new`, so every reading of them left an empty conversation in its own store (745 in four days). Asking for the models
-// never starts a reading; a session that starts on the harness does when what it said is older than six hours, and a reading runs in a folder of the plugin's own.
-test('the universal harnesses keep what they said of their models for hours', async (t) => {
+// 2026-11-27: Antigravity gives its models only in the answer to `session/new`, so every reading of them left an empty conversation in its own store (745 in four days). What was read is kept
+// for good: neither asking for the models nor a session that starts on the harness reads them again, and a reading runs in a folder of the plugin's own.
+test('the universal harnesses keep what they said of their models for good', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const calls: any[] = [];
   const runtime = { listModels: async (_installation: any, options: any) => { calls.push(options); return { kind: 'ok', models: [{ id: 'm', displayName: 'M' }] }; } };
@@ -183,18 +183,15 @@ test('the universal harnesses keep what they said of their models for hours', as
   const settle = () => new Promise((resolve) => setImmediate(resolve));
   const start = () => (driver as any).start({ prompt: 'hi', cwd: tmpdir(), permission: 'danger-full-access', signal: new AbortController().signal }).catch(() => {});
   await driver.listModels();
-  t.mock.timers.tick(5 * 60_000 + 1);
+  t.mock.timers.tick(30 * 24 * 60 * 60_000);
   await driver.listModels();
   await start();
   await settle();
-  assert.equal(calls.length, 1, 'five minutes are nothing to them');
-  t.mock.timers.tick(6 * 60 * 60_000);
+  assert.equal(calls.length, 1, 'a month later, asked and a session started: not read again');
+  (driver as any).refreshModels();
   await driver.listModels();
   await settle();
-  assert.equal(calls.length, 1, 'asking does not read them, however old they are');
-  await start();
-  await settle();
-  assert.equal(calls.length, 2, 'a session that starts does');
+  assert.equal(calls.length, 2, 'read again when someone asks for it');
 });
 
 test('the universal harnesses are read in a folder of the plugin\'s own', async (t) => {

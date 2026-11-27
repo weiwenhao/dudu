@@ -224,7 +224,7 @@ export async function createProviders({ host, providers, folder, log = console }
       if (closed) return;
       const entry = registered.get(provider.route);
       const wanted = enabled && detection.state === 'ready';
-      if (entry && (!wanted || entry.path !== detection.path)) await unregister(provider);
+      if (entry && (!wanted || entry.path !== detection.path || entry.version !== detection.version)) await unregister(provider);
       if (closed) return;
       if (wanted && !registered.has(provider.route)) {
         register(provider, detection);
