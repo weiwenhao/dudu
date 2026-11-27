@@ -10,7 +10,6 @@ struct DuduApp: App {
 
     init() {
         #if DEBUG && targetEnvironment(simulator)
-        FeedbackChannel.applyReviewOverrides()
         let store = ProcessInfo.processInfo.arguments.contains("-dudu-ui-review")
             ? SimulatorReviewFixture.makeStore() : DuduStore()
         #else

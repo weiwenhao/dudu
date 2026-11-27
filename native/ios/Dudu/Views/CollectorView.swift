@@ -193,21 +193,12 @@ struct CollectorView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityIdentifier("collector.loading")
         case .failed:
-            VStack(spacing: 14) {
-                Text(L10n.text("信息没能加载"))
-                    .font(.system(size: 15))
-                    .foregroundStyle(DuduStyle.muted)
-                Button { Task { await model.refresh(using: store) } } label: {
-                    Text(L10n.text("重试"))
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(DuduStyle.ink)
-                        .padding(.horizontal, 20)
-                        .frame(height: 44)
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(DuduGlassCapsuleButtonStyle())
+            ListLoadFailure(message: L10n.text("信息没能加载"), retryIdentifier: "collector.retry") {
+                Task { await model.refresh(using: store) }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The inbox tabs end six points below the board's filter bar.
+            .padding(.top, quickSheet == nil ? 74 : 0)
+            .frame(maxHeight: .infinity, alignment: quickSheet == nil ? .top : .center)
         case .loaded:
             if model.items.isEmpty {
                 Text(L10n.text("没有信息"))

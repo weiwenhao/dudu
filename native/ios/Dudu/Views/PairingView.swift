@@ -3,6 +3,8 @@ import SwiftUI
 import UIKit
 
 struct PairingView: View {
+    static let detents: Set<PresentationDetent> = [.height(304), .large]
+
     @ObservedObject var store: DuduStore
     var embeddedInSettings = false
     var initialLink: String?
@@ -61,7 +63,7 @@ struct PairingView: View {
                     DuduLabel(L10n.text("扫描配对码"), icon: .scan)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .frame(maxWidth: .infinity, minHeight: 52)
                         .background(DuduStyle.blue, in: Capsule())
                 }
                 .buttonStyle(.plain)
@@ -88,26 +90,28 @@ struct PairingView: View {
             }
             .padding(.horizontal, 20)
 
-            Spacer(minLength: 30)
         }
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            ScrollView {
-                pairingContent
-                    .frame(maxWidth: .infinity, minHeight: geometry.size.height)
-            }
-            .scrollDismissesKeyboard(.interactively)
+        ScrollView {
+            pairingContent
+                .padding(.top, 8)
+                .padding(.bottom, 16)
+                .frame(maxWidth: 640)
+                .frame(maxWidth: .infinity)
         }
+        .scrollBounceBehavior(.basedOnSize)
+        .scrollDismissesKeyboard(.interactively)
         .background(DuduStyle.sheet.ignoresSafeArea())
+        .interactiveDismissDisabled(isPairing)
         .navigationTitle(embeddedInSettings ? L10n.text("添加电脑") : "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if embeddedInSettings && showsCancelButton {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(L10n.text("取消")) { dismiss() }
-                        .foregroundStyle(DuduStyle.ink)
+                    SheetCloseButton(label: L10n.text("取消")) { dismiss() }
+                        .disabled(isPairing)
                 }
             }
             ToolbarItemGroup(placement: .keyboard) {
@@ -167,7 +171,7 @@ struct PairingView: View {
                         .font(.system(size: 15, weight: .semibold))
                 }
                 .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, minHeight: 48)
+                .frame(maxWidth: .infinity, minHeight: 52)
                 .background(DuduStyle.blue, in: Capsule())
             }
             .buttonStyle(.plain)
@@ -195,10 +199,10 @@ struct PairingView: View {
         } catch is CancellationError {
             // The app left the screen while it was connecting: nothing to say.
         } catch {
-            // The words of the failure in a short toast at the top (owner, 2026-11-27): the same one as on the connection page and the feedback's 「发送失败」. It was a red line inside the form, which a scan never showed.
+            // Show the same short error toast as the connection guide.
             let words = error.localizedDescription
             if let attempt = PairingAttempt(link: trimmed) { onFailed?(attempt, words) }
-            TopToast.shared.show(DuduToastMessage(text: words, kind: .error, duration: .seconds(1), showsClose: false))
+            TopToast.shared.showConnectionFailure(words)
         }
         isPairing = false
     }
@@ -212,7 +216,7 @@ private struct PasteIconButton: View {
 
     var body: some View {
         ZStack {
-            LucideIcon(.clipboardPaste, size: 18, strokeWidth: 2, absoluteStrokeWidth: false)
+            LucideIcon(.clipboard, size: 18, strokeWidth: 2, absoluteStrokeWidth: false)
                 .foregroundStyle(DuduStyle.ink)
                 .opacity(hasText ? 1 : 0.35)
                 .accessibilityHidden(true)

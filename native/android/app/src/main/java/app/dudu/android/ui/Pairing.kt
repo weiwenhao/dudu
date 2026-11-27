@@ -93,17 +93,15 @@ private fun ConnectionGuideBody(state: UiState, model: DuduViewModel, adding: Bo
     // The card: the saved computer, or the one a pairing tried and could not reach (nothing is saved then).
     val card = if (adding) attempt?.let { it.name to it.address }
         else savedComputer?.let { it.name to shortAddress(it.link).orEmpty() } ?: attempt?.let { it.name to it.address }
-    val failure = if (adding) attempt?.problem else state.problem ?: state.connectionFailure
+    val failure = if (adding) attempt?.problem else attempt?.problem ?: state.connectionFailure
     val failed = card != null && !busy && failure != null
     // The link to try again: the one that failed, when the phone has no saved computer to reach again.
     val retryLink = attempt?.takeIf { adding || savedComputer == null }
-    // The words of a failure are the short message at the top: when the page opens with one, when they change, and after a try that fails again.
-    LaunchedEffect(failure, failed) { if (failed && failure != null) model.failureToast(failure) }
     var network by remember { mutableStateOf<PhoneNetwork?>(null) }
-    LaunchedEffect(failure, failed) { if (failed) network = PhoneNetwork.current(context) }
+    LaunchedEffect(failed) { if (failed) network = PhoneNetwork.current(context) }
     Column(
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
-            .heightIn(min = minimum).padding(horizontal = 22.dp, vertical = 24.dp),
+            .heightIn(min = minimum).padding(start = 22.dp, end = 22.dp, top = 48.dp, bottom = 96.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -115,14 +113,12 @@ private fun ConnectionGuideBody(state: UiState, model: DuduViewModel, adding: Bo
         Column(Modifier.widthIn(max = 380.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             if (showsSteps) GuideCard { ConnectionSteps() }
             if (card == null) {
-                if (busy || failure != null) Box(Modifier.fillMaxWidth()) { PairingStatus(busy, failure) }
                 PairingButtons(busy, showsRetry, needsNewPairing, retryLink, model)
             } else {
                 GuideCard {
-                    GuideComputerRow(card.first, card.second, failed, selectable = !adding && state.computers.size > 1) {
+                    GuideComputerRow(card.first, card.second, failed, selectable = savedComputer != null) {
                         DuduLog.record("computers.open"); model.show(Panel.Computers)
                     }
-                    if (busy) Box(Modifier.fillMaxWidth().heightIn(min = 20.dp), contentAlignment = Alignment.CenterStart) { PairingStatus(true, null) }
                     PairingButtons(busy, showsRetry, needsNewPairing, retryLink, model)
                 }
                 if (failed) network?.let {
@@ -136,7 +132,7 @@ private fun ConnectionGuideBody(state: UiState, model: DuduViewModel, adding: Bo
 
 /**
  * The computer of the card: its icon, the name (15 medium) and the address (12), and, when it could not be reached, both in the red of a failure with a CircleX at the end. Only a phone that has
- * more than one computer can choose another there, so only then has the row its ⌃⌄ and opens the list (owner, 2026-11-27: the first connection has the one computer that was just paired).
+ * a saved computer can open the list, including a single computer whose connection needs attention.
  */
 @Composable
 private fun GuideComputerRow(name: String, address: String, failed: Boolean, selectable: Boolean, open: () -> Unit) {
@@ -167,21 +163,6 @@ private fun GuideCard(content: @Composable ColumnScope.() -> Unit) {
     }
 }
 
-/** What the connection is doing (the mark and 正在连接…), and, for a page that has no card to mark, why it failed; nothing when there is neither. */
-@Composable
-private fun PairingStatus(busy: Boolean, failure: String?) {
-    if (busy) Row(verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(w("正在连接…"), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    } else if (failure != null) {
-        // A pairing that was refused says only 配对已失效 here; the button under it says what to do.
-        Text(if (failure == "AUTH_FAILED" || failure == "UNAUTHORIZED") w("配对已失效") else problemText(failure),
-            color = ConnectionFailureRed, fontSize = 14.sp, modifier = Modifier.testTag("pairing-error"))
-    }
-}
-
 /** The main button (重新连接 for a saved computer, else 扫描配对码 / 重新扫码配对) and 粘贴配对链接, which opens the pairing form. */
 @Composable
 private fun PairingButtons(busy: Boolean, showsRetry: Boolean, needsNewPairing: Boolean, retryLink: PairingAttempt?, model: DuduViewModel) {
@@ -189,17 +170,24 @@ private fun PairingButtons(busy: Boolean, showsRetry: Boolean, needsNewPairing: 
         Button(onClick = {
             if (showsRetry) {
                 DuduLog.record("connection.guide.retry")
-                if (retryLink != null) model.connect(retryLink.link, pairingLinkName(retryLink.link)) else model.reconnect("guide")
+                if (retryLink != null) model.pair(retryLink.link) else model.reconnect("guide")
             } else { DuduLog.record("pairing.scan"); model.navigate(Route("scan")) }
         }, enabled = !busy,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).alpha(if (showsRetry && busy) .5f else 1f)
+            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).alpha(if (busy) .5f else 1f)
                 .testTag("pairing-scan"),
             shape = CircleShape,
             colors = ButtonDefaults.buttonColors(containerColor = DuduStyle.blue, contentColor = Color.White,
                 disabledContainerColor = DuduStyle.blue, disabledContentColor = Color.White)) {
-            Glyph(if (showsRetry) DuduGlyphs.reconnect else DuduGlyphs.scan, size = 21, tint = Color.White)
+            if (busy) Box(Modifier.size(21.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 1.5.dp, color = Color.White)
+            } else Glyph(if (showsRetry) DuduGlyphs.reconnect else DuduGlyphs.scan, size = 21, tint = Color.White)
             Spacer(Modifier.width(10.dp))
-            Text(if (showsRetry) w("重新连接") else if (needsNewPairing) w("重新扫码配对") else w("扫描配对码"),
+            Text(when {
+                busy -> w("正在连接…")
+                showsRetry -> w("重新连接")
+                needsNewPairing -> w("重新扫码配对")
+                else -> w("扫描配对码")
+            },
                 fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         }
         Surface(onClick = {
@@ -207,8 +195,8 @@ private fun PairingButtons(busy: Boolean, showsRetry: Boolean, needsNewPairing: 
             model.clearProblem()
             model.showPairing()
         }, enabled = !busy, shape = CircleShape, color = DuduStyle.selected.copy(alpha = .65f),
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("pairing-manual")) {
-            Box(Modifier.heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
+            modifier = Modifier.fillMaxWidth().testTag("pairing-manual")) {
+            Box(Modifier.heightIn(min = 52.dp), contentAlignment = Alignment.Center) {
                 Text(w("粘贴配对链接"), fontSize = 15.sp, fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurface)
             }
@@ -217,44 +205,48 @@ private fun PairingButtons(busy: Boolean, showsRetry: Boolean, needsNewPairing: 
 }
 
 /**
- * 添加电脑, the iPhone's `PairingView`: 扫描配对码, and under it the form for a pasted link (the guide's 粘贴配对链接 opens it as a sheet with 取消, and a `dudu://connect` link fills it in). Owner,
+ * 添加电脑, the iPhone's `PairingView`: 扫描配对码, and under it the form for a pasted link. A `dudu://connect` link fills it in. Owner,
  * 2026-11-27: no 电脑名称 (the name is the link's own, as when scanning), the button is 「连接」, and the empty field is one line high with a bare paste icon at its end (「类似复制一样的小按钮，
  * 不需要颜色，不需要文案描述」, picked as B, then 「它还有灰色的背景圆框」: no background); a failure is the short message at the top (the model says it), not a red line in the form.
  */
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun AddComputerScreen(route: Route, state: UiState, model: DuduViewModel) {
-    val sheet = route.params.optBoolean("sheet")
     val initialLink = route.params.nullableString("link")
-    var manual by rememberSaveable { mutableStateOf(sheet || initialLink != null) }
-    var link by rememberSaveable { mutableStateOf(initialLink.orEmpty()) }
+    var link by rememberSaveable(initialLink) { mutableStateOf(initialLink.orEmpty()) }
     val busy = state.connectionInFlight
-    LaunchedEffect(Unit) { if (!sheet) DuduLog.record("pairing.add.open") }
     BackHandler(enabled = busy) {}
     PreventSheetDismiss(busy)
-    fun pair() {
-        val trimmed = link.trim()
-        if (trimmed.isEmpty()) return
-        DuduLog.record("pairing.connect")
-        model.connect(trimmed, pairingLinkName(trimmed))
-    }
-    Page(w("添加电脑"), { if (!busy) model.backRoute() }, cancels = sheet, background = MaterialTheme.colorScheme.surfaceContainer) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding()
-            .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 30.dp),
+    CenterAlignedTopAppBar(
+        title = { Text(w("添加电脑"), fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
+        expandedHeight = 52.dp,
+        windowInsets = WindowInsets(0),
+        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
+        navigationIcon = {
+            IconButton(onClick = model::backRoute, enabled = !busy, modifier = Modifier.testTag("close-sheet")) {
+                Glyph(DuduGlyphs.close, w("取消"), 20)
+            }
+        },
+    )
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+        Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().imePadding().verticalScroll(rememberScrollState())
+            .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { DuduLog.record("pairing.scan"); model.navigate(Route("scan")) }, enabled = !busy,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("pairing-scan"), shape = CircleShape,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("pairing-scan"), shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(containerColor = DuduStyle.blue, contentColor = Color.White)) {
                 Glyph(DuduGlyphs.scan, size = 21, tint = Color.White)
                 Spacer(Modifier.width(10.dp))
                 Text(w("扫描配对码"), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
-            if (manual) Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface, RoundedCornerShape(20.dp)).padding(16.dp),
+            Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface, RoundedCornerShape(20.dp)).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(15.dp)) {
                 PairingField(w("配对链接"), link, w("粘贴电脑生成的完整链接"), !busy, tag = "pairing-link",
                     keyboard = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     trailing = if (link.isEmpty()) ({ PasteIcon(!busy) { link = it } }) else null) { link = it }
-                Button(onClick = ::pair, enabled = !busy && link.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("connect"), shape = CircleShape,
+                Button(onClick = { DuduLog.record("pairing.connect"); model.pair(link.trim()) },
+                    enabled = !busy && link.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("connect"), shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(containerColor = DuduStyle.blue, contentColor = Color.White)) {
                     if (busy) {
                         CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
@@ -262,9 +254,6 @@ fun AddComputerScreen(route: Route, state: UiState, model: DuduViewModel) {
                     }
                     Text(w("连接"), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 }
-            } else Box(Modifier.fillMaxWidth().heightIn(min = 44.dp).testTag("pairing-manual")
-                .clickable { manual = true; model.clearProblem(); DuduLog.record("pairing.manual") }, contentAlignment = Alignment.Center) {
-                Text(w("粘贴配对链接"), fontSize = 14.sp, fontWeight = FontWeight.Medium)
             }
         }
     }

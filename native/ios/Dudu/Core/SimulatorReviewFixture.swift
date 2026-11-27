@@ -102,17 +102,7 @@ private actor ReviewComputerRepository: DuduComputerStorage {
     }
 
     func pairAuthenticated(endpoint: ConnectionEndpoint, readyId: String) -> ComputerLibrary {
-        let existing = library.computers.first { $0.computerId == readyId }
-        let computer = Computer(
-            id: existing?.id ?? UUID().uuidString,
-            name: endpoint.name,
-            url: endpoint.originalURL,
-            computerId: readyId,
-            lastUsedAt: Date().timeIntervalSince1970 * 1_000
-        )
-        library.computers.removeAll { $0.id == computer.id }
-        library.computers.append(computer)
-        library.activeId = computer.id
+        _ = library.recordPairing(endpoint: endpoint, readyId: readyId)
         return library
     }
 
@@ -136,6 +126,7 @@ private actor ReviewComputerRepository: DuduComputerStorage {
         guard let index = library.computers.firstIndex(where: { $0.id == localId }) else {
             throw DuduFailure.switchedComputer
         }
+        library.computers[index].url = endpoint.originalURL
         library.computers[index].addresses = endpoint.addresses
         library.computers[index].addressesEdited = true
         return library
@@ -502,6 +493,10 @@ private actor ReviewTransport: DuduTransport {
         if method == "board.list", let file = Self.boardFile, let data = try? Data(contentsOf: URL(fileURLWithPath: file)), let answer = try? JSONDecoder().decode(JSONValue.self, from: data) { return answer }
         if method == "search.query", let file = Self.searchFile, let data = try? Data(contentsOf: URL(fileURLWithPath: file)), let answer = try? JSONDecoder().decode(JSONValue.self, from: data) { return answer }
         switch method {
+        case "board.list":
+            return .object(["outcome": .string("success"), "conversations": .array([])])
+        case "inbox.list":
+            return .object(["outcome": .string("success"), "items": .array([]), "total": .number(0), "unreadCount": .number(0)])
         case "assistant.hide":
             return .object(["outcome": .string("success")])
         case "assistant.card":

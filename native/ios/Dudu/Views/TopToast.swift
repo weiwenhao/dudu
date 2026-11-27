@@ -11,6 +11,10 @@ final class TopToast: ObservableObject {
     private var window: UIWindow?
     private var shownAt = Date.distantPast
 
+    func showConnectionFailure(_ text: String) {
+        show(DuduToastMessage(text: text, kind: .error, duration: .seconds(1), showsClose: false))
+    }
+
     func show(_ message: DuduToastMessage) {
         // The same words twice within a moment are one event told from two places (a pairing that fails is told by the form and by the page behind it): one toast, not two on top of each other.
         if let current = self.message, current.text == message.text, current.kind == message.kind, Date().timeIntervalSince(shownAt) < 0.5 { return }

@@ -19,14 +19,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
+import app.dudu.android.Panel
+import app.dudu.android.UiState
 import app.dudu.android.data.Toast
 import app.dudu.android.data.ToastKind
 import kotlinx.coroutines.delay
@@ -35,6 +45,26 @@ import kotlinx.coroutines.delay
 class ToastHost(val toast: Toast?, val dismiss: (Long) -> Unit)
 
 val LocalToastHost = compositionLocalOf<ToastHost?> { null }
+
+internal val UiState.connectionToastInSheet: Boolean
+    get() = route?.name == "pair" || panel == Panel.Computers
+
+/** A modal sheet owns a separate window. Show its connection message above the scrim. */
+@Composable
+internal fun SheetConnectionToast(host: ToastHost) {
+    val density = LocalDensity.current
+    val top = WindowInsets.statusBars.getTop(density) + with(density) { 6.dp.roundToPx() }
+    val position = remember(top) {
+        object : PopupPositionProvider {
+            override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
+                layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset =
+                IntOffset((windowSize.width - popupContentSize.width) / 2, top)
+        }
+    }
+    Popup(position, properties = PopupProperties(dismissOnBackPress = false, dismissOnClickOutside = false)) {
+        DuduToastOverlay(host, 0.dp)
+    }
+}
 
 /**
  * The message at the top of the page, the iPhone's `DuduToast`: a capsule (26 dp corners, at most 360 dp wide) on the page colour with a hairline and a soft shadow, the kind's filled

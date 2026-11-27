@@ -29,9 +29,9 @@ struct DuduToastMessage: Identifiable, Equatable {
     let id = UUID()
     let text: String
     let kind: Kind
-    /// How long it stays, when the kind's own time is not the one (owner, 2026-11-27: the feedback's 「发送失败」 goes within a second).
+    /// Override the default duration for short connection errors.
     var duration: Duration? = nil
-    /// Whether it has the ✕ at its right end; the feedback's failure has none.
+    /// Whether to show the close button.
     var showsClose = true
 }
 

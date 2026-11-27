@@ -63,10 +63,6 @@ struct ConnectionGuideView: View {
         isAdding ? pairingError : (pairingError ?? connectionMessage)
     }
 
-    private var hasStatus: Bool {
-        isConnecting || statusMessage != nil
-    }
-
     /// The computer of the card could not be reached, or its pairing is no longer valid, and nothing is going on now.
     private var computerFailed: Bool {
         cardComputer != nil && !isConnecting && statusMessage != nil
@@ -144,41 +140,26 @@ struct ConnectionGuideView: View {
                     startsWithManualEntry: true
                 )
             }
-            .presentationDetents([.large])
+            .presentationDetents(PairingView.detents)
             .presentationDragIndicator(.hidden)
             .presentationCornerRadius(32)
             .presentationBackground(DuduStyle.settingsBackground)
         }
         .modifier(AddingPageChrome(isAdding: isAdding))
         .task { DuduLog.record(isAdding ? "connection.guide.add" : "connection.guide.open") }
-        .task(id: statusMessage) {
-            phoneNetwork = PhoneNetwork.current()
-            showFailure()
+        .task(id: computerFailed) {
+            if computerFailed { phoneNetwork = PhoneNetwork.current() }
         }
     }
 
-    /// A phone with a computer has it, what the connection is doing and the buttons in one card. A phone without one has only the buttons, on the page itself under the steps, and a line above
-    /// them when there is something to say.
+    /// Put the actions on the saved or attempted computer's card when there is one.
     @ViewBuilder
     private var actions: some View {
         if !showsCard {
-            VStack(spacing: 18) {
-                if hasStatus {
-                    statusLine.frame(maxWidth: .infinity, alignment: .leading)
-                }
-                buttons
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("connection.card")
+            buttons.accessibilityIdentifier("connection.card")
         } else {
             VStack(alignment: .leading, spacing: 20) {
                 computerRow
-
-                if isConnecting {
-                    statusLine
-                        .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
-                }
-
                 buttons
             }
             .padding(20)
@@ -191,17 +172,15 @@ struct ConnectionGuideView: View {
     @ViewBuilder
     private var computerRow: some View {
         if let shown = cardComputer {
-            if !isAdding && store.computers.count > 1 {
-                // More than one computer (a pairing made again): the row still opens the list.
+            if !isAdding && !store.computers.isEmpty {
                 Button(action: onOpenComputers) { rowContent(shown, selectable: true) }
                     .buttonStyle(DuduRowButtonStyle())
                     .accessibilityLabel(L10n.text("选择电脑，当前为{0}", "\(shown.name)"))
                     .accessibilityIdentifier("connection.computers")
             } else {
-                // The first connection has the one computer that was just paired: nothing to choose, so no ⌃⌄ (owner, 2026-11-27: 「这个页面是首次链接的界面，根本不会有其他电脑」).
                 rowContent(shown, selectable: false)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel([shown.name, shown.address, computerFailed ? statusMessage : nil].compactMap { $0 }.joined(separator: "，"))
+                    .accessibilityLabel([shown.name, shown.address].joined(separator: "，"))
                     .accessibilityIdentifier("connection.computer")
             }
         }
@@ -239,26 +218,6 @@ struct ConnectionGuideView: View {
         .contentShape(Rectangle())
     }
 
-    @ViewBuilder
-    private var statusLine: some View {
-        if isConnecting {
-            HStack(spacing: 9) {
-                ProgressView().controlSize(.small)
-                Text(L10n.text("正在连接…"))
-                    .font(.system(size: 14))
-            }
-            .foregroundStyle(DuduStyle.muted)
-            .accessibilityIdentifier("connection.progress")
-        } else if let message = statusMessage {
-            Text(message)
-                .font(.system(size: 14))
-                .foregroundStyle(Self.failureRed)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("connection.failure")
-        }
-    }
-
     private var buttons: some View {
         VStack(spacing: 12) {
             Button {
@@ -272,8 +231,9 @@ struct ConnectionGuideView: View {
                             await pair(attempt.link)
                         } else {
                             await store.reconnect()
-                            phoneNetwork = PhoneNetwork.current()
-                            showFailure()
+                            if let failure = store.connectionFailure {
+                                TopToast.shared.showConnectionFailure(failure.localizedDescription)
+                            }
                         }
                     }
                 } else {
@@ -281,19 +241,26 @@ struct ConnectionGuideView: View {
                     DuduLog.record("pairing.scan")
                 }
             } label: {
-                DuduLabel(
-                    showsRetry ? L10n.text("重新连接") : (needsNewPairing ? L10n.text("重新扫码配对") : L10n.text("扫描配对码")),
-                    icon: showsRetry ? .reconnect : .scan
-                )
-                .font(.system(size: 16, weight: .semibold))
+                HStack(spacing: 10) {
+                    if isConnecting {
+                        ProgressView().controlSize(.small).tint(.white)
+                            .frame(width: 21, height: 21)
+                    } else {
+                        DuduIcon(showsRetry ? .reconnect : .scan, size: 21)
+                    }
+                    Text(isConnecting ? L10n.text("正在连接…") :
+                            showsRetry ? L10n.text("重新连接") :
+                            needsNewPairing ? L10n.text("重新扫码配对") : L10n.text("扫描配对码"))
+                        .font(.system(size: 16, weight: .semibold))
+                }
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, minHeight: 52)
                 .background(DuduStyle.blue, in: Capsule())
                 .contentShape(Capsule())
             }
             .buttonStyle(DuduIconButtonStyle())
-            .disabled(store.isRestoring || isPairing || (showsRetry && isConnecting))
-            .opacity(showsRetry && isConnecting ? 0.5 : 1)
+            .disabled(isConnecting)
+            .opacity(isConnecting ? 0.5 : 1)
             .accessibilityIdentifier(showsRetry ? "connection.retry" : "pairing.scan")
 
             Button {
@@ -307,12 +274,12 @@ struct ConnectionGuideView: View {
                 Text(L10n.text("粘贴配对链接"))
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(DuduStyle.ink)
-                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .frame(maxWidth: .infinity, minHeight: 52)
                     .background(DuduStyle.selected.opacity(0.65), in: Capsule())
                     .contentShape(Capsule())
             }
             .buttonStyle(DuduIconButtonStyle())
-            .disabled(store.isRestoring || isPairing)
+            .disabled(isConnecting)
             .accessibilityIdentifier("pairing.manual")
         }
     }
@@ -342,15 +309,8 @@ struct ConnectionGuideView: View {
         } catch {
             pairingError = error.localizedDescription
             if isAdding, let attempt = PairingAttempt(link: link) { addingAttempt = attempt }
-            phoneNetwork = PhoneNetwork.current()
-            showFailure()
+            TopToast.shared.showConnectionFailure(error.localizedDescription)
         }
-    }
-
-    /// The words of the failure in a short toast at the top (owner, 2026-11-27: 「链接失败有一个短暂的弹窗就行了」): the same one as the feedback's 「发送失败」, a second, no ✕. Only for a computer's card.
-    private func showFailure() {
-        guard computerFailed, let message = statusMessage else { return }
-        TopToast.shared.show(DuduToastMessage(text: message, kind: .error, duration: .seconds(1), showsClose: false))
     }
 }
 

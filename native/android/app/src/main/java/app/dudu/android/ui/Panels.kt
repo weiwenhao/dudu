@@ -37,7 +37,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.dudu.android.*
@@ -77,7 +76,7 @@ fun Panels(state: UiState, model: DuduViewModel) {
                     optionsFailed = true
                 }
             }
-            DuduSheet(model::dismissPanel, canDismiss = !state.busy && !pickerBusy,
+            DuduSheet(model::dismissPanel, canDismiss = !state.busy && !pickerBusy, showsConnectionToast = panel == Panel.Computers,
                 containerColor = if (panel == Panel.Create) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surfaceContainer) {
                 val picker = creationPicker
                 if (panel == Panel.Create && picker != null) {
@@ -100,9 +99,7 @@ fun Panels(state: UiState, model: DuduViewModel) {
                         Panel.Quota -> stringResource(R.string.quota)
                         else -> ""
                     }, model::dismissPanel, !state.busy && !state.connectionInFlight, action = if (panel == Panel.Computers) { {
-                        IconButton(onClick = { model.navigate(Route("connect")) }, enabled = !state.connectionInFlight) {
-                            Glyph(DuduGlyphs.plus, w("添加电脑"), 22)
-                        }
+                        AddComputerButton(model, enabled = !state.connectionInFlight)
                     } } else null)
                     Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
                         .padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -111,14 +108,8 @@ fun Panels(state: UiState, model: DuduViewModel) {
                             Panel.Create -> IssueForm(state, model, optionsFailed, { optionsFailed = false; optionsRetry++ }, createFailed) { creationPicker = it }
                             else -> Unit
                         }
-                        // The new-issue form says its own failures in the iPhone's words (事项没能加载, 事项没能创建).
-                        if (state.problem != null && panel != Panel.Create) Text(problemText(state.problem),
-                            color = MaterialTheme.colorScheme.error, fontSize = 14.sp,
-                            modifier = Modifier.testTag("panel-error"))
                         Spacer(Modifier.height(12.dp))
                     }
-                    if (panel != Panel.Create && (state.busy || state.connecting)) LinearProgressIndicator(Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.secondary)
                     }
                 }
             }
@@ -266,10 +257,10 @@ private fun ParentChip(parent: Issue?, enabled: Boolean, open: () -> Unit, remov
 
 /**
  * The bar of a form that is a sheet, the iPhone's: ✕ on the left (named 取消), the title in the middle, and a round button on the right that turns into a spinner while the form goes (owner,
- * 2026-11-21: ✕ / ✓ instead of repeating 创建事项). It is blue with a white glyph when `actionEnabled`, grey otherwise. The new issue's sheet and the feedback's are drawn with it, so that they stay one design.
+ * 2026-11-21: ✕ / ✓ instead of repeating 创建事项). It is blue with a white glyph when `actionEnabled`, grey otherwise.
  */
 @Composable
-internal fun FormSheetBar(title: String, cancel: () -> Unit, cancelEnabled: Boolean, action: Int, actionLabel: String, actionEnabled: Boolean,
+private fun FormSheetBar(title: String, cancel: () -> Unit, cancelEnabled: Boolean, action: Int, actionLabel: String, actionEnabled: Boolean,
     busy: Boolean, actionTag: String, perform: () -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
@@ -292,21 +283,18 @@ internal fun FormSheetBar(title: String, cancel: () -> Unit, cancelEnabled: Bool
     }
 }
 
-/**
- * The new issue's title (17 sp semibold, up to four lines) or its description (16 sp, four to eight lines) on the sheet's grey, as the iPhone's fields. `singleLine` is a line of 16 sp as high as the
- * title's (the feedback's reply address), with the `keyboardOptions` it asks for.
- */
+/** The title and description fields use the same text sizes and line limits as the iPhone. */
 @Composable
-internal fun NewIssueField(value: String, placeholder: String, enabled: Boolean, title: Boolean, modifier: Modifier = Modifier,
-    singleLine: Boolean = false, keyboardOptions: KeyboardOptions = KeyboardOptions.Default, changed: (String) -> Unit) {
+private fun NewIssueField(value: String, placeholder: String, enabled: Boolean, title: Boolean, modifier: Modifier = Modifier,
+    changed: (String) -> Unit) {
     val style = MaterialTheme.typography.bodyLarge.copy(fontSize = if (title) 17.sp else 16.sp,
         fontWeight = if (title) FontWeight.SemiBold else FontWeight.Normal)
     BasicTextField(value, changed, modifier.fillMaxWidth(), enabled = enabled,
-        textStyle = style.copy(color = MaterialTheme.colorScheme.onSurface), keyboardOptions = keyboardOptions, singleLine = singleLine,
-        minLines = if (title || singleLine) 1 else 4, maxLines = if (singleLine) 1 else if (title) 4 else 8, cursorBrush = SolidColor(DuduStyle.blue),
+        textStyle = style.copy(color = MaterialTheme.colorScheme.onSurface),
+        minLines = if (title) 1 else 4, maxLines = if (title) 4 else 8, cursorBrush = SolidColor(DuduStyle.blue),
         decorationBox = { inner ->
             Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(16.dp))
-                .padding(horizontal = 16.dp, vertical = if (title || singleLine) 12.dp else 16.dp)) {
+                .padding(horizontal = 16.dp, vertical = if (title) 12.dp else 16.dp)) {
                 if (value.isEmpty()) Text(placeholder, style = style, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 inner()
             }

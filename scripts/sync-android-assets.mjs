@@ -31,8 +31,8 @@ const menuGlyphs = {
   photoDownload: 'ArrowDownToLine', photoSaved: 'Check',
   // The connector card's points (2026-11-23): where it signs in or runs.
   connectorSignIn: 'LogIn', connectorLocal: 'SquareTerminal',
-  // The paste icon of the pairing form's empty field (2026-11-27): the iPhone draws Lucide's clipboard-paste there.
-  pasteLink: 'ClipboardPaste',
+  // The pairing form uses the same clipboard outline on both phones.
+  pasteLink: 'Clipboard',
 };
 // 'Pin' and 'PanelsTopLeft' are drawn by name in the drawer (`R.drawable.ic_pin`, `ic_panels_top_left`), not through a glyph: without them here this script deleted them (2026-11-21).
 const iconNames = new Set(['Bell', 'BellOff', 'Star', 'ArrowDown', 'KeyRound', 'GitFork', 'Pin', 'PanelsTopLeft',

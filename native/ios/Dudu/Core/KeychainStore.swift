@@ -91,6 +91,39 @@ actor KeychainVault {
 struct ComputerLibrary: Sendable {
     var computers: [Computer]
     var activeId: String?
+
+    mutating func recordPairing(endpoint: ConnectionEndpoint, readyId: String) -> Computer {
+        let index = computers.firstIndex { $0.computerId == readyId } ?? computers.firstIndex {
+            $0.computerId == nil && Self.credentialIdentity($0.url) == Self.credentialIdentity(endpoint.originalURL)
+        }
+        let computer = Computer(
+            id: index.map { computers[$0].id } ?? UUID().uuidString,
+            name: endpoint.name,
+            url: endpoint.originalURL,
+            computerId: readyId,
+            lastUsedAt: Date().timeIntervalSince1970 * 1_000,
+            addresses: endpoint.addresses, probeId: endpoint.probeId, addressesEdited: endpoint.addressesEdited
+        )
+        if let index { computers[index] = computer } else { computers.append(computer) }
+        activeId = computer.id
+        return computer
+    }
+
+    private static func credentialIdentity(_ rawURL: String) -> String? {
+        guard var components = URLComponents(string: rawURL),
+              let scheme = components.scheme,
+              let host = components.host else { return nil }
+        components.scheme = scheme.lowercased()
+        components.host = host.lowercased()
+        components.fragment = nil
+        var items = (components.queryItems ?? []).filter { $0.name != "computer" && $0.name != "name" }
+        items.sort {
+            if $0.name == $1.name { return ($0.value ?? "") < ($1.value ?? "") }
+            return $0.name < $1.name
+        }
+        components.queryItems = items.isEmpty ? nil : items
+        return components.string
+    }
 }
 
 private struct ComputerIndex: Codable {
@@ -211,24 +244,7 @@ actor ComputerRepository: DuduComputerStorage {
         await acquireMutation()
         defer { releaseMutation() }
         var library = try await loadUnlocked()
-        let credentialIdentity = Self.credentialIdentity(endpoint.originalURL)
-        let existing = library.computers.first { computer in
-            if computer.computerId == readyId { return true }
-            return computer.computerId == nil
-                && Self.credentialIdentity(computer.url) == credentialIdentity
-        }
-        let computer = Computer(
-            id: existing?.id ?? UUID().uuidString,
-            name: endpoint.name,
-            url: endpoint.originalURL,
-            computerId: readyId,
-            lastUsedAt: Date().timeIntervalSince1970 * 1_000,
-            addresses: endpoint.addresses, probeId: endpoint.probeId, addressesEdited: endpoint.addressesEdited
-        )
-        library.computers = existing == nil
-            ? library.computers + [computer]
-            : library.computers.map { $0.id == existing?.id ? computer : $0 }
-        library.activeId = computer.id
+        let computer = library.recordPairing(endpoint: endpoint, readyId: readyId)
         try await persist(computer: computer, library: library)
         cachedLibrary = library
         return library
@@ -277,6 +293,7 @@ actor ComputerRepository: DuduComputerStorage {
         }
         var computer = library.computers[index]
         guard computer.computerId == endpoint.computerId else { throw DuduFailure.identityMismatch }
+        computer.url = endpoint.originalURL
         computer.addresses = try ConnectionAddress.validated(endpoint.addresses)
         computer.addressesEdited = true
         library.computers[index] = computer
@@ -464,22 +481,6 @@ actor ComputerRepository: DuduComputerStorage {
               let value = values[0].value,
               validId(value) else { return nil }
         return value
-    }
-
-    private static func credentialIdentity(_ rawURL: String) -> String? {
-        guard var components = URLComponents(string: rawURL),
-              let scheme = components.scheme,
-              let host = components.host else { return nil }
-        components.scheme = scheme.lowercased()
-        components.host = host.lowercased()
-        components.fragment = nil
-        var items = (components.queryItems ?? []).filter { $0.name != "computer" && $0.name != "name" }
-        items.sort {
-            if $0.name == $1.name { return ($0.value ?? "") < ($1.value ?? "") }
-            return $0.name < $1.name
-        }
-        components.queryItems = items.isEmpty ? nil : items
-        return components.string
     }
 
     private func acquireMutation() async {

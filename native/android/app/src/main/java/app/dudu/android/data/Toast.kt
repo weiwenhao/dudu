@@ -9,7 +9,7 @@ enum class ToastKind(val millis: Long) { Success(1_000), Information(5_000), War
  */
 data class Toast(
     val id: Long, val text: String, val kind: ToastKind, val literal: Boolean = false, val args: List<String> = emptyList(),
-    /** How long it stays when the kind's own time is not the one (the iPhone's `DuduToastMessage.duration`: a failure of the connection or of the feedback goes within a second). */
+    /** Override the default duration for short connection errors. */
     val millis: Long? = null,
     /** Whether it has the ✕ at its end (the iPhone's `showsClose`); a toast that goes within a second has none. */
     val showsClose: Boolean = true,

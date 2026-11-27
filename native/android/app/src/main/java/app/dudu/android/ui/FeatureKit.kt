@@ -106,6 +106,7 @@ private fun SheetHandle() {
 @Composable
 fun DuduSheet(dismiss: () -> Unit, containerColor: Color = MaterialTheme.colorScheme.surfaceContainer,
     canDismiss: Boolean = true,
+    showsConnectionToast: Boolean = false,
     content: @Composable ColumnScope.() -> Unit) {
     val guard = remember { SheetDismissGuard() }
     ModalBottomSheet(
@@ -122,8 +123,9 @@ fun DuduSheet(dismiss: () -> Unit, containerColor: Color = MaterialTheme.colorSc
             LocalSheetDismissGuard provides guard) {
             Box {
                 Column(Modifier.fillMaxWidth().heightIn(max = maxHeight), content = content)
-                // A sheet is a window of its own, over the page's message: it shows the message over itself, under its bar.
-                DuduToastOverlay(LocalToastHost.current, 60.dp)
+                val host = LocalToastHost.current
+                if (showsConnectionToast && host?.toast?.problem != null) SheetConnectionToast(host)
+                else DuduToastOverlay(host?.takeUnless { it.toast?.problem != null }, 60.dp)
             }
         }
     }

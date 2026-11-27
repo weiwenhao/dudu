@@ -197,7 +197,7 @@ private fun BoardPage(state: UiState, model: DuduViewModel, openDrawer: () -> Un
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
                     title = {}, // no page title on the board (owner, 2026-11-18: "app 顶部的看板两个字不需要了"); the bar is the menu and the two buttons
                     actions = {
-                        // The magnifier opens the search page; 额度 and 新建事项 are in the ··· menu (owner, 2026-11-27, `.local/designs/phone-search-2026-11-27/`), a drop-down like the conversation's.
+                        // The magnifier opens the search page; 额度 and 事项 are in the ··· menu (owner, 2026-11-27, `.local/designs/phone-search-2026-11-27/`), a drop-down like the conversation's.
                         IconButton(onClick = model::openSearch, enabled = state.connected, modifier = Modifier.testTag("search")) {
                             Glyph(DuduGlyphs.search, w("搜索"))
                         }
@@ -207,7 +207,7 @@ private fun BoardPage(state: UiState, model: DuduViewModel, openDrawer: () -> Un
                                 Glyph(DuduGlyphs.options, stringResource(R.string.more))
                             }
                             DropdownMenu(menu, { menu = false }) {
-                                DropdownMenuItem(text = { Text(stringResource(R.string.new_issue)) }, leadingIcon = { Glyph(DuduGlyphs.plus, size = 18) },
+                                DropdownMenuItem(text = { Text(w("事项")) }, leadingIcon = { Glyph(DuduGlyphs.plus, size = 18) },
                                     enabled = state.connected && !state.busy, modifier = Modifier.testTag("new-issue"),
                                     onClick = { menu = false; model.newIssue() })
                                 DropdownMenuItem(text = { Text(stringResource(R.string.quota)) }, leadingIcon = { Glyph(DuduGlyphs.quota, size = 18) },
@@ -266,19 +266,9 @@ private fun BoardPage(state: UiState, model: DuduViewModel, openDrawer: () -> Un
                         Column(Modifier.fillMaxWidth().padding(top = 80.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                            if (state.boardLoadFailed && state.connected && !state.computerUnavailable) {
-                                Text(w("事项没能加载"), fontSize = 15.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                FilledTonalButton(onClick = model::refresh,
-                                    colors = ButtonDefaults.filledTonalButtonColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                        contentColor = MaterialTheme.colorScheme.onSurface),
-                                    shape = CircleShape,
-                                    contentPadding = PaddingValues(horizontal = 20.dp),
-                                    modifier = Modifier.heightIn(min = 44.dp)) {
-                                    Text(stringResource(R.string.retry), fontSize = 15.sp)
-                                }
-                            } else DeliveryLoadingMark(20)
+                            if (state.boardLoadFailed && state.connected && !state.computerUnavailable)
+                                ListFailure(w("事项没能加载"), retry = model::refresh)
+                            else DeliveryLoadingMark(20)
                         }
                     }
                     // Only an empty 未读 says so, as on the iPhone; the other scopes are simply empty.
@@ -315,17 +305,21 @@ private fun BoardPage(state: UiState, model: DuduViewModel, openDrawer: () -> Un
 /** The guide and homepage open the same existing computer/detail sheets. */
 @Composable
 private fun FeatureSheet(route: Route, state: UiState, model: DuduViewModel) {
-    DuduSheet(model::backRoute, containerColor =
+    DuduSheet(model::backRoute, showsConnectionToast = route.name == "pair", containerColor =
         if (route.name in setOf("changes", "diff", "files", "delivered-files")) MaterialTheme.colorScheme.surface
         else if (route.name == "preferences" &&
             !androidx.compose.foundation.isSystemInDarkTheme()) DuduStyle.settings else MaterialTheme.colorScheme.surfaceContainer) {
+        if (route.name == "pair") {
+            key(route) { AddComputerScreen(route, state, model) }
+            return@DuduSheet
+        }
         var measured by remember(route) { mutableIntStateOf(0) }
         val height = if (measured > 0) measured.dp else when (route.name) {
             "changes" -> 380.dp
             "files", "diff", "tool" -> 760.dp
             "activity", "session-tasks" -> 500.dp
             "issue" -> 420.dp
-            "preferences", "pair", "task", "record" -> 760.dp
+            "preferences", "task", "record" -> 760.dp
             else -> 660.dp
         }
         CompositionLocalProvider(LocalSheetHeight provides { measured = it }) {

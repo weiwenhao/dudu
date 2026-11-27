@@ -371,7 +371,7 @@ final class DuduStore: ObservableObject {
     }
 
     func pair(link: String, name: String = "") async throws {
-        let endpoint = try ConnectionEndpoint.parse(link, name: name)
+        let scanned = try ConnectionEndpoint.parse(link, name: name)
         let queuedLifecycle = lifecycleGeneration
         await acquireOperation()
         var releaseOnExit = true
@@ -380,6 +380,11 @@ final class DuduStore: ObservableObject {
             throw CancellationError()
         }
 
+        let edited = computers.first { $0.computerId == scanned.computerId && $0.addressesEdited == true }
+            .flatMap { try? ConnectionEndpoint.saved($0) }
+        let endpoint = edited.flatMap {
+            $0.token == scanned.token && $0.probeId == scanned.probeId ? $0 : nil
+        } ?? scanned
         let previous = activeComputer
         let currentGeneration = nextGeneration()
         status = .connecting
@@ -1831,11 +1836,11 @@ final class DuduStore: ObservableObject {
         var endpoint = try ConnectionEndpoint.saved(current)
         endpoint.addresses = try ConnectionAddress.validated(addresses)
         endpoint.addressesEdited = true
-        _ = try await client.verifyEndpoint(endpoint)
+        let verified = try await client.verifyEndpoint(endpoint)
         guard generation == editGeneration, lifecycleGeneration == editLifecycle else {
             throw DuduFailure.switchedComputer
         }
-        let library = try await repository.updateAddresses(localId: computer.id, endpoint: endpoint)
+        let library = try await repository.updateAddresses(localId: computer.id, endpoint: verified)
         guard generation == editGeneration else { throw DuduFailure.switchedComputer }
         apply(library)
         guard activeComputer?.id == computer.id else { return }

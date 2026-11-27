@@ -445,7 +445,6 @@ private fun SettingsChevron() = Glyph(DuduGlyphs.right, size = 16, tint = Materi
 @Composable
 fun PreferencesScreen(state: UiState, model: DuduViewModel) {
     val context = LocalContext.current
-    var feedback by remember { mutableStateOf(false) }
     Page(w("设置"), model::backRoute, background = settingsCanvas()) {
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(22.dp),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 30.dp)) {
@@ -489,12 +488,6 @@ fun PreferencesScreen(state: UiState, model: DuduViewModel) {
                         android.net.Uri.parse("https://github.com/weiwenhao/dudu/blob/main/docs/privacy.md")))
                 }
                 SettingsDivider()
-                // 反馈 under the privacy row (owner, 2026-11-27: 「反馈放在设置页不是放在这里，隐私条款下面放一个反馈弹窗呀」): the message glyph, as the iPhone's, and a sheet.
-                SettingsCardRow(DuduGlyphs.message, w("反馈"), tag = "settings-feedback", trailing = { SettingsChevron() }) {
-                    DuduLog.record("settings.feedback.open")
-                    feedback = true
-                }
-                SettingsDivider()
                 SettingsCardRow(DuduGlyphs.info, w("关于"), tag = "settings-about", trailing = { SettingsChevron() }) {
                     model.navigate(Route("about"))
                 }
@@ -510,7 +503,6 @@ fun PreferencesScreen(state: UiState, model: DuduViewModel) {
             }
         }
     }
-    if (feedback) FeedbackSheet(model) { feedback = false }
 }
 
 @Composable

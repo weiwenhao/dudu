@@ -8,6 +8,16 @@ import org.junit.Test
 class PairingAttemptTest {
     private val token = "c".repeat(43)
 
+    @Test fun pairingTheSameComputerUpdatesItsExistingRecord() {
+        val first = SavedComputer("mac", "Studio", "https://old.example.test/?pair=$token")
+        val repeated = emptyList<SavedComputer>().updating(first).updating(first)
+        assertEquals(listOf(first), repeated)
+
+        val newToken = "d".repeat(43)
+        val replacement = first.copy(link = "https://new.example.test/?pair=$newToken")
+        assertEquals(listOf(replacement), repeated.updating(replacement))
+    }
+
     @Test fun theAttemptNamesTheComputerAsTheLinkDoesAndShowsItsLanAddress() {
         val attempt = pairingAttemptOf("http://192.168.31.201:3170/?pair=$token&name=Studio", "ROUTES_UNAVAILABLE_LAN")!!
         assertEquals("Studio", attempt.name)

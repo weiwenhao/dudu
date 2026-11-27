@@ -289,7 +289,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     fun reconnect(reason: String = "manual") {
         val saved = state.value.computers.find { it.id == computerId } ?: return
         DuduLog.record("computer.reconnect", state = reason)
-        connect(saved.link)
+        connect(saved.link, reportsFailure = reason != "network")
     }
 
     /** The phone's network changed (the first answer is only what it is now): 300 ms later the computer is reached again, unless an attempt the person waits for is already on its way. */
@@ -388,16 +388,22 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun connect(link: String, displayName: String? = null) {
+    fun pair(link: String) {
+        if (!state.value.connectionInFlight) connect(link, pairing = true, reportsFailure = true)
+    }
+
+    private fun connect(link: String, pairing: Boolean = false, reportsFailure: Boolean = false,
+        retainedAttempt: PairingAttempt? = null) {
         val endpoint = try { Endpoint.parse(link) } catch (_: Exception) {
             // Why the link cannot be used, in the iPhone's words: no pairing token, an unencrypted public address, or anything else.
             val failure = pairingLinkFailure(link)
             DuduLog.record("connection.fail", "warn", code = failure)
             // From the pairing form: said in the toast, and the page behind it stays as it was (the iPhone's `pair(link:)` stops at the parse, before it touches anything).
-            if (displayName != null) failureToast(failure)
+            if (pairing) failureToast(failure)
             else mutable.update { it.copy(problem = failure,
                 connectionFailure = if (!it.connected && !it.connecting) failure else it.connectionFailure,
                 pairingRequired = it.pairingRequired || !it.connected && !it.connecting) }
+            if (!pairing && reportsFailure) failureToast(failure)
             return
         }
         val began = System.nanoTime()
@@ -419,15 +425,14 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         val known = savedComputer?.id ?: computerId.takeIf {
             it.isNotEmpty() && previousApi?.endpoint?.origin == endpoint.origin && previousApi.endpoint.token == endpoint.token
         }
-        // A link that no saved computer matches is a pairing (the form, a scan, a link from outside); a saved computer tried again, or the one on screen, is not. A pairing that fails leaves the
-        // computer the phone had as it was (the iPhone's `restore(previous)`).
-        val pairing = savedComputer == null && known == null
+        // A scan or a form submission is a pairing even when we have seen that code before.
         val previousLink = if (pairing) state.value.computers.firstOrNull { it.id == computerId }?.link else null
-        val candidate = DuduApi(endpoint, endpoint.computerId ?: known, savedComputer?.addressesEdited == true)
+        val editedEndpoint = savedComputer?.takeIf { it.addressesEdited }?.let { Endpoint.parse(it.link) }
+            ?.takeIf { it.computerId == endpoint.computerId && it.deviceId == endpoint.deviceId }
+        val candidate = DuduApi(editedEndpoint ?: endpoint, endpoint.computerId ?: known, editedEndpoint != null)
         candidate.language = state.value.language
         // The computer already on screen, connected again (重新连接, the app back in front, a change of network): what is open stays open, as the iPhone's `reconnect` keeps it.
-        // A link from the pairing form (it names the computer) and another computer start afresh.
-        val resuming = displayName == null && known != null && known == computerId && state.value.computerId == known
+        val resuming = !pairing && known != null && known == computerId && state.value.computerId == known
         mutable.update { if (resuming) it.copy(connecting = true, retrying = false, connected = false, busy = false, sending = false,
             refreshing = false, problem = null, computerUnavailable = false, boardLoadFailed = false, changing = emptySet())
         else it.copy(connecting = true, retrying = false, connected = false, busy = false, sending = false, refreshing = false,
@@ -437,11 +442,10 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         connectionJob = viewModelScope.launch {
             try {
                 previousApi?.let { runCatching { it.disconnect() } }
-                val computer = connectSaved(candidate, next, savedComputer != null || known != null)
+                val computer = connectSaved(candidate, next, !pairing && known != null, reportsFailure)
                 if (next != generation) return@launch
                 val id = computer.getString("id")
-                val name = displayName?.trim()?.take(100)?.takeIf(String::isNotEmpty)
-                    ?: savedComputer?.name ?: computer.getString("name")
+                val name = if (pairing) endpoint.name else savedComputer?.name ?: computer.getString("name")
                 require(id.matches(Regex("[A-Za-z0-9_-]{1,100}")))
                 if (computerId != id) {
                     homes.clear(); savedHomeJson = null; sessions.clear(); cachedSessions.clear(); outboxes.clear()
@@ -462,8 +466,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 val savedLink = candidate.endpoint.storedLink()
                 vault.write("computer", json("id" to id, "name" to name, "link" to savedLink).toString())
                 if (next != generation) return@launch
-                val allComputers = state.value.computers.filterNot { it.id == id } +
-                    SavedComputer(id, name, savedLink, candidate.preserveAddresses)
+                val allComputers = state.value.computers.updating(SavedComputer(id, name, savedLink, candidate.preserveAddresses))
                 vault.write("computers", JSONArray(allComputers.map { it.json() }).toString())
                 if (next != generation) return@launch
                 val cachedNavigation = vault.read("navigation-$id-${java.util.Locale.getDefault().language}")?.let { runCatching { JSONObject(it) }.getOrNull() } ?: json()
@@ -483,14 +486,13 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                     boardFilters = if (it.computerId == id) it.boardFilters else keptFilters,
                     searchMemory = if (it.computerId == id) it.searchMemory else keptSearch,
                     computers = allComputers, computerId = id, computerUnavailable = false,
-                    connectionFailure = null, pairingRequired = false, pairingAttempt = null,
+                    connectionFailure = null, pairingRequired = false, pairingAttempt = retainedAttempt,
                     quota = if (it.computerId == id) it.quota else null) }
                 DuduLog.record("connection.ready", elapsedMs = (System.nanoTime() - began) / 1_000_000,
                     state = if (resuming) "resumed" else "fresh")
                 syncBackgroundNotifications(restart = !resuming)
                 pendingNotification?.let { target -> if (target == id) { pendingNotification = null; selectHomeTab(HomeTab.Inbox) } }
-                // A link from the pairing form names its computer (the iPhone's `pairing.success` / `pair.fail`).
-                if (displayName != null) DuduLog.record("pairing.success")
+                if (pairing) DuduLog.record("pairing.success", counts = mapOf("computerCount" to allComputers.size.toLong()))
                 refresh()
                 loadCatalog()
                 if (visible) startEvents()
@@ -499,23 +501,22 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 if (error is CancellationException) throw error
                 DuduLog.failure("connection.fail", error, elapsedMs = (System.nanoTime() - began) / 1_000_000,
                     state = if (next == generation) "current" else "superseded")
-                if (displayName != null) DuduLog.failure("pair.fail", error)
+                if (pairing) DuduLog.failure("pair.fail", error)
                 if (next == generation) {
                     val failure = code(error)
                     val attempt = if (pairing) pairingAttemptOf(link, failure) else null
                     if (previousLink != null) {
                         // The pairing failed and the phone had a computer: it is connected again, and the page the person is on keeps the link that failed.
                         mutable.update { it.copy(connecting = false, retrying = false, pairingAttempt = attempt) }
-                        failureToast(failure)
-                        connect(previousLink)
+                        connect(previousLink, retainedAttempt = attempt)
                     } else {
                         mutable.update { it.copy(connecting = false, retrying = false, problem = failure,
                             connectionFailure = failure,
                             pairingRequired = it.pairingRequired || requiresNewPairing(failure),
                             computerUnavailable = visible && isConnectionProblem(failure),
                             pairingAttempt = attempt ?: it.pairingAttempt) }
-                        if (pairing) failureToast(failure)
                     }
+                    if (reportsFailure) failureToast(failure)
                 }
             } finally {
                 if (next == generation && !state.value.connected)
@@ -528,7 +529,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
      * Reuse this connection job for saved-computer retries; never retry pairing or a mutation. It waits longer after each failure, 1, 2, 4, 8, 16 s and then every 30 s, as the iPhone's
      * `scheduleReconnect` does; a change of network or a 重新连接 starts a new attempt at once.
      */
-    private suspend fun connectSaved(client: DuduApi, currentGeneration: Int, saved: Boolean): JSONObject {
+    private suspend fun connectSaved(client: DuduApi, currentGeneration: Int, saved: Boolean, reportsFailure: Boolean): JSONObject {
         var attempt = 0
         while (true) {
             try { return client.connect() }
@@ -538,6 +539,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 attempt++
                 DuduLog.failure("connection.retry", error, state = "foreground", counts = mapOf("attempt" to attempt.toLong()))
                 mutable.update { it.copy(connectionFailure = code(error), problem = code(error), computerUnavailable = true, retrying = true) }
+                if (attempt == 1 && reportsFailure) failureToast(code(error))
                 delay(reconnectDelayMillis(attempt))
                 if (!visible || currentGeneration != generation) throw CancellationException("Connection suspended")
             }
@@ -817,7 +819,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         vault.write("computers", JSONArray(updated.map { it.json() }).toString())
         if (current != generation) throw CancellationException("Computer switched")
         mutable.update { it.copy(computers = updated) }
-        if (computerId == id) connect(verified.storedLink()) else backRoute()
+        if (computerId == id) connect(verified.storedLink(), reportsFailure = true)
     }
 
     fun forgetComputer(id: String) {
@@ -1000,7 +1002,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun dismissPanel() {
-        if (!state.value.busy && !state.value.connecting) {
+        if (!state.value.busy && !state.value.connectionInFlight) {
             stopQuota()
             mutable.update { it.copy(panel = null, problem = null, draft = it.draft.copy(preparingPhotos = false)) }
         }

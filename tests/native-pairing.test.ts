@@ -109,8 +109,11 @@ test('one multi-address code has one credential and nonce-bound route proofs exp
   assert.equal(store.routeProof(code.id, nonce), undefined);
 
   const fresh = await store.issue({ address: addresses[0].url, addresses });
-  await store.authenticate(new URL(fresh.url).searchParams.get('pair'), 'iPhone');
+  const freshToken = new URL(fresh.url).searchParams.get('pair');
+  assert.equal(await store.authenticate(freshToken, 'iPhone'), fresh.id);
   now += 600_001;
+  assert.equal(await store.authenticate(freshToken, 'iPhone'), fresh.id, 'the same QR code reuses the paired device');
+  assert.equal(store.list().length, 1);
   assert.ok(store.routeProof(fresh.id, nonce), 'an established pairing survives the QR expiry');
   await store.revoke(fresh.id);
   assert.equal(store.routeProof(fresh.id, nonce), undefined);

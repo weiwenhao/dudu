@@ -19,6 +19,12 @@ data class SavedComputer(val id: String, val name: String, val link: String, val
     }
 }
 
+internal fun List<SavedComputer>.updating(computer: SavedComputer): List<SavedComputer> {
+    val index = indexOfFirst { it.id == computer.id }
+    if (index < 0) return this + computer
+    return filterNot { it.id == computer.id }.toMutableList().apply { add(index, computer) }
+}
+
 data class Outgoing(
     val requestId: String, val text: String, val attachments: List<JSONObject>,
     val accepted: Boolean = false, val failed: Boolean = false,

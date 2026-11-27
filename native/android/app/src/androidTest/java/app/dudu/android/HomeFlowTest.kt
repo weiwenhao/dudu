@@ -59,17 +59,18 @@ class HomeFlowTest {
         compose.onNodeWithText("Fixture Mac").performClick()
         awaitTag("computer-menu-android-e2e")
         compose.onNodeWithTag("computer-menu-android-e2e").performClick()
-        compose.onNodeWithTag("edit-addresses").performClick()
         awaitTag("address-lan-0")
         screenshot("computer-addresses")
         compose.onNodeWithTag("address-lan-0").performTextReplacement("file:///not-an-address")
         compose.onNodeWithTag("save-addresses").performClick()
-        awaitTag("computer-edit-failure")
+        awaitTag("feedback-toast")
         compose.onNodeWithTag("address-lan-0").assertTextContains("file:///not-an-address")
-        compose.onNodeWithTag("address-lan-0").performTextReplacement(origin)
+        compose.onNodeWithTag("address-lan-0").performTextReplacement("$origin/")
         compose.onNodeWithTag("save-addresses").performClick()
-        // Reaching the same computer again keeps its page open, as on the iPhone (2026-11-22): the editor closes and the page is left by hand.
-        compose.waitUntil(10_000) { compose.onAllNodesWithTag("save-addresses").fetchSemanticsNodes().isEmpty() }
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasTestTag("address-lan-0") and hasText(origin)).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("save-addresses").assertIsNotEnabled()
         compose.onNodeWithTag("page-back").performClick()
         awaitTag("row-issue:1")
         control("/fixture/configure?flag=fail-home", "POST")

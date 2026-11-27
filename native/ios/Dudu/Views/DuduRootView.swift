@@ -172,7 +172,7 @@ struct DuduRootView: View {
                     }
                 }
             }
-            .presentationDetents([.large])
+            .presentationDetents(sheet == .pairing ? PairingView.detents : [.large])
             .presentationDragIndicator(.hidden)
             .presentationCornerRadius(32)
             .presentationBackground(DuduStyle.settingsBackground)
@@ -380,13 +380,17 @@ struct DuduRootView: View {
         }
         // A native TabView covers inactive roots. Keep shared badge facts current
         // outside those roots' appearance-scoped tasks.
-        .task(id: SidebarRefresh(active: scenePhase == .active, connected: store.status == .connected)) {
+        .task(id: scenePhase == .active && store.status == .connected ? store.connectionRevision : nil) {
             guard scenePhase == .active, store.status == .connected else { return }
+            var firstRead = true
             while !Task.isCancelled {
                 async let inbox: Void = collector.refreshCount(using: store)
                 // The computer says when the board changes (`board.changed`, below); once it has, this is only the safety net, asked for when nothing has read the board for 30 s.
                 // Until then, and with a computer that does not say so, it is the timer of old: every 5 s.
-                if Date().timeIntervalSince(board.lastRefreshAt) >= (store.boardPushSeen ? 30 : 5) - 0.5 { await board.refresh(using: store) }
+                if firstRead || Date().timeIntervalSince(board.lastRefreshAt) >= (store.boardPushSeen ? 30 : 5) - 0.5 {
+                    firstRead = false
+                    await board.refresh(using: store)
+                }
                 await inbox
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
             }
@@ -1097,7 +1101,7 @@ struct DuduRootView: View {
                 dismissKeyboard()
                 isMakingIssue = true
             } label: {
-                DuduLabel(L10n.text("新建事项"), icon: .plus, ink: 17)
+                DuduLabel(L10n.text("事项"), icon: .plus, ink: 17)
             }
             .accessibilityIdentifier("board.new")
             Button {
