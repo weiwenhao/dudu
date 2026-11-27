@@ -541,7 +541,7 @@
 | 深灰 | Dark Grey | 复用 labels.colors.darkGrey | IssuePropertyIcons.swift |
 | 添加 | Add | 复用 dashboard.add | ChatView.swift、ComposerAttachmentSheet.swift |
 | 添加子事项 | Add sub-issue | 复用 subIssues.add | IssueActionsSheet.swift |
-| 添加并连接 | Add and connect | 新增，待审 | PairingView.swift |
+| 添加并连接 | Add and connect | iPhone 的粘贴表单不再用（2026-11-27 改成「连接」，主人定的字）；Android 的表单还在用 | Pairing.kt |
 | 添加描述… | Add description… | 复用 detail.description | NewIssueSheet.swift |
 | 添加收集器 | Add collector | 复用 settings.collectors.add | native-settings.mjs |
 | 添加环境变量 | Add environment variable | 复用 settings.connectorsPage.custom.addEnv | native-settings.mjs |
@@ -629,7 +629,6 @@
 | 说明 | Description | 新增，待审 | LibraryView.swift |
 | 请允许语音识别权限。 | Allow speech recognition access. | 新增，待审 | NativeSpeechCapture.swift |
 | 请允许麦克风权限。 | Allow microphone access. | 新增，待审 | NativeSpeechCapture.swift |
-| 请先在电脑上更新 Dudu 插件，再使用此功能。 | Update the Dudu plugin on your computer to use this feature. | 新增，待审 | DuduStore.swift、SessionSearch.swift |
 | 请先完成这道问题。 | Complete this question first. | 新增，待审 | ConversationQuestionsView.swift |
 | 请先登录 DeepSeek，并确认请求地址支持账号认证。 | Sign in to DeepSeek and check that the request URL supports account authentication. | 新增，待审 | ConversationFeatureViews.swift |
 | 请在系统设置中允许相机访问。 | Allow camera access in Settings. | 新增，待审 | QRScannerView.swift |
@@ -836,6 +835,37 @@ String Catalog 只增加已批准的中文，不新增未经审阅的英文译�
 
 「复制」沿用原有的词（复制后图标换成对勾，没有新增「已复制」）。原来的「打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码」不再使用，已从 String Catalog 删除。
 
+## 2026-11-27 搜索
+
+主人看过 `.local/designs/phone-search-2026-11-27/` 的设计图，说「行，那你去实现吧」；图上的字就是下面的中文，英文是我写的（主人只审中文，2026-11-27：「我只审中文」，英文不等他审）。手机、安卓、桌面用同一批词。其余的字（搜索、取消、会话、收件箱、任务、更多、智能体、项目、更新时间、状态、来源、待处理、已处理、新建事项、额度、重置、清除搜索、请分配智能体）都是已有的。
+
+| 中文 | English（新增） | 使用处 |
+|---|---|---|
+| 搜索历史 | Search history | 空白搜索页的小标题 |
+| 常用 | Frequently used | 空白搜索页白色卡片的标题 |
+| 没有匹配的内容 | No matching results | 搜不到时的一行（灰色放大镜下面） |
+| 输入关键词或使用筛选查找会话 | Enter a keyword or use filters to find sessions | 点了「会话」范围、还没输入也没选筛选时 |
+| 输入关键词或使用筛选查找信息 | Enter a keyword or use filters to find information | 同上，「收件箱」范围 |
+| 输入关键词或使用筛选查找任务 | Enter a keyword or use filters to find tasks | 同上，「任务」范围 |
+
+主人（2026-11-27）说三句话太口语化：「请先在电脑上更新 Dudu 插件，再使用此功能。」（`DuduStore`、抽屉搜索和搜索页用的，旧电脑插件不认识一个方法时的提示）换成 App 里已有的「请更新电脑端的 Dudu 插件」（手机和安卓的抽屉搜索、搜索页都是它；旧句已从 String Catalog 和安卓的词表删除）；会话文字索引还在建时的那一行：桌面搜索页原来有「正在建立搜索索引，结果可能不全」，主人说「，结果可能不全」是口语；我加到手机上之后主人又说「都不在设计稿里，莫名其妙的有个建立索引」，所以这一行三端的搜索页都没有了（电脑在建索引时页面什么也不说，保留已有结果、过一会儿再问）；桌面的失败一行「搜索没能完成」改成「搜索失败」（照「压缩失败」「上传失败」，中文待审；英文 Search failed）。
+
+搜索框里的提示用已有的「搜索」；清空搜索历史的垃圾桶、输入框的清除按钮的无障碍文字用已有的「清除搜索」；没有新增解释文字（内容索引还在建时，页面保留已有的结果、每秒再问一次，不说话）。
+
+## 2026-11-27 反馈
+
+主人（2026-11-27）：「增加一个反馈功能，可以把最近的日志，用户机型，和用户反馈内容一起发过来」；我先画的是一个页面（还有收件人、日志大小、机型三行），他改了：「反馈放在设置页……隐私条款下面放一个反馈弹窗」「只需要让用户填一个回信邮箱，其他的都不需要。你不需要显示出来我的邮箱，这都是我的隐私信息」。所以设置最后一张卡里「隐私政策」下面是一行「反馈」，点开是一个弹窗（画法同「新建事项」）：一个描述框、一个邮箱框，界面上没有收件人、日志、机型和任何说明。英文是我写的（主人只审中文）。手机和安卓同一批词；「取消」「发送」是已有的。
+
+| 中文 | English（新增） | 使用处 |
+|---|---|---|
+| 反馈 | Feedback | 设置里的一行，也是弹窗的标题 |
+| 请描述遇到的问题 | Describe the problem | 描述框的占位字 |
+| 回信邮箱 | Reply email | 邮箱框的占位字 |
+| 发送失败 | Send failed | 发送没成功时，屏幕最上面的提示条（约 1 秒，没有 ✕；主人 2026-11-27 选的位置，照「上传失败」的说法） |
+| 已发送 | Sent | 发送成功、弹窗关闭后设置页上的提示条 |
+
+发出去的内容（描述、回信邮箱、App 版本、机型和系统、语言、最近的诊断日志）不在界面上显示，也没有对应的文字。邮件主题「Dudu 反馈 · iOS 0.3.0 (169)」是主人收信时看的，不是界面文字，不翻译。
+
 ## 仍由原内容决定的文字
 
 2026-11-17 连接状态设计确认新增首页提示“电脑未连接”（`BoardConnectionNotice`）。
@@ -849,3 +879,22 @@ String Catalog 只加入主人已确认的这句中文，未增加未经审核�
 - 内嵌 DSH 页面使用本页的语言服务，不写入 Desktop 的语言偏好。
 
 本轮没有安装到手机或热更新 Desktop；没有启动 App、模拟器、浏览器或真实 DSH 场景。构建和单元测试不代表英文排版已通过目视验收。
+
+## 2026-11-27 连接失败的电脑（「连接嘟嘟」那一页）
+
+主人逐个看了画出来的候选（`.local/designs/connection-guide-failure-2026-11-27/boards/`）后选的：电脑那一行名字和地址变红、行尾一个 CircleX、去掉 ⌃⌄；原来那一行红字不再常驻，原因的字（「无法连接内网地址」「配对已失效」等，都是 App 里已有的）改成屏幕最上面的短暂提示条（约 1 秒，没有 ✕）；卡片下面一行小字写手机自己的网络和地址：「本机 · Wi-Fi · 192.168.31.88」（主人：「Q3 可以，但是这台手机这四个字换成 本机吧」）。英文是我写的（主人只审中文）。
+
+| 中文 | English（新增） | 使用处 |
+|---|---|---|
+| 本机 | This phone | 卡片下面那行小字的开头 |
+| 蜂窝网络 | Cellular | 同一行里，手机用蜂窝网络时代替「Wi-Fi」 |
+
+「Wi-Fi」是名称，不翻译。
+
+## 2026-11-27 粘贴配对链接表单（「添加电脑」和「连接嘟嘟」里的那个）
+
+主人逐条定的：整栏「电脑名称」去掉（名字取链接里的 `name=`，没有就用电脑的地址，扫描本来就是这样；改名在 电脑连接 › ⓘ › 编辑）；按钮只叫「连接」（主人：「连接就是连接，你为什么是添加并连接？」）；输入框空着时右端一个只有图标的粘贴按钮，没有字、没有颜色、没有背景（主人：「类似复制一样的小按钮，不需要颜色，不需要文案描述」，选了 B，又说「它还有灰色的背景圆框」）；连接失败的原因不再是表单里的红字，而是屏幕最上面约 1 秒的提示条（和「连接嘟嘟」页、反馈的「发送失败」一样），粘贴和扫码都一样。没有新增的字：「连接」「配对链接」「粘贴电脑生成的完整链接」在目录里原来就有；「电脑名称」「请输入配对链接」iPhone 不再用（Android 的表单还在用，目录里保留）。粘贴按钮的无障碍名称是系统粘贴控件自带的。
+
+## 2026-11-27 再次添加电脑
+
+电脑连接里的「+」不再打开只有两个按钮的「添加电脑」，而是第一次打开时的连接指南（主人：「再次添加的时候也跳到连接指南那个窗口吧，只是这一次它能返回」，选了「翻进去、左上角返回」那种）。没有新增的字：三步说明、「扫描配对码」「粘贴配对链接」「重新连接」和失败时的字都是第一次打开那页原来的；返回按钮是系统的。「添加电脑」这个标题现在只在从外面来的配对链接（`dudu://connect?url=`）打开的页面上还用。

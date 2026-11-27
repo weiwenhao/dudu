@@ -82,6 +82,8 @@ class HomeFlowTest {
     }
 
     @Test fun createRequiresProjectRetainsFailedDraftAndDeletionNeedsConfirmation() {
+        // 新建事项 is in the board's ··· menu since the search page came (2026-11-27), beside 额度.
+        compose.onNodeWithTag("board-more").performClick()
         compose.onNodeWithTag("new-issue").performClick()
         awaitEnabled("issue-title")
         compose.onAllNodesWithTag("agent-picker").assertCountEquals(0)

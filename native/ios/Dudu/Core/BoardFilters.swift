@@ -140,6 +140,8 @@ struct BoardFilters: Equatable {
         }
     }
     func contains(_ key: String?, in field: BoardFilterField) -> Bool { values[field]?.contains(key) == true }
+    /// What is chosen in one field (the search page's pills list it).
+    func chosenKeys(in field: BoardFilterField) -> Set<String?> { values[field] ?? [] }
 
     mutating func toggle(_ key: String?, in field: BoardFilterField) {
         var selected = values[field] ?? []

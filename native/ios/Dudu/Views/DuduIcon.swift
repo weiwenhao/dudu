@@ -26,6 +26,8 @@ enum DuduGlyph: CaseIterable {
     case stateIdle, stateWorking, stateBlocked, stateUnassigned
     /// A failed agent or background job in the activity sheets (red Lucide `CircleAlert`).
     case stateFailed
+    /// A computer that could not be reached (the 「连接嘟嘟」 page's card; owner, 2026-11-27: 「用 CircleX」).
+    case connectionFailed
     /// The square Stop in the approved background-job detail.
     case jobStop
     /// The long-press menus of the settings pages (the desktop's menus: ArrowUp / ArrowDown to move a status, Unplug for a connector, KeyRound to authorize one).
@@ -132,6 +134,7 @@ enum DuduGlyph: CaseIterable {
         case .stateBlocked: return .octagonPause
         case .stateUnassigned: return .user
         case .stateFailed: return .circleAlert
+        case .connectionFailed: return .circleX
         case .jobStop: return .square
         case .moveUp: return .arrowUp
         case .moveDown: return .arrowDown

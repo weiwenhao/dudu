@@ -451,7 +451,7 @@ class DuduApi(endpoint: Endpoint, private val expectedComputer: String? = endpoi
     }
 }
 
-private suspend fun Call.await(): Response = suspendCancellableCoroutine { continuation ->
+internal suspend fun Call.await(): Response = suspendCancellableCoroutine { continuation ->
     continuation.invokeOnCancellation { cancel() }
     enqueue(object : Callback {
         override fun onFailure(call: Call, e: IOException) {

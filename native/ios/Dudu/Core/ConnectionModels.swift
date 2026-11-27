@@ -234,3 +234,30 @@ actor DuduJSON {
         return try JSONDecoder().decode(JSONValue.self, from: data)
     }
 }
+
+/// A pairing that did not get through, as the link named the computer (`DuduStore.failedPairing`): what the page of the failure shows on its row, and the link to try again.
+struct PairingAttempt: Equatable, Sendable {
+    let link: String
+    let name: String
+    /// The address the phone tried, without `http://` (the LAN one when the link has both).
+    let address: String
+
+    init(link: String, endpoint: ConnectionEndpoint) {
+        self.link = link
+        name = endpoint.name
+        let url = (endpoint.addresses.first { $0.kind == .lan } ?? endpoint.addresses.first)?.url ?? endpoint.originalURL
+        address = url.replacingOccurrences(of: #"^https?://"#, with: "", options: .regularExpression).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    init(link: String, name: String, address: String) {
+        self.link = link
+        self.name = name
+        self.address = address
+    }
+
+    /// From the link as typed or scanned; nil when it is no link the phone can read (nothing was tried then).
+    init?(link: String) {
+        guard let endpoint = try? ConnectionEndpoint.parse(link) else { return nil }
+        self.init(link: link, endpoint: endpoint)
+    }
+}

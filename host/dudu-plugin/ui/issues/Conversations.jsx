@@ -7,6 +7,7 @@ import { useToast } from '../components/toast.jsx';
 import { useServices } from '../services.jsx';
 import { ConversationAvatar } from './ConversationAvatar.jsx';
 import { ConversationSplit } from './ConversationSplit.jsx';
+import { ConversationTitle, issueOf } from './conversation-row.jsx';
 import { AgentAvatar, ProgressRing } from './icons.jsx';
 import { AgentLogo } from './AgentLogo.jsx';
 import { IssueMenu } from './IssueMenu.jsx';
@@ -16,23 +17,10 @@ import { T } from '../strings.js';
 import { conversationTime } from './conversation-time.js';
 import { pickConversation, rememberConversation, rememberedConversation } from './selection.js';
 import { useSessionReturnState } from '../lib/session-return.jsx';
+import { SearchPage } from '../search/SearchPage.jsx';
+import { noteOpened } from '../search/search-model.js';
 
-const issueOf = entry => entry.issue ? {
-  ...entry.issue, pinned: entry.pinned, sessionState: entry.sessionState, receivedAt: entry.receivedAt,
-} : { id: 'assistant', title: T.brand, agent: 'dudu', session: 'assistant', pinned: entry.pinned };
-
-/**
- * A sub-issue's title under its parent's, the phones' rule (`BoardConversationTitle`; owner, 2026-11-23: 「父事项这里太长了，缩短一点，我都看不到标题了」): its own
- * title comes first, and the parent gives way down to about 48px, at most 128px when there is room.
- */
-function ConversationTitle({ issue }) {
-  return <span className="dudu-conversation-row-title-text">
-    {issue.parent && <><span className="max-w-32 min-w-0 shrink-[1000] truncate text-[#96989d]">{issue.parent.title}</span><span className="shrink-0 text-[#96989d]">#</span></>}
-    <span className={issue.parent ? 'min-w-0 max-w-[calc(100%_-_3.5rem)] truncate' : 'min-w-0 truncate'}>{issue.title}</span>
-  </span>;
-}
-
-function ConversationSidebar({ request, entries, pins, home, selected, listKey, open, openChild, menu, badge, header, controls }) {
+function ConversationSidebar({ request, entries, pins, home, selected, listKey, open, openChild, menu, badge, header, controls, hidden }) {
   const scroller = useRef(null);
   const aboveRows = useRef(null);
   const [aboveRowsHeight, setAboveRowsHeight] = useState(0);
@@ -49,7 +37,7 @@ function ConversationSidebar({ request, entries, pins, home, selected, listKey, 
     count: entries.length, getScrollElement: () => scroller.current, estimateSize: () => 64, overscan: 8,
     scrollMargin, getItemKey: index => entries[index].id,
   });
-  return <div className="dudu-conversation-sidebar">
+  return <div className="dudu-conversation-sidebar" style={hidden ? { display: 'none' } : undefined}>
     {header}
     <div ref={scroller} className="dudu-conversation-scroll">
     <div ref={aboveRows}>
@@ -93,7 +81,13 @@ function ConversationSidebar({ request, entries, pins, home, selected, listKey, 
   </div>;
 }
 
-export function Conversations({ request, home, scope, listKey, header, controls, deletedIssue, onOpen, onChange, onAssign, onDelete, onAddSub, onDuplicate, onRestart, onPin, pinning }) {
+/** Mounted while the panel is too narrow for the search page (the list column is a rail): it closes the search, so that it does not come back by itself when the panel is wide again. */
+function CloseSearch({ onClose }) {
+  useEffect(() => { onClose(); }, [onClose]);
+  return null;
+}
+
+export function Conversations({ request, home, scope, listKey, header, controls, deletedIssue, onOpen, onChange, onAssign, onDelete, onAddSub, onDuplicate, onRestart, onPin, pinning, search }) {
   const { conversation: services } = useServices();
   const toast = useToast();
   const [selection, setSelection] = useSessionReturnState('conversation.selection', () => ({ scope, id: null, entry: null, outsideIssue: null }));
@@ -134,6 +128,7 @@ export function Conversations({ request, home, scope, listKey, header, controls,
       if (!entry.issue.agent) toast({ message: T.toast.assignAgent });
       return;
     }
+    noteOpened(entry.id); // 常用 of the search page: the conversation opened last first
     setSelection({ scope, id: entry.id, entry, outsideIssue: null });
   };
   const selectedIssue = selectedEntry ? issueOf(selectedEntry) : outsideIssue;
@@ -145,7 +140,10 @@ export function Conversations({ request, home, scope, listKey, header, controls,
       const answer = await request('issues/get', { id, logLimit: 1 });
       if (token !== childRequest.current) return;
       if (answer.outcome !== 'success') throw new Error();
-      if (answer.issue?.session) setSelection(current => current.scope === scope ? { scope, id: `issue:${id}`, entry: null, outsideIssue: answer.issue } : current);
+      if (answer.issue?.session) {
+        noteOpened(`issue:${id}`);
+        setSelection(current => current.scope === scope ? { scope, id: `issue:${id}`, entry: null, outsideIssue: answer.issue } : current);
+      }
     } catch { if (token === childRequest.current) toast({ message: T.toast.failed }); }
   };
   const menu = (entry, child) => {
@@ -163,8 +161,13 @@ export function Conversations({ request, home, scope, listKey, header, controls,
   };
   const badge = (entry, size) => <ConversationAvatar title={entry.title} assistant={!entry.issue}
     state={entry.sessionState} size={size} busy={pinning.has(entry.id)} />;
-  return <ConversationSplit sidebar={compact => <ConversationSidebar request={request} entries={entries} pins={pins} home={home} selected={selected} listKey={listKey}
-    open={open} openChild={openChild} menu={menu} badge={badge} header={header(compact)} controls={!compact && controls} />}>
+  // The search page takes the list column's place (the rail of a narrow panel has no room for it: it is closed then) and the list stays under it, mounted, so that it comes back where it was.
+  return <ConversationSplit sidebar={compact => <>
+    <ConversationSidebar request={request} entries={entries} pins={pins} home={home} selected={selected} listKey={listKey}
+      open={open} openChild={openChild} menu={menu} badge={badge} header={header(compact)} controls={!compact && controls} hidden={search?.open && !compact} />
+    {search?.open && !compact && <SearchPage request={request} selected={selected} onOpen={open} badge={badge} onOpenIssue={onOpen} onClose={search.onClose} />}
+    {search?.open && compact && <CloseSearch onClose={search.onClose} />}
+  </>}>
     {selectedIssue && services && <IssueConversation key={selectedIssue.id} issue={selectedIssue} request={request} services={services} />}
   </ConversationSplit>;
 }

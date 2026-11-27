@@ -181,7 +181,8 @@ enum DuduLog {
         try? FileManager.default.moveItem(at: file, to: firstArchive)
     }
 
-    private static func logDirectory() -> URL? {
+    /// Where the log files are (`events.jsonl`, then `events.1.jsonl` … `events.4.jsonl`, the newest first); the feedback reads them.
+    static func logDirectory() -> URL? {
         guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
             return nil
         }

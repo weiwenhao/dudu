@@ -37,6 +37,7 @@ test('the phone can ask for every one of these methods, and the bridge knows the
   assert.deepEqual([...NATIVE_BOARD_METHODS], [
     'board.list', 'board.pin', 'board.read', 'issue.get', 'issue.delete', 'issue.update', 'issue.assign', 'issue.open', 'issue.pick', 'issue.options', 'issue.parents', 'issue.project.create', 'issue.label.create', 'issue.create',
     'inbox.list', 'inbox.get', 'inbox.read', 'inbox.mark', 'inbox.share', 'inbox.complete',
+    'search.query',
   ]);
 });
 
@@ -150,11 +151,12 @@ test('phone issue rows retain parent titles and completion counts; detail alone 
   const parent = issues.add({ title: 'desktop 插件', brief: '父事项完整描述' }).issue;
   const child = issues.add({ title: '子事项自己的标题', parent: parent.id, brief: '子事项完整描述', session: 'dsh:child' }).issue;
   const finished = issues.add({ title: '已完成的子事项', parent: parent.id, status: 'done' }).issue;
+  const canceled = issues.add({ title: '取消的子事项', parent: parent.id, status: 'canceled' }).issue;
   const list: any = await call('board.list', { tab: 'all' });
   const rows = list.groups.flatMap((group: any) => group.items);
   const parentRow = rows.find((item: any) => item.id === parent.id);
   const childRow = rows.find((item: any) => item.id === child.id);
-  assert.deepEqual(parentRow.subIssues, { total: 2, done: 1 });
+  assert.deepEqual(parentRow.subIssues, { total: 2, done: 1 }, 'a canceled sub-issue does not occupy the count');
   assert.equal(parentRow.children, undefined, 'no child list or descriptions in homepage rows');
   assert.equal(childRow.title, child.title, 'the original title is never overwritten by a joined presentation title');
   assert.deepEqual(childRow.parent, {
@@ -162,7 +164,7 @@ test('phone issue rows retain parent titles and completion counts; detail alone 
   });
   assert.equal(JSON.stringify(list).includes('完整描述'), false);
   const full: any = await call('issue.get', { id: parent.id });
-  assert.deepEqual(full.issue.children.map((item: any) => item.id), [child.id, finished.id]);
+  assert.deepEqual(full.issue.children.map((item: any) => item.id), [child.id, finished.id, canceled.id], 'the full list still shows a canceled sub-issue, only the count skips it');
   assert.equal(full.issue.children[0].sessionId, 'child');
   assert.equal(full.issue.children[0].description, undefined);
   issues.update(parent.id, { title: '新的父事项标题' });

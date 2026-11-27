@@ -57,6 +57,8 @@ import { createGroup } from './dist/assistant/home/group.mjs';
 import { createLatest } from './dist/assistant/home/latest.mjs';
 import { createChatHome } from './dist/assistant/home/chat-home.mjs';
 import { createChatHomeApi } from './dist/assistant/home/chat-home-api.mjs';
+import { createSearch, createSearchApi } from './dist/assistant/home/search.mjs';
+import { boardRow } from './dist/native-board.mjs';
 import { createConversation } from './dist/assistant/home/conversation.mjs';
 import { createAssistantSessionOperations } from './dist/assistant/home/session-operations.mjs';
 import { createLocalWidgets } from './dist/assistant/widgets/local.mjs';
@@ -1044,11 +1046,24 @@ function startChatHome(ctx, folder, assignment) {
     assistantLine: () => assignment.group?.ownLine() ?? null,
   });
   const handle = createChatHomeApi(home, (action, body) => assignment.issuesApi.execute(action, body));
+  // The search page's one request (home/search.mjs): the conversations, the inbox and the tasks, each asked when it is used, as the other halves of the plugin start later than this.
+  const search = createSearch({
+    row: boardRow,
+    conversations: (row, options) => home.list('all', row, undefined, options),
+    sessions: (query) => assignment.searchSessions?.(query),
+    inbox: (options) => assignment.inboxApi?.search(options) ?? { outcome: 'error', code: 'unavailable' },
+    tasks: (action, body) => assignment.tasks?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
+  });
+  const handleSearch = createSearchApi(search);
   const disposers = [];
   try {
     for (const action of ['list', 'pin']) disposers.push(registerRoute(ctx, {
       path: `/api/dudu/home/${action}`, methods: ['POST'], requestBody: 'buffered',
       fetch: (request) => handle(action, request),
+    }));
+    disposers.push(registerRoute(ctx, {
+      path: '/api/dudu/search/query', methods: ['POST'], requestBody: 'buffered',
+      fetch: (request) => handleSearch(request),
     }));
   } catch (error) {
     for (const dispose of disposers) dispose();
@@ -1056,9 +1071,11 @@ function startChatHome(ctx, folder, assignment) {
     throw error;
   }
   assignment.chatHome = home;
+  assignment.search = search;
   return () => {
     for (const dispose of disposers) dispose();
     delete assignment.chatHome;
+    delete assignment.search;
     home.close();
   };
 }
@@ -1134,6 +1151,7 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
       // The phone's board and Collector: the same commands the desktop interface sends, run for the owner (the issues are opened later than this: asked for when used).
       board: {
         home: chatHome,
+        search: assignment.search,
         getNeedsYouColor: () => assignment.assistant?.settings?.value('needsYouColor'),
         issues: (action, body) => assignment.issuesApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
         inbox: (action, body) => assignment.inboxApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },

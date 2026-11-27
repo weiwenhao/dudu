@@ -99,6 +99,7 @@ internal object DuduGlyphs {
     val stateBlocked = R.drawable.ic_octagon_pause
     val stateUnassigned = R.drawable.ic_user
     val stateFailed = R.drawable.ic_circle_alert
+    val connectionFailed = R.drawable.ic_circle_x
     val jobStop = R.drawable.ic_square
     val moveUp = R.drawable.ic_arrow_up
     val moveDown = R.drawable.ic_arrow_down

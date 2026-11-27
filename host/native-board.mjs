@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { HARNESS_IDS } from './providers/catalog.mjs';
 import { createWithAttachments } from './assistant/issues/create-with-attachments.mjs';
 import { understands } from './native-client.mjs';
+import { SEARCH_SCOPES } from './assistant/home/search.mjs';
 
 /**
  * The capability of a phone whose chat list may show what the owner said last (owner, 2026-11-22: "其他 APP 都会显示我发的消息"): the row's `preview` and `receivedAt` are then those of the newest message of
@@ -39,12 +40,17 @@ export const OWN_MESSAGES = 'board.latest';
 //   inbox.share   { ids, issue, to?: 'issue' | 'session' }   -> { outcome, changed }
 //   inbox.complete { id }                                    -> { outcome, started }              more context for one record: its collector's session reads the conversation around it, in the
 //                                                                                               background; `inbox.get` then says `completing` and, when it failed, `completeError`
+////   search.query  { q, scope?: 'sessions' | 'inbox' | 'tasks', state?: 'todo' | 'done', connector?: [id], limit? }
+//                                                           -> { q, sessions?: { total, items: [entry], indexing?, partial? }, inbox?: { total, items: [card], names: { collectorId: name } }, tasks?: { total, items: [task] } }
+//                                                                                               the search page's one request (assistant/home/search.mjs): each place in the rows of its own page, `snippet`
+//                                                                                               on an entry or a card whose text matched; with `scope`, `q` may be empty (that place's newest rows)
 //
 // A row is { id, ref, title, agent, sessionState, deepSleep?, status, statusType, priority, project?, dueAt?, updatedAt, sessionId? }; a card is the inbox's own
 // (inbox/api.mjs). An answer that is not a success keeps its `outcome`, `code` and `message`: the app says it failed in its own words.
 export const NATIVE_BOARD_METHODS = Object.freeze([
   'board.list', 'board.pin', 'board.read', 'issue.get', 'issue.delete', 'issue.update', 'issue.assign', 'issue.open', 'issue.pick', 'issue.options', 'issue.parents', 'issue.project.create', 'issue.label.create', 'issue.create',
   'inbox.list', 'inbox.get', 'inbox.read', 'inbox.mark', 'inbox.share', 'inbox.complete',
+  'search.query',
 ]);
 
 const TABS = new Set(['active', 'backlog', 'all']);
@@ -115,7 +121,7 @@ const succeeded = (result) => result?.outcome === 'success';
  * `issues(action, body)` and `inbox(action, body)` run the desktop interface's commands (the owner's: every change is written as the owner); each may answer at once or
  * later. `fail(code)` throws the bridge's own error for a request that is not well formed.
  */
-export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, home, pictures, fail }) {
+export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, home, search, pictures, fail }) {
   const unavailable = () => fail('UPSTREAM_UNAVAILABLE');
   const askIssues = async (action, body) => (issues ? issues(action, body) : unavailable());
   const askInbox = async (action, body) => (inbox ? inbox(action, body) : unavailable());
@@ -410,12 +416,28 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, h
       : problem(result);
   }
 
+  async function searchQuery(params, context) {
+    if (!search) return unavailable();
+    if (typeof params.q !== 'string' || params.q.length > 200
+      || params.scope !== undefined && !SEARCH_SCOPES.includes(params.scope)
+      || params.state !== undefined && !INBOX_TABS.has(params.state)
+      || params.connector !== undefined && (!Array.isArray(params.connector) || !params.connector.every((id) => typeof id === 'string' && id.length <= 80))
+      || params.limit !== undefined && !(Number.isSafeInteger(params.limit) && params.limit >= 1 && params.limit <= 100)
+      || !params.q.trim() && params.scope === undefined) fail('BAD_REQUEST');
+    const result = await search.query({
+      q: params.q, ...(params.scope ? { scope: params.scope } : {}), ...(params.state ? { state: params.state } : {}),
+      ...(params.connector?.length ? { connector: params.connector.slice(0, 20) } : {}), ...(params.limit ? { limit: params.limit } : {}),
+    }, { row, ownMessages: understands(context?.client, OWN_MESSAGES) });
+    return succeeded(result) ? result : problem(result);
+  }
+
   const METHODS = {
     'board.pin': (params) => home ? home.pin(params, fail) : unavailable(),
     'board.read': (params, context) => home ? home.read(params, fail, context?.source) : unavailable(),
     'board.list': list, 'issue.get': get, 'issue.delete': remove, 'issue.update': update, 'issue.assign': assign, 'issue.open': open, 'issue.pick': pick,
     'issue.options': options, 'issue.parents': parents, 'issue.project.create': createProject, 'issue.label.create': createLabel, 'issue.create': create,
     'inbox.list': inboxList, 'inbox.get': inboxGet, 'inbox.read': inboxRead, 'inbox.mark': inboxMark, 'inbox.share': inboxShare, 'inbox.complete': inboxComplete,
+    'search.query': searchQuery,
   };
   return {
     async dispatch(method, params, context) {

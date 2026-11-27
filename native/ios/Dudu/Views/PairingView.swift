@@ -1,23 +1,25 @@
+import LucideSwift
 import SwiftUI
+import UIKit
 
 struct PairingView: View {
     @ObservedObject var store: DuduStore
     var embeddedInSettings = false
     var initialLink: String?
     var onPaired: (() -> Void)?
+    /// What was tried and the words of why it failed, when a link the phone could read did not connect (the connection guide of a phone that has a computer shows it on its card).
+    var onFailed: ((PairingAttempt, String) -> Void)?
     var showsCancelButton: Bool
 
     @Environment(\.dismiss) private var dismiss
     @State private var isManualEntry: Bool
     @State private var isScannerPresented = false
     @State private var link: String
-    @State private var computerName = ""
-    @State private var errorMessage: String?
     @State private var isPairing = false
     @FocusState private var activeField: Field?
 
     private enum Field: Hashable {
-        case link, name
+        case link
     }
 
     init(
@@ -25,6 +27,7 @@ struct PairingView: View {
         embeddedInSettings: Bool = false,
         initialLink: String? = nil,
         onPaired: (() -> Void)? = nil,
+        onFailed: ((PairingAttempt, String) -> Void)? = nil,
         showsCancelButton: Bool = true,
         startsWithManualEntry: Bool = false
     ) {
@@ -32,10 +35,10 @@ struct PairingView: View {
         self.embeddedInSettings = embeddedInSettings
         self.initialLink = initialLink
         self.onPaired = onPaired
+        self.onFailed = onFailed
         self.showsCancelButton = showsCancelButton
         _isManualEntry = State(initialValue: startsWithManualEntry || initialLink != nil)
         _link = State(initialValue: initialLink ?? "")
-        _computerName = State(initialValue: initialLink.map { pairingName(from: $0) } ?? "")
     }
 
     private var pairingContent: some View {
@@ -71,7 +74,6 @@ struct PairingView: View {
                 } else {
                     Button {
                         isManualEntry = true
-                        errorMessage = nil
                         DuduLog.record("pairing.manual")
                     } label: {
                         Text(L10n.text("粘贴配对链接"))
@@ -117,16 +119,13 @@ struct PairingView: View {
             QRScannerView { scannedLink in
                 isScannerPresented = false
                 link = scannedLink
-                computerName = pairingName(from: scannedLink)
                 Task { await pairComputer(scannedLink) }
             }
         }
         .onChange(of: initialLink) { _, value in
             guard let value, !value.isEmpty else { return }
             link = value
-            computerName = pairingName(from: value)
             isManualEntry = true
-            errorMessage = nil
         }
     }
 
@@ -138,40 +137,25 @@ struct PairingView: View {
                     .foregroundStyle(DuduStyle.ink)
                 TextField(L10n.text("粘贴电脑生成的完整链接"), text: $link, axis: .vertical)
                     .focused($activeField, equals: .link)
+                    .accessibilityIdentifier("pairing.link")
                     .font(.system(size: 15))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
                     .textContentType(.URL)
-                    .lineLimit(2...4)
-                    .padding(13)
+                    .lineLimit(1...4)
+                    .padding(.leading, 13)
+                    // Room for the paste icon while the field is empty (it is one line high then, and grows with what is pasted or typed).
+                    .padding(.trailing, link.isEmpty ? 48 : 13)
+                    .padding(.vertical, 15)
                     .background(Color.white, in: RoundedRectangle(cornerRadius: 13))
                     .overlay(RoundedRectangle(cornerRadius: 13).stroke(DuduStyle.line, lineWidth: 1))
-                    .accessibilityIdentifier("pairing.link")
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text(L10n.text("电脑名称"))
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(DuduStyle.ink)
-                TextField(L10n.text("选填"), text: $computerName)
-                    .focused($activeField, equals: .name)
-                    .submitLabel(.done)
-                    .onSubmit { activeField = nil }
-                    .font(.system(size: 15))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .padding(13)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 13))
-                    .overlay(RoundedRectangle(cornerRadius: 13).stroke(DuduStyle.line, lineWidth: 1))
-            }
-
-            if let errorMessage, !errorMessage.isEmpty {
-                Text(errorMessage)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Color(red: 0.71, green: 0.31, blue: 0.29))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.isStaticText)
+                    .overlay(alignment: .trailing) {
+                        if link.isEmpty {
+                            PasteIconButton { link = $0 }
+                                .padding(.trailing, 6)
+                        }
+                    }
             }
 
             Button {
@@ -179,7 +163,7 @@ struct PairingView: View {
             } label: {
                 HStack(spacing: 9) {
                     if isPairing { ProgressView().tint(.white) }
-                    Text(L10n.text("添加并连接"))
+                    Text(L10n.text("连接"))
                         .font(.system(size: 15, weight: .semibold))
                 }
                 .foregroundStyle(.white)
@@ -198,28 +182,53 @@ struct PairingView: View {
     private func pairComputer(_ value: String) async {
         guard !isPairing else { return }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            errorMessage = L10n.text("请输入配对链接")
-            return
-        }
+        guard !trimmed.isEmpty else { return }
 
         isPairing = true
         activeField = nil
-        errorMessage = nil
         DuduLog.record("pairing.connect")
         do {
-            try await store.pair(link: trimmed, name: computerName.trimmingCharacters(in: .whitespacesAndNewlines))
+            try await store.pair(link: trimmed)
             DuduLog.record("pairing.success")
             onPaired?()
             dismiss()
+        } catch is CancellationError {
+            // The app left the screen while it was connecting: nothing to say.
         } catch {
-            errorMessage = error.localizedDescription
+            // The words of the failure in a short toast at the top (owner, 2026-11-27): the same one as on the connection page and the feedback's 「发送失败」. It was a red line inside the form, which a scan never showed.
+            let words = error.localizedDescription
+            if let attempt = PairingAttempt(link: trimmed) { onFailed?(attempt, words) }
+            TopToast.shared.show(DuduToastMessage(text: words, kind: .error, duration: .seconds(1), showsClose: false))
         }
         isPairing = false
     }
 }
 
-private func pairingName(from value: String) -> String {
-    guard let components = URLComponents(string: value) else { return "" }
-    return components.queryItems?.first(where: { $0.name == "name" })?.value ?? ""
+/// Only the clipboard glyph (owner, 2026-11-27: 「类似复制一样的小按钮，不需要颜色，不需要文案描述」, and 「它还有灰色的背景圆框」): no word, no colour, no background. What takes the tap is the system's paste control, hidden
+/// behind the glyph (it pastes without the 「允许粘贴」 question; one that is nearly transparent is refused by the system, so it is hidden by the blend mode instead, as tried in the simulator on 2026-11-27).
+private struct PasteIconButton: View {
+    var onPaste: (String) -> Void
+    @State private var hasText = UIPasteboard.general.hasStrings
+
+    var body: some View {
+        ZStack {
+            LucideIcon(.clipboardPaste, size: 18, strokeWidth: 2, absoluteStrokeWidth: false)
+                .foregroundStyle(DuduStyle.ink)
+                .opacity(hasText ? 1 : 0.35)
+                .accessibilityHidden(true)
+            PasteButton(payloadType: String.self) { strings in
+                if let text = strings.first { onPaste(text) }
+            }
+            .labelStyle(.iconOnly)
+            .blendMode(.destinationOver)
+        }
+        .frame(width: 36, height: 36)
+        .accessibilityIdentifier("pairing.paste")
+        .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in
+            hasText = UIPasteboard.general.hasStrings
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            hasText = UIPasteboard.general.hasStrings
+        }
+    }
 }

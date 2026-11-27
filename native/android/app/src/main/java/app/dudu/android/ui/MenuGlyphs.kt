@@ -15,4 +15,5 @@ internal object MenuGlyphs {
     val photoSaved = R.drawable.ic_check
     val connectorSignIn = R.drawable.ic_log_in
     val connectorLocal = R.drawable.ic_square_terminal
+    val pasteLink = R.drawable.ic_clipboard_paste
 }

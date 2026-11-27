@@ -16,7 +16,13 @@
     "请允许{0}使用麦克风，点这里打开设置。": "Allow {0} to use the microphone. Tap here to open its settings.",
     "嘟嘟正在接收通知": "Dudu is receiving notifications",
     "收集器通知": "Collector notifications",
-    "后台连接": "Background connection"
+    "后台连接": "Background connection",
+    "搜索历史": "Search history",
+    "常用": "Frequently used",
+    "没有匹配的内容": "No matching results",
+    "输入关键词或使用筛选查找会话": "Enter a keyword or use filters to find sessions",
+    "输入关键词或使用筛选查找信息": "Enter a keyword or use filters to find information",
+    "输入关键词或使用筛选查找任务": "Enter a keyword or use filters to find tasks"
   },
   "also": "wording-sources.json: englishAwaitingOwnerReview; the settings pages' words come from host/native-strings.mjs (docs/native-localization-wording.md)"
 }

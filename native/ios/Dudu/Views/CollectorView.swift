@@ -379,6 +379,9 @@ struct CollectorRow: View {
     let selected: Bool
     /// Its context is being filled in (`CollectorModel.complete`): a small spinner stands before the time, as on the desktop's row.
     var completing = false
+    /// A row of the search page: the words that were looked for are marked, and a line of the text that matched stands in place of who it is from.
+    var terms: [String] = []
+    var snippet: String? = nil
 
     /// A handled record that went to an issue is the issue's: nothing to choose it for.
     private var choosable: Bool { tab != .done || record.issue == nil }
@@ -408,13 +411,13 @@ struct CollectorRow: View {
             ConnectorAvatar(icon: record.connectorIcon, name: record.connectorName, size: 44)
                 .modifier(ConversationAvatarStatus(state: record.unread == true ? .unread : .idle, size: 44, roundedSquare: true))
             VStack(alignment: .leading, spacing: 3) {
-                Text(record.title)
+                SearchText.marked(record.title, terms: terms)
                     .font(.system(size: 16, weight: .medium))
                     .lineSpacing(2)
                     .foregroundStyle(DuduStyle.ink)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                Text(record.byLine)
+                SearchText.marked(snippet.flatMap { $0.isEmpty ? nil : $0 } ?? record.byLine, terms: terms)
                     .font(.system(size: 13))
                     .foregroundStyle(DuduStyle.muted)
                     .lineLimit(1)
@@ -629,7 +632,7 @@ struct SimulatorCollectorRecordReview: View {
 }
 #endif
 
-private struct CollectorRecordSheet: View {
+struct CollectorRecordSheet: View {
     let record: CollectorRecord
     let tab: CollectorTab
     @ObservedObject var model: CollectorModel

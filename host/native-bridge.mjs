@@ -1827,7 +1827,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
   });
   const pageBridge = pages ?? createNativePages({ rpc, files });
   // The board and the Collector: the plugin's own issues and inbox, asked through the commands the desktop interface sends (`board` gives the two).
-  const boardBridge = createNativeBoard({ issues: board?.issues, inbox: board?.inbox, projects: board?.projects, getNeedsYouColor: board?.getNeedsYouColor, home: board?.home, pictures: board?.pictures, fail });
+  const boardBridge = createNativeBoard({ issues: board?.issues, inbox: board?.inbox, projects: board?.projects, getNeedsYouColor: board?.getNeedsYouColor, home: board?.home, search: board?.search, pictures: board?.pictures, fail });
   // 嘟嘟's own settings, drawn by the app: the pages the web view used to show, asked through the same list of actions (phone-pages.mjs).
   const settingsBridge = createNativeSettings({ call: (action, body) => (duduPages?.allowed(action) ? duduPages.call(action, body) : { status: 404, body: {} }) });
   const activityBridge = createNativeSessionActivity({

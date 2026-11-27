@@ -30,6 +30,7 @@
 import { brandOf } from '../connectors/brands.mjs';
 import { loadCatalog } from '../connectors/catalog.mjs';
 import { WORDS as W } from '../dispatch/words.mjs';
+import { segment } from '../segment.mjs';
 import { parseMessages } from './records.mjs';
 import { INBOX_REQUESTS } from './contract.mjs';
 
@@ -57,6 +58,23 @@ const stamp = (ms) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
 const cut = (text, max) => { const chars = [...String(text ?? '')]; return chars.length > max ? `${chars.slice(0, Math.max(0, max - 1)).join('')}…` : chars.join(''); };
+
+/**
+ * The line of a record's text that a search result shows under its title: about a hundred characters around the first of the query's words that the text holds, cut where the text is cut with
+ * an ellipsis. Empty when the title already shows that word (the row says why it matched) or the text does not hold any word as typed (a match through the search's own word splitting).
+ */
+export function snippetOf(text, title, words) {
+  const raw = [...String(text ?? '').replace(/\s+/g, ' ').trim()];
+  const lower = raw.join('').toLowerCase();
+  const shown = String(title ?? '').toLowerCase();
+  const found = words.map((word) => ({ word, at: lower.indexOf(word) })).filter((hit) => hit.at >= 0).sort((a, b) => a.at - b.at)[0];
+  if (!found || shown.includes(found.word)) return '';
+  // `indexOf` counts UTF-16 units and `raw` is in code points: count the code points before the hit.
+  const before = [...lower.slice(0, found.at)].length;
+  const start = Math.max(0, before - 24);
+  const end = Math.min(raw.length, before + 80);
+  return `${start > 0 ? '…' : ''}${raw.slice(start, end).join('')}${end < raw.length ? '…' : ''}`;
+}
 
 /**
  * What an agent is told of records the owner shares into its session: for each one, where it came from, who sent it and when, its link, its words
@@ -140,6 +158,41 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
       unreadCount: inbox.unreadCount(),
       names: Object.fromEntries(called), // every collector's name by id, for the chips of a filter that keeps them by id
       facets: { connector: page.facets.connector.map(({ key, count }) => ({ key, name: called.get(key) ?? key, count })) },
+    };
+  }
+
+  /**
+   * The search page's 收件箱 range, for the phone, the Desktop and Dudu (home/search.mjs): the records whose title, text or sender hold the words of `q` (newest first), or, with no words,
+   * the newest records of both tabs; `state` ('todo' | 'done') and `connector` (ids) narrow either. -> { outcome, total, names: { id: name }, items: [card] } where a card whose text holds the words
+   * and whose title does not has `snippet`, a line of that text. Not one of the interface's own actions (no `CALLS` entry): the search is its own operation, `search/query`.
+   */
+  function search({ q = '', state, connector, limit = 20 } = {}) {
+    const size = Math.max(1, Math.min(100, Number.isSafeInteger(limit) ? limit : 20));
+    const query = String(q ?? '').trim().slice(0, 200);
+    const tab = TABS.includes(state) ? state : undefined;
+    const ids = Array.isArray(connector) ? connector.filter((id) => typeof id === 'string' && id).slice(0, 20) : [];
+    let rows;
+    let total;
+    if (query) {
+      rows = inbox.search(query, { connector: ids, tab, limit: size, text: true });
+      total = inbox.countMatches(query, { connector: ids, tab });
+    } else {
+      const pages = (tab ? [tab] : TABS).map((name) => inbox.browse({ tab: name, connector: ids, limit: size }));
+      rows = pages.flatMap((page) => page.items);
+      total = pages.reduce((sum, page) => sum + page.facets.connector.filter((facet) => !ids.length || ids.includes(facet.key)).reduce((all, facet) => all + facet.count, 0), 0);
+    }
+    rows.sort((a, b) => (b.at ?? b.collectedAt) - (a.at ?? a.collectedAt) || b.id - a.id);
+    rows = rows.slice(0, size);
+    const known = directory();
+    const summaries = summariesOf(rows);
+    const words = segment(query).split(' ').filter(Boolean);
+    return {
+      outcome: 'success', total,
+      names: Object.fromEntries(names(known)), // every collector's name by id: what a filter by source offers
+      items: rows.map((row) => {
+        const line = row.text ? snippetOf(row.text, row.title, words) : '';
+        return { ...card(row, known, summaries), ...(line ? { snippet: line } : {}) };
+      }),
     };
   }
 
@@ -284,6 +337,7 @@ export function createInboxApi({ issues, collectors = () => null, forward = null
   };
 
   return {
+    search,
     execute(action, body = {}) {
       if (!Object.hasOwn(CALLS, action)) return { outcome: 'error', code: 'unknown_action' };
       if (body === null || typeof body !== 'object' || Array.isArray(body)) return needs('The request must be a JSON object.', 'invalid_request');

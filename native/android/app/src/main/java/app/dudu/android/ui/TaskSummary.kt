@@ -27,11 +27,14 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.TimeZone
 
-/** `roomy` is the row of the 任务 sheet (owner, 2026-11-18, the inbox redesign): a 30 dp logo, the title in 16 sp, the status in 13 sp, the line under it across the whole row, 64 dp high. The other lists keep the compact row. */
+/**
+ * `roomy` is the row of the 任务 sheet (owner, 2026-11-18, the inbox redesign): a 30 dp logo, the title in 16 sp, the status in 13 sp, the line under it across the whole row, 64 dp high. The other lists keep the compact row.
+ * The search page draws the compact row with the status as words (no `onToggle`), and `highlight` is what was typed, whose words are coloured in the title.
+ */
 @Composable
 internal fun TaskSummary(task: JSONObject, conversationScoped: Boolean = false, busy: Boolean = false,
     horizontalPadding: Int = 16, roomy: Boolean = false, onToggle: ((Boolean) -> Unit)? = null,
-    toggleEnabled: Boolean = true, pendingToggle: Boolean? = null) {
+    toggleEnabled: Boolean = true, pendingToggle: Boolean? = null, highlight: String = "") {
     val on = task.optString("status") == "active"
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val schedule = task.optJSONObject("schedule") ?: json()
@@ -55,7 +58,7 @@ internal fun TaskSummary(task: JSONObject, conversationScoped: Boolean = false, 
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (roomy) 4.dp else 2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(task.optString("title"), Modifier.weight(1f), fontSize = if (roomy) 16.sp else 15.sp,
+                Text(highlighted(task.optString("title"), highlight), Modifier.weight(1f), fontSize = if (roomy) 16.sp else 15.sp,
                     lineHeight = if (roomy) 21.sp else TextUnit.Unspecified, fontWeight = FontWeight.Medium,
                     color = if (on) MaterialTheme.colorScheme.onSurface else muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (busy) RunningMark(16) else if (onToggle == null) Text(taskStatus(task.optString("status")), fontSize = if (roomy) 13.sp else 12.sp,

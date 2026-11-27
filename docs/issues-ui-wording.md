@@ -983,3 +983,15 @@ Lucide `ListTodo`。复用原有导航图标的尺寸、颜色、线宽和圆角
 | 二维码弹窗 | **打开嘟嘟扫码** / 点「扫描配对码」，对准下面的二维码 | **Open Dudu to scan** / Tap “Scan pairing code” and point it at the QR code below | 「打开嘟嘟扫码」是 `shell.scan`，一直在、没用上；第二行英文待审。弹窗原来只有读屏用的标题「配对手机」，现在标题可见。 |
 
 三个链接：App Store 用不带国家的地址 `https://apps.apple.com/app/id6833981505`（在人所在的地区打开），TestFlight 是公开链接 `https://testflight.apple.com/join/TNUPd6n7`，安卓是最新发行页 `https://github.com/weiwenhao/dudu/releases/latest`。
+
+## 搜索页（2026-11-27，主人看过设计图 `.local/designs/phone-search-2026-11-27/`，说「行，那你去实现吧」）
+
+手机、安卓、桌面用同一批词；图上的字就是下面的中文，英文是我写的（主人只审中文）。图里没有的一句（最后一行，搜索失败）是桌面做的，**中文待主人审**。会话索引还在建时页面什么也不说（设计稿里没有这一行；主人 2026-11-27 看到后说「莫名其妙的有个建立索引」，已去掉），只保留已有的结果、过一会儿再问。其余用界面里现有的字：搜索、取消、更多、会话、收件箱、任务、智能体、项目、更新时间、状态、来源、待处理、已处理、已开启、已暂停、已结束、清除、重试。
+
+| 位置 | 中文 | English | 来源 |
+| --- | --- | --- | --- |
+| 空白页小标题 | **搜索历史** | **Search history** | 图上的字（`strings.js` 的 `searchPage.history`）。 |
+| 空白页白色卡片的标题 | **常用** | **Frequently used** | 图上的字（`searchPage.frequent`）。三端同一句英文。 |
+| 搜不到时 | **没有匹配的内容** | **No matching results** | 图上的字（`searchPage.noResults`）。 |
+| 点了一个范围、没输入也没选筛选时 | **输入关键词或使用筛选查找会话** / **…查找信息** / **…查找任务** | **Enter a keyword or use filters to find sessions** / **…information** / **…tasks** | 图上的字（`searchPage.hint`）。 |
+| 搜索失败时（只在桌面，一行加重试） | **搜索失败** | **Search failed** | **待审**。主人（2026-11-27）说原来的「搜索没能完成」太口语化；现在照 App 里「压缩失败」「上传失败」「处理失败」的写法。手机、安卓用各自已有的失败字。 |

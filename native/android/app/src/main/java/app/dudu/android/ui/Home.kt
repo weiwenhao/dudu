@@ -67,7 +67,6 @@ fun DuduApp(state: UiState, model: DuduViewModel) {
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val coroutine = rememberCoroutineScope()
     BackHandler(drawer.isOpen) { coroutine.launch { drawer.close() } }
-    BackHandler(state.conversationTitle != null && state.panel == null && state.route == null) { model.leaveConversation() }
     // The drawer's search slides in over it from the right and ‹ goes back to the drawer, as on the iPhone; opening a result closes both (the conversations it was given match by title at once).
     var searching by remember(state.computerId) { mutableStateOf<List<org.json.JSONObject>?>(null) }
     LaunchedEffect(drawer.isOpen) { if (!drawer.isOpen) searching = null }
@@ -79,16 +78,30 @@ fun DuduApp(state: UiState, model: DuduViewModel) {
         val sheetRoute = state.route?.takeIf { it.isSheet(conversationOpen) }
         val pageRoute = pageRoute(state.route, model.routesBehindCurrent(), conversationOpen)
         val homeVisible = pageRoute == null && !conversationOpen
+        // Where the back of the conversation goes: the board, the search page it was opened from, another page, or the conversation it was opened from inside. The search page stays composed under
+        // its conversation (its words, rows and place are as they were when the conversation is closed), and, like the board, is placed under it while the back gesture is on its way, to be seen there.
+        val shown = conversationOpen && pageRoute == null
+        val returnRoute = if (shown) model.conversationReturnRoute() else null
+        val returnsToConversation = shown && model.conversationReturnsToConversation()
+        val searchPage = pageRoute?.takeIf { it.name == "search" } ?: returnRoute?.takeIf { it.name == "search" }
+        val reveals = shown && !returnsToConversation && (returnRoute == null || returnRoute.name == "search")
+        var revealing by remember { mutableStateOf(false) }
         Box(Modifier.fillMaxSize()) {
             key(state.computerId, state.language) {
-                RetainedHomeRoot(homeVisible) {
+                RetainedHomeRoot(homeVisible || revealing && reveals && returnRoute == null) {
                     HomeRoots(state, model, active = homeVisible && sheetRoute == null && state.panel == null && !drawer.isOpen) {
                         coroutine.launch { drawer.open() }
                     }
                 }
             }
-            if (pageRoute != null) FeatureScreen(pageRoute, state, model) { coroutine.launch { drawer.open() } }
-            else if (conversationOpen) key(state.computerId, state.conversationKey) { ConversationPage(state, model) }
+            if (searchPage != null) RetainedHomeRoot(pageRoute != null || revealing && reveals) {
+                CompositionLocalProvider(LocalPageActive provides (pageRoute != null)) { FeatureScreen(searchPage, state, model) }
+            }
+            else if (pageRoute != null) FeatureScreen(pageRoute, state, model) { coroutine.launch { drawer.open() } }
+            if (shown) key(state.computerId, state.conversationKey) {
+                ConversationBackLayer(enabled = state.panel == null && state.route == null, reveals = reveals, revealing = { revealing = it },
+                    leave = model::leaveConversation) { ConversationPage(state, model) }
+            }
         }
         if (sheetRoute != null) FeatureSheet(sheetRoute, state, model)
     }
@@ -184,13 +197,23 @@ private fun BoardPage(state: UiState, model: DuduViewModel, openDrawer: () -> Un
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
                     title = {}, // no page title on the board (owner, 2026-11-18: "app 顶部的看板两个字不需要了"); the bar is the menu and the two buttons
                     actions = {
-                        IconButton(onClick = { model.show(Panel.Quota) }, enabled = state.connected && !state.busy,
-                            modifier = Modifier.testTag("quota")) {
-                            Glyph(DuduGlyphs.quota, stringResource(R.string.quota))
+                        // The magnifier opens the search page; 额度 and 新建事项 are in the ··· menu (owner, 2026-11-27, `.local/designs/phone-search-2026-11-27/`), a drop-down like the conversation's.
+                        IconButton(onClick = model::openSearch, enabled = state.connected, modifier = Modifier.testTag("search")) {
+                            Glyph(DuduGlyphs.search, w("搜索"))
                         }
-                        IconButton(onClick = model::newIssue, enabled = state.connected && !state.busy,
-                            modifier = Modifier.testTag("new-issue")) {
-                            Glyph(DuduGlyphs.plus, stringResource(R.string.new_issue))
+                        var menu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { menu = true }, modifier = Modifier.testTag("board-more")) {
+                                Glyph(DuduGlyphs.options, stringResource(R.string.more))
+                            }
+                            DropdownMenu(menu, { menu = false }) {
+                                DropdownMenuItem(text = { Text(stringResource(R.string.new_issue)) }, leadingIcon = { Glyph(DuduGlyphs.plus, size = 18) },
+                                    enabled = state.connected && !state.busy, modifier = Modifier.testTag("new-issue"),
+                                    onClick = { menu = false; model.newIssue() })
+                                DropdownMenuItem(text = { Text(stringResource(R.string.quota)) }, leadingIcon = { Glyph(DuduGlyphs.quota, size = 18) },
+                                    enabled = state.connected && !state.busy, modifier = Modifier.testTag("quota"),
+                                    onClick = { menu = false; model.show(Panel.Quota) })
+                            }
                         }
                     },
                 )
@@ -330,36 +353,46 @@ private fun BoardConnectionNotice() {
 /**
  * One row of the board, the iPhone's `BoardConversationRow`: the avatar, the title (a sub-issue's under its parent) and the time, the last message and the agent's logo, which a spinner
  * replaces while the row's own change is saved. The sub-issue progress is a button of its own, 44 dp high, 8 dp before the logo, over the row's own tap.
+ * The search page draws its conversations with it too (owner, 2026-11-27: each place in the rows of its own page): `highlight` is what was typed, whose words are coloured, and `snippet` the
+ * line of the conversation's text that matched, which takes the place of the last message on two lines at most, so that the row is as tall as it needs; it has no long press and no progress button.
  */
 @Composable
-private fun ConversationRow(row: Conversation, busy: Boolean, onClick: () -> Unit, onLongClick: (IntRect) -> Unit, onChildren: () -> Unit) {
+internal fun ConversationRow(row: Conversation, busy: Boolean, onClick: () -> Unit, onLongClick: ((IntRect) -> Unit)?, onChildren: () -> Unit,
+    highlight: String = "", snippet: String? = null) {
     var anchor by remember(row.id) { mutableStateOf(IntRect.Zero) }
     val interaction = remember { MutableInteractionSource() }
     val issue = row.issue
-    val progress = issue?.takeIf { it.subTotal > 0 }
-    Box(Modifier.fillMaxWidth().height(66.dp)) {
-        Row(Modifier.fillMaxSize().testTag("row-${row.id}")
+    val tall = snippet != null
+    val progress = issue?.takeIf { it.subTotal > 0 && !tall }
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Box(Modifier.fillMaxWidth().then(if (tall) Modifier.heightIn(min = 66.dp) else Modifier.height(66.dp))) {
+        Row((if (tall) Modifier.fillMaxWidth() else Modifier.fillMaxSize()).testTag("row-${row.id}")
             .onGloballyPositioned { anchor = it.boundsInWindow().roundToIntRect() }
             .combinedClickable(interactionSource = interaction, indication = null, enabled = !busy,
-                onClick = onClick, onLongClick = { onLongClick(anchor) })
+                onClick = onClick, onLongClick = onLongClick?.let { press -> { press(anchor) } })
             .pressShade(interaction)
-            .padding(horizontal = BoardLayout.horizontalInset.dp), verticalAlignment = Alignment.CenterVertically) {
+            .padding(horizontal = BoardLayout.horizontalInset.dp).then(if (tall) Modifier.padding(vertical = 9.dp) else Modifier),
+            verticalAlignment = if (tall) Alignment.Top else Alignment.CenterVertically) {
             TitleAvatar(row, 48)
             Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(BoardLayout.lineSpacing.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (tall) 3.dp else BoardLayout.lineSpacing.dp)) {
                 Row(Modifier.height(BoardLayout.titleLineHeight.dp), verticalAlignment = Alignment.CenterVertically) {
                     BoardConversationTitle(if (row.id == "assistant") stringResource(R.string.dudu) else row.title, issue?.parent,
-                        17.sp, 22.sp, Modifier.weight(1f))
+                        17.sp, 22.sp, Modifier.weight(1f), highlight)
                     if (row.receivedAt > 0) {
                         Spacer(Modifier.width(8.dp))
-                        Text(receivedTime(row.receivedAt), fontSize = 14.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(receivedTime(row.receivedAt), fontSize = 14.sp, maxLines = 1, color = muted)
                     }
                 }
-                Row(Modifier.height(20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (snippet != null) Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(highlighted(snippet, highlight), Modifier.weight(1f), fontSize = 14.sp, lineHeight = 20.sp, maxLines = 2,
+                        overflow = TextOverflow.Ellipsis, color = muted)
+                    if (issue != null) Box(Modifier.height(20.dp), contentAlignment = Alignment.Center) { AgentLogo(issue.agent, BoardLayout.agentSize) }
+                } else Row(Modifier.height(20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val imageLabel = stringResource(R.string.image)
-                    Text(row.preview.replace("［图片］", "［$imageLabel］"), Modifier.weight(1f),
+                    Text(highlighted(row.preview.replace("［图片］", "［$imageLabel］"), highlight), Modifier.weight(1f),
                         fontSize = 14.sp, lineHeight = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        color = muted)
                     // Room for the progress button above, which draws the same label.
                     if (progress != null) Box(Modifier.alpha(0f)) { SubIssueProgressLabel(progress.subDone, progress.subTotal) }
                     if (busy) Box(Modifier.size(BoardLayout.agentSize.dp), contentAlignment = Alignment.Center) { RowSpinner(12) }

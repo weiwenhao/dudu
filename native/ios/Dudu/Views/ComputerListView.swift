@@ -95,8 +95,8 @@ struct ComputerListView: View {
             }
         }
         .navigationDestination(isPresented: $isPairingPresented) {
-            PairingView(store: store, embeddedInSettings: true, showsCancelButton: false)
-                .hidesTabBarWhenPushed()
+            // Adding another computer is the connection guide again (owner, 2026-11-27, option A): the steps, scan and paste, and a way back.
+            ConnectionGuideView(store: store, mode: .adding)
         }
         .navigationDestination(isPresented: $showsConnectionDetails) {
             if let detailComputerID { ComputerConnectionView(store: store, computerID: detailComputerID).hidesTabBarWhenPushed() }

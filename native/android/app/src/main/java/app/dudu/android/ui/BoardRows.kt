@@ -101,9 +101,9 @@ internal fun RowSpinner(size: Int) {
  * to 48 dp before the sub-issue's title is cut.
  */
 @Composable
-internal fun BoardConversationTitle(title: String, parent: String?, fontSize: TextUnit, lineHeight: TextUnit, modifier: Modifier = Modifier) {
+internal fun BoardConversationTitle(title: String, parent: String?, fontSize: TextUnit, lineHeight: TextUnit, modifier: Modifier = Modifier, highlight: String = "") {
     if (parent == null) {
-        Text(title, modifier, fontSize = fontSize, lineHeight = lineHeight, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(highlighted(title, highlight), modifier, fontSize = fontSize, lineHeight = lineHeight, maxLines = 1, overflow = TextOverflow.Ellipsis)
         return
     }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
@@ -111,7 +111,7 @@ internal fun BoardConversationTitle(title: String, parent: String?, fontSize: Te
     Layout({
         Text(parent, fontSize = fontSize, lineHeight = lineHeight, maxLines = 1, overflow = TextOverflow.Ellipsis, color = muted)
         Text("#", fontSize = fontSize, lineHeight = lineHeight, maxLines = 1, color = muted)
-        Text(title, fontSize = fontSize, lineHeight = lineHeight, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(highlighted(title, highlight), fontSize = fontSize, lineHeight = lineHeight, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }, modifier.semantics(mergeDescendants = true) { contentDescription = label }) { measurables, constraints ->
         val parentWidth = measurables[0].maxIntrinsicWidth(Constraints.Infinity)
         val separator = measurables[1].maxIntrinsicWidth(Constraints.Infinity)

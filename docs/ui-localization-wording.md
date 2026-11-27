@@ -766,6 +766,6 @@ Office 复用同一语言设置；事项状态、智能体状态等复用主表�
 | views.delete | Delete view | 删除视图 |
 | views.deleteTitle | Delete view "{name}"? | 删除视图“{name}”？ |
 | views.deleteScope | The view is deleted. The issues in it stay. | 将删除这个视图，里面的事项不受影响。 |
-| widgets.sessions.unsearchable | {count} sessions cannot be searched, so results may be incomplete | 还有 {count} 个会话没法搜索内容，结果可能不全 |
-| widgets.sessions.indexing | Building the search index ({done}/{total}), so results may be incomplete | 正在建立搜索索引（{done}/{total}），结果可能不全 |
+| widgets.sessions.unsearchable | {count} sessions cannot be searched | 还有 {count} 个会话没法搜索内容 |
+| widgets.sessions.indexing | Building the search index ({done}/{total}) | 正在建立搜索索引（{done}/{total}） |
 | widgets.sessions.listPartial | Some sessions could not be read, so the list may be incomplete | 部分会话没能读取，列表可能不全 |

@@ -119,7 +119,7 @@ private fun ReconnectRow(connecting: Boolean, tag: String, action: () -> Unit) {
 @Composable
 fun ComputersScreen(state: UiState, model: DuduViewModel) {
     Page(w("电脑连接"), model::backRoute, nested = true, background = settingsCanvas(), top = {
-        IconButton(onClick = { model.navigate(Route("pair")) }, modifier = Modifier.testTag("computers-add")) {
+        IconButton(onClick = { model.navigate(Route("connect")) }, modifier = Modifier.testTag("computers-add")) {
             Glyph(DuduGlyphs.plus, w("添加电脑"), 22)
         }
     }) {

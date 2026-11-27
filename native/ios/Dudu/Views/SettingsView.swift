@@ -25,6 +25,9 @@ struct SettingsView: View {
     @StateObject private var embeddedSession = EmbeddedPageSession()
     @State private var embeddedRetryToken = 0
     @State private var selectedRow: SettingsRow?
+    /// The feedback popup under the privacy policy (owner, 2026-11-27), and the line that says it was sent.
+    @State private var isFeedbackPresented = false
+    @State private var feedbackToast: DuduToastMessage?
 
     /// 嘟嘟's own settings pages: a fixed list in the app (owner, 2026-11-21: 「这个列表应该是原生组件写死的…不需要从 API 加载」). The plugin supplies the values a page shows (`settings.data`;
     /// the layout of each page is `SettingsLayouts`), not which pages there are, nor their names or icons, so an older plugin cannot bring back older icons. DSH's settings are not one of
@@ -103,6 +106,16 @@ struct SettingsView: View {
         .toolbarBackground(DuduStyle.settingsBackground, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.light, for: .navigationBar)
+        .sheet(isPresented: $isFeedbackPresented) {
+            FeedbackSheet { feedbackToast = DuduToastMessage(text: L10n.text("已发送"), kind: .success) }
+        }
+        .overlay(alignment: .top) {
+            DuduToastOverlay(message: feedbackToast) { dismissed in
+                if feedbackToast?.id == dismissed.id { feedbackToast = nil }
+            }
+            .padding(.top, 8)
+            .padding(.horizontal, 16)
+        }
         .toolbar {
             if !isHome {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -298,6 +311,20 @@ struct SettingsView: View {
             }
             .buttonStyle(DuduRowButtonStyle())
             .accessibilityIdentifier("settings.privacy")
+
+            rowDivider
+
+            Button {
+                DuduLog.record("settings.feedback.open")
+                isFeedbackPresented = true
+            } label: {
+                aboutRowLabel(.message, L10n.text("反馈")) {
+                    DuduIcon(.right, size: 16)
+                        .foregroundStyle(DuduStyle.muted)
+                }
+            }
+            .buttonStyle(DuduRowButtonStyle())
+            .accessibilityIdentifier("settings.feedback")
 
             rowDivider
 

@@ -9,7 +9,7 @@
     <string name="close">关闭</string>
     <string name="back">返回</string>
     <string name="retry">重试</string>
-    <string name="connect">添加并连接</string>
+    <string name="connect">连接</string>
     <string name="computers">电脑连接</string>
     <string name="pairing_link">配对链接</string>
     <string name="invalid_link">配对链接无效</string>

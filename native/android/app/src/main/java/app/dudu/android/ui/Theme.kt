@@ -21,6 +21,8 @@ object DuduStyle {
     val selected = Color(0xFFEAEAED)
     val scopeTrack = Color(0xFFEFF0F2)
     val scopeInk = Color(0xFF737982)
+    /** The grey the empty search page lies on, under its white history chips and 常用 card (Lark's, from the owner's drawing, `.local/designs/phone-search-2026-11-27/`). */
+    val searchBody = Color(0xFFF3F4F6)
 }
 
 private val light = lightColorScheme(

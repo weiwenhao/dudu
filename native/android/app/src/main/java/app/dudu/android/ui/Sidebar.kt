@@ -88,7 +88,7 @@ fun DuduSidebar(state: UiState, model: DuduViewModel, opened: Boolean, search: (
         }
     }
     changeProblem?.let { code ->
-        val text = if (code in listOf("UNSUPPORTED", "METHOD_NOT_ALLOWED")) w("请先在电脑上更新 Dudu 插件，再使用此功能。") else problemText(code)
+        val text = if (code in listOf("UNSUPPORTED", "METHOD_NOT_ALLOWED")) w("请更新电脑端的 Dudu 插件") else problemText(code)
         LaunchedEffect(code, text) { model.toast(text, ToastKind.Error, literal = true); changeProblem = null }
     }
     fun route(value: Route) {

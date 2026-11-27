@@ -203,43 +203,14 @@ struct BoardFilterSheet: View {
         }
     }
 
-    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        VStack(spacing: 0, content: content)
-            .background(.white, in: RoundedRectangle(cornerRadius: 16))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
+    private func card<Content: View>(@ViewBuilder content: @escaping () -> Content) -> some View {
+        FilterCard(content: content)
     }
 
     private func optionRow(_ option: BoardFilterOption, field: BoardFilterField) -> some View {
-        let checked = board.filters.contains(option.id, in: field)
-        return Button { board.toggle(option, in: field) } label: {
-            HStack(spacing: 12) {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(checked ? DuduStyle.blue : .white)
-                    .overlay {
-                        if checked {
-                            DuduIcon(.check, size: 14).foregroundStyle(.white)
-                        } else {
-                            RoundedRectangle(cornerRadius: 4)
-                                .strokeBorder(DuduStyle.muted.opacity(0.45), lineWidth: 1)
-                        }
-                    }
-                    .frame(width: 18, height: 18)
-                    .accessibilityHidden(true)
-                optionIcon(option, field: field)
-                Text(option.title).font(.system(size: 16)).lineLimit(1)
-                Spacer(minLength: 8)
-                if let count = option.count {
-                    Text(count.formatted())
-                        .font(.system(size: 14))
-                        .foregroundStyle(DuduStyle.chatSecondary)
-                }
-            }
-            .padding(.horizontal, 15)
-            .frame(minHeight: rowHeight)
-            .contentShape(Rectangle())
+        FilterOptionRow(title: option.title, count: option.count, checked: board.filters.contains(option.id, in: field), action: { board.toggle(option, in: field) }) {
+            optionIcon(option, field: field)
         }
-        .buttonStyle(DuduRowButtonStyle())
-        .accessibilityAddTraits(checked ? .isSelected : [])
     }
 
     @ViewBuilder private func optionIcon(_ option: BoardFilterOption, field: BoardFilterField) -> some View {
@@ -263,5 +234,58 @@ struct BoardFilterSheet: View {
         default:
             EmptyView()
         }
+    }
+}
+
+/// The white rounded card a filter sheet lists its rows in (the board's, and the search page's).
+struct FilterCard<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(spacing: 0, content: content)
+            .background(.white, in: RoundedRectangle(cornerRadius: 16))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+/// One choice of a filter sheet: the box, the choice's own mark (an agent's logo, a status), its title and, at the right, how many rows it leaves.
+struct FilterOptionRow<Mark: View>: View {
+    static var height: CGFloat { 44 }
+    let title: String
+    var count: Int? = nil
+    let checked: Bool
+    let action: () -> Void
+    @ViewBuilder let mark: () -> Mark
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(checked ? DuduStyle.blue : .white)
+                    .overlay {
+                        if checked {
+                            DuduIcon(.check, size: 14).foregroundStyle(.white)
+                        } else {
+                            RoundedRectangle(cornerRadius: 4)
+                                .strokeBorder(DuduStyle.muted.opacity(0.45), lineWidth: 1)
+                        }
+                    }
+                    .frame(width: 18, height: 18)
+                    .accessibilityHidden(true)
+                mark()
+                Text(title).font(.system(size: 16)).lineLimit(1)
+                Spacer(minLength: 8)
+                if let count {
+                    Text(count.formatted())
+                        .font(.system(size: 14))
+                        .foregroundStyle(DuduStyle.chatSecondary)
+                }
+            }
+            .padding(.horizontal, 15)
+            .frame(minHeight: Self.height)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(DuduRowButtonStyle())
+        .accessibilityAddTraits(checked ? .isSelected : [])
     }
 }

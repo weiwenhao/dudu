@@ -4,8 +4,8 @@ import { DICTIONARIES } from '../host/dudu-plugin/ui/strings.js';
 const root = new URL('../', import.meta.url);
 const native = JSON.parse(await readFile(new URL('native/ios/Dudu/Resources/Localizable.xcstrings', root), 'utf8')).strings;
 const keys = {
-  app_name: '嘟嘟', dudu: '嘟嘟', active: '进行中', unread: '未读', all: '全部事项',
-  cancel: '取消', close: '关闭', back: '返回', retry: '重试', connect: '添加并连接',
+  app_name: '嘟嘟', dudu: '嘟嘟', active: '进行中', unread: '未读', all: '全部',
+  cancel: '取消', close: '关闭', back: '返回', retry: '重试', connect: '连接',
   computers: '电脑连接', pairing_link: '配对链接', invalid_link: '配对链接无效',
   connection_failed: '无法连接，请检查电脑和网络',
   auth_failed: '配对已失效，请生成新配对码', identity_mismatch: '配对信息与电脑不匹配，请重新配对',

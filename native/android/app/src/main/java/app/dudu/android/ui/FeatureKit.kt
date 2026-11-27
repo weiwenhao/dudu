@@ -327,13 +327,13 @@ fun Field(label: String, value: String, enabled: Boolean = true, multi: Boolean 
     }
 }
 
-/** `prominent` is the forward picker's field (owner, 2026-11-18): a 48 dp pill filled in the sheet's darker grey, a 22 dp icon, the words in 16 sp. */
+/** `prominent` is the forward picker's field (owner, 2026-11-18): a 48 dp pill filled in the sheet's darker grey, a 22 dp icon, the words in 16 sp. `onSearch` is the keyboard's search key. */
 @Composable
 fun SearchField(value: String, placeholder: String, tag: String = "", autoFocus: Boolean = false,
     capsule: Boolean = false, prominent: Boolean = false,
     containerColor: Color = if (prominent) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainer,
     iconSize: Int = if (prominent) 22 else 18,
-    fontSize: Int = if (prominent) 16 else 14, changed: (String) -> Unit) {
+    fontSize: Int = if (prominent) 16 else 14, onSearch: (() -> Unit)? = null, changed: (String) -> Unit) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(autoFocus) { if (autoFocus) focus.requestFocus() }
     val words = (if (prominent) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium)
@@ -345,6 +345,8 @@ fun SearchField(value: String, placeholder: String, tag: String = "", autoFocus:
         Spacer(Modifier.width(if (prominent) 11.dp else 9.dp))
         BasicTextField(value, changed, Modifier.weight(1f).testTag(tag).focusRequester(focus), singleLine = true,
             textStyle = words.copy(color = MaterialTheme.colorScheme.onSurface),
+            keyboardOptions = if (onSearch == null) KeyboardOptions.Default else KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { onSearch?.invoke() }),
             cursorBrush = SolidColor(DuduStyle.blue),
             decorationBox = { inner ->
                 if (value.isEmpty()) Text(placeholder, color = MaterialTheme.colorScheme.onSurfaceVariant, style = words)
@@ -524,6 +526,7 @@ fun FeatureScreen(route: Route, state: UiState, model: DuduViewModel, openDrawer
         when (route.name) {
             "sessions" -> SessionsScreen(state, model)
             "session-search" -> SessionSearchScreen(route, state, model)
+            "search" -> SearchScreen(state, model)
             "session-new" -> NewSessionScreen(state, model, openDrawer ?: model::backRoute)
             "collector" -> CollectorScreen(model)
             "record" -> RecordScreen(route, model)
@@ -537,6 +540,7 @@ fun FeatureScreen(route: Route, state: UiState, model: DuduViewModel, openDrawer
             "computer" -> ComputerScreen(route, state, model)
             "computers" -> ComputersScreen(state, model)
             "pair" -> AddComputerScreen(route, state, model)
+            "connect" -> ConnectGuideScreen(state, model)
             "web" -> EmbeddedScreen(route, state, model)
             "scan" -> PairingScanner(model)
             "issue" -> IssueScreen(route, state, model)

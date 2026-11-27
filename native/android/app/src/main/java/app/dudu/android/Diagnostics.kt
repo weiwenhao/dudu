@@ -4,9 +4,13 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import app.dudu.android.data.DuduLog
+import app.dudu.android.data.FEEDBACK_LOG_LIMIT
+import app.dudu.android.data.recentLog
 import org.json.JSONException
 import java.io.File
+import java.util.concurrent.Callable
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Where the app's diagnostics go (`DuduLog`): `no_backup/diagnostics/events.jsonl` in the app's own storage, 1 MB a file and five files kept (every request is a line, so about twice the iPhone's room), and logcat under the
@@ -35,6 +39,33 @@ object Diagnostics {
         val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
         DuduLog.record("app.launch", state = version?.versionName?.filter { it.isLetterOrDigit() || it in "._-" }?.take(32),
             counts = mapOf("sdk" to Build.VERSION.SDK_INT.toLong()), detail = Build.MODEL.filter { it.isLetterOrDigit() || it in "._-" }.take(40))
+    }
+
+    /**
+     * The newest of the diagnostics for a feedback (`recentLog`: at most `limit` bytes, whole lines, oldest first, `(earlier lines left out)` in front when it was cut). It is read on the writer's own
+     * thread, so every line written before the call is in the files and none is moved while they are read. Only `events*.jsonl` is read: the crash files carry a message, and stay on the phone.
+     */
+    fun recent(context: Context, limit: Int = FEEDBACK_LOG_LIMIT): String {
+        val directory = File(context.noBackupFilesDir, "diagnostics")
+        return writer.submit(Callable { readRecent(directory, limit) }).get(10, TimeUnit.SECONDS)
+    }
+
+    private fun readRecent(directory: File, limit: Int): String {
+        // The newest file first; older ones are read only until there is enough to fill the limit.
+        val files = (listOf("events.jsonl") + (1 until KEPT).map { "events.$it.jsonl" }).map { File(directory, it) }.filter { it.isFile }
+        val newestFirst = mutableListOf<List<String>>()
+        var bytes = 0L
+        var older = false
+        for ((index, file) in files.withIndex()) {
+            val lines = file.readLines()
+            newestFirst += lines
+            bytes += lines.sumOf { it.length + 1 }
+            if (bytes >= limit) {
+                older = index < files.lastIndex
+                break
+            }
+        }
+        return recentLog(newestFirst.asReversed().flatten(), older, limit)
     }
 
     private fun append(directory: File, line: String) {
