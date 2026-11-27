@@ -221,6 +221,7 @@ async function startProviders(ctx, folder, assignment) {
   assignment.sources = providers.sources;
   assignment.release = (sessionId) => providers.release(sessionId); // deep sleep lets go of what the harnesses hold for a session whose turn has ended
   assignment.hasActiveWork = providers.hasActiveWork;
+  assignment.heldRuns = providers.heldRuns; // the runs that are kept after a turn: deep sleep lets go of the conversations that are no issue's too
   // 重启会话 (owner, 2026-11-23, pick A of .local/designs/session-restart-2026-11-23): the conversation's agent process is closed now, and the next
   // message starts a new one that resumes it (with the agent's current environment variables). One that works is left alone. The menu of the
   // conversation list and Dudu's `sessions/restart` are this one handler.
@@ -294,6 +295,7 @@ async function startProviders(ctx, folder, assignment) {
       delete assignment.release;
       delete assignment.restartSession;
       delete assignment.hasActiveWork;
+      delete assignment.heldRuns;
       delete assignment.links;
       delete assignment.quota;
       quota.close();
@@ -619,11 +621,16 @@ async function startAssignment(ctx, folder, assignment) {
     },
   });
   // An idle agent that nobody has handled for half an hour is in deep sleep (its issue says so): what is kept for it is let go of. Looked at every
-  // minute, or, when a test has shortened the time, every half of it.
+  // minute, or, when a test has shortened the time, every half of it. A conversation that is no issue's keeps its harness process between turns too: the same waits, counted from the end
+  // of its turn, let it go (owner, 2026-11-27: 「做吧」); the same switch turns both off.
   const deepSleep = createDeepSleep({
     sessions: agentSessions, asleep: (key) => assignment.issues.findBySession(key).issue?.deepSleep === true,
     intervalMs: deepSleepAfter ? Math.min(60_000, Math.max(250, deepSleepAfter / 2)) : undefined,
     release: (key) => assignment.release?.(key.slice('dsh:'.length)),
+    held: () => (assignment.heldRuns?.() ?? []).map(({ sessionId, finishedAt }) => ({ key: `dsh:${sessionId}`, endedAt: finishedAt })),
+    markOf: (key) => assignment.sessionStatus?.(key)?.sessionState ?? 'idle',
+    enabled: () => assignment.assistant?.settings?.value('deepSleep') !== false,
+    afterMs: deepSleepAfter,
   });
   const disposeSnapshots = registerRoute(ctx, {
     path: '/api/dudu/sessions/snapshots', methods: ['POST'], requestBody: 'buffered',

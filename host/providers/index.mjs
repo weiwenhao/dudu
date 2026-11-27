@@ -283,6 +283,8 @@ export async function createProviders({ host, providers, folder, log = console }
     })),
     refresh: async () => { await refresh(); return view(); },
     hasActiveWork: (sessionId) => [...registered.values()].some(({ bridge }) => bridge.hasActiveWork(sessionId)),
+    /** The sessions that keep a run whose turn has ended, with when it ended: what deep sleep looks at (`release` lets one go). */
+    heldRuns: () => [...registered.values()].flatMap(({ bridge }) => bridge.heldRuns()),
     /** Whether the session's turn is open only for native background work; `onForeground` is told the session's id whenever that may have changed. */
     backgroundOnly: (sessionId) => backgroundOnly(sessionId),
     onForeground(listener) {

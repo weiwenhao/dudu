@@ -106,6 +106,7 @@ export class HarnessRun {
     this.forwarded = new Set(prompts.map((message) => message.id));
     this.finished = false;
     this.startedAt = Date.now();
+    this.finishedAt = null; // when the turn ended: deep sleep counts its wait from here
     this.turnEnd = undefined;
     this.activity = activity;
     this.team = team;
@@ -144,6 +145,7 @@ export class HarnessRun {
   #end(event) {
     if (this.finished) return;
     this.finished = true;
+    this.finishedAt = Date.now();
     this.foregroundActive = false;
     this.onForeground?.();
     this.turnEnd = event;
@@ -242,6 +244,14 @@ export class HarnessBridge {
       session: this.agentOf(sessionId)?.session, flushSession: this.flushSession, provider: this.route, prompts,
       write: this.inputJournal ? (entry) => this.inputJournal.record(this.route, sessionId, entry) : undefined,
     });
+  }
+
+  /**
+   * The runs whose turn has ended and that are still kept: with their process while it lives, and with what they kept of the turn. Deep sleep lets go of them (`release`), after the same
+   * waits for an issue's agent and for any other conversation. A run with background work or a compaction is listed too; `release` leaves it alone.
+   */
+  heldRuns() {
+    return [...this.#runs].filter(([, run]) => run.finished).map(([sessionId, run]) => ({ route: this.route, sessionId, finishedAt: run.finishedAt }));
   }
 
   /** The runs that are working now, for the overview. */
