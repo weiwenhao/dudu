@@ -761,6 +761,7 @@ async function startDispatch(ctx, folder, assignment) {
   assignment.collectSource = createSourceCollector(ctx, {
     folder: () => assignment.assistant?.folder, file: join(folder, 'assistant', 'collect-sessions.json'),
     permission: () => assignment.assistant?.settings?.value('conversation')?.permission, // the permission the owner chose for 嘟嘟's sessions
+    model: () => assignment.assistant?.settings?.value('conversation')?.model, // and the model: a collection asks for none
     connections: () => assignment.assistant?.connections ?? null, // the MCP servers 嘟嘟 has connected itself
   });
   // The collection sessions made before each collector kept one are folded away once, a little after start (they are in DSH's list, not in the file).

@@ -172,20 +172,31 @@ test('a turn through the universal driver draws the harness\'s tool by what it d
   await handle.close();
 });
 
-// 2026-11-27: Antigravity gives its models only in the answer to `session/new`, so reading them every five minutes left an empty conversation in its own store each time (745 in four days).
-test('the universal harnesses keep what they said of their models for hours, not minutes', async (t) => {
+// 2026-11-27: Antigravity gives its models only in the answer to `session/new`, so every reading of them left an empty conversation in its own store (745 in four days). Asking for the models
+// never starts a reading; a session that starts on the harness does when what it said is older than six hours, and a reading runs in a folder of the plugin's own.
+test('the universal harnesses keep what they said of their models for hours, and read them in a folder of their own', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
-  let read = 0;
-  const driver = providerOver({ listModels: async () => { read++; return { kind: 'ok', models: [{ id: 'm', displayName: 'M' }] }; } });
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-listing-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const calls: any[] = [];
+  const runtime = { listModels: async (_installation: any, options: any) => { calls.push(options); return { kind: 'ok', models: [{ id: 'm', displayName: 'M' }] }; } };
+  const driver = createUniversalProvider({ id: 'grok', name: 'Grok', runtime: runtime as any, binaryEnv: 'OAR_GROK_BIN', login: 'Run `grok login` in a terminal.' }).create({ installation: BUNDLED, listingFolder: folder } as any);
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  const start = () => (driver as any).start({ prompt: 'hi', cwd: folder, permission: 'danger-full-access', signal: new AbortController().signal }).catch(() => {});
   await driver.listModels();
+  assert.equal(calls[0].cwd, folder);
   t.mock.timers.tick(5 * 60_000 + 1);
   await driver.listModels();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(read, 1);
+  await start();
+  await settle();
+  assert.equal(calls.length, 1, 'five minutes are nothing to them');
   t.mock.timers.tick(6 * 60 * 60_000);
   await driver.listModels();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(read, 2);
+  await settle();
+  assert.equal(calls.length, 1, 'asking does not read them, however old they are');
+  await start();
+  await settle();
+  assert.equal(calls.length, 2, 'a session that starts does');
 });
 
 test('read-only cannot be kept by these harnesses, so a session in it is refused; the other modes start as the harness runs and with a clean environment', async (t) => {

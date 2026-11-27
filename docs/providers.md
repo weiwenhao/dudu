@@ -407,7 +407,7 @@ writer 真正退出才继续。最后仍执行原来的 `openElsewhere`，不移
 所有者的手机上 `catalog.get` 有时要 24 秒。原因：DSH 的模型目录（`session/modelCatalog`）同时问每个供应商、等最慢的那个；
 Antigravity 没配代理时连不上 Google，列模型要等约 23 秒才失败（DSH 进程里没有代理变量，要在设置 > 供应商里给它配）；
 以前插件的列表缓存过期后，第一个来问的人要等重新读完，读失败的只缓存 30 秒，所以每隔 30 秒再来问又等一次。
-用 DSH 的做法重做（`createOarProvider().create()` 里的 `load`，`host/providers/oar.mjs`）：读到的列表（`MODEL_TTL` 5 分钟）过期后**立即照旧返回**，
+用 DSH 的做法重做（`createOarProvider().create()` 里的 `load`，`host/providers/oar.mjs`；2026-11-27 起“过期后被问就重读”改了，见本节末尾）：读到的列表（`MODEL_TTL` 5 分钟）过期后**立即照旧返回**，
 同时在后台重读，同一时间只读一次；只有从没读到过时第一次问才等，最多 `FIRST_WAIT_MS`（3 秒），之后用插件自己的备用列表，
 这期间再问不再等；读不出来的保留上次读到的（没有就备用的），`RETRY_MS`（1 分钟）后才再读；保存设置（`refreshModels`）后旧的读取结果作废。
 插件启动登记一个 harness 时和保存它的设置后，马上在后台读一次（`warmModels`），第一个菜单不用等。
@@ -422,12 +422,25 @@ Antigravity 没配代理时连不上 Google，列模型要等约 23 秒才失败
 
 **读一次列表在 Antigravity 自己的目录里留一个空会话（2026-11-27）：** `~/.gemini/antigravity-cli/conversations` 里 749 个会话库只有 4 个有内容，其余是空的：读 Antigravity 的模型要先 `session/new`
 （OAR `antigravity/list-models.js`：模型只在那条回复里），agy 在 `session/new` 时就建好会话库和 `brain/<id>` 目录，`session/close` 只是断开，不会删；4 天攒了约 745 个（约 410 MB，另有每次启动的日志）。
-谁在频繁地读：采集器每 5 分钟跑一次（`issues.db` 的 `collect_runs.started_at` 全在第 11 秒，和 agy 日志里每次启动的时间一一对上），每次开头 `pickModel(await modelCatalog())`，而列表的 `MODEL_TTL` 恰好 5 分钟，
-每跑两次左右就重读一遍所有 harness 的列表。别的供应商读法不开会话：Claude 是 `list_models` 控制请求，Codex 是 `model/list`，Pi 是 `--list-models`，Grok 是专用的 `_x.ai/models/list`，OpenCode 是 `opencode models`，
-Factory、Qwen、Qoder 读各自的配置（OAR 0.120.0 的 `list-models.js`；本机 Claude、Codex、Pi 的存储里今天没有新增会话）；Kimi、CodeBuddy、Devin 和 Antigravity 一样靠 `session/new`，装上并启用后会有同样的问题。
-修法：九个通用 harness 的列表有效期改为 6 小时（`createOarProvider` 的 `modelsTtl`，在 `drivers/universal.mjs`；Claude、Codex、Pi 仍是 5 分钟）；设置 > 供应商的“检测”仍让列表立刻作废（下一次问就重读）；
-读不出来时的重试从固定 1 分钟改成 1、2、4……分钟，最多 1 小时（也不超过该 harness 自己的有效期，默认的仍最多 5 分钟），读到一次就从头算。测试：`tests/oar-model-listing.test.ts` 三条、`tests/universal-driver.test.ts` 一条，旧代码下都红。
-没有清理已经留下的空会话：那是 agy 自己的存储，要所有者说了才删。
+谁在频繁地读：采集器每 5 分钟跑一次（`issues.db` 的 `collect_runs.started_at` 全在第 11 秒，和 agy 日志里每次启动的时间一一对上；自 11-26 起 324 次 agy 启动里 263 次在某次收集器开始后 4 秒内），
+每次开头 `pickModel(await modelCatalog())`；DSH 的 `buildModelCatalog` 每次向**每个**供应商要列表（`dsh-llm` 不缓存），而我们的列表 5 分钟过期就重读，所以每跑两次左右就把所有 harness 重读一遍——
+收集器自己跑在 `deepseek-flash` 上，和 agy 无关，牵连只来自这一句“问目录”。别的供应商读法不开会话：Claude 是 `list_models` 控制请求，Codex 是 `model/list`，Pi 是 `--list-models`，Grok 是专用的
+`_x.ai/models/list`，OpenCode 是 `opencode models`，Factory、Qwen、Qoder 读各自的配置（OAR 0.120.0 的 `list-models.js`；本机 Claude、Codex、Pi 今天没有新增会话）；Kimi、CodeBuddy、Devin 和 Antigravity
+一样靠 `session/new`，没有装过，没有验证过它们留不留会话。
+
+**所有者的要求（2026-11-27）和做法：**
+1. **问列表不再启动 harness**（“选了 Claude，查模型列表不该去问 agy、Codex”）。读到的列表不论多旧都照旧返回，**问**从不触发读取；读取只在这几种时候发生：从没读到过（插件启动登记时 `warmModels`，之后读不出来的按 1、2、4……分钟
+   重试，最多 1 小时）、有人让它作废（设置 > 供应商的“检测”、改了设置：`refreshModels`）、一个会话在这个 harness 上启动而列表已超过 `modelsTtl`（`freshen`，后台读；Claude、Codex、Pi 是 5 分钟，九个通用 harness 是 6 小时）。
+   DSH 自己的选择器本来就不重复问：`ModelCatalogDirectory.load()` 每个 Host 代只取一次目录；会问所有供应商的是 DSH 第一次取目录、手机的 `catalog.get`、DSH 的其他内部调用和我们自己的查询，现在它们得到的都是内存里的列表。
+2. **读取不留会话**：九个通用 harness 的读取在专用文件夹 `~/.dsh/dudu/model-listing` 里进行（不再用家目录），读完（agy 进程已退出）按 `listingCleanup` 清理：Antigravity 的是
+   `host/providers/listing-leftovers.mjs` 的 `removeAntigravityListings`，只处理**这次读取开始之后**写过的会话库（不逐个打开旧库），且要同时满足：库里没有任何步骤、库的元数据里记着工作目录就是那个专用文件夹、
+   `brain/<id>` 里只有空文件夹；删 `<id>.db`、`-wal`、`-shm` 和那个空 `brain` 目录；一次最多 20 个；读不懂就不删；agy 自己的索引 `conversation_summaries.db` 不动（agy 每次启动按目录对账）。
+   在真实库的副本上试过：问别的目录删 0 个，时间窗在未来删 0 个，有步骤的和 `brain` 里有文件的都保留。Kimi、CodeBuddy、Devin 没有清理（没有装，不知道它们的存储）。
+3. **嘟嘟自己的查询只问 DeepSeek 那几家**：`duduCatalog(ctx)`（`assistant/dispatch/dsh-llm.mjs`）按路由问（`ctx.llm.listProviders/listModels/resolveModelInfo`，harness 不问），形状和 DSH 的目录一样，
+   用在嘟嘟的对话、定时任务、一次性的模型调用和收集器的兜底；旧版 DSH 不能按路由问时退回它的目录并去掉 harness。`listProviders` 等三个方法在最低支持的 `0.2.1-alpha.3` 和 `0.2.1-rc.5` 的 `dsh-llm` 里都有。
+   **收集器不问任何目录**：用设置 > 常规里“嘟嘟 · 默认”存的模型（`createSourceCollector` 的 `model`），没存才从 DeepSeek 路由里选。手机、会话操作和事项指派要给人选所有供应商，仍用 DSH 的整个目录。
+测试：`tests/oar-model-listing.test.ts`（10）、`tests/universal-driver.test.ts` 一条、`tests/listing-leftovers.test.ts`（3）、`tests/dudu-catalog.test.ts`（2）、`tests/assistant-collect-session.test.ts` 一条，旧代码下相关的都红。
+没做的：没在真实的 agy 上跑过清理，也没在真实 DSH 里试过；已经留下的 744 个空会话（工作目录是家目录，不在专用文件夹里）插件不会动，清理脚本 `.local/recovered/clean-agy-probe-conversations.mjs` 要所有者说了才跑。
 
 ## harness 进程、后台任务和深度睡眠（2026-11-05，进程常驻 2026-11-23）
 

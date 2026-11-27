@@ -4,6 +4,7 @@ import {
   antigravityRuntime, classifyTool, codebuddyRuntime, devinRuntime, factoryRuntime, grokRuntime, kimiRuntime, opencodeRuntime, qoderRuntime, qwenRuntime,
 } from '../oar-runtimes.mjs';
 import { canonicalInput, fallbackSpecOf, kindOf, mirrorName, toolSpecs } from './universal-tools.mjs';
+import { removeAntigravityListings } from '../listing-leftovers.mjs';
 
 // Grok, Kimi, OpenCode, Antigravity, CodeBuddy, Devin, Factory, Qwen and Qoder through OAR. They differ in how OAR reaches them (the first
 // six over ACP, Qwen and Qoder over stream-json, Factory over droid's own protocol) and in what they call their tools, and not in what DSH
@@ -27,7 +28,7 @@ export const UNIVERSAL_HARNESSES = Object.freeze([
   { id: 'grok', name: 'Grok', runtime: grokRuntime, binaryEnv: 'OAR_GROK_BIN', login: 'Run `grok login` in a terminal.' },
   { id: 'kimi', name: 'Kimi', runtime: kimiRuntime, binaryEnv: 'OAR_KIMI_BIN', login: 'Run `kimi login` in a terminal.' },
   { id: 'opencode', name: 'OpenCode', runtime: opencodeRuntime, binaryEnv: 'OAR_OPENCODE_BIN', login: 'Run `opencode auth login` in a terminal.' },
-  { id: 'antigravity', name: 'Antigravity', runtime: antigravityRuntime, binaryEnv: 'OAR_ANTIGRAVITY_BIN', login: 'Run `agy` in a terminal and sign in.' },
+  { id: 'antigravity', name: 'Antigravity', runtime: antigravityRuntime, binaryEnv: 'OAR_ANTIGRAVITY_BIN', login: 'Run `agy` in a terminal and sign in.', listingCleanup: removeAntigravityListings },
   { id: 'codebuddy', name: 'CodeBuddy', runtime: codebuddyRuntime, binaryEnv: 'OAR_CODEBUDDY_BIN', login: 'Run `codebuddy` in a terminal and sign in.' },
   { id: 'devin', name: 'Devin', runtime: devinRuntime, binaryEnv: 'OAR_DEVIN_BIN', login: 'Run `devin auth login` in a terminal.' },
   { id: 'factory', name: 'Factory', runtime: factoryRuntime, binaryEnv: 'OAR_FACTORY_BIN', login: 'Run `droid` in a terminal and sign in.' },
@@ -104,9 +105,9 @@ export const universalSession = ({ name }) => ({ permission }) => {
 // menus change when the vendor ships a model or the person signs in, and Settings > Providers (Detect) makes them stale at once (the next ask reads them anew), so a few hours is as fresh as they need to be.
 const MODELS_TTL = 6 * 60 * 60_000;
 
-export function createUniversalProvider({ id, name, runtime, binaryEnv, login }) {
+export function createUniversalProvider({ id, name, runtime, binaryEnv, login, listingCleanup }) {
   return createOarProvider({
-    id, name, runtime, binaryEnv, login, modelsTtl: MODELS_TTL,
+    id, name, runtime, binaryEnv, login, modelsTtl: MODELS_TTL, listingInFolder: true, listingCleanup,
     tools: toolSpecs(id), fallbackTool: fallbackSpecOf(id),
     normalizer: (options) => new UniversalNormalizer({ id, ...options }),
     fallbackModels: [{ id: 'default', displayName: 'Default' }],

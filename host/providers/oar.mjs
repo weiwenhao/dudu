@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { AsyncQueue, abortReason, deferred } from './async.mjs';
 import { assertDirectory, harnessError, manualCompactionError } from './harness-bridge.mjs';
@@ -10,14 +11,15 @@ import { OarResident } from './oar-resident.mjs';
 // replays, and the choices OAR leaves to its host (which tools a mode may use, which sandbox a mode gets).
 
 // A harness's models are read from the harness itself: a process of its own, and for most of them a trip to the vendor's servers.
-// What was read is served at once and read anew in the background once it is MODEL_TTL old; a harness that could not say is
-// asked again after RETRY_MS. Only the very first ask waits, and then at most FIRST_WAIT_MS: DSH's model catalog waits for every
-// harness at once, and one that cannot reach its servers takes about 24 s to give up (owner, 2026-11-24: the phone's catalog.get).
+// What was read is served as it is, however old, and ASKING for it never starts a reading (owner, 2026-11-27: with Claude selected, a menu must not wake Codex or Antigravity). DSH's
+// catalog asks every harness at once, whoever asks (its first load, the phone, 嘟嘟's own lookups), and for Antigravity a reading is a conversation left in its own store (about two
+// hundred a day, 745 in four days). A harness is read when nothing is known of it yet (and again, after RETRY_MS and twice as long each time, while it cannot say), when someone made the
+// list stale on purpose (`refreshModels`: Settings > Providers, a changed setting), and when a session starts on it and the list is older than MODEL_TTL (`freshen`).
+// Only the very first ask waits, and then at most FIRST_WAIT_MS: DSH's model catalog waits for every harness at once, and one that cannot reach its servers takes about 24 s to give up
+// (owner, 2026-11-24: the phone's catalog.get).
 const MODEL_TTL = 5 * 60_000;
 const RETRY_MS = 60_000;
 // A harness that cannot say is asked again after RETRY_MS, and after twice as long each time it fails again, never after more than this (nor than its own `modelsTtl`, when that is shorter).
-// A reading is a process and a trip to the vendor's servers, and for some harnesses a session that stays in the harness's own store: Antigravity gives its models only in the answer to
-// `session/new`, so each reading left an empty conversation behind, about two hundred a day (2026-11-27).
 const MAX_RETRY_MS = 60 * 60_000;
 const FIRST_WAIT_MS = 3_000;
 // DSH's client keeps the first model catalog it gets until it hears `llm/models-updated` (or reconnects), so a list that is read after the
@@ -582,7 +584,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
  * A harness provider on an OAR runtime. `session` returns what is specific to the harness in the options of one OAR
  * session (environment, tool limits, launch arguments) from the DSH access mode.
  */
-export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, steering = true, quota, childUsage, backgroundTasks = true, defaultEnabled = true, folds = false, modelsTtl = MODEL_TTL }) {
+export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, steering = true, quota, childUsage, backgroundTasks = true, defaultEnabled = true, folds = false, modelsTtl = MODEL_TTL, listingInFolder = false, listingCleanup }) {
   const known = new Set(tools.map((tool) => tool.name));
   const environment = (extra) => ({ ...scrubbedEnvironment(scrub.patterns, scrub), ...extra });
 
@@ -607,7 +609,7 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
       return { state: 'missing', reason: override ? `${override} is not an executable file.` : `${name} was not found.` };
     },
 
-    create({ installation, env: own = () => ({}), modelsChanged }) {
+    create({ installation, env: own = () => ({}), modelsChanged, listingFolder }) {
       // A harness whose runtime depends on what was found (Pi: the command OAR launches) builds it from the detection.
       const active = runtimeFor ? runtimeFor(installation) : runtime;
       // The owner's variables for this harness (Settings > Providers), read anew for every process; what dudu itself sets for a session comes after them.
@@ -624,10 +626,16 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
         const mine = generation;
         const run = (async () => {
           let models;
+          const began = Date.now();
+          // A folder of its own, so that what a harness leaves behind of a reading (Antigravity: an empty conversation) belongs to no one's work, and is told from it.
+          let cwd = homedir();
+          const own = listingInFolder ? listingFolder : undefined;
+          if (own) { try { await mkdir(own, { recursive: true, mode: 0o700 }); cwd = own; } catch { /* the home folder, as before */ } }
           try {
-            const listed = await active.listModels(installation, { env: environmentOf(), cwd: homedir(), timeoutMs: 30_000 });
+            const listed = await active.listModels(installation, { env: environmentOf(), cwd, timeoutMs: 30_000 });
             if (listed.kind === 'ok') models = listed.models.filter((model) => !model.disabled);
           } catch { /* the fallback below */ }
+          if (cwd === own) { try { await listingCleanup?.({ env: environmentOf(), folder: cwd, since: began }); } catch { /* what is left stays for the next reading to clear */ } }
           // Settings changed while it was being read (a proxy, a path): this answer belongs to the old ones.
           if (mine !== generation) return;
           if (models?.length) { failures = 0; loaded = { until: Date.now() + modelsTtl, models, read: true }; }
@@ -647,7 +655,8 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
       // `toDsh`: the answer goes to DSH, which keeps it (noted at the moment it is given, before a reading that ends right after can be compared with it).
       const load = async ({ toDsh = false } = {}) => {
         const give = (models) => { if (toDsh) handedOut = models; return models; };
-        if (loaded && Date.now() < loaded.until) return give(loaded.models);
+        // What the harness said stands, however old, until someone makes it stale on purpose; a harness that has said nothing yet is asked again when its wait is over.
+        if (loaded && !loaded.stale && (loaded.read || Date.now() < loaded.until)) return give(loaded.models);
         const reading = readModels();
         // Stale, or given up on waiting for: say what is known, the new reading is there for the next ask.
         if (loaded) return give(loaded.models);
@@ -659,8 +668,11 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
         loaded ??= { until: 0, models: fallbackModels, read: false };
         return give(loaded.models);
       };
+      // A session starts on this harness: a list that is older than `modelsTtl` is read anew in the background, so that the next menu has what the harness offers now.
+      const freshen = () => { if (loaded?.read && !loaded.stale && !loading && Date.now() >= loaded.until) readModels().catch(() => {}); };
       const optionsFor = async ({ resume, cwd, model, effort, permission, signal, retained }) => {
         if (signal?.aborted) throw abortReason(signal);
+        freshen();
         await assertDirectory(cwd);
         if (!retained) await before?.({ resume });
         const specific = sessionFor({ permission, signal });
@@ -688,7 +700,7 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
           generation += 1;
           failures = 0;
           loading = undefined;
-          if (loaded) loaded = { ...loaded, until: 0 };
+          if (loaded) loaded = { ...loaded, stale: true };
         },
         /** Starts reading the models now, in the background, so that the first menu that asks does not wait for them. */
         warmModels() { load().catch(() => {}); },

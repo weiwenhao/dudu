@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { useNativeTools } from '../../dsh-tools.mjs';
-import { pickModel } from '../dispatch/dsh-llm.mjs';
+import { duduCatalog, pickModel } from '../dispatch/dsh-llm.mjs';
 import { RECORD_LIMITS } from '../inbox/records.mjs';
 import { checkCollectorResult, COLLECTOR_RESULT_SCHEMA, COLLECTOR_SUBMIT } from '../inbox/submission.mjs';
 
@@ -96,7 +96,7 @@ function readState(file) {
  * session for every collection and what the model found out about the source is still in front of it. The agent is opened for a collection
  * and let go of after it; the session stays on disk.
  */
-export function createSourceCollector(ctx, { folder, file = null, maxRuns = MAX_RUNS, warn = console.warn, permission = () => 'read-only', connections = () => null }) {
+export function createSourceCollector(ctx, { folder, file = null, maxRuns = MAX_RUNS, warn = console.warn, permission = () => 'read-only', connections = () => null, model: savedModel = () => undefined }) {
   const state = file ? readState(file) : { sessions: {} };
   const save = () => {
     if (!file) return;
@@ -180,7 +180,10 @@ export function createSourceCollector(ctx, { folder, file = null, maxRuns = MAX_
   async function collectOnce(source, { signal, since, ask, submit }) {
     signal?.throwIfAborted();
     if (typeof submit !== 'function') throw new Error('The collection submission service is unavailable.');
-    const model = pickModel(await ctx.sessionController.modelCatalog());
+    // The model is the one the owner set for 嘟嘟 (Settings > General): it is not asked for, and neither is DSH's catalog (owner, 2026-11-27: 「采集器不需要问什么模型，已经定死了」). Only when none is
+    // saved yet (before 嘟嘟's conversation was first opened) one is picked from the plain routes.
+    const saved = savedModel();
+    const model = saved?.provider && saved?.model ? { provider: saved.provider, model: saved.model, ...(saved.reasoningEffort ? { reasoningEffort: saved.reasoningEffort } : {}) } : pickModel(await duduCatalog(ctx));
     if (!model) throw new Error('This DSH has no conversation model.');
 
     let entry = state.sessions[source.id];
