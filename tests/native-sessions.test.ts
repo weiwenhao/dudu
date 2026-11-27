@@ -726,3 +726,42 @@ test('a long Codex thread is searched and previewed by its newest turns, and is 
   assert.ok(preview.messages.some((message: any) => /needle/.test(message.text)), 'the preview shows the newest turns');
   assert.equal(whole(), 0);
 });
+
+// 2026-11-27: a DSH session that runs on Pi was never synchronized: only Claude and Codex are listed, so the session of a harness without a list was "no longer on this computer"
+// and its log could not be brought up to date from the harness's own store. It is found by the identity its answers carry, and read from Pi's session file.
+test('a DSH session that runs on Pi is brought up to date from Pi\'s own store, found by the identity its answers carry', async (t) => {
+  const { stored, links, store, registry, base } = await setup(t);
+  const piId = '01a1e899-2fc3-73a4-a96f-6ffb55cd4a3a';
+  const piHome = join(base, 'pi-home');
+  await mkdir(join(piHome, 'sessions', '--work-app--'), { recursive: true });
+  let entry = 0;
+  const piLine = (message: any, parentId: string | null) => ({ type: 'message', id: `p${entry++}`, parentId, timestamp: stamp(), message });
+  const records: any[] = [{ type: 'session', version: 3, id: piId, timestamp: stamp(), cwd: '/work/app' }];
+  const say = (text: string) => records.push(piLine({ role: 'user', content: [{ type: 'text', text }] }, records.at(-1).id === piId ? null : records.at(-1).id));
+  const answer = (text: string) => records.push(piLine({ role: 'assistant', content: [{ type: 'text', text }], stopReason: 'stop', model: 'm' }, records.at(-1).id));
+  say('check the build');
+  records.push(piLine({ role: 'assistant', content: [{ type: 'text', text: 'Checking.' }, { type: 'toolCall', id: 'c1', name: 'bash', arguments: { command: 'make' } }], stopReason: 'toolUse', model: 'm' }, records.at(-1).id));
+  records.push(piLine({ role: 'toolResult', toolCallId: 'c1', toolName: 'bash', content: [{ type: 'text', text: 'ok' }], isError: false }, records.at(-1).id));
+  answer('The build passes.');
+  await writeFile(join(piHome, 'sessions', '--work-app--', `2026-11-01T10-00-00-000Z_${piId}.jsonl`), lines(records));
+  // The DSH session as its own loop left it: the question and a turn that was cut off before the answer was written.
+  const sessionId = 'session-on-pi';
+  const model = { role: 'assistant', content: [{ type: 'text', text: 'Checking.' }, { type: 'tool-call', id: 'c1', name: 'pi_bash', arguments: '{"command":"make"}' }], source: { kind: 'model', provider: 'pi', model: 'm', replayState: { harness: 'pi', nativeSessionId: piId } } };
+  stored.set(sessionId, { header: { id: sessionId, cwd: '/work/app' }, events: [
+    { seq: 0, time: 1, type: 'turn/start', data: { turn: 1 } },
+    { seq: 1, time: 2, type: 'user/message', surfaceOp: 'append', data: { id: 'u1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'check the build' }] } },
+    { seq: 2, time: 3, type: 'assistant/message', surfaceOp: 'append', data: { turn: 1, step: 1, message: model } },
+    { seq: 3, time: 4, type: 'turn/end', data: { turn: 1, reason: { kind: 'interrupted' } } },
+  ] });
+  const pi = { id: 'pi', name: 'Pi', route: 'pi', environment: () => ({ PI_CODING_AGENT_DIR: piHome }), driver: {} };
+  const service = createNativeSessions({
+    sources: () => [pi], links, persistence: () => store, workspaces: () => registry,
+    controller: () => ({ inspect: async (target: string) => stored.get(target) }),
+  });
+  t.after(async () => { await service.close(); });
+  assert.deepEqual(await service.sync({ sessionIds: [sessionId], recover: true }), { updated: [sessionId] });
+  assert.equal(links.get('pi', piId), sessionId, 'the identity in its answers linked the two');
+  assert.ok(JSON.stringify(stored.get(sessionId)!.events).includes('The build passes.'));
+  assert.equal(stored.get(sessionId)!.events.filter((event: any) => event.type === 'user/message').length, 1, 'what the person said is not said twice');
+  assert.deepEqual(await service.sync({ sessionIds: [sessionId], recover: true }), { updated: [] });
+});

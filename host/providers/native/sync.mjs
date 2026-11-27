@@ -35,7 +35,16 @@ function remainingSteps(turn, events, known) {
       let block = { ...original };
       while (seen.length && block) {
         const old = seen[0];
+        // What the model thought is not what the two sides have to agree on: a store keeps a summary of it, DSH what streamed, and they differ in wording and in where they put it. A thought is
+        // never new in what DSH already has, and one that DSH has and the store lacks goes; the words and the calls decide.
+        if (block.type === 'reasoning') { if (old.type === 'reasoning') seen.shift(); block = null; continue; }
+        if (old.type === 'reasoning') { seen.shift(); continue; }
         if (old.type !== block.type) return null;
+        // DSH puts a paragraph break in front of an answer that continues a turn it resumed; the store has the words alone.
+        if (old.type === 'text' && old.text.startsWith('\n') && !block.text.startsWith('\n')) {
+          old.text = old.text.replace(/^\n+/, '');
+          if (!old.text) { seen.shift(); continue; }
+        }
         if (block.type === 'tool-call') {
           if (old.id !== block.id) return null;
           seen.shift();

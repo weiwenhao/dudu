@@ -8,6 +8,9 @@ import { readClaudeHistory } from './claude-history.mjs';
 import { listCodexThreads, readCodexThread, readCodexThreads, readCodexThreadTail } from './codex-store.mjs';
 import { codexHistory } from './codex-history.mjs';
 import { readCodexMetrics } from './codex-metrics.mjs';
+import { antigravityStore } from './antigravity-store.mjs';
+import { mergedEnvironment } from './environment.mjs';
+import { piStore } from './pi-store.mjs';
 import { codexSearchText } from './content-index.mjs';
 import { createCachedContentIndex } from './cached-content-index.mjs';
 import { indexClaudeConversations } from './search-worker.mjs';
@@ -47,6 +50,9 @@ const HEAP_WATCH_EVERY = 10 * 60_000;
 // write was in the way), ten when this DSH cannot be synchronized into at all (sync.mjs says `unsupported`): every try reads the transcript and the whole DSH session.
 const PUT_OFF_FOR = { busy: 60_000, unsupported: 10 * 60_000 };
 const MAX_LIMIT = 500;
+// The harnesses whose own sessions are read only to bring a DSH session that runs on them up to date (sync.mjs): they are not listed, searched or loaded into DSH from here. A store
+// finds one session by its id (`summary`, which says where it is and how big) and reads it as a conversation (`history`, history.mjs).
+const STORES = new Map([piStore, antigravityStore].map((store) => [store.id, store]));
 
 /** Which DSH session each native session was loaded into (or was started from), kept across restarts. */
 export async function createLinkStore(folder) {
@@ -432,6 +438,12 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
 
   async function summaryOf(provider, id) {
     const key = `${provider}:${id}`;
+    const store = STORES.get(provider);
+    if (store) {
+      const found = await store.summary(id, { env: mergedEnvironment(sourceOf(provider)?.environment?.()) });
+      if (!found) throw new Error('That session is no longer on this computer.');
+      return found;
+    }
     const find = (snapshot) => snapshot.sessions.find((session) => session.provider === provider && session.id === id);
     let found = find(await scan({ refresh: false }));
     // Not in the list (a session that was just made, or that is gone): look in a fresh listing, but only now and then, and without reading everything again (this ran
@@ -495,6 +507,7 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
     if (!fresh && cached && cached.stamp === stamp && now() - cached.at < HISTORY_TTL) return cached.promise;
     const promise = (async () => {
       if (source.id === 'claude') return readClaudeHistory({ file: summary.file, id: summary.id });
+      if (STORES.has(source.id)) return STORES.get(source.id).history(summary);
       if (bounded && await isHuge(summary)) {
         const thread = await readCodexThreadTail({ command: source.command, env: source.environment?.(), spawnProcess: source.spawnProcess }, summary.id);
         // No per-turn timing: it is read by streaming the whole rollout.
@@ -555,8 +568,12 @@ export function createNativeSessions({ sources, persistence, workspaces, attachm
   async function withPictures(source, summary, history) {
     try {
       let read = history;
-      if (source.id === 'claude' && history.turns.some((turn) => turn.pictures)) {
-        try { read = await readClaudeHistory({ file: summary.file, id: summary.id, images: true }); } catch { /* the words load without them */ }
+      if ((source.id === 'claude' || STORES.has(source.id)) && history.turns.some((turn) => turn.pictures)) {
+        try {
+          read = source.id === 'claude'
+            ? await readClaudeHistory({ file: summary.file, id: summary.id, images: true })
+            : await STORES.get(source.id).history(summary, { images: true });
+        } catch { /* the words load without them */ }
       }
       return await keepImages(read, { attachments: attachments() });
     } catch { return history; }

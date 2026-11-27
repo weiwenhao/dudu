@@ -691,6 +691,20 @@ and cannot be renewed”）使上一轮失败，主人重新登录后发“继�
   要等之后有一条两边都有的消息才恢复对账，而那时只补“最后一个对上的回合”，更早丢的回复补不回来：所以修复要在断点之后的第一次同步（打开、启动或 15 秒内）完成。
   验证：用 NAT-1 的真实数据离线、只读地重放，断点后的状态补回丢掉的 279 字回复（`turn/start`、`step/start`、`assistant/message`、`step/end`、`turn/end` 共 5 条，作为紧接在失败回合后的新回合），
   55 个关联 Claude 会话重放，新旧代码都补 0 条、都没有报错；单元测试 `tests/native-sync.test.ts` 三条（含按这次事故的形状做的）和 `tests/native-claude.test.ts` 一条，旧代码下前两条红。没有在真实 DSH 里试过。
+- **Pi 和 Antigravity 的原生同步**（2026-11-27）：OAR 没有“列出会话”的接口，所以这两个只做一件事：DSH 里跑在它们上的会话，用它们自己的存储补回 DSH 丢的内容；不进面板的列表和搜索，也不能载入。
+  对账仍是 `nativeUpdates`；读取器在 `host/providers/native/index.mjs` 的 `STORES` 里登记（`summary(id)` 按 id 找到会话，`history(summary)` 读成各 harness 共用的历史形状）。DSH 的每条回复里写着原生会话 id
+  （`replayState.nativeSessionId`），`links.json` 里是 `pi:<id>`、`antigravity:<id>`，打开会话时（`recover`）自动补上链接。
+  **Pi**（`pi-store.mjs`）：目录是 OAR 启动 Pi 时用的那个——`OAR_PI_AGENT_DIR`，否则 `PI_CODING_AGENT_DIR`，否则家目录下的 `.pi/agent`（家目录取 `HOME`，再取 `USERPROFILE`）下的 `sessions`；OAR 还传了
+  `--session-dir`，所以 Pi 自己设置里的 `sessionDir` 挪不动它。里面按工作目录分文件夹（文件夹名把路径里的 `/ \ :` 换成 `-`，Windows 上含盘符），这里不重建文件夹名，而是在所有文件夹里按 `_<id>.jsonl` 找，
+  所以和文件夹的编码方式无关。文件是一棵树（`id`/`parentId`），只读最后一条所在的那条分支；调用都有结果之后、下一次请求之前收到的用户消息读成下一步的 `input`；工具名按 DSH 自己的 Pi 会话写（`pi_<name>`）。
+  **Antigravity**（`antigravity-store.mjs`）：`<gemini 目录>/antigravity-cli/conversations/<id>.db`（gemini 目录是 `GEMINI_HOME`，否则家目录下的 `.gemini`，Windows 的家目录取 `USERPROFILE`，和 OAR 一致），
+  一个会话一个 SQLite（WAL），用 `node:sqlite` 只读打开，不改它的文件；变化的戳记把 `-wal` 的大小也算上。步骤是没有公开定义的 protobuf（`protobuf.mjs` 是不依赖定义的线格式读取器）：用到的字段在
+  `antigravity-store.mjs` 开头逐个写明（类型 14 用户输入、15 模型回复、132 工具结果），不认识的步骤跳过，所以 agy 改了格式只会读成更短的会话，不会崩，也不会补错。工具名按 DSH 自己的 agy 会话写（`antigravity_<kind>`）。
+  对账为此放宽了两处（`remainingSteps`）：①思考块不参与“两边是否一致”（agy 库里存的是摘要，DSH 收到的是流，各家写法本来就不同）；②DSH 为它续接的回合在回复前加的 `\n\n` 不算差异。
+  验证（只读，真实数据）：Pi 99 个会话全部读通（最大 87 MB，不到 0.4 秒），两个关联会话和 DSH 记录逐条对上；像丢回复那样把 DSH 记录截在回复之前（补上 DSH 自己会写的“中断”回合结尾）再重放，Pi 7/7 补回且文字与原记录一致；
+  agy 三个关联会话 112 个截断点，83 个补回且与原记录一致，28 个多出文字，多出的是 agy 库里有而 DSH 从没记下的回复（`d3de1fce` 里第 10、15、28、37 轮共 4 条），只有 1 个放弃（DSH 少记了中间一次工具调用，两边对不上，
+  保守不补）；55 个关联 Claude 会话重放结果不变。单元测试 `tests/native-pi.test.ts`、`tests/native-antigravity.test.ts`，`tests/native-sessions.test.ts` 一条经 `createNativeSessions` 找链接并补回。
+  没有做的：没有在 Windows 上跑过（路径规则照 OAR，单元测试用 `path.win32` 算过）；没有在真实 DSH 里试过；Grok、Kimi、OpenCode 等其余 harness 没装在这台机器上，没有照猜测写读取器。
 
 团队入口使用 DSH 自己的 Agent Team 扩展；测试启用宿主随附的 `experimental-agent-team` 及其客户端模块，
 不从 npm 安装另一个版本，不复制其 UI。当前 Desktop 已配置该扩展的 profile。
