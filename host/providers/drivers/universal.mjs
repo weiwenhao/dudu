@@ -99,9 +99,14 @@ export const universalSession = ({ name }) => ({ permission }) => {
   return {};
 };
 
+// How long what one of these harnesses said of its models stays good. Kimi, CodeBuddy, Devin and Antigravity give their models only in the answer to `session/new`, which makes a conversation in
+// the harness's own store that no one deletes (Antigravity left one every five minutes, 745 in four days: 2026-11-27), and the other five are a process and a trip to the vendor each time. Their
+// menus change when the vendor ships a model or the person signs in, and Settings > Providers (Detect) makes them stale at once (the next ask reads them anew), so a few hours is as fresh as they need to be.
+const MODELS_TTL = 6 * 60 * 60_000;
+
 export function createUniversalProvider({ id, name, runtime, binaryEnv, login }) {
   return createOarProvider({
-    id, name, runtime, binaryEnv, login,
+    id, name, runtime, binaryEnv, login, modelsTtl: MODELS_TTL,
     tools: toolSpecs(id), fallbackTool: fallbackSpecOf(id),
     normalizer: (options) => new UniversalNormalizer({ id, ...options }),
     fallbackModels: [{ id: 'default', displayName: 'Default' }],

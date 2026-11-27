@@ -420,6 +420,15 @@ Antigravity 没配代理时连不上 Google，列模型要等约 23 秒才失败
 一样的不发，还没给过 DSH 的也不发。上一次给过什么，在返回的那一刻就记下（`load({ toDsh })`），不在返回之后：否则紧接着读完的结果会和旧的比。
 `tests/oar-model-listing.test.ts` 加两条。真 DSH（0.2.2-rc.5）里验证过：插件发这个事件，页面收到并重新请求 `session/modelCatalog`；不发就不请求。
 
+**读一次列表在 Antigravity 自己的目录里留一个空会话（2026-11-27）：** `~/.gemini/antigravity-cli/conversations` 里 749 个会话库只有 4 个有内容，其余是空的：读 Antigravity 的模型要先 `session/new`
+（OAR `antigravity/list-models.js`：模型只在那条回复里），agy 在 `session/new` 时就建好会话库和 `brain/<id>` 目录，`session/close` 只是断开，不会删；4 天攒了约 745 个（约 410 MB，另有每次启动的日志）。
+谁在频繁地读：采集器每 5 分钟跑一次（`issues.db` 的 `collect_runs.started_at` 全在第 11 秒，和 agy 日志里每次启动的时间一一对上），每次开头 `pickModel(await modelCatalog())`，而列表的 `MODEL_TTL` 恰好 5 分钟，
+每跑两次左右就重读一遍所有 harness 的列表。别的供应商读法不开会话：Claude 是 `list_models` 控制请求，Codex 是 `model/list`，Pi 是 `--list-models`，Grok 是专用的 `_x.ai/models/list`，OpenCode 是 `opencode models`，
+Factory、Qwen、Qoder 读各自的配置（OAR 0.120.0 的 `list-models.js`；本机 Claude、Codex、Pi 的存储里今天没有新增会话）；Kimi、CodeBuddy、Devin 和 Antigravity 一样靠 `session/new`，装上并启用后会有同样的问题。
+修法：九个通用 harness 的列表有效期改为 6 小时（`createOarProvider` 的 `modelsTtl`，在 `drivers/universal.mjs`；Claude、Codex、Pi 仍是 5 分钟）；设置 > 供应商的“检测”仍让列表立刻作废（下一次问就重读）；
+读不出来时的重试从固定 1 分钟改成 1、2、4……分钟，最多 1 小时（也不超过该 harness 自己的有效期，默认的仍最多 5 分钟），读到一次就从头算。测试：`tests/oar-model-listing.test.ts` 三条、`tests/universal-driver.test.ts` 一条，旧代码下都红。
+没有清理已经留下的空会话：那是 agy 自己的存储，要所有者说了才删。
+
 ## harness 进程、后台任务和深度睡眠（2026-11-05，进程常驻 2026-11-23）
 
 一个会话的原生进程从第一轮起一直保留，轮与轮之间不关（2026-11-23 所有者：“在进行中的会话应该是

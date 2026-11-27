@@ -172,6 +172,22 @@ test('a turn through the universal driver draws the harness\'s tool by what it d
   await handle.close();
 });
 
+// 2026-11-27: Antigravity gives its models only in the answer to `session/new`, so reading them every five minutes left an empty conversation in its own store each time (745 in four days).
+test('the universal harnesses keep what they said of their models for hours, not minutes', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  let read = 0;
+  const driver = providerOver({ listModels: async () => { read++; return { kind: 'ok', models: [{ id: 'm', displayName: 'M' }] }; } });
+  await driver.listModels();
+  t.mock.timers.tick(5 * 60_000 + 1);
+  await driver.listModels();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(read, 1);
+  t.mock.timers.tick(6 * 60 * 60_000);
+  await driver.listModels();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(read, 2);
+});
+
 test('read-only cannot be kept by these harnesses, so a session in it is refused; the other modes start as the harness runs and with a clean environment', async (t) => {
   const cwd = await workDirectory(t);
   const { runtime, asked } = scripted(() => {});

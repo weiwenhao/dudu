@@ -15,6 +15,10 @@ import { OarResident } from './oar-resident.mjs';
 // harness at once, and one that cannot reach its servers takes about 24 s to give up (owner, 2026-11-24: the phone's catalog.get).
 const MODEL_TTL = 5 * 60_000;
 const RETRY_MS = 60_000;
+// A harness that cannot say is asked again after RETRY_MS, and after twice as long each time it fails again, never after more than this (nor than its own `modelsTtl`, when that is shorter).
+// A reading is a process and a trip to the vendor's servers, and for some harnesses a session that stays in the harness's own store: Antigravity gives its models only in the answer to
+// `session/new`, so each reading left an empty conversation behind, about two hundred a day (2026-11-27).
+const MAX_RETRY_MS = 60 * 60_000;
 const FIRST_WAIT_MS = 3_000;
 // DSH's client keeps the first model catalog it gets until it hears `llm/models-updated` (or reconnects), so a list that is read after the
 // answer it was given (the stand-in served to a first ask that ran out of patience, a new model) has to be announced (owner, 2026-11-24:
@@ -578,7 +582,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
  * A harness provider on an OAR runtime. `session` returns what is specific to the harness in the options of one OAR
  * session (environment, tool limits, launch arguments) from the DSH access mode.
  */
-export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, steering = true, quota, childUsage, backgroundTasks = true, defaultEnabled = true, folds = false }) {
+export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, steering = true, quota, childUsage, backgroundTasks = true, defaultEnabled = true, folds = false, modelsTtl = MODEL_TTL }) {
   const known = new Set(tools.map((tool) => tool.name));
   const environment = (extra) => ({ ...scrubbedEnvironment(scrub.patterns, scrub), ...extra });
 
@@ -612,6 +616,7 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
       let loaded;
       let loading;
       let generation = 0;
+      let failures = 0; // readings in a row that could not say
       // The list DSH was last given (`listModels`): a reading that ends with another one says so (`modelsChanged`).
       let handedOut;
       const readModels = () => {
@@ -625,9 +630,12 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
           } catch { /* the fallback below */ }
           // Settings changed while it was being read (a proxy, a path): this answer belongs to the old ones.
           if (mine !== generation) return;
-          if (models?.length) loaded = { until: Date.now() + MODEL_TTL, models, read: true };
+          if (models?.length) { failures = 0; loaded = { until: Date.now() + modelsTtl, models, read: true }; }
           // A harness that cannot say keeps what it said before.
-          else loaded = { until: Date.now() + RETRY_MS, models: loaded?.read ? loaded.models : fallbackModels, read: loaded?.read === true };
+          else {
+            failures += 1;
+            loaded = { until: Date.now() + Math.min(modelsTtl, MAX_RETRY_MS, RETRY_MS * 2 ** (failures - 1)), models: loaded?.read ? loaded.models : fallbackModels, read: loaded?.read === true };
+          }
           if (handedOut && modelsSignature(handedOut) !== modelsSignature(loaded.models)) {
             handedOut = loaded.models;
             try { modelsChanged?.(); } catch { /* DSH asks again on its own, sooner or later */ }
@@ -678,6 +686,7 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
         /** What the harness offers may have changed (a new model, a login, a proxy): the list is read anew on the next ask, and until it is there the old one is served. */
         refreshModels() {
           generation += 1;
+          failures = 0;
           loading = undefined;
           if (loaded) loaded = { ...loaded, until: 0 };
         },
