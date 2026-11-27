@@ -145,6 +145,16 @@ test('a collection runs on the model saved for 嘟嘟 and asks for no catalog; w
   assert.deepEqual(opened[1], { provider: 'deepseek-official', model: 'deepseek-flash' }, 'DSH\'s default is a harness: the first plain model is taken');
 });
 
+test('a saved model that is a harness is never used for a collection: it would open a conversation in that harness every time', async (t) => {
+  const dsh = world([records('a')]);
+  const opened: any[] = [];
+  const create = dsh.ctx.agents.create;
+  dsh.ctx.agents.create = async (input: any) => { opened.push(input.agentOptions); return create(input); };
+  const collect = make(dsh.ctx, folder(t), { model: () => ({ provider: 'antigravity', model: 'gemini-4-neon', reasoningEffort: 'high' }) });
+  assert.deepEqual((await collect(SOURCE, { since: null })).records.map((record: any) => record.id), ['a']);
+  assert.deepEqual(opened, [{ provider: 'deepseek-official', model: 'deepseek-flash' }]);
+});
+
 test('the agent preset is mounted, so that the skills of the machine can be read, and the session stays read only', async (t) => {
   const dsh = world([records('a'), records('b')]);
   const collect = make(dsh.ctx, folder(t));

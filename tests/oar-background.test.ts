@@ -116,6 +116,21 @@ test('stopping the parent retains explicit background agents and their observer 
   assert.equal(native.disposed, 1);
 });
 
+test('a stop while the first message of a new process is on its way ends that process: nobody holds it, and it was left running until DSH exited', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const native = nativeSession();
+  const controller = new AbortController();
+  let taken: (outcome: any) => void = () => {};
+  native.session.prompt = () => new Promise((resolve) => { taken = resolve; });
+  const starting = start(native.session, { signal: controller.signal });
+  starting.catch(() => {});
+  await flush();
+  controller.abort();
+  taken(accepted);
+  await assert.rejects(starting, { name: 'AbortError' });
+  assert.equal(native.disposed, 1, 'the call that made the process is the one that stops it');
+});
+
 test('background agent observation ends at native task or process termination, not parent cancellation', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   for (const outcome of ['completed', 'stopped', 'failed', 'exit', 'dispose']) {

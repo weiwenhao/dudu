@@ -11,6 +11,7 @@ import { renderPairingSvg } from './qr.mjs';
 import { createWebPageHttp } from './web-page-http.mjs';
 import { createNativeNotifications } from './native-notifications.mjs';
 import { createBoardChanges } from './native-board-changes.mjs';
+import { isIntakeSession } from './assistant/home/intake-session.mjs';
 import { createBoardWake } from './native-board-wake.mjs';
 import { createWakeLog } from './wake-log.mjs';
 import { understands } from './native-client.mjs';
@@ -84,6 +85,7 @@ export async function createDuduControl({
   const lanAddress = () => connectionAddress(`http://${resolveLanAddress()}:${server.port}`);
   // "The board changed", told to the phones that declared `board.push` as soon as it does, instead of waiting for their next poll (native-board-changes.mjs).
   const boardChanges = createBoardChanges({
+    shown: (sessionId) => !isIntakeSession(sessionId),
     send: (revision) => {
       server.broadcast?.('board.changed', { revision }, (connection) => understands(connection.client, 'board.push'));
       boardWake.changed();

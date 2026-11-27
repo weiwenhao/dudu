@@ -407,10 +407,13 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     if (preserveBackground && resident.alive) resident.finishTurn();
     else await dispose();
   }
+  // A stop keeps the process for its background work, but only for a run somebody holds: the one that was kept for the next turn, or the one this call has handed out. A process made by
+  // this very call that is stopped before the call returns has no holder at all (the bridge gets nothing from a call that throws), and was left running until DSH exited.
+  let handedOut = false;
   function interrupt() {
     return stopping ??= (async () => {
       if (!finished) await session.abort().catch(() => {});
-      await close({ preserveBackground: true });
+      await close({ preserveBackground: reused || handedOut });
     })();
   }
   function onAbort() { void interrupt(); }
@@ -547,6 +550,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     throw harnessError(`${name} did not take the message: ${outcome.reason}`, 'HARNESS_REJECTED');
   }
 
+  handedOut = true;
   return {
     resident,
     team: resident.team,

@@ -11,8 +11,10 @@ if (!isMainThread) {
 mkdirSync(dirname(workerData.file), { recursive: true, mode: 0o700 });
 const db = new DatabaseSync(workerData.file);
 chmodSync(workerData.file, 0o600);
+// The log of a long-running host is cut back after a checkpoint: it was left at its high-water mark (77 MB beside a database of 320 MB) until the plugin closed.
 db.exec(`
   PRAGMA journal_mode=WAL;
+  PRAGMA journal_size_limit=16777216;
   CREATE TABLE IF NOT EXISTS documents (
     key TEXT UNIQUE NOT NULL, stamp TEXT NOT NULL,
     user_text TEXT NOT NULL, assistant_text TEXT NOT NULL,

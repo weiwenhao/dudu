@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createDshSessions } from '../host/assistant/home/dsh-sessions.mjs';
 import { createDshContentSearch } from '../host/assistant/home/session-search.mjs';
 import { deferred } from '../host/providers/async.mjs';
+import { createCachedContentIndex } from '../host/providers/native/cached-content-index.mjs';
 
 const phrase = '本轮巡检（北京时间 12:47）正常';
 const message = (text: string) => ({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text }] } } });
@@ -250,4 +251,29 @@ test('a failed DSH index stays stopped until explicit refresh and logs the failu
     assert.equal((await index.find(['本轮巡检'])).size, 2);
     await index.close();
   } finally { Date.now = real; }
+});
+
+test('the list kept of DSH\'s sessions is the few fields that are read: no tool headers, and none of the collectors\' conversations', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-dsh-list-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const file = join(folder, 'search.sqlite');
+  // A row of DSH's list carries every summary projection of its session; `contextHeaders` (the tools of its requests) was 96 % of a 76 MB list.
+  const row = (sessionId: string) => ({
+    sessionId, cwd: '/work', updatedAt: 5, seq: 9, blank: false, running: true, agentAvailable: true,
+    projections: { kind: 'cached', asOfSeq: 9, values: {
+      title: { title: 'Work' }, modelSelection: { lastUsed: { provider: 'claude', model: 'sonnet' } },
+      contextHeaders: [{ tools: 'x'.repeat(500_000) }], contextTimeline: ['y'.repeat(50_000)],
+    } },
+  });
+  const dsh = createDshSessions({
+    sessionController: { list: async () => ({ items: [row('one'), row('dudu-assistant-intake-1'), row('dudu-assistant-conversation')] }), inspect: async () => ({ events: [] }) },
+  }, { cacheFile: file });
+  const rows = await dsh.catalog();
+  assert.deepEqual(rows.map((item: any) => [item.id, item.title, item.agent, item.model]), [['one', 'Work', 'claude', 'sonnet']], 'what is read of a row is still all there');
+  await dsh.close();
+  const index = createCachedContentIndex({ file });
+  const stored = await index.snapshot();
+  await index.close();
+  assert.deepEqual(stored.items.map((item: any) => item.sessionId), ['one']);
+  assert.ok(JSON.stringify(stored).length < 1_000, 'what is written is the fields that are read, not half a megabyte of tool schemas for each session');
 });
