@@ -11,7 +11,7 @@ import { sessionChildren } from './dsh-subagents.mjs';
 import { createNativePages, NATIVE_PAGE_METHODS } from './native-pages.mjs';
 import { imageFromBlock } from './native-images.mjs';
 import { videoFromBlock } from './native-videos.mjs';
-import { markdownImagePath } from './native-markdown-images.mjs';
+import { imagesAsBlocks, markdownImagePath } from './native-markdown-images.mjs';
 import { mapLimit } from './providers/async.mjs';
 import { HARNESS_IDS, providerDefault, providerFamily, sessionProviders } from './providers/catalog.mjs';
 import { attentionForEvent, contentDigest, EMPTY_ATTENTION, sessionStateForActivity } from './assistant/sessions/session-state.mjs';
@@ -422,7 +422,8 @@ function messageFromEvent(event, sessionId) {
   const result = {
     id: text(message.id, 256) || `${sessionId}:${event.seq ?? randomUUID()}`,
     role,
-    text: text(textParts.join(''), MAX_WINDOW_CHARS),
+    // An image under a line of text is a picture of its own on the phone, which opens full screen when tapped (native-markdown-images.mjs).
+    text: text(role === 'assistant' ? imagesAsBlocks(textParts.join('')) : textParts.join(''), MAX_WINDOW_CHARS),
     ...(reasoningParts.length ? { reasoning: text(reasoningParts.join(''), MAX_WINDOW_CHARS) } : {}),
     ...(role === 'assistant' ? { status: 'complete' } : {}),
     ...(role === 'tool' && toolName ? { toolName } : {}),
@@ -1005,7 +1006,9 @@ let groupOf = () => null;
  * The pictures of the owner's @ line go to the phone as the attachments it already draws (`kind`, `name`, `id`, `seq`), not as DSH's references: the id names the line and the picture
  * (`group:<commandId>:<index>`) and the seq is the line's own event, which is what grants the read (`groupPicture`). A line without pictures is sent as it was.
  */
-function groupForPhone(line, entry) {
+function groupForPhone(source, entry) {
+  // An agent's answer or a task's result: an image under a line of text is a picture of its own on the phone (native-markdown-images.mjs).
+  const line = ['reply', 'task'].includes(source.kind) && typeof source.text === 'string' ? { ...source, text: imagesAsBlocks(source.text) } : source;
   if (!Array.isArray(line.pictures)) return line;
   const { pictures, ...rest } = line;
   if (!pictures.length || !Number.isSafeInteger(entry.seq)) return rest;

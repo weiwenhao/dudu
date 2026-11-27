@@ -61,3 +61,41 @@ export function markdownImagePath(event, source, cwd, lookup) {
     return path;
   } catch { fail(); }
 }
+
+/**
+ * An image on a line of its own, right under a line of text, belongs to that paragraph, and the phone draws it as part of the text: at its own size, clipped at the column's edge, with nothing
+ * to tap (owner, 2026-11-27: the two latest pictures of an agent's answer could not be opened, the older ones, each after a blank line, could). A blank line before and after makes it a picture
+ * of its own, which the phone draws as a thumbnail that opens full screen. Only a top-level paragraph is changed, and only an image that has its line to itself: an image inside a sentence,
+ * a list, a quotation or a code block is left as it is.
+ */
+export function imagesAsBlocks(markdown) {
+  if (typeof markdown !== 'string' || !markdown.includes('![')) return markdown;
+  let root;
+  try { root = fromMarkdown(markdown); } catch { return markdown; }
+  const breaks = new Set(); // offsets at which one more line break is put
+  for (const paragraph of root.children) {
+    if (paragraph.type !== 'paragraph' || !paragraph.position) continue;
+    const from = paragraph.position.start.offset;
+    const to = paragraph.position.end.offset;
+    for (const node of paragraph.children) {
+      if ((node.type !== 'image' && node.type !== 'imageReference') || !node.position) continue;
+      const start = node.position.start.offset;
+      const end = node.position.end.offset;
+      const lineStart = markdown.lastIndexOf('\n', start - 1) + 1;
+      const newline = markdown.indexOf('\n', end);
+      const lineEnd = newline === -1 ? markdown.length : newline;
+      if (markdown.slice(lineStart, start).trim() || markdown.slice(end, lineEnd).trim()) continue;
+      // Both are the offset of a line's own line break, so that two images on neighbouring lines share the one between them.
+      if (lineStart > from) breaks.add(lineStart - 1); // text above it in the same paragraph
+      if (lineEnd < to) breaks.add(lineEnd); // text below it in the same paragraph
+    }
+  }
+  if (!breaks.size) return markdown;
+  let result = '';
+  let last = 0;
+  for (const offset of [...breaks].sort((a, b) => a - b)) {
+    result += `${markdown.slice(last, offset)}\n`;
+    last = offset;
+  }
+  return result + markdown.slice(last);
+}

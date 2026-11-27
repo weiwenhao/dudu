@@ -1401,6 +1401,24 @@ test('Markdown images read only persisted assistant destinations and reject a ch
   } finally { await connection.cancel(); }
 });
 
+// 2026-11-27: an agent's answer put each picture on the line under a line of text, which the phone draws inline (no tap to open it); the older ones had a blank line before.
+test('an image under a line of text in an assistant answer reaches the phone as a picture of its own, with the destination unchanged', async () => {
+  const text = 'First picture:\n![one](/workspace/one.png)\n\nSecond one, a sentence with ![inline](/workspace/two.png) in it';
+  const records = [
+    surface('turn/start', 1, 100, { turn: 1 }),
+    surface('assistant/message', 2, 150, { turn: 1, message: { id: 'answer', content: [{ type: 'text', text }] } }),
+    surface('turn/end', 3, 200, { turn: 1, reason: { kind: 'completed' } }),
+  ];
+  const { bridge } = makeHarness({ snapshot: { type: 'snapshot', records, cursor: 3, projections: { values: {} } } });
+  const connection = attachmentConnection();
+  try {
+    const detail = await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, connection, { watchGeneration: 1 });
+    const seen = JSON.stringify(detail.transcript);
+    assert.ok(seen.includes(JSON.stringify('First picture:\n\n![one](/workspace/one.png)\n\nSecond one, a sentence with ![inline](/workspace/two.png) in it').slice(1, -1)),
+      'a blank line before the picture; the one inside a sentence is left in it');
+  } finally { await connection.cancel(); }
+});
+
 test('conversation images reject injected context, external URLs and invalid data', async () => {
   const data = Buffer.from('image').toString('base64');
   const { bridge } = makeHarness({ snapshot: {
