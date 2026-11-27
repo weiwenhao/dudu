@@ -439,8 +439,18 @@ Antigravity 没配代理时连不上 Google，列模型要等约 23 秒才失败
 3. **嘟嘟自己的查询只问 DeepSeek 那几家**：`duduCatalog(ctx)`（`assistant/dispatch/dsh-llm.mjs`）按路由问（`ctx.llm.listProviders/listModels/resolveModelInfo`，harness 不问），形状和 DSH 的目录一样，
    用在嘟嘟的对话、定时任务、一次性的模型调用和收集器的兜底；旧版 DSH 不能按路由问时退回它的目录并去掉 harness。`listProviders` 等三个方法在最低支持的 `0.2.1-alpha.3` 和 `0.2.1-rc.5` 的 `dsh-llm` 里都有。
    **收集器不问任何目录**：用设置 > 常规里“嘟嘟 · 默认”存的模型（`createSourceCollector` 的 `model`），没存才从 DeepSeek 路由里选。手机、会话操作和事项指派要给人选所有供应商，仍用 DSH 的整个目录。
-测试：`tests/oar-model-listing.test.ts`（10）、`tests/universal-driver.test.ts` 一条、`tests/listing-leftovers.test.ts`（3）、`tests/dudu-catalog.test.ts`（2）、`tests/assistant-collect-session.test.ts` 一条，旧代码下相关的都红。
-没做的：没在真实的 agy 上跑过清理，也没在真实 DSH 里试过；已经留下的 744 个空会话（工作目录是家目录，不在专用文件夹里）插件不会动，清理脚本 `.local/recovered/clean-agy-probe-conversations.mjs` 要所有者说了才跑。
+4. **agy 的模型目录没变就不开会话**（所有者让试 `agy models`，2026-11-27）：`agy models` 是 agy 自带的命令，不走 ACP，**不建会话**（在真实库上跑过：会话数不变），约 3.5 秒，输出逐字节稳定，
+   一行一个“模型加推理等级”（`gemini-4-neon-high<TAB>Gemini 4 Neon (High)`，本机 27 行，对应 ACP 读到的 11 个模型）。它给不出 DSH 要的结构（`gpt-oss-120b-medium` 是一个名字以等级结尾的模型，不是 `gpt-oss-120b` 加 medium；
+   默认模型和默认等级也不在里面），所以**不解析它，只拿它的哈希当“标记”**（`drivers/antigravity-models.mjs` 的 `antigravityModelsMark`）：读取前先跑 `agy models`，标记和 agy 版本都和上次完整读取时一样，就直接用磁盘上存的
+   那份列表（`~/.dsh/dudu/model-lists.json`，`host/providers/model-cache.mjs`），不开 ACP 会话；不一样、没存过、agy 说不出（没登录、没网、设了自己的 `GEMINI_HOME`：`agy models` 不能指定 gemini 目录，会答成另一个账号、
+   输出的行不是 `id<TAB>名字`）就照旧完整读，读完清理，再存。`createOarProvider` 的 `modelsMark`、`create({ modelCache })`。真实 agy 上走通过：第一次读 11 个模型 11 秒，会话数不变（开了又清掉），存了标记；
+   模拟重启后同一标记、同一版本，6.5 秒（只是 `agy models`）读到同样的 11 个，没有再启动 agy 的 ACP 进程。
+测试：`tests/oar-model-listing.test.ts`（12）、`tests/universal-driver.test.ts` 一条、`tests/listing-leftovers.test.ts`（3）、`tests/dudu-catalog.test.ts`（2）、`tests/assistant-collect-session.test.ts` 一条、`tests/model-cache.test.ts`（2）、
+`tests/antigravity-models-mark.test.ts`（2），旧代码下相关的都红。
+**Devin**（所有者让装来验证，2026-11-27）：用官方安装脚本装了 3000.15.14（`~/.local/bin/devin`）。OAR 读它的模型也是 `session/new`（`devin/list-models.js`）；在隔离的家目录里没登录时它 1.3 秒返回“未登录”
+（`unauthenticated`），`sessions.db` 的 `sessions` 表是空的，没有留会话（只有锁文件、日志和配置）。**登录后会不会留会话没验证**（要所有者自己 `devin auth login`）；所以 Devin 没有清理，只有“问不触发读取”和专用文件夹
+（它的会话库记着工作目录，将来可以按同样的办法清）。Kimi、CodeBuddy 同样没有装、没有验证。
+没做的：没在真实 DSH 里试过；已经留下的 744 个空会话（工作目录是家目录，不在专用文件夹里）插件不会动，清理脚本 `.local/recovered/clean-agy-probe-conversations.mjs` 要所有者说了才跑。
 
 ## harness 进程、后台任务和深度睡眠（2026-11-05，进程常驻 2026-11-23）
 

@@ -584,7 +584,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
  * A harness provider on an OAR runtime. `session` returns what is specific to the harness in the options of one OAR
  * session (environment, tool limits, launch arguments) from the DSH access mode.
  */
-export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, steering = true, quota, childUsage, backgroundTasks = true, defaultEnabled = true, folds = false, modelsTtl = MODEL_TTL, listingInFolder = false, listingCleanup }) {
+export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, steering = true, quota, childUsage, backgroundTasks = true, defaultEnabled = true, folds = false, modelsTtl = MODEL_TTL, listingInFolder = false, listingCleanup, modelsMark }) {
   const known = new Set(tools.map((tool) => tool.name));
   const environment = (extra) => ({ ...scrubbedEnvironment(scrub.patterns, scrub), ...extra });
 
@@ -609,7 +609,7 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
       return { state: 'missing', reason: override ? `${override} is not an executable file.` : `${name} was not found.` };
     },
 
-    create({ installation, env: own = () => ({}), modelsChanged, listingFolder }) {
+    create({ installation, env: own = () => ({}), modelsChanged, listingFolder, modelCache }) {
       // A harness whose runtime depends on what was found (Pi: the command OAR launches) builds it from the detection.
       const active = runtimeFor ? runtimeFor(installation) : runtime;
       // The owner's variables for this harness (Settings > Providers), read anew for every process; what dudu itself sets for a session comes after them.
@@ -627,15 +627,25 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
         const run = (async () => {
           let models;
           const began = Date.now();
-          // A folder of its own, so that what a harness leaves behind of a reading (Antigravity: an empty conversation) belongs to no one's work, and is told from it.
-          let cwd = homedir();
-          const own = listingInFolder ? listingFolder : undefined;
-          if (own) { try { await mkdir(own, { recursive: true, mode: 0o700 }); cwd = own; } catch { /* the home folder, as before */ } }
-          try {
-            const listed = await active.listModels(installation, { env: environmentOf(), cwd, timeoutMs: 30_000 });
-            if (listed.kind === 'ok') models = listed.models.filter((model) => !model.disabled);
-          } catch { /* the fallback below */ }
-          if (cwd === own) { try { await listingCleanup?.({ env: environmentOf(), folder: cwd, since: began }); } catch { /* what is left stays for the next reading to clear */ } }
+          // What the harness can say cheaply of its models (`modelsMark`: for Antigravity `agy models`, which makes no conversation) is checked first: if it is what it was when they were last read in full
+          // (and the harness is the same version), those are still its models and no session is started for them.
+          let mark = null;
+          try { mark = (await modelsMark?.({ installation, env: environmentOf() })) ?? null; } catch { /* read in full */ }
+          const version = text(installation?.version);
+          const kept = mark && modelCache ? await modelCache.get(id).catch(() => undefined) : undefined;
+          if (mark && kept && kept.mark === mark && kept.version === version) models = kept.models.filter((model) => !model.disabled);
+          else {
+            // A folder of its own, so that what a harness leaves behind of a reading (Antigravity: an empty conversation) belongs to no one's work, and is told from it.
+            let cwd = homedir();
+            const own = listingInFolder ? listingFolder : undefined;
+            if (own) { try { await mkdir(own, { recursive: true, mode: 0o700 }); cwd = own; } catch { /* the home folder, as before */ } }
+            try {
+              const listed = await active.listModels(installation, { env: environmentOf(), cwd, timeoutMs: 30_000 });
+              if (listed.kind === 'ok') models = listed.models.filter((model) => !model.disabled);
+            } catch { /* the fallback below */ }
+            if (cwd === own) { try { await listingCleanup?.({ env: environmentOf(), folder: cwd, since: began }); } catch { /* what is left stays for the next reading to clear */ } }
+            if (models?.length && mark && modelCache) void modelCache.set(id, { mark, version, models });
+          }
           // Settings changed while it was being read (a proxy, a path): this answer belongs to the old ones.
           if (mine !== generation) return;
           if (models?.length) { failures = 0; loaded = { until: Date.now() + modelsTtl, models, read: true }; }

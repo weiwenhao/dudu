@@ -174,17 +174,15 @@ test('a turn through the universal driver draws the harness\'s tool by what it d
 
 // 2026-11-27: Antigravity gives its models only in the answer to `session/new`, so every reading of them left an empty conversation in its own store (745 in four days). Asking for the models
 // never starts a reading; a session that starts on the harness does when what it said is older than six hours, and a reading runs in a folder of the plugin's own.
-test('the universal harnesses keep what they said of their models for hours, and read them in a folder of their own', async (t) => {
+test('the universal harnesses keep what they said of their models for hours', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
-  const folder = await mkdtemp(join(tmpdir(), 'dudu-listing-'));
-  t.after(() => rm(folder, { recursive: true, force: true }));
   const calls: any[] = [];
   const runtime = { listModels: async (_installation: any, options: any) => { calls.push(options); return { kind: 'ok', models: [{ id: 'm', displayName: 'M' }] }; } };
-  const driver = createUniversalProvider({ id: 'grok', name: 'Grok', runtime: runtime as any, binaryEnv: 'OAR_GROK_BIN', login: 'Run `grok login` in a terminal.' }).create({ installation: BUNDLED, listingFolder: folder } as any);
+  // No folder of their own here: a reading then starts without waiting for the disk, and what the test says about readings that did not start can be trusted.
+  const driver = createUniversalProvider({ id: 'grok', name: 'Grok', runtime: runtime as any, binaryEnv: 'OAR_GROK_BIN', login: 'Run `grok login` in a terminal.' }).create({ installation: BUNDLED } as any);
   const settle = () => new Promise((resolve) => setImmediate(resolve));
-  const start = () => (driver as any).start({ prompt: 'hi', cwd: folder, permission: 'danger-full-access', signal: new AbortController().signal }).catch(() => {});
+  const start = () => (driver as any).start({ prompt: 'hi', cwd: tmpdir(), permission: 'danger-full-access', signal: new AbortController().signal }).catch(() => {});
   await driver.listModels();
-  assert.equal(calls[0].cwd, folder);
   t.mock.timers.tick(5 * 60_000 + 1);
   await driver.listModels();
   await start();
@@ -197,6 +195,16 @@ test('the universal harnesses keep what they said of their models for hours, and
   await start();
   await settle();
   assert.equal(calls.length, 2, 'a session that starts does');
+});
+
+test('the universal harnesses are read in a folder of the plugin\'s own', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-listing-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const read = Promise.withResolvers<any>();
+  const runtime = { listModels: async (_installation: any, options: any) => { read.resolve(options); return { kind: 'ok', models: [{ id: 'm', displayName: 'M' }] }; } };
+  const driver = createUniversalProvider({ id: 'grok', name: 'Grok', runtime: runtime as any, binaryEnv: 'OAR_GROK_BIN', login: 'Run `grok login` in a terminal.' }).create({ installation: BUNDLED, listingFolder: folder } as any);
+  driver.warmModels();
+  assert.equal((await read.promise).cwd, folder);
 });
 
 test('read-only cannot be kept by these harnesses, so a session in it is refused; the other modes start as the harness runs and with a clean environment', async (t) => {

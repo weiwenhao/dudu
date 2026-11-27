@@ -201,3 +201,59 @@ test('a harness that asks for it is read in a folder of its own, which is cleare
   assert.deepEqual(await ids(other.driver), ['opus']);
   assert.notEqual(other.calls[0].cwd, tmpdir());
 });
+
+// 2026-11-27: `agy models` lists the account's models without a conversation, and OAR's reading of them (an ACP session) makes one. What agy said of its models is kept, with the mark that `agy models` gave
+// then and the harness's version: the models are read in full only when the mark or the version is not what it was.
+test('a harness whose models can be checked cheaply is read in full only when what the check says has changed', async () => {
+  const kept = new Map<string, any>();
+  const modelCache = { get: async (id: string) => kept.get(id), set: async (id: string, entry: any) => { kept.set(id, entry); } };
+  let mark: string | null = 'one';
+  const cleared: string[] = [];
+  const extra = { modelsMark: async () => mark, listingInFolder: true, listingCleanup: async () => { cleared.push('cleared'); } };
+  // A reading in full makes its folder first (real I/O), so the test waits for the harness to be asked and not for a time.
+  const started = [Promise.withResolvers<void>(), Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+  const answer = (n: number, models: any[]) => () => { started[n].resolve(); return Promise.resolve(ok(models)); };
+  const { driver, asked } = harness([answer(0, OLD), answer(1, NEW), answer(2, NEW)], undefined, extra, { modelCache, listingFolder: tmpdir() });
+  assert.deepEqual(await ids(driver), ['opus']);
+  await started[0].promise;
+  await settle();
+  assert.equal(asked(), 1, 'nothing was kept: read in full');
+  assert.equal(kept.get('fake').mark, 'one');
+  driver.refreshModels();
+  await ids(driver);
+  await settle();
+  assert.equal(asked(), 1, 'the mark is what it was: no session');
+  assert.equal(cleared.length, 1, 'and nothing to clear');
+  assert.deepEqual(await ids(driver), ['opus']);
+  mark = 'two';
+  driver.refreshModels();
+  await ids(driver);
+  await started[1].promise;
+  await settle();
+  assert.equal(asked(), 2, 'the mark changed: read in full');
+  assert.deepEqual(await ids(driver), ['opus', 'sonnet']);
+  assert.equal(kept.get('fake').mark, 'two');
+  mark = null;
+  driver.refreshModels();
+  await ids(driver);
+  await started[2].promise;
+  await settle();
+  assert.equal(asked(), 3, 'the harness cannot say: read in full, and nothing is kept for it');
+  assert.equal(kept.get('fake').mark, 'two');
+});
+
+test('a new version of the harness is read in full, the same version is not', async () => {
+  const kept = new Map<string, any>();
+  const modelCache = { get: async (id: string) => kept.get(id), set: async (id: string, entry: any) => { kept.set(id, entry); } };
+  const extra = { modelsMark: async () => 'same' };
+  const installation = (version: string) => ({ kind: 'available', via: 'executable', command: '/bin/fake', version });
+  const first = harness([() => Promise.resolve(ok(OLD))], undefined, extra, { modelCache, installation: installation('1.5.18') });
+  assert.deepEqual(await ids(first.driver), ['opus']);
+  await settle();
+  const restarted = harness([], undefined, extra, { modelCache, installation: installation('1.5.18') });
+  assert.deepEqual(await ids(restarted.driver), ['opus'], 'a restart finds what was kept');
+  assert.equal(restarted.asked(), 0);
+  const updated = harness([() => Promise.resolve(ok(NEW))], undefined, extra, { modelCache, installation: installation('1.5.19') });
+  assert.deepEqual(await ids(updated.driver), ['opus', 'sonnet']);
+  assert.equal(updated.asked(), 1);
+});

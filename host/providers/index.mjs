@@ -6,6 +6,7 @@ import { createHarnessInput } from './input.mjs';
 import { registerHarnessCommands } from './commands.mjs';
 import { createHarnessTeams } from './teams.mjs';
 import { createInputJournal } from './input-delivery.mjs';
+import { createModelCache } from './model-cache.mjs';
 import { createHarnessJobs } from './jobs.mjs';
 import { createForegroundWatch } from './foreground.mjs';
 import { reportGoal } from './goal.mjs';
@@ -84,6 +85,7 @@ async function writeSettings(file, settings) {
 export async function createProviders({ host, providers, folder, log = console }) {
   await mkdir(folder, { recursive: true, mode: 0o700 });
   const settingsFile = join(folder, 'providers.json');
+  const modelCache = createModelCache(join(folder, 'model-lists.json'));
   const inputJournal = createInputJournal(join(folder, 'input-delivery'));
   let settings = await readSettings(settingsFile);
   const status = new Map();         // provider id -> what the settings page shows
@@ -153,7 +155,7 @@ export async function createProviders({ host, providers, folder, log = console }
 
   function register(provider, detection) {
     // A list read after DSH was given the first one: DSH keeps what it got until it is told, as it is by its own DeepSeek listing.
-    const driver = provider.create({ installation: detection.installation, env: () => envOf(provider), modelsChanged: () => host.emit?.('llm/models-updated', provider.route), listingFolder: join(folder, 'model-listing') });
+    const driver = provider.create({ installation: detection.installation, env: () => envOf(provider), modelsChanged: () => host.emit?.('llm/models-updated', provider.route), listingFolder: join(folder, 'model-listing'), modelCache });
     const bridge = new HarnessBridge({
       driver, agentOf: (id) => host.agents.get(id), permissionOf: (agent) => host.permissionOf?.(agent), onLink: host.onLink,
       eventsOf: host.eventsOf, flushSession: host.flushSession, inputJournal,
