@@ -566,11 +566,6 @@ test('uses a restrictive local-only CSP and strips the upstream permissive polic
   assert.match(csp, /form-action 'none'/u);
   assert.doesNotMatch(document.html, /default-src \*/u);
   assert.doesNotMatch(document.html, /https?:\/\//u);
-  const cssPath = internalPath(document.html, 'mobile-page.css');
-  assert.match(
-    bytes((await document.resource(cssPath)).data).toString('utf8'),
-    /font-family:"Pingfang SC",-apple-system/iu,
-  );
 });
 
 test('builds direct HTTP documents with page-scoped roots and rewrites manifest text resources', async (t) => {

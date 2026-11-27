@@ -73,6 +73,8 @@ test('custom status identity, color, description and default survive rename and 
   assert.equal(reopened.add({ title: 'Still the default' }).issue.status, status.id);
 });
 
+const BEFORE_ICON_PROGRESS = 14;
+
 test('workflow icon progress migrates old shapes and persists owner choices without changing issues', async (t) => {
   const folder = mkdtempSync(join(tmpdir(), 'dudu-workflow-icons-'));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
@@ -85,7 +87,8 @@ test('workflow icon progress migrates old shapes and persists owner choices with
   const counts = previous.counts();
   previous.close();
   const db = new DatabaseSync(file);
-  db.exec(`ALTER TABLE issue_statuses DROP COLUMN icon_progress; PRAGMA user_version=${SCHEMA_VERSION - 1};`);
+  // A file from before the icon column: migrations only append, so the number of the one that adds it never changes, and the migrations after it (which drop the old agent state columns) find them.
+  db.exec(`ALTER TABLE issue_statuses DROP COLUMN icon_progress; ALTER TABLE issues ADD COLUMN agent_state TEXT; ALTER TABLE issues ADD COLUMN agent_state_basis TEXT; PRAGMA user_version=${BEFORE_ICON_PROGRESS};`);
   db.close();
 
   const { issues } = world(t, file);

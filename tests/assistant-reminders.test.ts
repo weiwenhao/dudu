@@ -6,8 +6,14 @@ import { reminders } from '../host/assistant/home/reminders.mjs';
 const NOON = new Date(2026, 10, 1, 12, 0, 0).getTime();
 const DAY = 86_400_000;
 
+// The store reads a session two ways (2026-11-16, 'Unify session state'): `lifecycleState` is the session's own state (waiting_owner, error, running...), which the reminders for a blocked
+// session read, and `sessionState` is what the owner's list shows of it (processing, idle...), which says whether a working session may be reminded about. A running session is processing.
 function world(sessions: Record<string, string> = {}) {
-  const issues = createIssues({ file: ':memory:', now: () => NOON, sessionState: (session: string) => sessions[session] ?? null });
+  const issues = createIssues({
+    file: ':memory:', now: () => NOON,
+    lifecycleState: (session: string) => sessions[session] ?? null,
+    sessionState: (session: string) => (sessions[session] === 'running' ? 'processing' : 'idle'),
+  });
   const add = (fields: any) => (issues.add({ status: 'in_progress', project: { name: 'app', path: '/work/app' }, ...fields }) as any).issue;
   return { issues, add };
 }

@@ -151,12 +151,12 @@ test('a reply goes into the log as a decision, clears the question and is handed
   const handed: Array<[number, string]> = [];
   const api = createIssuesApi({ issues, onReply: (issue: { id: number }, text: string) => { handed.push([issue.id, text]); } });
   try {
-    const { issue } = issues.add({ project: { name: 'work', path: '/work' }, title: '归档报销单', status: 'in_progress', agent: 'deepseek', ask: '第 3 张发票缺少抬头' });
+    const { issue } = issues.add({ project: { name: 'work', path: '/work' }, title: '归档报销单', status: 'in_progress', agent: 'deepseek', session: 'dsh:work', ask: '第 3 张发票缺少抬头' });
     const response = await api.handle('reply', new Request('http://dsh.test/', { method: 'POST', body: JSON.stringify({ id: issue.id, text: '抬头用公司全称' }) }));
     const answer = await response.json();
     assert.equal(answer.outcome, 'success');
     assert.equal(answer.issue.ask, '');
-    assert.equal(answer.issue.sessionState, 'idle', 'the Needs you mark goes with the question');
+    assert.equal(answer.issue.sessionState, 'idle', 'the Needs you mark goes with the question: the conversation reads as it does without one (an issue with no conversation reads unassigned)');
     assert.deepEqual(handed, [[issue.id, '抬头用公司全称']]);
     const { log } = issues.get(issue.id);
     assert.ok(log.some((entry: { kind: string; text: string; actor: string }) => entry.kind === 'decision' && entry.text === '抬头用公司全称' && entry.actor === 'owner'));
