@@ -1,0 +1,30 @@
+appId: com.harnessmobile.app
+---
+- extendedWaitUntil:
+    visible:
+      id: board.search
+    timeout: 12000
+- assertNotVisible:
+    id: board.connection.pending
+- tapOn:
+    id: board.search
+- tapOn:
+    id: search.query
+- inputText: DuduE2E030
+- tapOn:
+    id: search.range.sessions
+- tapOn:
+    id: 'search.result.issue:102'
+- extendedWaitUntil:
+    visible:
+      id: page.back
+    timeout: 10000
+- tapOn:
+    id: page.back
+- tapOn:
+    id: search.cancel
+- extendedWaitUntil:
+    visible:
+      id: board.connection.pending
+    timeout: 20000
+- takeScreenshot: ios-reconnect-banner

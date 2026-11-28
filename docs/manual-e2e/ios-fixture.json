@@ -1,0 +1,104 @@
+{
+  "outcome": "success",
+  "conversations": [
+    {
+      "id": "issue:101",
+      "title": "优化手机上的对话体验",
+      "sessionId": "review-chat",
+      "preview": "DuduE2E030 fixture",
+      "receivedAt": 1795867200000,
+      "sessionState": "idle",
+      "deepSleep": false,
+      "unread": false,
+      "readSeq": 0,
+      "pinned": false,
+      "issue": {
+        "id": 101,
+        "title": "优化手机上的对话体验",
+        "sessionId": "review-chat",
+        "project": "Mobile E2E",
+        "agent": "deepseek",
+        "updatedAt": 1795867200000,
+        "status": "in_progress",
+        "statusType": "in_progress",
+        "priority": "none"
+      }
+    },
+    {
+      "id": "issue:102",
+      "title": "检查连接与配对",
+      "sessionId": "review-second",
+      "preview": "DuduE2E030 fixture",
+      "receivedAt": 1795867200000,
+      "sessionState": "idle",
+      "deepSleep": false,
+      "unread": false,
+      "readSeq": 0,
+      "pinned": false,
+      "issue": {
+        "id": 102,
+        "title": "检查连接与配对",
+        "sessionId": "review-second",
+        "project": "Release fixtures",
+        "agent": "claude",
+        "updatedAt": 1795867200000,
+        "status": "in_progress",
+        "statusType": "in_progress",
+        "priority": "none"
+      }
+    }
+  ],
+  "sessions": {
+    "total": 2,
+    "items": [
+      {
+        "id": "issue:101",
+        "title": "优化手机上的对话体验",
+        "sessionId": "review-chat",
+        "preview": "DuduE2E030 fixture",
+        "snippet": "DuduE2E030 fixture",
+        "receivedAt": 1795867200000,
+        "sessionState": "idle",
+        "deepSleep": false,
+        "unread": false,
+        "readSeq": 0,
+        "pinned": false,
+        "issue": {
+          "id": 101,
+          "title": "优化手机上的对话体验",
+          "sessionId": "review-chat",
+          "project": "Mobile E2E",
+          "agent": "deepseek",
+          "updatedAt": 1795867200000,
+          "status": "in_progress",
+          "statusType": "in_progress",
+          "priority": "none"
+        }
+      },
+      {
+        "id": "issue:102",
+        "title": "检查连接与配对",
+        "sessionId": "review-second",
+        "preview": "DuduE2E030 fixture",
+        "snippet": "DuduE2E030 fixture",
+        "receivedAt": 1795867200000,
+        "sessionState": "idle",
+        "deepSleep": false,
+        "unread": false,
+        "readSeq": 0,
+        "pinned": false,
+        "issue": {
+          "id": 102,
+          "title": "检查连接与配对",
+          "sessionId": "review-second",
+          "project": "Release fixtures",
+          "agent": "claude",
+          "updatedAt": 1795867200000,
+          "status": "in_progress",
+          "statusType": "in_progress",
+          "priority": "none"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+appId: com.harnessmobile.app
+---
+- extendedWaitUntil:
+    visible:
+      id: 'board.conversation.issue:101'
+    timeout: 12000
+- tapOn:
+    id: 'board.conversation.issue:101'
+- extendedWaitUntil:
+    visible:
+      id: 'chat.image.review-question.0'
+    timeout: 10000
+- tapOn:
+    id: 'chat.image.review-question.0'
+- assertVisible:
+    id: photo.preview.close
+- takeScreenshot: ios-loaded-image
+- tapOn:
+    id: photo.preview.close
+- assertVisible:
+    id: page.back
