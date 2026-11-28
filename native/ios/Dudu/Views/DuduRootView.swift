@@ -1185,21 +1185,13 @@ struct DuduRootView: View {
     }
 
     private var sidebarButton: some View {
-        Button {
+        SidebarToggleButton(isOpen: isSidebarOpen) {
             if isSidebarOpen {
                 closeSidebar()
             } else {
                 openSidebar()
             }
-        } label: {
-            DuduIcon(.menu)
-                .foregroundStyle(DuduStyle.ink)
-                .frame(width: DuduLayout.toolbarButtonSize, height: DuduLayout.toolbarButtonSize)
-                .contentShape(Circle())
         }
-        .buttonStyle(DuduGlassButtonStyle())
-        .accessibilityLabel(isSidebarOpen ? L10n.text("关闭会话列表") : L10n.text("打开会话列表"))
-        .accessibilityIdentifier("sidebar.toggle")
     }
 
     /// Back to where the page was opened from: the board, or the conversation for a page of that conversation.

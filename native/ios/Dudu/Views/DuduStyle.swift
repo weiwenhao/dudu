@@ -226,6 +226,23 @@ struct DuduGlassButtonStyle: ButtonStyle {
     }
 }
 
+struct SidebarToggleButton: View {
+    var isOpen = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            DuduIcon(.menu)
+                .foregroundStyle(DuduStyle.ink)
+                .frame(width: DuduLayout.toolbarButtonSize, height: DuduLayout.toolbarButtonSize)
+                .contentShape(Circle())
+        }
+        .buttonStyle(DuduGlassButtonStyle())
+        .accessibilityLabel(isOpen ? L10n.text("关闭会话列表") : L10n.text("打开会话列表"))
+        .accessibilityIdentifier("sidebar.toggle")
+    }
+}
+
 struct DuduGlassCapsuleButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
