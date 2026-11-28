@@ -183,7 +183,7 @@ test('foreground, unclassified and ambient agents do not become background work;
   }
 });
 
-test('background shell and Monitor hold the DSH turn through native completion and the follow-up answer', async t => {
+test('background shell and Monitor let DSH commit the answer before their native follow-up', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   for (const task of [shell, { ...shell, nativeType: 'local_monitor', ambient: true, background: false }]) {
     const native = nativeSession();
@@ -196,23 +196,25 @@ test('background shell and Monitor hold the DSH turn through native completion a
     t.mock.timers.tick(30_000);
     await flush();
     assert.equal(native.disposed, 0);
-    assert.equal(seen.events.some(event => ['step-end', 'turn-end'].includes(event.type)), false,
-      'DSH must keep the root working while its real background task runs');
+    const boundary = seen.events.find(event => event.type === 'step-end');
+    assert.equal(boundary?.reason, 'stop');
+    assert.ok(boundary.continuation);
+    assert.equal(seen.events.some(event => event.type === 'turn-end'), false);
 
     native.emit([{ kind: 'task_ended', taskId: 'poll', status: 'completed' }]);
     t.mock.timers.tick(4999);
     await flush();
     assert.equal(native.disposed, 0, 'task notification must not close the process before native continuation starts');
     native.emit([{ kind: 'turn_active' }]);
+    assert.equal(await boundary.continuation, true);
     t.mock.timers.tick(30_000);
     await flush();
     assert.equal(native.disposed, 0, 'a slow native follow-up is not cut off by the idle grace period');
     assert.equal(seen.events.some(event => event.type === 'turn-end'), false);
     native.emit([say('The background task completed.'), end]);
     await seen.done;
-    assert.equal(seen.events.filter(event => event.type === 'text-delta').map(event => event.text).join(''),
-      'Polling.\n\nThe background task completed.');
-    assert.equal(seen.events.filter(event => event.type === 'step-end').length, 1);
+    assert.deepEqual(seen.events.filter(event => event.type === 'text-delta' || event.type === 'step-end')
+      .map(event => event.text ?? event.type), ['Polling.', 'step-end', 'The background task completed.', 'step-end']);
     assert.equal(seen.events.filter(event => event.type === 'turn-end').length, 1);
     assert.equal(seen.events.at(-1).ok, true);
     await handle.close();
@@ -275,6 +277,7 @@ test('a background task with no native continuation ends the turn after the idle
   native.emit([{ kind: 'task_ended', taskId: 'poll', status: 'completed' }]);
   t.mock.timers.tick(5000);
   await seen.done;
+  assert.equal(await seen.events.find(event => event.type === 'step-end')?.continuation, false);
   assert.equal(seen.events.at(-1).ok, true);
   assert.equal(seen.events.filter(event => event.type === 'turn-end').length, 1);
   assert.equal(native.disposed, 0, 'the last output read still owns the native process');

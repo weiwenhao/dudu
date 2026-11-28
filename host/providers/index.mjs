@@ -248,6 +248,10 @@ export async function createProviders({ host, providers, folder, log = console }
 
   const disposers = [
     host.on('agent/created', ({ agent }) => syncMirrorTools(agent, routeOf(agent))),
+    host.on('agent/turn-stopping', async ({ agent, signal }) => {
+      const active = [...registered.values()].find(({ bridge }) => bridge.runOf(agent.id)?.backgroundStep?.signal === signal);
+      await active?.bridge.waitForBackground(agent, signal);
+    }),
     host.on('session/event', (session, event) => {
       if (event?.type === 'agent/inbox/spliced' && event.data?.target === 'next-step') {
         for (const { bridge } of registered.values()) bridge.yieldForInput(session.id);

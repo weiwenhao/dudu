@@ -387,18 +387,22 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   }
   let unsubscribe = () => {};
   let stopping;
+  let held;
+  let holdTimer;
   let heldStep;
-  let yieldedStep = false;
-  const yieldForInput = () => {
-    if (finished || !held || foreground || yieldedStep) return;
-    // DSH claims next-step input only after the current adapter stream returns. Release this step, while
-    // retaining the native turn/process for its background notifications and the next admitted input.
-    events.push(heldStep ?? { type: 'step-end', reason: 'stop' });
+  const publishHeldStep = () => {
+    if (held.continuation) return;
+    held.continuation = deferred();
+    events.push({ ...(heldStep ?? { type: 'step-end', reason: 'stop' }), continuation: held.continuation.promise });
     heldStep = undefined;
-    yieldedStep = true;
+  };
+  const yieldForInput = () => {
+    if (!finished && held && !foreground) publishHeldStep();
   };
   async function close({ preserveBackground = false } = {}) {
     if (!finished) events.push({ type: 'turn-end', ok: false, error: harnessError('The turn was interrupted.', 'ABORTED') });
+    held?.continuation?.resolve(true);
+    held = undefined;
     finished = true;
     clearTimeout(holdTimer);
     signal?.removeEventListener('abort', onAbort);
@@ -422,6 +426,8 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     finished = true;
     clearTimeout(holdTimer);
     signal?.removeEventListener('abort', onAbort);
+    held?.continuation?.resolve(!event.ok);
+    held = undefined;
     if (event.ok && heldStep) events.push(heldStep);
     heldStep = undefined;
     events.push(event);
@@ -433,9 +439,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   // answered by a turn of its own once this one ends. Such a message is tracked until the harness shows it picked it up.
   const waiting = new Set();
   const forwarded = new Set();
-  let held;
-  let holdTimer;
-  const release = () => { clearTimeout(holdTimer); const event = held; held = undefined; if (event) finish(event); };
+  const release = () => { if (held) finish(held.end); };
   const read = (record) => {
     if (finished) return;
     // Native children and background commands can finish after the root's first answer. Keep both the process and
@@ -457,21 +461,23 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
       || (record.kind === 'response' && record.body?.kind === 'exited'))) {
       clearTimeout(holdTimer);
       holdTimer = undefined;
+      held.continuation?.resolve(true);
       held = undefined;
       normalizer.reopen();
       setForeground(true);
-      if (heldStep) events.push({ type: 'text-delta', text: '\n\n' });
       heldStep = undefined;
     }
     for (const event of normalizer.feed(record)) {
-      // A tool-free final step also stops DSH's loop. Defer that boundary together with the root end while
-      // native work runs, so DSH keeps its stop control and never reports a completed parent prematurely.
+      // See the native outcome before committing the answer. On success DSH stores the step first and
+      // waits at agent/turn-stopping, so file references are usable while the native process keeps working.
       if (event.type === 'step-end' && event.reason === 'stop' && hasWork()) { heldStep = event; continue; }
       if (event.type !== 'turn-end') { events.push(event); continue; }
       if (event.ok && (waiting.size > 0 || hasWork())) {
-        held = event;
-        yieldedStep = false;
-        if (hasWork()) setForeground(false);
+        held = { end: event };
+        if (hasWork()) {
+          setForeground(false);
+          if (heldStep) publishHeldStep();
+        }
         clearTimeout(holdTimer);
         holdTimer = hasWork() ? undefined : setTimeout(release, followUpMs);
       }

@@ -466,6 +466,9 @@ Antigravity 没配代理时连不上 Google，列模型要等约 23 秒才失败
 `assignment.restartSession` 也是嘟嘟的操作；工作中的不动，`no_op`）、关闭插件或退出 DSH、原生进程自己退出。
 有实际运行的原生子智能体或后台任务时，根智能体的第一段回答不结束 DSH 这一轮；`oar-resident.mjs`
 在同一个进程里继续接收原生完成通知和后续回答。
+回复一完成就提交为 `assistant/message`，桌面和手机随即可以加载 Markdown 图片。DSH 在提交后通过
+`agent/turn-stopping` 等待原生续答或下一步输入。原生续答到来时进入 DSH 的下一步，沿用同一个进程和订阅。
+
 后台等待期间的新输入通过 OAR 的 `deliver()` 投递，由它处理原生根智能体空闲与继续工作的竞态，
 保留原来的输入 ID、图片和投递回执，不重新启动后台命令。显式停止后仍有后台任务的保留会话，
 也继续通过 `deliver()` 接收下一轮。
@@ -491,7 +494,7 @@ Antigravity 没配代理时连不上 Google，列模型要等约 23 秒才失败
 和 `steer`（下一步就收下）。手机以前对每条消息都用 `queue`；DSH 自己的输入框对不在运行的会话用 `queue`（就是普通发送，马上开始），
 对在运行的会话按所有者在设置里选的（`ui-conversation` 的 `busyEnter`，默认 `queue`）。后台任务期间 DSH 这一轮被保持，会话对 DSH 是“运行中”，
 手机的 `queue` 消息要等后台命令结束才发（所有者的电脑设为 `steer`，没有这个问题）。现在手机用同一条规则：会话在运行（`agents.get(id).status`）
-且设置是 `steer` 时发 `steer`，其余照旧 `queue`；`steer` 进来由 `yieldForInput` 放行被保持的一步。设置经 DSH 的 `settings` 服务读，读不到
+且设置是 `steer` 时发 `steer`，其余照旧 `queue`；`steer` 进来后，DSH 结束等待并在下一步收下。设置经 DSH 的 `settings` 服务读，读不到
 （旧 DSH、没有这一项）就是 `queue`，和以前一样。只管手机的 `session.send`：定时任务、收集和转发给事项会话的消息不是所有者在输入框里打的，仍是 `queue`。
 
 `HarnessBridge` 每个会话保留最近一轮的 `HarnessRun`（工具结果每个最多 256 KB、活动记录、团队观察），
