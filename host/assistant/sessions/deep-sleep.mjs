@@ -17,7 +17,7 @@ export const hasEndedTurn = (state, turnActive) => turnActive !== true && (ENDED
 // Both idle and unread may sleep. Actual foreground work, dialogs and background jobs remain protected separately.
 export const SLEEPING_MARKS = Object.freeze(['idle', 'unread']);
 
-/** When a session was last handled: the latest of when its state began, when it last did anything, and when the owner last spoke to it or opened it. */
+/** The latest of the session's state transition, its last activity, and the owner's last start or message. */
 export function handledAtOf(snapshot) {
   const times = [snapshot?.stateSince, snapshot?.lastActivityAt, snapshot?.touchedAt].filter(Number.isFinite);
   return times.length ? Math.max(...times) : null;

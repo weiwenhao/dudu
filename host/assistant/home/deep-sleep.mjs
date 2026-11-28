@@ -1,7 +1,8 @@
 // Deep sleep releases stopped issue sessions once, after thirty minutes idle or an hour unread.
-// Actual work, live questions/approvals and background jobs remain protected by lifecycle checks. The next turn
-// starts the agent again by itself, and the owner speaking to the session or opening it makes it awake. It never changes an issue's status or the
-// agent's state, calls no model and writes nothing to the log: the session is as it was, and only what is kept in memory for it is gone.
+// Actual work, live questions/approvals and background jobs remain protected by lifecycle checks.
+// Starting or speaking to the session resets its sleep timer. Opening it preserves the timer.
+// Deep sleep releases retained memory while preserving the issue's status and the agent's state.
+// It calls no model and writes nothing to the log.
 //
 // A conversation that is no issue's keeps its harness process between turns as well (130 to 400 MB each, until DSH exited: owner, 2026-11-27: 「做吧」), so it is let go of after the same
 // waits, counted from the end of its turn. Nothing about it is shown differently (no crescent, no state): only the process and what the run kept of the turn go.

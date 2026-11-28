@@ -47,7 +47,7 @@ test('real work and active dialogs cannot be released; inactive historical quest
   assert.equal(inDeepSleep({ ...base, state: 'idle', handledAt: null }), false);
 });
 
-test('a session was last handled when its state began, when it last did anything, or when the owner last spoke to it or opened it: the latest of them', () => {
+test('the latest state change, session activity, or owner start or message sets the sleep timer', () => {
   assert.equal(handledAtOf({ stateSince: 100, lastActivityAt: 300, touchedAt: 200 }), 300);
   assert.equal(handledAtOf({ stateSince: 100, lastActivityAt: 50, touchedAt: 200 }), 200);
   assert.equal(handledAtOf({ stateSince: 100, lastActivityAt: null, touchedAt: null }), 100);
