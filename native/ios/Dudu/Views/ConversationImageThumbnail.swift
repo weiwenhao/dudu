@@ -22,9 +22,15 @@ struct ConversationImageThumbnail: View {
         let isReady: Bool
     }
 
+    private var waitsForSourceSequence: Bool { attachment.kind == "markdown" && attachment.seq == nil }
+
     private var imageKey: ConversationImageKey? {
-        guard let target else { return nil }
+        guard !waitsForSourceSequence, let target else { return nil }
         return ConversationImageKey(target: target, attachment: attachment)
+    }
+
+    private var showsLoading: Bool {
+        waitsForSourceSequence || isLoading || (canLoadAttachment && loadedKey != imageKey)
     }
 
     var body: some View {
@@ -37,18 +43,18 @@ struct ConversationImageThumbnail: View {
                 // The full-screen preview keeps the original image's aspect ratio.
                 .aspectRatio(0.8, contentMode: .fit)
                 .overlay {
-                if let image {
-                    Image(uiImage: image.image).resizable().scaledToFill()
-                } else if isLoading {
-                    ProgressView()
-                } else {
-                    DuduIcon(.image, size: 28).foregroundStyle(DuduStyle.chatTertiary)
+                    if let image, loadedKey == imageKey {
+                        Image(uiImage: image.image).resizable().scaledToFill()
+                    } else if showsLoading {
+                        ProgressView()
+                    } else {
+                        DuduIcon(.image, size: 28).foregroundStyle(DuduStyle.chatTertiary)
+                    }
                 }
-            }
-            .modifier(ThumbnailFrame(tileShape: tileShape, alignment: alignment))
+                .modifier(ThumbnailFrame(tileShape: tileShape, alignment: alignment))
         }
         .buttonStyle(.plain)
-        .disabled(isLoading || (image == nil && !canLoadAttachment))
+        .disabled(showsLoading || (image == nil && !canLoadAttachment))
         .modifier(MessagePendingIndicator(isPending: isPending))
         .frame(maxWidth: .infinity, alignment: alignment)
         .accessibilityLabel(attachment.name)
@@ -73,7 +79,7 @@ struct ConversationImageThumbnail: View {
     }
 
     @MainActor private func load() async {
-        guard image == nil, let target else { return }
+        guard !waitsForSourceSequence, image == nil, let target else { return }
         let identifier = UUID()
         let key = imageKey
         loadingID = identifier

@@ -27,6 +27,7 @@ struct MessageMarkdown: View {
     var todo = false
     var allowsTextSelection = true
     var sourceSequence: Double?
+    var waitsForSourceSequence = false
     /// Already parsed (a reply still being written, `StreamingReplyText`, which parses its parts together off the main thread and without the shared cache, so that a new
     /// character neither waits for its own parse nor pushes the history's texts out of the cache's 48).
     var content: MarkdownContent?
@@ -56,7 +57,7 @@ struct MessageMarkdown: View {
                 (parsed?.text == text ? parsed?.content : nil) {
                 Markdown(parsed)
                     .markdownTheme(todo ? .duduTodo : compact ? .duduCompact : .duduChat)
-                    .markdownImageProvider(MessageImageProvider(sequence: sourceSequence))
+                    .markdownImageProvider(MessageImageProvider(sequence: sourceSequence, waitsForSourceSequence: waitsForSourceSequence))
                     .markdownInlineImageProvider(MessageInlineImageProvider(sequence: sourceSequence, access: access))
             } else {
                 ProgressView()
@@ -264,23 +265,25 @@ private extension Theme {
 // Both image providers use the watched conversation's authenticated attachment transport.
 private struct MessageImageProvider: ImageProvider {
     let sequence: Double?
+    let waitsForSourceSequence: Bool
 
     func makeImage(url: URL?) -> some View {
-        MessageImage(url: url, sequence: sequence)
+        MessageImage(url: url, sequence: sequence, waitsForSourceSequence: waitsForSourceSequence)
     }
 }
 
 private struct MessageImage: View {
     let url: URL?
     let sequence: Double?
+    let waitsForSourceSequence: Bool
     @Environment(\.conversationAccess) private var access
 
     var body: some View {
-        if let url, let sequence, let access {
+        if let url, let access, sequence != nil || waitsForSourceSequence {
             ConversationImageThumbnail(
                 attachment: TranscriptAttachment(kind: "markdown", name: L10n.text("图片"), id: url.absoluteString, seq: sequence),
                 target: access.target, canLoadAttachment: access.connected,
-                identifier: "chat.markdown.image.\(Int(sequence))", loadImage: access.loadImage,
+                identifier: sequence.map { "chat.markdown.image.\(Int($0))" } ?? "chat.markdown.image", loadImage: access.loadImage,
                 alignment: .leading
             )
         } else {

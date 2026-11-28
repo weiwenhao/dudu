@@ -249,8 +249,7 @@ private struct GroupGuestBubble: View {
     private var bubble: some View {
         let shape = UnevenRoundedRectangle(topLeadingRadius: 4, bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: 18, style: .continuous)
         return VStack(alignment: .leading, spacing: 0) {
-            // The line's own sequence number is what lets a picture in the answer be fetched (`session.attachment` names the line that grants it); without it the pictures stay grey boxes marked 图片 (owner, 2026-11-11).
-            MessageMarkdown(text: text, allowsTextSelection: false, sourceSequence: seq)
+            MessageMarkdown(text: text, allowsTextSelection: false, sourceSequence: seq, waitsForSourceSequence: isRunning)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxHeight: isClosed ? Self.clampedHeight : nil, alignment: .top)

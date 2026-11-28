@@ -76,11 +76,6 @@ private val hairline = Color.Black.copy(alpha = .08f)
 private val replyShape = RoundedCornerShape(topStart = 4.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 18.dp)
 private val ownShape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomEnd = 4.dp, bottomStart = 24.dp)
 
-/** How a picture written in a line's Markdown is drawn where it stands: a tile as wide as a picture sent alone, read by the line's own event; without that event, its words. */
-private fun groupPicture(sessionId: String, seq: Long?, model: DuduViewModel): (@Composable (String, String) -> Unit)? = seq?.let { line ->
-    { words, source -> Attachment(sessionId, json("kind" to "image", "name" to words, "source" to source), line, model, AttachmentImageStyle.Message) }
-}
-
 /** One line of the group (a command's entry with a `group`, or the dots/live answer `GroupChat.placingTyping` put in). `reply` puts the issue's @ into the box. */
 @Composable
 internal fun GroupLineRow(message: Message, sessionId: String, model: DuduViewModel, actions: Actions, reply: (JSONObject) -> Unit) {
@@ -170,8 +165,8 @@ private fun GroupGuestBubble(line: JSONObject, seq: Long?, running: Boolean, ses
                         .combinedClickable(onClick = {}, onLongClick = { menu = true }).padding(horizontal = 14.dp, vertical = 10.dp)) {
                         Box(Modifier.fillMaxWidth().then(if (closed) Modifier.heightIn(max = 184.dp).clipToBounds() else Modifier)) {
                             Column(Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = closed)) {
-                                // A picture in the answer stands where it is written, read by the line's own event (the plugin's `session.attachment` names the line that grants it).
-                                Markdown(text, selectable = false, picture = groupPicture(sessionId, seq, model))
+                                Markdown(text, selectable = false,
+                                    picture = conversationMarkdownPicture(sessionId, seq, model, waitsForSequence = running))
                             }
                             if (closed) {
                                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(76.dp)
@@ -276,7 +271,7 @@ private fun GroupTaskLine(line: JSONObject, seq: Long?, sessionId: String, model
                     if (line.has("at")) Text(groupClock(line.optDouble("at"), locale), fontSize = 12.sp, color = muted, maxLines = 1, softWrap = false)
                 }
             }
-            if (text.isNotEmpty()) Markdown(text, selectable = false, picture = groupPicture(sessionId, seq, model))
+            if (text.isNotEmpty()) Markdown(text, selectable = false, picture = conversationMarkdownPicture(sessionId, seq, model))
         }
         GroupLineMenu(menu, { menu = false }, press, text, null, seq, sessionId, model, actions) {}
     }
