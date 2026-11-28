@@ -18,6 +18,7 @@ import { createNativeDiagnostics } from './dist/native-diagnostics.mjs';
 import { createSessionDiagnostics } from './dist/session-diagnostics.mjs';
 import { cleanReadSource, createReadLog } from './dist/read-log.mjs';
 import { createBoardAnnounce } from './dist/native-board-announce.mjs';
+import { createSubmitMode } from './dist/native-submit-mode.mjs';
 import { createStartupLog } from './dist/startup-log.mjs';
 import { createProviders } from './dist/providers/index.mjs';
 import { createSessionTools } from './dist/providers/cron-tools.mjs';
@@ -57,6 +58,8 @@ import { createGroup } from './dist/assistant/home/group.mjs';
 import { createLatest } from './dist/assistant/home/latest.mjs';
 import { createChatHome } from './dist/assistant/home/chat-home.mjs';
 import { createChatHomeApi } from './dist/assistant/home/chat-home-api.mjs';
+import { createSearch, createSearchApi } from './dist/assistant/home/search.mjs';
+import { boardRow } from './dist/native-board.mjs';
 import { createConversation } from './dist/assistant/home/conversation.mjs';
 import { createAssistantSessionOperations } from './dist/assistant/home/session-operations.mjs';
 import { createLocalWidgets } from './dist/assistant/widgets/local.mjs';
@@ -221,6 +224,7 @@ async function startProviders(ctx, folder, assignment) {
   assignment.sources = providers.sources;
   assignment.release = (sessionId) => providers.release(sessionId); // deep sleep lets go of what the harnesses hold for a session whose turn has ended
   assignment.hasActiveWork = providers.hasActiveWork;
+  assignment.heldRuns = providers.heldRuns; // the runs that are kept after a turn: deep sleep lets go of the conversations that are no issue's too
   // 重启会话 (owner, 2026-11-23, pick A of .local/designs/session-restart-2026-11-23): the conversation's agent process is closed now, and the next
   // message starts a new one that resumes it (with the agent's current environment variables). One that works is left alone. The menu of the
   // conversation list and Dudu's `sessions/restart` are this one handler.
@@ -294,6 +298,7 @@ async function startProviders(ctx, folder, assignment) {
       delete assignment.release;
       delete assignment.restartSession;
       delete assignment.hasActiveWork;
+      delete assignment.heldRuns;
       delete assignment.links;
       delete assignment.quota;
       quota.close();
@@ -619,11 +624,16 @@ async function startAssignment(ctx, folder, assignment) {
     },
   });
   // An idle agent that nobody has handled for half an hour is in deep sleep (its issue says so): what is kept for it is let go of. Looked at every
-  // minute, or, when a test has shortened the time, every half of it.
+  // minute, or, when a test has shortened the time, every half of it. A conversation that is no issue's keeps its harness process between turns too: the same waits, counted from the end
+  // of its turn, let it go (owner, 2026-11-27: 「做吧」); the same switch turns both off.
   const deepSleep = createDeepSleep({
     sessions: agentSessions, asleep: (key) => assignment.issues.findBySession(key).issue?.deepSleep === true,
     intervalMs: deepSleepAfter ? Math.min(60_000, Math.max(250, deepSleepAfter / 2)) : undefined,
     release: (key) => assignment.release?.(key.slice('dsh:'.length)),
+    held: () => (assignment.heldRuns?.() ?? []).map(({ sessionId, finishedAt }) => ({ key: `dsh:${sessionId}`, endedAt: finishedAt })),
+    markOf: (key) => assignment.sessionStatus?.(key)?.sessionState ?? 'idle',
+    enabled: () => assignment.assistant?.settings?.value('deepSleep') !== false,
+    afterMs: deepSleepAfter,
   });
   const disposeSnapshots = registerRoute(ctx, {
     path: '/api/dudu/sessions/snapshots', methods: ['POST'], requestBody: 'buffered',
@@ -761,6 +771,7 @@ async function startDispatch(ctx, folder, assignment) {
   assignment.collectSource = createSourceCollector(ctx, {
     folder: () => assignment.assistant?.folder, file: join(folder, 'assistant', 'collect-sessions.json'),
     permission: () => assignment.assistant?.settings?.value('conversation')?.permission, // the permission the owner chose for 嘟嘟's sessions
+    model: () => assignment.assistant?.settings?.value('conversation')?.model, // and the model: a collection asks for none
     connections: () => assignment.assistant?.connections ?? null, // the MCP servers 嘟嘟 has connected itself
   });
   // The collection sessions made before each collector kept one are folded away once, a little after start (they are in DSH's list, not in the file).
@@ -1036,11 +1047,24 @@ function startChatHome(ctx, folder, assignment) {
     assistantLine: () => assignment.group?.ownLine() ?? null,
   });
   const handle = createChatHomeApi(home, (action, body) => assignment.issuesApi.execute(action, body));
+  // The search page's one request (home/search.mjs): the conversations, the inbox and the tasks, each asked when it is used, as the other halves of the plugin start later than this.
+  const search = createSearch({
+    row: boardRow,
+    conversations: (row, options) => home.list('all', row, undefined, options),
+    sessions: (query) => assignment.searchSessions?.(query),
+    inbox: (options) => assignment.inboxApi?.search(options) ?? { outcome: 'error', code: 'unavailable' },
+    tasks: (action, body) => assignment.tasks?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
+  });
+  const handleSearch = createSearchApi(search);
   const disposers = [];
   try {
     for (const action of ['list', 'pin']) disposers.push(registerRoute(ctx, {
       path: `/api/dudu/home/${action}`, methods: ['POST'], requestBody: 'buffered',
       fetch: (request) => handle(action, request),
+    }));
+    disposers.push(registerRoute(ctx, {
+      path: '/api/dudu/search/query', methods: ['POST'], requestBody: 'buffered',
+      fetch: (request) => handleSearch(request),
     }));
   } catch (error) {
     for (const dispose of disposers) dispose();
@@ -1048,9 +1072,11 @@ function startChatHome(ctx, folder, assignment) {
     throw error;
   }
   assignment.chatHome = home;
+  assignment.search = search;
   return () => {
     for (const dispose of disposers) dispose();
     delete assignment.chatHome;
+    delete assignment.search;
     home.close();
   };
 }
@@ -1121,11 +1147,18 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
       },
       duduPages,
       foreground: { backgroundOnly: (id) => assignment.providers?.backgroundOnly?.(id) === true, onChange: (listener) => assignment.providers?.onForeground?.(listener) },
+      // A message from the phone goes in the way DSH's own composer sends a plain one: queued for a conversation that does not run, as the owner chose (Settings: queue or steer) for one that does.
+      // A conversation held open for background work runs for DSH, so with steer the message is taken in at once instead of waiting behind the command (native-submit-mode.mjs).
+      submission: createSubmitMode({
+        running: (id) => ctx.agents.get(id)?.status === 'running',
+        settings: () => { try { return ctx.get('settings'); } catch { return undefined; } },   // DSH's settings service, when this DSH has it
+      }),
       collectorNotifications: assignment.collectorNotifications,
       collectorNotificationsEnabled: () => assignment.assistant?.collectors?.dudu.list().collectors?.some((entry) => entry.notify === true) === true,
       // The phone's board and Collector: the same commands the desktop interface sends, run for the owner (the issues are opened later than this: asked for when used).
       board: {
         home: chatHome,
+        search: assignment.search,
         getNeedsYouColor: () => assignment.assistant?.settings?.value('needsYouColor'),
         issues: (action, body) => assignment.issuesApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },
         inbox: (action, body) => assignment.inboxApi?.execute(action, body) ?? { outcome: 'error', code: 'unavailable' },

@@ -335,6 +335,20 @@ test('input admitted after the native answer resumes the same session once inste
   await bridge.dispose();
 });
 
+test('the runs deep sleep may look at are those whose turn has ended, with when it ended', async () => {
+  const { driver, bridge } = setup();
+  await bridge.begin('s1', { prompts: [user('u1', 'work')], link: { nativeSessionId: 'native-9' } });
+  assert.deepEqual(bridge.heldRuns(), [], 'it works');
+  driver.handles[0].push({ type: 'turn-end', ok: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  const [held, ...rest] = bridge.heldRuns();
+  assert.equal(rest.length, 0);
+  assert.deepEqual([held.sessionId, held.route], ['s1', 'fake']);
+  assert.ok(Number.isFinite(held.finishedAt) && held.finishedAt >= bridge.runOf('s1')!.startedAt);
+  assert.equal(await bridge.release('s1'), true);
+  assert.deepEqual(bridge.heldRuns(), [], 'what was let go of is no longer kept');
+});
+
 test('deep sleep lets go of a run whose turn has ended and never of one that works; the next turn starts a harness again on the same native session', async () => {
   const { driver, bridge, adapter } = setup();
   const run = await bridge.begin('s1', { prompts: [user('u1', 'work')], link: { nativeSessionId: 'native-9' } });

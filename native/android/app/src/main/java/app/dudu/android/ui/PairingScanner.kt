@@ -65,7 +65,7 @@ fun PairingScanner(model: DuduViewModel) {
                                     val link = codes.mapNotNull { it.rawValue }.firstOrNull { runCatching { Endpoint.parse(it) }.isSuccess }
                                     if (active.get() && link != null && found.compareAndSet(false, true)) {
                                         model.backRoute()
-                                        model.connect(link)
+                                        model.pair(link)
                                     }
                                 }.addOnCompleteListener { frame.close() }
                         }

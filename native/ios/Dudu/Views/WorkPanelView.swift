@@ -48,8 +48,7 @@ struct WorkPanelView: View {
                         DuduLog.record("files.parent")
                         path = path.split(separator: "/").dropLast().joined(separator: "/")
                     } label: {
-                        DuduIcon(.back, size: 18)
-                            .foregroundStyle(DuduStyle.ink)
+                        DuduBarGlyph(.back)
                             .frame(width: 36, height: 36)
                             .contentShape(Rectangle())
                     }

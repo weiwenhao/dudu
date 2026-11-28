@@ -757,6 +757,7 @@ final class CoreStoreTests: XCTestCase {
         let transport = StoreTransportFixture()
         await transport.holdNextConnection()
         let store = DuduStore(repository: StoreComputerFixture(), client: transport)
+        store.foregroundFailureNoticeDelay = { _ in }
         XCTAssertFalse(store.isComputerUnavailable)
 
         let startup = Task { await store.start() }
@@ -767,6 +768,7 @@ final class CoreStoreTests: XCTestCase {
         await startup.value
 
         await transport.emitDisconnect()
+        await store.foregroundFailureNoticeTask?.value
         XCTAssertTrue(store.isComputerUnavailable, "A foreground connection loss is a confirmed failure.")
         await transport.failConnections(with: .connectionFailed)
         await transport.holdNextConnection()
@@ -788,6 +790,7 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertFalse(store.isComputerUnavailable, "A new foreground visit checks the connection first.")
         await transport.finishConnection()
         await resumed.value
+        await store.foregroundFailureNoticeTask?.value
         XCTAssertTrue(store.isComputerUnavailable, "A failed foreground check must still report the outage.")
 
         await transport.failConnections(with: nil)
@@ -800,6 +803,40 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertEqual(store.status, .connected)
         XCTAssertFalse(store.isComputerUnavailable)
         store.suspend()
+    }
+
+    func testForegroundFailureNoticeKeepsItsFirstDeadlineAcrossAutomaticRetries() async {
+        let transport = StoreTransportFixture()
+        let store = DuduStore(repository: StoreComputerFixture(), client: transport)
+        let (deadline, clock) = AsyncStream<Void>.makeStream()
+        store.foregroundFailureNoticeDelay = { _ in
+            var ticks = deadline.makeAsyncIterator()
+            _ = await ticks.next()
+        }
+        await store.start()
+        await transport.failConnections(with: .connectionFailed)
+        await transport.emitDisconnect()
+        let firstNotice = store.foregroundFailureNoticeTask
+        XCTAssertNotNil(firstNotice)
+        XCTAssertFalse(store.isComputerUnavailable)
+
+        await store.reconnect(automatically: true)
+        XCTAssertFalse(store.isComputerUnavailable)
+        await transport.holdNextConnection()
+        let retry = Task { await store.reconnect(automatically: true) }
+        await transport.waitForConnection()
+        XCTAssertNil(store.connectionFailure)
+        clock.yield(())
+        await firstNotice?.value
+        XCTAssertTrue(store.isComputerUnavailable, "The first deadline still applies during a retry.")
+
+        await transport.failConnections(with: nil)
+        await transport.finishConnection()
+        await retry.value
+        XCTAssertEqual(store.status, .connected)
+        XCTAssertFalse(store.isComputerUnavailable)
+        store.suspend()
+        clock.finish()
     }
 
     func testFirstLaunchWithoutSavedComputerShowsGuideAfterRestore() async {
@@ -1141,6 +1178,7 @@ final class CoreStoreTests: XCTestCase {
     func testAutomaticRetriesAndAManualReconnectTellAFailedConnectionByTheStripNotByAnError() async throws {
         let transport = StoreTransportFixture()
         let store = DuduStore(repository: StoreComputerFixture(), client: transport)
+        store.foregroundFailureNoticeDelay = { _ in }
         await store.start()
         let originalMessages = store.messages
         var failures: [String] = []
@@ -1173,6 +1211,7 @@ final class CoreStoreTests: XCTestCase {
         // (`reportsFailure ||` was taken out of `start` on 2026-11-18, with the strip of 2026-11-17; this test still asked for the old error until 2026-11-24.)
         XCTAssertNil(store.error)
         XCTAssertEqual(store.connectionFailure, .connectionFailed)
+        await store.foregroundFailureNoticeTask?.value
         XCTAssertTrue(store.isComputerUnavailable)
         XCTAssertTrue(failures.isEmpty)
         store.suspend()
@@ -1691,6 +1730,25 @@ final class CoreStoreTests: XCTestCase {
         XCTAssertEqual(store.status, .disconnected)
     }
 
+    func testAFirstConnectionThatFailsKeepsWhatItTriedForThePageOfTheFailure() async throws {
+        let transport = StoreTransportFixture()
+        let store = DuduStore(repository: StoreComputerFixture(paired: false), client: transport)
+        await store.start()
+        await transport.failConnections(with: .routesUnavailable(onlyLAN: true))
+        let link = "http://192.168.31.201:3170/?pair=" + String(repeating: "c", count: 43) + "&name=Studio"
+        do {
+            try await store.pair(link: link)
+            XCTFail("the computer cannot be reached")
+        } catch {
+            XCTAssertEqual(error as? DuduFailure, .routesUnavailable(onlyLAN: true))
+        }
+        XCTAssertEqual(store.failedPairing?.link, link, "the retry pairs with this link")
+        XCTAssertEqual(store.failedPairing?.address, "192.168.31.201:3170")
+        XCTAssertEqual(store.failedPairing?.name, "Studio")
+        XCTAssertTrue(store.showsConnectionGuide)
+        XCTAssertTrue(store.computers.isEmpty, "nothing is saved for a computer that was never reached")
+    }
+
     func testQueuedForegroundResumeCannotUndoBackgroundSuspension() async throws {
         let transport = StoreTransportFixture()
         let store = DuduStore(repository: StoreComputerFixture(), client: transport)
@@ -1828,14 +1886,14 @@ final class CoreStoreTests: XCTestCase {
 
         let outcome = await store.runCommand(.compact)
         XCTAssertNil(outcome)
-        XCTAssertEqual(store.error, L10n.text("请先在电脑上更新 Dudu 插件，再使用此功能。"))
+        XCTAssertEqual(store.error, L10n.text("请更新电脑端的 Dudu 插件"))
 
         store.error = nil
         do {
             _ = try await store.uploadFile(PickedFile(name: "notes.txt", url: URL(fileURLWithPath: "/fixture/notes.txt"), bytes: 3))
             XCTFail("An old plugin cannot stage files")
         } catch {
-            XCTAssertEqual(store.error, L10n.text("请先在电脑上更新 Dudu 插件，再使用此功能。"))
+            XCTAssertEqual(store.error, L10n.text("请更新电脑端的 Dudu 插件"))
         }
     }
 
@@ -2243,7 +2301,7 @@ final class CoreStoreTests: XCTestCase {
         await transport.failNextRequest("session.archive", with: .remote("METHOD_NOT_ALLOWED"))
         let archived = await store.archiveSession("a")
         XCTAssertFalse(archived)
-        XCTAssertEqual(store.error, L10n.text("请先在电脑上更新 Dudu 插件，再使用此功能。"))
+        XCTAssertEqual(store.error, L10n.text("请更新电脑端的 Dudu 插件"))
     }
 
     private func session(_ id: String) -> SessionSummary {

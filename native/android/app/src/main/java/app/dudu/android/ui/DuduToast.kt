@@ -19,14 +19,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
+import app.dudu.android.Panel
+import app.dudu.android.UiState
 import app.dudu.android.data.Toast
 import app.dudu.android.data.ToastKind
 import kotlinx.coroutines.delay
@@ -35,6 +45,26 @@ import kotlinx.coroutines.delay
 class ToastHost(val toast: Toast?, val dismiss: (Long) -> Unit)
 
 val LocalToastHost = compositionLocalOf<ToastHost?> { null }
+
+internal val UiState.connectionToastInSheet: Boolean
+    get() = route?.name == "pair" || panel == Panel.Computers
+
+/** A modal sheet owns a separate window. Show its connection message above the scrim. */
+@Composable
+internal fun SheetConnectionToast(host: ToastHost) {
+    val density = LocalDensity.current
+    val top = WindowInsets.statusBars.getTop(density) + with(density) { 6.dp.roundToPx() }
+    val position = remember(top) {
+        object : PopupPositionProvider {
+            override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
+                layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset =
+                IntOffset((windowSize.width - popupContentSize.width) / 2, top)
+        }
+    }
+    Popup(position, properties = PopupProperties(dismissOnBackPress = false, dismissOnClickOutside = false)) {
+        DuduToastOverlay(host, 0.dp)
+    }
+}
 
 /**
  * The message at the top of the page, the iPhone's `DuduToast`: a capsule (26 dp corners, at most 360 dp wide) on the page colour with a hairline and a soft shadow, the kind's filled
@@ -47,7 +77,7 @@ internal fun DuduToastOverlay(host: ToastHost?, top: Dp) {
     if (toast != null) shown = toast
     LaunchedEffect(toast?.id) {
         val current = toast ?: return@LaunchedEffect
-        delay(current.kind.millis)
+        delay(current.millis ?: current.kind.millis)
         host.dismiss(current.id)
     }
     Box(Modifier.fillMaxWidth().padding(top = top, start = 16.dp, end = 16.dp), contentAlignment = Alignment.TopCenter) {
@@ -63,11 +93,15 @@ private fun ToastCapsule(toast: Toast, dismiss: () -> Unit) {
     val shape = RoundedCornerShape(26.dp)
     val ink = MaterialTheme.colorScheme.onSurface
     val error = Color(0xFFEC1313)
-    var text = if (toast.literal) toast.text else w(toast.text)
+    // A failure of the connection says itself in the app's language; any other message is a key of the app's words, or the plugin's own words as they are.
+    var text = toast.problem?.let { problemText(it) } ?: if (toast.literal) toast.text else w(toast.text)
     toast.args.forEachIndexed { index, value -> text = text.replace("{$index}", value) }
-    Row(Modifier.widthIn(max = 360.dp).shadow(8.dp, shape, ambientColor = Color.Black.copy(alpha = .08f), spotColor = Color.Black.copy(alpha = .08f))
+    // Without the ✕ (a toast that goes within a second) it is as tall as with it and its words have 18 dp after them, as the iPhone's.
+    Row(Modifier.widthIn(max = 360.dp).defaultMinSize(minHeight = 54.dp)
+        .shadow(8.dp, shape, ambientColor = Color.Black.copy(alpha = .08f), spotColor = Color.Black.copy(alpha = .08f))
         .background(MaterialTheme.colorScheme.background.copy(alpha = .97f), shape).border(.5.dp, ink.copy(alpha = .08f), shape)
-        .padding(start = 16.dp, end = 4.dp, top = 5.dp, bottom = 5.dp).semantics { liveRegion = LiveRegionMode.Polite }.testTag("feedback-toast"),
+        .padding(start = 16.dp, end = if (toast.showsClose) 4.dp else 18.dp, top = 5.dp, bottom = 5.dp)
+        .semantics { liveRegion = LiveRegionMode.Polite }.testTag("feedback-toast"),
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(20.dp).background(if (toast.kind == ToastKind.Error) error else ink, CircleShape), contentAlignment = Alignment.Center) {
             when (toast.kind) {
@@ -78,7 +112,7 @@ private fun ToastCapsule(toast: Toast, dismiss: () -> Unit) {
             }
         }
         Text(text, Modifier.weight(1f, fill = false), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = ink)
-        IconButton(onClick = dismiss, modifier = Modifier.size(44.dp).testTag("feedback-dismiss")) {
+        if (toast.showsClose) IconButton(onClick = dismiss, modifier = Modifier.size(44.dp).testTag("feedback-dismiss")) {
             Glyph(DuduGlyphs.close, w("关闭提示"), 13, chatSecondary())
         }
     }

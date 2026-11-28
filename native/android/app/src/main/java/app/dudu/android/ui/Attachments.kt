@@ -253,20 +253,32 @@ fun InlineImage(encoded: String, modifier: Modifier = Modifier, scale: ContentSc
 @Composable
 internal fun rememberAttachmentImage(encoded: String, maxDimension: Int = 1600): ImageBitmap? {
     val bitmap by produceState<ImageBitmap?>(null, encoded, maxDimension) {
-        value = withContext(Dispatchers.Default) {
-            runCatching {
-                require(encoded.length <= 24 * 1024 * 1024)
-                val bytes = Base64.decode(encoded, Base64.DEFAULT)
-                val info = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, info)
-                require(info.outWidth in 1..50000 && info.outHeight in 1..50000)
-                var sample = 1
-                while (maxOf(info.outWidth, info.outHeight) / sample > maxDimension) sample *= 2
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
-            }.getOrNull()
-        }
+        value = decodeAttachmentImage(encoded, maxDimension)
     }
     return bitmap
+}
+
+private suspend fun decodeAttachmentImage(encoded: String, maxDimension: Int = 1600): ImageBitmap? = withContext(Dispatchers.Default) {
+    runCatching {
+        require(encoded.length <= 24 * 1024 * 1024)
+        val bytes = Base64.decode(encoded, Base64.DEFAULT)
+        val info = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, info)
+        require(info.outWidth in 1..50000 && info.outHeight in 1..50000)
+        var sample = 1
+        while (maxOf(info.outWidth, info.outHeight) / sample > maxDimension) sample *= 2
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+    }.getOrNull()
+}
+
+internal fun conversationMarkdownPicture(sessionId: String, seq: Long?, model: DuduViewModel, waitsForSequence: Boolean = false):
+    (@Composable (String, String) -> Unit)? {
+    if (seq == null && !waitsForSequence) return null
+    return { words, source ->
+        key(seq, source) {
+            Attachment(sessionId, json("kind" to "image", "name" to words, "source" to source), seq, model, AttachmentImageStyle.Message)
+        }
+    }
 }
 
 @Composable
@@ -283,6 +295,7 @@ fun Attachment(sessionId: String, file: JSONObject, seq: Long?, model: DuduViewM
     val actions = rememberActions()
     val context = LocalContext.current
     var payload by remember { mutableStateOf<JSONObject?>(null) }
+    var thumbnail by remember { mutableStateOf<ImageBitmap?>(null) }
     var expanded by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf<JSONObject?>(null) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
@@ -304,8 +317,10 @@ fun Attachment(sessionId: String, file: JSONObject, seq: Long?, model: DuduViewM
         }
     }
     val image = file.optString("kind") == "image" || file.has("source")
+    val sourceSequence = if (file.isNull("seq")) seq else file.optLong("seq")
+    val waitsForSequence = file.has("source") && sourceSequence == null
     fun read() = actions.run {
-        payload = if (file.has("dataBase64")) file else model.attachment(
+        val result = if (file.has("dataBase64")) file else model.attachment(
             if (file.optString("kind") in listOf("produced", "uploaded", "mentioned")) "session.file" else "session.attachment",
             json("id" to sessionId).apply {
                 if (file.has("source")) put("source", file.getString("source"))
@@ -314,13 +329,17 @@ fun Attachment(sessionId: String, file: JSONObject, seq: Long?, model: DuduViewM
                 if (file.optString("kind") in listOf("produced", "uploaded", "mentioned")) {
                     put("kind", file.getString("kind")); remove("attachmentId")
                 }
-                (if (file.has("seq")) file.optLong("seq") else seq)?.let { put("seq", it) }
+                sourceSequence?.let { put("seq", it) }
                 file.optLong("callSeq", -1).takeIf { it >= 0 }?.let { put("callSeq", it) }
                 file.optInt("index", -1).takeIf { it >= 0 }?.let { put("index", it) }
             })
+        thumbnail = decodeAttachmentImage(result.optString("dataBase64", result.optString("data"))) ?: throw ApiFailure("NOT_FOUND")
+        payload = result
     }
     if (image) {
-        LaunchedEffect(file.toString(), actions.revision) { read() }
+        LaunchedEffect(file.toString(), sourceSequence, actions.revision) {
+            if (!waitsForSequence) read()
+        }
         val imageModifier = when (imageStyle) {
             AttachmentImageStyle.Inline -> Modifier.fillMaxWidth().heightIn(min = 72.dp, max = 240.dp)
             // As wide as the iPhone's: 56 % of the screen (its conversation's scroll view), at most 260, whatever holds it.
@@ -337,15 +356,16 @@ fun Attachment(sessionId: String, file: JSONObject, seq: Long?, model: DuduViewM
             AttachmentImageStyle.BubbleFirst -> RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomEnd = 10.dp, bottomStart = 10.dp)
             AttachmentImageStyle.Bubble -> RoundedCornerShape(10.dp)
         }
+        val loading = waitsForSequence || actions.busy || (thumbnail == null && actions.error == null)
         Box(imageModifier.clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainer)
-            .clickable { if (payload != null) expanded = true else read() }, contentAlignment = Alignment.Center) {
-            payload?.let { InlineImage(it.optString("dataBase64", it.optString("data")),
+            .clickable(enabled = !loading) { if (payload != null) expanded = true else read() }, contentAlignment = Alignment.Center) {
+            thumbnail?.let { Image(it, stringResource(R.string.image),
                 if (imageStyle == AttachmentImageStyle.Inline) Modifier.fillMaxWidth().heightIn(max = 240.dp) else Modifier.matchParentSize(),
-                scale = if (imageStyle == AttachmentImageStyle.Inline) ContentScale.Fit else ContentScale.Crop) }
-            if (actions.busy) CircularProgressIndicator(Modifier.size(if (imageStyle == AttachmentImageStyle.Queue) 14.dp else 20.dp), strokeWidth = 2.dp)
+                contentScale = if (imageStyle == AttachmentImageStyle.Inline) ContentScale.Fit else ContentScale.Crop) }
+            if (loading) CircularProgressIndicator(Modifier.size(if (imageStyle == AttachmentImageStyle.Queue) 14.dp else 20.dp), strokeWidth = 2.dp)
             if (imageStyle == AttachmentImageStyle.Queue) {
-                if (payload == null && !actions.busy) Glyph(DuduGlyphs.image, file.optString("name"), 16, chatTertiary())
+                if (payload == null && !loading) Glyph(DuduGlyphs.image, file.optString("name"), 16, chatTertiary())
             } else if (actions.error != null) TextButton(onClick = { read() }) { Text(stringResource(R.string.retry)) }
         }
     } else {

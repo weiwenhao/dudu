@@ -47,6 +47,14 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   const [classicTab, setClassicTab] = useSessionReturnState('issues.tab', 'active');
   const [chatTab, setChatTab] = useSessionReturnState('issues.chat.tab', 'active');
   const setTab = chat ? setChatTab : setClassicTab;
+  // The search page takes the conversation list's column (search/SearchPage.jsx) while it is open; it is the conversation layout's, so it closes when the page leaves that layout.
+  const [searching, setSearching] = useState(false);
+  const searchButton = useRef(null);
+  const closeSearch = useCallback(() => {
+    setSearching(false);
+    requestAnimationFrame(() => searchButton.current?.focus({ preventScroll: true })); // the list is shown again by then: the focus goes back to the button that opened the page
+  }, []);
+  if (!chat && searching) setSearching(false);
   const [creating, setCreating] = useState(null); // null, or { preset, parent?, initial? } while the New issue window is open
   const [dialogKey, setDialogKey] = useState(0); // a window that opens anew starts from its own preset and text
   const startCreating = useCallback((next) => { setDialogKey((key) => key + 1); setCreating(next); }, []);
@@ -215,7 +223,7 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
   }, []);
   useEffect(() => {
     const onKey = (event) => {
-      if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target) || searching) return; // the search page has the column: F has no filter button to open
       if (!root.current?.getClientRects().length || root.current.closest('[inert]')) return;
       if (event.key === 'Escape' && !event.defaultPrevented) { setSelected((current) => (current.size ? new Set() : current)); return; }
       const button = filterButton.current ?? scopeButton.current;
@@ -227,7 +235,7 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [chat, openFilter]);
+  }, [chat, openFilter, searching]);
   const filtered = appliedFilters(view.filter, FILTER_KEYS).length > 0;
   const facets = useFacets(request, menu.open, query.tab === 'unread' ? 'all' : query.tab, query.filter);
   const addTo = useCallback((entry) => startCreating({ preset: presetOf(entry.field, entry.groupKey) }), [startCreating]);
@@ -255,6 +263,9 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
       className={cn('size-7', chat ? 'rounded-md text-muted-foreground' : 'rounded-full')}
       aria-label={T.newIssue.title} title={T.newIssue.title} onClick={() => { setScopeMenuOpen(false); startCreating({ preset: {} }); }}><Plus /></Button>
   </>;
+  // The magnifier before Display options and the plus (owner, 2026-11-27: the desktop has room for it, so it is not folded into a ⋯); the narrow rail has no room for the page, so it has no button.
+  const searchTrigger = <Button ref={searchButton} variant="ghost" size="icon-sm" className="size-7 rounded-md text-muted-foreground"
+    aria-label={T.searchPage.open} title={T.searchPage.open} onClick={() => setSearching(true)}><Search /></Button>;
   const searchControl = base === 'all' && <div className="relative">
     <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
     <input
@@ -286,7 +297,7 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
           <div className="flex items-center justify-end gap-1.5 px-1.5 pt-1.5 pb-2">{filterTrigger}{actions}</div>
         </div>
       </IssueScopeMenu>
-    ) : <div className="ml-auto flex shrink-0 items-center gap-1.5">{actions}</div>}
+    ) : <div className="ml-auto flex shrink-0 items-center gap-1.5">{searchTrigger}{actions}</div>}
   </header>;
   const conversationControls = <>
     <div className="flex min-w-0 items-center gap-1.5 px-4 py-1" data-conversation-list-controls>
@@ -334,7 +345,7 @@ export function IssuesWidget({ request, onOpen, onOpenSession, onPreviewSession 
           request={request} home={home} scope={savedView ? tab : JSON.stringify({ tab: base })} listKey={JSON.stringify(homeQuery)}
           header={conversationHeader} controls={conversationControls} deletedIssue={deletedIssue} onOpen={onOpen}
           onChange={changeProperty} onAssign={assignCard} onDelete={(issue) => setDeleting([issue.id])}
-          onAddSub={addSub} onDuplicate={duplicate} onRestart={restart} onPin={pin} pinning={pinning}
+          onAddSub={addSub} onDuplicate={duplicate} onRestart={restart} onPin={pin} pinning={pinning} search={{ open: searching, onClose: closeSearch }}
         /> : list.status === 'error' ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
             <span>{T.loadFailed}</span>

@@ -9,7 +9,7 @@
     <string name="close">Close</string>
     <string name="back">Back</string>
     <string name="retry">Retry</string>
-    <string name="connect">Add and connect</string>
+    <string name="connect">Connect</string>
     <string name="computers">Computer connections</string>
     <string name="pairing_link">Pairing link</string>
     <string name="invalid_link">Invalid pairing link</string>

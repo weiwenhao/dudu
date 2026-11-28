@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { mock } from 'node:test';
 import { createBoardChanges } from '../host/native-board-changes.mjs';
+import { INTAKE_PREFIX, isIntakeSession } from '../host/assistant/home/intake-session.mjs';
 import { createNativeServer } from '../host/native-server.mjs';
 import { createPairingStore } from '../host/pairing-devices.mjs';
 import { understands } from '../host/native-client.mjs';
@@ -40,6 +41,23 @@ test('a burst of changes is one event, two events are never closer than the gap,
     changes.close();
     changes.changed(); mock.timers.tick(1000);
     assert.equal(sent.length, 4, 'nothing is sent once it is closed');
+  } finally { mock.timers.reset(); }
+});
+
+test('what happens in a collector\'s own conversation is never told as a change: the board does not show it, and every collection used to wake the phone', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const sent: number[] = [];
+    const changes = createBoardChanges({ send: (revision) => sent.push(revision), shown: (id) => !isIntakeSession(id) });
+    const attention = (seq: number) => ({ seq, through: seq });
+    changes.sessionChanged(`${INTAKE_PREFIX}one`, attention(5));
+    changes.sessionChanged(`${INTAKE_PREFIX}one`, attention(6));
+    mock.timers.tick(1000);
+    assert.deepEqual(sent, [], 'the turns of a collection change nothing a phone shows');
+    changes.sessionChanged('dudu-assistant-0000conversation', attention(1));
+    mock.timers.tick(1000);
+    assert.deepEqual(sent, [1], 'the conversation with 嘟嘟 is still told');
+    changes.close();
   } finally { mock.timers.reset(); }
 });
 

@@ -208,8 +208,12 @@ struct ScheduledTask: Codable, Identifiable, Equatable, Sendable {
     var nextRunAt: Double?
     var sessionId: String?
     var lastRun: TaskLastRun?
+    /// Where the task was made from, as the plugin records it: `app`, `assistant` (嘟嘟) or `session` (a conversation, with its own cron tools). A task made before that was recorded has none.
+    var origin: String?
 
     var isActive: Bool { status == "active" }
+    /// The 任务 list is not for the tasks a conversation made for itself (owner, 2026-11-26): they are in that conversation's own list (`SessionTasksSheet`), which reads all of them.
+    var isListed: Bool { origin != "session" }
     var taskAgent: TaskAgent? { TaskAgent(id: agent) }
     /// 已开启 / 已暂停 / 已结束, the desktop's words.
     var statusText: String { Self.statusName(status) }
@@ -430,9 +434,9 @@ final class TasksModel: ObservableObject {
     private let json = DuduJSON()
     private var refreshing = false
 
-    var items: [ScheduledTask] { tasks.filter { tab.status == nil || $0.status == tab.status } }
-    /// The number behind the sidebar's row: the tasks that are on.
-    var enabled: Int { tasks.filter(\.isActive).count }
+    var items: [ScheduledTask] { tasks.filter { $0.isListed && (tab.status == nil || $0.status == tab.status) } }
+    /// The number behind the sidebar's row: the tasks of the list that are on.
+    var enabled: Int { tasks.filter { $0.isListed && $0.isActive }.count }
 
     /// Forget what was read: another computer has other tasks.
     func reset() {

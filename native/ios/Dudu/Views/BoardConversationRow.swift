@@ -87,16 +87,8 @@ struct BoardConversationRow: View {
                         if busy {
                             ProgressView().controlSize(.mini).tint(DuduStyle.muted)
                                 .frame(width: BoardHomeLayout.agentSize, height: BoardHomeLayout.agentSize)
-                        } else if let agent = entry.issue?.sessionAgent {
-                            AgentLogo(agent: agent, size: BoardHomeLayout.agentSize)
-                        } else if entry.issue != nil {
-                            // Desktop's empty AgentAvatar: the same user glyph in a dashed circle.
-                            DuduIcon(.stateUnassigned, size: 10.5, scalesStroke: true)
-                                .foregroundStyle(DuduStyle.muted)
-                                .frame(width: 14, height: 14)
-                                .overlay(Circle().strokeBorder(DuduStyle.muted.opacity(0.5),
-                                    style: StrokeStyle(lineWidth: 1, dash: [2, 2])))
-                                .accessibilityHidden(true)
+                        } else {
+                            BoardAgentMark(entry: entry)
                         }
                     }
                     .frame(height: BoardHomeLayout.previewLineHeight)
@@ -115,13 +107,36 @@ struct BoardConversationRow: View {
         .accessibilityIdentifier("board.conversation.\(entry.id)")
     }
 
-    private var receivedTime: String {
-        let date = Date(timeIntervalSince1970: entry.receivedAt / 1000)
+    private var receivedTime: String { entry.receivedLabel }
+}
+
+extension BoardConversation {
+    /// When the newest message came, as a row says it: the time of day today, 昨天, or the date.
+    var receivedLabel: String {
+        let date = Date(timeIntervalSince1970: receivedAt / 1000)
         if Calendar.current.isDateInToday(date) { return L10n.date(date, template: "jmm") }
         if Calendar.current.isDateInYesterday(date) { return L10n.text("昨天") }
         return L10n.date(date, template: "MMMd")
     }
+}
 
+/// The small mark at the end of a row's second line: the agent that has the issue, or the dashed circle of an issue that nobody has yet. 嘟嘟 has none.
+struct BoardAgentMark: View {
+    let entry: BoardConversation
+
+    var body: some View {
+        if let agent = entry.issue?.sessionAgent {
+            AgentLogo(agent: agent, size: BoardHomeLayout.agentSize)
+        } else if entry.issue != nil {
+            // Desktop's empty AgentAvatar: the same user glyph in a dashed circle.
+            DuduIcon(.stateUnassigned, size: 10.5, scalesStroke: true)
+                .foregroundStyle(DuduStyle.muted)
+                .frame(width: 14, height: 14)
+                .overlay(Circle().strokeBorder(DuduStyle.muted.opacity(0.5),
+                    style: StrokeStyle(lineWidth: 1, dash: [2, 2])))
+                .accessibilityHidden(true)
+        }
+    }
 }
 
 /// A full-row press highlight, without dimming or resizing the conversation's content.

@@ -112,13 +112,14 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings.close")
                 }
-            } else {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { onOpenSidebar?() } label: {
-                        DuduIcon(.menu, size: 22)
-                    }
-                    .buttonBorderShape(.circle)
-                    .accessibilityLabel(L10n.text("打开会话列表"))
+            } else if let onOpenSidebar {
+                let item = ToolbarItem(placement: .topBarLeading) {
+                    SidebarToggleButton(action: onOpenSidebar)
+                }
+                if #available(iOS 26.0, *) {
+                    item.sharedBackgroundVisibility(.hidden)
+                } else {
+                    item
                 }
             }
             ToolbarItem(placement: .principal) {

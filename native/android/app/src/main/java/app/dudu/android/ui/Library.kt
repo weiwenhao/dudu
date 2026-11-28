@@ -333,8 +333,12 @@ fun CollectorScreen(model: DuduViewModel, back: () -> Unit = model::backRoute,
         Box(Modifier.weight(1f).fillMaxWidth()) {
         LazyColumn(Modifier.fillMaxSize().testTag("collector-list"), state = list, contentPadding = PaddingValues(bottom = 24.dp)) {
             if (items.isEmpty()) item {
-                Box(Modifier.fillParentMaxWidth().then(if (sheet) Modifier.heightIn(min = 82.dp) else Modifier.fillParentMaxHeight()),
-                    contentAlignment = Alignment.Center) {
+                val homeFailure = !sheet && load == ListLoad.Failed
+                Box(Modifier.fillParentMaxWidth().then(when {
+                    sheet -> Modifier.heightIn(min = 82.dp)
+                    homeFailure -> Modifier.padding(top = 68.dp)
+                    else -> Modifier.fillParentMaxHeight()
+                }), contentAlignment = Alignment.Center) {
                     when (load) {
                         ListLoad.Loading -> ListLoading()
                         ListLoad.Failed -> ListFailure(w("信息没能加载")) { scope.launch { refresh() } }

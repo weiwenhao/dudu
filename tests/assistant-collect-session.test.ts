@@ -122,6 +122,39 @@ test('a connector is collected in one session, opened again for each collection'
   assert.equal(JSON.parse(readFileSync(join(dir, 'collect-sessions.json'), 'utf8')).sessions.lark.runs, 2);
 });
 
+// 2026-11-27: every collection began by asking DSH for its whole model catalog, which asks every harness too, and Antigravity left a conversation behind each time (the owner's
+// collector runs every five minutes). 嘟嘟's model is saved in its settings; a collection uses that and asks for nothing.
+test('a collection runs on the model saved for 嘟嘟 and asks for no catalog; with none saved it picks one of the plain routes', async (t) => {
+  const dir = folder(t);
+  const dsh = world([records('a'), records('b')]);
+  let asked = 0;
+  const opened: any[] = [];
+  const create = dsh.ctx.agents.create;
+  dsh.ctx.agents.create = async (input: any) => { opened.push(input.agentOptions); return create(input); };
+  dsh.ctx.sessionController.modelCatalog = async () => {
+    asked++;
+    return { default: { provider: 'claude', model: 'default' }, groups: [{ id: 'claude', models: [{ id: 'default' }] }, { id: 'deepseek-official', models: [{ id: 'deepseek-flash' }] }] };
+  };
+  const saved = make(dsh.ctx, dir, { model: () => ({ provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'max' }) });
+  assert.deepEqual((await saved(SOURCE, { since: null })).records.map((record: any) => record.id), ['a']);
+  assert.equal(asked, 0, 'no catalog was asked for');
+  assert.deepEqual(opened, [{ provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'max' }]);
+  const none = make(dsh.ctx, folder(t));
+  assert.deepEqual((await none({ ...SOURCE, id: 'other' }, { since: null })).records.map((record: any) => record.id), ['b']);
+  assert.equal(asked, 1);
+  assert.deepEqual(opened[1], { provider: 'deepseek-official', model: 'deepseek-flash' }, 'DSH\'s default is a harness: the first plain model is taken');
+});
+
+test('a saved model that is a harness is never used for a collection: it would open a conversation in that harness every time', async (t) => {
+  const dsh = world([records('a')]);
+  const opened: any[] = [];
+  const create = dsh.ctx.agents.create;
+  dsh.ctx.agents.create = async (input: any) => { opened.push(input.agentOptions); return create(input); };
+  const collect = make(dsh.ctx, folder(t), { model: () => ({ provider: 'antigravity', model: 'gemini-4-neon', reasoningEffort: 'high' }) });
+  assert.deepEqual((await collect(SOURCE, { since: null })).records.map((record: any) => record.id), ['a']);
+  assert.deepEqual(opened, [{ provider: 'deepseek-official', model: 'deepseek-flash' }]);
+});
+
 test('the agent preset is mounted, so that the skills of the machine can be read, and the session stays read only', async (t) => {
   const dsh = world([records('a'), records('b')]);
   const collect = make(dsh.ctx, folder(t));

@@ -485,7 +485,7 @@ export function createIssues({ file, now = Date.now, lifecycleState = () => null
     return parent ? { id: parent.id, ref: parent.project_key ? `${parent.project_key}-${parent.project_number}` : null, title: parent.title, status: parent.workflow_status ?? parent.status, statusType: parent.status, ...subIssuesOf(parent.id) } : null;
   };
   const subIssuesOf = (id) => {
-    const { total, done } = stmt("SELECT COUNT(*) AS total, COALESCE(SUM(status = 'done'), 0) AS done FROM issues WHERE parent_id = ?").get(id);
+    const { total, done } = stmt("SELECT COUNT(*) AS total, COALESCE(SUM(status = 'done'), 0) AS done FROM issues WHERE parent_id = ? AND status != 'canceled'").get(id);
     return total ? { subIssues: { total, done } } : {};
   };
   // Sub-issues do not nest (owner, 2026-11-22): a parent is another issue that is not a sub-issue itself, and an issue that has

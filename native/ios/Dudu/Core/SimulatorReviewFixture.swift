@@ -16,7 +16,14 @@ enum SimulatorReviewFixture {
         }
         let conversationStorage: any DuduConversationStorage = arguments.contains("-dudu-review-delayed-cache")
             ? DelayedReviewConversationStorage(storage: storage) : storage
-        return DuduStore(repository: ReviewComputerRepository(), client: ReviewTransport(), conversationStorage: conversationStorage)
+        let store = DuduStore(repository: ReviewComputerRepository(), client: ReviewTransport(), conversationStorage: conversationStorage)
+        if arguments.contains("-dudu-review-guide-unreachable") {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                store.reviewShowUnreachableGuide()
+            }
+        }
+        return store
     }
 }
 
@@ -68,6 +75,10 @@ private actor ReviewComputerRepository: DuduComputerStorage {
             ]
             library.computers[0].probeId = "review-phone"
         }
+        if ProcessInfo.processInfo.arguments.contains("-dudu-review-single-computer") {
+            // The first connection has the one computer that was just paired (the 「连接嘟嘟」 page of a failed connection).
+            library.computers = [library.computers[0]]
+        }
         if ProcessInfo.processInfo.arguments.contains("-dudu-review-unpaired") {
             library = ComputerLibrary(computers: [], activeId: nil)
         } else if ProcessInfo.processInfo.arguments.contains("-dudu-review-many-computers") {
@@ -91,17 +102,7 @@ private actor ReviewComputerRepository: DuduComputerStorage {
     }
 
     func pairAuthenticated(endpoint: ConnectionEndpoint, readyId: String) -> ComputerLibrary {
-        let existing = library.computers.first { $0.computerId == readyId }
-        let computer = Computer(
-            id: existing?.id ?? UUID().uuidString,
-            name: endpoint.name,
-            url: endpoint.originalURL,
-            computerId: readyId,
-            lastUsedAt: Date().timeIntervalSince1970 * 1_000
-        )
-        library.computers.removeAll { $0.id == computer.id }
-        library.computers.append(computer)
-        library.activeId = computer.id
+        _ = library.recordPairing(endpoint: endpoint, readyId: readyId)
         return library
     }
 
@@ -125,6 +126,7 @@ private actor ReviewComputerRepository: DuduComputerStorage {
         guard let index = library.computers.firstIndex(where: { $0.id == localId }) else {
             throw DuduFailure.switchedComputer
         }
+        library.computers[index].url = endpoint.originalURL
         library.computers[index].addresses = endpoint.addresses
         library.computers[index].addressesEdited = true
         return library
@@ -255,6 +257,8 @@ private actor ReviewTransport: DuduTransport {
     private static let finalReviewAnswer = "这一轮结束了。\n\n1. 测试已经跑完，没有失败的用例。\n2. 传输层的 JSON 重试已经加上。\n3. 剩下的是文档，我下一轮补上。\n\n如果还要继续，直接告诉我。"
     /// The answer of `board.list`, as the plugin's own board would give it (a JSON file): what the board shows in the simulator, offline (made-up issues for pictures).
     private static let boardFile = reviewArgument("-dudu-review-board")
+    /// The answer of `search.query` (a JSON file), whatever was asked: what the search page shows in the simulator, offline.
+    private static let searchFile = reviewArgument("-dudu-review-search")
     private static let navigationFile = reviewArgument("-dudu-review-navigation")
     private lazy var reviewTasksData: ReviewTasksFile? = {
         guard let file = Self.tasksFile, let data = try? Data(contentsOf: URL(fileURLWithPath: file)) else { return nil }
@@ -291,6 +295,7 @@ private actor ReviewTransport: DuduTransport {
     ) async throws -> (id: String, name: String) {
         connectionCount += 1
         let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-dudu-review-pair-unreachable") { throw DuduFailure.routesUnavailable(onlyLAN: true) }
         let isPrimary = expectedComputerId == nil || expectedComputerId == "review-desktop"
         if isPrimary {
             if arguments.contains("-dudu-review-connecting") {
@@ -486,7 +491,12 @@ private actor ReviewTransport: DuduTransport {
             return try reviewTasksRequest(method, params)
         }
         if method == "board.list", let file = Self.boardFile, let data = try? Data(contentsOf: URL(fileURLWithPath: file)), let answer = try? JSONDecoder().decode(JSONValue.self, from: data) { return answer }
+        if method == "search.query", let file = Self.searchFile, let data = try? Data(contentsOf: URL(fileURLWithPath: file)), let answer = try? JSONDecoder().decode(JSONValue.self, from: data) { return answer }
         switch method {
+        case "board.list":
+            return .object(["outcome": .string("success"), "conversations": .array([])])
+        case "inbox.list":
+            return .object(["outcome": .string("success"), "items": .array([]), "total": .number(0), "unreadCount": .number(0)])
         case "assistant.hide":
             return .object(["outcome": .string("success")])
         case "assistant.card":

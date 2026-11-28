@@ -223,7 +223,8 @@ private struct TurnRowView: View {
                     } else {
                         // Text the host says is finished is a message already, though it has not recorded it yet (that can be minutes late): Markdown, not the plain streaming text.
                         // Its read receipt waits for what was drawn, as for the streaming text.
-                        MessageMarkdown(text: text, allowsTextSelection: false, sourceSequence: row.messageSequences[id])
+                        MessageMarkdown(text: text, allowsTextSelection: false, sourceSequence: row.messageSequences[id],
+                                        waitsForSourceSequence: isLive)
                             .preference(key: RenderedLiveReplies.self, value: isLive ? [id: text] : [:])
                             .messageActions(text: text, seq: row.messageSequences[id])
                     }

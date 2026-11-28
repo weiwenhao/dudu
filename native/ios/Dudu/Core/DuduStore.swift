@@ -18,7 +18,7 @@ final class DuduStore: ObservableObject {
     @Published var activeComputer: Computer? {
         didSet {
             if oldValue?.id != activeComputer?.id {
-                if hasForegroundConnectionFailure { hasForegroundConnectionFailure = false }
+                resetForegroundFailureNotice()
                 loadedConversationTarget = nil
                 submissionComputerChanged()
             }
@@ -115,7 +115,7 @@ final class DuduStore: ObservableObject {
     @Published var isRespondingApprovals: Set<String> = []
     @Published var status: ConnectionStatus = .disconnected {
         didSet {
-            if status == .connected, hasForegroundConnectionFailure { hasForegroundConnectionFailure = false }
+            if status == .connected { resetForegroundFailureNotice() }
             resumeSendConnectionWaiters()
         }
     }
@@ -133,6 +133,9 @@ final class DuduStore: ObservableObject {
     @Published var isRestoring = true
     // Background suspension and reconnect attempts keep the current screen until failure is confirmed.
     @Published private(set) var showsConnectionGuide = false
+    /// The computer of a first connection that failed, as the pairing link named it: nothing is saved then, and the page of the failure needs a row for it and a link to try again.
+    /// In memory only (the link carries the pairing token): gone with the app, and when a computer is saved.
+    @Published private(set) var failedPairing: PairingAttempt?
     @Published var isSending = false
     @Published private(set) var isChoosingProvider = false
     @Published private(set) var isStoppingSession = false
@@ -141,14 +144,44 @@ final class DuduStore: ObservableObject {
     @Published var notice: String?
     @Published private(set) var connectionFailure: DuduFailure? {
         didSet {
-            if connectionFailure != nil, isForeground, !hasForegroundConnectionFailure {
-                hasForegroundConnectionFailure = true
+            if let failure = connectionFailure {
+                if !failure.shouldRetryConnection {
+                    resetForegroundFailureNotice()
+                } else if isForeground, !hasForegroundConnectionFailure, foregroundFailureNoticeTask == nil {
+                    scheduleForegroundFailureNotice()
+                }
             }
             resumeSendConnectionWaiters()
         }
     }
     /// Retain a confirmed failure across retries, but never infer one from lifecycle suspension.
     @Published private var hasForegroundConnectionFailure = false
+    private(set) var foregroundFailureNoticeTask: Task<Void, Never>?
+    /// A Mac that was asleep answers again, on its own reconnect retries, within a handful of seconds (measured
+    /// 2026-11-27: two real wake-from-sleep gaps cleared in 7.8 s and 9.0 s). Only a failure that outlives this grace
+    /// period, counted from when the streak first began (a retry that fails again while already waiting does not
+    /// restart the clock, or a long real outage would never surface), becomes the "电脑未连接" banner, so an
+    /// ordinary wake-up does not flash it. Not private: a test shortens it to run in milliseconds instead of 8 s.
+    var foregroundFailureNoticeSeconds: Double = 8
+    var foregroundFailureNoticeDelay: @MainActor (Double) async -> Void = { seconds in
+        try? await Task.sleep(for: .seconds(seconds))
+    }
+    private func resetForegroundFailureNotice() {
+        foregroundFailureNoticeTask?.cancel()
+        foregroundFailureNoticeTask = nil
+        if hasForegroundConnectionFailure { hasForegroundConnectionFailure = false }
+    }
+
+    private func scheduleForegroundFailureNotice() {
+        foregroundFailureNoticeTask = Task { [weak self] in
+            guard let delay = self?.foregroundFailureNoticeDelay,
+                  let seconds = self?.foregroundFailureNoticeSeconds else { return }
+            await delay(seconds)
+            guard !Task.isCancelled, let self else { return }
+            self.hasForegroundConnectionFailure = true
+            self.foregroundFailureNoticeTask = nil
+        }
+    }
     var isComputerUnavailable: Bool {
         isForeground && activeComputer != nil && status != .connected
             && hasForegroundConnectionFailure && connectionFailure?.shouldRetryConnection != false
@@ -189,7 +222,7 @@ final class DuduStore: ObservableObject {
     private var operationWaiters: [CheckedContinuation<Void, Never>] = []
     private var isForeground = false {
         didSet {
-            if !isForeground, hasForegroundConnectionFailure { hasForegroundConnectionFailure = false }
+            if !isForeground { resetForegroundFailureNotice() }
             resumeSendConnectionWaiters()
         }
     }
@@ -242,6 +275,17 @@ final class DuduStore: ObservableObject {
             Task { @MainActor [weak self] in self?.networkPathChanged() }
         }
     }
+
+#if DEBUG && targetEnvironment(simulator)
+    /// For the simulator's review of the 「连接嘟嘟」 page of a computer that cannot be reached: a failure that is tried again never shows the page in the app (the board's red bar is what the person sees),
+    /// so `-dudu-review-guide-unreachable` puts the state on it (`SimulatorReviewFixture`).
+    func reviewShowUnreachableGuide() {
+        status = .disconnected
+        isRestoring = false
+        connectionFailure = .routesUnavailable(onlyLAN: true)
+        showsConnectionGuide = true
+    }
+#endif
 
     func resume() {
         isForeground = true
@@ -327,7 +371,7 @@ final class DuduStore: ObservableObject {
     }
 
     func pair(link: String, name: String = "") async throws {
-        let endpoint = try ConnectionEndpoint.parse(link, name: name)
+        let scanned = try ConnectionEndpoint.parse(link, name: name)
         let queuedLifecycle = lifecycleGeneration
         await acquireOperation()
         var releaseOnExit = true
@@ -336,13 +380,20 @@ final class DuduStore: ObservableObject {
             throw CancellationError()
         }
 
+        let edited = computers.first { $0.computerId == scanned.computerId && $0.addressesEdited == true }
+            .flatMap { try? ConnectionEndpoint.saved($0) }
+        let endpoint = edited.flatMap {
+            $0.token == scanned.token && $0.probeId == scanned.probeId ? $0 : nil
+        } ?? scanned
         let previous = activeComputer
         let currentGeneration = nextGeneration()
+        resetForegroundFailureNotice()
         status = .connecting
         connectionFailure = nil
         error = nil
         clearConversation()
         DuduLog.record("pair.begin", state: "connecting")
+        let attempt = PairingAttempt(link: link, endpoint: endpoint)
 
         do {
             let ready = try await client.connect(
@@ -383,6 +434,7 @@ final class DuduStore: ObservableObject {
             if let previous {
                 await restore(previous, generation: currentGeneration)
             } else {
+                failedPairing = attempt
                 showsConnectionGuide = true
             }
             releaseOperation()
@@ -404,6 +456,7 @@ final class DuduStore: ObservableObject {
 
         let previous = activeComputer
         let currentGeneration = nextGeneration()
+        resetForegroundFailureNotice()
         status = .connecting
         connectionFailure = nil
         error = nil
@@ -451,6 +504,7 @@ final class DuduStore: ObservableObject {
         let wasActive = computer.id == activeComputer?.id
         let currentGeneration = wasActive ? nextGeneration() : generation
         if wasActive {
+            resetForegroundFailureNotice()
             status = .disconnected
             clearConversation()
             await client.disconnect(throughGeneration: currentGeneration)
@@ -1431,7 +1485,7 @@ final class DuduStore: ObservableObject {
     private func featureMessage(for error: Error) -> String {
         if case let .remote(code) = safeFailure(for: error),
            ["UNSUPPORTED", "METHOD_NOT_ALLOWED"].contains(code) {
-            return L10n.text("请先在电脑上更新 Dudu 插件，再使用此功能。")
+            return L10n.text("请更新电脑端的 Dudu 插件")
         }
         return safeMessage(for: error)
     }
@@ -1785,11 +1839,11 @@ final class DuduStore: ObservableObject {
         var endpoint = try ConnectionEndpoint.saved(current)
         endpoint.addresses = try ConnectionAddress.validated(addresses)
         endpoint.addressesEdited = true
-        _ = try await client.verifyEndpoint(endpoint)
+        let verified = try await client.verifyEndpoint(endpoint)
         guard generation == editGeneration, lifecycleGeneration == editLifecycle else {
             throw DuduFailure.switchedComputer
         }
-        let library = try await repository.updateAddresses(localId: computer.id, endpoint: endpoint)
+        let library = try await repository.updateAddresses(localId: computer.id, endpoint: verified)
         guard generation == editGeneration else { throw DuduFailure.switchedComputer }
         apply(library)
         guard activeComputer?.id == computer.id else { return }
@@ -1886,6 +1940,7 @@ final class DuduStore: ObservableObject {
 
     private func restore(_ computer: Computer, generation currentGeneration: Int) async {
         guard currentGeneration == generation else { return }
+        resetForegroundFailureNotice()
         status = .connecting
         connectionFailure = nil
         DuduLog.record("computer.restore.begin", state: "connecting")
@@ -2178,6 +2233,7 @@ final class DuduStore: ObservableObject {
     private func apply(_ library: ComputerLibrary) {
         computers = library.computers.sorted { $0.lastUsedAt > $1.lastUsedAt }
         activeComputer = computers.first { $0.id == library.activeId }
+        if !computers.isEmpty { failedPairing = nil }
     }
 
     private func apply(_ detail: SessionDetail) async {

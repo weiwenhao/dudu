@@ -15,7 +15,8 @@
 //                                    closing one that runs needs stop: true
 //   stateOf(key)   -> 'running' | 'waiting_owner' | 'finished' | 'idle' | 'error' | 'stopped' | null    synchronous: createIssues' `lifecycleState`
 //   snapshotOf(key) -> { key, id, agent, cwd, closed, state, stateSince, lastActivityAt, touchedAt, pending, error, ending, excerpt } | null
-//                                    (touchedAt: when the owner last started, spoke to or opened the session, ms, or null: it is what keeps an agent awake, deep-sleep.mjs)
+//                                    (touchedAt: when the owner last started or spoke to the session, ms, or null: it is what keeps an agent awake, deep-sleep.mjs;
+//                                    merely opening a folded session to look at it is not handling it, so resume() alone does not touch this)
 //   onChange(cb)   -> unsubscribe; cb({ key, from, to, snapshot }) for every change of a session's state ({ from: null } the first time)
 //   adopt(key, { agent?, cwd? })     follow a session that existed before this process (DSH was restarted): its state is read from what
 //                                    DSH stored of it, and nothing is announced
@@ -274,10 +275,9 @@ export function createAgentSessions({ dsh, now = Date.now, log = console } = {})
     if (!id) return clarify(`"${key}" is not a DSH session key (dsh:<id>).`);
     let folded;
     try { folded = await reopen(id); } catch (error) { return failure(error); }
-    // Completed issues are not followed during restore. Opening one must still record the touch that wakes it.
+    // Opening a conversation preserves its sleep timer (owner, 2026-11-28).
+    // Completed issues are skipped during restore, so read the stored turn when first opening one.
     if (!entries.has(id)) await adopt(key);
-    const opened = entries.get(id);
-    if (opened) opened.touchedAt = now(); // opening it is handling it: it is awake again
     // Where the session lives is what a window must be told to adopt it, so the answer always says.
     let where = {};
     try { const workspaceId = await dsh.workspaceOf?.(id); if (workspaceId) where = { workspaceId }; } catch { /* the window will say */ }

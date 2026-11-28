@@ -154,7 +154,7 @@ struct ConversationHistoryView<Content: View>: View {
         }
         .onScrollGeometryChange(for: Bool.self) { geometry in
             ChatScrollPosition.isAwayFromEnd(
-                contentHeight: geometry.contentSize.height, containerHeight: geometry.containerSize.height,
+                contentHeight: geometry.contentSize.height, containerHeight: geometry.visibleHeight,
                 contentOffset: geometry.contentOffset.y, topInset: geometry.contentInsets.top
             )
         } action: { _, away in
@@ -201,7 +201,7 @@ struct ConversationHistoryView<Content: View>: View {
             // The owner takes the chat in hand: the end of the thread is the end again.
             if cardFromTop { cardFromTop = false }
             dragBeganFollowingWithKeyboard = followsLatest && keyboardVisible
-            dragViewportWithoutKeyboard = keyboardVisible ? nil : geometry.containerSize.height
+            dragViewportWithoutKeyboard = keyboardVisible ? nil : geometry.visibleHeight
             record("chat.scroll.begin")
         }
         if chatReaderScrollReleasesFollow(phase, keyboardTransition: scroll.isKeyboardTransitioning) {
@@ -211,7 +211,7 @@ struct ConversationHistoryView<Content: View>: View {
         } else if phase == .idle, scroll.isUserScrolling {
             scroll.isUserScrolling = false
             let follows = ChatScrollPosition.shouldFollowAfterDrag(
-                contentHeight: geometry.contentSize.height, containerHeight: geometry.containerSize.height,
+                contentHeight: geometry.contentSize.height, containerHeight: geometry.visibleHeight,
                 contentOffset: geometry.contentOffset.y, topInset: geometry.contentInsets.top,
                 beganFollowingWithKeyboard: dragBeganFollowingWithKeyboard, keyboardVisible: keyboardVisible,
                 viewportHeightBeforeKeyboard: dragViewportWithoutKeyboard
@@ -255,6 +255,13 @@ struct ConversationHistoryView<Content: View>: View {
     }
 }
 
+private extension ScrollGeometry {
+    /// The frame less the top bar and the keyboard (`ChatScrollPosition.visibleHeight`).
+    var visibleHeight: CGFloat {
+        ChatScrollPosition.visibleHeight(containerHeight: containerSize.height, topInset: contentInsets.top, bottomInset: contentInsets.bottom)
+    }
+}
+
 /// The last scroll geometry, for the diagnostics. A reference, so that keeping it never redraws the history.
 private final class HistoryGeometryRecord {
     var value: HistoryGeometry?
@@ -280,7 +287,9 @@ private struct HistoryGeometry: Equatable {
     /// The end of the history is in view (Dudu's rule for the read receipt: within 1 pt).
     var isAtEnd: Bool {
         ChatScrollPosition.isAtEnd(
-            contentHeight: contentHeight, containerHeight: viewportHeight, contentOffset: contentOffset, topInset: topInset, tolerance: 1
+            contentHeight: contentHeight,
+            containerHeight: ChatScrollPosition.visibleHeight(containerHeight: viewportHeight, topInset: topInset, bottomInset: bottomInset),
+            contentOffset: contentOffset, topInset: topInset, tolerance: 1
         )
     }
 

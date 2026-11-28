@@ -15,6 +15,26 @@ import { createSessionFacts } from './session-facts.mjs';
 
 const textOf = (content) => (typeof content === 'string' ? content : (Array.isArray(content) ? content : []).filter((block) => block?.type === 'text').map((block) => block.text).join('\n'));
 
+/**
+ * The sessions DSH lists, cut down to what the plugin reads of them. A row of DSH's list carries every summary projection of its session, and one of them, `contextHeaders` (the tools of
+ * the requests), is 96 % of it: a list of 1,044 sessions was 76 MB, kept whole in memory and written whole to the search database at every refresh, for 0.4 MB of what is read. The
+ * conversations of the collectors (`dudu-assistant-*`) are never shown here, so they are not kept at all; they were 465 of those 1,044 sessions, and a new one comes every few hours.
+ */
+export function listedSessions(items) {
+  const kept = [];
+  for (const item of Array.isArray(items) ? items : []) {
+    const id = item?.sessionId ?? item?.id;
+    if (typeof id !== 'string' || id.startsWith('dudu-assistant-')) continue;
+    const values = item.projections?.values ?? {};
+    kept.push({
+      ...(item.sessionId !== undefined ? { sessionId: item.sessionId } : { id }),
+      ...Object.fromEntries(['updatedAt', 'seq', 'blank', 'parentSessionId', 'origin', 'cwd', 'title'].filter((key) => item[key] !== undefined).map((key) => [key, item[key]])),
+      projections: { values: Object.fromEntries(['title', 'modelSelection'].filter((key) => values[key] !== undefined).map((key) => [key, values[key]])) },
+    });
+  }
+  return kept;
+}
+
 /** The first of the promises to be kept; rejected only when every one of them is not. */
 function firstKept(...promises) {
   return new Promise((resolve, reject) => {
@@ -97,14 +117,14 @@ export function createDshSessions(ctx, { hidden = () => false, nativeDefaults, c
     if (!restoredCatalog) {
       cachedCatalog = await contentSearch.snapshot();
       if (!Array.isArray(cachedCatalog?.items)) cachedCatalog = null;
-      else cachedCatalog.at = 0; // show it immediately and check for changes in the background
+      else cachedCatalog = { at: 0, items: listedSessions(cachedCatalog.items) }; // show it immediately and check for changes in the background
       restoredCatalog = true;
     }
     const scan = () => (readingCatalog ??= (async () => {
       catalogDirty = false;
       const readSignal = AbortSignal.any([catalogLifetime.signal, AbortSignal.timeout(12_000)]);
       const result = await withAbort(service('sessionController').list({}, readSignal), readSignal);
-      cachedCatalog = { at: Date.now(), items: result.items ?? result };
+      cachedCatalog = { at: Date.now(), items: listedSessions(result.items ?? result) };
       await contentSearch.saveSnapshot(cachedCatalog);
       return cachedCatalog;
     })().finally(() => { readingCatalog = undefined; }));

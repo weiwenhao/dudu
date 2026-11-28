@@ -47,7 +47,7 @@ test('real work and active dialogs cannot be released; inactive historical quest
   assert.equal(inDeepSleep({ ...base, state: 'idle', handledAt: null }), false);
 });
 
-test('a session was last handled when its state began, when it last did anything, or when the owner last spoke to it or opened it: the latest of them', () => {
+test('the latest state change, session activity, or owner start or message sets the sleep timer', () => {
   assert.equal(handledAtOf({ stateSince: 100, lastActivityAt: 300, touchedAt: 200 }), 300);
   assert.equal(handledAtOf({ stateSince: 100, lastActivityAt: 50, touchedAt: 200 }), 200);
   assert.equal(handledAtOf({ stateSince: 100, lastActivityAt: null, touchedAt: null }), 100);
@@ -93,6 +93,78 @@ test('a release that fails does not stop the others, and is not tried again for 
     assert.deepEqual(attempts, ['dsh:a', 'dsh:b']);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /refused/);
+  } finally { await sleep.close(); }
+});
+
+// 2026-11-27: only an issue's session was let go of; the process of any other conversation (130 to 400 MB with Claude or Codex) stayed until DSH exited.
+function otherConversations(overrides: any = {}) {
+  const clock = { now: 0 };
+  const state = { held: [{ key: 'dsh:c', endedAt: 0 }] as { key: string; endedAt: number }[], mark: 'idle', on: true };
+  const released: string[] = [];
+  const sleep = createDeepSleep({
+    sessions: { keys: () => ['dsh:issue'] }, asleep: () => false, intervalMs: 0, log: quiet, now: () => clock.now,
+    held: () => state.held, markOf: () => state.mark, enabled: () => state.on,
+    release: async (key: string) => { released.push(key); return true; }, ...overrides,
+  });
+  return { sleep, clock, state, released };
+}
+
+test('a conversation that is no issue\'s is let go of after the same waits, counted from the end of its turn; a working one, or an issue\'s, never by this', async () => {
+  const { sleep, clock, state, released } = otherConversations();
+  try {
+    clock.now = 30 * MINUTE - 1; await sleep.tick();
+    assert.deepEqual(released, [], 'idle: not before thirty minutes');
+    clock.now = 30 * MINUTE; await sleep.tick();
+    assert.deepEqual(released, ['dsh:c']);
+    state.held = [{ key: 'dsh:c', endedAt: 100 * MINUTE }];
+    state.mark = 'unread';
+    clock.now = 160 * MINUTE - 1; await sleep.tick();
+    assert.deepEqual(released, ['dsh:c'], 'unread: not before an hour');
+    clock.now = 160 * MINUTE; await sleep.tick();
+    assert.deepEqual(released, ['dsh:c', 'dsh:c']);
+    state.held = [{ key: 'dsh:c', endedAt: 200 * MINUTE }, { key: 'dsh:issue', endedAt: 200 * MINUTE }];
+    state.mark = 'processing';
+    clock.now = 500 * MINUTE; await sleep.tick();
+    assert.deepEqual(released, ['dsh:c', 'dsh:c'], 'a session that works or waits for the owner is never let go of, and an issue\'s session is left to its issue');
+  } finally { await sleep.close(); }
+});
+
+test('reading the answer or a new turn starts the wait again, and the owner\'s switch turns it off', async () => {
+  const { sleep, clock, state, released } = otherConversations();
+  try {
+    state.mark = 'unread'; state.held = [{ key: 'dsh:c', endedAt: 0 }];
+    clock.now = 40 * MINUTE; await sleep.tick();
+    state.mark = 'idle'; // read at minute 40
+    await sleep.tick();
+    clock.now = 69 * MINUTE; await sleep.tick();
+    assert.deepEqual(released, [], 'thirty minutes after it was read, not at once');
+    clock.now = 70 * MINUTE; await sleep.tick();
+    assert.deepEqual(released, ['dsh:c']);
+    state.held = [{ key: 'dsh:c', endedAt: 80 * MINUTE }]; // another turn ended
+    clock.now = 109 * MINUTE; await sleep.tick();
+    assert.equal(released.length, 1, 'counted from the end of the new turn');
+    state.on = false;
+    clock.now = 300 * MINUTE; await sleep.tick();
+    assert.equal(released.length, 1, 'switched off: nothing is let go of');
+  } finally { await sleep.close(); }
+});
+
+test('a release that is refused is asked again at the next look; one that fails is not asked again for the same turn', async () => {
+  let answer: boolean | Error = false;
+  const attempts: string[] = [];
+  const warnings: string[] = [];
+  const { sleep, clock } = otherConversations({
+    log: { warn: (message: string) => warnings.push(message) },
+    release: async (key: string) => { attempts.push(key); if (answer instanceof Error) throw answer; return answer; },
+  });
+  try {
+    clock.now = 31 * MINUTE;
+    await sleep.tick(); await sleep.tick();
+    assert.equal(attempts.length, 2, 'it still has background work: tried at each look');
+    answer = new Error('refused');
+    await sleep.tick(); await sleep.tick(); await sleep.tick();
+    assert.equal(attempts.length, 3, 'a failure is not tried again');
+    assert.equal(warnings.length, 1);
   } finally { await sleep.close(); }
 });
 

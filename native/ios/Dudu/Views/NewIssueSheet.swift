@@ -40,8 +40,15 @@ struct NewIssueSheet: View {
         self.onCreated = onCreated
     }
 
-    /// The form, the bar above it and the home indicator below it (the key window's, which does not change when the keyboard is up).
-    private var formDetent: PresentationDetent { .height(formHeight > 0 ? formHeight + formTopInset + DuduLayout.windowSafeAreaBottom : 360) }
+    private var formDetent: PresentationDetent {
+        let homeInset = DuduLayout.windowSafeAreaBottom
+        let measuredHeight = formHeight > 0
+            ? formHeight + formTopInset
+            : 360
+        // A height detent already includes the bottom safe area outside its content height.
+        let maximumHeight = max(0, DuduLayout.screenHeight * 0.9 - homeInset)
+        return .height(min(measuredHeight, maximumHeight))
+    }
     private var sameComputer: Bool { computerID != nil && computerID == store.activeComputer?.id }
     private var canCreate: Bool {
         !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -135,9 +142,7 @@ struct NewIssueSheet: View {
                         if isCreating {
                             ProgressView()
                         } else {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 13, weight: .medium))
-                                .frame(width: 20, height: 20)
+                            DuduBarGlyph(.check).frame(width: 20, height: 20)
                         }
                     }
                     .controlSize(.small)
@@ -154,8 +159,7 @@ struct NewIssueSheet: View {
         .background {
             SheetOutsideTapDismiss(isEnabled: !isCreating) { dismiss() }
         }
-        // The sheet is as tall as its form, and the form changes height (a picture row, a line that says the values did not load). A detent whose height changes is a different detent to the sheet, so the
-        // selection follows it, as in the activity sheets.
+        // Follow the fitted detent as the form grows, then scroll within the capped height.
         .presentationDetents(path.isEmpty ? [formDetent] : [.large], selection: $detent)
         .onChange(of: formDetent, initial: true) { _, new in if path.isEmpty { detent = new } }
         .onChange(of: path.isEmpty) { _, empty in detent = empty ? formDetent : .large }

@@ -1,0 +1,44 @@
+appId: com.harnessmobile.app
+---
+- extendedWaitUntil:
+    visible:
+      id: board.search
+    timeout: 12000
+- tapOn:
+    id: board.search
+- tapOn:
+    id: search.query
+- inputText: DuduE2E030
+- tapOn:
+    id: search.range.sessions
+- extendedWaitUntil:
+    visible:
+      id: 'search.result.issue:101'
+    timeout: 10000
+- assertVisible:
+    id: 'search.result.issue:102'
+- tapOn:
+    id: search.filter.project
+- tapOn:
+    text: 'Mobile E2E.*'
+- tapOn: '关闭|Close|完成|Done'
+- assertNotVisible:
+    id: 'search.result.issue:102'
+- tapOn:
+    id: 'search.result.issue:101'
+- extendedWaitUntil:
+    visible:
+      id: page.back
+    timeout: 10000
+- assertVisible: '优化手机上的对话体验'
+- tapOn:
+    id: page.back
+- assertVisible: DuduE2E030
+- assertVisible:
+    id: 'search.result.issue:101'
+- assertNotVisible:
+    id: 'search.result.issue:102'
+- tapOn:
+    id: search.cancel
+- assertVisible:
+    id: board.search

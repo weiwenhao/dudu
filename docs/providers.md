@@ -172,6 +172,7 @@ Grok、Kimi、OpenCode、Antigravity、CodeBuddy、Devin（这六个走 ACP）�
 - **运行中发的消息**：不插进正在跑的回合，等这一轮结束后作为下一轮发出（`steering: false`）。原因是 Grok、OpenCode 的插话
   如果没赶上当前回合，会变成 harness 自己另起的一轮，DSH 不会等它，回答就丢了。顺带修了桥里的一个缺口：不能插话的 runtime
   原来会把这条消息记成 “已送达” 然后丢掉，现在如实返回 “没送”，由下一轮带上（`harness-bridge.mjs` 的 `forward`）。
+- **Antigravity 的启动取消**：恢复会话时收到停止请求，OAR 关闭自己启动的 ACP 进程，等它退出后结束该轮。DSH `0.2.2-rc.5` 保留已经排队的输入。发送新消息启动下一轮时，保留的输入会在同一原生会话处理。
 - **开场不带参数的调用**：ACP 的工具调用常常先开场、参数后到（Kimi 开场什么都没有，OpenCode 的 shell 开场只有目录）。
   驱动等参数到了再画卡片；一直没有参数的调用在结束时补画，不再被丢掉。
 - **没有**：后台任务和子智能体的单独显示、额度读取、侧栏里浏览和载入它们已有的会话、单写者检查（终端里同时写同一个会话要自己当心）。
@@ -407,7 +408,7 @@ writer 真正退出才继续。最后仍执行原来的 `openElsewhere`，不移
 所有者的手机上 `catalog.get` 有时要 24 秒。原因：DSH 的模型目录（`session/modelCatalog`）同时问每个供应商、等最慢的那个；
 Antigravity 没配代理时连不上 Google，列模型要等约 23 秒才失败（DSH 进程里没有代理变量，要在设置 > 供应商里给它配）；
 以前插件的列表缓存过期后，第一个来问的人要等重新读完，读失败的只缓存 30 秒，所以每隔 30 秒再来问又等一次。
-用 DSH 的做法重做（`createOarProvider().create()` 里的 `load`，`host/providers/oar.mjs`）：读到的列表（`MODEL_TTL` 5 分钟）过期后**立即照旧返回**，
+用 DSH 的做法重做（`createOarProvider().create()` 里的 `load`，`host/providers/oar.mjs`；2026-11-27 起“过期后被问就重读”改了，见本节末尾）：读到的列表（当时 5 分钟）过期后**立即照旧返回**，
 同时在后台重读，同一时间只读一次；只有从没读到过时第一次问才等，最多 `FIRST_WAIT_MS`（3 秒），之后用插件自己的备用列表，
 这期间再问不再等；读不出来的保留上次读到的（没有就备用的），`RETRY_MS`（1 分钟）后才再读；保存设置（`refreshModels`）后旧的读取结果作废。
 插件启动登记一个 harness 时和保存它的设置后，马上在后台读一次（`warmModels`），第一个菜单不用等。
@@ -420,6 +421,41 @@ Antigravity 没配代理时连不上 Google，列模型要等约 23 秒才失败
 一样的不发，还没给过 DSH 的也不发。上一次给过什么，在返回的那一刻就记下（`load({ toDsh })`），不在返回之后：否则紧接着读完的结果会和旧的比。
 `tests/oar-model-listing.test.ts` 加两条。真 DSH（0.2.2-rc.5）里验证过：插件发这个事件，页面收到并重新请求 `session/modelCatalog`；不发就不请求。
 
+**读一次列表在 Antigravity 自己的目录里留一个空会话（2026-11-27）：** `~/.gemini/antigravity-cli/conversations` 里 749 个会话库只有 4 个有内容，其余是空的：读 Antigravity 的模型要先 `session/new`
+（OAR `antigravity/list-models.js`：模型只在那条回复里），agy 在 `session/new` 时就建好会话库和 `brain/<id>` 目录，`session/close` 只是断开，不会删；4 天攒了约 745 个（约 410 MB，另有每次启动的日志）。
+谁在频繁地读：采集器每 5 分钟跑一次（`issues.db` 的 `collect_runs.started_at` 全在第 11 秒，和 agy 日志里每次启动的时间一一对上；自 11-26 起 324 次 agy 启动里 263 次在某次收集器开始后 4 秒内），
+每次开头 `pickModel(await modelCatalog())`；DSH 的 `buildModelCatalog` 每次向**每个**供应商要列表（`dsh-llm` 不缓存），而我们的列表当时 5 分钟过期就重读，所以每跑两次左右就把所有 harness 重读一遍——
+收集器自己跑在 `deepseek-flash` 上，和 agy 无关，牵连只来自这一句“问目录”。别的供应商读法不开会话：Claude 是 `list_models` 控制请求，Codex 是 `model/list`，Pi 是 `--list-models`，Grok 是专用的
+`_x.ai/models/list`，OpenCode 是 `opencode models`，Factory、Qwen、Qoder 读各自的配置（OAR 0.120.0 的 `list-models.js`；本机 Claude、Codex、Pi 今天没有新增会话）；Kimi、CodeBuddy、Devin 和 Antigravity
+一样靠 `session/new`，没有装过，没有验证过它们留不留会话。
+
+**所有者的要求（2026-11-27）和做法：**
+1. **问列表不再启动 harness，列表一直缓存**（“选了 Claude，查模型列表不该去问 agy、Codex”；“能一直缓存，只有人手动才再更新”）。读到的列表**存在磁盘上**（`~/.dsh/dudu/model-lists.json`，`host/providers/model-cache.mjs`，
+   每个供应商一条：版本、路径、`agy models` 标记、列表），重启后第一次问就直接用，不论多旧；**问**、插件启动、会话启动都不触发读取。读取只在这几种时候发生：这个 harness 从没读到过（之后读不出来的按 1、2、4……分钟
+   重试，最多 1 小时）、它更新了（版本或路径和读取时的不一样：`providers/index.mjs` 的 `refreshNow` 把版本变了也当作换了一个，重新登记）、有人让它重读（设置 > 供应商的“检测”、改了设置：`refreshModels`；
+   没有标记的 harness 此时完整重读，agy 先比标记）。没有到期时间。代价：供应商在服务端新增的模型，要等点“检测”或它升级才出现。
+   “打开模型列表时再更新”做不到：DSH 桌面端的选择器打开时不通知插件（`ModelCatalogDirectory.load()` 每个 Host 代只取一次目录，之后用自己缓存的），iPhone 每次连上就取一次目录（`loadInitialData`），不是只在打开模型列表时，
+   所以桌面端的手动入口就是“检测”。DSH 自己的选择器本来就不重复问；会问所有供应商的是 DSH 第一次取目录、手机的 `catalog.get`、DSH 的其他内部调用和我们自己的查询，现在它们得到的都是已存的列表。
+2. **读取不留会话**：九个通用 harness 的读取在专用文件夹 `~/.dsh/dudu/model-listing` 里进行（不再用家目录），读完（agy 进程已退出）按 `listingCleanup` 清理：Antigravity 的是
+   `host/providers/listing-leftovers.mjs` 的 `removeAntigravityListings`，只处理**这次读取开始之后**写过的会话库（不逐个打开旧库），且要同时满足：库里没有任何步骤、库的元数据里记着工作目录就是那个专用文件夹、
+   `brain/<id>` 里只有空文件夹；删 `<id>.db`、`-wal`、`-shm` 和那个空 `brain` 目录；一次最多 20 个；读不懂就不删；agy 自己的索引 `conversation_summaries.db` 不动（agy 每次启动按目录对账）。
+   在真实库的副本上试过：问别的目录删 0 个，时间窗在未来删 0 个，有步骤的和 `brain` 里有文件的都保留。Kimi、CodeBuddy、Devin 没有清理（没有装，不知道它们的存储）。
+3. **嘟嘟自己的查询只问 DeepSeek 那几家**：`duduCatalog(ctx)`（`assistant/dispatch/dsh-llm.mjs`）按路由问（`ctx.llm.listProviders/listModels/resolveModelInfo`，harness 不问），形状和 DSH 的目录一样，
+   用在嘟嘟的对话、定时任务、一次性的模型调用和收集器的兜底；旧版 DSH 不能按路由问时退回它的目录并去掉 harness。`listProviders` 等三个方法在最低支持的 `0.2.1-alpha.3` 和 `0.2.1-rc.5` 的 `dsh-llm` 里都有。
+   **收集器不问任何目录**：用设置 > 常规里“嘟嘟 · 默认”存的模型（`createSourceCollector` 的 `model`），没存才从 DeepSeek 路由里选。手机、会话操作和事项指派要给人选所有供应商，仍用 DSH 的整个目录。
+4. **agy 的模型目录没变就不开会话**（所有者让试 `agy models`，2026-11-27）：`agy models` 是 agy 自带的命令，不走 ACP，**不建会话**（在真实库上跑过：会话数不变），约 3.5 秒，输出逐字节稳定，
+   一行一个“模型加推理等级”（`gemini-4-neon-high<TAB>Gemini 4 Neon (High)`，本机 27 行，对应 ACP 读到的 11 个模型）。它给不出 DSH 要的结构（`gpt-oss-120b-medium` 是一个名字以等级结尾的模型，不是 `gpt-oss-120b` 加 medium；
+   默认模型和默认等级也不在里面），所以**不解析它，只拿它的哈希当“标记”**（`drivers/antigravity-models.mjs` 的 `antigravityModelsMark`）：读取前先跑 `agy models`，标记和 agy 版本都和上次完整读取时一样，就直接用磁盘上存的
+   那份列表（`~/.dsh/dudu/model-lists.json`，`host/providers/model-cache.mjs`），不开 ACP 会话；不一样、没存过、agy 说不出（没登录、没网、设了自己的 `GEMINI_HOME`：`agy models` 不能指定 gemini 目录，会答成另一个账号、
+   输出的行不是 `id<TAB>名字`）就照旧完整读，读完清理，再存。`createOarProvider` 的 `modelsMark`、`create({ modelCache })`。真实 agy 上走通过：第一次读 11 个模型 11 秒，会话数不变（开了又清掉），存了标记；
+   模拟重启后同一标记、同一版本，6.5 秒（只是 `agy models`）读到同样的 11 个，没有再启动 agy 的 ACP 进程。
+测试：`tests/oar-model-listing.test.ts`（13）、`tests/universal-driver.test.ts` 一条、`tests/listing-leftovers.test.ts`（3）、`tests/dudu-catalog.test.ts`（2）、`tests/assistant-collect-session.test.ts` 一条、`tests/model-cache.test.ts`（2）、
+`tests/antigravity-models-mark.test.ts`（2），旧代码下相关的都红。
+**Devin**（所有者让装来验证，2026-11-27）：用官方安装脚本装了 3000.15.14（`~/.local/bin/devin`）。OAR 读它的模型也是 `session/new`（`devin/list-models.js`）；在隔离的家目录里没登录时它 1.3 秒返回“未登录”
+（`unauthenticated`），`sessions.db` 的 `sessions` 表是空的，没有留会话（只有锁文件、日志和配置）。**登录后会不会留会话没验证**（要所有者自己 `devin auth login`）；所以 Devin 没有清理，只有“问不触发读取”和专用文件夹
+（它的会话库记着工作目录，将来可以按同样的办法清）。Kimi、CodeBuddy 同样没有装、没有验证。
+没做的：没在真实 DSH 里试过；已经留下的 744 个空会话（工作目录是家目录，不在专用文件夹里）插件不会动，清理脚本 `.local/recovered/clean-agy-probe-conversations.mjs` 要所有者说了才跑。
+
 ## harness 进程、后台任务和深度睡眠（2026-11-05，进程常驻 2026-11-23）
 
 一个会话的原生进程从第一轮起一直保留，轮与轮之间不关（2026-11-23 所有者：“在进行中的会话应该是
@@ -431,6 +467,9 @@ Antigravity 没配代理时连不上 Google，列模型要等约 23 秒才失败
 `assignment.restartSession` 也是嘟嘟的操作；工作中的不动，`no_op`）、关闭插件或退出 DSH、原生进程自己退出。
 有实际运行的原生子智能体或后台任务时，根智能体的第一段回答不结束 DSH 这一轮；`oar-resident.mjs`
 在同一个进程里继续接收原生完成通知和后续回答。
+回复一完成就提交为 `assistant/message`，桌面和手机随即可以加载 Markdown 图片。DSH 在提交后通过
+`agent/turn-stopping` 等待原生续答或下一步输入。原生续答到来时进入 DSH 的下一步，沿用同一个进程和订阅。
+
 后台等待期间的新输入通过 OAR 的 `deliver()` 投递，由它处理原生根智能体空闲与继续工作的竞态，
 保留原来的输入 ID、图片和投递回执，不重新启动后台命令。显式停止后仍有后台任务的保留会话，
 也继续通过 `deliver()` 接收下一轮。
@@ -452,13 +491,27 @@ Antigravity 没配代理时连不上 Google，列模型要等约 23 秒才失败
 不声称在旧权限下应用了新权限。后台任务仍依赖原生 CLI 进程；关闭插件、退出 DSH 或原生进程退出
 会收尾其任务记录，不将它们声明为可以跨进程恢复的守护进程。
 
+**手机发来的消息怎样进 DSH**（2026-11-28，`native-submit-mode.mjs`）：DSH 的 `session/prompt` 有两种方式，`queue`（等这一轮结束）
+和 `steer`（下一步就收下）。手机以前对每条消息都用 `queue`；DSH 自己的输入框对不在运行的会话用 `queue`（就是普通发送，马上开始），
+对在运行的会话按所有者在设置里选的（`ui-conversation` 的 `busyEnter`，默认 `queue`）。后台任务期间 DSH 这一轮被保持，会话对 DSH 是“运行中”，
+手机的 `queue` 消息要等后台命令结束才发（所有者的电脑设为 `steer`，没有这个问题）。现在手机用同一条规则：会话在运行（`agents.get(id).status`）
+且设置是 `steer` 时发 `steer`，其余照旧 `queue`；`steer` 进来后，DSH 结束等待并在下一步收下。设置经 DSH 的 `settings` 服务读，读不到
+（旧 DSH、没有这一项）就是 `queue`，和以前一样。只管手机的 `session.send`：定时任务、收集和转发给事项会话的消息不是所有者在输入框里打的，仍是 `queue`。
+
 `HarnessBridge` 每个会话保留最近一轮的 `HarnessRun`（工具结果每个最多 256 KB、活动记录、团队观察），
 直到下一轮开始才换掉。深度睡眠（2026-11-15：会话空闲 30 分钟或未读 1 小时，且真实轮次已结束，见 `docs/session-status.md`）
 调用 `bridge.release(sessionId)`：关掉已经结束且没有原生后台任务的一轮的进程，在跑的、后台工作中、
-正在手动压缩的会话不碰。深度睡眠只看事项的会话；不属于事项的会话和关掉深度睡眠设置时，进程留到
-退出 DSH。`createProviders().release(sessionId)` 对所有已注册 harness 调用同一入口。
+正在手动压缩的会话不碰。关掉深度睡眠设置时，进程留到退出 DSH。`createProviders().release(sessionId)` 对所有已注册 harness
+调用同一入口。
 DSH 的 Agent 对象不归这里管，DSH 没有给插件卸载它的办法（实测见 `docs/assistant.md`
 的“深度睡眠和办公室的 ZZZ”一条）。
+
+不属于事项的会话（你自己在 DSH 里开的 Claude、Codex 等对话）原先不在深度睡眠里，进程（每个 130 到 400 MB，外加一个约 20 到
+30 MB 的辅助进程）留到退出 DSH，开得越多占得越多（2026-11-27 所有者：「做吧」）。现在它们按同样的时间放手：`createProviders().heldRuns()`
+列出已结束一轮的运行和结束的时刻，`createDeepSleep` 对其中不属于事项的会话（事项的仍由事项自己判定）每分钟看一次：状态标记是空闲就等 30 分钟，
+是未读就等 1 小时，处理中（在跑、等你回答）不放；等待从那一轮结束算起，标记变了（读了回答，未读变空闲）或又结束了一轮就重新计时。
+被拒绝的（还有后台工作、正在压缩）下一分钟再试，抛错的同一轮不再试。它不改任何状态、也没有新月标记：只放掉进程和这一轮留下的记录，
+下一条消息按记下的原生会话 id 恢复，只是第一条回复慢几秒。设置里的“深度睡眠”开关同时管事项和这些会话。
 
 2026-11-14 补充：`hasActiveWork(sessionId)` 将真实运行、保留的原生后台任务和手动压缩直接交给
 休眠判定，避免前台已经空闲时把后台工作显示成休眠。历史提问与现场存活分开记录；确认没有现场
@@ -679,6 +732,32 @@ and cannot be renewed”）使上一轮失败，主人重新登录后发“继�
   卡片和只读输入区完全沿用 DSH；不会允许在 DSH 独立给原生子智能体发消息、恢复或停止。
 
 - **原生会话同步的代价**（2026-11-07，主人在手机上发消息转了约 4 秒：“为什么会一直转转转发不出去？”）：面板的客户端每 5 秒为打开的会话、每 15 秒为所有会话请求 `sessions/sync`，`loadOnce` 过去的做法是先把整份 Claude 记录读一遍（这个对话的记录 659 MB、上千张图，单独读一遍实测 5.07 秒），再为图片读第二遍（没有缓存），读完才由 `sync.mjs` 发现会话的智能体正在工作而推迟；推迟时 `checked` 不记，所以下一次请求又全部重来。结果是 DSH 宿主的主线程几乎一直满载（`ps` 看是约 96% CPU，`sample` 看全在 `fs` 回调里的 JS），手机的请求排在后面。现在：智能体正在 DSH 里工作的会话**一个字节都不读**（`sync.mjs` 的 `busy`，两处共用一条规则）；为图片读的那一遍和历史一样按记录的状态（大小加修改时间）缓存 2 分钟；被推迟的同步，同一状态的记录 60 秒内不再试（`fresh` 或记录变大除外）。测试 `tests/native-sessions.test.ts` 的 “the synchronization does not read the transcript…”（监视 `fs.createReadStream`，数假智能体被问了几次；三条各去掉一条都会失败）。代价仍随记录大小线性增长：只看末尾就能判断“有没有新东西”的做法没做。**尚未装进主人的 Desktop**（`desktop:update`）。
+
+- **原生同步怎样把两边对上账**（2026-11-27，`host/providers/native/sync.mjs` 的 `nativeUpdates`，纯函数）：同步只追加“两边共同的最后一条用户消息”之后的原生内容，DSH 已有的记录从不改写；
+  DSH 里最新的一条“人说的话”在原生记录里找不到时，认为 DSH 超前或原生被回退过，整个会话什么都不补，而且不提示。这条保守规则本身没有错，但对账的几处曾把不是人说的话、或只是写法不同的话
+  当成“对不上”，让同步对整个会话变瞎：NAT-1（嘟嘟里跑的 Claude 会话）因此在一次强制更新把最后一条回复藏起来之后补不回来（那条回复只留在 DSH 日志里失败的尝试中，见 `docs/` 之外的复盘：
+  记忆笔记 `forced-update-hides-held-answers-2026-11-27`）。现在的规则：①DSH 自己为它的模型写的 `user/message`（`time-context`、`runtime-context`、`agent-instructions`、`skill-catalog`、
+  `model-selection`、`user-approval`、`repeat-tool-reminder`）不算人说的话（`DSH_CONTEXT`）；②两边的同一条消息按文字对：图片的位置和个数不比（DSH 把图片写在文字前，Claude Code 写在文字后；
+  丢掉的图片在文字里是 `[image]` 标记），只有纯图片的消息才比个数；③Claude 记录里，回合中间发的消息（Claude Code 把它作为下一次请求的附件 `queued_command` 交给模型，不是 `user` 记录；
+  `queue-operation` 里写着 `absorbed_mid_turn`）读成下一步的 `input`，和 Codex 的读法一致（`claude-history.mjs` 的 `turnsOf`）；④回合中间发的消息，DSH 写在它到达时开始的那一步，原生写在
+  吸收它的那次请求，可以差好几步：核对内容时不比它的位置，DSH 已有的（`known`）不再说第二遍。仍然保守的情形：DSH 最新的人说的话原生没有（比如发出后几秒就被停止、harness 没来得及记）时不补，
+  要等之后有一条两边都有的消息才恢复对账，而那时只补“最后一个对上的回合”，更早丢的回复补不回来：所以修复要在断点之后的第一次同步（打开、启动或 15 秒内）完成。
+  验证：用 NAT-1 的真实数据离线、只读地重放，断点后的状态补回丢掉的 279 字回复（`turn/start`、`step/start`、`assistant/message`、`step/end`、`turn/end` 共 5 条，作为紧接在失败回合后的新回合），
+  55 个关联 Claude 会话重放，新旧代码都补 0 条、都没有报错；单元测试 `tests/native-sync.test.ts` 三条（含按这次事故的形状做的）和 `tests/native-claude.test.ts` 一条，旧代码下前两条红。没有在真实 DSH 里试过。
+- **Pi 和 Antigravity 的原生同步**（2026-11-27）：OAR 没有“列出会话”的接口，所以这两个只做一件事：DSH 里跑在它们上的会话，用它们自己的存储补回 DSH 丢的内容；不进面板的列表和搜索，也不能载入。
+  对账仍是 `nativeUpdates`；读取器在 `host/providers/native/index.mjs` 的 `STORES` 里登记（`summary(id)` 按 id 找到会话，`history(summary)` 读成各 harness 共用的历史形状）。DSH 的每条回复里写着原生会话 id
+  （`replayState.nativeSessionId`），`links.json` 里是 `pi:<id>`、`antigravity:<id>`，打开会话时（`recover`）自动补上链接。
+  **Pi**（`pi-store.mjs`）：目录是 OAR 启动 Pi 时用的那个——`OAR_PI_AGENT_DIR`，否则 `PI_CODING_AGENT_DIR`，否则家目录下的 `.pi/agent`（家目录取 `HOME`，再取 `USERPROFILE`）下的 `sessions`；OAR 还传了
+  `--session-dir`，所以 Pi 自己设置里的 `sessionDir` 挪不动它。里面按工作目录分文件夹（文件夹名把路径里的 `/ \ :` 换成 `-`，Windows 上含盘符），这里不重建文件夹名，而是在所有文件夹里按 `_<id>.jsonl` 找，
+  所以和文件夹的编码方式无关。文件是一棵树（`id`/`parentId`），只读最后一条所在的那条分支；调用都有结果之后、下一次请求之前收到的用户消息读成下一步的 `input`；工具名按 DSH 自己的 Pi 会话写（`pi_<name>`）。
+  **Antigravity**（`antigravity-store.mjs`）：`<gemini 目录>/antigravity-cli/conversations/<id>.db`（gemini 目录是 `GEMINI_HOME`，否则家目录下的 `.gemini`，Windows 的家目录取 `USERPROFILE`，和 OAR 一致），
+  一个会话一个 SQLite（WAL），用 `node:sqlite` 只读打开，不改它的文件；变化的戳记把 `-wal` 的大小也算上。步骤是没有公开定义的 protobuf（`protobuf.mjs` 是不依赖定义的线格式读取器）：用到的字段在
+  `antigravity-store.mjs` 开头逐个写明（类型 14 用户输入、15 模型回复、132 工具结果），不认识的步骤跳过，所以 agy 改了格式只会读成更短的会话，不会崩，也不会补错。工具名按 DSH 自己的 agy 会话写（`antigravity_<kind>`）。
+  对账为此放宽了两处（`remainingSteps`）：①思考块不参与“两边是否一致”（agy 库里存的是摘要，DSH 收到的是流，各家写法本来就不同）；②DSH 为它续接的回合在回复前加的 `\n\n` 不算差异。
+  验证（只读，真实数据）：Pi 99 个会话全部读通（最大 87 MB，不到 0.4 秒），两个关联会话和 DSH 记录逐条对上；像丢回复那样把 DSH 记录截在回复之前（补上 DSH 自己会写的“中断”回合结尾）再重放，Pi 7/7 补回且文字与原记录一致；
+  agy 三个关联会话 112 个截断点，83 个补回且与原记录一致，28 个多出文字，多出的是 agy 库里有而 DSH 从没记下的回复（`d3de1fce` 里第 10、15、28、37 轮共 4 条），只有 1 个放弃（DSH 少记了中间一次工具调用，两边对不上，
+  保守不补）；55 个关联 Claude 会话重放结果不变。单元测试 `tests/native-pi.test.ts`、`tests/native-antigravity.test.ts`，`tests/native-sessions.test.ts` 一条经 `createNativeSessions` 找链接并补回。
+  没有做的：没有在 Windows 上跑过（路径规则照 OAR，单元测试用 `path.win32` 算过）；没有在真实 DSH 里试过；Grok、Kimi、OpenCode 等其余 harness 没装在这台机器上，没有照猜测写读取器。
 
 团队入口使用 DSH 自己的 Agent Team 扩展；测试启用宿主随附的 `experimental-agent-team` 及其客户端模块，
 不从 npm 安装另一个版本，不复制其 UI。当前 Desktop 已配置该扩展的 profile。

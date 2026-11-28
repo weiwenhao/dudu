@@ -1,5 +1,28 @@
 import SwiftUI
 
+struct ListLoadFailure: View {
+    let message: String
+    let retryIdentifier: String
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Text(message).font(.system(size: 15)).foregroundStyle(DuduStyle.muted)
+            Button(action: onRetry) {
+                Text(L10n.text("重试"))
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(DuduStyle.ink)
+                    .padding(.horizontal, 20)
+                    .frame(height: 44)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(DuduGlassCapsuleButtonStyle())
+            .accessibilityIdentifier(retryIdentifier)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
 private struct BoardScopeSelectionKey: PreferenceKey {
     static var defaultValue: Anchor<CGRect>? { nil }
 

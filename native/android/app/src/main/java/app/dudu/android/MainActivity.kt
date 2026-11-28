@@ -22,6 +22,7 @@ import app.dudu.android.ui.DuduTheme
 import app.dudu.android.ui.DuduToastOverlay
 import app.dudu.android.ui.LocalToastHost
 import app.dudu.android.ui.ToastHost
+import app.dudu.android.ui.connectionToastInSheet
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.ui.unit.dp
@@ -74,9 +75,11 @@ class MainActivity : ComponentActivity() {
                 DuduTheme {
                     androidx.compose.foundation.layout.Box {
                         DuduApp(state, model)
-                        // Over every page, under its bar (the iPhone's: the toolbar's height and 8 below the status bar); a sheet shows it over itself (`DuduSheet`).
-                        DuduToastOverlay(toasts, androidx.compose.foundation.layout.WindowInsets.statusBars
-                            .asPaddingValues().calculateTopPadding() + 72.dp)
+                        val connectionToast = state.toast?.problem != null
+                        if (!connectionToast || !state.connectionToastInSheet) {
+                            DuduToastOverlay(toasts, androidx.compose.foundation.layout.WindowInsets.statusBars
+                                .asPaddingValues().calculateTopPadding() + if (connectionToast) 6.dp else 72.dp)
+                        }
                     }
                 }
             }

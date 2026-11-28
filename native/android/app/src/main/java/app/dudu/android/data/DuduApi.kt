@@ -51,7 +51,7 @@ object AppDeclaration {
      * `board.latest`: its chat rows are drawn as the plugin sends them, so it may be sent the owner's own last message as a row's preview and time (the newest message of either side).
      * `notifications.events`: it shows a `notification` event as a notification (its background connection, `DuduConnectionService`), where the iPhone is pushed by Apple.
      */
-    val capabilities = listOf("settings.rich", "board.push", "board.latest", "notifications.events")
+    val capabilities = listOf("settings.rich", "board.push", "board.latest", "notifications.events", "search.filters")
     @Volatile var version = ""
     @Volatile var build = ""
     fun json(): JSONObject = JSONObject().put("app", JSONObject().put("platform", "android").put("version", version).put("build", build))
@@ -451,7 +451,7 @@ class DuduApi(endpoint: Endpoint, private val expectedComputer: String? = endpoi
     }
 }
 
-private suspend fun Call.await(): Response = suspendCancellableCoroutine { continuation ->
+internal suspend fun Call.await(): Response = suspendCancellableCoroutine { continuation ->
     continuation.invokeOnCancellation { cancel() }
     enqueue(object : Callback {
         override fun onFailure(call: Call, e: IOException) {

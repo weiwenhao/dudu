@@ -140,20 +140,10 @@ struct BoardView: View {
             ProgressView().controlSize(.regular).tint(DuduStyle.muted)
                 .frame(maxWidth: .infinity).padding(.top, 80).accessibilityIdentifier("board.loading")
         case .failed:
-            VStack(spacing: 14) {
-                Text(L10n.text("事项没能加载")).font(.system(size: 15)).foregroundStyle(DuduStyle.muted)
-                Button { Task { await board.refresh(using: store) } } label: {
-                    Text(L10n.text("重试"))
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(DuduStyle.ink)
-                        .padding(.horizontal, 20)
-                        .frame(height: 44)
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(DuduGlassCapsuleButtonStyle())
-                .accessibilityIdentifier("board.retry")
+            ListLoadFailure(message: L10n.text("事项没能加载"), retryIdentifier: "board.retry") {
+                Task { await board.refresh(using: store) }
             }
-            .frame(maxWidth: .infinity).padding(.top, 80)
+            .padding(.top, 80)
         case .loaded:
             let computer = store.activeComputer?.id
             let rows = board.conversations

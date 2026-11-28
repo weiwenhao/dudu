@@ -30,6 +30,8 @@ struct TaskSummaryRow: View {
     var onOpen: (() -> Void)? = nil
     var onToggle: ((Bool) async -> Void)? = nil
     var toggleEnabled = true
+    /// A row of the search page: the words that were looked for are marked in the name.
+    var terms: [String] = []
 
     @State private var pendingToggle: Bool?
 
@@ -92,7 +94,7 @@ struct TaskSummaryRow: View {
             .opacity(isOn ? 1 : 0.55)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(title)
+                    SearchText.marked(title, terms: terms)
                         .font(.system(size: roomy ? 16 : 15, weight: .medium))
                         .foregroundStyle(isOn ? DuduStyle.ink : DuduStyle.muted)
                         .lineLimit(1)

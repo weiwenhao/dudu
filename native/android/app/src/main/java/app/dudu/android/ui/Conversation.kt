@@ -527,7 +527,7 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 navigationIcon = {
                     IconButton(onClick = model::leaveConversation, modifier = Modifier.testTag("conversation-back")) {
-                        Glyph(DuduGlyphs.back, stringResource(R.string.back))
+                        BarGlyph(DuduGlyphs.back, stringResource(R.string.back))
                     }
                 }, actions = {
                     Box {
@@ -826,7 +826,7 @@ private fun MessageView(message: Message, state: UiState, model: DuduViewModel, 
     var messageMenu by remember { mutableStateOf(false) }
     var selecting by remember { mutableStateOf(false) }
     val press = remember { PressPoint() }
-    val seq = if (raw.has("seq")) raw.optLong("seq") else null
+    val seq = if (raw.isNull("seq")) null else raw.optLong("seq")
     Row(Modifier.fillMaxWidth(),
         horizontalArrangement = if (own) Arrangement.End else Arrangement.Start) {
         Box {
@@ -872,10 +872,8 @@ private fun MessageView(message: Message, state: UiState, model: DuduViewModel, 
                             RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomEnd = 4.dp, bottomStart = 24.dp))
                         .padding(horizontal = 16.dp, vertical = 12.dp), fontSize = 17.sp, lineHeight = 26.sp)
                 }
-                // A picture in the answer stands where it is written, read by the message's own event (the iPhone's `MessageImageProvider`).
-                else Markdown(message.text, selectable = false, picture = if (raw.has("seq")) { words, source ->
-                    Attachment(session.id, json("kind" to "image", "name" to words, "source" to source), raw.getLong("seq"), model, AttachmentImageStyle.Message)
-                } else null)
+                else Markdown(message.text, selectable = false,
+                    picture = conversationMarkdownPicture(session.id, seq, model, waitsForSequence = message.streaming))
             }
             if (others.isNotEmpty()) PendingMessage(pendingTail) { FileChips(others) }
             if (!own) message.attachments.forEach { attachment -> Attachment(session.id, attachment, seq, model) }

@@ -3,8 +3,9 @@
 // Claude Code's own CronCreate, CronDelete and CronList keep a job in the memory of one Claude process: it is gone when the session ends, it expires after 7 days and it only fires while that session is open. In the Claude
 // sessions this plugin starts those three are denied (`disallowedTools`) and a server of this plugin, served over MCP by OAR (`serveMcpTools`: http on 127.0.0.1, a bearer token, the handlers run here), offers tools of the same
 // names, parameters and words. Claude sees them as `mcp__dudu__CronCreate` and so on (an MCP tool always carries the name of its server) and uses them like the originals. A job is a task of Dudu (assistant/tasks): when its time
-// comes its prompt is sent into the conversation that made it (`target: { mode: 'existing' }`, the way the owner sends a message), it is kept on disk, survives the session and a restart of Dudu, never expires, and is in the
-// window of the tasks, where the owner can see, pause and delete it. The model of such a task is left empty on purpose: the prompt goes in on whatever model the conversation is on (assistant/tasks/host.mjs).
+// comes its prompt is sent into the conversation that made it (`target: { mode: 'existing' }`, the way the owner sends a message), it is kept on disk, survives the session and a restart of Dudu, and never expires. It is recorded as
+// made by a session (`origin: 'session'`) and is not in the window of the tasks (owner, 2026-11-26: "MCP dudu 调用创建的，我不希望出现在这个定时任务列表里，结束之后，我也希望能直接清理掉，不要占用列表数据"): only the conversation's own
+// control of its scheduled tasks shows it, and a once-only job is deleted when it has fired (assistant/tasks/index.mjs). The model of such a task is left empty on purpose: the prompt goes in on whatever model the conversation is on (assistant/tasks/host.mjs).
 //
 // One served set for each conversation: its handlers must know which conversation is asking, and a handler is not told that. A set lives until the conversation's agent is gone or the plugin stops; it is given to OAR
 // with every start (OAR does not remember it) and stays the same between starts, so that a process that is still alive sees the same options.
@@ -38,7 +39,7 @@ For "every N minutes" / "every hour" / "weekdays at 9am" requests:
 
 ## Where it runs
 
-The job is kept by Dudu on this computer, not in this session: it survives this session ending and Dudu restarting, it does not expire, and the user sees it in Dudu's task list, where they can pause or delete it. The prompt is sent into this same conversation each time the job fires, as if the user had typed it; if the conversation is busy, it waits for the turn to end. Jobs fire while the Dudu desktop app is running.
+The job is kept by Dudu on this computer, not in this session: it survives this session ending and Dudu restarting, and it does not expire. It is not in the user's task list, and a one-shot job is deleted once it has fired; CronList shows what is scheduled in this conversation and CronDelete cancels a job. The prompt is sent into this same conversation each time the job fires, as if the user had typed it; if the conversation is busy, it waits for the turn to end. Jobs fire while the Dudu desktop app is running.
 
 The result gives the job's ID (pass it to CronDelete) and its next run time: when you tell the user when a job will run, give that time.
 
@@ -108,7 +109,8 @@ export function createSessionTools({ tasks, describe, question, serve = serveMcp
 
   function cronToolsFor(sessionId, route) {
     const service = () => tasks() ?? null;
-    const mine = (task) => task?.target?.mode === 'existing' && task.target.sessionId === sessionId;
+    // The jobs of this conversation: what its own tools made, and what they made before tasks recorded an origin. A task the owner or 嘟嘟 made for the conversation is theirs, not one to list or cancel from here.
+    const mine = (task) => task?.target?.mode === 'existing' && task.target.sessionId === sessionId && (task.origin == null || task.origin === 'session');
     return [
       {
         name: 'CronCreate', description: CREATE,
@@ -131,7 +133,7 @@ export function createSessionTools({ tasks, describe, question, serve = serveMcp
           const service_ = service();
           if (!service_) return text("Dudu's tasks are not available right now.", true);
           // No model: the prompt goes in on the model the conversation has, now and after the owner changes it.
-          const result = await service_.execute('create', { fields: { title: titleOf(prompt), prompt, agent: route, model: null, project: place.project, target: { mode: 'existing', sessionId }, schedule: made.schedule } });
+          const result = await service_.execute('create', { fields: { title: titleOf(prompt), prompt, agent: route, model: null, project: place.project, target: { mode: 'existing', sessionId }, schedule: made.schedule } }, { origin: 'session' });
           if (result?.outcome !== 'success') return text(`The job could not be scheduled (${result?.code ?? 'unavailable'}).`, true);
           const task = result.task;
           return text(`Scheduled ${made.schedule.kind === 'once' ? 'one-shot' : 'recurring'} job ${task.id}: ${whenOf(made.schedule)}. Next run: ${stamp(task.nextRunAt, zone)}. Dudu keeps it, also after this session ends; its prompt is sent into this conversation.`);

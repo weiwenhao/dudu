@@ -140,6 +140,8 @@ struct BoardFilters: Equatable {
         }
     }
     func contains(_ key: String?, in field: BoardFilterField) -> Bool { values[field]?.contains(key) == true }
+    /// What is chosen in one field (the search page's pills list it).
+    func chosenKeys(in field: BoardFilterField) -> Set<String?> { values[field] ?? [] }
 
     mutating func toggle(_ key: String?, in field: BoardFilterField) {
         var selected = values[field] ?? []
@@ -169,11 +171,12 @@ struct BoardFilters: Equatable {
     }
 
     func options(
-        for field: BoardFilterField, in rows: [BoardConversation], statuses: [IssueWorkflowStatus], labels: [String: IssueLabel]
+        for field: BoardFilterField, in rows: [BoardConversation], statuses: [IssueWorkflowStatus], labels: [String: IssueLabel],
+        counts suppliedCounts: [String?: Int]? = nil
     ) -> [BoardFilterOption] {
-        let counts = field.isDate ? [:] : matching(rows, ignoring: field).reduce(into: [String?: Int]()) { counts, row in
+        let counts = suppliedCounts ?? (field.isDate ? [:] : matching(rows, ignoring: field).reduce(into: [String?: Int]()) { counts, row in
             for key in field.keys(in: row) { counts[key, default: 0] += 1 }
-        }
+        })
         let selected = values[field] ?? []
         func title(_ key: String?) -> String { field.title(for: key, statuses: statuses, labels: labels) }
         let keys: [String?]

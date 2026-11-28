@@ -966,3 +966,32 @@ Lucide `ListTodo`。复用原有导航图标的尺寸、颜色、线宽和圆角
 | 两个组名 | **已启用** · **未启用** | **Enabled** · **Not enabled** | 中文在主人审过的稿子上；英文是我写的，待审（`strings.js` 的 `shell.groupOn/groupOff`，手机 `Localizable.xcstrings`，插件 `native-strings.mjs`）。 |
 
 其余都是原有的字：供应商、重新检测、启用、可执行文件路径、留空则自动查找、环境变量、取消、保存、可用、未找到、版本不受支持、无法运行。
+
+## 手机控制的连接指南（2026-11-27，主人审过设计稿）
+
+主人：“用户安装了 dsh-dudu 点开了手机控制，但是完全不知道怎样才能用手机使用，没有任何的引导、提示、链接等。 设计一下 UI 吧”；看过 `.local/designs/phone-guide-2026-11-26/boards/` 的方案 A 后说“在手机上使用应该改成连接指南，样式上，你再设计一下。形式上可以，样式上不行”，看过三种样式后说“没问题，你实现吧”。做了推荐的样式 2（竖排时间线）：页面里一组「连接指南」，没有配对设备时展开，配对后收成一行；二维码弹窗上方多两行。这是主人明说要加的说明，不受“默认不加说明文字”的限制（`docs/secondary-copy-review.md`）。
+
+| 位置 | 中文 | English | 来源 |
+| --- | --- | --- | --- |
+| 组名 | **连接指南** | **Connection guide** | 中文是主人定的；英文是我写的，待审（`strings.js` 的 `shell.guide`）。 |
+| 第 1 步 | **安装嘟嘟手机 App** / iOS 在 App Store 搜索「Dudu-多智能体协作助手」，也可以通过 TestFlight 安装最新版；安卓从 GitHub Release 安装 apk。 | **Install the Dudu phone app** / On iOS, search the App Store for “Dudu - Multi-Agent Assistant”, or install the latest version through TestFlight. On Android, install the apk from GitHub Release. | 说明改自 README 里主人审过的那一句；英文待审。 |
+| 名字后的按钮（在引号里面） | 图标按钮，提示「复制」，点后图标变对勾、提示「已复制」两秒 | 图标按钮，提示 “Copy”，点后变对勾、提示 “Copied” 两秒 | 主人（2026-11-27）发来连接指南的截图，在这个名字后面画了红框，说「增加一个复制到」（后半句没发出来，按「复制到剪贴板」做）；看过放在引号外面的版本后问「放在「」里面会不会更好一点」，对比后放进引号里面（外面时逗号会孤零零挂在图标后面，里面「」，和 ”, 这对标点仍连在一起）。按钮复制的是名字本身（中文界面 Dudu-多智能体协作助手，英文界面 Dudu - Multi-Agent Assistant）。「复制」「已复制」是面板里原有的字（`shell.copy` 是新加的键，字不是新的）；这一句因此拆成三段（`guideInstallBefore`、名字 `guideAppName`、`guideInstallAfter`，按钮在名字和后面的引号之间；名字和按钮不拆行），拼起来和上一行的字一样。 |
+| 链接 | App Store · TestFlight · Android | App Store · TestFlight · Android | 产品名，不翻译。 |
+| 第 2 步 | **打开嘟嘟，点「扫描配对码」** | **Open Dudu and tap “Scan pairing code”** | 「扫描配对码」是手机上已有的按钮名（英文 Scan pairing code，手机已有）。 |
+| 第 3 步 | **点右上角的「生成二维码」，用嘟嘟扫描** | **Tap “Generate QR code” at the top right and scan it with Dudu** | 「生成二维码」是页头已有的按钮；英文待审。 |
+| 说明 | 手机和电脑在同一个网络时，用内网地址配对；不在同一个网络，请先在「连接地址」里添加公网地址。 | When the phone and the computer are on the same network, pair over the LAN address; otherwise add a public address under “Connection addresses” first. | 英文待审。 |
+| 二维码弹窗 | **打开嘟嘟扫码** / 点「扫描配对码」，对准下面的二维码 | **Open Dudu to scan** / Tap “Scan pairing code” and point it at the QR code below | 「打开嘟嘟扫码」是 `shell.scan`，一直在、没用上；第二行英文待审。弹窗原来只有读屏用的标题「配对手机」，现在标题可见。 |
+
+三个链接：App Store 用不带国家的地址 `https://apps.apple.com/app/id6833981505`（在人所在的地区打开），TestFlight 是公开链接 `https://testflight.apple.com/join/TNUPd6n7`，安卓是最新发行页 `https://github.com/weiwenhao/dudu/releases/latest`。
+
+## 搜索页（2026-11-27，主人看过设计图 `.local/designs/phone-search-2026-11-27/`，说「行，那你去实现吧」）
+
+手机、安卓、桌面用同一批词；图上的字就是下面的中文，英文是我写的（主人只审中文）。图里没有的一句（最后一行，搜索失败）是桌面做的，**中文已通过审核**。会话索引还在建时页面什么也不说（设计稿里没有这一行；主人 2026-11-27 看到后说「莫名其妙的有个建立索引」，已去掉），只保留已有的结果、过一会儿再问。其余用界面里现有的字：搜索、取消、更多、会话、收件箱、任务、智能体、项目、更新时间、状态、来源、待处理、已处理、已开启、已暂停、已结束、清除、重试。
+
+| 位置 | 中文 | English | 来源 |
+| --- | --- | --- | --- |
+| 空白页小标题 | **搜索历史** | **Search history** | 图上的字（`strings.js` 的 `searchPage.history`）。 |
+| 空白页白色卡片的标题 | **常用** | **Frequently used** | 图上的字（`searchPage.frequent`）。三端同一句英文。 |
+| 搜不到时 | **没有匹配的内容** | **No matching results** | 图上的字（`searchPage.noResults`）。 |
+| 点了一个范围、没输入也没选筛选时 | **输入关键词或使用筛选查找会话** / **…查找信息** / **…查找任务** | **Enter a keyword or use filters to find sessions** / **…information** / **…tasks** | 图上的字（`searchPage.hint`）。 |
+| 搜索失败时（只在桌面，一行加重试） | **搜索失败** | **Search failed** | **中文已通过审核**。主人（2026-11-27）说原来的「搜索没能完成」太口语化；现在照 App 里「压缩失败」「上传失败」「处理失败」的写法。手机、安卓用各自已有的失败字。 |

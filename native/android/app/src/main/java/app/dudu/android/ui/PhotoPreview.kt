@@ -123,7 +123,7 @@ internal fun PhotoPreview(encoded: String, name: String, dismiss: () -> Unit) {
             if (zoom <= 1.02f && drag == 0f) Row(Modifier.align(Alignment.TopCenter).fillMaxWidth()
                 .statusBarsPadding().padding(horizontal = 14.dp).padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(dismiss, Modifier.size(44.dp).background(Color.White.copy(alpha = .15f), CircleShape)) {
-                    Glyph(DuduGlyphs.close, w("关闭照片预览"), 16, Color.White)
+                    BarGlyph(DuduGlyphs.close, w("关闭照片预览"), Color.White)
                 }
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = {

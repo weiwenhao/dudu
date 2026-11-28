@@ -52,6 +52,9 @@ struct DuduRootView: View {
     @State private var pageToast: DuduToastMessage?
     @State private var isSearchActive = false
     @State private var conversationSearch = SessionSearchModel()
+    /// The board's search page (owner, 2026-11-27, Lark's): over everything, from the magnifier at the top right of the board.
+    @State private var isBoardSearching = false
+    @StateObject private var boardSearch = SearchModel()
     /// The home indicator's inset, read once the window exists. UIKit is never asked while SwiftUI lays out:
     /// reading a window's safe area inside a layout closure leaves the root view stale (the card stops
     /// following the drawer).
@@ -169,7 +172,7 @@ struct DuduRootView: View {
                     }
                 }
             }
-            .presentationDetents([.large])
+            .presentationDetents(sheet == .pairing ? PairingView.detents : [.large])
             .presentationDragIndicator(.hidden)
             .presentationCornerRadius(32)
             .presentationBackground(DuduStyle.settingsBackground)
@@ -221,6 +224,25 @@ struct DuduRootView: View {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 conversationFromBoard = false
                 openPage(MainDestination(id: "dudu.tasks", area: .sidebar, target: .tasks, title: L10n.text("任务")))
+            }
+            if let spec = reviewArgument("-dudu-review-search-open") {
+                // "<words>|<range>": the search page with the words typed and the range picked (`sessions`, `inbox` or `tasks`; none for the three together). `-dudu-review-search-history a,b,c`
+                // seeds the history, `-dudu-review-search-choose agent:claude` chooses one filter of the range.
+                try? await Task.sleep(nanoseconds: 1_800_000_000)
+                // The page is reset when the computer changes (nil → the fixture's at launch): open it once there is one.
+                for _ in 0..<40 where store.activeComputer == nil { try? await Task.sleep(nanoseconds: 250_000_000) }
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                if let words = reviewArgument("-dudu-review-search-history") {
+                    var history = SearchHistory()
+                    for word in words.split(separator: ",").reversed() { history.add(String(word)) }
+                    SearchMemory.shared.history = history
+                }
+                let parts = spec.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+                boardSearch.query = parts.first ?? ""
+                if parts.count > 1, let scope = SearchScope(rawValue: parts[1]) { boardSearch.select(scope) }
+                if let choice = reviewArgument("-dudu-review-search-choose")?.split(separator: ":").map(String.init), choice.count == 2,
+                   let field = SearchFilterField(rawValue: choice[0]) { boardSearch.toggle(choice[1], in: field) }
+                isBoardSearching = true
             }
             if let seconds = reviewArgument("-dudu-review-press-back").flatMap(Double.init) {
                 // The back button, once, after that many seconds: what a tap on it does (the simulator has no finger).
@@ -301,6 +323,8 @@ struct DuduRootView: View {
             subagentParents = []
             isSearchActive = false
             conversationSearch.reset()
+            isBoardSearching = false
+            boardSearch.reset()
         }
         .onChange(of: "\(notifications.target?.id.uuidString ?? "")/\(store.isRestoring)/\(store.status)/\(store.navigationAvailability)/\(store.navigation.sidebar.count)", initial: true) { _, _ in
             Task { await openCollectorNotification() }
@@ -334,6 +358,8 @@ struct DuduRootView: View {
         // message stayed and came up again, with a new timer, on the way back (owner, 2026-11-23: 转发 之后「提示好像重复弹出了，而且持续的时间很久」).
         .onChange(of: destination.showsChat) { _, shows in
             if shows { pageToast = nil }
+            // Back from a conversation to the search page: what its rows say (a red dot, the time) may have changed while it was read.
+            else if isBoardSearching { boardSearch.retry() }
         }
         .onReceive(store.visibleSessionReads) { receipt in
             board.receiveVisibleRead(receipt, using: store)
@@ -354,13 +380,17 @@ struct DuduRootView: View {
         }
         // A native TabView covers inactive roots. Keep shared badge facts current
         // outside those roots' appearance-scoped tasks.
-        .task(id: SidebarRefresh(active: scenePhase == .active, connected: store.status == .connected)) {
+        .task(id: scenePhase == .active && store.status == .connected ? store.connectionRevision : nil) {
             guard scenePhase == .active, store.status == .connected else { return }
+            var firstRead = true
             while !Task.isCancelled {
                 async let inbox: Void = collector.refreshCount(using: store)
                 // The computer says when the board changes (`board.changed`, below); once it has, this is only the safety net, asked for when nothing has read the board for 30 s.
                 // Until then, and with a computer that does not say so, it is the timer of old: every 5 s.
-                if Date().timeIntervalSince(board.lastRefreshAt) >= (store.boardPushSeen ? 30 : 5) - 0.5 { await board.refresh(using: store) }
+                if firstRead || Date().timeIntervalSince(board.lastRefreshAt) >= (store.boardPushSeen ? 30 : 5) - 0.5 {
+                    firstRead = false
+                    await board.refresh(using: store)
+                }
                 await inbox
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
             }
@@ -515,7 +545,7 @@ struct DuduRootView: View {
                 HomeTabs(
                     selection: Binding(get: { homeTab }, set: { selectHomeTab($0) }),
                     boardUnread: board.unreadCount, inboxUnread: collector.unreadCount,
-                    hidesBar: homeTab == .inbox && collector.isSelecting,
+                    hidesBar: homeTab == .inbox && collector.isSelecting || isBoardSearching,
                     board: { boardLayer(in: geometry, drawerWidth: drawerWidth) },
                     inbox: { homePage(.inbox, in: geometry, drawerWidth: drawerWidth) },
                     tasks: { homePage(.tasks, in: geometry, drawerWidth: drawerWidth) },
@@ -629,6 +659,10 @@ struct DuduRootView: View {
             .frame(width: geometry.size.width)
             .modifier(DrawerToolbarEffect(motion: drawerMotion, isOpen: isSidebarOpen, width: drawerWidth))
         })
+        // The search page is a layer of the board (owner, 2026-11-27: 「点返回的时候都应该返回到上一页，而不是返回到主页，并且是滑动的效果」): a conversation chosen on it slides in over it as one chosen
+        // on the board does, and its way back (the button, the swipe from the left edge) shows the page as it was left.
+        .overlay { boardSearchLayer }
+        .animation(.easeOut(duration: 0.18), value: isBoardSearching)
         .opacity(homeTab == .board && (isBoard || conversationFromBoard) ? 1 : 0)
         .allowsHitTesting(isVisible && !isSidebarOpen && !isBoardTransitioning)
         .accessibilityHidden(!isVisible || isSidebarOpen || isBoardTransitioning)
@@ -758,7 +792,18 @@ struct DuduRootView: View {
         if !isSidebarOpen && presentedSheet == nil && !isBoardTransitioning &&
             (destination.target != .settingsHome || settingsIsAtRoot) {
             // The edge pulls the drawer out on the board and on a conversation of the sidebar's; on every page, and on a conversation opened from the board, it is the way back.
-            if HomeTab(target: destination.target) != nil && !collector.isSelecting ||
+            if isBoardSearching, !destination.showsChat {
+                // The search page covers the board: the edge is its way back (the page leaves as it came, with no drawer behind it).
+                Color.clear
+                    .frame(width: DuduLayout.edgeSwipeWidth)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 16).onEnded { value in
+                        guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                        if value.translation.width > 70 || value.predictedEndTranslation.width > 140 { closeBoardSearch() }
+                    })
+                    .accessibilityHidden(true)
+            } else if HomeTab(target: destination.target) != nil && !collector.isSelecting ||
                 (destination.showsChat && !conversationFromBoard && store.selectedSession?.subagent == nil) {
                 Color.clear
                     .frame(width: DuduLayout.edgeSwipeWidth)
@@ -970,8 +1015,7 @@ struct DuduRootView: View {
             Button {
                 collector.stopSelecting()
             } label: {
-                DuduIcon(.close, size: 20)
-                    .foregroundStyle(DuduStyle.ink)
+                DuduBarGlyph(.close)
                     .frame(width: DuduLayout.toolbarButtonSize, height: DuduLayout.toolbarButtonSize)
                     .contentShape(Circle())
             }
@@ -1018,10 +1062,11 @@ struct DuduRootView: View {
         }
     }
 
+    /// The board's two buttons in one glass capsule (owner, 2026-11-27, after the Lark search): the magnifier, and "···" with 新建事项 and 额度 in its menu (the system menu, as the conversation's).
     private var boardTrailing: some View {
         HStack(spacing: 0) {
-            quotaButton
-            newIssueButton
+            searchButton
+            boardMenu
         }
         .duduGlass(in: Capsule())
         .overlay {
@@ -1033,34 +1078,86 @@ struct DuduRootView: View {
         }
     }
 
-    private var quotaButton: some View {
+    private var searchButton: some View {
         Button {
             dismissKeyboard()
-            showsQuota = true
+            isBoardSearching = true
+            DuduLog.record("board.search.open")
         } label: {
-            DuduIcon(.quota, size: 22)
+            DuduIcon(.search, size: 22)
                 .foregroundStyle(DuduStyle.ink)
                 .frame(width: DuduLayout.toolbarButtonSize, height: DuduLayout.toolbarButtonSize)
                 .contentShape(Rectangle())
         }
         .buttonStyle(DuduQuietPressStyle())
-        .accessibilityLabel(L10n.text("额度"))
-        .accessibilityIdentifier("board.quota")
+        .accessibilityLabel(L10n.text("搜索"))
+        .accessibilityIdentifier("board.search")
     }
 
-    private var newIssueButton: some View {
-        Button {
-            dismissKeyboard()
-            isMakingIssue = true
+    private var boardMenu: some View {
+        Menu {
+            Button {
+                dismissKeyboard()
+                isMakingIssue = true
+            } label: {
+                DuduLabel(L10n.text("事项"), icon: .plus, ink: 17)
+            }
+            .accessibilityIdentifier("board.new")
+            Button {
+                dismissKeyboard()
+                showsQuota = true
+            } label: {
+                DuduLabel(L10n.text("额度"), icon: .quota, ink: 17)
+            }
+            .accessibilityIdentifier("board.quota")
         } label: {
-            DuduIcon(.plus, size: 22)
+            DuduIcon(.options, size: 22)
                 .foregroundStyle(DuduStyle.ink)
                 .frame(width: DuduLayout.toolbarButtonSize, height: DuduLayout.toolbarButtonSize)
                 .contentShape(Rectangle())
         }
+        .menuStyle(.button)
         .buttonStyle(DuduQuietPressStyle())
-        .accessibilityLabel(L10n.text("新建事项"))
-        .accessibilityIdentifier("board.new")
+        .menuIndicator(.hidden)
+        .accessibilityLabel(L10n.text("更多"))
+        .accessibilityIdentifier("board.menu")
+    }
+
+    @ViewBuilder private var boardSearchLayer: some View {
+        if isBoardSearching {
+            SearchView(
+                model: boardSearch, board: board, collector: collector, tasks: tasks, store: store,
+                onClose: closeBoardSearch,
+                onOpenConversation: openSearchedConversation,
+                onOpenIssue: { id in Task { await openIssueConversation(id: id) } },
+                onOpenSession: { sessionID in
+                    guard let session = store.sessions.first(where: { $0.id == sessionID }) else { return }
+                    showConversation(returningToHome: true)
+                    Task { await store.selectSession(session) }
+                }
+            )
+            .transition(.opacity)
+        }
+    }
+
+    private func closeBoardSearch() {
+        dismissKeyboard()
+        isBoardSearching = false
+        boardSearch.reset()
+    }
+
+    /// A conversation chosen on the search page opens as one chosen on the board does (an issue nobody has yet says so instead); the page stays under it.
+    private func openSearchedConversation(_ entry: BoardConversation) {
+        dismissKeyboard()
+        guard let issue = entry.issue else {
+            Task { await openHomeAssistant(trace: BoardOpenTrace()) }
+            return
+        }
+        if issue.agent == nil {
+            board.report?(DuduToastMessage(text: L10n.text("请分配智能体"), kind: .information))
+            return
+        }
+        Task { await openIssue(issue, trace: BoardOpenTrace()) }
     }
 
     /// The tasks page's "+": the editor of a new task, which the page presents.
@@ -1088,21 +1185,13 @@ struct DuduRootView: View {
     }
 
     private var sidebarButton: some View {
-        Button {
+        SidebarToggleButton(isOpen: isSidebarOpen) {
             if isSidebarOpen {
                 closeSidebar()
             } else {
                 openSidebar()
             }
-        } label: {
-            DuduIcon(.menu)
-                .foregroundStyle(DuduStyle.ink)
-                .frame(width: DuduLayout.toolbarButtonSize, height: DuduLayout.toolbarButtonSize)
-                .contentShape(Circle())
         }
-        .buttonStyle(DuduGlassButtonStyle())
-        .accessibilityLabel(isSidebarOpen ? L10n.text("关闭会话列表") : L10n.text("打开会话列表"))
-        .accessibilityIdentifier("sidebar.toggle")
     }
 
     /// Back to where the page was opened from: the board, or the conversation for a page of that conversation.
@@ -1111,8 +1200,7 @@ struct DuduRootView: View {
             DuduLog.record("page.back")
             goBack()
         } label: {
-            DuduIcon(.back)
-                .foregroundStyle(DuduStyle.ink)
+            DuduBarGlyph(.back)
                 .frame(width: DuduLayout.toolbarButtonSize, height: DuduLayout.toolbarButtonSize)
                 .contentShape(Circle())
         }
@@ -1475,6 +1563,7 @@ struct DuduRootView: View {
             trace?.record("blocked", state: "resolve_unavailable"); return
         }
         assistantReturnsToBoard = true
+        SearchMemory.shared.recordOpen("assistant", computer: computer)
         await selectIssueSession(session, returningToAssistant: false, trace: trace)
     }
 
@@ -1510,6 +1599,7 @@ struct DuduRootView: View {
             issueDetail = issue
             return
         }
+        SearchMemory.shared.recordOpen("issue:\(issue.id)", computer: computer)
         await selectIssueSession(session, returningToAssistant: fromAssistant, trace: trace)
     }
 
@@ -1524,6 +1614,7 @@ struct DuduRootView: View {
         guard let session = await board.session(ofIssue: id, using: store) else { return }
         guard origin == destination, navigationRevision == sidebarNavigationRevision,
               computer == store.activeComputer?.id, !isBoardTransitioning else { return }
+        SearchMemory.shared.recordOpen("issue:\(id)", computer: computer)
         await selectIssueSession(session, returningToAssistant: fromAssistant)
     }
 

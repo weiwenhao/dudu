@@ -6,6 +6,7 @@ import { createHarnessInput } from './input.mjs';
 import { registerHarnessCommands } from './commands.mjs';
 import { createHarnessTeams } from './teams.mjs';
 import { createInputJournal } from './input-delivery.mjs';
+import { createModelCache } from './model-cache.mjs';
 import { createHarnessJobs } from './jobs.mjs';
 import { createForegroundWatch } from './foreground.mjs';
 import { reportGoal } from './goal.mjs';
@@ -84,6 +85,7 @@ async function writeSettings(file, settings) {
 export async function createProviders({ host, providers, folder, log = console }) {
   await mkdir(folder, { recursive: true, mode: 0o700 });
   const settingsFile = join(folder, 'providers.json');
+  const modelCache = createModelCache(join(folder, 'model-lists.json'));
   const inputJournal = createInputJournal(join(folder, 'input-delivery'));
   let settings = await readSettings(settingsFile);
   const status = new Map();         // provider id -> what the settings page shows
@@ -135,6 +137,7 @@ export async function createProviders({ host, providers, folder, log = console }
     const entry = registered.get(provider.route);
     if (!entry) return;
     registered.delete(provider.route);
+    entry.driver.refreshModels?.(); // Invalidate any listing that could outlive this installation.
     for (const [id, current] of mirrored) {
       if (current.bridge !== entry.bridge) continue;
       current.dispose();
@@ -153,7 +156,7 @@ export async function createProviders({ host, providers, folder, log = console }
 
   function register(provider, detection) {
     // A list read after DSH was given the first one: DSH keeps what it got until it is told, as it is by its own DeepSeek listing.
-    const driver = provider.create({ installation: detection.installation, env: () => envOf(provider), modelsChanged: () => host.emit?.('llm/models-updated', provider.route) });
+    const driver = provider.create({ installation: detection.installation, env: () => envOf(provider), modelsChanged: () => host.emit?.('llm/models-updated', provider.route), listingFolder: join(folder, 'model-listing'), modelCache });
     const bridge = new HarnessBridge({
       driver, agentOf: (id) => host.agents.get(id), permissionOf: (agent) => host.permissionOf?.(agent), onLink: host.onLink,
       eventsOf: host.eventsOf, flushSession: host.flushSession, inputJournal,
@@ -222,7 +225,7 @@ export async function createProviders({ host, providers, folder, log = console }
       if (closed) return;
       const entry = registered.get(provider.route);
       const wanted = enabled && detection.state === 'ready';
-      if (entry && (!wanted || entry.path !== detection.path)) await unregister(provider);
+      if (entry && (!wanted || entry.path !== detection.path || entry.version !== detection.version)) await unregister(provider);
       if (closed) return;
       if (wanted && !registered.has(provider.route)) {
         register(provider, detection);
@@ -246,6 +249,10 @@ export async function createProviders({ host, providers, folder, log = console }
 
   const disposers = [
     host.on('agent/created', ({ agent }) => syncMirrorTools(agent, routeOf(agent))),
+    host.on('agent/turn-stopping', async ({ agent, signal }) => {
+      const active = [...registered.values()].find(({ bridge }) => bridge.runOf(agent.id)?.backgroundStep?.signal === signal);
+      await active?.bridge.waitForBackground(agent, signal);
+    }),
     host.on('session/event', (session, event) => {
       if (event?.type === 'agent/inbox/spliced' && event.data?.target === 'next-step') {
         for (const { bridge } of registered.values()) bridge.yieldForInput(session.id);
@@ -281,6 +288,8 @@ export async function createProviders({ host, providers, folder, log = console }
     })),
     refresh: async () => { await refresh(); return view(); },
     hasActiveWork: (sessionId) => [...registered.values()].some(({ bridge }) => bridge.hasActiveWork(sessionId)),
+    /** The sessions that keep a run whose turn has ended, with when it ended: what deep sleep looks at (`release` lets one go). */
+    heldRuns: () => [...registered.values()].flatMap(({ bridge }) => bridge.heldRuns()),
     /** Whether the session's turn is open only for native background work; `onForeground` is told the session's id whenever that may have changed. */
     backgroundOnly: (sessionId) => backgroundOnly(sessionId),
     onForeground(listener) {

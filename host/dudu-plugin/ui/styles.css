@@ -11,6 +11,7 @@
 @import "./tasks/session-tasks.css";
 @import "./issues/conversations.css";
 @import "./issues/conversation-find.css";
+@import "./search/search.css";
 @import "../widget.css";
 @source "./";
 

@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
-import { AsyncQueue, abortReason, deferred } from './async.mjs';
+import { AsyncQueue, abortReason, deferred, withAbort } from './async.mjs';
 import { createHarnessActivity } from './activity.mjs';
 import { goalReportOf } from './goal.mjs';
 import { admittedLink, createInputDelivery, undeliveredInputs, withInputDeliveries } from './input-delivery.mjs';
@@ -106,6 +107,7 @@ export class HarnessRun {
     this.forwarded = new Set(prompts.map((message) => message.id));
     this.finished = false;
     this.startedAt = Date.now();
+    this.finishedAt = null; // when the turn ended: deep sleep counts its wait from here
     this.turnEnd = undefined;
     this.activity = activity;
     this.team = team;
@@ -144,6 +146,7 @@ export class HarnessRun {
   #end(event) {
     if (this.finished) return;
     this.finished = true;
+    this.finishedAt = Date.now();
     this.foregroundActive = false;
     this.onForeground?.();
     this.turnEnd = event;
@@ -227,8 +230,41 @@ export class HarnessBridge {
 
   yieldForInput(sessionId) {
     const run = this.#runs.get(sessionId);
-    if (run && !run.finished && !run.foregroundActive && this.agentOf(sessionId)?.inbox?.nextStep?.length) {
-      run.handle.yieldForInput?.();
+    if (!run || !this.agentOf(sessionId)?.inbox?.nextStep?.length) return;
+    run.inputReady?.resolve();
+    if (!run.finished && !run.foregroundActive) run.handle.yieldForInput?.();
+  }
+
+  /** DSH has committed the reply. Wait here for native output or for DSH to admit human input. */
+  async waitForBackground(agent, signal) {
+    const run = this.#runs.get(agent.id);
+    const step = run?.backgroundStep;
+    if (!step) return;
+    try {
+      while (!agent.inbox.nextStep.length) {
+        run.inputReady = deferred();
+        const resume = await withAbort(Promise.race([step.continuation, run.inputReady.promise]), signal);
+        signal.throwIfAborted();
+        if (resume === undefined) continue; // an inbox entry may have been removed before DSH claimed it
+        if (this.#lifetime.signal.aborted) return;
+        if (!resume) {
+          run.backgroundStep = undefined;
+          if (step.goal) await this.onGoalReport?.(agent.id, step.goal.round.source, goalReportOf(step.goal.text));
+        } else if (!agent.inbox.nextStep.length) {
+          // DSH consumes a runtime-context entry when assembling the step, without adding an empty
+          // user message to the transcript. The adapter drains the native follow-up without sending a prompt.
+          agent.inject({ id: randomUUID(), role: 'user', source: { kind: 'runtime-context' }, content: [] });
+        }
+        return;
+      }
+    } catch (error) {
+      if (signal.aborted) {
+        run.backgroundStep = undefined;
+        await run.interrupt();
+      }
+      throw error;
+    } finally {
+      run.inputReady = undefined;
     }
   }
 
@@ -242,6 +278,14 @@ export class HarnessBridge {
       session: this.agentOf(sessionId)?.session, flushSession: this.flushSession, provider: this.route, prompts,
       write: this.inputJournal ? (entry) => this.inputJournal.record(this.route, sessionId, entry) : undefined,
     });
+  }
+
+  /**
+   * The runs whose turn has ended and that are still kept: with their process while it lives, and with what they kept of the turn. Deep sleep lets go of them (`release`), after the same
+   * waits for an issue's agent and for any other conversation. A run with background work or a compaction is listed too; `release` leaves it alone.
+   */
+  heldRuns() {
+    return [...this.#runs].filter(([, run]) => run.finished).map(([sessionId, run]) => ({ route: this.route, sessionId, finishedAt: run.finishedAt }));
   }
 
   /** The runs that are working now, for the overview. */
@@ -415,7 +459,9 @@ export function createHarnessAdapter(bridge) {
   }
 
   async function* step(run, signal, resumePending, goalRound) {
-    let finalText = '';
+    const previousGoal = run.backgroundStep?.goal;
+    run.backgroundStep = undefined;
+    let finalText = previousGoal && previousGoal.round.id === goalRound?.id ? `${previousGoal.text}\n\n` : '';
     let index = 0;
     let open;
     let calls = 0;
@@ -466,7 +512,7 @@ export function createHarnessAdapter(bridge) {
           }
           // DSH can admit input after the native turn ends, before it consumes the final answer.
           // Drain old tool steps first; only the tool-free boundary can hand over to a resumed writer.
-          if (calls === 0 && run.finished && run.turnEnd?.ok && event.reason !== 'tool-calls') {
+          if (calls === 0 && !event.continuation && run.finished && run.turnEnd?.ok && event.reason !== 'tool-calls') {
             const next = await resumePending?.(run);
             if (next) {
               run = next;
@@ -476,7 +522,9 @@ export function createHarnessAdapter(bridge) {
           }
           if (usage || event.usage) yield { type: 'usage', usage: usageOf(usage ?? event.usage) };
           // The end of a goal round: the harness cannot call update_goal, so what it says of the goal is done here, before DSH sees the agent idle and starts another round.
-          if (goalRound && calls === 0) await bridge.onGoalReport?.(run.sessionId, goalRound.source, goalReportOf(finalText));
+          const goal = goalRound && calls === 0 ? { round: goalRound, text: finalText } : undefined;
+          if (event.continuation) run.backgroundStep = { continuation: event.continuation, goal, signal };
+          else if (goal) await bridge.onGoalReport?.(run.sessionId, goal.round.source, goalReportOf(goal.text));
           const nativeSubagents = await run.team?.checkpoint();
           yield {
             type: 'finish',
@@ -519,10 +567,11 @@ export function createHarnessAdapter(bridge) {
         const events = await bridge.historyOf(options.sessionId, signal);
         const request = analyzeRequest(options.messages, bridge.route, events, bridge.isPrompt);
         let run = bridge.runOf(options.sessionId);
-        if (request.continuing && !run) {
+        const continuing = request.continuing || (signal !== undefined && signal === run?.backgroundStep?.signal);
+        if (continuing && !run) {
           throw harnessError('The harness is no longer running this turn. Send the message again.', 'HARNESS_LOST');
         }
-        if (!request.continuing) {
+        if (!continuing) {
           if (!request.promptText.trim() && !request.prompts.some((message) => message.content.some((block) => block.type === 'image'))) throw harnessError('There is nothing to send to the harness.', 'HARNESS_NO_PROMPT');
           run = await bridge.begin(options.sessionId, { ...request, model: options.model, effort: options.reasoningEffort, signal });
         } else {

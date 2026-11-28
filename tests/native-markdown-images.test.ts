@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { markdownImagePath } from '../host/native-markdown-images.mjs';
+import { imagesAsBlocks, markdownImagePath } from '../host/native-markdown-images.mjs';
 
 function message(text: string) {
   return { type: 'assistant/message', surfaceOp: 'append', data: { message: { content: [{ type: 'text', text }] } } };
@@ -68,4 +68,19 @@ test('A line of 嘟嘟\'s group chat grants its images as a message does: an ans
   // a relative path has no working directory in a group line (it would be the assistant's, not the issue's)
   lines.relative = { kind: 'reply', text: '![r](pictures/r.png)' };
   assert.throws(() => markdownImagePath(run('dudu-say', 'relative'), 'pictures/r.png', undefined, lookup), { code: 'NOT_FOUND' });
+});
+
+// 2026-11-27: an image under a line of text with no blank line between is a part of that paragraph, which the phone draws inline, without a tap to open it.
+test('an image that has its line under a line of text gets blank lines around it, and nothing else is touched', () => {
+  assert.equal(imagesAsBlocks('First:\n![a](x.png)\n\nMore'), 'First:\n\n![a](x.png)\n\nMore');
+  assert.equal(imagesAsBlocks('Text\n![a](x.png)\n![b](y.png)\nText'), 'Text\n\n![a](x.png)\n\n![b](y.png)\n\nText');
+  assert.equal(imagesAsBlocks('Text\r\n![a](x.png)\r\nText'), 'Text\r\n\n![a](x.png)\r\n\nText');
+  assert.equal(imagesAsBlocks('Text\n![a][ref]\nText\n\n[ref]: y.png'), 'Text\n\n![a][ref]\n\nText\n\n[ref]: y.png');
+  const left = [
+    'An image alone\n\n![a](x.png)\n\nbetween blank lines', 'a sentence with ![a](x.png) inside\nand more', '- item\n  ![a](x.png)\n- item', '> quoted\n> ![a](x.png)',
+    '```md\ntext\n![a](x.png)\n```', 'no image at all', '', '![a](x.png)', 'Text\n\n![a](x.png)', '![a](x.png)\nText',
+  ];
+  for (const text of left.slice(0, -1)) assert.equal(imagesAsBlocks(text), text, text);
+  assert.equal(imagesAsBlocks('![a](x.png)\nText'), '![a](x.png)\n\nText', 'the text under an image on the first line');
+  assert.equal(imagesAsBlocks(undefined as any), undefined);
 });

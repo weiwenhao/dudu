@@ -118,6 +118,22 @@ final class CoreConnectionTests: XCTestCase {
         }
     }
 
+    func testPairingTheSameComputerReusesItsLocalRecord() throws {
+        let link = try ConnectionEndpoint.parse("https://old.example.test/?pair=\(token)&computer=office")
+        var library = ComputerLibrary(computers: [], activeId: nil)
+        let first = library.recordPairing(endpoint: link, readyId: "office")
+        let repeated = library.recordPairing(endpoint: link, readyId: "office")
+        XCTAssertEqual(repeated.id, first.id)
+
+        let newToken = String(repeating: "b", count: 43)
+        let replacement = try ConnectionEndpoint.parse("https://new.example.test/?pair=\(newToken)&computer=office")
+        let updated = library.recordPairing(endpoint: replacement, readyId: "office")
+        XCTAssertEqual(updated.id, first.id)
+        XCTAssertEqual(library.computers, [updated])
+        XCTAssertEqual(library.activeId, first.id)
+        XCTAssertEqual(updated.url, replacement.originalURL)
+    }
+
     func testDisplayAddressKeepsSchemeAndPortButDropsPathAndQuery() {
         let computer = Computer(
             id: "local-id",

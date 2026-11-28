@@ -16,7 +16,8 @@
 //   fail(id)                               the model could not judge it; after 3 tries it is let go -> true when it was let go
 //   issueFor(connector, sourceId)          the issue this source id became, or null
 //   list({ connector, state, thread, issue, since, limit, cursor })   -> { items (no text), nextCursor }
-//   search(q, { connector, limit })        full text, Chinese included -> [row without text]
+//   search(q, { connector, tab, limit, text })   full text, Chinese included; `connector` an id or a list, `tab` todo | done -> [row without text, or with it when `text`]
+//   countMatches(q, { connector, tab })    how many rows that search finds in all
 //   get(id, { around, summary })           -> { record, thread: [rows of the same thread, without text] } | null; summary skips body and thread
 //   forIssue(issueId)                      the rows that became or fed this issue
 //   dropUntouched(connector)               the rows of a collector that was removed which the owner never dealt with (the widget's "待处理": no issue, not
@@ -412,14 +413,31 @@ export function createInbox(db, { now = Date.now } = {}) {
     return { items: rows.slice(0, size).map(view), nextCursor: rows.length > size ? rows[size - 1].id : null };
   }
 
-  function search(query, { connector, limit = 20 } = {}) {
+  /** What a full-text query matches: `connector` is an id or a list of ids, `tab` ('todo' | 'done') keeps only the rows that tab holds. Null when the query has no usable word. */
+  function matching(query, { connector, tab } = {}) {
     const match = matchQuery(query);
-    if (!match) return [];
+    if (!match) return null;
+    const where = ['inbox_fts MATCH ?', 'r.deleted_at IS NULL'];
+    const params = [match];
+    const ids = [connector].flat().filter((id) => typeof id === 'string' && id);
+    if (ids.length) { where.push(`r.connector IN (${ids.map(() => '?').join(', ')})`); params.push(...ids); }
+    if (Object.hasOwn(TABS, tab)) where.push(`(${TABS[tab]})`); // the FTS table has no column of these names, so they need no prefix
+    return { where: where.join(' AND '), params };
+  }
+
+  /** `text: true` brings each row's text along (the search page cuts a line of it); the other callers get the light view. */
+  function search(query, { connector, tab, limit = 20, text = false } = {}) {
+    const found = matching(query, { connector, tab });
+    if (!found) return [];
     const size = Math.max(1, Math.min(100, Number.isSafeInteger(limit) ? limit : 20));
-    const rows = connector
-      ? sql(`SELECT ${LIGHT.split(', ').map((c) => `r.${c}`).join(', ')} FROM inbox_fts f JOIN inbox_records r ON r.id = f.rowid WHERE inbox_fts MATCH ? AND r.connector = ? AND r.deleted_at IS NULL ORDER BY rank LIMIT ?`).all(match, String(connector), size)
-      : sql(`SELECT ${LIGHT.split(', ').map((c) => `r.${c}`).join(', ')} FROM inbox_fts f JOIN inbox_records r ON r.id = f.rowid WHERE inbox_fts MATCH ? AND r.deleted_at IS NULL ORDER BY rank LIMIT ?`).all(match, size);
-    return rows.map(view);
+    const columns = `${LIGHT.split(', ').map((c) => `r.${c}`).join(', ')}${text ? ', r.text' : ''}`;
+    return sql(`SELECT ${columns} FROM inbox_fts f JOIN inbox_records r ON r.id = f.rowid WHERE ${found.where} ORDER BY rank LIMIT ?`).all(...found.params, size).map(view);
+  }
+
+  /** How many rows `search` would find with no limit. */
+  function countMatches(query, options = {}) {
+    const found = matching(query, options);
+    return found ? sql(`SELECT COUNT(*) AS n FROM inbox_fts f JOIN inbox_records r ON r.id = f.rowid WHERE ${found.where}`).get(...found.params).n : 0;
   }
 
   function get(id, { around = 4, summary = false } = {}) {
@@ -520,5 +538,5 @@ export function createInbox(db, { now = Date.now } = {}) {
   const lastMe = (connector) => meOf(sql("SELECT me FROM collect_runs WHERE connector = ? AND me IS NOT NULL ORDER BY id DESC LIMIT 1").get(connector)?.me);
   const lastStarted = (connector) => sql('SELECT MAX(started_at) AS at FROM collect_runs WHERE connector = ?').get(connector)?.at ?? null;
 
-  return { ingest, addContext, repairTitles, update, pending, waiting, judge, fail, issueFor, list, search, get, forIssue, read, unreadCount, prune, dropUntouched, browse, done, remove, restore, link, startRun, finishRun, lastRun, lastFinished, lastGood, lastStarted, lastMe };
+  return { ingest, addContext, repairTitles, update, pending, waiting, judge, fail, issueFor, list, search, countMatches, get, forIssue, read, unreadCount, prune, dropUntouched, browse, done, remove, restore, link, startRun, finishRun, lastRun, lastFinished, lastGood, lastStarted, lastMe };
 }

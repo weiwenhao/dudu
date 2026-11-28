@@ -177,4 +177,35 @@ final class ChatScrollPositionTests: XCTestCase {
             beganFollowingWithKeyboard: false, keyboardVisible: true
         ))
     }
+
+    func testAListReportsItsWholeFrameSoTheEndIsMeasuredAfterTheBarAndTheKeyboard() {
+        // Device log 2026-11-27 12:01-12:02, the 嘟嘟 chat with the keyboard up: the List's frame is 912pt whatever is over it, with a 112pt top bar and a 355pt keyboard as insets.
+        // The end is at offset 5088.8 + 355 - 912 = 4531.67. Six drags of the owner's ended 140 to 352pt above it, every one was taken for the end, and the list sprang back to it.
+        let visible = ChatScrollPosition.visibleHeight(containerHeight: 912, topInset: 112, bottomInset: 355)
+        XCTAssertEqual(visible, 445)
+        XCTAssertTrue(ChatScrollPosition.shouldFollowAfterDrag(
+            contentHeight: 5_088.8, containerHeight: visible, contentOffset: 4_531.67, topInset: 112,
+            beganFollowingWithKeyboard: false, keyboardVisible: true
+        ))
+        for offset: CGFloat in [4_388.33, 4_355.67, 4_392, 4_179.33, 4_282, 4_280.33] {
+            XCTAssertFalse(ChatScrollPosition.shouldFollowAfterDrag(
+                contentHeight: 5_088.8, containerHeight: visible, contentOffset: offset, topInset: 112,
+                beganFollowingWithKeyboard: false, keyboardVisible: true
+            ), "a drag that ends at \(offset) is \(4_531.67 - offset)pt above the end")
+        }
+        // Without the keyboard (12:02:05, content 5104.8) the end is at 4192.67 and a drag of 100pt is reading too (the bar's 112pt made it the end).
+        let bare = ChatScrollPosition.visibleHeight(containerHeight: 912, topInset: 112, bottomInset: 0)
+        XCTAssertEqual(bare, 800)
+        XCTAssertTrue(ChatScrollPosition.shouldFollowAfterDrag(
+            contentHeight: 5_104.8, containerHeight: bare, contentOffset: 4_192.67, topInset: 112,
+            beganFollowingWithKeyboard: false, keyboardVisible: false
+        ))
+        XCTAssertFalse(ChatScrollPosition.shouldFollowAfterDrag(
+            contentHeight: 5_104.8, containerHeight: bare, contentOffset: 4_092.67, topInset: 112,
+            beganFollowingWithKeyboard: false, keyboardVisible: false
+        ))
+        XCTAssertFalse(ChatScrollPosition.isAtEnd(contentHeight: 5_104.8, containerHeight: bare, contentOffset: 4_092.67, topInset: 112, tolerance: 1))
+        // A frame the insets use up has no height left to measure with.
+        XCTAssertEqual(ChatScrollPosition.visibleHeight(containerHeight: 300, topInset: 112, bottomInset: 355), 0)
+    }
 }

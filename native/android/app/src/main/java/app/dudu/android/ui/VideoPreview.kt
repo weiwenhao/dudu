@@ -230,7 +230,7 @@ internal fun MediaPreviewPage(file: File, type: String, dismiss: () -> Unit, con
             Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Surface(onClick = dismiss, modifier = Modifier.size(44.dp).testTag("media-close"), shape = CircleShape, color = Color.White,
                     shadowElevation = 3.dp, border = edge) {
-                    Box(contentAlignment = Alignment.Center) { Glyph(DuduGlyphs.close, w("关闭"), 20, ink) }
+                    Box(contentAlignment = Alignment.Center) { BarGlyph(DuduGlyphs.close, w("关闭"), ink) }
                 }
                 Spacer(Modifier.weight(1f))
                 Surface(shape = RoundedCornerShape(22.dp), color = Color.White, shadowElevation = 3.dp, border = edge) {

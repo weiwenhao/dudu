@@ -143,7 +143,9 @@ release. Their existing Chinese actions are reused unchanged:
 | 添加图片 | Add pictures |
 | 发送视频 | Send video |
 | 连接嘟嘟 | Connect to Dudu |
-| 打开 DSH 并安装嘟嘟插件，在嘟嘟设置中打开配对二维码 | Open DSH and install the Dudu plugin, then open the pairing QR code in Dudu settings. |
+| 在电脑上安装 DSH | Install DSH on your computer |
+| 在 DSH 的「添加插件」里输入 | In DSH's “Add plugin”, enter |
+| 打开嘟嘟，点右上角的设置，进入「手机控制」，点「生成二维码」 | Open Dudu, tap Settings at the top right, go to “Phone control”, and tap “Generate QR code” |
 | 转发 | Forward |
 | 转发给 | Forward to |
 | 最近会话 | Recent conversations |

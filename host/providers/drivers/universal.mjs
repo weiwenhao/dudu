@@ -4,6 +4,8 @@ import {
   antigravityRuntime, classifyTool, codebuddyRuntime, devinRuntime, factoryRuntime, grokRuntime, kimiRuntime, opencodeRuntime, qoderRuntime, qwenRuntime,
 } from '../oar-runtimes.mjs';
 import { canonicalInput, fallbackSpecOf, kindOf, mirrorName, toolSpecs } from './universal-tools.mjs';
+import { removeAntigravityListings } from '../listing-leftovers.mjs';
+import { antigravityModelsMark } from './antigravity-models.mjs';
 
 // Grok, Kimi, OpenCode, Antigravity, CodeBuddy, Devin, Factory, Qwen and Qoder through OAR. They differ in how OAR reaches them (the first
 // six over ACP, Qwen and Qoder over stream-json, Factory over droid's own protocol) and in what they call their tools, and not in what DSH
@@ -27,7 +29,7 @@ export const UNIVERSAL_HARNESSES = Object.freeze([
   { id: 'grok', name: 'Grok', runtime: grokRuntime, binaryEnv: 'OAR_GROK_BIN', login: 'Run `grok login` in a terminal.' },
   { id: 'kimi', name: 'Kimi', runtime: kimiRuntime, binaryEnv: 'OAR_KIMI_BIN', login: 'Run `kimi login` in a terminal.' },
   { id: 'opencode', name: 'OpenCode', runtime: opencodeRuntime, binaryEnv: 'OAR_OPENCODE_BIN', login: 'Run `opencode auth login` in a terminal.' },
-  { id: 'antigravity', name: 'Antigravity', runtime: antigravityRuntime, binaryEnv: 'OAR_ANTIGRAVITY_BIN', login: 'Run `agy` in a terminal and sign in.' },
+  { id: 'antigravity', name: 'Antigravity', runtime: antigravityRuntime, binaryEnv: 'OAR_ANTIGRAVITY_BIN', login: 'Run `agy` in a terminal and sign in.', listingCleanup: removeAntigravityListings, modelsMark: antigravityModelsMark },
   { id: 'codebuddy', name: 'CodeBuddy', runtime: codebuddyRuntime, binaryEnv: 'OAR_CODEBUDDY_BIN', login: 'Run `codebuddy` in a terminal and sign in.' },
   { id: 'devin', name: 'Devin', runtime: devinRuntime, binaryEnv: 'OAR_DEVIN_BIN', login: 'Run `devin auth login` in a terminal.' },
   { id: 'factory', name: 'Factory', runtime: factoryRuntime, binaryEnv: 'OAR_FACTORY_BIN', login: 'Run `droid` in a terminal and sign in.' },
@@ -94,20 +96,20 @@ export class UniversalNormalizer extends OarNormalizer {
 }
 
 /** Neither a sandbox nor a verified tool denial is reachable through OAR for these harnesses, so a read-only session cannot be kept read-only. */
-export const universalSession = ({ name }) => ({ permission }) => {
+export const universalSession = ({ name, cancellableOpening }) => ({ permission, signal }) => {
   if (permission === 'read-only') throw harnessError(`${name} cannot be kept read-only. Choose another access mode to use it.`, 'HARNESS_UNSUPPORTED');
-  return {};
+  return cancellableOpening && signal ? { openSignal: signal } : {};
 };
 
-export function createUniversalProvider({ id, name, runtime, binaryEnv, login }) {
+export function createUniversalProvider({ id, name, runtime, binaryEnv, login, listingCleanup, modelsMark }) {
   return createOarProvider({
-    id, name, runtime, binaryEnv, login,
+    id, name, runtime, binaryEnv, login, listingInFolder: true, listingCleanup, modelsMark,
     tools: toolSpecs(id), fallbackTool: fallbackSpecOf(id),
     normalizer: (options) => new UniversalNormalizer({ id, ...options }),
     fallbackModels: [{ id: 'default', displayName: 'Default' }],
     // Another harness's identity must not leak into the child.
     scrub: { patterns: [/^(ORCA_|HERDR_)/] },
-    session: universalSession({ name }),
+    session: universalSession({ name, cancellableOpening: id === 'antigravity' }),
     steering: false,
     backgroundTasks: false,
     // On as soon as it is found, like every harness (owner, 2026-11-24: 「安装嘟嘟插件启动后检测到的全都自动启用」; it was off until switched on from 2026-11-19).

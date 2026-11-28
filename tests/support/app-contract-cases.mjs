@@ -24,6 +24,8 @@ export async function sampleResponses(root) {
     load('host/assistant/issues/index.mjs'), load('host/assistant/issues/api.mjs'), load('host/assistant/inbox/api.mjs'), load('host/assistant/inbox/records.mjs'),
     load('host/native-board.mjs'), load('host/assistant/home/chat-home.mjs'), load('host/native-navigation.mjs'), load('host/native-settings.mjs'),
   ]);
+  // The search page's request (added 2026-11-27): a plugin older than it has no such module, and then there is no case to record.
+  const searching = await load('host/assistant/home/search.mjs').then((module) => module, () => null);
   const issues = createIssues({ file: ':memory:', now: () => NOW, sessionState: () => 'idle' });
   try {
     const api = createIssuesApi({ issues });
@@ -35,9 +37,14 @@ export async function sampleResponses(root) {
       activity: () => ({ sessionState: 'unread', unread: true, deepSleep: false, attention: { messageAt: NOW - 1000, preview: 'a reply', seq: 3 } }),
       warm: async () => {}, markUnread: async () => {}, acknowledge: async () => {}, now: () => NOW,
     });
+    const search = searching?.createSearch({
+      row: (issue) => issue, conversations: (row, options) => home.list('all', row, undefined, options),
+      sessions: async () => ({ items: [{ sessionId: 'one', snippet: 'A line of the text' }], indexing: false }),
+      inbox: (options) => inbox.search(options), tasks: async () => ({ outcome: 'success', tasks: [] }),
+    });
     const board = createNativeBoard({
       issues: ask, inbox: (action, body) => inbox.execute(action, body),
-      home: { list: (...args) => home.list(...args), pin: (...args) => home.pin(...args), read: (...args) => home.read(...args) }, fail,
+      home: { list: (...args) => home.list(...args), pin: (...args) => home.pin(...args), read: (...args) => home.read(...args) }, search, fail,
     });
     const project = { name: 'Dudu', path: '/project/dudu' };
     const assigned = issues.add({ title: 'Assigned', brief: 'A description', project, agent: 'claude', session: 'dsh:one' }).issue;
@@ -84,6 +91,7 @@ export async function sampleResponses(root) {
       'issue.get': await board.dispatch('issue.get', { id: assigned.id }),
       'inbox.list': await board.dispatch('inbox.list', { tab: 'todo' }),
       'inbox.get': await board.dispatch('inbox.get', { id: record.id }),
+      ...(search ? { 'search.query': await board.dispatch('search.query', { q: 'record' }) } : {}),
       'navigation.get': store.get(),
       'settings.page (general)': await page('general'),
       'settings.page (statuses)': await page('statuses'),

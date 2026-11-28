@@ -131,6 +131,10 @@ private enum class FilterCategory(val fields: List<BoardFilterField>, @param:Dra
 private data class CategoryRow(val category: FilterCategory, val title: String, val summary: String)
 private data class ChoiceRow(val option: BoardFilterOption, val title: String)
 
+/**
+ * The board's filter sheet: the categories, and a category's choices with their counts. `only` is the search page's use of it: the choices of that one field are all it shows (the
+ * page's pills are the categories), with the title of the field and no 重置 or ‹.
+ */
 @Composable
 internal fun BoardFilterSheet(
     home: Home?,
@@ -139,10 +143,13 @@ internal fun BoardFilterSheet(
     close: () -> Unit,
     reset: () -> Unit,
     toggle: (BoardFilterField, String?) -> Unit,
+    only: BoardFilterField? = null,
+    counts: Map<String?, Int>? = null,
 ) {
     var category by remember { mutableStateOf<FilterCategory?>(null) }
     var search by remember { mutableStateOf("") }
     val section = category
+    val choosing = only != null || section != null
     val colors = MaterialTheme.colorScheme
     val locale = appLocale()
     val format = remember(locale) { ListFormatter.getInstance(locale) }
@@ -164,7 +171,7 @@ internal fun BoardFilterSheet(
     val query = search.trim()
     fun matches(title: String) = title.contains(query, ignoreCase = true)
 
-    val groups = if (section != null) emptyList() else FilterCategory.groups.map { group ->
+    val groups = if (choosing) emptyList() else FilterCategory.groups.map { group ->
         group.mapNotNull { item ->
             val title = item.title()
             if (!matches(title)) return@mapNotNull null
@@ -175,9 +182,9 @@ internal fun BoardFilterSheet(
         }
     }.filter { it.isNotEmpty() }
 
-    val fields = section?.fields.orEmpty()
-    val options = remember(filters, fields, scoped, statuses) {
-        fields.associateWith { filters.options(it, scoped, statuses) }
+    val fields = if (only != null) listOf(only) else section?.fields.orEmpty()
+    val options = remember(filters, fields, scoped, statuses, counts) {
+        fields.associateWith { filters.options(it, scoped, statuses, counts.takeIf { _ -> it == only }) }
     }
     val choices = fields.mapNotNull { field ->
         val rows = options.getValue(field).mapNotNull { option ->
@@ -198,15 +205,16 @@ internal fun BoardFilterSheet(
             category = next
         }
         CenterAlignedTopAppBar(
-            title = { Text(section?.title() ?: w("筛选"), fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+            title = { Text(only?.title() ?: section?.title() ?: w("筛选"), fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis) },
             expandedHeight = 52.dp,
             windowInsets = WindowInsets(0),
             colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.surfaceContainer),
             navigationIcon = {
-                if (section != null) {
+                if (only != null) Unit
+                else if (section != null) {
                     IconButton(onClick = { show(null) }, modifier = Modifier.padding(start = 10.dp)) {
-                        Glyph(DuduGlyphs.back, stringResource(R.string.back), 22)
+                        BarGlyph(DuduGlyphs.back, stringResource(R.string.back))
                     }
                 } else {
                     FilledTonalButton(reset, Modifier.padding(start = 16.dp).minimumInteractiveComponentSize()
@@ -219,12 +227,12 @@ internal fun BoardFilterSheet(
             },
             actions = {
                 IconButton(onClick = close, modifier = Modifier.testTag("close-sheet")) {
-                    Glyph(DuduGlyphs.close, stringResource(R.string.close), 20)
+                    BarGlyph(DuduGlyphs.check, stringResource(R.string.close))
                 }
             },
         )
         Box(Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 8.dp)) {
-            SearchField(search, if (section == null) w("添加筛选…") else w("筛选…"), tag = "board-filter-search",
+            SearchField(search, if (!choosing) w("添加筛选…") else w("筛选…"), tag = "board-filter-search",
                 prominent = true, containerColor = colors.surfaceContainerHighest, iconSize = 16, fontSize = 15) { search = it }
         }
         key(section) {
@@ -256,7 +264,7 @@ internal fun BoardFilterSheet(
 }
 
 @Composable
-private fun FilterCardRow(index: Int, last: Int, content: @Composable () -> Unit) {
+internal fun FilterCardRow(index: Int, last: Int, content: @Composable () -> Unit) {
     GroupRow(index == 0, index == last, inset = 16, dividerStart = 15, dividerEnd = 15, radius = 16, content = content)
 }
 
@@ -282,18 +290,8 @@ private fun FilterChoiceRow(
     row: ChoiceRow, field: BoardFilterField, selected: Boolean, statuses: Map<String, Status>, labels: Map<String, Label>,
     count: String?, toggle: () -> Unit,
 ) {
-    val colors = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().toggleable(selected, role = Role.Checkbox, onValueChange = { toggle() })
-        .heightIn(min = 48.dp).padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(18.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
-            .background(if (selected) DuduStyle.blue else colors.surface)
-            .then(if (selected) Modifier else Modifier.border(1.dp,
-                colors.onSurfaceVariant.copy(alpha = .45f), androidx.compose.foundation.shape.RoundedCornerShape(4.dp))),
-            contentAlignment = Alignment.Center) {
-            if (selected) Glyph(DuduGlyphs.check, size = 14, tint = Color.White)
-        }
-        val id = row.option.key
+    val id = row.option.key
+    ChoiceLine(row.title, selected, count, toggle) {
         when (field) {
             BoardFilterField.Agent -> if (id != null) AgentLogo(id, 16)
             BoardFilterField.Priority -> if (id != null) IssuePriorityMark(id)
@@ -303,16 +301,34 @@ private fun FilterChoiceRow(
             }
             else -> Unit
         }
-        Text(row.title, Modifier.weight(1f), fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** One choice of a filter: a checkbox, what it is marked with (`leading`), its name, and how many rows it would keep. The search page's own choices (状态, 来源) are drawn with it too. */
+@Composable
+internal fun ChoiceLine(title: String, selected: Boolean, count: String? = null, toggle: () -> Unit, leading: @Composable () -> Unit = {}) {
+    val colors = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().toggleable(selected, role = Role.Checkbox, onValueChange = { toggle() })
+        .heightIn(min = 48.dp).padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(18.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+            .background(if (selected) DuduStyle.blue else colors.surface)
+            .then(if (selected) Modifier else Modifier.border(1.dp,
+                colors.onSurfaceVariant.copy(alpha = .45f), androidx.compose.foundation.shape.RoundedCornerShape(4.dp))),
+            contentAlignment = Alignment.Center) {
+            if (selected) TickMark()
+        }
+        leading()
+        Text(title, Modifier.weight(1f), fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         count?.let { Text(it, fontSize = 14.sp, color = filterSecondary()) }
     }
 }
 
 @Composable
-private fun filterSecondary() = MaterialTheme.colorScheme.onSurface.copy(alpha = .68f)
+internal fun filterSecondary() = MaterialTheme.colorScheme.onSurface.copy(alpha = .68f)
 
 @Composable
-private fun BoardFilterField.title(): String = when (this) {
+internal fun BoardFilterField.title(): String = when (this) {
     BoardFilterField.Status -> stringResource(R.string.status)
     BoardFilterField.Agent -> stringResource(R.string.agent)
     BoardFilterField.SessionState -> w("会话状态")
@@ -326,7 +342,7 @@ private fun BoardFilterField.title(): String = when (this) {
 }
 
 @Composable
-private fun BoardFilterField.title(id: String?, statuses: Map<String, Status>, labels: Map<String, Label>): String = when (this) {
+internal fun BoardFilterField.title(id: String?, statuses: Map<String, Status>, labels: Map<String, Label>): String = when (this) {
     BoardFilterField.Status -> statuses[id]?.let { statusTitle(it) } ?: id.orEmpty()
     BoardFilterField.Agent -> if (id == null) stringResource(R.string.unassigned) else agentName(id)
     BoardFilterField.SessionState -> when (id) {

@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { useNativeTools as mountNativeTools } from '../../dsh-tools.mjs';
-import { availableModel, pickModel } from '../dispatch/dsh-llm.mjs';
+import { availableModel, duduCatalog, pickModel } from '../dispatch/dsh-llm.mjs';
 import { modelFor } from './agent-sessions.mjs';
 import { taskLine } from './group.mjs';
 import { conversationToolNames, isConversationTool } from './native-tools.mjs';
@@ -238,11 +238,11 @@ export function createTaskSessions({ ctx, assistant, tools, context, say, file =
   return {
     /** Whether 嘟嘟 can run a task now: the DSH has a conversation model. */
     async available() {
-      try { return Boolean(pickModel(await ctx.sessionController.modelCatalog())); } catch { return false; }
+      try { return Boolean(pickModel(await duduCatalog(ctx))); } catch { return false; }
     },
     async validate(task) {
       if (task.target?.mode === 'existing') reject('invalid_session');
-      if (!chosen(await ctx.sessionController.modelCatalog(), task)) reject('provider_unavailable');
+      if (!chosen(await duduCatalog(ctx), task)) reject('provider_unavailable');
     },
     /** The engine's `deliver` for a task of 嘟嘟 (tasks/host.mjs): resolves once the prompt is accepted; the rest happens in the background (`follow`). */
     async deliver(task, run, checkpoint) {
@@ -252,7 +252,7 @@ export function createTaskSessions({ ctx, assistant, tools, context, say, file =
       if (closed) reject('unavailable');
       let opened = null;
       try {
-        const model = chosen(await ctx.sessionController.modelCatalog(), task) ?? reject('provider_unavailable');
+        const model = chosen(await duduCatalog(ctx), task) ?? reject('provider_unavailable');
         opened = await open(task, run, model);
         await checkpoint(opened.sessionId, { provider: model.provider, model: model.model, ...(opened.created && permissionOf() ? { access: permissionOf() } : {}) });
       } catch (error) {

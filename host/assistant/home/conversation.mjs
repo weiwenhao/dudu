@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname, join } from 'node:path';
 import { readSessionHistory } from '../../dsh-session-history.mjs';
 import { executeNativeTool, useNativeTools as mountNativeTools } from '../../dsh-tools.mjs';
-import { availableModel, pickModel } from '../dispatch/dsh-llm.mjs';
+import { availableModel, duduCatalog, pickModel } from '../dispatch/dsh-llm.mjs';
 import { PERSONAL_IDENTITY } from '../identity.mjs';
 import { CARD_COMMAND, CARD_KINDS, cardCommand } from './cards.mjs';
 import { SAY_COMMAND } from './group.mjs';
@@ -306,7 +306,7 @@ export function createConversation({ ctx, assistant, issues, assignment, dashboa
     if (opening) return opening;
     opening = (async () => {
       if (!assistant.folder || !assistant.memory) throw new Error('The project folder is unavailable.');
-      const catalog = await ctx.sessionController.modelCatalog();
+      const catalog = await duduCatalog(ctx);
       const defaults = assistant.settings.value('conversation');
       let agentOptions = pickModel(catalog, defaults.model);
       if (!agentOptions) throw new Error('This DSH has no conversation model.');
@@ -377,7 +377,7 @@ export function createConversation({ ctx, assistant, issues, assignment, dashboa
 
   async function selectModel(selection) {
     await ensure();
-    const catalog = await ctx.sessionController.modelCatalog();
+    const catalog = await duduCatalog(ctx);
     const selected = availableModel(catalog, selection);
     if (!selected || selection.reasoningEffort && selected.reasoningEffort !== selection.reasoningEffort) throw new Error('The selected model or reasoning effort is unavailable.');
     await commitModel(selected);
@@ -385,7 +385,7 @@ export function createConversation({ ctx, assistant, issues, assignment, dashboa
   }
 
   async function preferences({ patch } = {}) {
-    const catalog = await ctx.sessionController.modelCatalog();
+    const catalog = await duduCatalog(ctx);
     const permissions = ctx.permissionPresets?.catalog();
     if (patch !== undefined) {
       if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).some((key) => !['model', 'permission'].includes(key))) return { outcome: 'needs_clarification' };

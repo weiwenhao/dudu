@@ -60,3 +60,23 @@ private fun queryItems(raw: String?): Map<String, List<String>> =
         { java.net.URLDecoder.decode(it.substringBefore("="), "UTF-8") },
         { java.net.URLDecoder.decode(it.substringAfter("=", ""), "UTF-8") },
     ) ?: emptyMap()
+
+/**
+ * A pairing link that did not connect, as the link named the computer (the iPhone's `PairingAttempt`): the card of the connection guide shows its name and address, and 重新连接 tries the link again.
+ * It carries the pairing token, so it lives in memory only and its `toString` leaves the link out.
+ */
+class PairingAttempt(val link: String, val name: String, val address: String, val problem: String) {
+    override fun toString() = "PairingAttempt($address, $problem)"
+}
+
+/** The attempt for a link the phone could read (null for one it could not: nothing was tried then): the name is the link's own or the computer's address, the address the LAN one when the link has both, without `http://`. */
+fun pairingAttemptOf(link: String, problem: String): PairingAttempt? {
+    val endpoint = runCatching { Endpoint.parse(link) }.getOrNull() ?: return null
+    val route = endpoint.addresses.firstOrNull { it.kind == "lan" } ?: endpoint.addresses.firstOrNull()
+    val address = (route?.origin ?: endpoint.origin).substringAfter("://").trimEnd('/')
+    return PairingAttempt(link, pairingLinkName(link).trim().ifEmpty { endpoint.name }, address, problem)
+}
+
+/** A saved computer's address as the guide and the lists say it: the origin without `http://`. */
+fun shortAddress(link: String): String? =
+    runCatching { Endpoint.parse(link).origin.substringAfter("://").trimEnd('/') }.getOrNull()

@@ -2,7 +2,6 @@
 
 package app.dudu.android.ui
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,9 +16,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -28,9 +31,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.dudu.android.*
 import app.dudu.android.data.*
-import java.util.UUID
 
-private data class AddressDraft(val kind: String, val value: String, val id: String = UUID.randomUUID().toString())
+private data class AddressDraft(val kind: String, val value: String)
 
 /** The address of a computer without its scheme (the iPhone's `shortAddress`): what the computer rows and 已连接 · {0} say. */
 private fun shortAddress(origin: String?) = origin.orEmpty().replace(Regex("^https?://"), "")
@@ -107,21 +109,26 @@ fun ComputerList(state: UiState, model: DuduViewModel, selected: () -> Unit = mo
 
 /** 重新连接 on a card of its own: the circular arrow, the words (正在连接… while it connects, with a spinner and no chevron), disabled until the attempt ends. */
 @Composable
-private fun ReconnectRow(connecting: Boolean, tag: String, action: () -> Unit) {
-    SettingsCardRow(DuduGlyphs.reconnect, if (connecting) w("正在连接…") else w("重新连接"), enabled = !connecting, tag = tag,
-        trailing = {
-            if (connecting) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 1.5.dp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }, action = action)
+private fun ReconnectRow(connecting: Boolean, tag: String, enabled: Boolean = true, action: () -> Unit) {
+    SettingsCardRow(DuduGlyphs.reconnect, if (connecting) w("正在连接…") else w("重新连接"), enabled = enabled && !connecting, tag = tag,
+        leading = if (connecting) { {
+            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } } else null, action = action)
+}
+
+@Composable
+internal fun AddComputerButton(model: DuduViewModel, enabled: Boolean = true) {
+    IconButton(onClick = { model.navigate(Route("connect")) }, enabled = enabled,
+        modifier = Modifier.size(44.dp).duduGlass(CircleShape, glass()).testTag("computers-add")) {
+        Glyph(DuduGlyphs.plus, w("添加电脑"), 22)
+    }
 }
 
 /** 电脑连接, a page pushed over the settings (the bottom bar hidden): the list, and + to add a computer. */
 @Composable
 fun ComputersScreen(state: UiState, model: DuduViewModel) {
     Page(w("电脑连接"), model::backRoute, nested = true, background = settingsCanvas(), top = {
-        IconButton(onClick = { model.navigate(Route("pair")) }, modifier = Modifier.testTag("computers-add")) {
-            Glyph(DuduGlyphs.plus, w("添加电脑"), 22)
-        }
+        AddComputerButton(model, enabled = !state.connectionInFlight)
     }) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 28.dp)) {
             ComputerList(state, model, model::backRoute)
@@ -131,21 +138,54 @@ fun ComputersScreen(state: UiState, model: DuduViewModel) {
 
 /**
  * A computer's connection, the iPhone's `ComputerConnectionView`: 连接状态 (a dot, 已连接 · {address}, 正在连接… or 未连接), its addresses (内网地址 / 公网地址, 使用中 by the one in use, the
- * address itself in monospace), why it is not connected, and 重新连接. 编辑 opens the address form in a sheet.
+ * address itself in monospace). The checkmark saves edits made directly in the address rows.
  */
 @Composable
 fun ComputerScreen(route: Route, state: UiState, model: DuduViewModel) {
     val saved = state.computers.find { it.id == route.target }
     val endpoint = remember(saved?.link) { saved?.let { runCatching { Endpoint.parse(it.link) }.getOrNull() } }
-    var editing by remember { mutableStateOf(false) }
+    val canEdit = endpoint?.deviceId != null
+    val original = remember(endpoint, canEdit) {
+        endpoint?.addresses.orEmpty().map { AddressDraft(it.kind, it.origin) }.toMutableList().apply {
+            if (canEdit && none { it.kind == "lan" }) add(0, AddressDraft("lan", ""))
+            if (canEdit && none { it.kind == "public" }) add(AddressDraft("public", ""))
+        }
+    }
+    var drafts by remember(saved?.id) { mutableStateOf<List<AddressDraft>?>(null) }
+    val fields = drafts ?: original
     val active = state.computerId == saved?.id
     val connecting = active && state.connectionInFlight
     val connected = active && state.connected
-    Page(saved?.name ?: route.title, model::backRoute, nested = true, background = settingsCanvas(), top = {
-        TextButton(onClick = { editing = true }, enabled = saved != null && endpoint?.deviceId != null && !connecting,
-            modifier = Modifier.testTag("edit-addresses")) { Text(w("编辑"), fontSize = 15.sp) }
+    val actions = rememberActions()
+    val focus = LocalFocusManager.current
+    PreventSheetDismiss(actions.busy)
+    LaunchedEffect(actions.error) {
+        actions.error?.let(model::failureToast)
+        actions.error = null
+    }
+    Page(saved?.name ?: route.title, { if (!actions.busy) model.backRoute() }, nested = true, background = settingsCanvas(), top = {
+        IconButton(onClick = {
+            if (saved != null && drafts != null) {
+                focus.clearFocus()
+                actions.run {
+                    val addresses = try {
+                        fields.filter { it.value.isNotBlank() }.map { ConnectionAddress.parse(it.value, it.kind) }
+                    } catch (_: Exception) { throw ApiFailure("INVALID_LINK") }
+                    DuduLog.record("computer.addresses.save", counts = mapOf(
+                        "lanAddressCount" to addresses.count { it.kind == "lan" }.toLong(),
+                        "publicAddressCount" to addresses.count { it.kind == "public" }.toLong()))
+                    model.updateConnectionAddresses(saved.id, addresses)
+                    drafts = null
+                }
+            }
+        }, enabled = canEdit && drafts != null && !actions.busy && !connecting,
+            modifier = Modifier.size(44.dp).duduGlass(CircleShape, glass()).testTag("save-addresses")) {
+            if (actions.busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 1.5.dp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else BarGlyph(DuduGlyphs.check, w("保存"))
+        }
     }) {
-        if (saved != null) Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+        if (saved != null) Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState())
             .padding(start = 18.dp, end = 18.dp, top = 16.dp, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
             InsetCard {
                 Row(Modifier.fillMaxWidth().padding(16.dp).testTag("computer-connection-state"), verticalAlignment = Alignment.CenterVertically,
@@ -165,16 +205,39 @@ fun ComputerScreen(route: Route, state: UiState, model: DuduViewModel) {
                 Text(w("连接地址"), Modifier.padding(start = 16.dp), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 InsetCard {
                     Column(Modifier.padding(horizontal = 16.dp)) {
-                        endpoint?.addresses.orEmpty().forEachIndexed { index, address ->
+                        fields.forEachIndexed { index, address ->
                             if (index > 0) HorizontalDivider(thickness = .5.dp, color = MaterialTheme.colorScheme.outlineVariant)
                             Column(Modifier.fillMaxWidth().padding(vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                val title = if (address.kind == "lan") w("内网地址") else w("公网地址")
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(if (address.kind == "lan") w("内网地址") else w("公网地址"), Modifier.weight(1f), fontSize = 15.sp)
-                                    if (connected && address.origin == endpoint?.origin)
+                                    Text(title, Modifier.weight(1f), fontSize = 15.sp)
+                                    if (connected && address.value == endpoint?.origin)
                                         Text(w("使用中"), Modifier.testTag("computer-address-in-use"), fontSize = 12.sp)
                                 }
-                                SelectionContainer {
-                                    Text(address.origin, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                                if (canEdit) {
+                                    var focused by remember(index) { mutableStateOf(false) }
+                                    val style = MaterialTheme.typography.bodyLarge.copy(fontSize = 11.sp, lineHeight = 15.sp,
+                                        fontFamily = FontFamily.Monospace)
+                                    BasicTextField(address.value, { value ->
+                                        val updated = fields.toMutableList()
+                                        updated[index] = address.copy(value = value)
+                                        drafts = updated.takeUnless { it == original }
+                                    }, Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
+                                        .semantics { contentDescription = title }.testTag("address-${address.kind}-$index"),
+                                        enabled = !actions.busy && !connecting, singleLine = true,
+                                        textStyle = style.copy(color = if (focused) MaterialTheme.colorScheme.onSurface
+                                            else MaterialTheme.colorScheme.onSurfaceVariant),
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                                        cursorBrush = SolidColor(DuduStyle.blue),
+                                        decorationBox = { inner ->
+                                            Box {
+                                                if (address.value.isEmpty()) Text(w("选填"), style = style,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                inner()
+                                            }
+                                        })
+                                } else SelectionContainer {
+                                    Text(address.value, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
@@ -182,82 +245,13 @@ fun ComputerScreen(route: Route, state: UiState, model: DuduViewModel) {
                     }
                 }
             }
-            if (active && !state.connected && !state.connectionInFlight) state.connectionFailure?.let {
-                Text(problemText(it), Modifier.padding(horizontal = 16.dp).testTag("computer-connection-failure"), fontSize = 13.sp,
-                    color = ConnectionFailureRed)
-            }
             InsetCard {
-                SettingsCardRow(DuduGlyphs.reconnect, if (connecting) w("正在连接…") else w("重新连接"), enabled = !connecting,
-                    tag = "computer-reconnect", trailing = {
-                        if (connecting) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 1.5.dp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }) { if (active) model.reconnect("computer") else { DuduLog.record("computer.switch"); model.selectComputer(saved.id) } }
-            }
-        }
-    }
-    if (editing && saved != null && endpoint != null) AddressEditor(saved, endpoint, model) { editing = false }
-}
-
-/** The addresses of a computer in a sheet (the iPhone's `ConnectionAddressEditor`): 取消, 编辑, 保存; a 内网地址 and a 公网地址 field at least, each 选填; checked against the computer before they are kept. */
-@Composable
-private fun AddressEditor(saved: SavedComputer, endpoint: Endpoint, model: DuduViewModel, close: () -> Unit) {
-    val actions = rememberActions()
-    val drafts = remember {
-        endpoint.addresses.map { AddressDraft(it.kind, it.origin) }.toMutableList().apply {
-            if (none { it.kind == "lan" }) add(0, AddressDraft("lan", ""))
-            if (none { it.kind == "public" }) add(AddressDraft("public", ""))
-        }.toMutableStateList()
-    }
-    BackHandler(enabled = actions.busy) {}
-    DuduSheet({ if (!actions.busy) close() }, containerColor = settingsCanvas(), canDismiss = !actions.busy) {
-        CenterAlignedTopAppBar(
-            title = { Text(w("编辑"), fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
-            expandedHeight = 52.dp, windowInsets = WindowInsets(0),
-            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
-            navigationIcon = { TextButton(onClick = close, enabled = !actions.busy) { Text(w("取消")) } },
-            actions = {
-                if (actions.busy) Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } else TextButton(onClick = {
-                    actions.run {
-                        val addresses = try { drafts.filter { it.value.isNotBlank() }.map { ConnectionAddress.parse(it.value, it.kind) } }
-                            catch (_: Exception) { throw ApiFailure("INVALID_PARAMS") }
-                        DuduLog.record("computer.addresses.save", counts = mapOf(
-                            "lanAddressCount" to addresses.count { it.kind == "lan" }.toLong(),
-                            "publicAddressCount" to addresses.count { it.kind == "public" }.toLong()))
-                        model.updateConnectionAddresses(saved.id, addresses)
-                        close()
-                    }
-                }, modifier = Modifier.testTag("save-addresses")) { Text(w("保存")) }
-            },
-        )
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            InsetCard {
-                Column(Modifier.padding(horizontal = 16.dp)) {
-                    drafts.forEachIndexed { index, draft ->
-                        key(draft.id) {
-                            Column(Modifier.fillMaxWidth().padding(vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(if (draft.kind == "lan") w("内网地址") else w("公网地址"), fontSize = 13.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                val style = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp)
-                                BasicTextField(draft.value, { value -> drafts[index] = draft.copy(value = value) },
-                                    Modifier.fillMaxWidth().testTag("address-${draft.kind}-$index"), enabled = !actions.busy, singleLine = true,
-                                    textStyle = style.copy(color = MaterialTheme.colorScheme.onSurface),
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                                    cursorBrush = SolidColor(DuduStyle.blue), decorationBox = { inner ->
-                                        Box {
-                                            if (draft.value.isEmpty()) Text(w("选填"), style = style, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            inner()
-                                        }
-                                    })
-                            }
-                        }
-                        if (index < drafts.lastIndex) HorizontalDivider(thickness = .5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                    }
+                ReconnectRow(connecting, tag = "computer-reconnect", enabled = !actions.busy && drafts == null) {
+                    focus.clearFocus()
+                    if (active) model.reconnect("computer")
+                    else { DuduLog.record("computer.switch"); model.selectComputer(saved.id) }
                 }
             }
-            actions.error?.let { Text(problemText(it), fontSize = 13.sp, color = ConnectionFailureRed, modifier = Modifier.testTag("computer-edit-failure")) }
-            Spacer(Modifier.height(12.dp))
         }
     }
 }

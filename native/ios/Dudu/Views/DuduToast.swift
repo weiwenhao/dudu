@@ -29,6 +29,10 @@ struct DuduToastMessage: Identifiable, Equatable {
     let id = UUID()
     let text: String
     let kind: Kind
+    /// Override the default duration for short connection errors.
+    var duration: Duration? = nil
+    /// Whether to show the close button.
+    var showsClose = true
 }
 
 struct DuduToastOverlay: View {
@@ -51,7 +55,7 @@ struct DuduToastOverlay: View {
             guard let message else { return }
             UIAccessibility.post(notification: .announcement, argument: message.text)
             do {
-                let shown = message.kind.duration
+                let shown = message.duration ?? message.kind.duration
                 try await Task.sleep(for: voiceOverEnabled ? max(shown, .seconds(8)) : shown)
             } catch {
                 return
@@ -80,18 +84,22 @@ private struct DuduToast: View {
                 .foregroundStyle(DuduStyle.ink)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("feedback.message")
-            Button(action: onDismiss) {
-                DuduIcon(.close, size: 13)
-                    .foregroundStyle(DuduStyle.chatSecondary)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+            if message.showsClose {
+                Button(action: onDismiss) {
+                    DuduIcon(.close, size: 13)
+                        .foregroundStyle(DuduStyle.chatSecondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L10n.text("关闭提示"))
+                .accessibilityIdentifier("feedback.dismiss")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(L10n.text("关闭提示"))
-            .accessibilityIdentifier("feedback.dismiss")
         }
+        // 54pt high with or without the ✕ (its button is 44pt).
+        .frame(minHeight: 44)
         .padding(.leading, 16)
-        .padding(.trailing, 4)
+        .padding(.trailing, message.showsClose ? 4 : 18)
         .padding(.vertical, 5)
         .background {
             if reduceTransparency {

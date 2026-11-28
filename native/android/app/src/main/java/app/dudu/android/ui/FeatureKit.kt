@@ -106,6 +106,7 @@ private fun SheetHandle() {
 @Composable
 fun DuduSheet(dismiss: () -> Unit, containerColor: Color = MaterialTheme.colorScheme.surfaceContainer,
     canDismiss: Boolean = true,
+    showsConnectionToast: Boolean = false,
     content: @Composable ColumnScope.() -> Unit) {
     val guard = remember { SheetDismissGuard() }
     ModalBottomSheet(
@@ -122,8 +123,9 @@ fun DuduSheet(dismiss: () -> Unit, containerColor: Color = MaterialTheme.colorSc
             LocalSheetDismissGuard provides guard) {
             Box {
                 Column(Modifier.fillMaxWidth().heightIn(max = maxHeight), content = content)
-                // A sheet is a window of its own, over the page's message: it shows the message over itself, under its bar.
-                DuduToastOverlay(LocalToastHost.current, 60.dp)
+                val host = LocalToastHost.current
+                if (showsConnectionToast && host?.toast?.problem != null) SheetConnectionToast(host)
+                else DuduToastOverlay(host?.takeUnless { it.toast?.problem != null }, 60.dp)
             }
         }
     }
@@ -144,7 +146,7 @@ fun SheetHeader(title: String, dismiss: () -> Unit, enabled: Boolean = true,
         actions = {
             action?.invoke()
             IconButton(onClick = dismiss, enabled = enabled, modifier = Modifier.testTag("close-sheet")) {
-                Glyph(DuduGlyphs.close, stringResource(R.string.close), 20)
+                BarGlyph(DuduGlyphs.close, stringResource(R.string.close))
             }
         },
     )
@@ -178,12 +180,12 @@ fun Page(title: String, back: () -> Unit, actions: Actions? = null,
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = background),
                 navigationIcon = { if (cancels) TextButton(onClick = back) { Text(stringResource(R.string.cancel)) }
                     else if (nested) IconButton(onClick = back) {
-                    Glyph(DuduGlyphs.back, stringResource(R.string.back), 22)
+                    BarGlyph(DuduGlyphs.back, stringResource(R.string.back))
                 } },
                 actions = {
                     top()
                     if ((!nested && !cancels) || close != null) IconButton(onClick = close ?: back, modifier = Modifier.testTag("page-back")) {
-                        Glyph(DuduGlyphs.close, stringResource(R.string.close), 20)
+                        BarGlyph(DuduGlyphs.close, stringResource(R.string.close))
                     }
                 },
             ) else CenterAlignedTopAppBar(
@@ -327,13 +329,13 @@ fun Field(label: String, value: String, enabled: Boolean = true, multi: Boolean 
     }
 }
 
-/** `prominent` is the forward picker's field (owner, 2026-11-18): a 48 dp pill filled in the sheet's darker grey, a 22 dp icon, the words in 16 sp. */
+/** `prominent` is the forward picker's field (owner, 2026-11-18): a 48 dp pill filled in the sheet's darker grey, a 22 dp icon, the words in 16 sp. `onSearch` is the keyboard's search key. */
 @Composable
 fun SearchField(value: String, placeholder: String, tag: String = "", autoFocus: Boolean = false,
     capsule: Boolean = false, prominent: Boolean = false,
     containerColor: Color = if (prominent) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainer,
     iconSize: Int = if (prominent) 22 else 18,
-    fontSize: Int = if (prominent) 16 else 14, changed: (String) -> Unit) {
+    fontSize: Int = if (prominent) 16 else 14, onSearch: (() -> Unit)? = null, changed: (String) -> Unit) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(autoFocus) { if (autoFocus) focus.requestFocus() }
     val words = (if (prominent) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium)
@@ -345,6 +347,8 @@ fun SearchField(value: String, placeholder: String, tag: String = "", autoFocus:
         Spacer(Modifier.width(if (prominent) 11.dp else 9.dp))
         BasicTextField(value, changed, Modifier.weight(1f).testTag(tag).focusRequester(focus), singleLine = true,
             textStyle = words.copy(color = MaterialTheme.colorScheme.onSurface),
+            keyboardOptions = if (onSearch == null) KeyboardOptions.Default else KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { onSearch?.invoke() }),
             cursorBrush = SolidColor(DuduStyle.blue),
             decorationBox = { inner ->
                 if (value.isEmpty()) Text(placeholder, color = MaterialTheme.colorScheme.onSurfaceVariant, style = words)
@@ -524,6 +528,7 @@ fun FeatureScreen(route: Route, state: UiState, model: DuduViewModel, openDrawer
         when (route.name) {
             "sessions" -> SessionsScreen(state, model)
             "session-search" -> SessionSearchScreen(route, state, model)
+            "search" -> SearchScreen(state, model)
             "session-new" -> NewSessionScreen(state, model, openDrawer ?: model::backRoute)
             "collector" -> CollectorScreen(model)
             "record" -> RecordScreen(route, model)
@@ -537,6 +542,7 @@ fun FeatureScreen(route: Route, state: UiState, model: DuduViewModel, openDrawer
             "computer" -> ComputerScreen(route, state, model)
             "computers" -> ComputersScreen(state, model)
             "pair" -> AddComputerScreen(route, state, model)
+            "connect" -> ConnectGuideScreen(state, model)
             "web" -> EmbeddedScreen(route, state, model)
             "scan" -> PairingScanner(model)
             "issue" -> IssueScreen(route, state, model)

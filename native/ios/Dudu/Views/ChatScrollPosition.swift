@@ -1,6 +1,15 @@
 import CoreGraphics
 
 enum ChatScrollPosition {
+    /// What is left of the scroll view's frame once the top bar and, while it is up, the keyboard are taken off. SwiftUI reports a `List`'s `containerSize` as its whole frame
+    /// (912pt on the owner's phone, keyboard up or not) and the bar and the keyboard as `contentInsets`; the rules below measure against the height that is left, so that
+    /// `contentOffset + topInset` is how far the reader is from the top and `contentHeight - containerHeight` the longest way there is. Measured against the whole frame, the end was
+    /// taken to be as much earlier as the insets add up to (467pt with the keyboard up): a drag of less than that ended "at the end" and the list sprang back to it (owner,
+    /// 2026-11-27: 「往上拉它就自动弹到底部」; the device log has 33 such drag ends of 395, 16 of them with the keyboard up).
+    static func visibleHeight(containerHeight: CGFloat, topInset: CGFloat, bottomInset: CGFloat) -> CGFloat {
+        max(0, containerHeight - topInset - bottomInset)
+    }
+
     static func isAtEnd(
         contentHeight: CGFloat, containerHeight: CGFloat, contentOffset: CGFloat, topInset: CGFloat = 0,
         tolerance: CGFloat = 48

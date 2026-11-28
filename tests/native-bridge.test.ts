@@ -741,7 +741,7 @@ test('stream disposal settles a pending iterator.next before iterator.return', a
   assert.deepEqual(events.slice(0, 2), ['dispose', 'iterator.return']);
 });
 
-function commandHarness(handlers = {}) {
+function commandHarness(handlers = {}, options = {}) {
   const calls = [];
   const rpc = {
     async call(channel, endpoint, ...args) {
@@ -753,7 +753,7 @@ function commandHarness(handlers = {}) {
       throw new Error('unexpected stream');
     },
   };
-  return { bridge: createNativeBridge({ rpc }), calls };
+  return { bridge: createNativeBridge({ rpc, ...options }), calls };
 }
 
 const connection = () => ({ selectedSessionId: 'session-1', stopWatch: async () => {} });
@@ -860,6 +860,20 @@ test('native submission receipts preserve the caller request identity and reject
     await assert.rejects(bridge.dispatch('session.send', { text: 'continue', requestId: invalid }, connection()), { code: 'BAD_REQUEST' });
   }
   assert.equal(calls.length, before);
+});
+
+// Owner, 2026-11-28: a message from the phone to a conversation held open for a background command waited in the queue for good, while his Desktop (steer) went in at once.
+test('a message from the phone is queued or steered the way DSH\'s own composer would send it', async () => {
+  const modes = async (options?: object) => {
+    const { bridge, calls } = commandHarness({}, options);
+    await bridge.dispatch('session.send', { text: 'now', id: 'held' }, connection());
+    await bridge.dispatch('session.send', { text: 'later', id: 'idle' }, connection());
+    return calls.filter(({ endpoint }) => endpoint === 'session/prompt').map(({ args }) => `${args[0].sessionId}:${args[0].mode}`);
+  };
+  assert.deepEqual(await modes(), ['held:queue', 'idle:queue'], 'without a rule the phone queues, as it always did');
+  assert.deepEqual(await modes({ submission: { modeOf: (id: string) => (id === 'held' ? 'steer' : 'queue') } }), ['held:steer', 'idle:queue']);
+  assert.deepEqual(await modes({ submission: { modeOf: () => { throw new Error('settings are not readable'); } } }), ['held:queue', 'idle:queue']);
+  assert.deepEqual(await modes({ submission: { modeOf: () => 'anything else' } }), ['held:queue', 'idle:queue']);
 });
 
 test('native sends restore an archived session before intake and fail without submitting when restore fails', async () => {
@@ -1398,6 +1412,24 @@ test('Markdown images read only persisted assistant destinations and reject a ch
     reply = { mediaType: 'image/png', dataBase64: data };
     duringRead = () => { connection.watchGeneration++; };
     await assert.rejects(bridge.dispatch('session.attachment', params, connection), { code: 'NOT_FOUND' });
+  } finally { await connection.cancel(); }
+});
+
+// 2026-11-27: an agent's answer put each picture on the line under a line of text, which the phone draws inline (no tap to open it); the older ones had a blank line before.
+test('an image under a line of text in an assistant answer reaches the phone as a picture of its own, with the destination unchanged', async () => {
+  const text = 'First picture:\n![one](/workspace/one.png)\n\nSecond one, a sentence with ![inline](/workspace/two.png) in it';
+  const records = [
+    surface('turn/start', 1, 100, { turn: 1 }),
+    surface('assistant/message', 2, 150, { turn: 1, message: { id: 'answer', content: [{ type: 'text', text }] } }),
+    surface('turn/end', 3, 200, { turn: 1, reason: { kind: 'completed' } }),
+  ];
+  const { bridge } = makeHarness({ snapshot: { type: 'snapshot', records, cursor: 3, projections: { values: {} } } });
+  const connection = attachmentConnection();
+  try {
+    const detail = await bridge.dispatch('session.watch', { id: 'session-1', transcript: true }, connection, { watchGeneration: 1 });
+    const seen = JSON.stringify(detail.transcript);
+    assert.ok(seen.includes(JSON.stringify('First picture:\n\n![one](/workspace/one.png)\n\nSecond one, a sentence with ![inline](/workspace/two.png) in it').slice(1, -1)),
+      'a blank line before the picture; the one inside a sentence is left in it');
   } finally { await connection.cancel(); }
 });
 

@@ -148,6 +148,14 @@ const en = {
   // NEW: the search box and the footer of All issues.
   search: { label: 'Search issues', placeholder: 'Search issues…' },
   total: (count) => (count === 1 ? '1 issue' : `${count.toLocaleString('en-US')} issues`),
+  // The search page of the conversation list (owner, 2026-11-27; `.local/designs/phone-search-2026-11-27/`, the phone's design on every screen). The words of the drawings are the interface's own: 搜索, 取消 and 更多 are here;
+  // The owner approved the design's Chinese wording and approved 搜索失败 for the Desktop error. The search keeps its rows and asks again while the text index is building.
+  searchPage: {
+    open: 'Search', placeholder: 'Search', cancel: 'Cancel', more: 'More',
+    history: 'Search history', frequent: 'Frequently used', noResults: 'No matching results',
+    hint: { sessions: 'Enter a keyword or use filters to find sessions', inbox: 'Enter a keyword or use filters to find information', tasks: 'Enter a keyword or use filters to find tasks' },
+    failed: 'Search failed',
+  },
   // NEW: the Collector widget. The owner approved its design and these words on 2026-11-05 ("没问题，就按你的推荐实现吧"); the rest is Issues' own (Filter, Clear, Dates, New issue, Open source, Open issue, Search issues…, Undo).
   collector: {
     select: 'Select', // Existing bulk-selection wording; moved to the context menu at the owner's request, 2026-11-09.
@@ -241,8 +249,8 @@ const en = {
     sessions: {
       search: 'Search sessions', empty: 'No sessions', failed: 'Could not read sessions',
       // NEW (2026-11-05): what a search cannot see, in grey under the results once something is searched for; and a list that is not complete.
-      unsearchable: (count) => (count === 1 ? '1 session cannot be searched, so results may be incomplete' : `${count} sessions cannot be searched, so results may be incomplete`),
-      indexing: (done, total) => `Building the search index (${done}/${total}), so results may be incomplete`,
+      unsearchable: (count) => (count === 1 ? '1 session cannot be searched' : `${count} sessions cannot be searched`),
+      indexing: (done, total) => `Building the search index (${done}/${total})`,
       listPartial: 'Some sessions could not be read, so the list may be incomplete',
       history: 'Conversation history', importLabel: 'Import', takeOverLabel: 'Take over', noMessages: 'No messages', // NEW; Chinese action labels supplied by the owner
       clear: 'Clear search', more: 'More sessions', openFailed: 'Could not open this session.', takeoverLabel: 'Let Dudu manage this task', // NEW
@@ -406,7 +414,7 @@ const en = {
     lanCode: 'Generate a QR code for the LAN address', generate: 'Generate QR code', address: (n) => `Connection address ${n}`,
     removeAddress: (n) => `Delete connection address ${n}`, remove: 'Delete', addAddress: 'Add address', save: 'Save', saved: 'Saved',
     devices: 'Paired devices', paired: (date) => `Paired on ${date}`, revoke: 'Revoke', noDevices: 'No paired devices',
-    scan: 'Open Dudu to scan', close: 'Close', copied: 'Copied', copyPairing: 'Copy pairing link',
+    scan: 'Open Dudu to scan', close: 'Close', copy: 'Copy', copied: 'Copied', copyPairing: 'Copy pairing link',
     copyFailed: 'Could not copy. Scan the QR code to connect.', expiry: 'QR code expires in 10 minutes', pair: 'Pair phone',
     revokeQuestion: (name) => `Revoke the connection to ${name}?`, cancel: 'Cancel', revokePairing: 'Revoke pairing',
     providers: 'Providers', state: 'Status', enable: 'Enable', executable: 'Executable path', autoFind: 'Leave blank to find automatically',
@@ -417,6 +425,14 @@ const en = {
     env: 'Environment variables',
     // NEW (2026-11-24): the two groups of the providers page (the owner approved the design; the Chinese is the design's, the English awaits review).
     groupOn: 'Enabled', groupOff: 'Not enabled',
+    // NEW (2026-11-27): the connection guide of Phone control and the two lines over the QR code (the owner approved the design, `.local/designs/phone-guide-2026-11-26/`, style 2; the Chinese is the design's, the
+    // English awaits review: docs/issues-ui-wording.md). `scan` above was there and unused until now.
+    guide: 'Connection guide', guideInstall: 'Install the Dudu phone app',
+    guideInstallBefore: 'On iOS, search the App Store for “', guideAppName: 'Dudu - Multi-Agent Assistant',
+    guideInstallAfter: '”, or install the latest version through TestFlight. On Android, install the apk from GitHub Release.',
+    guideOpen: 'Open Dudu and tap “Scan pairing code”', guideScan: 'Tap “Generate QR code” at the top right and scan it with Dudu',
+    guideNetwork: 'When the phone and the computer are on the same network, pair over the LAN address; otherwise add a public address under “Connection addresses” first.',
+    scanHint: 'Tap “Scan pairing code” and point it at the QR code below',
   },
 };
 
@@ -509,6 +525,14 @@ const zh = {
   },
   dates: { name: '日期', due: '截止日期', created: '创建时间', updated: '更新时间', overdue: '已逾期', today: '今天', next7: '未来 7 天', next30: '未来 30 天', day: '过去一天', week: '过去一周', month: '过去一个月' },
   search: { label: '搜索事项', placeholder: '搜索事项…' }, total: (n) => `${n.toLocaleString('zh-CN')} 条事项`,
+  // 对话列表的搜索页（主人 2026-11-27；`.local/designs/phone-search-2026-11-27/`，各端都照手机的设计）。图里的字用界面里现有的：搜索、取消、更多在这里；三个范围和筛选用 `T.widgets.titles`、`T.fields`、`T.dates`、
+  // `T.collector.tabs`、`T.tasks.statuses`。图中中文已审，桌面失败提示「搜索失败」也已通过。会话正文索引建立期间保留已有结果，过一会儿再问。
+  searchPage: {
+    open: '搜索', placeholder: '搜索', cancel: '取消', more: '更多',
+    history: '搜索历史', frequent: '常用', noResults: '没有匹配的内容',
+    hint: { sessions: '输入关键词或使用筛选查找会话', inbox: '输入关键词或使用筛选查找信息', tasks: '输入关键词或使用筛选查找任务' },
+    failed: '搜索失败',
+  },
   // 信息收集器：设计和这些字主人 2026-11-05 看过（“没问题，就按你的推荐实现吧”）；别的字是事项自己的（筛选、清除、日期、新建事项、打开来源、打开事项、搜索事项…、撤销）。
   collector: {
     select: '选择', // 已批准的原字；主人 2026-11-09 改为右键菜单入口。
@@ -586,8 +610,8 @@ const zh = {
     sessions: {
       search: '搜索会话', empty: '暂无会话', failed: '会话没能读取',
       // NEW（2026-11-05）：搜索看不到什么，搜了之后在结果下面用灰字说；以及列表不全。待主人审核。
-      unsearchable: (count) => `还有 ${count} 个会话没法搜索内容，结果可能不全`,
-      indexing: (done, total) => `正在建立搜索索引（${done}/${total}），结果可能不全`,
+      unsearchable: (count) => `还有 ${count} 个会话没法搜索内容`,
+      indexing: (done, total) => `正在建立搜索索引（${done}/${total}）`,
       listPartial: '部分会话没能读取，列表可能不全',
       history: '会话记录', importLabel: '导入', takeOverLabel: '接管', noMessages: '暂无消息', // NEW; action labels supplied by the owner
       clear: '清空搜索', more: '更多会话', openFailed: '会话没能打开。', takeoverLabel: '交给嘟嘟管理',
@@ -710,12 +734,19 @@ const zh = {
     computerName: '电脑名称', addresses: '连接地址', lan: '内网地址', lanCode: '为内网地址生成二维码', generate: '生成二维码', address: (n) => `连接地址 ${n}`,
     publicAddress: '公网地址', lanLabel: '内网', publicLabel: '公网', editPublicAddress: '编辑公网地址', edit: '编辑', removeRoute: '移除地址', // 2026-11-04 已审核连接设计
     removeAddress: (n) => `删除连接地址 ${n}`, remove: '删除', addAddress: '添加地址', save: '保存', saved: '已保存', devices: '已配对设备',
-    paired: (date) => `配对于 ${date}`, revoke: '撤销', noDevices: '暂无配对设备', scan: '打开嘟嘟扫码', close: '关闭', copied: '已复制', copyPairing: '复制配对链接',
+    paired: (date) => `配对于 ${date}`, revoke: '撤销', noDevices: '暂无配对设备', scan: '打开嘟嘟扫码', close: '关闭', copy: '复制', copied: '已复制', copyPairing: '复制配对链接',
     copyFailed: '复制失败，请扫码连接', expiry: '二维码 10 分钟内有效', pair: '配对手机', revokeQuestion: (name) => `撤销 ${name} 的连接？`, cancel: '取消', revokePairing: '撤销配对',
     providers: '供应商', state: '状态', enable: '启用', executable: '可执行文件路径', autoFind: '留空则自动查找', detect: '重新检测',
     providerStates: { ready: '可用', missing: '未找到', unsupported: '版本不受支持', broken: '无法运行' }, providerChip: (name) => `供应商：${name}`,
     env: '环境变量', // NEW (2026-11-23), see the English
     groupOn: '已启用', groupOff: '未启用',
+    // NEW (2026-11-27), see the English
+    guide: '连接指南', guideInstall: '安装嘟嘟手机 App',
+    guideInstallBefore: 'iOS 在 App Store 搜索「', guideAppName: 'Dudu-多智能体协作助手',
+    guideInstallAfter: '」，也可以通过 TestFlight 安装最新版；安卓从 GitHub Release 安装 apk。',
+    guideOpen: '打开嘟嘟，点「扫描配对码」', guideScan: '点右上角的「生成二维码」，用嘟嘟扫描',
+    guideNetwork: '手机和电脑在同一个网络时，用内网地址配对；不在同一个网络，请先在「连接地址」里添加公网地址。',
+    scanHint: '点「扫描配对码」，对准下面的二维码',
   },
 };
 

@@ -125,6 +125,78 @@ test('once-only jobs end after one claim, failed and ambiguous delivery are sepa
   } finally { await rejected.close(); }
 });
 
+test('a task records who made it from who calls, and only the ones a conversation made with its cron tools are dropped, once they have ended and their delivery is over', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-task-origin-'));
+  const file = join(folder, 'tasks.db');
+  let now = at;
+  const open = (deliver: any = async () => {}) => createTasks({ file, now: () => now, log: quiet, deliver });
+  const once = { kind: 'once', date: '2026-11-10', time: '09:00', timezone: 'Asia/Shanghai' };
+  let tasks = open();
+  try {
+    const make = async (context?: any, fields: any = {}) => (await tasks.execute('create', { fields: { ...base(), schedule: once, ...fields } }, context)).task;
+    const session = await make({ origin: 'session' });
+    const assistant = await make({ origin: 'assistant' });
+    const owner = await make();
+    const claimed = await make({ origin: 'owner' });
+    assert.deepEqual([session.origin, assistant.origin, owner.origin, claimed.origin], ['session', 'assistant', 'app', 'app'], 'a call that says nothing, or something else, is the interface');
+    assert.equal((await tasks.execute('create', { fields: { ...base(), origin: 'app' } }, { origin: 'session' })).code, 'invalid_task', 'a client cannot name its own origin');
+    const recurring = await make({ origin: 'session' }, { schedule: base().schedule });
+    now += 3600_000;
+    await tasks.tick(); await tasks.idle();
+    assert.equal((await tasks.execute('get', { id: session.id })).code, 'not_found', 'what a conversation made is gone once it has fired');
+    assert.equal((await tasks.execute('history', { id: session.id })).code, 'not_found');
+    for (const kept of [assistant, owner, claimed]) assert.equal((await tasks.execute('get', { id: kept.id })).task.status, 'ended', 'nobody else\'s ended task is dropped');
+    assert.equal((await tasks.execute('get', { id: recurring.id })).task.status, 'active', 'a recurring job has not ended');
+    await tasks.close();
+    const db = new DatabaseSync(file);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM task_runs WHERE task_id=?').get(session.id)!.n, 0, 'its runs went with it');
+    // What a process that stopped before it could drop the task left behind.
+    const left = (id: string, origin: string) => JSON.stringify({ ...base(), origin, id, revision: 1, status: 'ended', nextRunAt: null, sessionId: null, createdAt: at, updatedAt: at, schedule: once });
+    for (const [id, origin] of [['left-by-session', 'session'], ['left-by-owner', 'app']]) db.prepare('INSERT INTO tasks(id,body) VALUES(?,?)').run(id, left(id, origin));
+    db.close();
+    tasks = open();
+    assert.equal((await tasks.execute('get', { id: 'left-by-session' })).code, 'not_found', 'dropped when the plugin starts');
+    assert.equal((await tasks.execute('get', { id: 'left-by-owner' })).task.status, 'ended');
+  } finally { await tasks.close(); await rm(folder, { recursive: true, force: true }); }
+  // A delivery that did not go does not keep it either: nobody sees a hidden task, and the log has the reason.
+  const refusing = createTasks({ file: ':memory:', now: () => now, log: quiet, deliver: async () => { throw Object.assign(new Error('not sent'), { code: 'invalid_session', beforeSend: true }); } });
+  try {
+    now = at;
+    const task = (await refusing.execute('create', { fields: { ...base(), schedule: once } }, { origin: 'session' })).task;
+    now += 3600_000;
+    await refusing.tick(); await refusing.idle();
+    assert.equal((await refusing.execute('get', { id: task.id })).code, 'not_found');
+  } finally { await refusing.close(); }
+});
+
+test('a task a conversation made is dropped when it falls due and its conversation is gone, with no run made; the owner\'s task is not, and DSH\'s list says what is gone', async () => {
+  let now = at;
+  const gone = new Set(['deleted']);
+  const sent: string[] = [];
+  const tasks = createTasks({ file: ':memory:', now: () => now, log: quiet, gone: (task: any) => gone.has(task.target.sessionId), deliver: async (task: any) => { sent.push(task.target.sessionId); } });
+  try {
+    const into = (sessionId: string) => ({ ...base(), target: { mode: 'existing', sessionId } });
+    const lost = (await tasks.execute('create', { fields: into('deleted') }, { origin: 'session' })).task;
+    const there = (await tasks.execute('create', { fields: into('here') }, { origin: 'session' })).task;
+    const owners = (await tasks.execute('create', { fields: into('deleted') })).task;
+    now += 3600_000; await tasks.tick(); await tasks.idle();
+    assert.equal((await tasks.execute('get', { id: lost.id })).code, 'not_found', 'dropped before its firing');
+    assert.deepEqual(sent.sort(), ['deleted', 'here'], 'nothing was sent for it: only the owner\'s task and the one whose conversation is there');
+    assert.equal((await tasks.execute('get', { id: there.id })).task.status, 'active');
+    assert.equal((await tasks.execute('history', { id: owners.id })).runs.length, 1, 'the owner\'s task is never asked about: it fires and says what happens');
+    assert.equal((await tasks.execute('get', { id: owners.id })).task.status, 'active');
+  } finally { await tasks.close(); }
+  // What is gone: no workspace of DSH's registry lists the conversation (a live or an archived one is listed); a failing registry says nothing.
+  const listed = (list: () => any[]) => createTaskHost({ registry: { list }, controller: {}, agents: { get: () => undefined }, dsh: {} as any }).gone;
+  const into = (target: any) => ({ target });
+  const registry = () => [{ id: 'w', title: 'dudu', path: '/work/dudu', sessionIds: ['here'] }, { id: 'x', title: 'other', path: '/work/other', sessionIds: ['elsewhere'] }];
+  assert.equal(listed(registry)(into({ mode: 'existing', sessionId: 'here' })), false);
+  assert.equal(listed(registry)(into({ mode: 'existing', sessionId: 'elsewhere' })), false, 'in another workspace is still there');
+  assert.equal(listed(registry)(into({ mode: 'existing', sessionId: 'deleted' })), true);
+  assert.equal(listed(registry)(into({ mode: 'reuse' })), false, 'a task that names no conversation has none to lose');
+  assert.equal(listed(() => { throw new Error('not active'); })(into({ mode: 'existing', sessionId: 'here' })), false);
+});
+
 test('schedule edits reanchor intervals and history pagination and deletion preserve their own bounds', async () => {
   let now = at;
   const tasks = createTasks({ file: ':memory:', now: () => now, deliver: async () => {} });

@@ -37,7 +37,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.dudu.android.*
@@ -77,7 +76,7 @@ fun Panels(state: UiState, model: DuduViewModel) {
                     optionsFailed = true
                 }
             }
-            DuduSheet(model::dismissPanel, canDismiss = !state.busy && !pickerBusy,
+            DuduSheet(model::dismissPanel, canDismiss = !state.busy && !pickerBusy, showsConnectionToast = panel == Panel.Computers,
                 containerColor = if (panel == Panel.Create) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surfaceContainer) {
                 val picker = creationPicker
                 if (panel == Panel.Create && picker != null) {
@@ -90,35 +89,17 @@ fun Panels(state: UiState, model: DuduViewModel) {
                 } else {
                 Column(Modifier.fillMaxWidth().testTag("bottom-sheet")) {
                     if (panel == Panel.Create) {
-                        // The iPhone's bar: ✕ on the left, the title, and a round ✓ that turns into a spinner while the issue is made (owner, 2026-11-21: ✕ / ✓ instead of repeating 创建事项).
-                        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = model::dismissPanel, enabled = !state.busy, modifier = Modifier.testTag("close-sheet")) {
-                                Glyph(DuduGlyphs.close, stringResource(R.string.cancel), 20)
-                            }
-                            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                Text(stringResource(R.string.new_issue), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                            val canCreate = state.draft.valid && state.draft.status != null && state.options != null && state.connected && !state.busy
-                            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                                if (state.busy) RowSpinner(18)
-                                else Box(Modifier.size(32.dp).clip(CircleShape)
-                                    .background(if (canCreate) DuduStyle.blue else MaterialTheme.colorScheme.surfaceContainerHigh)
-                                    .clickable(enabled = canCreate) { createFailed = false; model.createIssue { createFailed = true } }
-                                    .semantics { contentDescription = createLabel; role = Role.Button }.testTag("create-issue"),
-                                    contentAlignment = Alignment.Center) {
-                                    Glyph(DuduGlyphs.check, null, 16, if (canCreate) Color.White else MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
+                        val canCreate = state.draft.valid && state.draft.status != null && state.options != null && state.connected && !state.busy
+                        FormSheetBar(stringResource(R.string.new_issue), model::dismissPanel, cancelEnabled = !state.busy,
+                            action = DuduGlyphs.check, actionLabel = createLabel, actionEnabled = canCreate, busy = state.busy, actionTag = "create-issue") {
+                            createFailed = false; model.createIssue { createFailed = true }
                         }
                     } else SheetHeader(when (panel) {
                         Panel.Computers -> stringResource(R.string.computers)
                         Panel.Quota -> stringResource(R.string.quota)
                         else -> ""
                     }, model::dismissPanel, !state.busy && !state.connectionInFlight, action = if (panel == Panel.Computers) { {
-                        IconButton(onClick = { model.navigate(Route("pair")) }, enabled = !state.connectionInFlight) {
-                            Glyph(DuduGlyphs.plus, w("添加电脑"), 22)
-                        }
+                        AddComputerButton(model, enabled = !state.connectionInFlight)
                     } } else null)
                     Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
                         .padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -127,14 +108,8 @@ fun Panels(state: UiState, model: DuduViewModel) {
                             Panel.Create -> IssueForm(state, model, optionsFailed, { optionsFailed = false; optionsRetry++ }, createFailed) { creationPicker = it }
                             else -> Unit
                         }
-                        // The new-issue form says its own failures in the iPhone's words (事项没能加载, 事项没能创建).
-                        if (state.problem != null && panel != Panel.Create) Text(problemText(state.problem),
-                            color = MaterialTheme.colorScheme.error, fontSize = 14.sp,
-                            modifier = Modifier.testTag("panel-error"))
                         Spacer(Modifier.height(12.dp))
                     }
-                    if (panel != Panel.Create && (state.busy || state.connecting)) LinearProgressIndicator(Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.secondary)
                     }
                 }
             }
@@ -280,7 +255,35 @@ private fun ParentChip(parent: Issue?, enabled: Boolean, open: () -> Unit, remov
     }
 }
 
-/** The new issue's title (17 sp semibold, up to four lines) or its description (16 sp, four to eight lines) on the sheet's grey, as the iPhone's fields. */
+/**
+ * The bar of a form that is a sheet, the iPhone's: ✕ on the left (named 取消), the title in the middle, and a round button on the right that turns into a spinner while the form goes (owner,
+ * 2026-11-21: ✕ / ✓ instead of repeating 创建事项). It is blue with a white glyph when `actionEnabled`, grey otherwise.
+ */
+@Composable
+private fun FormSheetBar(title: String, cancel: () -> Unit, cancelEnabled: Boolean, action: Int, actionLabel: String, actionEnabled: Boolean,
+    busy: Boolean, actionTag: String, perform: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = cancel, enabled = cancelEnabled, modifier = Modifier.testTag("close-sheet")) {
+            BarGlyph(DuduGlyphs.close, stringResource(R.string.cancel))
+        }
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+            if (busy) RowSpinner(18)
+            else Box(Modifier.size(32.dp).clip(CircleShape)
+                .background(if (actionEnabled) DuduStyle.blue else MaterialTheme.colorScheme.surfaceContainerHigh)
+                .clickable(enabled = actionEnabled, onClick = perform)
+                .semantics { contentDescription = actionLabel; role = Role.Button }.testTag(actionTag),
+                contentAlignment = Alignment.Center) {
+                Glyph(action, null, 16, if (actionEnabled) Color.White else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+/** The title and description fields use the same text sizes and line limits as the iPhone. */
 @Composable
 private fun NewIssueField(value: String, placeholder: String, enabled: Boolean, title: Boolean, modifier: Modifier = Modifier,
     changed: (String) -> Unit) {

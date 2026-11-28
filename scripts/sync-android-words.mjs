@@ -38,7 +38,12 @@ const pending = { '发送视频': 'Send video',
   // The phone's speech service has no microphone permission of its own while the app has (2026-11-21): whose it is, and where to give it.
   '请允许{0}使用麦克风，点这里打开设置。': 'Allow {0} to use the microphone. Tap here to open its settings.',
   // Notifications without Google's push service (owner, 2026-11-22: the Chinese approved, 「可以的」): the ongoing notification and the two notification categories.
-  '嘟嘟正在接收通知': 'Dudu is receiving notifications', '收集器通知': 'Collector notifications', '后台连接': 'Background connection' };
+  '嘟嘟正在接收通知': 'Dudu is receiving notifications', '收集器通知': 'Collector notifications', '后台连接': 'Background connection',
+  // The search page (owner, 2026-11-27): the Chinese is in the drawings he approved (`.local/designs/phone-search-2026-11-27/`), the English is the agent's.
+  '搜索历史': 'Search history', '常用': 'Frequently used', '没有匹配的内容': 'No matching results',
+  '输入关键词或使用筛选查找会话': 'Enter a keyword or use filters to find sessions',
+  '输入关键词或使用筛选查找信息': 'Enter a keyword or use filters to find information',
+  '输入关键词或使用筛选查找任务': 'Enter a keyword or use filters to find tasks' };
 Object.assign(words, pending);
 const src = new URL('native/android/app/src/main/java/app/dudu/android/', root);
 async function sources(directory) {

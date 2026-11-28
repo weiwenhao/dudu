@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { AsyncQueue, abortReason, deferred } from './async.mjs';
 import { assertDirectory, harnessError, manualCompactionError } from './harness-bridge.mjs';
@@ -10,11 +11,16 @@ import { OarResident } from './oar-resident.mjs';
 // replays, and the choices OAR leaves to its host (which tools a mode may use, which sandbox a mode gets).
 
 // A harness's models are read from the harness itself: a process of its own, and for most of them a trip to the vendor's servers.
-// What was read is served at once and read anew in the background once it is MODEL_TTL old; a harness that could not say is
-// asked again after RETRY_MS. Only the very first ask waits, and then at most FIRST_WAIT_MS: DSH's model catalog waits for every
-// harness at once, and one that cannot reach its servers takes about 24 s to give up (owner, 2026-11-24: the phone's catalog.get).
-const MODEL_TTL = 5 * 60_000;
+// What was read is kept for good (on disk, `modelCache`, so that a restart finds it) and served as it is, however old; ASKING for it never starts a reading, and neither does a session that
+// starts on the harness (owner, 2026-11-27: with Claude selected, a menu must not wake Codex or Antigravity; read anew only when a person asks). DSH's catalog asks every harness at once, whoever
+// asks (its first load, the phone, 嘟嘟's own lookups), and for Antigravity a reading is a conversation left in its own store (about two hundred a day, 745 in four days). A harness is read
+// when nothing is known of it yet (and again, after RETRY_MS and twice as long each time, while it cannot say), when it was updated (another version or path than the one that was read), and when
+// someone made the list stale on purpose (`refreshModels`: Settings > Providers > Detect, a changed setting).
+// Only the very first ask of a harness that has nothing kept waits, and then at most FIRST_WAIT_MS: DSH's model catalog waits for every harness at once, and one that cannot reach its servers takes
+// about 24 s to give up (owner, 2026-11-24: the phone's catalog.get).
 const RETRY_MS = 60_000;
+// A harness that cannot say is asked again after RETRY_MS, and after twice as long each time it fails again, never after more than this.
+const MAX_RETRY_MS = 60 * 60_000;
 const FIRST_WAIT_MS = 3_000;
 // DSH's client keeps the first model catalog it gets until it hears `llm/models-updated` (or reconnects), so a list that is read after the
 // answer it was given (the stand-in served to a first ask that ran out of patience, a new model) has to be announced (owner, 2026-11-24:
@@ -381,18 +387,22 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   }
   let unsubscribe = () => {};
   let stopping;
+  let held;
+  let holdTimer;
   let heldStep;
-  let yieldedStep = false;
-  const yieldForInput = () => {
-    if (finished || !held || foreground || yieldedStep) return;
-    // DSH claims next-step input only after the current adapter stream returns. Release this step, while
-    // retaining the native turn/process for its background notifications and the next admitted input.
-    events.push(heldStep ?? { type: 'step-end', reason: 'stop' });
+  const publishHeldStep = () => {
+    if (held.continuation) return;
+    held.continuation = deferred();
+    events.push({ ...(heldStep ?? { type: 'step-end', reason: 'stop' }), continuation: held.continuation.promise });
     heldStep = undefined;
-    yieldedStep = true;
+  };
+  const yieldForInput = () => {
+    if (!finished && held && !foreground) publishHeldStep();
   };
   async function close({ preserveBackground = false } = {}) {
     if (!finished) events.push({ type: 'turn-end', ok: false, error: harnessError('The turn was interrupted.', 'ABORTED') });
+    held?.continuation?.resolve(true);
+    held = undefined;
     finished = true;
     clearTimeout(holdTimer);
     signal?.removeEventListener('abort', onAbort);
@@ -401,10 +411,13 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     if (preserveBackground && resident.alive) resident.finishTurn();
     else await dispose();
   }
+  // A stop keeps the process for its background work, but only for a run somebody holds: the one that was kept for the next turn, or the one this call has handed out. A process made by
+  // this very call that is stopped before the call returns has no holder at all (the bridge gets nothing from a call that throws), and was left running until DSH exited.
+  let handedOut = false;
   function interrupt() {
     return stopping ??= (async () => {
       if (!finished) await session.abort().catch(() => {});
-      await close({ preserveBackground: true });
+      await close({ preserveBackground: reused || handedOut });
     })();
   }
   function onAbort() { void interrupt(); }
@@ -413,6 +426,8 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     finished = true;
     clearTimeout(holdTimer);
     signal?.removeEventListener('abort', onAbort);
+    held?.continuation?.resolve(!event.ok);
+    held = undefined;
     if (event.ok && heldStep) events.push(heldStep);
     heldStep = undefined;
     events.push(event);
@@ -424,9 +439,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
   // answered by a turn of its own once this one ends. Such a message is tracked until the harness shows it picked it up.
   const waiting = new Set();
   const forwarded = new Set();
-  let held;
-  let holdTimer;
-  const release = () => { clearTimeout(holdTimer); const event = held; held = undefined; if (event) finish(event); };
+  const release = () => { if (held) finish(held.end); };
   const read = (record) => {
     if (finished) return;
     // Native children and background commands can finish after the root's first answer. Keep both the process and
@@ -448,21 +461,23 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
       || (record.kind === 'response' && record.body?.kind === 'exited'))) {
       clearTimeout(holdTimer);
       holdTimer = undefined;
+      held.continuation?.resolve(true);
       held = undefined;
       normalizer.reopen();
       setForeground(true);
-      if (heldStep) events.push({ type: 'text-delta', text: '\n\n' });
       heldStep = undefined;
     }
     for (const event of normalizer.feed(record)) {
-      // A tool-free final step also stops DSH's loop. Defer that boundary together with the root end while
-      // native work runs, so DSH keeps its stop control and never reports a completed parent prematurely.
+      // See the native outcome before committing the answer. On success DSH stores the step first and
+      // waits at agent/turn-stopping, so file references are usable while the native process keeps working.
       if (event.type === 'step-end' && event.reason === 'stop' && hasWork()) { heldStep = event; continue; }
       if (event.type !== 'turn-end') { events.push(event); continue; }
       if (event.ok && (waiting.size > 0 || hasWork())) {
-        held = event;
-        yieldedStep = false;
-        if (hasWork()) setForeground(false);
+        held = { end: event };
+        if (hasWork()) {
+          setForeground(false);
+          if (heldStep) publishHeldStep();
+        }
         clearTimeout(holdTimer);
         holdTimer = hasWork() ? undefined : setTimeout(release, followUpMs);
       }
@@ -541,6 +556,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
     throw harnessError(`${name} did not take the message: ${outcome.reason}`, 'HARNESS_REJECTED');
   }
 
+  handedOut = true;
   return {
     resident,
     team: resident.team,
@@ -578,7 +594,7 @@ export async function startOarRun({ runtime, installation, sessionOptions, promp
  * A harness provider on an OAR runtime. `session` returns what is specific to the harness in the options of one OAR
  * session (environment, tool limits, launch arguments) from the DSH access mode.
  */
-export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, steering = true, quota, childUsage, backgroundTasks = true, defaultEnabled = true, folds = false }) {
+export function createOarProvider({ id, name, runtime, runtimeFor, installation: installationOf, binaryEnv, tools, fallbackTool, login, normalizer, fallbackModels, scrub, session: sessionFor, before, queuesSteer, steering = true, quota, childUsage, backgroundTasks = true, defaultEnabled = true, folds = false, listingInFolder = false, listingCleanup, modelsMark }) {
   const known = new Set(tools.map((tool) => tool.name));
   const environment = (extra) => ({ ...scrubbedEnvironment(scrub.patterns, scrub), ...extra });
 
@@ -603,7 +619,7 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
       return { state: 'missing', reason: override ? `${override} is not an executable file.` : `${name} was not found.` };
     },
 
-    create({ installation, env: own = () => ({}), modelsChanged }) {
+    create({ installation, env: own = () => ({}), modelsChanged, listingFolder, modelCache }) {
       // A harness whose runtime depends on what was found (Pi: the command OAR launches) builds it from the detection.
       const active = runtimeFor ? runtimeFor(installation) : runtime;
       // The owner's variables for this harness (Settings > Providers), read anew for every process; what dudu itself sets for a session comes after them.
@@ -612,6 +628,9 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
       let loaded;
       let loading;
       let generation = 0;
+      let failures = 0; // readings in a row that could not say
+      const version = text(installation?.version);
+      const command = text(installation?.command);
       // The list DSH was last given (`listModels`): a reading that ends with another one says so (`modelsChanged`).
       let handedOut;
       const readModels = () => {
@@ -619,15 +638,37 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
         const mine = generation;
         const run = (async () => {
           let models;
-          try {
-            const listed = await active.listModels(installation, { env: environmentOf(), cwd: homedir(), timeoutMs: 30_000 });
-            if (listed.kind === 'ok') models = listed.models.filter((model) => !model.disabled);
-          } catch { /* the fallback below */ }
+          const began = Date.now();
+          // What the harness can say cheaply of its models (`modelsMark`: for Antigravity `agy models`, which makes no conversation) is checked first: if it is what it was when they were last read in full
+          // (and the harness is the same version), those are still its models and no session is started for them.
+          let mark = null;
+          try { mark = (await modelsMark?.({ installation, env: environmentOf() })) ?? null; } catch { /* read in full */ }
+          const kept = mark && modelCache ? await modelCache.get(id).catch(() => undefined) : undefined;
+          const reuse = mark && kept && kept.mark === mark && kept.version === version && kept.command === command;
+          if (reuse) models = kept.models.filter((model) => !model.disabled);
+          else {
+            // A folder of its own, so that what a harness leaves behind of a reading (Antigravity: an empty conversation) belongs to no one's work, and is told from it.
+            let cwd = homedir();
+            const own = listingInFolder ? listingFolder : undefined;
+            if (own) { try { await mkdir(own, { recursive: true, mode: 0o700 }); cwd = own; } catch { /* the home folder, as before */ } }
+            try {
+              const listed = await active.listModels(installation, { env: environmentOf(), cwd, timeoutMs: 30_000 });
+              if (listed.kind === 'ok') models = listed.models.filter((model) => !model.disabled);
+            } catch { /* the fallback below */ }
+            if (cwd === own) { try { await listingCleanup?.({ env: environmentOf(), folder: cwd, since: began }); } catch { /* what is left stays for the next reading to clear */ } }
+          }
           // Settings changed while it was being read (a proxy, a path): this answer belongs to the old ones.
           if (mine !== generation) return;
-          if (models?.length) loaded = { until: Date.now() + MODEL_TTL, models, read: true };
+          if (models?.length) {
+            if (!reuse && modelCache) void modelCache.set(id, { mark: mark ?? '', version, command, models });
+            failures = 0;
+            loaded = { until: 0, models, read: true };
+          }
           // A harness that cannot say keeps what it said before.
-          else loaded = { until: Date.now() + RETRY_MS, models: loaded?.read ? loaded.models : fallbackModels, read: loaded?.read === true };
+          else {
+            failures += 1;
+            loaded = { until: Date.now() + Math.min(MAX_RETRY_MS, RETRY_MS * 2 ** (failures - 1)), models: loaded?.read ? loaded.models : fallbackModels, read: loaded?.read === true };
+          }
           if (handedOut && modelsSignature(handedOut) !== modelsSignature(loaded.models)) {
             handedOut = loaded.models;
             try { modelsChanged?.(); } catch { /* DSH asks again on its own, sooner or later */ }
@@ -639,7 +680,13 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
       // `toDsh`: the answer goes to DSH, which keeps it (noted at the moment it is given, before a reading that ends right after can be compared with it).
       const load = async ({ toDsh = false } = {}) => {
         const give = (models) => { if (toDsh) handedOut = models; return models; };
-        if (loaded && Date.now() < loaded.until) return give(loaded.models);
+        // A restart finds what was read before, if the harness is the one that was read (the same version, at the same path): it is not read again.
+        if (!loaded && modelCache) {
+          const kept = await modelCache.get(id).catch(() => undefined);
+          if (!loaded && kept && kept.version === version && kept.command === command) loaded = { until: 0, models: kept.models.filter((model) => !model.disabled), read: true };
+        }
+        // What the harness said stands, however old, until someone makes it stale on purpose; a harness that has said nothing yet is asked again when its wait is over.
+        if (loaded && !loaded.stale && (loaded.read || Date.now() < loaded.until)) return give(loaded.models);
         const reading = readModels();
         // Stale, or given up on waiting for: say what is known, the new reading is there for the next ask.
         if (loaded) return give(loaded.models);
@@ -678,8 +725,9 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
         /** What the harness offers may have changed (a new model, a login, a proxy): the list is read anew on the next ask, and until it is there the old one is served. */
         refreshModels() {
           generation += 1;
+          failures = 0;
           loading = undefined;
-          if (loaded) loaded = { ...loaded, until: 0 };
+          if (loaded) loaded = { ...loaded, stale: true };
         },
         /** Starts reading the models now, in the background, so that the first menu that asks does not wait for them. */
         warmModels() { load().catch(() => {}); },

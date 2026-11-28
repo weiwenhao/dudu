@@ -3,7 +3,8 @@
 //
 //   projectFolder   where the owner's Markdown files live; null means the default folder
 //   pet             what the pet may do: { enabled, doubleSpace, voice }
-//   deepSleep       whether an idle agent, or one whose run finished, that nobody has handled for half an hour is put into deep sleep (sessions/deep-sleep.mjs); on unless turned off
+//   deepSleep       whether an idle agent, or one whose run finished, that nobody has handled for half an hour is put into deep sleep (sessions/deep-sleep.mjs); on unless turned off; the same switch
+//                   lets go of the harness process of a conversation that is no issue's after the same waits (home/deep-sleep.mjs)
 //   views           the display options and filters of each tab of the Issues widget, as the page keeps them
 //
 // Only a missing file uses defaults. An unreadable or invalid existing file fails without moving or rewriting it.

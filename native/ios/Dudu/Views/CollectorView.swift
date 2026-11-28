@@ -193,21 +193,12 @@ struct CollectorView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityIdentifier("collector.loading")
         case .failed:
-            VStack(spacing: 14) {
-                Text(L10n.text("信息没能加载"))
-                    .font(.system(size: 15))
-                    .foregroundStyle(DuduStyle.muted)
-                Button { Task { await model.refresh(using: store) } } label: {
-                    Text(L10n.text("重试"))
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(DuduStyle.ink)
-                        .padding(.horizontal, 20)
-                        .frame(height: 44)
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(DuduGlassCapsuleButtonStyle())
+            ListLoadFailure(message: L10n.text("信息没能加载"), retryIdentifier: "collector.retry") {
+                Task { await model.refresh(using: store) }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The inbox tabs end six points below the board's filter bar.
+            .padding(.top, quickSheet == nil ? 74 : 0)
+            .frame(maxHeight: .infinity, alignment: quickSheet == nil ? .top : .center)
         case .loaded:
             if model.items.isEmpty {
                 Text(L10n.text("没有信息"))
@@ -379,6 +370,9 @@ struct CollectorRow: View {
     let selected: Bool
     /// Its context is being filled in (`CollectorModel.complete`): a small spinner stands before the time, as on the desktop's row.
     var completing = false
+    /// A row of the search page: the words that were looked for are marked, and a line of the text that matched stands in place of who it is from.
+    var terms: [String] = []
+    var snippet: String? = nil
 
     /// A handled record that went to an issue is the issue's: nothing to choose it for.
     private var choosable: Bool { tab != .done || record.issue == nil }
@@ -397,7 +391,7 @@ struct CollectorRow: View {
                             .strokeBorder(selected ? DuduStyle.blue : Color(white: 0.77), lineWidth: 1.5)
                             .background(Circle().fill(selected ? DuduStyle.blue : Color.clear))
                             .overlay {
-                                if selected { DuduIcon(.check, size: 13, strokeWidth: 3.2).foregroundStyle(.white) }
+                                if selected { DuduFilterTick() }
                             }
                     }
                 }
@@ -408,13 +402,13 @@ struct CollectorRow: View {
             ConnectorAvatar(icon: record.connectorIcon, name: record.connectorName, size: 44)
                 .modifier(ConversationAvatarStatus(state: record.unread == true ? .unread : .idle, size: 44, roundedSquare: true))
             VStack(alignment: .leading, spacing: 3) {
-                Text(record.title)
+                SearchText.marked(record.title, terms: terms)
                     .font(.system(size: 16, weight: .medium))
                     .lineSpacing(2)
                     .foregroundStyle(DuduStyle.ink)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                Text(record.byLine)
+                SearchText.marked(snippet.flatMap { $0.isEmpty ? nil : $0 } ?? record.byLine, terms: terms)
                     .font(.system(size: 13))
                     .foregroundStyle(DuduStyle.muted)
                     .lineLimit(1)
@@ -629,7 +623,7 @@ struct SimulatorCollectorRecordReview: View {
 }
 #endif
 
-private struct CollectorRecordSheet: View {
+struct CollectorRecordSheet: View {
     let record: CollectorRecord
     let tab: CollectorTab
     @ObservedObject var model: CollectorModel

@@ -106,7 +106,7 @@ final class SessionSearchModel: ObservableObject {
             guard requestID == loadID, !Task.isCancelled else { return }
             if let failure = error as? DuduFailure, case let .remote(code) = failure,
                ["UNSUPPORTED", "METHOD_NOT_ALLOWED"].contains(code) {
-                self.error = L10n.text("请先在电脑上更新 Dudu 插件，再使用此功能。")
+                self.error = L10n.text("请更新电脑端的 Dudu 插件")
             } else {
                 self.error = (error as? DuduFailure ?? .connectionFailed).localizedDescription
             }

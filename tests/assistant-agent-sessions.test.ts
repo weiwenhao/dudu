@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAgentSessions, stateFrom } from '../host/assistant/home/agent-sessions.mjs';
 import { approvalText, createDshSessions, outcomeOf } from '../host/assistant/home/dsh-sessions.mjs';
+import { handledAtOf } from '../host/assistant/sessions/deep-sleep.mjs';
 import { fakeDsh as baseDsh } from './fake-dsh.mjs';
 
 // The sessions of issues: agent-sessions.mjs over a stand-in for DSH's adapter (what DSH itself does is tried in a real DSH by
@@ -277,24 +278,32 @@ test('what the owner says to a session that is not waiting starts its next turn;
 
 test('closing folds the session away, resuming puts it back, and speaking to a closed one reopens it', async () => {
   const world = fakeDsh();
-  const { sessions } = await startOne(world);
+  let clock = 1_000;
+  const sessions = createAgentSessions({ dsh: world.dsh, log: quiet, now: () => clock });
+  assert.equal((await sessions.start({ agent: 'deepseek', firstMessage: 'Do the thing.', cwd: folder })).outcome, 'success');
+  clock = 2_000;
   world.say.status('s1', true);
   world.say.turnEnd('s1', { kind: 'completed' });
   world.say.status('s1', false);
 
+  clock = 3_000;
   assert.deepEqual(await sessions.close('dsh:s1'), { outcome: 'success', key: 'dsh:s1' });
   assert.equal(sessions.snapshotOf('dsh:s1')!.closed, true);
   assert.equal((await sessions.close('dsh:s1')).outcome, 'no_op');
   assert.equal(sessions.reader.list().length, 0, 'a closed session is not on the list of what is followed');
   assert.deepEqual(await sessions.resume('dsh:s1'), { outcome: 'success', key: 'dsh:s1', sessionId: 's1', workspaceId: 'ws-of-s1' }, 'and the session identity and workspace needed to open it');
+  assert.equal(handledAtOf(sessions.snapshotOf('dsh:s1')), 2_000, 'restoring a folded session preserves its sleep timer');
   const open = await sessions.resume('dsh:s1');
   assert.deepEqual([open.outcome, open.workspaceId], ['no_op', 'ws-of-s1']);
+  assert.equal(handledAtOf(sessions.snapshotOf('dsh:s1')), 2_000, 'opening it again preserves its sleep timer');
   assert.equal(sessions.snapshotOf('dsh:s1')!.closed, false);
 
+  clock = 4_000;
   await sessions.close('dsh:s1');
   await sessions.send('dsh:s1', 'one more thing');
   assert.deepEqual(world.calls.filter(([name]) => name === 'unarchive' || name === 'prompt').slice(-2).map(([name]) => name), ['unarchive', 'prompt'], 'back in the sidebar before it is spoken to');
   assert.equal(sessions.snapshotOf('dsh:s1')!.closed, false);
+  assert.equal(sessions.snapshotOf('dsh:s1')!.touchedAt, 4_000, 'sending a message resets the sleep timer');
   assert.equal((await sessions.resume('claude:abc')).outcome, 'needs_clarification');
   // A session that is not followed here, and not folded away either, is where it should be.
   assert.equal((await sessions.resume('dsh:elsewhere')).outcome, 'no_op');
@@ -330,12 +339,15 @@ test('after a restart a session is followed again from what DSH stored of it, an
     ['cut', { last: 'aborted', at: 3000 }],
   ]);
   const world = fakeDsh({ turns });
-  const sessions = createAgentSessions({ dsh: world.dsh, log: quiet });
+  world.archived.add('cut');
+  const sessions = createAgentSessions({ dsh: world.dsh, log: quiet, now: () => 10_000 });
   const heard: unknown[] = [];
   sessions.onChange((change: unknown) => heard.push(change));
   assert.deepEqual(await sessions.adopt('dsh:done', { agent: 'claude', cwd: folder }), { outcome: 'success', key: 'dsh:done', state: 'finished' });
   assert.equal((await sessions.adopt('dsh:broke')).state, 'error');
-  assert.equal((await sessions.adopt('dsh:cut')).state, 'stopped');
+  assert.equal((await sessions.resume('dsh:cut')).outcome, 'success');
+  assert.equal(sessions.stateOf('dsh:cut'), 'stopped');
+  assert.equal(handledAtOf(sessions.snapshotOf('dsh:cut')), 3_000, 'reopening after restart uses the stored turn time');
   assert.equal((await sessions.adopt('dsh:never-ran')).state, 'idle', 'a session DSH has no turn of');
   assert.equal(sessions.snapshotOf('dsh:broke')!.error, 'the model refused');
   assert.equal(sessions.snapshotOf('dsh:done')!.ending, 'all done');

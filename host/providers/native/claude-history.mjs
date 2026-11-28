@@ -63,8 +63,18 @@ export function turnsOf(records) {
   const turns = [];
   let turn;
   let step;
+  // What the person typed while Claude worked (`input` records): Claude Code hands it over with its next request, so it belongs to the step that follows. One that nothing followed
+  // is kept as a step of its own, which holds only the message.
+  let input;
+  const flushInput = () => {
+    if (input && turn) turn.steps.push({ at: input.at, input: input.value, blocks: [], calls: [] });
+    input = undefined;
+  };
   for (const record of records) {
-    if (record.type === 'end') {
+    if (record.type === 'input') {
+      if (turn) { flushInput(); input = { at: record.at, value: { id: record.uuid, prompt: record.prompt, ...(record.pictures ? { pictures: record.pictures } : {}), ...(record.parts ? { parts: record.parts } : {}) } }; }
+    } else if (record.type === 'end') {
+      flushInput();
       if (turn) { turn.complete = true; turn.endedAt = record.at; }
     } else if (record.type === 'user') {
       const results = record.blocks.filter((block) => block.type === 'tool_result');
@@ -73,6 +83,7 @@ export function turnsOf(records) {
         continue;
       }
       if (record.prompt === undefined) continue;
+      flushInput();
       if (turn?.complete === false) { turn.complete = true; turn.interrupted = true; }
       turn = {
         id: record.uuid,
@@ -86,6 +97,7 @@ export function turnsOf(records) {
       turn.endedAt = record.at;
       if (!step || step.messageId !== record.messageId) {
         step = { messageId: record.messageId, at: record.at, model: record.model, blocks: [], calls: [] };
+        if (input) { step.input = input.value; input = undefined; }
         turn.steps.push(step);
       }
       step.at = Math.max(step.at, record.at);
@@ -98,6 +110,7 @@ export function turnsOf(records) {
       if (record.usage) step.usage = record.usage;
     }
   }
+  flushInput();
   return turns;
 }
 
@@ -118,9 +131,25 @@ export async function readClaudeHistory({ file, id, results = true, images = fal
       if (start.startsWith('{"type":"ai-title"')) aiTitle = parse(line)?.aiTitle ?? aiTitle;
       else if (start.startsWith('{"type":"custom-title"')) customTitle = parse(line)?.customTitle ?? customTitle;
       else if (!start.startsWith('{"type":"user"') && !start.startsWith('{"type":"assistant"') && !start.startsWith('{"type":"system"')) continue;
-    } else if (!line.includes('"type":"assistant"') && !line.includes('"type":"user"') && !line.includes('"type":"system"')) continue;
+    } else if (!line.includes('"type":"assistant"') && !line.includes('"type":"user"') && !line.includes('"type":"system"') && !line.includes('"type":"queued_command"')) continue;
     const record = parse(line);
     if (!record || record.isSidechain) continue;
+    // A message typed while Claude works is not a `user` record: Claude Code writes it as an attachment of the next request, and says in `queue-operation` that it was absorbed mid-turn.
+    if (record.type === 'attachment' && record.attachment?.type === 'queued_command') {
+      const content = record.attachment.prompt;
+      const prompt = promptText(content);
+      const at = Date.parse(record.timestamp);
+      if (prompt || picturesOf(content).length) {
+        const entry = { uuid: record.uuid, type: 'input', at: Number.isNaN(at) ? createdAt ?? Date.now() : at, prompt };
+        const pictures = picturesOf(content);
+        if (pictures.length) {
+          entry.pictures = pictures.length;
+          if (images) entry.parts = promptParts(pictures, prompt, budget);
+        }
+        kept.push(entry);
+      }
+      continue;
+    }
     if (record.type === 'system' && record.subtype === 'turn_duration') {
       kept.push({ type: 'end', at: Date.parse(record.timestamp) });
       continue;

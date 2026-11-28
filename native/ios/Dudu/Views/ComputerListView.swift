@@ -22,21 +22,26 @@ struct ComputerListView: View {
                 if store.activeComputer != nil {
                     Button {
                         DuduLog.record("computer.reconnect")
-                        Task { await store.reconnect() }
+                        Task {
+                            await store.reconnect()
+                            if let failure = store.connectionFailure {
+                                TopToast.shared.showConnectionFailure(failure.localizedDescription)
+                            }
+                        }
                     } label: {
                         HStack(spacing: 12) {
-                            DuduIcon(.reconnect)
-                                .foregroundStyle(DuduStyle.ink)
-                                .frame(width: 28)
+                            Group {
+                                if store.status == .connecting {
+                                    ProgressView().controlSize(.small).tint(DuduStyle.muted)
+                                } else {
+                                    DuduIcon(.reconnect).foregroundStyle(DuduStyle.ink)
+                                }
+                            }
+                            .frame(width: 28)
                             Text(store.status == .connecting ? L10n.text("正在连接…") : L10n.text("重新连接"))
                                 .font(.system(size: 15, weight: .medium))
                                 .foregroundStyle(DuduStyle.ink)
                             Spacer()
-                            if store.status == .connecting {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .tint(DuduStyle.muted)
-                            }
                         }
                         .padding(.horizontal, 14)
                         .frame(minHeight: 58)
@@ -81,6 +86,7 @@ struct ComputerListView: View {
                         .contentShape(Circle())
                 }
                 .accessibilityLabel(L10n.text("添加电脑"))
+                .buttonBorderShape(.circle)
                 .accessibilityIdentifier("computers.add")
             }
             if onClose != nil {
@@ -95,8 +101,8 @@ struct ComputerListView: View {
             }
         }
         .navigationDestination(isPresented: $isPairingPresented) {
-            PairingView(store: store, embeddedInSettings: true, showsCancelButton: false)
-                .hidesTabBarWhenPushed()
+            // Adding another computer is the connection guide again (owner, 2026-11-27, option A): the steps, scan and paste, and a way back.
+            ConnectionGuideView(store: store, mode: .adding)
         }
         .navigationDestination(isPresented: $showsConnectionDetails) {
             if let detailComputerID { ComputerConnectionView(store: store, computerID: detailComputerID).hidesTabBarWhenPushed() }

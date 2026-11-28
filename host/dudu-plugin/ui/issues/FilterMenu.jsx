@@ -12,7 +12,7 @@ const ISSUES = { fields: FILTER_FIELDS, rows: FILTER_ROWS, groups: FILTER_GROUPS
 
 const Kbd = ({ children }) => <kbd className="ml-auto rounded border bg-muted px-1.5 text-xs text-muted-foreground">{children}</kbd>;
 
-function CheckBox({ on }) {
+export function CheckBox({ on }) {
   return on
     ? <span className="flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-primary bg-primary text-primary-foreground shadow-xs"><Check className="size-3.5" aria-hidden="true" /></span>
     : <span className="size-4 shrink-0 rounded-[4px] border border-input shadow-xs dark:bg-input/30" />;

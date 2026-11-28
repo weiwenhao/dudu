@@ -19,7 +19,8 @@ struct StreamingReplyText: View {
                         SettledReply(text: prepared.parts.settled, content: settled, sourceSequence: sourceSequence).equatable()
                     }
                     if let tail = prepared.tail {
-                        MessageMarkdown(text: prepared.parts.tail, allowsTextSelection: false, sourceSequence: sourceSequence, content: tail)
+                        MessageMarkdown(text: prepared.parts.tail, allowsTextSelection: false, sourceSequence: sourceSequence,
+                                        waitsForSourceSequence: true, content: tail)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -46,7 +47,7 @@ private struct SettledReply: View, Equatable {
     }
 
     var body: some View {
-        MessageMarkdown(text: text, allowsTextSelection: false, sourceSequence: sourceSequence, content: content)
+        MessageMarkdown(text: text, allowsTextSelection: false, sourceSequence: sourceSequence, waitsForSourceSequence: true, content: content)
     }
 }
 

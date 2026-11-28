@@ -33,6 +33,46 @@ export function pickModel(catalog, preferred) {
 
 const textOf = (content) => (typeof content === 'string' ? content : String(content ?? ''));
 
+/**
+ * The models DSH has on its plain routes (DeepSeek's): all that 嘟嘟's own work chooses from, in the shape of DSH's catalog. DSH's `modelCatalog()` asks every route, the harnesses too (Claude,
+ * Codex, Antigravity...): each answer is a process that may be started for nothing, for Antigravity a conversation left in its own store, and one that cannot reach its servers takes 24 s
+ * and holds the whole answer back. So what 嘟嘟 asks for itself it asks of the plain routes only (owner, 2026-11-27: 「嘟嘟自己的查询模型列表的时候只问 deepseek 那几家」). A DSH that cannot be
+ * asked route by route gives its catalog, without the harnesses.
+ */
+export async function duduCatalog(ctx) {
+  const read = (name) => { try { return ctx[name]; } catch { return undefined; } }; // reading a service the plugin did not ask for throws
+  const llm = read('llm');
+  if (typeof llm?.listProviders !== 'function' || typeof llm?.listModels !== 'function' || typeof llm?.resolveModelInfo !== 'function') {
+    const controller = read('sessionController');
+    if (!controller) throw new Error('This DSH has no sessionController service.');
+    const catalog = await controller.modelCatalog();
+    return { ...catalog, groups: (catalog?.groups ?? []).filter((group) => !HARNESS.has(group?.id)) };
+  }
+  const groups = [];
+  for (const provider of llm.listProviders().filter((candidate) => !HARNESS.has(candidate.id))) {
+    try {
+      const models = await llm.listModels(provider.id);
+      const entries = await Promise.all(models.map(async (model) => {
+        const resolved = await llm.resolveModelInfo(provider.id, model.id);
+        return {
+          id: model.id, name: model.name,
+          ...(model.description === undefined ? {} : { description: model.description }),
+          ...(resolved?.reasoning === undefined ? {} : {
+            reasoning: {
+              efforts: resolved.reasoning.efforts.map((effort) => ({ id: effort.id, name: effort.name, ...(effort.description === undefined ? {} : { description: effort.description }) })),
+              ...(resolved.reasoning.defaultEffort === undefined ? {} : { defaultEffort: resolved.reasoning.defaultEffort }),
+            },
+          }),
+          ...(model.badge === undefined ? {} : { badge: model.badge }),
+        };
+      }));
+      if (entries.length) groups.push({ id: provider.id, name: provider.name, models: entries });
+    } catch { /* a route that cannot say is left out, as DSH's own catalog leaves it */ }
+  }
+  const selection = read('agentDefaultModel')?.currentSelection?.();
+  return { ...(selection ? { default: { ...selection } } : {}), routableProviders: groups.map((group) => group.id), groups, failures: [] };
+}
+
 export function createDshLlm(ctx) {
   const service = (name) => {
     let found;
@@ -42,7 +82,7 @@ export function createDshLlm(ctx) {
   };
 
   return async function llm(messages, { signal } = {}) {
-    const picked = pickModel(await service('sessionController').modelCatalog());
+    const picked = pickModel(await duduCatalog(ctx));
     if (!picked) throw new Error('This DSH has no model to ask.');
     const system = [...messages.filter((message) => message.role === 'system').map((message) => textOf(message.content)), PERSONAL_IDENTITY].join('\n\n');
     const asked = messages.filter((message) => message.role !== 'system').map((message) => ({ role: 'user', content: [{ type: 'text', text: textOf(message.content) }] }));

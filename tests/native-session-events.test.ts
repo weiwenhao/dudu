@@ -111,7 +111,7 @@ test('what was said is recorded the way DSH records it, naming the harness sessi
   assert.deepEqual(title.data, { title: 'A session', messageSeqs: [], source: { kind: 'user' } });
 });
 
-test('a tool call is followed by its result, which DSH draws from the output and the data', () => {
+test('a tool call is followed by its result: its text is the message, and the data it came with rides in meta', () => {
   const { events } = build();
   const call = events.find((event: any) => event.type === 'tool/call');
   const result = events.find((event: any) => event.type === 'tool/result');
@@ -120,7 +120,8 @@ test('a tool call is followed by its result, which DSH draws from the output and
   assert.deepEqual(result.sourceEventSeqs, [call.seq]);
   assert.deepEqual(result.data.message.content, [{ type: 'text', text: 'a\nb' }]);
   assert.equal(result.data.message.isError, false);
-  assert.deepEqual(result.data.meta, { output: 'a\nb', data: { exitCode: 0 } });
+  // The output is not kept twice (2026-11-18): the message holds it, and `meta` only what the card needs besides.
+  assert.deepEqual(result.data.meta, { data: { exitCode: 0 } });
 });
 
 test('a call whose result was never recorded gets an empty one, and event times only move forward', () => {

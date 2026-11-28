@@ -1,0 +1,8 @@
+/* The search page of the conversation list (search/SearchPage.jsx). Its rows are the list's own (conversations.css): the other places' rows are lower and have their own copy; a conversation found by the text of
+   the conversation shows that text, up to two lines, in place of its last message, and the row grows with it. Scoped by the client build. */
+.dudu-conversation-row[data-search-row="record"],.dudu-conversation-row[data-search-row="task"] { height: 52px; }
+.dudu-conversation-row[data-search-row="record"] { gap: 10px; }
+.dudu-conversation-row[data-search-row="record"] .dudu-conversation-row-copy,.dudu-conversation-row[data-search-row="task"] .dudu-conversation-row-copy { gap: 0; }
+.dudu-conversation-row[data-snippet] { height: auto; min-height: 64px; align-items: flex-start; padding-top: 9px; padding-bottom: 9px; }
+.dudu-conversation-row[data-snippet] .dudu-conversation-row-preview { height: auto; align-items: flex-end; }
+.dudu-conversation-row[data-snippet] .dudu-conversation-row-preview > .dudu-conversation-summary { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; line-height: 17px; }

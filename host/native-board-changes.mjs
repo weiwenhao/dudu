@@ -3,10 +3,14 @@
 //
 // It sends nothing itself: `send(revision)` puts one small event on the phones' held connections (native-server.mjs, `broadcast`), and a phone that gets it reads the board again.
 // A burst of changes is one event: the first change starts a short wait, everything that happens inside it is the same event, and two events are never closer than `minGapMs`.
+//
+// `shown(sessionId)` says whether the board can show a session at all. A collector's own conversation is on no board, yet it takes a turn every collection, and each turn used to be told
+// as a change: with three collectors that was a silent push to the phone about every three minutes, day and night (`wake.jsonl`: 340 to 400 a day, where Apple asks for two or three an
+// hour), and the App read the whole board each time it woke for nothing.
 
 import { activityRevision } from './assistant/sessions/session-state.mjs';
 
-export function createBoardChanges({ send, delayMs = 120, minGapMs = 400, now = Date.now }) {
+export function createBoardChanges({ send, delayMs = 120, minGapMs = 400, now = Date.now, shown = () => true }) {
   let timer;
   let lastSentAt = -Infinity;
   let revision = 0;
@@ -33,6 +37,7 @@ export function createBoardChanges({ send, delayMs = 120, minGapMs = 400, now = 
      * compared with what it said the last time, so that the many events of a running turn that change nothing a phone shows are not told.
      */
     sessionChanged(id, attention) {
+      if (!shown(id)) return;
       const mark = `${activityRevision(attention)}:${attention?.pending?.seq ?? -1}`;
       if (seen.get(id) === mark) return;
       seen.set(id, mark);

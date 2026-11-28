@@ -11,6 +11,7 @@ import { renderPairingSvg } from './qr.mjs';
 import { createWebPageHttp } from './web-page-http.mjs';
 import { createNativeNotifications } from './native-notifications.mjs';
 import { createBoardChanges } from './native-board-changes.mjs';
+import { isIntakeSession } from './assistant/home/intake-session.mjs';
 import { createBoardWake } from './native-board-wake.mjs';
 import { createWakeLog } from './wake-log.mjs';
 import { understands } from './native-client.mjs';
@@ -36,6 +37,8 @@ export async function createDuduControl({
   duduPages,
   // The providers' foreground watch (`backgroundOnly`, `onChange`): a harness turn open only for its background work.
   foreground,
+  // How a message from the phone goes in, queued or steered (`modeOf(sessionId)`, native-submit-mode.mjs).
+  submission,
   collectorNotifications,
   collectorNotificationsEnabled,
   runRequest,
@@ -84,6 +87,7 @@ export async function createDuduControl({
   const lanAddress = () => connectionAddress(`http://${resolveLanAddress()}:${server.port}`);
   // "The board changed", told to the phones that declared `board.push` as soon as it does, instead of waiting for their next poll (native-board-changes.mjs).
   const boardChanges = createBoardChanges({
+    shown: (sessionId) => !isIntakeSession(sessionId),
     send: (revision) => {
       server.broadcast?.('board.changed', { revision }, (connection) => understands(connection.client, 'board.push'));
       boardWake.changed();
@@ -129,7 +133,7 @@ export async function createDuduControl({
     notifications = await createNativeNotifications({
       folder, devices, source: collectorNotifications, enabled: collectorNotificationsEnabled,
     });
-    bridge = injectedDispatch ? undefined : createNativeBridge({ rpc, pages, navigation, conversationReads, fileTransfers, questionBridge, sessionActivity, acknowledgeRead, sessionSearch, assistantConversation, assistant, board, duduPages, notifications, foreground });
+    bridge = injectedDispatch ? undefined : createNativeBridge({ rpc, pages, navigation, conversationReads, fileTransfers, questionBridge, sessionActivity, acknowledgeRead, sessionSearch, assistantConversation, assistant, board, duduPages, notifications, foreground, submission });
     dispatch = injectedDispatch ?? bridge.dispatch;
     httpPages = typeof pages?.openHttp === 'function'
       ? createWebPageHttp({ pages, pairingStore: devices, duduPages }) : undefined;

@@ -96,6 +96,8 @@ data class UiState(
     // Connection recovery must survive dismissing a panel or clearing its transient error.
     val connectionFailure: String? = null,
     val pairingRequired: Boolean = false,
+    /** The pairing link that did not connect (the connection guide marks it on its card; the iPhone's `failedPairing`). In memory only: it carries the pairing token. */
+    val pairingAttempt: PairingAttempt? = null,
     val boardLoadFailed: Boolean = false,
     val homeTab: HomeTab = HomeTab.Board,
     val inboxWaiting: Int = 0,
@@ -104,6 +106,8 @@ data class UiState(
     val changing: Set<String> = emptySet(),
     /** The plugin on the computer predates `navigation.get` (the iPhone's `NavigationAvailability.unsupported`): the drawer says why DSH's entries are missing. */
     val navigationUnsupported: Boolean = false,
+    /** What the search page remembers for this computer: the words searched for and when each conversation was opened (`SearchMemory`). */
+    val searchMemory: SearchMemory = SearchMemory(),
 ) {
     /** The connection guide stands in for the board (the iPhone's `needsConnectionGuide`): no computer yet, or one the app must not try again by itself (pairing, or a plugin to update). */
     val showsConnectionGuide: Boolean
@@ -123,6 +127,8 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     val inboxCompletions = InboxCompletions(viewModelScope, { generation }, { method, params -> request(method, params) }) { problem ->
         if (problem.isEmpty()) toast(word("更改没能保存"), ToastKind.Error) else toast(problem, ToastKind.Error, literal = true)
     }
+    /** The search page's words, range and choices, and its latest answer (`search.query`): kept here so that the page is as it was when a conversation opened from it is closed. */
+    val search = SearchModel(viewModelScope, { generation }) { params -> request("search.query", params) }
     private val inboxChangesFlow = MutableStateFlow<Pair<Int, Long?>>(0 to null)
     /** Counts the records that left the inbox other than by its own lists' marks (an issue made of one, the record's id second): the lists read again and that record in full goes back to them. */
     val inboxChanges = inboxChangesFlow.asStateFlow()
@@ -165,9 +171,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     private val attachmentCache = LinkedHashMap<String, JSONObject>()
     private val attachmentWrites = Mutex()
     private val routes = mutableListOf<Route>()
-    private data class ConversationReturn(val id: String?, val title: String?, val issue: Long?,
-        val assistant: Boolean, val subagent: JSONObject?, val route: Route?, val routes: List<Route>)
-    private val conversationBack = mutableListOf<ConversationReturn>()
+    private val conversationBack = ConversationTrail()
     private var subagentAddress: JSONObject? = null
     private var pendingLink: String? = null
     // The phone's default network, as last told (declared before `init`, which registers the callback).
@@ -230,8 +234,9 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                     // or a still-current pairing link. An upgrade must not hide that cache.
                     restoreHomes()
                     val filters = savedBoardFilters(computerId)
+                    val searched = savedSearchMemory(computerId)
                     mutable.update { it.copy(computer = data.getString("name"),
-                        home = cachedHome(it.scope), computerId = computerId, boardFilters = filters) }
+                        home = cachedHome(it.scope), computerId = computerId, boardFilters = filters, searchMemory = searched) }
                     val endpoint = try { Endpoint.parse(link) } catch (error: Exception) {
                         DuduLog.record("connection.restore.fail", "warn", code = "INVALID_LINK",
                             detail = DuduLog.describe(error), at = DuduLog.place(error))
@@ -284,7 +289,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     fun reconnect(reason: String = "manual") {
         val saved = state.value.computers.find { it.id == computerId } ?: return
         DuduLog.record("computer.reconnect", state = reason)
-        connect(saved.link)
+        connect(saved.link, reportsFailure = reason != "network")
     }
 
     /** The phone's network changed (the first answer is only what it is now): 300 ms later the computer is reached again, unless an attempt the person waits for is already on its way. */
@@ -383,14 +388,22 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun connect(link: String, displayName: String? = null) {
+    fun pair(link: String) {
+        if (!state.value.connectionInFlight) connect(link, pairing = true, reportsFailure = true)
+    }
+
+    private fun connect(link: String, pairing: Boolean = false, reportsFailure: Boolean = false,
+        retainedAttempt: PairingAttempt? = null) {
         val endpoint = try { Endpoint.parse(link) } catch (_: Exception) {
             // Why the link cannot be used, in the iPhone's words: no pairing token, an unencrypted public address, or anything else.
             val failure = pairingLinkFailure(link)
             DuduLog.record("connection.fail", "warn", code = failure)
-            mutable.update { it.copy(problem = failure,
+            // From the pairing form: said in the toast, and the page behind it stays as it was (the iPhone's `pair(link:)` stops at the parse, before it touches anything).
+            if (pairing) failureToast(failure)
+            else mutable.update { it.copy(problem = failure,
                 connectionFailure = if (!it.connected && !it.connecting) failure else it.connectionFailure,
                 pairingRequired = it.pairingRequired || !it.connected && !it.connecting) }
+            if (!pairing && reportsFailure) failureToast(failure)
             return
         }
         val began = System.nanoTime()
@@ -412,11 +425,14 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         val known = savedComputer?.id ?: computerId.takeIf {
             it.isNotEmpty() && previousApi?.endpoint?.origin == endpoint.origin && previousApi.endpoint.token == endpoint.token
         }
-        val candidate = DuduApi(endpoint, endpoint.computerId ?: known, savedComputer?.addressesEdited == true)
+        // A scan or a form submission is a pairing even when we have seen that code before.
+        val previousLink = if (pairing) state.value.computers.firstOrNull { it.id == computerId }?.link else null
+        val editedEndpoint = savedComputer?.takeIf { it.addressesEdited }?.let { Endpoint.parse(it.link) }
+            ?.takeIf { it.computerId == endpoint.computerId && it.deviceId == endpoint.deviceId }
+        val candidate = DuduApi(editedEndpoint ?: endpoint, endpoint.computerId ?: known, editedEndpoint != null)
         candidate.language = state.value.language
         // The computer already on screen, connected again (重新连接, the app back in front, a change of network): what is open stays open, as the iPhone's `reconnect` keeps it.
-        // A link from the pairing form (it names the computer) and another computer start afresh.
-        val resuming = displayName == null && known != null && known == computerId && state.value.computerId == known
+        val resuming = !pairing && known != null && known == computerId && state.value.computerId == known
         mutable.update { if (resuming) it.copy(connecting = true, retrying = false, connected = false, busy = false, sending = false,
             refreshing = false, problem = null, computerUnavailable = false, boardLoadFailed = false, changing = emptySet())
         else it.copy(connecting = true, retrying = false, connected = false, busy = false, sending = false, refreshing = false,
@@ -426,11 +442,10 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         connectionJob = viewModelScope.launch {
             try {
                 previousApi?.let { runCatching { it.disconnect() } }
-                val computer = connectSaved(candidate, next, savedComputer != null || known != null)
+                val computer = connectSaved(candidate, next, !pairing && known != null, reportsFailure)
                 if (next != generation) return@launch
                 val id = computer.getString("id")
-                val name = displayName?.trim()?.take(100)?.takeIf(String::isNotEmpty)
-                    ?: savedComputer?.name ?: computer.getString("name")
+                val name = if (pairing) endpoint.name else savedComputer?.name ?: computer.getString("name")
                 require(id.matches(Regex("[A-Za-z0-9_-]{1,100}")))
                 if (computerId != id) {
                     homes.clear(); savedHomeJson = null; sessions.clear(); cachedSessions.clear(); outboxes.clear()
@@ -439,6 +454,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 computerId = id
                 if (!resuming) {
                     routes.clear()
+                    search.reset()
                     conversationBack.clear(); subagentAddress = null
                     quickSheetReturn = null
                     watchId = null
@@ -450,12 +466,12 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 val savedLink = candidate.endpoint.storedLink()
                 vault.write("computer", json("id" to id, "name" to name, "link" to savedLink).toString())
                 if (next != generation) return@launch
-                val allComputers = state.value.computers.filterNot { it.id == id } +
-                    SavedComputer(id, name, savedLink, candidate.preserveAddresses)
+                val allComputers = state.value.computers.updating(SavedComputer(id, name, savedLink, candidate.preserveAddresses))
                 vault.write("computers", JSONArray(allComputers.map { it.json() }).toString())
                 if (next != generation) return@launch
                 val cachedNavigation = vault.read("navigation-$id-${java.util.Locale.getDefault().language}")?.let { runCatching { JSONObject(it) }.getOrNull() } ?: json()
                 val keptFilters = savedBoardFilters(id)
+                val keptSearch = savedSearchMemory(id)
                 if (next != generation) return@launch
                 mutable.update {
                     // Reconnected to the same computer, the page, the sheet and the conversation on screen stay; anything else starts on the board.
@@ -468,15 +484,15 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                     scope = if (it.computerId == id) it.scope else Scope.Active,
                     // …with the filter last chosen on it (nothing when none was kept).
                     boardFilters = if (it.computerId == id) it.boardFilters else keptFilters,
+                    searchMemory = if (it.computerId == id) it.searchMemory else keptSearch,
                     computers = allComputers, computerId = id, computerUnavailable = false,
-                    connectionFailure = null, pairingRequired = false,
+                    connectionFailure = null, pairingRequired = false, pairingAttempt = retainedAttempt,
                     quota = if (it.computerId == id) it.quota else null) }
                 DuduLog.record("connection.ready", elapsedMs = (System.nanoTime() - began) / 1_000_000,
                     state = if (resuming) "resumed" else "fresh")
                 syncBackgroundNotifications(restart = !resuming)
                 pendingNotification?.let { target -> if (target == id) { pendingNotification = null; selectHomeTab(HomeTab.Inbox) } }
-                // A link from the pairing form names its computer (the iPhone's `pairing.success` / `pair.fail`).
-                if (displayName != null) DuduLog.record("pairing.success")
+                if (pairing) DuduLog.record("pairing.success", counts = mapOf("computerCount" to allComputers.size.toLong()))
                 refresh()
                 loadCatalog()
                 if (visible) startEvents()
@@ -485,11 +501,23 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 if (error is CancellationException) throw error
                 DuduLog.failure("connection.fail", error, elapsedMs = (System.nanoTime() - began) / 1_000_000,
                     state = if (next == generation) "current" else "superseded")
-                if (displayName != null) DuduLog.failure("pair.fail", error)
-                if (next == generation) mutable.update { it.copy(connecting = false, retrying = false, problem = code(error),
-                    connectionFailure = code(error),
-                    pairingRequired = it.pairingRequired || requiresNewPairing(code(error)),
-                    computerUnavailable = visible && isConnectionProblem(code(error))) }
+                if (pairing) DuduLog.failure("pair.fail", error)
+                if (next == generation) {
+                    val failure = code(error)
+                    val attempt = if (pairing) pairingAttemptOf(link, failure) else null
+                    if (previousLink != null) {
+                        // The pairing failed and the phone had a computer: it is connected again, and the page the person is on keeps the link that failed.
+                        mutable.update { it.copy(connecting = false, retrying = false, pairingAttempt = attempt) }
+                        connect(previousLink, retainedAttempt = attempt)
+                    } else {
+                        mutable.update { it.copy(connecting = false, retrying = false, problem = failure,
+                            connectionFailure = failure,
+                            pairingRequired = it.pairingRequired || requiresNewPairing(failure),
+                            computerUnavailable = visible && isConnectionProblem(failure),
+                            pairingAttempt = attempt ?: it.pairingAttempt) }
+                    }
+                    if (reportsFailure) failureToast(failure)
+                }
             } finally {
                 if (next == generation && !state.value.connected)
                     mutable.update { it.copy(connecting = false, retrying = false) }
@@ -501,7 +529,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
      * Reuse this connection job for saved-computer retries; never retry pairing or a mutation. It waits longer after each failure, 1, 2, 4, 8, 16 s and then every 30 s, as the iPhone's
      * `scheduleReconnect` does; a change of network or a 重新连接 starts a new attempt at once.
      */
-    private suspend fun connectSaved(client: DuduApi, currentGeneration: Int, saved: Boolean): JSONObject {
+    private suspend fun connectSaved(client: DuduApi, currentGeneration: Int, saved: Boolean, reportsFailure: Boolean): JSONObject {
         var attempt = 0
         while (true) {
             try { return client.connect() }
@@ -511,6 +539,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
                 attempt++
                 DuduLog.failure("connection.retry", error, state = "foreground", counts = mapOf("attempt" to attempt.toLong()))
                 mutable.update { it.copy(connectionFailure = code(error), problem = code(error), computerUnavailable = true, retrying = true) }
+                if (attempt == 1 && reportsFailure) failureToast(code(error))
                 delay(reconnectDelayMillis(attempt))
                 if (!visible || currentGeneration != generation) throw CancellationException("Connection suspended")
             }
@@ -648,6 +677,13 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun routesBehindCurrent(): List<Route> = routes.toList()
 
+    /**
+     * The page the conversation on screen was opened from (the search page, a list), null when it was opened from the board: where its back goes (`leaveConversation` puts that route back as the
+     * current one). One opened from inside another conversation is first back in that one, `conversationReturnsToConversation`.
+     */
+    fun conversationReturnRoute(): Route? = conversationBack.origin
+    fun conversationReturnsToConversation(): Boolean = conversationBack.returnsToConversation
+
     /** A quick sheet leaves for a conversation or an issue: kept until 嘟嘟's chat is shown again (the iPhone's `leaveQuickSheet`). */
     fun leaveQuickSheet(sheet: QuickSheetReturn) {
         quickSheetReturn = sheet
@@ -783,7 +819,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         vault.write("computers", JSONArray(updated.map { it.json() }).toString())
         if (current != generation) throw CancellationException("Computer switched")
         mutable.update { it.copy(computers = updated) }
-        if (computerId == id) connect(verified.storedLink()) else backRoute()
+        if (computerId == id) connect(verified.storedLink(), reportsFailure = true)
     }
 
     fun forgetComputer(id: String) {
@@ -796,6 +832,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
             try { app.dudu.android.media.VideoPreviewStorage.remove(getApplication(), id) }
             catch (e: java.io.IOException) { DuduLog.failure("video.cache.remove.fail", e) }
             vault.delete(filtersName(id))
+            vault.delete(searchName(id))
             if (computerId == id) {
                 val previous = api
                 previous?.retire(); generation++; api = null; eventJob?.cancel(); watchJob?.cancel()
@@ -855,6 +892,48 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun savedBoardFilters(id: String) = vault.read(filtersName(id))?.let(BoardFilters::parse) ?: BoardFilters()
     private fun filtersName(id: String) = "board-filters-$id"
+
+    /** The search page, empty (the magnifier on the board). A page that is open and was left for a conversation, a record or a task comes back as it was; this starts a new one. */
+    fun openSearch() {
+        DuduLog.record("search.open")
+        search.reset()
+        navigate(Route("search"))
+    }
+
+    /** Back from the search page (取消, the back gesture): the next one starts empty. */
+    fun leaveSearch() {
+        DuduLog.record("search.close")
+        search.reset()
+        backRoute()
+    }
+
+    /** The words were searched for (the keyboard's search key, or a result was opened from them): they are first in the history from now on. */
+    fun rememberSearch(words: String) = changeSearchMemory { it.searched(words) }
+
+    fun clearSearchHistory() = changeSearchMemory { it.withoutHistory() }
+
+    /** The conversation `row` was opened now, whichever way (a board row, a pin, a search result, the drawer): 常用 is ordered by it. */
+    private fun noteOpened(id: String?, issue: Long?, assistant: Boolean) {
+        val row = state.value.home?.rows.orEmpty().firstOrNull {
+            if (assistant) it.id == "assistant" else if (issue != null) it.issue?.id == issue else id != null && it.sessionId == id
+        } ?: return
+        val at = System.currentTimeMillis()
+        changeSearchMemory { it.open(row.id, at) }
+    }
+
+    private fun changeSearchMemory(change: (SearchMemory) -> SearchMemory) {
+        val id = computerId.takeIf(String::isNotEmpty) ?: return
+        val next = change(state.value.searchMemory)
+        if (next == state.value.searchMemory) return
+        mutable.update { it.copy(searchMemory = next) }
+        viewModelScope.launch {
+            runCatching { vault.write(searchName(id), next.saved()) }
+                .onFailure { DuduLog.failure("search.memory.save.fail", it as? Exception ?: Exception(it)) }
+        }
+    }
+
+    private suspend fun savedSearchMemory(id: String) = vault.read(searchName(id))?.let(SearchMemory::parse) ?: SearchMemory()
+    private fun searchName(id: String) = "search-$id"
 
     fun preference(key: String, value: Any) {
         val updated = state.value.preferences.copyJson().put(key, value)
@@ -923,7 +1002,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun dismissPanel() {
-        if (!state.value.busy && !state.value.connecting) {
+        if (!state.value.busy && !state.value.connectionInFlight) {
             stopQuota()
             mutable.update { it.copy(panel = null, problem = null, draft = it.draft.copy(preparingPhotos = false)) }
         }
@@ -1202,9 +1281,10 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         subagent: JSONObject? = null, rememberReturn: Boolean = true) {
         watchJob?.cancel()
         val client = api ?: return
+        if (rememberReturn && subagent == null) noteOpened(id, issue, assistant)
         val previous = state.value
         if (rememberReturn && (previous.conversationTitle != null || previous.route != null)) {
-            conversationBack.add(ConversationReturn(previous.session?.id, previous.conversationTitle,
+            conversationBack.push(ConversationReturn(previous.session?.id, previous.conversationTitle,
                 previous.issueId, previous.isAssistant, subagentAddress, previous.route, routes.toList()))
         }
         routes.clear()
@@ -1271,7 +1351,7 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
         DuduLog.record("conversation.close", requestId = oldWatch)
         watchId = null
         watchJob?.cancel()
-        val returning = conversationBack.removeLastOrNull()
+        val returning = conversationBack.pop()
         if (returning?.title != null) {
             openSession(returning.id, returning.title, returning.issue, returning.assistant,
                 returning.subagent, rememberReturn = false)
@@ -1295,9 +1375,25 @@ class DuduViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Answer `issue` (its `id`, `ref`, `title`) from 嘟嘟's conversation: its @ goes into the box as a 回复 there does. */
     private var toastCount = 0L
-    /** A message at the top of the page, as the iPhone's toast: `text` is a key of the app's words (written with `word`) unless `literal` (the plugin's own words). */
-    fun toast(text: String, kind: ToastKind = ToastKind.Information, literal: Boolean = false, args: List<String> = emptyList()) =
-        mutable.update { it.copy(toast = Toast(++toastCount, text, kind, literal, args)) }
+    private var toastAt = 0L
+    /**
+     * A message at the top of the page, as the iPhone's toast: `text` is a key of the app's words (written with `word`) unless `literal` (the plugin's own words); `problem` is a failure code of the
+     * connection, said in the app's language. The same words twice within half a second are one event told from two places (a pairing that fails is told by the model and by the page behind the
+     * form): one toast, not two on top of each other.
+     */
+    fun toast(text: String, kind: ToastKind = ToastKind.Information, literal: Boolean = false, args: List<String> = emptyList(),
+        millis: Long? = null, showsClose: Boolean = true, problem: String? = null) {
+        val now = System.nanoTime()
+        val shown = state.value.toast
+        if (shown != null && shown.text == text && shown.kind == kind && shown.literal == literal && shown.args == args && shown.problem == problem &&
+            now - toastAt < 500_000_000L) return
+        toastAt = now
+        mutable.update { it.copy(toast = Toast(++toastCount, text, kind, literal, args, millis, showsClose, problem)) }
+    }
+    /** The words of a failure of the connection in the short toast at the top (owner, 2026-11-27: 「链接失败有一个短暂的弹窗就行了」): 1 s, no ✕, as the iPhone's. */
+    fun failureToast(code: String) = toast("", ToastKind.Error, millis = 1_000, showsClose = false, problem = code)
+    /** The link that failed is let go: the page that showed it is left, or opens again. */
+    fun clearPairingAttempt() = mutable.update { if (it.pairingAttempt == null) it else it.copy(pairingAttempt = null) }
     fun dismissToast(id: Long) = mutable.update { if (it.toast?.id == id) it.copy(toast = null) else it }
 
     fun reply(issue: JSONObject) = mutable.update { it.copy(replyRequest = issue) }
