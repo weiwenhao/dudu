@@ -114,13 +114,12 @@ terminal termination.
 
 ## Opening cancellation (2026-11-03)
 
-Claude's local `SessionOptions.openSignal` cancels initialization before a
-Session exists, including SessionStart hooks, resume and settings/usage
-readbacks. `dist/runtimes/claude/session.js` uses OAR's existing child teardown
-and awaits process exit before rejecting. The listener is removed when
-opening settles; an open session continues to use the existing abort/dispose
-controls. No native prompt is sent for a cancelled opening. Other runtimes
-do not implement this optional control, and Dudu supplies it only to Claude.
+`SessionOptions.openSignal` cancels initialization before a Session exists.
+Claude uses it for SessionStart hooks, resume and settings and usage readbacks.
+Antigravity uses it for opening and resuming its isolated ACP process.
+Both use OAR's existing process teardown and await exit before rejecting.
+The opening listener is removed when startup settles. Established sessions
+use their existing abort and dispose controls.
 
 ## Native Claude defaults and permissions (2026-11-03–04)
 

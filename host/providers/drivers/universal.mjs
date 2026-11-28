@@ -96,9 +96,9 @@ export class UniversalNormalizer extends OarNormalizer {
 }
 
 /** Neither a sandbox nor a verified tool denial is reachable through OAR for these harnesses, so a read-only session cannot be kept read-only. */
-export const universalSession = ({ name }) => ({ permission }) => {
+export const universalSession = ({ name, cancellableOpening }) => ({ permission, signal }) => {
   if (permission === 'read-only') throw harnessError(`${name} cannot be kept read-only. Choose another access mode to use it.`, 'HARNESS_UNSUPPORTED');
-  return {};
+  return cancellableOpening && signal ? { openSignal: signal } : {};
 };
 
 export function createUniversalProvider({ id, name, runtime, binaryEnv, login, listingCleanup, modelsMark }) {
@@ -109,7 +109,7 @@ export function createUniversalProvider({ id, name, runtime, binaryEnv, login, l
     fallbackModels: [{ id: 'default', displayName: 'Default' }],
     // Another harness's identity must not leak into the child.
     scrub: { patterns: [/^(ORCA_|HERDR_)/] },
-    session: universalSession({ name }),
+    session: universalSession({ name, cancellableOpening: id === 'antigravity' }),
     steering: false,
     backgroundTasks: false,
     // On as soon as it is found, like every harness (owner, 2026-11-24: 「安装嘟嘟插件启动后检测到的全都自动启用」; it was off until switched on from 2026-11-19).

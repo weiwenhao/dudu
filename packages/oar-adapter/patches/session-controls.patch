@@ -14,7 +14,7 @@
 +        readonly description?: string;
 +        readonly nativeType?: string;
 +    }[];
-+    /** Cancel Claude opening and await process teardown. After opening use abort()/dispose(). */
++    /** Cancel Claude or isolated ACP opening and await process teardown. Once open, use abort() or dispose(). */
 +    readonly openSignal?: AbortSignal;
      /**
       * Bound what this process retains for records(), the query folds and cursor

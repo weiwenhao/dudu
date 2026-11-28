@@ -1,0 +1,62 @@
+--- a/dist/shared/acp/session.js
++++ b/dist/shared/acp/session.js
+@@ -31,6 +31,8 @@
+         if (installation.via !== "executable") {
+             throw new Error("ACP runtimes require an executable installation");
+         }
++        const openSignal = options.openSignal;
++        openSignal?.throwIfAborted();
+         profile.validateOptions?.(options);
+         // SessionOptions.mcpServers go out in the open request (mcp-servers.ts):
+         // a list with an empty or repeated name fails before anything starts,
+@@ -41,6 +43,7 @@
+         const initializeStartedAt = profile.acquireStartup === undefined ? undefined : performance.now();
+         const releaseStartup = profile.acquireStartup === undefined ? undefined : await profile.acquireStartup(options, profile.initializeTimeoutMs ?? 60_000);
+         try {
++            openSignal?.throwIfAborted();
+             const state = createAcpSessionState(profile, options, environment, undefined, () => runtime.pid);
+             const { terminalHost, recorder, opening } = state;
+             const client = createAcpClientApp(terminalHost, state.hooks);
+@@ -50,22 +53,34 @@
+             if (releaseStartup !== undefined) {
+                 void runtime.exited.then(releaseStartup, releaseStartup);
+             }
+-            const opened = await openAcpSession(runtime, profile, options, (step) => {
+-                if (step.method === "initialize") {
+-                    releaseStartup?.();
+-                }
+-                recorder.step(step.method, step.response);
+-            }, state.configUpdates, initializeStartedAt).catch(async (error) => {
++            // During opening the isolated process is the cancellation handle.
++            const cancelOpening = () => { runtime.kill(); };
++            openSignal?.addEventListener("abort", cancelOpening, { once: true });
++            try {
++                openSignal?.throwIfAborted();
++                const opened = await openAcpSession(runtime, profile, options, (step) => {
++                    if (step.method === "initialize") {
++                        releaseStartup?.();
++                    }
++                    recorder.step(step.method, step.response);
++                }, state.configUpdates, initializeStartedAt);
++                openSignal?.throwIfAborted();
++                return finishAcpSession(profile, options, credentials, runtime, opened, state);
++            }
++            catch (error) {
+                 releaseStartup?.();
+                 runtime.kill();
+                 await runtime.exited;
+                 await terminalHost.dispose();
++                openSignal?.throwIfAborted();
+                 const failure = error instanceof AcpError && error.kind === "process_exited"
+                     ? acpProcessExitedError(error.exitCode, runtime.diagnostics(), credentials.redact) : error;
+                 const reason = cleanupFailureReason(runtime.diagnostics().cleanup);
+                 throw withoutCredentials(appendCleanupFailure(failure, reason));
+-            });
+-            return finishAcpSession(profile, options, credentials, runtime, opened, state);
++            }
++            finally {
++                openSignal?.removeEventListener("abort", cancelOpening);
++            }
+         }
+         finally {
+             releaseStartup?.();

@@ -13,7 +13,7 @@
       "files": {
         "dist/contracts/session-options.d.ts": {
           "before": "efcadda22fd601f29fd9bfd444aa737cd7a4de20ff074e897b7d78281082d6aa",
-          "after": "a74b1bcf18482e01eadeed2e9895a0c438db971c8c53548282ec69ab0eab1b43"
+          "after": "3e4bbcb010a34a0af210da5975daf945b265deecd5b86d9882c19b4f53df7115"
         },
         "dist/contracts/session.d.ts": {
           "before": "6fcf7f70daa6d7909b460d83ec958e0a9119de13ce32e177c4330806817edad0",
@@ -90,6 +90,16 @@
         "dist/runtimes/claude/compaction.js": {
           "before": "2d9f8720762fc61da3933a9d170940155c018effb858444d04a24eafd49beda7",
           "after": "23a2306631333b6dd67a62738795a34bf3bd313bf1f8e660a11a1b38bc8a2b21"
+        }
+      }
+    },
+    {
+      "file": "patches/acp-opening.patch",
+      "purpose": "Cancel Antigravity opening and resume through the isolated ACP process owner.",
+      "files": {
+        "dist/shared/acp/session.js": {
+          "before": "076ddfcc84b348e564c5d1b832da2d21e9b953f0d861021f3e26908ca3ea4e9c",
+          "after": "c651c1a936d61e6e439a409de20558233aa93c37ffc4494f91018641d0deb9d2"
         }
       }
     },

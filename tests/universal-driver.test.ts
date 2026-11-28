@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { once } from 'node:events';
+import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createServer, type AddressInfo, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { scriptedRuntime } from '@dudu/oar-adapter/testing';
@@ -235,4 +237,46 @@ test('a message written while the harness works is not steered into it', async (
   release();
   await collect(handle);
   await handle.close();
+});
+
+test('stopping Antigravity during ACP resume releases the next queued turn', { timeout: 8_000 }, async (t) => {
+  const cwd = await workDirectory(t);
+  await copyFile(new URL('./fixtures/antigravity-acp.cjs', import.meta.url), join(cwd, 'acp'));
+  const server = createServer();
+  let stalledProcess: Socket | undefined;
+  server.on('connection', (socket) => { stalledProcess = socket; });
+  t.after(() => { stalledProcess?.destroy(); server.close(); });
+  const listening = once(server, 'listening');
+  server.listen(0, '127.0.0.1');
+  await listening;
+  const port = (server.address() as AddressInfo).port;
+  let stall = true;
+  const driver = universalProviders.find((provider) => provider.id === 'antigravity')!.create({
+    installation: { kind: 'available', via: 'executable', command: process.execPath },
+    env: () => ({ DUDU_TEST_ACP_STALL_PORT: stall ? String(port) : null }),
+  });
+  const options = { cwd, resume: 'native-agy-1', permission: 'danger-full-access' };
+  const controller = new AbortController();
+  const enteredResume = once(server, 'connection', { signal: t.signal });
+  const opening = driver.start({ ...options, prompt: 'Stopped message', signal: controller.signal });
+  const [connection] = await Promise.race([
+    enteredResume,
+    opening.then(() => assert.fail('The first resume should still be pending.')),
+  ]);
+  const disconnected = once(connection, 'close');
+  controller.abort();
+  await assert.rejects(opening, { name: 'AbortError' });
+  await disconnected;
+
+  stall = false;
+  const handle = await driver.start({ ...options, prompt: 'Queued message', signal: t.signal });
+  try {
+    assert.equal((await collect(handle)).at(-1).ok, true);
+    const prompts = await readFile(join(cwd, 'prompts.jsonl'), 'utf8');
+    assert.deepEqual(prompts.trim().split('\n').map((line) => JSON.parse(line)), [
+      { sessionId: options.resume, prompt: [{ type: 'text', text: 'Queued message' }] },
+    ]);
+  } finally {
+    await handle.close();
+  }
 });
