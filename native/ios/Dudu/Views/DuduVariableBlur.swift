@@ -24,7 +24,7 @@ struct DuduScrollEdgeBar<Bar: View>: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             content
-                // Chat already reserves the measured chrome on its last history row.
+                // Chat reserves the measured bar height in its history layout.
                 .ignoresSafeArea(.container, edges: underlapsBar ? edges : [])
                 .safeAreaBar(edge: edge, spacing: 0) {
                     bar()

@@ -436,7 +436,7 @@ struct ChatView: View {
         return ZStack(alignment: .bottom) {
             ConversationHistoryView(
                 items: items, target: target,
-                topInset: historyTopInset + 7, bottomInset: chromeHeight + 11,
+                topInset: historyTopInset + 7, bottomInset: 11,
                 canLoadAttachments: canLoadAttachments, keyboardVisible: keyboardVisible,
                 isCovered: historyIsCovered, isPreparingForPresentation: presentationRequest != nil,
                 followsLatest: $followsLatestMessage,
@@ -456,6 +456,11 @@ struct ChatView: View {
                 if isPageTransitioning { transaction.animation = nil }
             }
             .id(target)
+            // List draws into its safe-area insets. Clip its bottom while leaving room for the native top edge.
+            .mask {
+                Rectangle().ignoresSafeArea(.container, edges: .top)
+            }
+            .padding(.bottom, chromeHeight)
         }
         .modifier(DuduScrollEdgeBar(edge: .bottom, underlapsBar: true, showsEffect: false) {
             if store.selectedSession?.subagent == nil {
