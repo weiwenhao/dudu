@@ -38,7 +38,7 @@ struct ConversationImageThumbnail: View {
             if image != nil { isPreviewPresented = true }
             else { Task { await load() } }
         } label: {
-            DuduStyle.chatPanel
+            DuduStyle.sheet
                 // Loading pixels must not resize a history row under the reader.
                 // The full-screen preview keeps the original image's aspect ratio.
                 .aspectRatio(0.8, contentMode: .fit)
@@ -46,14 +46,14 @@ struct ConversationImageThumbnail: View {
                     if let image, loadedKey == imageKey {
                         Image(uiImage: image.image).resizable().scaledToFill()
                     } else if showsLoading {
-                        ProgressView()
+                        ThumbnailLoadingRing()
                     } else {
                         DuduIcon(.image, size: 28).foregroundStyle(DuduStyle.chatTertiary)
                     }
                 }
                 .modifier(ThumbnailFrame(tileShape: tileShape, alignment: alignment))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DuduQuietPressStyle())
         .disabled(showsLoading || (image == nil && !canLoadAttachment))
         .modifier(MessagePendingIndicator(isPending: isPending))
         .frame(maxWidth: .infinity, alignment: alignment)
@@ -93,6 +93,28 @@ struct ConversationImageThumbnail: View {
         let prepared = await loadImage(attachment, target, false)
         guard !Task.isCancelled, loadingID == identifier, key == imageKey else { return }
         image = prepared
+    }
+}
+
+/// Matches the Android attachment tile's 20-point indeterminate arc and rounded 2-point stroke.
+private struct ThumbnailLoadingRing: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.conversationIsCovered) private var isCovered
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion || isCovered || scenePhase != .active)) { timeline in
+            let period = 1.332
+            let phase = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+            let sweep = reduceMotion ? 0.25 : 0.1 + 0.55 * (1 - cos(phase * 2 * .pi)) / 2
+            Circle()
+                .trim(from: 0, to: sweep)
+                .stroke(DuduStyle.ink, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .frame(width: 18, height: 18)
+                .rotationEffect(.degrees(reduceMotion ? -90 : 360 * (phase - sweep / 2) - 90))
+        }
+        .frame(width: 20, height: 20)
+        .accessibilityRepresentation { ProgressView() }
     }
 }
 
