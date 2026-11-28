@@ -5,6 +5,7 @@ package app.dudu.android.ui
 import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -24,6 +25,10 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
@@ -32,6 +37,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.roundToIntRect
 import androidx.compose.ui.unit.sp
@@ -497,6 +503,31 @@ internal fun BoxScope.AvatarStatus(state: String, size: Int, roundedSquare: Bool
 fun Glyph(@DrawableRes resource: Int, description: String? = null, size: Int = 24,
     tint: Color = MaterialTheme.colorScheme.onSurface) {
     Icon(painterResource(resource), description, Modifier.size(size.dp), tint = tint)
+}
+
+/**
+ * One of the three glyphs of a bar or a sheet: back ‹ (`DuduGlyphs.back`), close ✕ (`close`), confirm ✓ (`check`). They are drawn alike everywhere, the iPhone's `DuduBarGlyph` (owner, 2026-11-28, B of
+ * `.local/designs/sheet-icons-2026-11-28/`): Lucide at 22dp, its own line (1.83dp) and the ink. They used to be 18, 20, 22 and 24dp, some of them grey.
+ */
+@Composable
+fun BarGlyph(@DrawableRes resource: Int, description: String? = null, tint: Color = MaterialTheme.colorScheme.onSurface) =
+    Glyph(resource, description, 22, tint)
+
+/**
+ * The tick of a box or a circle that is chosen, the iPhone's `DuduFilterTick` (owner, 2026-11-28, B): Lucide's check (`M4 12 9 17 20 6` in its 24 box) at 13dp with a 2.2dp line, white. The check
+ * of `DuduGlyphs` has a line that shrinks with it (1.1dp at this size); this one keeps 2.2dp, as the iPhone's does.
+ */
+@Composable
+fun TickMark(size: Dp = 13.dp, stroke: Dp = 2.2.dp, color: Color = Color.White) {
+    Canvas(Modifier.size(size)) {
+        val unit = this.size.minDimension / 24f
+        val path = Path().apply {
+            moveTo(4f * unit, 12f * unit)
+            lineTo(9f * unit, 17f * unit)
+            lineTo(20f * unit, 6f * unit)
+        }
+        drawPath(path, color, style = Stroke(width = stroke.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
 }
 
 @Composable

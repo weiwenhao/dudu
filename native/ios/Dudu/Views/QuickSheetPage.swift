@@ -39,6 +39,8 @@ struct QuickSheetPage<Actions: View, Filters: View, Content: View, Footer: View>
     var onBack: (() -> Void)? = nil
     let onClose: () -> Void
     var closeLabel = L10n.text("关闭")
+    /// The glyph of the button at the trailing edge: ✕ (`.close`), or ✓ (`.check`) for a sheet that is done rather than closed (the board's filter; owner, 2026-11-28).
+    var closeGlyph: DuduGlyph = .close
     /// The title sits in the middle of the bar on every sheet (owner, 2026-11-18: "我们其他弹窗我看 title 都是在中间的", about the 收件箱 and 任务 sheets, whose left heading was only the activity sheet's old header, copied into the
     /// quick-entry designs of 2026-11-12). The count of a list goes beside it. A page with a back button is always centred; `false` is the old left heading (21pt), no sheet asks for it now.
     var centersTitle = false
@@ -75,7 +77,7 @@ struct QuickSheetPage<Actions: View, Filters: View, Content: View, Footer: View>
                 if let onBack {
                     ToolbarItem(placement: .topBarLeading) {
                         Button(action: onBack) {
-                            Image(systemName: "chevron.left").font(.system(size: 18, weight: .medium))
+                            DuduBarGlyph(.back)
                         }
                         .accessibilityLabel(L10n.text("返回"))
                     }
@@ -113,7 +115,7 @@ struct QuickSheetPage<Actions: View, Filters: View, Content: View, Footer: View>
                 }
                 if showsClose {
                     ToolbarItem(placement: .topBarTrailing) {
-                        SheetCloseButton(label: closeLabel, action: onClose)
+                        SheetCloseButton(label: closeLabel, glyph: closeGlyph, action: onClose)
                     }
                 }
             }

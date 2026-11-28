@@ -265,7 +265,7 @@ private fun FormSheetBar(title: String, cancel: () -> Unit, cancelEnabled: Boole
     Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = cancel, enabled = cancelEnabled, modifier = Modifier.testTag("close-sheet")) {
-            Glyph(DuduGlyphs.close, stringResource(R.string.cancel), 20)
+            BarGlyph(DuduGlyphs.close, stringResource(R.string.cancel))
         }
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)

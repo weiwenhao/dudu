@@ -125,7 +125,7 @@ struct VideoFullScreenPreview: View {
         VStack(spacing: 20) {
             HStack {
                 Button(action: onClose) {
-                    Image(systemName: "xmark").font(.system(size: 20, weight: .regular))
+                    DuduIcon(.close, size: DuduBarGlyph.size)
                         .frame(width: 44, height: 44).contentShape(Circle())
                 }
                 .buttonStyle(DuduGlassButtonStyle())

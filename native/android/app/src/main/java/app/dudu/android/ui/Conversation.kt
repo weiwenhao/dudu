@@ -527,7 +527,7 @@ fun ConversationPage(state: UiState, model: DuduViewModel) {
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 navigationIcon = {
                     IconButton(onClick = model::leaveConversation, modifier = Modifier.testTag("conversation-back")) {
-                        Glyph(DuduGlyphs.back, stringResource(R.string.back))
+                        BarGlyph(DuduGlyphs.back, stringResource(R.string.back))
                     }
                 }, actions = {
                     Box {

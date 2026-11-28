@@ -160,7 +160,7 @@ fun IssuePickerFlow(root: IssuePicker, draft: IssueDraft, options: Options?, mod
             val confirms = page in listOf(IssuePicker.Due, IssuePicker.Labels)
             if (nestedRoot || pages.size > 1) IconButton(onClick = ::back, enabled = !busy,
                 modifier = Modifier.align(Alignment.CenterStart).testTag("picker-back")) {
-                Glyph(DuduGlyphs.back, stringResource(R.string.back), 22)
+                BarGlyph(DuduGlyphs.back, stringResource(R.string.back))
             } else if (confirms) TextButton(onClick = ::back, enabled = !busy, modifier = Modifier.align(Alignment.CenterStart)) {
                 Text(stringResource(R.string.cancel))
             }
@@ -182,7 +182,7 @@ fun IssuePickerFlow(root: IssuePicker, draft: IssueDraft, options: Options?, mod
                 }
                 !nestedRoot && pages.size == 1 -> IconButton(onClick = ::back, enabled = !busy,
                     modifier = Modifier.align(Alignment.CenterEnd).testTag("close-sheet")) {
-                    Glyph(DuduGlyphs.close, stringResource(R.string.close), 20)
+                    BarGlyph(DuduGlyphs.close, stringResource(R.string.close))
                 }
             }
         }

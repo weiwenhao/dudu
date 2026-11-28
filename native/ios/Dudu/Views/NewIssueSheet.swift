@@ -135,9 +135,7 @@ struct NewIssueSheet: View {
                         if isCreating {
                             ProgressView()
                         } else {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 13, weight: .medium))
-                                .frame(width: 20, height: 20)
+                            DuduBarGlyph(.check).frame(width: 20, height: 20)
                         }
                     }
                     .controlSize(.small)

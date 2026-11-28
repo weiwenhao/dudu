@@ -1015,8 +1015,7 @@ struct DuduRootView: View {
             Button {
                 collector.stopSelecting()
             } label: {
-                DuduIcon(.close, size: 20)
-                    .foregroundStyle(DuduStyle.ink)
+                DuduBarGlyph(.close)
                     .frame(width: DuduLayout.toolbarButtonSize, height: DuduLayout.toolbarButtonSize)
                     .contentShape(Circle())
             }
@@ -1209,8 +1208,7 @@ struct DuduRootView: View {
             DuduLog.record("page.back")
             goBack()
         } label: {
-            DuduIcon(.back)
-                .foregroundStyle(DuduStyle.ink)
+            DuduBarGlyph(.back)
                 .frame(width: DuduLayout.toolbarButtonSize, height: DuduLayout.toolbarButtonSize)
                 .contentShape(Circle())
         }

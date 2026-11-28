@@ -27,9 +27,7 @@ struct SignInBrowser: View {
                     .padding(.horizontal, 56)
                 HStack {
                     Button { onClose() } label: {
-                        LucideIcon(.x, size: 22, strokeWidth: 2, absoluteStrokeWidth: false)
-                            .frame(width: 22, height: 22)
-                            .foregroundStyle(DuduStyle.ink)
+                        DuduBarGlyph(.close)
                             .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }

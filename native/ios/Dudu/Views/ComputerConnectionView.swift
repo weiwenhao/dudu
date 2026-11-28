@@ -100,8 +100,7 @@ struct ComputerConnectionView: View {
                         if isSaving {
                             ProgressView().controlSize(.small).tint(DuduStyle.muted)
                         } else {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 16, weight: .semibold))
+                            DuduBarGlyph(.check)
                         }
                     }
                     .frame(width: 20, height: 20)

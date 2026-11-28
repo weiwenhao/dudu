@@ -391,7 +391,7 @@ struct CollectorRow: View {
                             .strokeBorder(selected ? DuduStyle.blue : Color(white: 0.77), lineWidth: 1.5)
                             .background(Circle().fill(selected ? DuduStyle.blue : Color.clear))
                             .overlay {
-                                if selected { DuduIcon(.check, size: 13, strokeWidth: 3.2).foregroundStyle(.white) }
+                                if selected { DuduFilterTick() }
                             }
                     }
                 }

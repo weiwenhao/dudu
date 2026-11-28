@@ -224,7 +224,7 @@ fun AddComputerScreen(route: Route, state: UiState, model: DuduViewModel) {
         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
         navigationIcon = {
             IconButton(onClick = model::backRoute, enabled = !busy, modifier = Modifier.testTag("close-sheet")) {
-                Glyph(DuduGlyphs.close, w("取消"), 20)
+                BarGlyph(DuduGlyphs.close, w("取消"))
             }
         },
     )

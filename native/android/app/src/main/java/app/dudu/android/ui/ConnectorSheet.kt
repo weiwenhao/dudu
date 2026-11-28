@@ -292,7 +292,7 @@ private fun SignInBrowser(page: String, onCallback: (String) -> Unit, onClose: (
         Column(Modifier.fillMaxSize().background(Color.White).systemBarsPadding()) {
             Box(Modifier.fillMaxWidth().height(50.dp)) {
                 Box(Modifier.align(Alignment.CenterStart).padding(start = 8.dp).size(44.dp).clickable(role = Role.Button, onClick = onClose), contentAlignment = Alignment.Center) {
-                    Glyph(DuduGlyphs.close, w("取消"), 22, MaterialTheme.colorScheme.onSurface)
+                    BarGlyph(DuduGlyphs.close, w("取消"))
                 }
                 Text(Uri.parse(page).host.orEmpty(), Modifier.align(Alignment.Center).padding(horizontal = 56.dp), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
             }

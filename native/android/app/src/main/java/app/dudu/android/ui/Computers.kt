@@ -182,7 +182,7 @@ fun ComputerScreen(route: Route, state: UiState, model: DuduViewModel) {
             modifier = Modifier.size(44.dp).duduGlass(CircleShape, glass()).testTag("save-addresses")) {
             if (actions.busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 1.5.dp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            else Glyph(DuduGlyphs.check, w("保存"), 20)
+            else BarGlyph(DuduGlyphs.check, w("保存"))
         }
     }) {
         if (saved != null) Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState())

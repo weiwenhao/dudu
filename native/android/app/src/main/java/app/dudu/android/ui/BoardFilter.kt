@@ -213,7 +213,7 @@ internal fun BoardFilterSheet(
                 if (only != null) Unit
                 else if (section != null) {
                     IconButton(onClick = { show(null) }, modifier = Modifier.padding(start = 10.dp)) {
-                        Glyph(DuduGlyphs.back, stringResource(R.string.back), 22)
+                        BarGlyph(DuduGlyphs.back, stringResource(R.string.back))
                     }
                 } else {
                     FilledTonalButton(reset, Modifier.padding(start = 16.dp).minimumInteractiveComponentSize()
@@ -226,7 +226,7 @@ internal fun BoardFilterSheet(
             },
             actions = {
                 IconButton(onClick = close, modifier = Modifier.testTag("close-sheet")) {
-                    Glyph(DuduGlyphs.close, stringResource(R.string.close), 20)
+                    BarGlyph(DuduGlyphs.check, stringResource(R.string.close))
                 }
             },
         )
@@ -315,7 +315,7 @@ internal fun ChoiceLine(title: String, selected: Boolean, count: String? = null,
             .then(if (selected) Modifier else Modifier.border(1.dp,
                 colors.onSurfaceVariant.copy(alpha = .45f), androidx.compose.foundation.shape.RoundedCornerShape(4.dp))),
             contentAlignment = Alignment.Center) {
-            if (selected) Glyph(DuduGlyphs.check, size = 14, tint = Color.White)
+            if (selected) TickMark()
         }
         leading()
         Text(title, Modifier.weight(1f), fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)

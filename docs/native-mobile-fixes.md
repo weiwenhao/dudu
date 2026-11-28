@@ -3203,3 +3203,13 @@ iPhone：`DuduStore.consume` → `boardChanges` → `DuduRootView` 立刻 `board
 **看过什么：** 单元测试 `ChatScrollPositionTests`（加了一条用这次日志的数字，12 条全过）；模拟器里真手势（暂存工程 `KeyboardDragTests`，键盘打开往上拉 126pt 四次、没键盘往上拉 80pt 四次）：旧代码 8 次全被当成到底、弹回，新代码 8 次都留在原处，结果在 `.local/qa/scroll-keyboard-2026-11-27/`；Release 编译并装到主人的手机（166）。
 **没看过：** 主人手机上的实际手感。
 **三个按钮遮挡文字：没改。** 日志里没有这件事的记录。量过：停在最底部时，最后一行文字在按钮上方留有间隔（代码里是 11pt 加行距，主人截图里量到约 26pt），不会被盖住；往上翻的时候文字从按钮后面穿过，输入框那一条有模糊衬底，按钮这一排没有。要不要给按钮这一排也加上衬底，等主人确认。
+
+## 2026-11-28：返回、关闭、确认三个图标统一（iPhone 和安卓）
+
+主人挑了 `.local/designs/sheet-icons-2026-11-28/` 的方案 B：「图标图这个就用这一套吧。ios,安卓，所有的用到这三个图标的地方都进行统一。」起因是他的截图：弹窗里返回箭头和叉叉大小粗细都不一样（箭头系统符号 18pt、黑，叉叉系统符号 13pt、灰，线宽 2.0 对 1.4pt），确认勾又是另一种（新建事项的系统符号 13pt；筛选框里的 Lucide 14pt、线 1.2pt；收件箱选择圈里的 Lucide 13pt、线 3.2pt）。
+**方案 B：** 三个都是 Lucide，22pt，Lucide 自己随大小缩的线（1.83pt），墨色；框和圈里的勾 13pt、线 2.2pt、白色。
+**iPhone：** `DuduBarGlyph`（`SheetChrome.swift`）画这三个。用在：所有弹窗的右上角（`SheetCloseButton`，现在能画成 ✓：`closeGlyph: .check`）、`QuickSheetPage` 的返回、新建事项的 ✓、连接地址的保存 ✓、页面顶栏的返回和选择模式的 ✕（`DuduRootView`）、文件面板的上一级、会话搜索的返回、登录页的 ✕；照片和视频预览的 ✕ 换成同一个图标（颜色照旧）。系统给弹窗按钮画的圆不变（图标画布仍是 20pt，22pt 的图居中）。看板的筛选框和搜索页里每个筛选的弹窗，右上角是 ✓（它们的选择当场生效，✓ 只是关掉；无障碍名字仍是「关闭」，没有新文字）。勾是 `DuduFilterTick`，用在筛选框的方框和收件箱选择的圆。
+**安卓：** `BarGlyph`（22dp、墨色）和 `TickMark`（Canvas 画，13dp、线 2.2dp，因为 `DuduGlyphs.check` 的线会随大小缩到 1.1dp），用在同样的位置：`Panels`、`Pairing`、`IssuePickers`、`FeatureKit`、`ConnectorSheet`、`VideoPreview`、`PhotoPreview`、`BoardFilter`（✓、返回、框里的勾）、`Search`（筛选的 ✓）、`ConversationDetails`、`Conversation`、`SessionSearch`、`Computers`、`CollectorSummary`。
+**有意没改：** 设置页等的系统返回键（主人 11-21 决定留系统的，边缘滑动才可用）；附件弹窗的「返回 + 标题」头（`ComposerAttachmentSheet`、安卓 `ConversationControls`，主人 11-19 要求恢复原样）；行尾的「已选」勾（18–20pt）、输入框的清除 ×、标签和角标上的小 ×、移除附件的 ×、提示条、菜单里的图标；安卓新建事项的蓝底白勾（`FormSheetBar`：蓝色是「可以点」的标志，圆是 32dp，22dp 的图放不下）。
+**看过什么：** `npm run native:build`（Release）和 `npm run android:build`（含单元测试和 lint）通过；方案图是代码画的（`.local/designs/sheet-icons-2026-11-28/`），不是 App 的截图。
+**没看过：** 两个 App 里实际的样子（真机、模拟器都没看）；iOS 26 的玻璃按钮在 22pt 图标下圆的大小有没有变（按画布 20pt 推算不变）。

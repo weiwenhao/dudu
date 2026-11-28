@@ -130,7 +130,7 @@ fun FilesScreen(route: Route, state: UiState, model: DuduViewModel) {
             Row(Modifier.fillMaxWidth().heightIn(min = 36.dp).padding(start = if (path.isEmpty()) 16.dp else 4.dp, end = 16.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 if (path.isNotEmpty()) IconButton(onClick = model::backRoute, modifier = Modifier.size(36.dp)) {
-                    Glyph(DuduGlyphs.back, w("返回上一级"), 18)
+                    BarGlyph(DuduGlyphs.back, w("返回上一级"))
                 }
                 Text(if (path.isEmpty()) result?.optString("name") ?: w("项目") else path,
                     fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)

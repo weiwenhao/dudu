@@ -443,7 +443,7 @@ private fun SearchChoiceSheet(title: String, choices: List<SearchChoice>, select
             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             actions = {
                 IconButton(onClick = close, modifier = Modifier.testTag("close-sheet")) {
-                    Glyph(DuduGlyphs.close, stringResource(R.string.close), 20)
+                    BarGlyph(DuduGlyphs.check, stringResource(R.string.close))
                 }
             },
         )

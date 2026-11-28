@@ -146,7 +146,7 @@ fun SheetHeader(title: String, dismiss: () -> Unit, enabled: Boolean = true,
         actions = {
             action?.invoke()
             IconButton(onClick = dismiss, enabled = enabled, modifier = Modifier.testTag("close-sheet")) {
-                Glyph(DuduGlyphs.close, stringResource(R.string.close), 20)
+                BarGlyph(DuduGlyphs.close, stringResource(R.string.close))
             }
         },
     )
@@ -180,12 +180,12 @@ fun Page(title: String, back: () -> Unit, actions: Actions? = null,
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = background),
                 navigationIcon = { if (cancels) TextButton(onClick = back) { Text(stringResource(R.string.cancel)) }
                     else if (nested) IconButton(onClick = back) {
-                    Glyph(DuduGlyphs.back, stringResource(R.string.back), 22)
+                    BarGlyph(DuduGlyphs.back, stringResource(R.string.back))
                 } },
                 actions = {
                     top()
                     if ((!nested && !cancels) || close != null) IconButton(onClick = close ?: back, modifier = Modifier.testTag("page-back")) {
-                        Glyph(DuduGlyphs.close, stringResource(R.string.close), 20)
+                        BarGlyph(DuduGlyphs.close, stringResource(R.string.close))
                     }
                 },
             ) else CenterAlignedTopAppBar(

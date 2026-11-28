@@ -43,7 +43,7 @@ internal fun CollectorSummary(record: JSONObject, tab: String = "todo", selectin
                     .background(if (selected) DuduStyle.blue else Color.Transparent, CircleShape)
                     .border(1.5.dp, if (selected) DuduStyle.blue else Color(0xFFC4C4C4), CircleShape),
                     contentAlignment = Alignment.Center) {
-                    if (selected) Glyph(DuduGlyphs.check, size = 13, tint = Color.White)
+                    if (selected) TickMark()
                 }
             }
             Box(Modifier.size(44.dp)) {

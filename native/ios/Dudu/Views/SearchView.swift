@@ -557,6 +557,7 @@ struct SearchFilterSheet: View {
         QuickSheetPage(
             title: field.title,
             onClose: { dismiss() },
+            closeGlyph: .check,
             centersTitle: true,
             leading: QuickSheetLeading(title: L10n.text("重置"), isEnabled: !chosen.isEmpty) { model.reset(field) },
             horizontalInset: DuduLayout.sidebarPadding,

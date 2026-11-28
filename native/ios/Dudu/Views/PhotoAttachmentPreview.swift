@@ -156,8 +156,7 @@ struct PhotoAttachmentFullScreenPreview: View {
     private var previewControls: some View {
         HStack {
                 Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 16, weight: .regular))
+                    DuduIcon(.close, size: DuduBarGlyph.size)
                         .foregroundStyle(.white)
                         .frame(width: 44, height: 44)
                         .contentShape(Circle())

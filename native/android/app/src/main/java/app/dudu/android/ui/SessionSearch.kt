@@ -70,7 +70,7 @@ fun SessionSearchPage(sessions: List<JSONObject>, state: UiState, model: DuduVie
         Column(Modifier.statusBarsPadding().navigationBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                IconButton(onClick = { focus.clearFocus(); back() }) { Glyph(DuduGlyphs.back, w("返回"), 22) }
+                IconButton(onClick = { focus.clearFocus(); back() }) { BarGlyph(DuduGlyphs.back, w("返回")) }
                 Box(Modifier.weight(1f)) { SearchField(query, w("搜索对话内容…"), "session-search", autoFocus = true, capsule = true) { query = it } }
             }
             LazyColumn(Modifier.fillMaxSize()) {

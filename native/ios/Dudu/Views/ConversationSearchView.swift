@@ -86,8 +86,7 @@ struct ConversationSearchView: View {
     private var searchBar: some View {
         HStack(spacing: 8) {
             Button(action: onBack) {
-                DuduIcon(.back, size: 22)
-                    .foregroundStyle(DuduStyle.ink)
+                DuduBarGlyph(.back)
                     .frame(width: 44, height: 44)
                     .contentShape(Circle())
             }
