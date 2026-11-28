@@ -101,7 +101,7 @@ final class SearchTests: XCTestCase {
     func testAnAnswerDecodesEachPlacesRowsWithTheirLinesOfText() throws {
         let answer = try JSONDecoder().decode(SearchAnswer.self, from: Data("""
         {"outcome":"success","q":"预发布",
-         "sessions":{"total":1,"indexing":true,"items":[{"id":"issue:1","title":"A","sessionId":"s1","preview":"p","receivedAt":5,"sessionState":"idle","deepSleep":false,"unread":false,"readSeq":1,"pinned":false,"snippet":"…预发布…",
+         "sessions":{"total":2,"indexing":true,"facets":{"agent":[{"key":null,"count":1},{"key":"codex","count":1}]},"items":[{"id":"issue:1","title":"A","sessionId":"s1","preview":"p","receivedAt":5,"sessionState":"idle","deepSleep":false,"unread":false,"readSeq":1,"pinned":false,"snippet":"…预发布…",
            "issue":{"id":1,"title":"A","status":"todo","statusType":"todo","priority":"none","updatedAt":1}}]},
          "inbox":{"total":1,"names":{"lark":"飞书"},"items":[{"id":7,"ref":"r7","connector":"lark","connectorName":"飞书","connectorIcon":"lark","title":"T","from":"Alice","at":1,"unread":true,"snippet":"…预发布…"}]},
          "tasks":{"total":0,"items":[],"failed":true}}
@@ -109,6 +109,7 @@ final class SearchTests: XCTestCase {
         XCTAssertEqual(answer.sessions?.items.first?.snippet, "…预发布…")
         XCTAssertEqual(answer.sessions?.items.first?.conversation.id, "issue:1")
         XCTAssertEqual(answer.sessions?.indexing, true)
+        XCTAssertEqual(answer.sessions?.facets?["agent"], [SearchFacet(key: nil, count: 1), SearchFacet(key: "codex", count: 1)])
         XCTAssertEqual(answer.inbox?.items.first?.record.byLine, "Alice · 飞书")
         XCTAssertEqual(answer.inbox?.names, ["lark": "飞书"])
         XCTAssertTrue(answer.failed(in: [.tasks]))
@@ -133,5 +134,14 @@ final class SearchTests: XCTestCase {
         XCTAssertEqual(model.wantedRequest(computerID: "a", revision: 1)?.phrase, "预发布")
         XCTAssertEqual(model.wantedRequest(computerID: "a", revision: 1)?.places, SearchScope.allCases)
         XCTAssertNotEqual(model.wantedRequest(computerID: "a", revision: 1), model.wantedRequest(computerID: "a", revision: 2), "a new connection asks again")
+        model.select(.sessions)
+        let unfiltered = model.wantedRequest(computerID: "a", revision: 1)
+        model.toggle("codex", in: .agent)
+        model.toggle(nil, in: .project)
+        XCTAssertNotEqual(unfiltered, model.wantedRequest(computerID: "a", revision: 1))
+        XCTAssertEqual(model.wantedRequest(computerID: "a", revision: 1)?.filters, ["agent": ["codex"], "project": [nil]])
+        model.select(.tasks)
+        model.toggle("paused", in: .taskStatus)
+        XCTAssertEqual(model.wantedRequest(computerID: "a", revision: 1)?.filters, ["status": ["paused"]])
     }
 }

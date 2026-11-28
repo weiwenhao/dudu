@@ -118,15 +118,21 @@ data class BoardFilters(private val values: Map<BoardFilterField, Set<String?>> 
         }
     }
 
-    fun options(field: BoardFilterField, rows: List<Conversation>, statuses: List<Status>): List<BoardFilterOption> {
+    fun options(
+        field: BoardFilterField,
+        rows: List<Conversation>,
+        statuses: List<Status>,
+        suppliedCounts: Map<String?, Int>? = null,
+    ): List<BoardFilterOption> {
         if (field.isDate) return field.choices.orEmpty().map { BoardFilterOption(it, null) }
-        val counts = mutableMapOf<String?, Int>()
-        for (row in matching(rows, ignoring = field)) {
-            for (key in field.keys(row)) counts[key] = (counts[key] ?: 0) + 1
+        val counts = suppliedCounts ?: buildMap {
+            for (row in matching(rows, ignoring = field)) {
+                for (key in field.keys(row)) put(key, (get(key) ?: 0) + 1)
+            }
         }
         val knownKeys = when (field) {
             BoardFilterField.Status -> statuses.map(Status::id)
-            BoardFilterField.Agent, BoardFilterField.Project -> rows.flatMap(field::keys) + listOf(null)
+            BoardFilterField.Agent, BoardFilterField.Project -> (suppliedCounts?.keys ?: rows.flatMap(field::keys)) + listOf(null)
             else -> field.choices ?: rows.flatMap(field::keys)
         }
         return (knownKeys.toSet() + selected(field)).map { key -> BoardFilterOption(key, counts[key] ?: 0) }

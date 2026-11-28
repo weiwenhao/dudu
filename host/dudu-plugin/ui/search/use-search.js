@@ -16,7 +16,7 @@ export function useSettled(value, ms, hold = false) {
   return settled;
 }
 
-const NOTHING = { value: null, answered: null, failed: null };
+const NOTHING = { value: null, key: null, answered: null, failed: null };
 
 /**
  * The answer of `search/query` (the plugin's one request for the three places: assistant/home/search.mjs) to `body`; null asks nothing. The newest question wins: an older one that is still
@@ -39,7 +39,7 @@ export function useSearchAnswer(request, body) {
         const answer = await request('search/query', JSON.parse(key), { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(TIMEOUT_MS)]) });
         if (controller.signal.aborted) return;
         if (answer?.outcome !== 'success') throw new Error('unavailable');
-        setState({ value: answer, answered: question, failed: null });
+        setState({ value: answer, key, answered: question, failed: null });
         if (answer.sessions?.indexing === true && tries++ < INDEXING_RETRIES) timer = setTimeout(ask, INDEXING_RETRY_MS);
       } catch {
         if (!controller.signal.aborted) setState((current) => ({ ...current, failed: question }));
@@ -50,5 +50,5 @@ export function useSearchAnswer(request, body) {
   }, [request, key, question]);
   const retry = useCallback(() => setRevision((count) => count + 1), []);
   const status = question === null ? 'idle' : state.answered === question ? 'ready' : state.failed === question ? 'error' : 'loading';
-  return { status, value: question === null ? null : state.value, retry };
+  return { status, value: question === null ? null : state.value, matches: key !== null && key === state.key, retry };
 }

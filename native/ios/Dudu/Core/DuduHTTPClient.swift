@@ -152,7 +152,7 @@ actor DuduHTTPClient: DuduTransport {
     /// `board.latest`: its chat rows are drawn as the plugin sends them, so it may be sent the owner's own last message as a row's preview and time (the newest message of either side).
     /// `board.wake`: while it is away, the computer may send it a silent push when the board changes, and it reads the board and writes it down before it is opened (`BoardWake`).
     /// `notifications.service`: it has a notification extension (`DuduNotificationService`). The plugin does not branch on it today (a notice carries `mutable-content` and `content-available` both); it tells which phones have the extension.
-    static let capabilities = ["settings.rich", "board.push", "board.latest", "board.wake", "notifications.service"]
+    static let capabilities = ["settings.rich", "board.push", "board.latest", "board.wake", "notifications.service", "search.filters"]
     private static var declaration: Data {
         let info = Bundle.main.infoDictionary ?? [:]
         let app = [

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import { createModelCache } from '../host/providers/model-cache.mjs';
 import { createOarProvider } from '../host/providers/oar.mjs';
 
 // DSH's model catalog (and with it the phone's catalog.get) waits for every harness at once. A harness that cannot reach its
@@ -99,22 +102,39 @@ test('a harness that fails to read again keeps what it said before, and is read 
 });
 
 test('settings saved while a reading is under way drop what it says', async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), 'dudu-model-list-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const file = join(folder, 'models.json');
+  const cache = createModelCache(file);
+  const writes: Promise<void>[] = [];
+  const modelCache = {
+    get: cache.get,
+    set: (...args: Parameters<typeof cache.set>) => {
+      const write = cache.set(...args);
+      writes.push(write);
+      return write;
+    },
+  };
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const old = Promise.withResolvers<any>();
   const fresh = Promise.withResolvers<any>();
-  const { driver, asked } = harness([() => Promise.resolve(ok(OLD)), () => old.promise, () => fresh.promise]);
+  const { driver, asked } = harness([() => Promise.resolve(ok(OLD)), () => old.promise, () => fresh.promise], undefined, {}, { modelCache });
   await ids(driver);
   driver.refreshModels();
   await ids(driver);
   driver.refreshModels();
   assert.deepEqual(await ids(driver), ['opus']);
   assert.equal(asked(), 3, 'read anew with the new settings');
-  old.resolve(ok([{ id: 'stale', displayName: 'Stale' }]));
-  await settle();
-  assert.deepEqual(await ids(driver), ['opus'], 'what the old settings gave is not used');
   fresh.resolve(ok(NEW));
   await settle();
   assert.deepEqual(await ids(driver), ['opus', 'sonnet']);
+  old.resolve(ok([{ id: 'stale', displayName: 'Stale' }]));
+  await settle();
+  assert.deepEqual(await ids(driver), ['opus', 'sonnet'], 'what the old settings gave is not used');
+  await Promise.all(writes);
+  const restarted = harness([], undefined, {}, { modelCache: createModelCache(file) });
+  assert.deepEqual(await ids(restarted.driver), ['opus', 'sonnet'], 'what the old settings gave was not written');
+  assert.equal(restarted.asked(), 0);
 });
 
 // DSH's client keeps the first catalog it gets until it hears `llm/models-updated`: without the announcement a menu that was given the

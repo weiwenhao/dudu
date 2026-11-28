@@ -1,20 +1,21 @@
 import { buildSessionEvents } from './session-events.mjs';
 import { canReadSessionHistory, readSessionHistory } from '../../dsh-session-history.mjs';
-import { userContent } from './images.mjs';
+import { IMAGE_MARKER, userContent } from './images.mjs';
 
 // What DSH writes as a user message for its own models, not for the harness: the person did not type it and the harness's store does not have it. Anything else (what was typed,
 // a skill's expansion, a prompt the plugin sent for them) is a message both sides must agree on.
 const DSH_CONTEXT = new Set(['time-context', 'runtime-context', 'agent-instructions', 'skill-catalog', 'model-selection', 'user-approval', 'repeat-tool-reminder']);
 const typed = (event) => event.type === 'user/message' && event.surfaceOp === 'append' && !DSH_CONTEXT.has(event.data?.source?.kind);
 
-// A message as the two sides can agree on it: its words, whitespace aside. Pictures stand where each side puts them (DSH writes them before the words, Claude Code after; a kept one is an
-// image block, one that was lost is a marker in the text), so they count only for a message that is nothing but pictures.
+// DSH and the harness may put pictures on either side of the words, and older imports may only have a marker for a picture.
+// Match the words and the number of pictures independently of their order.
 const promptOf = (content) => {
   const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : (content ?? []);
   const text = blocks.map((block) => (block.type === 'text' ? block.text : '')).join('\n');
-  const words = text.replaceAll('[image]', '').replace(/\s+/g, ' ').trim();
-  const pictures = blocks.filter((block) => block.type === 'image').length + (text.match(/\[image\]/g)?.length ?? 0);
-  return words || (pictures ? `[${pictures} pictures]` : '');
+  const parts = text.split(IMAGE_MARKER);
+  const words = parts.join(' ').replace(/\s+/g, ' ').trim();
+  const pictures = blocks.filter((block) => block.type === 'image').length + parts.length - 1;
+  return JSON.stringify([words, pictures]);
 };
 const supported = (block) => ['text', 'reasoning', 'tool-call'].includes(block.type);
 

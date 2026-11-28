@@ -124,6 +124,16 @@ struct SearchRangeFilters: Equatable {
     /// The one state the inbox is asked for: both chosen is no restriction.
     var inboxState: String? { states.count == 1 ? states.first : nil }
 
+    func requestFilters(for scope: SearchScope?) -> [String: Set<String?>] {
+        switch scope {
+        case .sessions: return conversations.saved.mapValues { Set($0) }
+        case .tasks:
+            return ["status": Set(taskStatuses.map(Optional.some)), "agent": Set(taskAgents.map(Optional.some))]
+                .filter { !$0.value.isEmpty }
+        default: return [:]
+        }
+    }
+
     func matching(_ tasks: [ScheduledTask]) -> [ScheduledTask] {
         tasks.filter { task in
             (taskStatuses.isEmpty || taskStatuses.contains(task.status)) && (taskAgents.isEmpty || taskAgents.contains(task.agent))
@@ -179,8 +189,14 @@ struct SearchGroup<Item: Decodable & Equatable & Sendable>: Decodable, Equatable
     var partial: Bool?
     /// The inbox only: every collector's name by id, for the 来源 choices.
     var names: [String: String]?
+    var facets: [String: [SearchFacet]]?
 
     static var empty: SearchGroup { SearchGroup(total: 0, items: []) }
+}
+
+struct SearchFacet: Decodable, Equatable, Sendable {
+    var key: String?
+    var count: Int
 }
 
 struct SearchAnswer: Decodable, Equatable, Sendable {
@@ -317,6 +333,7 @@ final class SearchModel: ObservableObject {
         var scope: SearchScope?
         var state: String?
         var sources: [String]
+        var filters: [String: Set<String?>]
         var computerID: String?
         var revision: Int
         var retry: Int
@@ -407,7 +424,8 @@ final class SearchModel: ObservableObject {
         }
         return RequestKey(
             phrase: phrase, scope: scope, state: scope == .inbox ? filters.inboxState : nil,
-            sources: scope == .inbox ? filters.sources.sorted() : [], computerID: computerID, revision: revision, retry: retryRevision
+            sources: scope == .inbox ? filters.sources.sorted() : [], filters: filters.requestFilters(for: scope),
+            computerID: computerID, revision: revision, retry: retryRevision
         )
     }
 
@@ -416,6 +434,11 @@ final class SearchModel: ObservableObject {
         if let scope = key.scope { values["scope"] = .string(scope.rawValue) }
         if let state = key.state { values["state"] = .string(state) }
         if !key.sources.isEmpty { values["connector"] = .array(key.sources.map(JSONValue.string)) }
+        if key.scope == .sessions || key.scope == .tasks {
+            values["filters"] = .object(key.filters.mapValues { keys in
+                .array(keys.map { $0.map(JSONValue.string) ?? .null })
+            })
+        }
         return values
     }
 
@@ -437,7 +460,7 @@ final class SearchModel: ObservableObject {
         defer { if requestID == id { isLoading = false } }
         do {
             // Words are asked for once the typing pauses; a choice on a pill is asked for at once.
-            if !key.phrase.isEmpty { try await Task.sleep(for: .milliseconds(250)) }
+            if !key.phrase.isEmpty, key.phrase != answeredKey?.phrase { try await Task.sleep(for: .milliseconds(250)) }
             try Task.checkCancellation()
             var rounds = 0
             while !Task.isCancelled {
@@ -475,27 +498,40 @@ final class SearchModel: ObservableObject {
 
     // MARK: Rows
 
-    /// The conversations the picked range lists: with words, what the computer found; without, every conversation of the board. Then the range's filters.
+    private var answerForPhrase: SearchAnswer? { answeredKey?.phrase == phrase ? answer : nil }
+
+    private func matchesFilters(_ scope: SearchScope) -> Bool {
+        answeredKey?.filters == filters.requestFilters(for: scope)
+    }
+
+    /// With words, the computer applies the filters. With an older plugin or the local board, filter the available rows here.
     func conversationHits(boardRows: [BoardConversation]) -> [SearchConversationHit] {
-        let base = phrase.isEmpty ? boardRows.map { SearchConversationHit(conversation: $0) } : answer?.sessions?.items ?? []
+        let group = answerForPhrase?.sessions
+        if !phrase.isEmpty, !matchesFilters(.sessions) { return [] }
+        if !phrase.isEmpty, let group, group.facets != nil { return group.items }
+        let base = phrase.isEmpty ? boardRows.map { SearchConversationHit(conversation: $0) } : group?.items ?? []
         guard !filters.conversations.isEmpty else { return base }
         let kept = Set(filters.conversations.matching(base.map(\.conversation)).map(\.id))
         return base.filter { kept.contains($0.id) }
     }
 
-    func baseConversations(boardRows: [BoardConversation]) -> [BoardConversation] {
-        phrase.isEmpty ? boardRows : (answer?.sessions?.items ?? []).map(\.conversation)
-    }
-
     func recordHits() -> [SearchRecordHit] { answer?.inbox?.items ?? [] }
-    func taskRows() -> [ScheduledTask] { filters.matching(answer?.tasks?.items ?? []) }
+    func taskRows() -> [ScheduledTask] {
+        guard matchesFilters(.tasks), let group = answerForPhrase?.tasks else { return [] }
+        return group.facets == nil ? filters.matching(group.items) : group.items
+    }
 
     /// The choices of a pill's sheet.
     func choices(for field: SearchFilterField, boardRows: [BoardConversation]) -> [SearchChoice] {
         switch field {
         case .agent, .project, .updated:
             guard let board = field.boardField else { return [] }
-            return filters.conversations.options(for: board, in: baseConversations(boardRows: boardRows), statuses: [], labels: [:]).map { option in
+            let group = phrase.isEmpty ? nil : answerForPhrase?.sessions
+            let base = phrase.isEmpty ? boardRows : (group?.items ?? []).map(\.conversation)
+            let counts = group?.facets?[board.rawValue]?.reduce(into: [String?: Int]()) { counts, facet in
+                if facet.count > 0 { counts[facet.key] = facet.count }
+            }
+            return filters.conversations.options(for: board, in: base, statuses: [], labels: [:], counts: counts).map { option in
                 var mark = SearchChoice.Mark.none
                 if field == .agent, let agent = option.id.flatMap(SessionAgent.init(rawValue:)) { mark = .agent(agent) }
                 return SearchChoice(key: option.id, title: option.title, count: option.count, mark: mark)
@@ -508,10 +544,13 @@ final class SearchModel: ObservableObject {
         case .taskStatus:
             return ["active", "paused", "ended"].map { SearchChoice(key: $0, title: ScheduledTask.statusName($0)) }
         case .taskAgent:
-            let agents = Dictionary(grouping: answer?.tasks?.items ?? [], by: \.agent)
-            return agents.compactMap { id, tasks -> SearchChoice? in
+            let group = answerForPhrase?.tasks
+            let agents = group?.facets?["agent"]?.reduce(into: [String: Int]()) { counts, facet in
+                if let key = facet.key { counts[key] = facet.count }
+            } ?? Dictionary(grouping: group?.items ?? [], by: \.agent).mapValues(\.count)
+            return Set(agents.keys).union(filters.taskAgents).compactMap { id -> SearchChoice? in
                 guard let agent = TaskAgent(id: id) else { return nil }
-                return SearchChoice(key: id, title: agent.name, count: tasks.count, mark: .taskAgent(agent))
+                return SearchChoice(key: id, title: agent.name, count: agents[id] ?? 0, mark: .taskAgent(agent))
             }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         }
     }

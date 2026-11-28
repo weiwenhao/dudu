@@ -75,7 +75,8 @@ class SearchTest {
 
     @Test fun theAnswerIsReadPlaceByPlaceAndOneThatCannotBeReadDoesNotSpoilTheRest() {
         val raw = json("outcome" to "success", "q" to "预发布",
-            "sessions" to json("total" to 7, "indexing" to true, "items" to JSONArray(listOf(conversationJson(1, snippet = "…预发布…"), json("id" to "broken")))),
+            "sessions" to json("total" to 7, "indexing" to true, "items" to JSONArray(listOf(conversationJson(1, snippet = "…预发布…"), json("id" to "broken"))),
+                "facets" to json("agent" to JSONArray(listOf(json("key" to "codex", "count" to 6))))),
             "inbox" to json("total" to 2, "names" to json("lark" to "飞书", "mail" to ""),
                 "items" to JSONArray(listOf(json("id" to 5, "title" to "x", "snippet" to "s"), json("title" to "no id")))),
             "tasks" to json("failed" to true, "total" to 0, "items" to JSONArray()))
@@ -83,6 +84,8 @@ class SearchTest {
         assertEquals(7, answer.sessions!!.total)
         assertEquals(listOf("issue:1"), answer.sessions.items.map { it.row.id })
         assertEquals("…预发布…", answer.sessions.items.single().snippet)
+        assertEquals("codex", answer.sessions.facets?.get("agent")?.single()?.key)
+        assertEquals(6, answer.sessions.facets?.get("agent")?.single()?.count)
         assertTrue(answer.indexing)
         assertEquals(1, answer.inbox!!.items.size)
         assertEquals(mapOf("lark" to "飞书"), answer.sources)
@@ -131,6 +134,12 @@ class SearchTest {
         // 状态 and 来源 are the records' alone.
         val tasks = SearchKey("x", SearchRange.Tasks, "todo", setOf("lark")).params()
         assertFalse(tasks.has("state") || tasks.has("connector"))
+        assertEquals(0, tasks.getJSONObject("filters").length())
+        val sessions = SearchUi(query = "x", range = SearchRange.Sessions, filters = SearchFilters(
+            sessions = BoardFilters().toggle(BoardFilterField.Agent, "codex").toggle(BoardFilterField.Project, null),
+        )).key.params().getJSONObject("filters")
+        assertEquals("codex", sessions.getJSONArray("agent").getString(0))
+        assertTrue(sessions.getJSONArray("project").isNull(0))
     }
 
     @Test fun theAnswerShownIsTheOneToTheWordsAskedAndAPickedRangeStartsFromTheAnswerOfAll() {
@@ -166,8 +175,7 @@ class SearchTest {
         assertEquals(100, asked[1].getInt("limit"))
         search.change { it.copy(inboxState = "done") }; runCurrent()
         assertEquals("done", asked[2].getString("state"))
-        // Another range starts with no choices. With nothing typed 任务 asks for its tasks all the same, as soon as it is picked (its 智能体 takes its choices from the answer); a choice of
-        // the tasks narrows them here and asks nothing new, and 会话 with nothing typed asks nothing at all.
+        // Tasks fetch their agents before a filter is selected. A selection asks the computer for the filtered page.
         search.pick(null); search.type(""); search.pick(SearchRange.Tasks); runCurrent()
         assertFalse(search.state.value.filters.any(SearchRange.Inbox))
         assertEquals(4, asked.size)
@@ -175,9 +183,10 @@ class SearchTest {
         assertEquals("", asked[3].getString("q"))
         assertEquals(SearchKey("", SearchRange.Tasks), search.state.value.answered)
         search.change { it.copy(taskStatuses = setOf("active")) }; runCurrent()
-        assertEquals(4, asked.size)
+        assertEquals(5, asked.size)
+        assertEquals("active", asked[4].getJSONObject("filters").getJSONArray("status").getString(0))
         search.pick(SearchRange.Sessions); runCurrent()
-        assertEquals(4, asked.size)
+        assertEquals("keyword-free conversations use the local board", 5, asked.size)
     }
 
     @Test fun aRecordsRangePickedWithNothingTypedAsksAtOnceAndKeepsItsAnswerForTheChoicesItOffers() = runTest {

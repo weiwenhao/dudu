@@ -144,6 +144,7 @@ internal fun BoardFilterSheet(
     reset: () -> Unit,
     toggle: (BoardFilterField, String?) -> Unit,
     only: BoardFilterField? = null,
+    counts: Map<String?, Int>? = null,
 ) {
     var category by remember { mutableStateOf<FilterCategory?>(null) }
     var search by remember { mutableStateOf("") }
@@ -182,8 +183,8 @@ internal fun BoardFilterSheet(
     }.filter { it.isNotEmpty() }
 
     val fields = if (only != null) listOf(only) else section?.fields.orEmpty()
-    val options = remember(filters, fields, scoped, statuses) {
-        fields.associateWith { filters.options(it, scoped, statuses) }
+    val options = remember(filters, fields, scoped, statuses, counts) {
+        fields.associateWith { filters.options(it, scoped, statuses, counts.takeIf { _ -> it == only }) }
     }
     val choices = fields.mapNotNull { field ->
         val rows = options.getValue(field).mapNotNull { option ->

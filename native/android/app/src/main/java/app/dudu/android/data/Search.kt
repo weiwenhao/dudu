@@ -88,7 +88,12 @@ fun matchRanges(text: String, terms: List<String>): List<IntRange> {
 data class SessionHit(val row: Conversation, val snippet: String?)
 
 /** One place's answer: how many matched in all, the rows it sent (at most the limit asked for), and `failed` when the computer could not look there (the other places are still answered). */
-data class SearchGroup<T>(val total: Int, val items: List<T>, val failed: Boolean = false)
+data class SearchGroup<T>(
+    val total: Int,
+    val items: List<T>,
+    val failed: Boolean = false,
+    val facets: Map<String, List<BoardFilterOption>>? = null,
+)
 
 /**
  * The answer of `search.query`. A place that was not asked for is null. `indexing` says the conversations' text is still being indexed (the page asks again until it is done), `sources`
@@ -109,7 +114,15 @@ class SearchAnswer(
                 val place = o.optJSONObject(key) ?: return null
                 // A row this build cannot read is left out; the others are shown.
                 val items = place.optJSONArray("items")?.let { list -> (0 until list.length()).mapNotNull { index -> list.optJSONObject(index)?.let { runCatching { item(it) }.getOrNull() } } }.orEmpty()
-                return SearchGroup(place.optInt("total", items.size), items, place.optBoolean("failed"))
+                val facets = place.optJSONObject("facets")?.let { fields ->
+                    fields.keys().asSequence().associateWith { field ->
+                        val options = fields.optJSONArray(field) ?: JSONArray()
+                        (0 until options.length()).mapNotNull { index ->
+                            options.optJSONObject(index)?.let { BoardFilterOption(it.nullableString("key"), it.optInt("count")) }
+                        }
+                    }
+                }
+                return SearchGroup(place.optInt("total", items.size), items, place.optBoolean("failed"), facets)
             }
             val sessions = group("sessions") { SessionHit(Conversation.parse(it), it.nullableString("snippet")) }
             val inbox = group("inbox") { it.also { card -> card.getLong("id") } }
@@ -123,8 +136,7 @@ class SearchAnswer(
 }
 
 /**
- * What a range page narrows its rows by. The conversations' choices are the board's own (`BoardFilters`: 智能体, 项目 and 更新时间 are the ones the page offers), applied here to the rows that
- * came; the records' (状态, 来源) go to the computer with the request; the tasks' (状态, 智能体) are applied here to the tasks that came.
+ * The range's selections. The board's choices also filter the local, keyword-free conversation list.
  */
 data class SearchFilters(
     val sessions: BoardFilters = BoardFilters(),
@@ -140,6 +152,13 @@ data class SearchFilters(
         SearchRange.Inbox -> inboxState != null || sources.isNotEmpty()
         SearchRange.Tasks -> taskStatuses.isNotEmpty() || taskAgents.isNotEmpty()
     }
+
+    fun forRequest(range: SearchRange?): Map<String, Set<String?>> = when (range) {
+        SearchRange.Sessions -> listOf(BoardFilterField.Agent, BoardFilterField.Project, BoardFilterField.Updated)
+            .associate { it.wire to sessions.selected(it) }
+        SearchRange.Tasks -> mapOf("status" to taskStatuses, "agent" to taskAgents)
+        else -> emptyMap()
+    }.filterValues { it.isNotEmpty() }
 }
 
 /**

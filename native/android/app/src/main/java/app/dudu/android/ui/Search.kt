@@ -145,9 +145,12 @@ fun SearchScreen(state: UiState, model: DuduViewModel) {
     when (val open = sheet) {
         null -> Unit
         is SearchSheet.Board -> {
-            val base = remember(ui.query, answer, rows) { sessionBase(ui, rows).map(SessionHit::row) }
+            val sessions = ui.answerForPhrase?.sessions
+            val base = if (phrase.isEmpty()) rows else sessions?.items.orEmpty().map(SessionHit::row)
+            val counts = if (phrase.isEmpty()) null else sessions?.facets?.get(open.field.wire)?.associate { it.key to (it.count ?: 0) }
             BoardFilterSheet(state.home, base, ui.filters.sessions, close = { sheet = null }, reset = {},
-                toggle = { field, key -> model.search.change { it.copy(sessions = it.sessions.toggle(field, key)) } }, only = open.field)
+                toggle = { field, key -> model.search.change { it.copy(sessions = it.sessions.toggle(field, key)) } },
+                only = open.field, counts = counts)
         }
         SearchSheet.InboxState -> SearchChoiceSheet(stringResource(R.string.status),
             listOf(SearchChoice("todo", w("待处理")), SearchChoice("done", w("已处理"))), setOfNotNull(ui.filters.inboxState),
@@ -166,7 +169,9 @@ fun SearchScreen(state: UiState, model: DuduViewModel) {
         }
         SearchSheet.TaskAgent -> {
             val collator = Collator.getInstance(appLocale())
-            val agents = (ui.answer?.tasks?.items.orEmpty().map { it.nullableString("agent") } + ui.filters.taskAgents).distinct()
+            val tasks = ui.answerForPhrase?.tasks
+            val choices = tasks?.facets?.get("agent")?.map { it.key } ?: tasks?.items.orEmpty().map { it.nullableString("agent") }
+            val agents = (choices + ui.filters.taskAgents).distinct()
                 .sortedWith { a, b -> collator.compare(agentName(a), agentName(b)) }
             SearchChoiceSheet(stringResource(R.string.agent),
                 agents.map { agent -> SearchChoice(agent, if (agent == null) stringResource(R.string.unassigned) else agentName(agent)) { if (agent != null) AgentLogo(agent, 16) } },
@@ -192,7 +197,7 @@ private fun SearchPills(ui: SearchUi, sources: Map<String, String>, search: Sear
     // 来源 and the tasks' 智能体 offer what the computer's answer holds: until it is here (or when it could not be read), they are grey and do nothing. 状态 and the conversations' choices need no answer.
     val answer = ui.shown
     val sourcesReady = answer?.inbox?.let { !it.failed } == true
-    val agentsReady = answer?.tasks?.let { !it.failed } == true
+    val agentsReady = ui.answerForPhrase?.tasks?.let { !it.failed } == true
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         if (range == null) for (place in SearchRange.entries) SearchPill(rangeTitle(place), "search-range-${place.wire}") { search.pick(place) }
@@ -322,9 +327,10 @@ private fun SearchBody(ui: SearchUi, answer: SearchAnswer?, rows: List<Conversat
         return
     }
     val sessionHits = if (range == null || range == SearchRange.Sessions) sessionBase(ui, rows) else emptyList()
-    val sessionRows = if (range == SearchRange.Sessions) narrowSessions(sessionHits, filters.sessions) else sessionHits
+    val sessionRows = if (range == SearchRange.Sessions && answer?.sessions?.facets == null) narrowSessions(sessionHits, filters.sessions) else sessionHits
     val cards = answer?.inbox?.items.orEmpty()
-    val tasks = if (range == SearchRange.Tasks) narrowTasks(answer?.tasks?.items.orEmpty(), filters) else answer?.tasks?.items.orEmpty()
+    val taskRows = answer?.tasks?.items.orEmpty()
+    val tasks = if (range == SearchRange.Tasks && answer?.tasks?.facets == null) narrowTasks(taskRows, filters) else taskRows
     val shownRows = when (range) {
         null -> sessionRows.size + cards.size + tasks.size
         SearchRange.Sessions -> sessionRows.size

@@ -18,7 +18,7 @@ final class DuduStore: ObservableObject {
     @Published var activeComputer: Computer? {
         didSet {
             if oldValue?.id != activeComputer?.id {
-                if hasForegroundConnectionFailure { hasForegroundConnectionFailure = false }
+                resetForegroundFailureNotice()
                 loadedConversationTarget = nil
                 submissionComputerChanged()
             }
@@ -115,7 +115,7 @@ final class DuduStore: ObservableObject {
     @Published var isRespondingApprovals: Set<String> = []
     @Published var status: ConnectionStatus = .disconnected {
         didSet {
-            if status == .connected, hasForegroundConnectionFailure { hasForegroundConnectionFailure = false }
+            if status == .connected { resetForegroundFailureNotice() }
             resumeSendConnectionWaiters()
         }
     }
@@ -144,13 +144,12 @@ final class DuduStore: ObservableObject {
     @Published var notice: String?
     @Published private(set) var connectionFailure: DuduFailure? {
         didSet {
-            if connectionFailure != nil {
-                if isForeground, !hasForegroundConnectionFailure, foregroundFailureNoticeTask == nil {
+            if let failure = connectionFailure {
+                if !failure.shouldRetryConnection {
+                    resetForegroundFailureNotice()
+                } else if isForeground, !hasForegroundConnectionFailure, foregroundFailureNoticeTask == nil {
                     scheduleForegroundFailureNotice()
                 }
-            } else {
-                foregroundFailureEpoch += 1
-                foregroundFailureNoticeTask = nil
             }
             resumeSendConnectionWaiters()
         }
@@ -158,7 +157,6 @@ final class DuduStore: ObservableObject {
     /// Retain a confirmed failure across retries, but never infer one from lifecycle suspension.
     @Published private var hasForegroundConnectionFailure = false
     private(set) var foregroundFailureNoticeTask: Task<Void, Never>?
-    private var foregroundFailureEpoch = 0
     /// A Mac that was asleep answers again, on its own reconnect retries, within a handful of seconds (measured
     /// 2026-11-27: two real wake-from-sleep gaps cleared in 7.8 s and 9.0 s). Only a failure that outlives this grace
     /// period, counted from when the streak first began (a retry that fails again while already waiting does not
@@ -168,16 +166,18 @@ final class DuduStore: ObservableObject {
     var foregroundFailureNoticeDelay: @MainActor (Double) async -> Void = { seconds in
         try? await Task.sleep(for: .seconds(seconds))
     }
+    private func resetForegroundFailureNotice() {
+        foregroundFailureNoticeTask?.cancel()
+        foregroundFailureNoticeTask = nil
+        if hasForegroundConnectionFailure { hasForegroundConnectionFailure = false }
+    }
+
     private func scheduleForegroundFailureNotice() {
-        foregroundFailureEpoch += 1
-        let epoch = foregroundFailureEpoch
         foregroundFailureNoticeTask = Task { [weak self] in
             guard let delay = self?.foregroundFailureNoticeDelay,
                   let seconds = self?.foregroundFailureNoticeSeconds else { return }
             await delay(seconds)
-            guard let self else { return }
-            guard self.foregroundFailureEpoch == epoch, self.isForeground,
-                  self.connectionFailure != nil, !self.hasForegroundConnectionFailure else { return }
+            guard !Task.isCancelled, let self else { return }
             self.hasForegroundConnectionFailure = true
             self.foregroundFailureNoticeTask = nil
         }
@@ -222,7 +222,7 @@ final class DuduStore: ObservableObject {
     private var operationWaiters: [CheckedContinuation<Void, Never>] = []
     private var isForeground = false {
         didSet {
-            if !isForeground, hasForegroundConnectionFailure { hasForegroundConnectionFailure = false }
+            if !isForeground { resetForegroundFailureNotice() }
             resumeSendConnectionWaiters()
         }
     }
@@ -387,6 +387,7 @@ final class DuduStore: ObservableObject {
         } ?? scanned
         let previous = activeComputer
         let currentGeneration = nextGeneration()
+        resetForegroundFailureNotice()
         status = .connecting
         connectionFailure = nil
         error = nil
@@ -455,6 +456,7 @@ final class DuduStore: ObservableObject {
 
         let previous = activeComputer
         let currentGeneration = nextGeneration()
+        resetForegroundFailureNotice()
         status = .connecting
         connectionFailure = nil
         error = nil
@@ -502,6 +504,7 @@ final class DuduStore: ObservableObject {
         let wasActive = computer.id == activeComputer?.id
         let currentGeneration = wasActive ? nextGeneration() : generation
         if wasActive {
+            resetForegroundFailureNotice()
             status = .disconnected
             clearConversation()
             await client.disconnect(throughGeneration: currentGeneration)
@@ -1937,6 +1940,7 @@ final class DuduStore: ObservableObject {
 
     private func restore(_ computer: Computer, generation currentGeneration: Int) async {
         guard currentGeneration == generation else { return }
+        resetForegroundFailureNotice()
         status = .connecting
         connectionFailure = nil
         DuduLog.record("computer.restore.begin", state: "connecting")

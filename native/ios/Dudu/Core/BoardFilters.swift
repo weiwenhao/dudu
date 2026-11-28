@@ -171,11 +171,12 @@ struct BoardFilters: Equatable {
     }
 
     func options(
-        for field: BoardFilterField, in rows: [BoardConversation], statuses: [IssueWorkflowStatus], labels: [String: IssueLabel]
+        for field: BoardFilterField, in rows: [BoardConversation], statuses: [IssueWorkflowStatus], labels: [String: IssueLabel],
+        counts suppliedCounts: [String?: Int]? = nil
     ) -> [BoardFilterOption] {
-        let counts = field.isDate ? [:] : matching(rows, ignoring: field).reduce(into: [String?: Int]()) { counts, row in
+        let counts = suppliedCounts ?? (field.isDate ? [:] : matching(rows, ignoring: field).reduce(into: [String?: Int]()) { counts, row in
             for key in field.keys(in: row) { counts[key, default: 0] += 1 }
-        }
+        })
         let selected = values[field] ?? []
         func title(_ key: String?) -> String { field.title(for: key, statuses: statuses, labels: labels) }
         let keys: [String?]

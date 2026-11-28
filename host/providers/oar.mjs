@@ -644,7 +644,8 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
           let mark = null;
           try { mark = (await modelsMark?.({ installation, env: environmentOf() })) ?? null; } catch { /* read in full */ }
           const kept = mark && modelCache ? await modelCache.get(id).catch(() => undefined) : undefined;
-          if (mark && kept && kept.mark === mark && kept.version === version && kept.command === command) models = kept.models.filter((model) => !model.disabled);
+          const reuse = mark && kept && kept.mark === mark && kept.version === version && kept.command === command;
+          if (reuse) models = kept.models.filter((model) => !model.disabled);
           else {
             // A folder of its own, so that what a harness leaves behind of a reading (Antigravity: an empty conversation) belongs to no one's work, and is told from it.
             let cwd = homedir();
@@ -655,11 +656,14 @@ export function createOarProvider({ id, name, runtime, runtimeFor, installation:
               if (listed.kind === 'ok') models = listed.models.filter((model) => !model.disabled);
             } catch { /* the fallback below */ }
             if (cwd === own) { try { await listingCleanup?.({ env: environmentOf(), folder: cwd, since: began }); } catch { /* what is left stays for the next reading to clear */ } }
-            if (models?.length && modelCache) void modelCache.set(id, { mark: mark ?? '', version, command, models });
           }
           // Settings changed while it was being read (a proxy, a path): this answer belongs to the old ones.
           if (mine !== generation) return;
-          if (models?.length) { failures = 0; loaded = { until: 0, models, read: true }; }
+          if (models?.length) {
+            if (!reuse && modelCache) void modelCache.set(id, { mark: mark ?? '', version, command, models });
+            failures = 0;
+            loaded = { until: 0, models, read: true };
+          }
           // A harness that cannot say keeps what it said before.
           else {
             failures += 1;

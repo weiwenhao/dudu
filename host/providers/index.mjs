@@ -137,6 +137,7 @@ export async function createProviders({ host, providers, folder, log = console }
     const entry = registered.get(provider.route);
     if (!entry) return;
     registered.delete(provider.route);
+    entry.driver.refreshModels?.(); // Invalidate any listing that could outlive this installation.
     for (const [id, current] of mirrored) {
       if (current.bridge !== entry.bridge) continue;
       current.dispose();

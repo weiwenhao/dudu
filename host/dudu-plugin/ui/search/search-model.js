@@ -1,7 +1,8 @@
 // The pure part of the search page of the conversation list (owner, 2026-11-27; `.local/designs/phone-search-2026-11-27/`, the phone's design on every screen): what the page remembers (the words
-// that were searched for, when each conversation was last opened), the 常用 list, the words to mark in a result, the groups of an answer, and the filters the page applies itself to the rows it gets.
+// that were searched for, when each conversation was last opened), the 常用 list, the words to mark in a result, the groups of an answer, and the search filters.
 // No React in here: `tests/desktop-search.test.ts` runs it as it is.
-import { dateRange } from '../issues/dates.js';
+import { facetCounts } from '../../../assistant/home/search-filters.mjs';
+export { agentOfEntry, filterSessions, filterTasks, isUnfiltered, projectOfEntry } from '../../../assistant/home/search-filters.mjs';
 
 export const HISTORY_KEY = 'dudu.search.history.v1';
 export const OPENED_KEY = 'dudu.conversations.opened.v1';
@@ -82,40 +83,9 @@ export function answerState(answer, places = PLACES) {
   return asked.some((group) => group.items?.length > 0) ? 'rows' : 'empty';
 }
 
-// ---- The filters of a range. The conversations' and the tasks' are applied here, to the rows the page has; the inbox's are asked of the plugin.
-
-/** The agent of a conversation: its issue's, none for an issue nobody was given, 嘟嘟 for 嘟嘟's own (which has no issue). */
-export const agentOfEntry = (entry) => (entry.issue ? entry.issue.agent ?? null : 'dudu');
-/** The name of the project of a conversation's issue (the Desktop's rows carry the whole project, the phone's only its name). */
-export const projectOfEntry = (entry) => {
-  const project = entry.issue?.project;
-  return (typeof project === 'string' ? project : project?.name) ?? null;
-};
-
-export const isUnfiltered = (filter) => Object.values(filter ?? {}).every((values) => !values?.length);
-
-/** The conversations that pass the filter ({ agent: [ids], project: [names], updated: ['day' | 'week' | 'month'] }); the time is that of the row (the newest message). */
-export function filterSessions(entries, filter, now = Date.now()) {
-  const agents = filter.agent ?? [];
-  const projects = filter.project ?? [];
-  const from = filter.updated?.[0] ? dateRange('updated', filter.updated[0], now).updatedFrom : null;
-  return entries.filter((entry) => (!agents.length || agents.includes(agentOfEntry(entry)))
-    && (!projects.length || projects.includes(projectOfEntry(entry)))
-    && (from === null || entry.receivedAt >= from));
-}
-
-/** The tasks that pass the filter ({ status: ['active' | 'paused' | 'ended'], agent: [ids] }). */
-export function filterTasks(tasks, filter) {
-  const statuses = filter.status ?? [];
-  const agents = filter.agent ?? [];
-  return tasks.filter((task) => (!statuses.length || statuses.includes(task.status)) && (!agents.length || agents.includes(task.agent)));
-}
-
 /** The values a picker offers, from the rows it filters: each once, the commonest first. */
 export function distinct(rows, pick) {
-  const counts = new Map();
-  for (const row of rows) { const value = pick(row); counts.set(value, (counts.get(value) ?? 0) + 1); }
-  return [...counts].map(([value, count], index) => ({ value, count, index })).sort((a, b) => b.count - a.count || a.index - b.index).map(({ value }) => value);
+  return facetCounts(rows, pick).map(({ key }) => key);
 }
 
 /** What the inbox filter says to the plugin: one state, and the collectors by id. */

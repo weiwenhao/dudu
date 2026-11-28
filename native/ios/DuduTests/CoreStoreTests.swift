@@ -805,6 +805,40 @@ final class CoreStoreTests: XCTestCase {
         store.suspend()
     }
 
+    func testForegroundFailureNoticeKeepsItsFirstDeadlineAcrossAutomaticRetries() async {
+        let transport = StoreTransportFixture()
+        let store = DuduStore(repository: StoreComputerFixture(), client: transport)
+        let (deadline, clock) = AsyncStream<Void>.makeStream()
+        store.foregroundFailureNoticeDelay = { _ in
+            var ticks = deadline.makeAsyncIterator()
+            _ = await ticks.next()
+        }
+        await store.start()
+        await transport.failConnections(with: .connectionFailed)
+        await transport.emitDisconnect()
+        let firstNotice = store.foregroundFailureNoticeTask
+        XCTAssertNotNil(firstNotice)
+        XCTAssertFalse(store.isComputerUnavailable)
+
+        await store.reconnect(automatically: true)
+        XCTAssertFalse(store.isComputerUnavailable)
+        await transport.holdNextConnection()
+        let retry = Task { await store.reconnect(automatically: true) }
+        await transport.waitForConnection()
+        XCTAssertNil(store.connectionFailure)
+        clock.yield(())
+        await firstNotice?.value
+        XCTAssertTrue(store.isComputerUnavailable, "The first deadline still applies during a retry.")
+
+        await transport.failConnections(with: nil)
+        await transport.finishConnection()
+        await retry.value
+        XCTAssertEqual(store.status, .connected)
+        XCTAssertFalse(store.isComputerUnavailable)
+        store.suspend()
+        clock.finish()
+    }
+
     func testFirstLaunchWithoutSavedComputerShowsGuideAfterRestore() async {
         let store = DuduStore(repository: StoreComputerFixture(paired: false), client: StoreTransportFixture())
         XCTAssertFalse(store.showsConnectionGuide)

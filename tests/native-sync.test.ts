@@ -200,6 +200,17 @@ test('a message DSH has that the harness never saw still keeps the synchronizati
   assert.deepEqual(nativeUpdates({ events, history: history([earlier, turn('something else', 'native-only answer')]), route: 'claude', sessionId: 'dsh-1' }), []);
 });
 
+test('an old text-only branch cannot answer the same words sent with a picture', () => {
+  const earlier = turn('earlier question', 'earlier answer');
+  const events = initial([earlier]);
+  dshTurn(events, 2, [{ inputs: [{ id: 'u2', content: [
+    { type: 'image', attachment: 'pic-1' }, { type: 'text', text: 'look at this' },
+  ] }] }]);
+  const sync = (next: ReturnType<typeof turn>) => nativeUpdates({ events, history: history([earlier, next]), route: 'claude', sessionId: 'dsh-1' });
+  assert.deepEqual(sync(turn('look at this', 'Reply from the older branch.')), []);
+  assert.deepEqual(words(sync(turn('look at this\n[image]', 'Reply to the picture.'))), ['Reply to the picture.']);
+});
+
 test('a message typed while the harness worked, which an older reading of the store did not know, does not stop what comes after it', () => {
   const base = { ...turn('go', 'Started.'), id: 'one' };
   // DSH imported the turn without the message typed in the middle: it has the answer of that step but not the message.

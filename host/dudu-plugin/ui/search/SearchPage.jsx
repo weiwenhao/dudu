@@ -33,6 +33,7 @@ const TASK_STATUSES = ['active', 'paused', 'ended'];
 const placeName = (place) => (place === 'sessions' ? T.widgets.titles.sessions : place === 'inbox' ? T.widgets.titles.collector : T.tasks.title);
 const agentLabel = (value) => (value === 'dudu' ? T.brand : value == null ? T.noAgent : AGENT_NAMES[value] ?? value);
 const projectLabel = (value) => (value == null ? T.noProject : value);
+const filterChoices = (group, field, rows, pick) => group?.facets?.[field]?.map(({ key }) => key) ?? distinct(rows, pick);
 
 // An input method (a Chinese one, say) reports Esc as its "Process" key while it holds a composition; only one that is not composing is Esc (as the find bar of a conversation reads it).
 const isEscape = (event) => !(event.isComposing ?? event.nativeEvent?.isComposing) && (event.key === 'Escape' || event.code === 'Escape');
@@ -78,8 +79,8 @@ function Group({ place, total, onMore, children }) {
  *   - nothing typed: the words searched for before (搜索历史) and the conversations most opened (常用, the 全部 list, the one opened last first);
  *   - words typed: the three places in groups of three rows with 更多, each place in the rows of its own page, the words found in blue;
  *   - a range chosen (a pill with ×; × or the pill goes back): that place alone, with its filters as pills in the same row, and a line saying how to search while nothing is typed or chosen.
- * The conversations and the tasks are filtered here, from the rows the page has; the inbox's state and sources are asked of the plugin. `selected` is the open conversation's id, `onOpen(entry)` opens a
- * conversation, `badge(entry, size)` is the list's own avatar, `onOpenIssue(id)` opens an issue's page.
+ * The plugin applies the range's filters before limiting results. With no keyword, the conversations are the board's own rows. `selected` is the open conversation's id,
+ * `onOpen(entry)` opens a conversation, `badge(entry, size)` is the list's own avatar, `onOpenIssue(id)` opens an issue's page.
  */
 export function SearchPage({ request, selected, onOpen, badge, onOpenIssue, onClose }) {
   const toast = useToast();
@@ -104,8 +105,9 @@ export function SearchPage({ request, selected, onOpen, badge, onOpenIssue, onCl
   const question = useMemo(() => {
     if (scope === null) return asked ? { q: asked } : null;
     if (scope === 'sessions' && !asked) return null; // the 全部 list is the answer
-    return { q: asked, scope, limit: RANGE_ROWS, ...(scope === 'inbox' ? inboxArguments(filters.inbox) : {}) };
-  }, [scope, asked, filters.inbox]);
+    const criteria = scope === 'inbox' ? inboxArguments(filters.inbox) : { filters: filters[scope] };
+    return { q: asked, scope, limit: RANGE_ROWS, ...criteria };
+  }, [scope, asked, filters]);
   const answer = useSearchAnswer(request, question);
   const value = answer.value;
   if (value?.inbox?.names && value.inbox.names !== namesFrom) { setNamesFrom(value.inbox.names); setNames(value.inbox.names); } // kept once read: the answer of another place has none
@@ -140,18 +142,19 @@ export function SearchPage({ request, selected, onOpen, badge, onOpenIssue, onCl
   const { call, actions } = useRecordActions({ request, toast, openIssue: onOpenIssue ?? services.openIssue, beginMark, refresh, startCompletion: completion.start, followCompletion: completion.follow, setCreating });
 
   // ---- What the range filters offer, and the rows they leave.
-  const sessionBase = scope === 'sessions' && !asked ? all.value?.conversations ?? [] : value?.sessions?.items ?? [];
-  const taskBase = value?.tasks?.items ?? [];
+  const sessions = value?.q === asked ? value.sessions : null;
+  const tasks = value?.q === asked ? value.tasks : null;
+  const sessionBase = !asked ? all.value?.conversations ?? [] : sessions?.items ?? [];
   const rangeFilters = scope === 'sessions' ? [
-    { key: 'agent', name: T.fields.agent, options: distinct(sessionBase, agentOfEntry).map((one) => ({ value: one, label: agentLabel(one) })), labelOf: agentLabel },
-    { key: 'project', name: T.fields.project, options: distinct(sessionBase, projectOfEntry).map((one) => ({ value: one, label: projectLabel(one) })), labelOf: projectLabel },
+    { key: 'agent', name: T.fields.agent, options: filterChoices(sessions, 'agent', sessionBase, agentOfEntry).map((one) => ({ value: one, label: agentLabel(one) })), labelOf: agentLabel },
+    { key: 'project', name: T.fields.project, options: filterChoices(sessions, 'project', sessionBase, projectOfEntry).map((one) => ({ value: one, label: projectLabel(one) })), labelOf: projectLabel },
     { key: 'updated', name: T.dates.updated, options: UPDATED.map((one) => ({ value: one, label: T.dates[one] })), labelOf: (one) => T.dates[one] },
   ] : scope === 'inbox' ? [
     { key: 'state', name: T.fields.status, options: ['todo', 'done'].map((one) => ({ value: one, label: T.collector.tabs[one] })), labelOf: (one) => T.collector.tabs[one] },
     { key: 'connector', name: T.fields.source, options: Object.entries(names).map(([id, name]) => ({ value: id, label: name })), labelOf: (id) => names[id] ?? id },
   ] : scope === 'tasks' ? [
     { key: 'status', name: T.fields.status, options: TASK_STATUSES.map((one) => ({ value: one, label: T.tasks.statuses[one] })), labelOf: (one) => T.tasks.statuses[one] },
-    { key: 'agent', name: T.fields.agent, options: distinct(taskBase, (task) => task.agent).map((one) => ({ value: one, label: agentLabel(one) })), labelOf: agentLabel },
+    { key: 'agent', name: T.fields.agent, options: filterChoices(tasks, 'agent', tasks?.items ?? [], (task) => task.agent).map((one) => ({ value: one, label: agentLabel(one) })), labelOf: agentLabel },
   ] : [];
   const toggle = (key, one) => setFilters((current) => ({ ...current, [scope]: toggleFilter(current[scope], key, one, SINGLE[scope]) }));
 
@@ -213,11 +216,14 @@ export function SearchPage({ request, selected, onOpen, badge, onOpenIssue, onCl
     const bare = !q && isUnfiltered(filters[scope]);
     const own = scope === 'sessions' && !asked;
     const waiting = own && q !== ''; // typed, and not asked for yet: the 全部 list is not the answer to it
-    const group = value?.[scope];
+    const group = answer.matches ? value?.[scope] : null;
     let rows = null;
     if (!bare) {
       if (own) rows = all.value ? filterSessions(sessionBase, filters.sessions) : null;
-      else if (group && !group.failed) rows = scope === 'sessions' ? filterSessions(group.items, filters.sessions) : scope === 'tasks' ? filterTasks(group.items, filters.tasks) : group.items;
+      else if (group && !group.failed) {
+        if (scope === 'inbox' || group.facets) rows = group.items;
+        else rows = scope === 'sessions' ? filterSessions(group.items, filters.sessions) : filterTasks(group.items, filters.tasks);
+      }
     }
     const failed = own ? all.status === 'error' && !all.value : answer.status === 'error' || group?.failed === true;
     content = (

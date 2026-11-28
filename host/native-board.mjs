@@ -4,12 +4,14 @@ import { HARNESS_IDS } from './providers/catalog.mjs';
 import { createWithAttachments } from './assistant/issues/create-with-attachments.mjs';
 import { understands } from './native-client.mjs';
 import { SEARCH_SCOPES } from './assistant/home/search.mjs';
+import { validSearchFilters } from './assistant/home/search-filters.mjs';
 
 /**
  * The capability of a phone whose chat list may show what the owner said last (owner, 2026-11-22: "其他 APP 都会显示我发的消息"): the row's `preview` and `receivedAt` are then those of the newest message of
  * either side, so the row also moves to the top when the owner sends. The shape of the row is the same; a phone that declares nothing (build 143) is answered as it always was.
  */
 export const OWN_MESSAGES = 'board.latest';
+const SEARCH_FILTERS = 'search.filters';
 // The board and the Collector for the phone (docs/assistant.md 4.2). The owner is the one asking, here as on the desktop, and the commands are the desktop
 // interface's own: `issues/list`, `issues/add`, `inbox/*` (host/assistant/issues/api.mjs, host/assistant/inbox/api.mjs). What changes is the answer: plain,
 // small rows (no description, no activity), so that the app draws its lists itself.
@@ -40,7 +42,7 @@ export const OWN_MESSAGES = 'board.latest';
 //   inbox.share   { ids, issue, to?: 'issue' | 'session' }   -> { outcome, changed }
 //   inbox.complete { id }                                    -> { outcome, started }              more context for one record: its collector's session reads the conversation around it, in the
 //                                                                                               background; `inbox.get` then says `completing` and, when it failed, `completeError`
-////   search.query  { q, scope?: 'sessions' | 'inbox' | 'tasks', state?: 'todo' | 'done', connector?: [id], limit? }
+////   search.query  { q, scope?: 'sessions' | 'inbox' | 'tasks', state?: 'todo' | 'done', connector?: [id], filters?, limit? }
 //                                                           -> { q, sessions?: { total, items: [entry], indexing?, partial? }, inbox?: { total, items: [card], names: { collectorId: name } }, tasks?: { total, items: [task] } }
 //                                                                                               the search page's one request (assistant/home/search.mjs): each place in the rows of its own page, `snippet`
 //                                                                                               on an entry or a card whose text matched; with `scope`, `q` may be empty (that place's newest rows)
@@ -418,16 +420,19 @@ export function createNativeBoard({ issues, inbox, projects, getNeedsYouColor, h
 
   async function searchQuery(params, context) {
     if (!search) return unavailable();
+    const filters = understands(context?.client, SEARCH_FILTERS) ? params.filters : undefined;
     if (typeof params.q !== 'string' || params.q.length > 200
       || params.scope !== undefined && !SEARCH_SCOPES.includes(params.scope)
       || params.state !== undefined && !INBOX_TABS.has(params.state)
       || params.connector !== undefined && (!Array.isArray(params.connector) || !params.connector.every((id) => typeof id === 'string' && id.length <= 80))
       || params.limit !== undefined && !(Number.isSafeInteger(params.limit) && params.limit >= 1 && params.limit <= 100)
+      || !validSearchFilters(params.scope, filters)
       || !params.q.trim() && params.scope === undefined) fail('BAD_REQUEST');
     const result = await search.query({
       q: params.q, ...(params.scope ? { scope: params.scope } : {}), ...(params.state ? { state: params.state } : {}),
       ...(params.connector?.length ? { connector: params.connector.slice(0, 20) } : {}), ...(params.limit ? { limit: params.limit } : {}),
-    }, { row, ownMessages: understands(context?.client, OWN_MESSAGES) });
+      ...(filters === undefined ? {} : { filters }),
+    }, { row, ownMessages: understands(context?.client, OWN_MESSAGES), includeAssistant: false });
     return succeeded(result) ? result : problem(result);
   }
 

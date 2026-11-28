@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { createInboxApi, snippetOf } from '../host/assistant/inbox/api.mjs';
 import { normalizeRecords } from '../host/assistant/inbox/records.mjs';
 import { createIssues } from '../host/assistant/issues/index.mjs';
-import { cleanLine, createSearch } from '../host/assistant/home/search.mjs';
+import { cleanLine, createSearch, createSearchApi } from '../host/assistant/home/search.mjs';
 import { createNativeBoard } from '../host/native-board.mjs';
 
 const NOW = new Date(2026, 10, 27, 12).getTime();
@@ -50,9 +50,61 @@ test('a place alone with nothing typed answers its newest rows; nothing typed an
   assert.deepEqual(Object.keys(all).sort(), ['outcome', 'q', 'sessions']);
   assert.equal(all.sessions.total, 4);
   assert.equal(all.sessions.items.length, 2);
+  assert.equal(all.sessions.facets, undefined, 'older clients keep the original response');
   assert.equal((await find.query({ q: '  ' })).code, 'empty_query');
   assert.equal((await find.query({ q: 'x', scope: 'files' })).outcome, 'needs_clarification');
   assert.equal((await find.query({ q: 'x'.repeat(201) })).outcome, 'needs_clarification');
+});
+
+test('desktop and phones can filter past the first 100 title and task matches, including a conversation matched by its text', async () => {
+  const at = Date.now();
+  const listed = Array.from({ length: 101 }, (_, index) => {
+    const featured = index === 100;
+    const row = entry(index + 1, featured ? 'Release checklist' : `Deploy ${index + 1}`);
+    return {
+      ...row, receivedAt: at - index,
+      issue: { ...row.issue, agent: featured ? 'codex' : 'claude', project: { name: featured ? 'Mobile' : 'Desktop' } },
+    };
+  });
+  const tasks = listed.map((row, index) => ({
+    id: String(index + 1), title: `Deploy ${index + 1}`, agent: row.issue.agent, status: index < 100 ? 'active' : 'paused',
+  }));
+  const { search: find } = search({
+    conversations: async (row: any) => ({ conversations: listed.map((entry) => ({ ...entry, issue: row(entry.issue) })) }),
+    sessions: async () => ({ items: [{ sessionId: 's101', snippet: 'Deploy before lunch' }] }),
+    tasks: async () => ({ outcome: 'success', tasks: [...tasks, { id: 'hidden', title: 'Deploy', agent: 'pi', status: 'paused', origin: 'session' }] }),
+  });
+  const desktop = createSearchApi(find);
+  const board = createNativeBoard({ search: find, fail } as any);
+  const ui = [
+    async (params: object) => {
+      const response = await desktop(new Request('http://localhost/api/dudu/search/query', { method: 'POST', body: JSON.stringify(params) }));
+      assert.equal(response.status, 200);
+      return response.json();
+    },
+    (params: object) => board.dispatch('search.query', params, { client: { capabilities: ['search.filters'] } }),
+  ];
+  for (const query of ui) {
+    const sessions = { q: 'deploy', scope: 'sessions', limit: 100 };
+    const unfiltered = (await query({ ...sessions, filters: {} })).sessions;
+    assert.equal(unfiltered.total, 101);
+    assert.equal(unfiltered.items.length, 100);
+    assert.deepEqual(unfiltered.facets.agent.at(-1), { key: 'codex', count: 1 });
+    assert.deepEqual(unfiltered.facets.project.at(-1), { key: 'Mobile', count: 1 });
+    const filtered = (await query({ ...sessions, filters: { agent: ['codex'], project: ['Mobile'], updated: ['day'] } })).sessions;
+    assert.equal(filtered.total, 1);
+    assert.deepEqual(filtered.items.map((item: any) => [item.id, item.snippet]), [['issue:101', 'Deploy before lunch']]);
+
+    const unfilteredTasks = (await query({ q: '', scope: 'tasks', filters: {}, limit: 100 })).tasks;
+    assert.equal(unfilteredTasks.items.length, 100);
+    assert.deepEqual(unfilteredTasks.facets.agent, [{ key: 'claude', count: 100 }, { key: 'codex', count: 1 }]);
+    const filteredTasks = (await query({ q: 'deploy', scope: 'tasks', filters: { status: ['paused'], agent: ['codex'] }, limit: 100 })).tasks;
+    assert.equal(filteredTasks.total, 1);
+    assert.deepEqual(filteredTasks.items.map((item: any) => item.id), ['101']);
+  }
+  const baseline = await board.dispatch('search.query', { q: 'deploy', scope: 'sessions', filters: { agent: ['codex'] } });
+  assert.equal(baseline.sessions.total, 101);
+  assert.equal(baseline.sessions.facets, undefined);
 });
 
 test('a place that cannot be asked is marked and the others are still answered; a content index that fails leaves the title matches', async () => {
@@ -127,8 +179,9 @@ test('the phone asks for a search with checked fields, and the owner-messages sw
   assert.equal((await call({ q: '预发布', scope: 'inbox', state: 'todo', connector: ['lark'], limit: 5 }, { capabilities: ['board.latest'] }) as any).q, '预发布');
   await call({ q: '', scope: 'tasks' });
   assert.deepEqual(seen, [[{ q: '预发布', scope: 'inbox', state: 'todo', connector: ['lark'], limit: 5 }, true], [{ q: '', scope: 'tasks' }, false]]);
-  for (const bad of [{}, { q: 3 }, { q: '' }, { q: 'x'.repeat(201) }, { q: 'x', scope: 'files' }, { q: 'x', state: 'new' }, { q: 'x', connector: 'lark' }, { q: 'x', limit: 0 }, { q: 'x', limit: 101 }]) {
-    await assert.rejects(() => call(bad), { code: 'BAD_REQUEST' }, JSON.stringify(bad));
+  for (const bad of [{}, { q: 3 }, { q: '' }, { q: 'x'.repeat(201) }, { q: 'x', scope: 'files' }, { q: 'x', state: 'new' }, { q: 'x', connector: 'lark' }, { q: 'x', limit: 0 }, { q: 'x', limit: 101 },
+    { q: 'x', filters: {} }, { q: 'x', scope: 'tasks', filters: { project: ['Mobile'] } }, { q: 'x', scope: 'sessions', filters: { updated: ['unknown'] } }]) {
+    await assert.rejects(() => call(bad, { capabilities: ['search.filters'] }), { code: 'BAD_REQUEST' }, JSON.stringify(bad));
   }
   await assert.rejects(() => createNativeBoard({ fail } as any).dispatch('search.query', { q: 'x' }), { code: 'UPSTREAM_UNAVAILABLE' });
 });

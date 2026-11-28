@@ -149,8 +149,7 @@ const en = {
   search: { label: 'Search issues', placeholder: 'Search issues…' },
   total: (count) => (count === 1 ? '1 issue' : `${count.toLocaleString('en-US')} issues`),
   // The search page of the conversation list (owner, 2026-11-27; `.local/designs/phone-search-2026-11-27/`, the phone's design on every screen). The words of the drawings are the interface's own: 搜索, 取消 and 更多 are here;
-  // the three places and the filters read `T.widgets.titles`, `T.fields`, `T.dates`, `T.collector.tabs` and `T.tasks.statuses`. NEW, awaiting the owner's review of the Chinese (the English is mine): history, frequent, noResults, hint
-  // and failed (搜索失败, the pattern of 压缩失败 and 上传失败). While the computer builds its index of the conversations' text the page says nothing: it keeps its rows and asks again (the approved design has no line for it; owner, 2026-11-27).
+  // The owner approved the design's Chinese wording and approved 搜索失败 for the Desktop error. The search keeps its rows and asks again while the text index is building.
   searchPage: {
     open: 'Search', placeholder: 'Search', cancel: 'Cancel', more: 'More',
     history: 'Search history', frequent: 'Frequently used', noResults: 'No matching results',
@@ -527,7 +526,7 @@ const zh = {
   dates: { name: '日期', due: '截止日期', created: '创建时间', updated: '更新时间', overdue: '已逾期', today: '今天', next7: '未来 7 天', next30: '未来 30 天', day: '过去一天', week: '过去一周', month: '过去一个月' },
   search: { label: '搜索事项', placeholder: '搜索事项…' }, total: (n) => `${n.toLocaleString('zh-CN')} 条事项`,
   // 对话列表的搜索页（主人 2026-11-27；`.local/designs/phone-search-2026-11-27/`，各端都照手机的设计）。图里的字用界面里现有的：搜索、取消、更多在这里；三个范围和筛选用 `T.widgets.titles`、`T.fields`、`T.dates`、
-  // `T.collector.tabs`、`T.tasks.statuses`。NEW，待主人审核中文（英文是我写的）：history、frequent、noResults、hint 和 failed（搜索失败，照「压缩失败」「上传失败」）。电脑在建会话正文的索引时页面什么也不说，只是保留已有的结果、过一会儿再问（设计稿里没有这一行；主人 2026-11-27）。
+  // `T.collector.tabs`、`T.tasks.statuses`。图中中文已审，桌面失败提示「搜索失败」也已通过。会话正文索引建立期间保留已有结果，过一会儿再问。
   searchPage: {
     open: '搜索', placeholder: '搜索', cancel: '取消', more: '更多',
     history: '搜索历史', frequent: '常用', noResults: '没有匹配的内容',

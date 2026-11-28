@@ -1,7 +1,7 @@
 // The search of the phone's and the Desktop's search page, and Dudu's `search/query` (owner, 2026-11-27: Lark's search, one design on every screen; .local/designs/phone-search-2026-11-27/).
 // One request looks in the three places the owner keeps things, each answered in the rows of its own page:
 //
-//   query({ q, scope?, state?, connector?, limit? })
+//   query({ q, scope?, state?, connector?, filters?, limit? })
 //     -> { outcome: 'success', q, sessions?: { total, items: [entry], indexing?, partial? }, inbox?: { total, items: [card], names: { collectorId: name } }, tasks?: { total, items: [task] } }
 //
 //   sessions  the conversations of the board's 全部 list (嘟嘟 included) whose title, issue number or project holds the words of `q`, newest first, then the ones whose text does (DSH's
@@ -11,9 +11,10 @@
 //   tasks     the scheduled tasks whose name holds the words (the ones the tasks page lists: not those a conversation made for itself): `tasks/list`'s own rows.
 //
 // `scope` asks for one place only; with it, `q` may be empty and the answer is the place's newest rows (a range picked on the page and narrowed by its filters, with nothing typed yet).
-// `state` ('todo' | 'done') and `connector` (ids) narrow the inbox. `limit` (1-100, 20 by default) is how many rows each place answers with; `total` says how many matched. A place that
-// could not be asked has `failed: true` and no rows: the others are still answered. The filters of the conversations and of the tasks (agent, project, time, status) are the page's own and
-// are applied by the page to the rows it gets.
+// `state` ('todo' | 'done') and `connector` (ids) narrow the inbox. In a sessions or tasks scope, `filters` narrows the matches before `limit` and asks for `facets` with the available
+// agent and project choices. `total` counts the matches after filtering. A place that could not be asked has `failed: true` and no rows: the others are still answered.
+import { agentOfEntry, facetCounts, filterSessions, filterTasks, projectOfEntry, validSearchFilters } from './search-filters.mjs';
+
 export const SEARCH_SCOPES = Object.freeze(['sessions', 'inbox', 'tasks']);
 export const MAX_QUERY = 200;
 const DEFAULT_LIMIT = 20;
@@ -33,8 +34,19 @@ export function cleanLine(text, terms) {
   const lowered = cleaned.toLowerCase();
   return terms.some((term) => lowered.includes(term)) ? cleaned : '';
 }
-const nameOf = (project) => (typeof project === 'string' ? project : project?.name ?? '');
 const timeout = (ms) => new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('timeout')), ms); timer.unref?.(); });
+
+function sessionPage(matches, limit, filters, includeAssistant) {
+  if (!filters) return { total: matches.length, items: matches.slice(0, limit) };
+  const now = Date.now();
+  const items = filterSessions(matches, filters, now, includeAssistant);
+  const choices = includeAssistant ? matches : matches.filter((entry) => entry.issue);
+  const agents = includeAssistant ? choices : filterSessions(choices, { ...filters, agent: [] }, now, false);
+  const projects = includeAssistant ? choices : filterSessions(choices, { ...filters, project: [] }, now, false);
+  return { total: items.length, items: items.slice(0, limit), facets: {
+    agent: facetCounts(choices, agentOfEntry, agents), project: facetCounts(choices, projectOfEntry, projects),
+  } };
+}
 
 /**
  * `conversations(row, options)` is the chat home's list (`home.list('all', row, undefined, options)`), `sessions(query)` the content search (`{ items: [{ sessionId, snippet }], indexing }`),
@@ -42,13 +54,13 @@ const timeout = (ms) => new Promise((_, reject) => { const timer = setTimeout(()
  * native-board.mjs `boardRow`).
  */
 export function createSearch({ conversations, sessions, inbox, tasks, row: shownAs = (issue) => issue }) {
-  async function findSessions(query, limit, row, options) {
-    const listed = await conversations(row, options);
+  async function findSessions(query, limit, row, ownMessages, filters, includeAssistant) {
+    const listed = await conversations(row, { ownMessages });
     const entries = listed?.conversations;
     if (!Array.isArray(entries)) throw new Error('The conversation list is not available.');
-    if (!query) return { total: entries.length, items: entries.slice(0, limit) };
+    if (!query) return sessionPage(entries, limit, filters, includeAssistant);
     const needle = lower(query);
-    const titled = entries.filter((entry) => lower([entry.title, entry.issue?.ref, nameOf(entry.issue?.project)].join('\n')).includes(needle));
+    const titled = entries.filter((entry) => lower([entry.title, entry.issue?.ref, projectOfEntry(entry)].join('\n')).includes(needle));
     let hits = [];
     let indexing;
     let partial = false;
@@ -69,16 +81,18 @@ export function createSearch({ conversations, sessions, inbox, tasks, row: shown
     // A hit on a session that is not a conversation of the list (no issue, or a folded one) has no row to show: it is left out.
     const inText = [...lines.keys()].map((sessionId) => bySession.get(sessionId)).filter((entry) => entry && !titles.has(entry.id));
     const merged = [...titled, ...inText].map((entry) => (lines.has(entry.sessionId) ? { ...entry, snippet: lines.get(entry.sessionId) } : entry));
-    return { total: merged.length, items: merged.slice(0, limit), ...(indexing === undefined ? {} : { indexing }), ...(partial ? { partial: true } : {}) };
+    return { ...sessionPage(merged, limit, filters, includeAssistant), ...(indexing === undefined ? {} : { indexing }), ...(partial ? { partial: true } : {}) };
   }
 
-  async function findTasks(query, limit) {
+  async function findTasks(query, limit, filters) {
     const answer = await tasks('list', {});
     if (answer?.outcome !== 'success' || !Array.isArray(answer.tasks)) throw new Error('The tasks are not available.');
     const needle = lower(query);
     // The tasks page does not list what a conversation made for itself with its cron tools (origin 'session'), so neither does the search.
     const matched = answer.tasks.filter((task) => task?.origin !== 'session' && (!needle || lower(task.title).includes(needle)));
-    return { total: matched.length, items: matched.slice(0, limit) };
+    if (!filters) return { total: matched.length, items: matched.slice(0, limit) };
+    const items = filterTasks(matched, filters);
+    return { total: items.length, items: items.slice(0, limit), facets: { agent: facetCounts(matched, (task) => task.agent ?? null) } };
   }
 
   async function findInbox(query, limit, { state, connector }) {
@@ -89,16 +103,17 @@ export function createSearch({ conversations, sessions, inbox, tasks, row: shown
 
   return {
     /** `row` is what the conversations are shown as (the default one, or the Desktop's whole issue); `ownMessages` is the board's own switch (home/chat-home.mjs). */
-    async query(body = {}, { row = shownAs, ownMessages = true } = {}) {
+    async query(body = {}, { row = shownAs, ownMessages = true, includeAssistant = true } = {}) {
       const query = typeof body.q === 'string' ? body.q.trim() : '';
       if (query.length > MAX_QUERY) return { outcome: 'needs_clarification', code: 'invalid_request', message: `The query may have at most ${MAX_QUERY} characters.` };
       if (body.scope !== undefined && !SEARCH_SCOPES.includes(body.scope)) return { outcome: 'needs_clarification', code: 'invalid_request', message: 'Choose sessions, inbox or tasks.' };
       if (!query && body.scope === undefined) return { outcome: 'needs_clarification', code: 'empty_query', message: 'Give the words to look for, or choose where to look.' };
+      if (!validSearchFilters(body.scope, body.filters)) return { outcome: 'needs_clarification', code: 'invalid_request', message: 'Use the filters for the selected search scope.' };
       const limit = Number.isSafeInteger(body.limit) ? Math.max(1, Math.min(MAX_LIMIT, body.limit)) : DEFAULT_LIMIT;
       const places = {
-        sessions: () => findSessions(query, limit, row, { ownMessages }),
+        sessions: () => findSessions(query, limit, row, ownMessages, body.filters, includeAssistant),
         inbox: () => findInbox(query, limit, body),
-        tasks: () => findTasks(query, limit),
+        tasks: () => findTasks(query, limit, body.filters),
       };
       const asked = body.scope === undefined ? SEARCH_SCOPES : [body.scope];
       const answers = await Promise.all(asked.map(async (place) => [place, await places[place]().catch(() => ({ failed: true, total: 0, items: [] }))]));

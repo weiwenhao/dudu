@@ -14,8 +14,14 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.coroutines.CoroutineContext
 
-/** What a request of the page is made of: the words (trimmed), the range, and the records' two choices, which are the only ones the computer applies. */
-data class SearchKey(val phrase: String, val range: SearchRange?, val state: String? = null, val sources: Set<String> = emptySet()) {
+/** The words, range and filter selections that identify one request. */
+data class SearchKey(
+    val phrase: String,
+    val range: SearchRange?,
+    val state: String? = null,
+    val sources: Set<String> = emptySet(),
+    val filters: Map<String, Set<String?>> = emptyMap(),
+) {
     /**
      * Whether the computer is asked. Words always are. 收件箱 and 任务 are as soon as they are picked, with no words and no choice, because what their pills offer (来源, the tasks' 智能体) is
      * in the answer (the page shows no rows for it until there is a word or a choice). 会话 never is without words: its rows are the board's own, which the phone has.
@@ -28,6 +34,9 @@ data class SearchKey(val phrase: String, val range: SearchRange?, val state: Str
         if (range == SearchRange.Inbox) {
             state?.let { put("state", it) }
             if (sources.isNotEmpty()) put("connector", JSONArray(sources.sorted()))
+        }
+        if (range == SearchRange.Sessions || range == SearchRange.Tasks) {
+            put("filters", JSONObject(filters.mapValues { (_, keys) -> JSONArray(keys.map { it ?: JSONObject.NULL }) }))
         }
     }
 }
@@ -47,7 +56,11 @@ data class SearchUi(
 ) {
     val key: SearchKey
         get() = SearchKey(query.trim(), range, if (range == SearchRange.Inbox) filters.inboxState else null,
-            if (range == SearchRange.Inbox) filters.sources else emptySet())
+            if (range == SearchRange.Inbox) filters.sources else emptySet(), filters.forRequest(range))
+
+    /** Choices from the previous scope answer stay available while new filter selections are on their way. */
+    val answerForPhrase: SearchAnswer?
+        get() = answer.takeIf { answered?.phrase == key.phrase }
 
     /**
      * The answer that goes with what is asked now: the one to the same request, or, for a range picked after the words were typed, the answer of all three places to those words, which
@@ -57,7 +70,8 @@ data class SearchUi(
         get() {
             val was = answered ?: return null
             val now = key
-            return if (was == now || was.phrase == now.phrase && was.range == null && now.range != null && now.state == null && now.sources.isEmpty()) answer else null
+            return if (was == now || was.phrase == now.phrase && was.range == null && now.range != null
+                && now.state == null && now.sources.isEmpty() && now.filters.isEmpty()) answer else null
         }
 }
 
@@ -91,7 +105,7 @@ class SearchModel(
         restart(debounce = false)
     }
 
-    /** A choice on a range page. Only 状态 and 来源 of the records change what is asked; the others narrow the rows that are here. */
+    /** A choice on a range page is sent immediately when it changes the request. */
     fun change(update: (SearchFilters) -> SearchFilters) {
         val before = flow.value.key
         flow.update { it.copy(filters = update(it.filters)) }
