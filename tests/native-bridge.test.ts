@@ -741,7 +741,7 @@ test('stream disposal settles a pending iterator.next before iterator.return', a
   assert.deepEqual(events.slice(0, 2), ['dispose', 'iterator.return']);
 });
 
-function commandHarness(handlers = {}) {
+function commandHarness(handlers = {}, options = {}) {
   const calls = [];
   const rpc = {
     async call(channel, endpoint, ...args) {
@@ -753,7 +753,7 @@ function commandHarness(handlers = {}) {
       throw new Error('unexpected stream');
     },
   };
-  return { bridge: createNativeBridge({ rpc }), calls };
+  return { bridge: createNativeBridge({ rpc, ...options }), calls };
 }
 
 const connection = () => ({ selectedSessionId: 'session-1', stopWatch: async () => {} });
@@ -860,6 +860,20 @@ test('native submission receipts preserve the caller request identity and reject
     await assert.rejects(bridge.dispatch('session.send', { text: 'continue', requestId: invalid }, connection()), { code: 'BAD_REQUEST' });
   }
   assert.equal(calls.length, before);
+});
+
+// Owner, 2026-11-28: a message from the phone to a conversation held open for a background command waited in the queue for good, while his Desktop (steer) went in at once.
+test('a message from the phone is queued or steered the way DSH\'s own composer would send it', async () => {
+  const modes = async (options?: object) => {
+    const { bridge, calls } = commandHarness({}, options);
+    await bridge.dispatch('session.send', { text: 'now', id: 'held' }, connection());
+    await bridge.dispatch('session.send', { text: 'later', id: 'idle' }, connection());
+    return calls.filter(({ endpoint }) => endpoint === 'session/prompt').map(({ args }) => `${args[0].sessionId}:${args[0].mode}`);
+  };
+  assert.deepEqual(await modes(), ['held:queue', 'idle:queue'], 'without a rule the phone queues, as it always did');
+  assert.deepEqual(await modes({ submission: { modeOf: (id: string) => (id === 'held' ? 'steer' : 'queue') } }), ['held:steer', 'idle:queue']);
+  assert.deepEqual(await modes({ submission: { modeOf: () => { throw new Error('settings are not readable'); } } }), ['held:queue', 'idle:queue']);
+  assert.deepEqual(await modes({ submission: { modeOf: () => 'anything else' } }), ['held:queue', 'idle:queue']);
 });
 
 test('native sends restore an archived session before intake and fail without submitting when restore fails', async () => {

@@ -18,6 +18,7 @@ import { createNativeDiagnostics } from './dist/native-diagnostics.mjs';
 import { createSessionDiagnostics } from './dist/session-diagnostics.mjs';
 import { cleanReadSource, createReadLog } from './dist/read-log.mjs';
 import { createBoardAnnounce } from './dist/native-board-announce.mjs';
+import { createSubmitMode } from './dist/native-submit-mode.mjs';
 import { createStartupLog } from './dist/startup-log.mjs';
 import { createProviders } from './dist/providers/index.mjs';
 import { createSessionTools } from './dist/providers/cron-tools.mjs';
@@ -1146,6 +1147,12 @@ async function startPhoneControl(ctx, config, dshHome, folder, assignment) {
       },
       duduPages,
       foreground: { backgroundOnly: (id) => assignment.providers?.backgroundOnly?.(id) === true, onChange: (listener) => assignment.providers?.onForeground?.(listener) },
+      // A message from the phone goes in the way DSH's own composer sends a plain one: queued for a conversation that does not run, as the owner chose (Settings: queue or steer) for one that does.
+      // A conversation held open for background work runs for DSH, so with steer the message is taken in at once instead of waiting behind the command (native-submit-mode.mjs).
+      submission: createSubmitMode({
+        running: (id) => ctx.agents.get(id)?.status === 'running',
+        settings: () => { try { return ctx.get('settings'); } catch { return undefined; } },   // DSH's settings service, when this DSH has it
+      }),
       collectorNotifications: assignment.collectorNotifications,
       collectorNotificationsEnabled: () => assignment.assistant?.collectors?.dudu.list().collectors?.some((entry) => entry.notify === true) === true,
       // The phone's board and Collector: the same commands the desktop interface sends, run for the owner (the issues are opened later than this: asked for when used).

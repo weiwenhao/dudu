@@ -487,6 +487,13 @@ Antigravity 没配代理时连不上 Google，列模型要等约 23 秒才失败
 不声称在旧权限下应用了新权限。后台任务仍依赖原生 CLI 进程；关闭插件、退出 DSH 或原生进程退出
 会收尾其任务记录，不将它们声明为可以跨进程恢复的守护进程。
 
+**手机发来的消息怎样进 DSH**（2026-11-28，`native-submit-mode.mjs`）：DSH 的 `session/prompt` 有两种方式，`queue`（等这一轮结束）
+和 `steer`（下一步就收下）。手机以前对每条消息都用 `queue`；DSH 自己的输入框对不在运行的会话用 `queue`（就是普通发送，马上开始），
+对在运行的会话按所有者在设置里选的（`ui-conversation` 的 `busyEnter`，默认 `queue`）。后台任务期间 DSH 这一轮被保持，会话对 DSH 是“运行中”，
+手机的 `queue` 消息要等后台命令结束才发（所有者的电脑设为 `steer`，没有这个问题）。现在手机用同一条规则：会话在运行（`agents.get(id).status`）
+且设置是 `steer` 时发 `steer`，其余照旧 `queue`；`steer` 进来由 `yieldForInput` 放行被保持的一步。设置经 DSH 的 `settings` 服务读，读不到
+（旧 DSH、没有这一项）就是 `queue`，和以前一样。只管手机的 `session.send`：定时任务、收集和转发给事项会话的消息不是所有者在输入框里打的，仍是 `queue`。
+
 `HarnessBridge` 每个会话保留最近一轮的 `HarnessRun`（工具结果每个最多 256 KB、活动记录、团队观察），
 直到下一轮开始才换掉。深度睡眠（2026-11-15：会话空闲 30 分钟或未读 1 小时，且真实轮次已结束，见 `docs/session-status.md`）
 调用 `bridge.release(sessionId)`：关掉已经结束且没有原生后台任务的一轮的进程，在跑的、后台工作中、

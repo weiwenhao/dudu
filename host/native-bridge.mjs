@@ -1629,8 +1629,12 @@ const phoneSource = (connection, how) => ({
   how,
 });
 
-export function createNativeBridge({ rpc, pages, navigation, conversationReads, fileTransfers, questionBridge, sessionActivity, acknowledgeRead, sessionSearch, assistantConversation, assistant, board, duduPages, notifications, foreground }) {
+export function createNativeBridge({ rpc, pages, navigation, conversationReads, fileTransfers, questionBridge, sessionActivity, acknowledgeRead, sessionSearch, assistantConversation, assistant, board, duduPages, notifications, foreground, submission }) {
   const remote = createRemote(rpc);
+  // How a message from the phone goes in (native-submit-mode.mjs): DSH's rule for the plain Enter. Without it, or when it cannot say, `queue`, what the phone always did.
+  const submitMode = (sessionId) => {
+    try { return submission?.modeOf?.(sessionId) === 'steer' ? 'steer' : 'queue'; } catch { return 'queue'; }
+  };
   backgroundOnlyOf = typeof foreground?.backgroundOnly === 'function' ? (id) => typeof id === 'string' && foreground.backgroundOnly(id) === true : () => false;
   cardOf = typeof assistant?.cardOf === 'function' ? (commandId) => assistant.cardOf(commandId) : () => null;
   groupOf = typeof assistant?.groupOf === 'function' ? (commandId) => assistant.groupOf(commandId) : () => null;
@@ -2542,7 +2546,7 @@ export function createNativeBridge({ rpc, pages, navigation, conversationReads, 
           const request = {
             requestId: params.requestId ?? randomUUID(),
             sessionId,
-            mode: 'queue',
+            mode: submitMode(sessionId),
             content,
           };
           // Opening history does not restore an archived session. DSH accepts
